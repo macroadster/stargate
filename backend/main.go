@@ -20,7 +20,7 @@ type InscriptionRequest struct {
 	Status    string  `json:"status"`
 }
 
-var pendingInscriptions []InscriptionRequest
+var pendingInscriptions = []InscriptionRequest{}
 
 func enableCORS(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -75,7 +75,7 @@ func handleInscriptions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := http.Get("https://api.hiro.so/ordinals/v1/inscriptions?order_by=number&order=desc&limit=100")
+	resp, err := http.Get("https://api.hiro.so/ordinals/v1/inscriptions?order_by=number&order=desc&limit=20")
 	if err != nil {
 		http.Error(w, "Failed to fetch inscriptions", http.StatusInternalServerError)
 		return
@@ -143,28 +143,84 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	query := r.URL.Query().Get("q")
-	if query == "" {
+	if query == "" || strings.ToLower(query) == "block" || strings.ToLower(query) == "blocks" {
+		// Return recent blocks
+		resp, err := http.Get("https://mempool.space/api/v1/blocks")
+		blocks := []interface{}{}
+		if err == nil {
+			defer resp.Body.Close()
+			body, _ := io.ReadAll(resp.Body)
+			json.Unmarshal(body, &blocks)
+			// Limit to 5 blocks
+			if len(blocks) > 5 {
+				blocks = blocks[:5]
+			}
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"inscriptions": pendingInscriptions,
-			"blocks":       []interface{}{},
+			"blocks":       blocks,
 		})
 		return
 	}
 
 	// Search pending inscriptions
-	var results []InscriptionRequest
+	var inscriptionResults []InscriptionRequest
 	for _, insc := range pendingInscriptions {
 		if strings.Contains(strings.ToLower(insc.Text), strings.ToLower(query)) ||
 		   strings.Contains(strings.ToLower(insc.ID), strings.ToLower(query)) {
-			results = append(results, insc)
+			inscriptionResults = append(inscriptionResults, insc)
+		}
+	}
+
+	// Search blocks
+	resp, err := http.Get("https://mempool.space/api/v1/blocks")
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"inscriptions": inscriptionResults,
+			"blocks":       []interface{}{},
+		})
+		return
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"inscriptions": inscriptionResults,
+			"blocks":       []interface{}{},
+		})
+		return
+	}
+
+	var blocks []interface{}
+	if err := json.Unmarshal(body, &blocks); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"inscriptions": inscriptionResults,
+			"blocks":       []interface{}{},
+		})
+		return
+	}
+
+	var blockResults []interface{}
+	for _, block := range blocks {
+		blockMap := block.(map[string]interface{})
+		heightStr := fmt.Sprintf("%v", blockMap["height"])
+		hash := fmt.Sprintf("%v", blockMap["id"]) // id is the block hash
+
+		if strings.Contains(heightStr, query) || strings.Contains(strings.ToLower(hash), strings.ToLower(query)) {
+			blockResults = append(blockResults, block)
 		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"inscriptions": results,
-		"blocks":       []interface{}{},
+		"inscriptions": inscriptionResults,
+		"blocks":       blockResults,
 	})
 }
 

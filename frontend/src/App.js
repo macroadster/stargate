@@ -47,7 +47,6 @@ const generateInscriptions = (inscriptions) => {
 };
 
 const BlockCard = ({ block, onClick, isSelected }) => {
-  const date = new Date(block.timestamp);
   const timeAgo = Math.floor((Date.now() - block.timestamp) / 3600000);
 
   return (
@@ -94,8 +93,9 @@ const BlockCard = ({ block, onClick, isSelected }) => {
 };
 
 const InscriptionCard = ({ inscription, onClick }) => {
+  console.log('Rendering inscription card:', inscription.id);
   return (
-    <div 
+    <div
       onClick={() => onClick(inscription)}
       className="relative group cursor-pointer"
     >
@@ -152,7 +152,7 @@ const InscriptionCard = ({ inscription, onClick }) => {
   );
 };
 
-const PendingTransactionsView = () => {
+const PendingTransactionsView = ({ copiedText, copyToClipboard, setSelectedInscription }) => {
   const [pendingTxs, setPendingTxs] = useState([]);
 
   useEffect(() => {
@@ -180,38 +180,66 @@ const PendingTransactionsView = () => {
 
       {Array.isArray(pendingTxs) && pendingTxs.length > 0 ? (
         <div className="space-y-3">
-          {pendingTxs.map((tx, idx) => (
-            <div key={idx} className="bg-yellow-50 dark:bg-yellow-900 border border-yellow-200 dark:border-yellow-700 rounded-lg p-4">
-              <div className="flex justify-between items-start mb-3">
-                <div className="flex items-center gap-3">
-                  <div className="px-3 py-1 rounded text-xs font-semibold bg-yellow-600 text-white">
-                    Inscribe
-                  </div>
-                  <div className="text-yellow-800 dark:text-yellow-200 font-mono text-sm">
-                    {tx.id}
-                  </div>
-                </div>
-                <div className="px-2 py-1 rounded text-xs font-semibold bg-yellow-100 dark:bg-yellow-800 text-yellow-800 dark:text-yellow-200">
-                  {tx.status}
-                </div>
-              </div>
+                  {pendingTxs.map((tx, idx) => (
+                    <div
+                      key={idx}
+                      className="bg-yellow-50 dark:bg-yellow-900 border border-yellow-200 dark:border-yellow-700 rounded-lg p-4 cursor-pointer hover:bg-yellow-100 dark:hover:bg-yellow-800 transition-colors"
+                      onClick={() => {
+                        // Convert pending tx to inscription format for modal
+                        const inscription = {
+                          id: tx.id,
+                          contractType: 'Pending Contract',
+                          capability: 'Data Storage',
+                          protocol: 'BRC-20',
+                          apiEndpoints: 1,
+                          interactions: 0,
+                          reputation: 'Pending',
+                          isActive: false,
+                          number: parseInt(tx.id.split('_')[1]) || 0,
+                          address: 'bc1q...pending',
+                          genesis_block_height: tx.blockHeight,
+                          mime_type: 'text/plain',
+                          text: tx.text,
+                          price: tx.price,
+                          timestamp: tx.timestamp,
+                          status: tx.status,
+                        };
+                        setSelectedInscription(inscription);
+                      }}
+                    >
+                      <div className="flex justify-between items-start mb-3">
+                        <div className="flex items-center gap-3">
+                          <div className="px-3 py-1 rounded text-xs font-semibold bg-yellow-600 text-white">
+                            Inscribe
+                          </div>
+                          <div className="text-yellow-800 dark:text-yellow-200 font-mono text-sm">
+                            {tx.id}
+                          </div>
+                          <button onClick={(e) => { e.stopPropagation(); copyToClipboard(tx.id); }} className="text-yellow-600 dark:text-yellow-400 hover:text-yellow-800 dark:hover:text-yellow-200">
+                            {copiedText === tx.id ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                          </button>
+                        </div>
+                        <div className="px-2 py-1 rounded text-xs font-semibold bg-yellow-100 dark:bg-yellow-800 text-yellow-800 dark:text-yellow-200">
+                          {tx.status}
+                        </div>
+                      </div>
 
-              <div className="grid grid-cols-2 gap-4 text-sm">
-                <div>
-                  <div className="text-yellow-700 dark:text-yellow-300 mb-1">Text Length</div>
-                  <div className="text-yellow-900 dark:text-yellow-100">{tx.text?.length || 0} chars</div>
-                </div>
-                <div>
-                  <div className="text-yellow-700 dark:text-yellow-300 mb-1">Price</div>
-                  <div className="text-yellow-900 dark:text-yellow-100 font-semibold">{tx.price} BTC</div>
-                </div>
-              </div>
+                      <div className="grid grid-cols-2 gap-4 text-sm">
+                        <div>
+                          <div className="text-yellow-700 dark:text-yellow-300 mb-1">Text Length</div>
+                          <div className="text-yellow-900 dark:text-yellow-100">{tx.text?.length || 0} chars</div>
+                        </div>
+                        <div>
+                          <div className="text-yellow-700 dark:text-yellow-300 mb-1">Price</div>
+                          <div className="text-yellow-900 dark:text-yellow-100 font-semibold">{tx.price} BTC</div>
+                        </div>
+                      </div>
 
-              <div className="mt-3 text-xs text-yellow-600 dark:text-yellow-400">
-                Submitted {new Date(tx.timestamp * 1000).toLocaleString()}
-              </div>
-            </div>
-          ))}
+                      <div className="mt-3 text-xs text-yellow-600 dark:text-yellow-400">
+                        Submitted {new Date(tx.timestamp * 1000).toLocaleString()}
+                      </div>
+                    </div>
+                  ))}
         </div>
       ) : (
         <div className="text-center py-8 text-gray-500 dark:text-gray-400">
@@ -536,7 +564,7 @@ function transfer(address to, uint256 amount) {
         <div className="p-6 border-b border-gray-300 dark:border-gray-800">
           <div className="flex justify-between items-start">
             <div>
-              <h2 className="text-2xl font-bold text-black dark:text-white mb-2">Contract {inscription.id}</h2>
+               <h2 className="text-2xl font-bold text-black dark:text-white mb-2">Contract Details</h2>
               <div className="flex gap-2 items-center">
                 <span className="text-gray-500 dark:text-gray-400 text-sm font-mono">
                   {inscription.id}
@@ -600,61 +628,67 @@ function transfer(address to, uint256 amount) {
               
               <div className="space-y-4">
                 <div>
-                  <div className="text-gray-400 text-sm mb-1">Contract Type</div>
-                  <div className="text-white font-semibold">{inscription.contractType}</div>
+                  <div className="text-gray-700 dark:text-gray-300 text-sm mb-1">Contract Type</div>
+                  <div className="text-gray-900 dark:text-gray-100 font-semibold">{inscription.contractType}</div>
                 </div>
-                
+
                 <div>
-                  <div className="text-gray-400 text-sm mb-1">Capability</div>
-                  <div className="text-white font-mono text-sm">{inscription.capability}</div>
+                  <div className="text-gray-700 dark:text-gray-300 text-sm mb-1">Capability</div>
+                  <div className="text-gray-900 dark:text-gray-100 font-mono text-sm">{inscription.capability}</div>
                 </div>
-                
+
                 <div>
-                  <div className="text-gray-400 text-sm mb-1">Protocol</div>
-                  <div className="text-white">{inscription.protocol}</div>
+                  <div className="text-gray-700 dark:text-gray-300 text-sm mb-1">Protocol</div>
+                  <div className="text-gray-900 dark:text-gray-100">{inscription.protocol}</div>
                 </div>
-                
+
                 <div>
-                  <div className="text-gray-400 text-sm mb-1">API Endpoints</div>
-                  <div className="text-white font-semibold">{inscription.apiEndpoints} endpoints</div>
+                  <div className="text-gray-700 dark:text-gray-300 text-sm mb-1">API Endpoints</div>
+                  <div className="text-gray-900 dark:text-gray-100 font-semibold">{inscription.apiEndpoints} endpoints</div>
                 </div>
-                
+
                 <div>
-                  <div className="text-gray-400 text-sm mb-1">Total Interactions</div>
-                  <div className="text-white font-semibold">{inscription.interactions?.toLocaleString() || '0'}</div>
+                  <div className="text-gray-700 dark:text-gray-300 text-sm mb-1">Total Interactions</div>
+                  <div className="text-gray-900 dark:text-gray-100 font-semibold">{inscription.interactions?.toLocaleString() || '0'}</div>
                 </div>
-                
+
                 <div>
-                  <div className="text-gray-400 text-sm mb-1">Status</div>
+                  <div className="text-gray-700 dark:text-gray-300 text-sm mb-1">Status</div>
                   <div className="flex items-center gap-2">
                     <div className={`w-2 h-2 rounded-full ${inscription.isActive ? 'bg-green-500' : 'bg-gray-500'}`}></div>
-                    <span className="text-white">{inscription.isActive ? 'Active' : 'Inactive'}</span>
+                    <span className="text-gray-900 dark:text-gray-100">{inscription.isActive ? 'Active' : 'Inactive'}</span>
                   </div>
                 </div>
-                
-                <div>
-                  <div className="text-gray-400 text-sm mb-1">Reputation Score</div>
-                  <div className="flex items-center gap-1">
-                    <span className="text-yellow-400">★</span>
-                    <span className="text-white font-semibold">{inscription.reputation} / 5.0</span>
-                  </div>
-                </div>
-                
 
-                
                 <div>
-                  <div className="text-gray-400 text-sm mb-1">Satoshi</div>
-                  <div className="text-white font-mono text-sm">
+                  <div className="text-gray-700 dark:text-gray-300 text-sm mb-1">Reputation Score</div>
+                  <div className="flex items-center gap-1">
+                    <span className="text-yellow-600 dark:text-yellow-400">★</span>
+                    <span className="text-gray-900 dark:text-gray-100 font-semibold">{inscription.reputation} / 5.0</span>
+                  </div>
+                </div>
+
+                <div>
+                  <div className="text-gray-700 dark:text-gray-300 text-sm mb-1">Contract ID</div>
+                  <div className="text-indigo-700 dark:text-indigo-300 font-mono text-sm hover:underline cursor-pointer">
+                    {inscription.id}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="text-gray-700 dark:text-gray-300 text-sm mb-1">Satoshi</div>
+                  <div className="text-gray-900 dark:text-gray-100 font-mono text-sm">
                     {Math.floor(Math.random() * 1000000000)}
                   </div>
                 </div>
-                
+
                 <div>
-                  <div className="text-gray-400 text-sm mb-1">Owner</div>
-                  <div className="text-white font-mono text-sm">
+                  <div className="text-gray-700 dark:text-gray-300 text-sm mb-1">Owner</div>
+                  <div className="text-gray-900 dark:text-gray-100 font-mono text-sm">
                     bc1q{Math.random().toString(36).substring(2, 15)}...
                   </div>
                 </div>
+                
               </div>
             </div>
           )}
@@ -813,12 +847,23 @@ export default function OrdiscanExplorer() {
   const fetchBlocks = async () => {
     try {
       const response = await fetch('http://localhost:3001/api/blocks');
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
       const data = await response.json();
-      const processedBlocks = data.slice(0, 10).map(generateBlock);
+      let processedBlocks = data.slice(0, 10).map(generateBlock);
+
+      if (processedBlocks.length === 0) {
+        // Fallback mock blocks
+        processedBlocks = [
+          { height: 924000, timestamp: Date.now() - 3600000, hash: 'mock1', tx_count: 1500 },
+          { height: 923999, timestamp: Date.now() - 7200000, hash: 'mock2', tx_count: 1400 },
+        ].map(generateBlock);
+      }
 
       // Add future block
       const futureBlock = {
-        height: processedBlocks[processedBlocks.length - 1].height + 1,
+        height: processedBlocks[0].height + 1,
         timestamp: Date.now() + 600000, // 10 minutes in future
         hash: 'pending...',
         inscriptionCount: 0,
@@ -830,8 +875,10 @@ export default function OrdiscanExplorer() {
 
       const allBlocks = [futureBlock, ...processedBlocks];
       setBlocks(allBlocks);
-      if (!selectedBlock && processedBlocks.length > 0) {
+      console.log('Blocks set:', allBlocks.length, 'Selected block:', processedBlocks[0]?.height);
+      if (!selectedBlock) {
         setSelectedBlock(processedBlocks[0]);
+        console.log('Selected block set to:', processedBlocks[0]?.height);
       }
     } catch (error) {
       console.error('Error fetching blocks:', error);
@@ -841,12 +888,30 @@ export default function OrdiscanExplorer() {
   const fetchInscriptions = async () => {
     try {
       const response = await fetch('http://localhost:3001/api/inscriptions');
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
       const data = await response.json();
-      const processedInscriptions = generateInscriptions(data.results);
+      const results = data.results || [];
+      console.log('Fetched inscriptions:', results.length);
+      const finalResults = results.length > 0 ? results : [
+        { id: '110513026', number: 110513026, address: 'bc1p...', mime_type: 'image/png' },
+        { id: '110513025', number: 110513025, address: 'bc1p...', mime_type: 'text/plain' },
+      ];
+      const processedInscriptions = generateInscriptions(finalResults);
+      console.log('Inscriptions set:', processedInscriptions.length, 'for block:', selectedBlock?.height);
       setInscriptions(processedInscriptions);
-      setCurrentInscriptions(data.results); // Store raw data for search
+      setCurrentInscriptions(finalResults); // Store raw data for search
     } catch (error) {
       console.error('Error fetching inscriptions:', error);
+      // Fallback mock data
+      const mockResults = [
+        { id: '110513026', number: 110513026, address: 'bc1p...', mime_type: 'image/png' },
+        { id: '110513025', number: 110513025, address: 'bc1p...', mime_type: 'text/plain' },
+      ];
+      const processedInscriptions = generateInscriptions(mockResults);
+      setInscriptions(processedInscriptions);
+      setCurrentInscriptions(mockResults);
     }
   };
 
@@ -941,9 +1006,9 @@ export default function OrdiscanExplorer() {
               className="flex gap-4 overflow-x-auto pb-4 px-12 scrollbar-hide"
               style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
             >
-              {blocks.map((block) => (
+              {blocks.map((block, index) => (
                 <BlockCard
-                  key={block.height}
+                  key={`${block.height}-${index}`}
                   block={block}
                   onClick={setSelectedBlock}
                   isSelected={selectedBlock?.height === block.height}
@@ -1080,6 +1145,7 @@ export default function OrdiscanExplorer() {
           </div>
         ) : selectedBlock && (
           <>
+            {console.log('Rendering block:', selectedBlock.height, 'isFuture:', selectedBlock.isFuture, 'inscriptions:', inscriptions.length)}
             {/* Block Header */}
             <div className="mb-8">
               <h2 className="text-4xl font-bold mb-4 text-black dark:text-white">Block {selectedBlock.height}</h2>
@@ -1103,7 +1169,7 @@ export default function OrdiscanExplorer() {
 
             {/* Contracts or Pending Transactions Section */}
             {selectedBlock.isFuture ? (
-              <PendingTransactionsView />
+              <PendingTransactionsView copiedText={copiedText} copyToClipboard={copyToClipboard} setSelectedInscription={setSelectedInscription} />
             ) : (
               <div className="mb-4">
                 <div className="mb-4">
@@ -1113,15 +1179,14 @@ export default function OrdiscanExplorer() {
                 </div>
 
                 <div className="grid grid-cols-5 gap-4">
-                  {inscriptions
-                    .filter(insc => insc.genesis_block_height == selectedBlock.height)
-                    .map((inscription, idx) => (
-                      <InscriptionCard
-                        key={idx}
-                        inscription={inscription}
-                        onClick={setSelectedInscription}
-                      />
-                    ))}
+                  {console.log('Rendering inscriptions grid:', inscriptions.length)}
+                  {inscriptions.map((inscription, idx) => (
+                    <InscriptionCard
+                      key={idx}
+                      inscription={inscription}
+                      onClick={setSelectedInscription}
+                    />
+                  ))}
                 </div>
               </div>
             )}
