@@ -203,6 +203,7 @@ const PendingTransactionsView = ({ copiedText, copyToClipboard, setSelectedInscr
                           price: tx.price,
                           timestamp: tx.timestamp,
                           status: tx.status,
+                          image: tx.imageData ? `http://localhost:3001/uploads/${tx.imageData.split('/').pop()}` : null,
                         };
                         setSelectedInscription(inscription);
                       }}
@@ -320,7 +321,8 @@ const InscribeModal = ({ onClose, blocks, setPendingTransactions }) => {
       });
 
       if (response.ok) {
-        console.log('Inscription request submitted');
+        const result = await response.json();
+        console.log('Inscription request submitted:', result);
         setIsSubmitting(false);
         onClose();
         // Reset
@@ -330,7 +332,9 @@ const InscribeModal = ({ onClose, blocks, setPendingTransactions }) => {
         setPrice('');
         setPaymentAddress('');
       } else {
-        alert('Failed to submit inscription request');
+        const errorText = await response.text();
+        console.error('Failed to submit inscription request:', response.status, errorText);
+        alert(`Failed to submit inscription request: ${response.status} ${errorText}`);
         setIsSubmitting(false);
       }
     } catch (error) {
@@ -621,9 +625,17 @@ function transfer(address to, uint256 amount) {
           {activeTab === 'overview' && (
             <div className="grid grid-cols-2 gap-6">
               <div>
-                <div className={`aspect-square rounded-lg bg-gradient-to-br ${inscription.gradient} to-gray-900 flex items-center justify-center mb-4`}>
-                  <div className="text-white text-9xl opacity-50">🎨</div>
-                </div>
+                {inscription.image ? (
+                  <img
+                    src={inscription.image}
+                    alt="Contract Image"
+                    className="w-full aspect-square rounded-lg object-cover mb-4"
+                  />
+                ) : (
+                  <div className={`aspect-square rounded-lg bg-gradient-to-br ${inscription.gradient || 'from-blue-500'} to-gray-900 flex items-center justify-center mb-4`}>
+                    <div className="text-white text-9xl opacity-50">🎨</div>
+                  </div>
+                )}
               </div>
               
               <div className="space-y-4">

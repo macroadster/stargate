@@ -6,8 +6,11 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -20,7 +23,42 @@ type InscriptionRequest struct {
 	Status    string  `json:"status"`
 }
 
-var pendingInscriptions = []InscriptionRequest{}
+var (
+	pendingInscriptions = []InscriptionRequest{}
+	mu                  sync.Mutex
+	inscriptionsFile    = "inscriptions.json"
+)
+
+func loadInscriptions() {
+	file, err := os.Open(inscriptionsFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			pendingInscriptions = []InscriptionRequest{}
+			return
+		}
+		log.Printf("Error opening inscriptions file: %v", err)
+		return
+	}
+	defer file.Close()
+
+	if err := json.NewDecoder(file).Decode(&pendingInscriptions); err != nil {
+		log.Printf("Error decoding inscriptions: %v", err)
+		pendingInscriptions = []InscriptionRequest{}
+	}
+}
+
+func saveInscriptions() {
+	file, err := os.Create(inscriptionsFile)
+	if err != nil {
+		log.Printf("Error creating inscriptions file: %v", err)
+		return
+	}
+	defer file.Close()
+
+	if err := json.NewEncoder(file).Encode(pendingInscriptions); err != nil {
+		log.Printf("Error encoding inscriptions: %v", err)
+	}
+}
 
 func enableCORS(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -110,15 +148,54 @@ func handleInscribe(w http.ResponseWriter, r *http.Request) {
 	priceStr := r.FormValue("price")
 	price, _ := strconv.ParseFloat(priceStr, 64)
 
+	// Handle file upload
+	file, header, err := r.FormFile("image")
+	if err != nil {
+		http.Error(w, "Failed to get image file", http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+
+	// Create uploads directory if it doesn't exist
+	uploadsDir := "uploads"
+	if err := os.MkdirAll(uploadsDir, 0755); err != nil {
+		http.Error(w, "Failed to create uploads directory", http.StatusInternalServerError)
+		return
+	}
+
+	// Generate filename
+	timestamp := time.Now().Unix()
+	filename := fmt.Sprintf("%d_%s", timestamp, header.Filename)
+	imagePath := filepath.Join(uploadsDir, filename)
+
+	// Save file
+	dst, err := os.Create(imagePath)
+	if err != nil {
+		http.Error(w, "Failed to save file", http.StatusInternalServerError)
+		return
+	}
+	defer dst.Close()
+
+	if _, err := io.Copy(dst, file); err != nil {
+		http.Error(w, "Failed to copy file", http.StatusInternalServerError)
+		return
+	}
+
 	req := InscriptionRequest{
+		ImageData: imagePath,
 		Text:      text,
 		Price:     price,
-		Timestamp: time.Now().Unix(),
-		ID:        fmt.Sprintf("pending_%d", time.Now().Unix()),
+		Timestamp: timestamp,
+		ID:        fmt.Sprintf("pending_%d", timestamp),
 		Status:    "pending",
 	}
 
+	log.Printf("Created inscription: %s, image: %s", req.ID, imagePath)
+
+	mu.Lock()
 	pendingInscriptions = append(pendingInscriptions, req)
+	saveInscriptions()
+	mu.Unlock()
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "success", "id": req.ID})
@@ -260,6 +337,11 @@ func handleInscriptionContent(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	loadInscriptions()
+
+	// Serve uploaded images
+	http.Handle("/uploads/", http.StripPrefix("/uploads/", http.FileServer(http.Dir("uploads/"))))
+
 	http.HandleFunc("/api/blocks", handleBlocks)
 	http.HandleFunc("/api/inscriptions", handleInscriptions)
 	http.HandleFunc("/api/inscribe", handleInscribe)

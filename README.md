@@ -1,4 +1,4 @@
-# Starlight - Bitcoin Ordinals Explorer
+# Stargate - Bitcoin Ordinals Explorer
 
 A modern, full-stack web application for exploring Bitcoin Ordinals inscriptions, blocks, and smart contracts. Built with React frontend and Go backend.
 
@@ -151,5 +151,5 @@ MIT License - see LICENSE file for details
 
 ---
 
-**Starlight** - Illuminating the world of Bitcoin Ordinals ✨</content>
+**Stargate** - Illuminating the world of Bitcoin Ordinals ✨</content>
 <parameter name="filePath">README.md
