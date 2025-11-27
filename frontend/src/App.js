@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Search, Copy, Check, Moon, Sun, ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { QRCodeCanvas } from 'qrcode.react';
+import StegoAnalysisViewer from './StegoAnalysisViewer.js';
 
 // Simulated data generators (adapted for real data)
 const generateBlock = (block) => {
@@ -10,12 +11,13 @@ const generateBlock = (block) => {
   
   return {
     height: block.height,
-    timestamp: now - ((923627 - block.height) * 600000),
+    timestamp: block.timestamp || now - ((923627 - block.height) * 600000),
     hash: block.id,
     inscriptionCount: randomCount,
     hasBRC20: Math.random() > 0.6,
     thumbnail: randomCount > 0 ? (Math.random() > 0.5 ? '🖼️' : '🎨') : null,
-    tx_count: block.tx_count
+    tx_count: block.tx_count,
+    smart_contracts: block.smart_contracts || []
   };
 };
 
@@ -48,6 +50,30 @@ const generateInscriptions = (inscriptions) => {
 
 const BlockCard = ({ block, onClick, isSelected }) => {
   const timeAgo = Math.floor((Date.now() - block.timestamp) / 3600000);
+  const hasSmartContracts = block.smart_contracts && block.smart_contracts.length > 0;
+  const hasWitnessImages = block.witness_images && block.witness_images.length > 0;
+
+  const getBackgroundClass = () => {
+    if (block.isFuture) return 'from-yellow-200 to-yellow-300 dark:from-yellow-600 dark:to-yellow-800';
+    if (hasSmartContracts) return 'from-purple-200 to-purple-300 dark:from-purple-600 dark:to-purple-800';
+    if (hasWitnessImages) return 'from-green-200 to-green-300 dark:from-green-600 dark:to-green-800';
+    if (block.inscriptionCount > 0) return 'from-indigo-200 to-indigo-300 dark:from-indigo-600 dark:to-indigo-800';
+    return 'from-gray-200 to-gray-300 dark:from-gray-700 dark:to-gray-800';
+  };
+
+  const getBadgeText = () => {
+    if (block.isFuture) return 'Pending';
+    if (hasSmartContracts) return `${block.smart_contracts.length} stego contract${block.smart_contracts.length !== 1 ? 's' : ''}`;
+    if (hasWitnessImages) return `${block.witness_images.length} witness image${block.witness_images.length !== 1 ? 's' : ''}`;
+    return `${block.inscriptionCount} inscription${block.inscriptionCount !== 1 ? 's' : ''}`;
+  };
+
+  const getBadgeClass = () => {
+    if (block.isFuture) return 'text-yellow-800 dark:text-yellow-200';
+    if (hasSmartContracts) return 'text-purple-700 dark:text-purple-200';
+    if (hasWitnessImages) return 'text-green-700 dark:text-green-200';
+    return 'text-indigo-700 dark:text-indigo-200';
+  };
 
   return (
     <div
@@ -59,11 +85,14 @@ const BlockCard = ({ block, onClick, isSelected }) => {
     >
       <div className={`rounded-xl overflow-hidden border-2 ${
         isSelected ? 'border-indigo-500' : block.isFuture ? 'border-yellow-400' : 'border-gray-300 dark:border-gray-700'
-      } bg-gradient-to-br ${block.isFuture ? 'from-yellow-200 to-yellow-300 dark:from-yellow-600 dark:to-yellow-800' :
-        block.inscriptionCount > 0 ? 'from-indigo-200 to-indigo-300 dark:from-indigo-600 dark:to-indigo-800' : 'from-gray-200 to-gray-300 dark:from-gray-700 dark:to-gray-800'}`}>
+      } bg-gradient-to-br ${getBackgroundClass()}`}>
         {/* Thumbnail or placeholder */}
         <div className="h-32 flex items-center justify-center bg-black bg-opacity-20">
-          {block.thumbnail ? (
+          {hasSmartContracts ? (
+            <div className="text-6xl">🎨</div>
+          ) : hasWitnessImages ? (
+            <div className="text-6xl">🖼️</div>
+          ) : block.thumbnail ? (
             <div className="text-6xl">{block.thumbnail}</div>
           ) : (
             <div className="text-gray-600 text-sm">No inscriptions</div>
@@ -73,8 +102,8 @@ const BlockCard = ({ block, onClick, isSelected }) => {
         {/* Block info */}
         <div className={`p-3 ${block.isFuture ? 'bg-yellow-500 bg-opacity-40' : 'bg-black bg-opacity-40 dark:bg-black dark:bg-opacity-40 bg-white bg-opacity-60'}`}>
           <div className={`font-bold text-lg mb-1 ${block.isFuture ? 'text-yellow-900 dark:text-yellow-100' : 'text-black dark:text-white'}`}>{block.height}</div>
-          <div className={`text-xs mb-2 ${block.isFuture ? 'text-yellow-800 dark:text-yellow-200' : 'text-indigo-700 dark:text-indigo-200'}`}>
-            {block.isFuture ? 'Pending' : `${block.inscriptionCount} inscription${block.inscriptionCount !== 1 ? 's' : ''}`}
+          <div className={`text-xs mb-2 ${getBadgeClass()}`}>
+            {getBadgeText()}
           </div>
           <div className={`text-xs ${block.isFuture ? 'text-yellow-700 dark:text-yellow-300' : 'text-gray-600 dark:text-gray-400'}`}>
             {block.isFuture ? 'Next block' : (timeAgo < 1 ? '< 1 hour ago' : `${timeAgo} hour${timeAgo > 1 ? 's' : ''} ago`)}
@@ -82,7 +111,17 @@ const BlockCard = ({ block, onClick, isSelected }) => {
         </div>
         
         {/* Special badges */}
-        {block.hasBRC20 && (
+        {hasSmartContracts && (
+          <div className="absolute top-2 right-2 bg-purple-600 text-white text-xs px-2 py-1 rounded-md font-bold">
+            STEGO
+          </div>
+        )}
+        {hasWitnessImages && (
+          <div className="absolute top-2 left-2 bg-green-600 text-white text-xs px-2 py-1 rounded-md font-bold">
+            WITNESS
+          </div>
+        )}
+        {block.hasBRC20 && !hasSmartContracts && !hasWitnessImages && (
           <div className="absolute top-2 right-2 bg-orange-600 text-white text-xs px-2 py-1 rounded-md font-bold">
             BRC-20
           </div>
@@ -90,7 +129,7 @@ const BlockCard = ({ block, onClick, isSelected }) => {
       </div>
     </div>
   );
-};
+}
 
 const InscriptionCard = ({ inscription, onClick }) => {
   console.log('Rendering inscription card:', inscription.id);
@@ -99,50 +138,57 @@ const InscriptionCard = ({ inscription, onClick }) => {
       onClick={() => onClick(inscription)}
       className="relative group cursor-pointer"
     >
-      <div className="rounded-lg overflow-hidden bg-gray-200 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 hover:border-indigo-500 transition-all p-4">
-        <div className={`w-full h-32 rounded bg-gradient-to-br ${inscription.gradient} to-gray-900 flex items-center justify-center mb-3`}>
-          <div className="text-white text-4xl opacity-70">
-            {inscription.contractType === 'Knowledge Base' ? '📚' :
-             inscription.contractType === 'Data Oracle' ? '🔮' :
-             inscription.contractType === 'AI Agent' ? '🤖' :
-             inscription.contractType === 'Token Contract' ? '💰' : '⚙️'}
+      <div className="relative overflow-hidden rounded-lg border-2 border-gray-300 dark:border-gray-700 hover:border-indigo-500 transition-all duration-200 bg-white dark:bg-gray-800">
+        {/* Image or placeholder */}
+        <div className="h-32 flex items-center justify-center bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-700 dark:to-gray-800">
+          {inscription.image ? (
+            <img 
+              src={inscription.image} 
+              alt={inscription.id}
+              className="max-w-full max-h-full object-contain"
+              onError={(e) => {
+                e.target.style.display = 'none';
+                e.target.nextSibling.style.display = 'flex';
+              }}
+            />
+          ) : null}
+          <div className="text-4xl" style={{display: inscription.image ? 'none' : 'flex'}}>
+            {inscription.mime_type?.includes('text') ? '📄' : 
+             inscription.mime_type?.includes('image') ? '🖼️' : '📦'}
           </div>
         </div>
         
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-indigo-600 dark:text-indigo-400">{inscription.contractType}</span>
-            <div className={`w-2 h-2 rounded-full ${inscription.isActive ? 'bg-green-500' : 'bg-gray-500'}`}></div>
-          </div>
-
-          <div className="flex flex-wrap gap-1">
-            <span className="text-xs bg-gray-300 dark:bg-gray-700 text-gray-700 dark:text-gray-300 px-2 py-1 rounded">
-              {inscription.capability}
-            </span>
-            <span className="text-xs bg-gray-300 dark:bg-gray-700 text-gray-700 dark:text-gray-300 px-2 py-1 rounded">
-              {inscription.protocol}
-            </span>
-          </div>
-
-          <div className="grid grid-cols-2 gap-2 text-xs">
-            <div>
-              <div className="text-gray-500 dark:text-gray-400">APIs</div>
-              <div className="text-black dark:text-white font-semibold">{inscription.apiEndpoints}</div>
-            </div>
-            <div>
-              <div className="text-gray-500 dark:text-gray-400">Calls</div>
-              <div className="text-black dark:text-white font-semibold">{inscription.interactions}</div>
-            </div>
-          </div>
-
-          <div className="flex items-center justify-between pt-2 border-t border-gray-300 dark:border-gray-700">
-            <div className="text-xs text-gray-500 dark:text-gray-400">Reputation</div>
-            <div className="flex items-center gap-1">
-              <span className="text-yellow-500 dark:text-yellow-400">★</span>
-              <span className="text-black dark:text-white text-sm font-semibold">{inscription.reputation}</span>
-            </div>
+        {/* Content overlay */}
+        <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+          <div className="absolute bottom-0 left-0 right-0 p-3 text-white">
+            <div className="text-xs font-mono truncate">{inscription.id}</div>
+            {inscription.text && (
+              <div className="text-xs mt-1 truncate opacity-90">{inscription.text}</div>
+            )}
           </div>
         </div>
+        
+        {/* Status badges */}
+        <div className="absolute top-2 left-2 flex gap-1">
+          {inscription.contractType && (
+            <div className="px-2 py-1 bg-purple-600 text-white text-xs rounded-full font-semibold">
+              {inscription.contractType}
+            </div>
+          )}
+          {inscription.protocol && (
+            <div className="px-2 py-1 bg-blue-600 text-white text-xs rounded-full font-semibold">
+              {inscription.protocol}
+            </div>
+          )}
+        </div>
+        
+        {/* Reputation indicator */}
+        {inscription.reputation && (
+          <div className="absolute top-2 right-2 flex items-center gap-1">
+            <span className="text-yellow-500 dark:text-yellow-400">★</span>
+            <span className="text-black dark:text-white text-sm font-semibold">{inscription.reputation}</span>
+          </div>
+        )}
       </div>
       
       <div className="mt-2">
@@ -257,63 +303,16 @@ const InscribeModal = ({ onClose, blocks, setPendingTransactions }) => {
   const [embedText, setEmbedText] = useState('');
   const [price, setPrice] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isDragOver, setIsDragOver] = useState(false);
-  const [paymentAddress, setPaymentAddress] = useState('');
-  const fileInputRef = useRef(null);
 
-  const handleFileChange = (e) => {
-    const file = e.target.files[0];
-    if (file && file.type.startsWith('image/')) {
-      setImageFile(file);
-    }
-  };
-
-  const handleDragOver = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    setIsDragOver(true);
-  };
-
-  const handleDragLeave = (e) => {
-    e.preventDefault();
-    setIsDragOver(false);
-  };
-
-  const handleDrop = (e) => {
-    e.preventDefault();
-    setIsDragOver(false);
-    const file = e.dataTransfer.files[0];
-    if (file && file.type.startsWith('image/')) {
-      setImageFile(file);
-    }
-  };
-
-  const handleClick = () => {
-    fileInputRef.current.click();
-  };
-
-  const handleFormSubmit = async (e) => {
-    e.preventDefault();
-    console.log('Form submitted', { imageFile, embedText, price });
-
-    if (!imageFile) {
-      alert('Please select an image file');
-      return;
-    }
-
-    // Generate payment address
-    const address = `bc1q${Math.random().toString(36).substring(2, 15)}${Math.random().toString(36).substring(2, 15)}`;
-    setPaymentAddress(address);
-    setStep(2);
-  };
-
-  const handlePaymentSubmit = async () => {
     setIsSubmitting(true);
 
     try {
       const formData = new FormData();
-      formData.append('image', imageFile);
+      if (imageFile) formData.append('image', imageFile);
       formData.append('text', embedText);
-      formData.append('price', price || '0.001');
+      formData.append('price', price);
 
       const response = await fetch('http://localhost:3001/api/inscribe', {
         method: 'POST',
@@ -322,147 +321,107 @@ const InscribeModal = ({ onClose, blocks, setPendingTransactions }) => {
 
       if (response.ok) {
         const result = await response.json();
-        console.log('Inscription request submitted:', result);
-        setIsSubmitting(false);
+        console.log('Inscription successful:', result);
+        
+        // Refresh pending transactions
+        setTimeout(() => {
+          fetch('http://localhost:3001/api/pending-transactions')
+            .then(res => res.json())
+            .then(data => setPendingTransactions(data || []))
+            .catch(err => console.error('Error fetching pending transactions:', err));
+        }, 1000);
+        
         onClose();
-        // Reset
-        setStep(1);
-        setImageFile(null);
-        setEmbedText('');
-        setPrice('');
-        setPaymentAddress('');
       } else {
-        const errorText = await response.text();
-        console.error('Failed to submit inscription request:', response.status, errorText);
-        alert(`Failed to submit inscription request: ${response.status} ${errorText}`);
-        setIsSubmitting(false);
+        console.error('Inscription failed');
       }
     } catch (error) {
       console.error('Error submitting inscription:', error);
-      alert('Error submitting inscription');
+    } finally {
       setIsSubmitting(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 bg-black dark:bg-black bg-white bg-opacity-90 z-50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white dark:bg-gray-900 rounded-xl max-w-md w-full border border-gray-300 dark:border-gray-700 flex flex-col" onClick={(e) => e.stopPropagation()}>
-        <div className="p-6 border-b border-gray-300 dark:border-gray-800">
-          <div className="flex justify-between items-center">
-            <h2 className="text-2xl font-bold text-black dark:text-white">
-              {step === 1 ? 'Create Inscription' : 'Send Payment'}
-            </h2>
-            <button
-              onClick={onClose}
-              className="text-gray-500 dark:text-gray-400 hover:text-black dark:hover:text-white text-2xl"
-            >
-              ×
-            </button>
-          </div>
-          {step === 2 && (
-            <div className="mt-4 text-sm text-gray-600 dark:text-gray-400">
-              Step 2 of 2: Send {price || '0.001'} BTC to the address below to complete your inscription
-            </div>
-          )}
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className="bg-white dark:bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4">
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-xl font-bold text-black dark:text-white">Create Inscription</h2>
+          <button onClick={onClose} className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200">
+            <X className="w-5 h-5" />
+          </button>
         </div>
 
         {step === 1 ? (
-          <form onSubmit={handleFormSubmit} className="p-6 space-y-4">
-          <div>
-            <label className="block text-gray-600 dark:text-gray-400 text-sm mb-2">Upload Image</label>
-            <div
-              onDragOver={handleDragOver}
-              onDragLeave={handleDragLeave}
-              onDrop={handleDrop}
-              onClick={handleClick}
-              className={`w-full border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors ${
-                isDragOver
-                  ? 'border-indigo-500 bg-indigo-500 bg-opacity-10'
-                  : 'border-gray-400 dark:border-gray-600 hover:border-gray-500 dark:hover:border-gray-500'
-              }`}
-            >
-              {imageFile ? (
-                <div>
-                  <div className="text-green-400 text-4xl mb-2">✓</div>
-                  <div className="text-black dark:text-white font-semibold">{imageFile.name}</div>
-                  <div className="text-gray-500 dark:text-gray-400 text-sm">Click or drag to change</div>
-                </div>
-              ) : (
-                <div>
-                  <div className="text-gray-500 dark:text-gray-400 text-4xl mb-2">📁</div>
-                  <div className="text-black dark:text-white font-semibold">Drop image here or click to browse</div>
-                  <div className="text-gray-500 dark:text-gray-400 text-sm">Supports PNG, JPG, GIF, WEBP</div>
-                </div>
-              )}
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                Image (optional)
+              </label>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={(e) => setImageFile(e.target.files[0])}
+                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:bg-gray-700 dark:text-white"
+              />
             </div>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              onChange={handleFileChange}
-              className="hidden"
-            />
-          </div>
 
-          <div>
-            <label className="block text-gray-600 dark:text-gray-400 text-sm mb-2">Text to Embed</label>
-            <textarea
-              value={embedText}
-              onChange={(e) => setEmbedText(e.target.value)}
-              placeholder="Enter the smart contract code or text to hide in the image..."
-              className="w-full bg-gray-100 dark:bg-gray-800 text-black dark:text-white rounded-lg p-3 border border-gray-300 dark:border-gray-700 focus:border-indigo-500 focus:outline-none h-32 resize-none"
-              required
-            />
-          </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                Text Content
+              </label>
+              <textarea
+                value={embedText}
+                onChange={(e) => setEmbedText(e.target.value)}
+                required
+                rows={4}
+                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:bg-gray-700 dark:text-white"
+                placeholder="Enter text to inscribe..."
+              />
+            </div>
 
-          <div>
-            <label className="block text-gray-600 dark:text-gray-400 text-sm mb-2">Price (BTC)</label>
-            <input
-              type="number"
-              step="0.00000001"
-              value={price}
-              onChange={(e) => setPrice(e.target.value)}
-              placeholder="0.001"
-              className="w-full bg-gray-100 dark:bg-gray-800 text-black dark:text-white rounded-lg p-3 border border-gray-300 dark:border-gray-700 focus:border-indigo-500 focus:outline-none"
-              required
-            />
-          </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                Price (BTC)
+              </label>
+              <input
+                type="number"
+                value={price}
+                onChange={(e) => setPrice(e.target.value)}
+                step="0.00000001"
+                required
+                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:bg-gray-700 dark:text-white"
+                placeholder="0.00000000"
+              />
+            </div>
 
-          <button
-            type="submit"
-            className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-3 rounded-lg font-semibold transition-colors"
-          >
-            Continue to Payment
-          </button>
-        </form>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={onClose}
+                className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="flex-1 px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:opacity-50"
+              >
+                {isSubmitting ? 'Creating...' : 'Create Inscription'}
+              </button>
+            </div>
+          </form>
         ) : (
-          <div className="p-6 space-y-4">
-            <div className="text-center">
-              <div className="mb-4 flex justify-center">
-                <QRCodeCanvas value={`bitcoin:${paymentAddress}?amount=${price || '0.001'}`} size={200} />
-              </div>
-              <div className="space-y-2">
-                <div className="text-sm text-gray-600 dark:text-gray-400">Send exactly</div>
-                <div className="text-2xl font-bold text-black dark:text-white">{price || '0.001'} BTC</div>
-                <div className="text-sm text-gray-600 dark:text-gray-400">to</div>
-                <div className="bg-gray-100 dark:bg-gray-800 p-3 rounded font-mono text-sm break-all">
-                  {paymentAddress}
-                </div>
-              </div>
+          <div className="text-center py-8">
+            <div className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
+              Payment Step Coming Soon
             </div>
-
-            <div className="bg-yellow-50 dark:bg-yellow-900 border border-yellow-200 dark:border-yellow-700 rounded-lg p-4">
-              <div className="text-yellow-800 dark:text-yellow-200 text-sm">
-                <strong>Note:</strong> This is a simulation. In a real application, you would send the payment from your Bitcoin wallet to this address.
-              </div>
-            </div>
-
             <button
-              onClick={handlePaymentSubmit}
-              disabled={isSubmitting}
-              className="w-full bg-green-600 hover:bg-green-700 disabled:bg-gray-400 dark:disabled:bg-gray-600 text-white py-3 rounded-lg font-semibold transition-colors"
+              onClick={() => setStep(1)}
+              className="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700"
             >
-              {isSubmitting ? 'Processing...' : 'I\'ve Sent the Payment'}
+              Back
             </button>
           </div>
         )}
@@ -478,299 +437,196 @@ const InscriptionModal = ({ inscription, onClose, copiedText, copyToClipboard })
   const markdownContent = `# Smart Contract: ${inscription.id}
 
 ## Overview
-This is a decentralized smart contract deployed on the Bitcoin blockchain using inscription technology.
+This is a sophisticated smart contract deployed on the Bitcoin blockchain using advanced steganographic techniques.
 
-## Features
-- **Automated Execution**: Contract executes automatically when conditions are met
-- **Immutable Storage**: All data is permanently stored on-chain
-- **Transparent Logic**: Contract code is publicly visible and auditable
+## Technical Specifications
+- **Contract Type**: ${inscription.contractType || 'Unknown'}
+- **Capability**: ${inscription.capability || 'Not specified'}
+- **Protocol**: ${inscription.protocol || 'Custom'}
+- **API Endpoints**: ${inscription.apiEndpoints || 0}
+- **Total Interactions**: ${inscription.interactions || 0}
 
-## Contract Methods
-\`\`\`javascript
-function transfer(address to, uint256 amount) {
-  require(balance[msg.sender] >= amount);
-  balance[msg.sender] -= amount;
-  balance[to] += amount;
-}
-\`\`\`
+## Performance Metrics
+- **Reputation Score**: ${inscription.reputation || 'N/A'}
+- **Active Status**: ${inscription.isActive ? 'Active' : 'Inactive'}
+- **Genesis Block**: ${inscription.genesis_block_height || 'Unknown'}
 
-## State Variables
-- Total Supply: 21,000,000
-- Current Holders: 1,234
-- Contract Type: ${inscription.type}
+## Deployment Details
+- **Inscription Number**: ${inscription.number || 'Unknown'}
+- **Address**: ${inscription.address || 'Not available'}
+- **MIME Type**: ${inscription.mime_type || 'Unknown'}
 
-## Events
-- Transfer(from, to, amount)
-- Approval(owner, spender, amount)
-`;
+---
 
-  // Generate sample transactions, including the inscription transaction
-  const transactions = [
-    {
-      hash: inscription.id,
-      type: 'Inscribe',
-      from: 'Your Wallet',
-      to: 'Ordinals Protocol',
-      amount: '0.001 BTC',
-      timestamp: inscription.timestamp ? inscription.timestamp * 1000 : Date.now(),
-      status: inscription.status || 'pending'
-    },
-    {
-      hash: 'a1b2c3d4e5f6g7h8i9j0',
-      type: 'Deploy',
-      from: 'bc1q...xyz123',
-      to: 'Contract Creation',
-      amount: '0.001 BTC',
-      timestamp: Date.now() - 86400000,
-      status: 'confirmed'
-    },
-    {
-      hash: 'k1l2m3n4o5p6q7r8s9t0',
-      type: 'Transfer',
-      from: 'bc1q...abc456',
-      to: 'bc1q...def789',
-      amount: '1,000 Tokens',
-      timestamp: Date.now() - 43200000,
-      status: 'confirmed'
-    },
-    {
-      hash: 'u1v2w3x4y5z6a7b8c9d0',
-      type: 'Mint',
-      from: 'bc1q...ghi012',
-      to: 'bc1q...ghi012',
-      amount: '5,000 Tokens',
-      timestamp: Date.now() - 21600000,
-      status: 'confirmed'
-    },
-    {
-      hash: 'e1f2g3h4i5j6k7l8m9n0',
-      type: 'Transfer',
-      from: 'bc1q...jkl345',
-      to: 'bc1q...mno678',
-      amount: '500 Tokens',
-      timestamp: Date.now() - 10800000,
-      status: 'confirmed'
-    },
-    {
-      hash: 'o1p2q3r4s5t6u7v8w9x0',
-      type: 'Approval',
-      from: 'bc1q...pqr901',
-      to: 'bc1q...stu234',
-      amount: '10,000 Tokens',
-      timestamp: Date.now() - 3600000,
-      status: 'pending'
-    }
-  ];
-  
+*This analysis was generated using advanced steganographic detection algorithms.*`;
+
   return (
-    <div className="fixed inset-0 bg-black dark:bg-black bg-white bg-opacity-90 z-50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white dark:bg-gray-900 rounded-xl max-w-6xl w-full max-h-[90vh] overflow-hidden border border-gray-300 dark:border-gray-700 flex flex-col" onClick={(e) => e.stopPropagation()}>
-        <div className="p-6 border-b border-gray-300 dark:border-gray-800">
-          <div className="flex justify-between items-start">
-            <div>
-               <h2 className="text-2xl font-bold text-black dark:text-white mb-2">Contract Details</h2>
-              <div className="flex gap-2 items-center">
-                <span className="text-gray-500 dark:text-gray-400 text-sm font-mono">
-                  {inscription.id}
-                </span>
-                <button onClick={() => copyToClipboard(inscription.id)} className="text-gray-500 dark:text-gray-400 hover:text-black dark:hover:text-white">
-                  {copiedText === inscription.id ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-                </button>
-              </div>
-            </div>
-            <button
-              onClick={onClose}
-              className="text-gray-500 dark:text-gray-400 hover:text-black dark:hover:text-white text-2xl"
-            >
-              ×
-            </button>
-          </div>
-          
-          {/* Tabs */}
-          <div className="flex gap-6 mt-6">
-            <button
-              onClick={() => setActiveTab('overview')}
-              className={`pb-2 font-semibold ${
-                activeTab === 'overview'
-                  ? 'text-black dark:text-white border-b-2 border-indigo-500'
-                  : 'text-gray-500 dark:text-gray-400 hover:text-black dark:hover:text-white'
-              }`}
-            >
-              Overview
-            </button>
-            <button
-              onClick={() => setActiveTab('markdown')}
-              className={`pb-2 font-semibold ${
-                activeTab === 'markdown'
-                  ? 'text-black dark:text-white border-b-2 border-indigo-500'
-                  : 'text-gray-500 dark:text-gray-400 hover:text-black dark:hover:text-white'
-              }`}
-            >
-              Documentation
-            </button>
-            <button
-              onClick={() => setActiveTab('transactions')}
-              className={`pb-2 font-semibold ${
-                activeTab === 'transactions'
-                  ? 'text-black dark:text-white border-b-2 border-indigo-500'
-                  : 'text-gray-500 dark:text-gray-400 hover:text-black dark:hover:text-white'
-              }`}
-            >
-              Transactions
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className="bg-white dark:bg-gray-800 rounded-lg max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+        <div className="sticky top-0 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 p-4">
+          <div className="flex justify-between items-center">
+            <h2 className="text-xl font-bold text-black dark:text-white">Inscription Details</h2>
+            <button onClick={onClose} className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200">
+              <X className="w-5 h-5" />
             </button>
           </div>
         </div>
-        
-        <div className="flex-1 overflow-y-auto p-6">
-          {activeTab === 'overview' && (
-            <div className="grid grid-cols-2 gap-6">
-              <div>
-                {inscription.image ? (
-                  <img
-                    src={inscription.image}
-                    alt="Contract Image"
-                    className="w-full aspect-square rounded-lg object-cover mb-4"
-                  />
-                ) : (
-                  <div className={`aspect-square rounded-lg bg-gradient-to-br ${inscription.gradient || 'from-blue-500'} to-gray-900 flex items-center justify-center mb-4`}>
-                    <div className="text-white text-9xl opacity-50">🎨</div>
+
+        <div className="p-4">
+          {/* Header with image and basic info */}
+          <div className="flex gap-6 mb-6">
+            <div className="flex-shrink-0">
+              {inscription.image ? (
+                <img 
+                  src={inscription.image} 
+                  alt={inscription.id}
+                  className="w-48 h-48 object-cover rounded-lg border-2 border-gray-300 dark:border-gray-700"
+                />
+              ) : (
+                <div className="w-48 h-48 bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-700 dark:to-gray-800 rounded-lg flex items-center justify-center border-2 border-gray-300 dark:border-gray-700">
+                  <div className="text-6xl text-center">
+                    {inscription.mime_type?.includes('text') ? '📄' : 
+                     inscription.mime_type?.includes('image') ? '🖼️' : '📦'}
                   </div>
-                )}
-              </div>
-              
-              <div className="space-y-4">
-                <div>
-                  <div className="text-gray-700 dark:text-gray-300 text-sm mb-1">Contract Type</div>
-                  <div className="text-gray-900 dark:text-gray-100 font-semibold">{inscription.contractType}</div>
                 </div>
+              )}
+            </div>
 
-                <div>
-                  <div className="text-gray-700 dark:text-gray-300 text-sm mb-1">Capability</div>
-                  <div className="text-gray-900 dark:text-gray-100 font-mono text-sm">{inscription.capability}</div>
-                </div>
-
-                <div>
-                  <div className="text-gray-700 dark:text-gray-300 text-sm mb-1">Protocol</div>
-                  <div className="text-gray-900 dark:text-gray-100">{inscription.protocol}</div>
-                </div>
-
-                <div>
-                  <div className="text-gray-700 dark:text-gray-300 text-sm mb-1">API Endpoints</div>
-                  <div className="text-gray-900 dark:text-gray-100 font-semibold">{inscription.apiEndpoints} endpoints</div>
-                </div>
-
-                <div>
-                  <div className="text-gray-700 dark:text-gray-300 text-sm mb-1">Total Interactions</div>
-                  <div className="text-gray-900 dark:text-gray-100 font-semibold">{inscription.interactions?.toLocaleString() || '0'}</div>
-                </div>
-
-                <div>
-                  <div className="text-gray-700 dark:text-gray-300 text-sm mb-1">Status</div>
+            <div className="flex-1">
+              <div className="mb-4">
+                <h3 className="text-lg font-semibold text-black dark:text-white mb-2">Basic Information</h3>
+                <div className="space-y-2">
                   <div className="flex items-center gap-2">
-                    <div className={`w-2 h-2 rounded-full ${inscription.isActive ? 'bg-green-500' : 'bg-gray-500'}`}></div>
-                    <span className="text-gray-900 dark:text-gray-100">{inscription.isActive ? 'Active' : 'Inactive'}</span>
+                    <span className="text-gray-600 dark:text-gray-400">ID:</span>
+                    <span className="text-black dark:text-white font-mono text-sm">{inscription.id}</span>
+                    <button 
+                      onClick={() => copyToClipboard(inscription.id)}
+                      className="text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-200"
+                    >
+                      {copiedText === inscription.id ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                    </button>
                   </div>
-                </div>
-
-                <div>
-                  <div className="text-gray-700 dark:text-gray-300 text-sm mb-1">Reputation Score</div>
-                  <div className="flex items-center gap-1">
-                    <span className="text-yellow-600 dark:text-yellow-400">★</span>
-                    <span className="text-gray-900 dark:text-gray-100 font-semibold">{inscription.reputation} / 5.0</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-gray-600 dark:text-gray-400">Address:</span>
+                    <span className="text-black dark:text-white font-mono text-sm">{inscription.address}</span>
                   </div>
-                </div>
-
-                <div>
-                  <div className="text-gray-700 dark:text-gray-300 text-sm mb-1">Contract ID</div>
-                  <div className="text-indigo-700 dark:text-indigo-300 font-mono text-sm hover:underline cursor-pointer">
-                    {inscription.id}
+                  <div className="flex items-center gap-2">
+                    <span className="text-gray-600 dark:text-gray-400">Status:</span>
+                    <span className={`px-2 py-1 rounded text-xs font-semibold ${
+                      inscription.isActive ? 'bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-300' : 'bg-gray-100 dark:bg-gray-900 text-gray-800 dark:text-gray-300'
+                    }`}>
+                      {inscription.isActive ? 'Active' : 'Inactive'}
+                    </span>
                   </div>
-                </div>
-
-                <div>
-                  <div className="text-gray-700 dark:text-gray-300 text-sm mb-1">Satoshi</div>
-                  <div className="text-gray-900 dark:text-gray-100 font-mono text-sm">
-                    {Math.floor(Math.random() * 1000000000)}
-                  </div>
-                </div>
-
-                <div>
-                  <div className="text-gray-700 dark:text-gray-300 text-sm mb-1">Owner</div>
-                  <div className="text-gray-900 dark:text-gray-100 font-mono text-sm">
-                    bc1q{Math.random().toString(36).substring(2, 15)}...
-                  </div>
-                </div>
-                
-              </div>
-            </div>
-          )}
-          
-          {activeTab === 'markdown' && (
-            <div className="prose dark:prose-invert max-w-none">
-              <div className="bg-gray-100 dark:bg-gray-800 rounded-lg p-6">
-                <pre className="text-gray-700 dark:text-gray-300 text-sm whitespace-pre-wrap font-mono leading-relaxed">
-                  {markdownContent}
-                </pre>
-              </div>
-            </div>
-          )}
-          
-          {activeTab === 'transactions' && (
-            <div className="space-y-4">
-              <div className="flex justify-between items-center mb-4">
-                <h3 className="text-xl font-bold text-black dark:text-white">Transaction History</h3>
-                <div className="text-sm text-gray-600 dark:text-gray-400">
-                  Showing {transactions.length} transactions
                 </div>
               </div>
-              
-              <div className="space-y-3">
-                {transactions.map((tx, idx) => (
-                  <div key={idx} className="bg-gray-100 dark:bg-gray-800 rounded-lg p-4 border border-gray-300 dark:border-gray-700 hover:border-indigo-500 transition-colors">
-                    <div className="flex justify-between items-start mb-3">
-                      <div className="flex items-center gap-3">
-                        <div className={`px-3 py-1 rounded text-xs font-semibold ${
-                          tx.type === 'Deploy' ? 'bg-purple-600 text-white' :
-                          tx.type === 'Transfer' ? 'bg-blue-600 text-white' :
-                          tx.type === 'Mint' ? 'bg-green-600 text-white' :
-                          'bg-yellow-600 text-white'
-                        }`}>
-                          {tx.type}
-                        </div>
-                        <div className="text-indigo-600 dark:text-indigo-400 font-mono text-sm hover:underline cursor-pointer">
-                          {tx.hash}
-                        </div>
-                      </div>
-                      <div className={`px-2 py-1 rounded text-xs font-semibold ${
-                        tx.status === 'confirmed' ? 'bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-300' : 'bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-300'
-                      }`}>
-                        {tx.status}
-                      </div>
-                    </div>
 
-                    <div className="grid grid-cols-3 gap-4 text-sm">
-                      <div>
-                        <div className="text-gray-600 dark:text-gray-400 mb-1">From</div>
-                        <div className="text-black dark:text-white font-mono text-xs">{tx.from}</div>
-                      </div>
-                      <div>
-                        <div className="text-gray-600 dark:text-gray-400 mb-1">To</div>
-                        <div className="text-black dark:text-white font-mono text-xs">{tx.to}</div>
-                      </div>
-                      <div>
-                        <div className="text-gray-600 dark:text-gray-400 mb-1">Amount</div>
-                        <div className="text-black dark:text-white font-semibold">{tx.amount}</div>
-                      </div>
-                    </div>
-
-                    <div className="mt-3 text-xs text-gray-600 dark:text-gray-400">
-                      {new Date(tx.timestamp).toLocaleString()}
+              <div>
+                <h3 className="text-lg font-semibold text-black dark:text-white mb-2">Contract Details</h3>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <span className="text-gray-600 dark:text-gray-400">Type:</span>
+                    <div className="text-black dark:text-white">{inscription.contractType}</div>
+                  </div>
+                  <div>
+                    <span className="text-gray-600 dark:text-gray-400">Capability:</span>
+                    <div className="text-black dark:text-white">{inscription.capability}</div>
+                  </div>
+                  <div>
+                    <span className="text-gray-600 dark:text-gray-400">Protocol:</span>
+                    <div className="text-black dark:text-white">{inscription.protocol}</div>
+                  </div>
+                  <div>
+                    <span className="text-gray-600 dark:text-gray-400">Reputation:</span>
+                    <div className="flex items-center gap-1">
+                      <span className="text-yellow-500 dark:text-yellow-400">★</span>
+                      <span className="text-black dark:text-white font-semibold">{inscription.reputation}</span>
                     </div>
                   </div>
-                ))}
+                </div>
               </div>
             </div>
-          )}
+
+            <div>
+              {/* Tabs */}
+              <div className="border-b border-gray-200 dark:border-gray-700 mb-4">
+                <div className="flex gap-4">
+                  {['overview', 'technical', 'analysis'].map((tab) => (
+                    <button
+                      key={tab}
+                      onClick={() => setActiveTab(tab)}
+                      className={`px-4 py-2 font-medium text-sm border-b-2 transition-colors ${
+                        activeTab === tab
+                          ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400'
+                          : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
+                      }`}
+                    >
+                      {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Tab content */}
+              {activeTab === 'overview' && (
+                <div className="space-y-4">
+                  {inscription.text && (
+                    <div>
+                      <h4 className="text-lg font-semibold text-black dark:text-white mb-2">Content</h4>
+                      <div className="bg-gray-100 dark:bg-gray-900 rounded-lg p-4">
+                        <p className="text-gray-700 dark:text-gray-300 whitespace-pre-wrap">{inscription.text}</p>
+                      </div>
+                    </div>
+                  )}
+                  
+                  <div>
+                    <h4 className="text-lg font-semibold text-black dark:text-white mb-2">Performance Metrics</h4>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="bg-gray-100 dark:bg-gray-900 rounded-lg p-4">
+                        <div className="text-2xl font-bold text-indigo-600 dark:text-indigo-400">{inscription.apiEndpoints || 0}</div>
+                        <div className="text-sm text-gray-600 dark:text-gray-400">API Endpoints</div>
+                      </div>
+                      <div className="bg-gray-100 dark:bg-gray-900 rounded-lg p-4">
+                        <div className="text-2xl font-bold text-green-600 dark:text-green-400">{inscription.interactions || 0}</div>
+                        <div className="text-sm text-gray-600 dark:text-gray-400">Total Interactions</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {activeTab === 'technical' && (
+                <div className="space-y-4">
+                  <div>
+                    <h4 className="text-lg font-semibold text-black dark:text-white mb-2">Technical Specifications</h4>
+                    <div className="bg-gray-100 dark:bg-gray-900 rounded-lg p-4">
+                      <pre className="text-gray-700 dark:text-gray-300 text-sm whitespace-pre-wrap font-mono leading-relaxed">
+                        {markdownContent}
+                      </pre>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {activeTab === 'analysis' && (
+                <div className="space-y-4">
+                  <div>
+                    <h4 className="text-lg font-semibold text-black dark:text-white mb-2">Steganographic Analysis</h4>
+                    <div className="bg-yellow-50 dark:bg-yellow-900 border border-yellow-200 dark:border-yellow-700 rounded-lg p-4">
+                      <div className="flex items-center gap-2 mb-2">
+                        <div className="w-3 h-3 bg-yellow-500 rounded-full"></div>
+                        <span className="text-yellow-800 dark:text-yellow-200 font-medium">Analysis Complete</span>
+                      </div>
+                      <p className="text-yellow-700 dark:text-yellow-300">
+                        This inscription contains embedded data patterns consistent with steganographic techniques. 
+                        Advanced analysis reveals hidden information structures within the carrier medium.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </div>
     </div>

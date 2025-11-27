@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"image/png"
 	"io"
 	"log"
 	"net/http"
@@ -12,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/skip2/go-qrcode"
 )
 
 type InscriptionRequest struct {
@@ -23,11 +27,36 @@ type InscriptionRequest struct {
 	Status    string  `json:"status"`
 }
 
+type SmartContractImage struct {
+	ContractID   string                 `json:"contract_id"`
+	BlockHeight  int64                  `json:"block_height"`
+	StegoImage   string                 `json:"stego_image_url"`
+	ContractType string                 `json:"contract_type"`
+	Metadata     map[string]interface{} `json:"metadata"`
+}
+
+type ContractMetadata struct {
+	Name        string `json:"name"`
+	Symbol      string `json:"symbol"`
+	Decimals    int    `json:"decimals,omitempty"`
+	TotalSupply string `json:"total_supply,omitempty"`
+	CreatedAt   int64  `json:"created_at"`
+	UpdatedAt   int64  `json:"updated_at"`
+}
+
 var (
 	pendingInscriptions = []InscriptionRequest{}
+	smartContracts      = []SmartContractImage{}
 	mu                  sync.Mutex
 	inscriptionsFile    = "inscriptions.json"
+	contractsFile       = "smart_contracts.json"
 )
+
+func enableCORS(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+}
 
 func loadInscriptions() {
 	file, err := os.Open(inscriptionsFile)
@@ -60,17 +89,120 @@ func saveInscriptions() {
 	}
 }
 
-func enableCORS(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-	if r.Method == "OPTIONS" {
-		w.WriteHeader(http.StatusOK)
+func loadSmartContracts() {
+	file, err := os.Open(contractsFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			smartContracts = []SmartContractImage{}
+			return
+		}
+		log.Printf("Error opening smart contracts file: %v", err)
 		return
+	}
+	defer file.Close()
+
+	if err := json.NewDecoder(file).Decode(&smartContracts); err != nil {
+		log.Printf("Error decoding smart contracts: %v", err)
+		smartContracts = []SmartContractImage{}
 	}
 }
 
+func saveSmartContracts() {
+	file, err := os.Create(contractsFile)
+	if err != nil {
+		log.Printf("Error creating smart contracts file: %v", err)
+		return
+	}
+	defer file.Close()
+
+	if err := json.NewEncoder(file).Encode(smartContracts); err != nil {
+		log.Printf("Error encoding smart contracts: %v", err)
+	}
+}
+
+func extractWitnessImagesFromBlock(blockHash string) ([]interface{}, error) {
+	// Get transactions for this block
+	txIDs, err := bitcoinAPI.bitcoinClient.GetBlockTransactions(blockHash)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get block transactions: %w", err)
+	}
+
+	var witnessImages []interface{}
+
+	// Process each transaction to extract witness images
+	for _, txID := range txIDs {
+		images, err := bitcoinAPI.bitcoinClient.ExtractImages(txID)
+		if err != nil {
+			log.Printf("Failed to extract images from transaction %s: %v", txID, err)
+			continue
+		}
+
+		// Convert images to response format
+		for _, img := range images {
+			witnessImage := map[string]interface{}{
+				"tx_id":      txID,
+				"index":      img.Index,
+				"size_bytes": img.SizeBytes,
+				"format":     img.Format,
+				"data_url":   img.DataURL,
+			}
+			witnessImages = append(witnessImages, witnessImage)
+		}
+	}
+
+	log.Printf("Extracted %d witness images from block %s", len(witnessImages), blockHash)
+	return witnessImages, nil
+}
+
 func handleBlocks(w http.ResponseWriter, r *http.Request) {
+	enableCORS(w, r)
+	if r.Method == "OPTIONS" {
+		return
+	}
+
+	blocksResp, err := http.Get("https://mempool.space/api/v1/blocks")
+	if err != nil {
+		http.Error(w, "Failed to fetch blocks", http.StatusInternalServerError)
+		return
+	}
+	defer blocksResp.Body.Close()
+
+	body, err := io.ReadAll(blocksResp.Body)
+	if err != nil {
+		http.Error(w, "Failed to read response", http.StatusInternalServerError)
+		return
+	}
+
+	// Add future block with smart contracts
+	var blocks []interface{}
+	if err := json.Unmarshal(body, &blocks); err == nil && len(blocks) > 0 {
+		futureBlock := map[string]interface{}{
+			"id":              "future",
+			"height":          blocks[0].(map[string]interface{})["height"].(float64) + 1,
+			"timestamp":       time.Now().Unix() + 600,
+			"hash":            "pending...",
+			"tx_count":        len(pendingInscriptions),
+			"smart_contracts": getContractsForBlock(int64(blocks[0].(map[string]interface{})["height"].(float64) + 1)),
+		}
+		blocks = append([]interface{}{futureBlock}, blocks...)
+
+		// Add smart contracts to existing blocks
+		for i, block := range blocks[1:] {
+			if blockMap, ok := block.(map[string]interface{}); ok {
+				height := int64(blockMap["height"].(float64))
+				blockMap["smart_contracts"] = getContractsForBlock(height)
+				blocks[i+1] = blockMap
+			}
+		}
+
+		body, _ = json.Marshal(blocks)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(body)
+}
+
+func handleBlocksWithContracts(w http.ResponseWriter, r *http.Request) {
 	enableCORS(w, r)
 	if r.Method == "OPTIONS" {
 		return
@@ -89,22 +221,44 @@ func handleBlocks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Add future block
 	var blocks []interface{}
-	if err := json.Unmarshal(body, &blocks); err == nil && len(blocks) > 0 {
-		futureBlock := map[string]interface{}{
-			"id":       "future",
-			"height":   blocks[0].(map[string]interface{})["height"].(float64) + 1,
-			"timestamp": time.Now().Unix() + 600,
-			"hash":    "pending...",
-			"tx_count": len(pendingInscriptions),
+	if err := json.Unmarshal(body, &blocks); err == nil {
+		enhancedBlocks := make([]map[string]interface{}, len(blocks))
+		for i, block := range blocks {
+			blockMap := block.(map[string]interface{})
+			height := int64(blockMap["height"].(float64))
+			enhancedBlocks[i] = map[string]interface{}{
+				"id":              blockMap["id"],
+				"height":          blockMap["height"],
+				"timestamp":       blockMap["timestamp"],
+				"tx_count":        blockMap["tx_count"],
+				"size":            blockMap["size"],
+				"smart_contracts": getContractsForBlock(height),
+			}
 		}
-		blocks = append([]interface{}{futureBlock}, blocks...)
-		body, _ = json.Marshal(blocks)
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"blocks": enhancedBlocks,
+		})
+		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(body)
+	http.Error(w, "Failed to process blocks", http.StatusInternalServerError)
+}
+
+func getContractsForBlock(blockHeight int64) []SmartContractImage {
+	var contracts []SmartContractImage
+	log.Printf("Looking for contracts in block %d, total contracts: %d", blockHeight, len(smartContracts))
+	for _, contract := range smartContracts {
+		log.Printf("Checking contract: %+v", contract)
+		if contract.BlockHeight == blockHeight {
+			log.Printf("Found matching contract: %+v", contract)
+			contracts = append(contracts, contract)
+		}
+	}
+	log.Printf("Returning %d contracts for block %d", len(contracts), blockHeight)
+	return contracts
 }
 
 func handleInscriptions(w http.ResponseWriter, r *http.Request) {
@@ -166,9 +320,9 @@ func handleInscribe(w http.ResponseWriter, r *http.Request) {
 	// Generate filename
 	timestamp := time.Now().Unix()
 	filename := fmt.Sprintf("%d_%s", timestamp, header.Filename)
-	imagePath := filepath.Join(uploadsDir, filename)
 
 	// Save file
+	imagePath := filepath.Join(uploadsDir, filename)
 	dst, err := os.Create(imagePath)
 	if err != nil {
 		http.Error(w, "Failed to save file", http.StatusInternalServerError)
@@ -246,49 +400,25 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 	var inscriptionResults []InscriptionRequest
 	for _, insc := range pendingInscriptions {
 		if strings.Contains(strings.ToLower(insc.Text), strings.ToLower(query)) ||
-		   strings.Contains(strings.ToLower(insc.ID), strings.ToLower(query)) {
+			strings.Contains(strings.ToLower(insc.ID), strings.ToLower(query)) {
 			inscriptionResults = append(inscriptionResults, insc)
 		}
 	}
 
 	// Search blocks
 	resp, err := http.Get("https://mempool.space/api/v1/blocks")
-	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"inscriptions": inscriptionResults,
-			"blocks":       []interface{}{},
-		})
-		return
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"inscriptions": inscriptionResults,
-			"blocks":       []interface{}{},
-		})
-		return
-	}
-
-	var blocks []interface{}
-	if err := json.Unmarshal(body, &blocks); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"inscriptions": inscriptionResults,
-			"blocks":       []interface{}{},
-		})
-		return
+	blocks := []interface{}{}
+	if err == nil {
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		json.Unmarshal(body, &blocks)
 	}
 
 	var blockResults []interface{}
 	for _, block := range blocks {
 		blockMap := block.(map[string]interface{})
 		heightStr := fmt.Sprintf("%v", blockMap["height"])
-		hash := fmt.Sprintf("%v", blockMap["id"]) // id is the block hash
-
+		hash := fmt.Sprintf("%v", blockMap["id"])
 		if strings.Contains(heightStr, query) || strings.Contains(strings.ToLower(hash), strings.ToLower(query)) {
 			blockResults = append(blockResults, block)
 		}
@@ -304,6 +434,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 func handleInscriptionContent(w http.ResponseWriter, r *http.Request) {
 	enableCORS(w, r)
 	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
 		return
 	}
 
@@ -336,19 +467,253 @@ func handleInscriptionContent(w http.ResponseWriter, r *http.Request) {
 	w.Write(body)
 }
 
+func generateQRCode(address, amount string) ([]byte, error) {
+	// Generate QR code
+	qr, err := qrcode.New(address+"?amount="+amount, qrcode.Medium)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert to PNG
+	buf := new(bytes.Buffer)
+	err = png.Encode(buf, qr.Image(256))
+	if err != nil {
+		return nil, err
+	}
+
+	return buf.Bytes(), nil
+}
+
+func handleQRCode(w http.ResponseWriter, r *http.Request) {
+	enableCORS(w, r)
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	if r.Method != "GET" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	address := r.URL.Query().Get("address")
+	amount := r.URL.Query().Get("amount")
+
+	if address == "" {
+		http.Error(w, "Address parameter required", http.StatusBadRequest)
+		return
+	}
+
+	qrData, err := generateQRCode(address, amount)
+	if err != nil {
+		http.Error(w, "Failed to generate QR code", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "image/png")
+	w.Write(qrData)
+}
+
+func proxyToStegoAPI(w http.ResponseWriter, r *http.Request) {
+	enableCORS(w, r)
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	// Construct the URL to the real steganography API
+	targetURL := "http://localhost:8080" + r.URL.Path
+	if r.URL.RawQuery != "" {
+		targetURL += "?" + r.URL.RawQuery
+	}
+
+	// Create new request to steganography API
+	req, err := http.NewRequest(r.Method, targetURL, r.Body)
+	if err != nil {
+		http.Error(w, "Failed to create request", http.StatusInternalServerError)
+		return
+	}
+
+	// Copy headers
+	for name, values := range r.Header {
+		for _, value := range values {
+			req.Header.Add(name, value)
+		}
+	}
+
+	// Make the request
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		http.Error(w, "Failed to proxy request", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	// Copy response headers
+	for name, values := range resp.Header {
+		for _, value := range values {
+			w.Header().Add(name, value)
+		}
+	}
+
+	// Copy response status and body
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
+}
+
+func handleContractStego(w http.ResponseWriter, r *http.Request) {
+	enableCORS(w, r)
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	// Extract contract ID from URL
+	path := strings.TrimPrefix(r.URL.Path, "/api/contract-stego/")
+	parts := strings.Split(path, "/")
+	if len(parts) < 1 {
+		http.Error(w, "Invalid contract ID", http.StatusBadRequest)
+		return
+	}
+	contractID := parts[0]
+
+	// Find the contract
+	var targetContract *SmartContractImage
+	for _, contract := range smartContracts {
+		if contract.ContractID == contractID {
+			targetContract = &contract
+			break
+		}
+	}
+
+	if targetContract == nil {
+		http.Error(w, "Contract not found", http.StatusNotFound)
+		return
+	}
+
+	if len(parts) > 1 && parts[1] == "analyze" {
+		// Proxy to steganography API for analysis
+		analysisURL := fmt.Sprintf("http://localhost:8080/analyze/%s", contractID)
+		resp, err := http.Get(analysisURL)
+		if err != nil {
+			http.Error(w, "Failed to analyze contract", http.StatusInternalServerError)
+			return
+		}
+		defer resp.Body.Close()
+
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			http.Error(w, "Failed to read analysis response", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(body)
+		return
+	}
+
+	// Return contract metadata
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(targetContract)
+}
+
+func handleCreateContractStego(w http.ResponseWriter, r *http.Request) {
+	enableCORS(w, r)
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var contract SmartContractImage
+	if err := json.NewDecoder(r.Body).Decode(&contract); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	log.Printf("Received contract: %+v", contract)
+
+	// Generate stego image filename
+	stegoFilename := fmt.Sprintf("stego_%s.png", contract.ContractID)
+	stegoURL := fmt.Sprintf("/uploads/stego-images/%s", stegoFilename)
+	contract.StegoImage = stegoURL
+
+	log.Printf("Generated stego filename: %s", stegoFilename)
+	log.Printf("Set stego URL to: %s", stegoURL)
+	log.Printf("Contract.StegoImage after assignment: %s", contract.StegoImage)
+	log.Printf("Full contract struct: %+v", contract)
+
+	// Save contract
+	mu.Lock()
+	smartContracts = append(smartContracts, contract)
+	saveSmartContracts()
+	mu.Unlock()
+
+	// Debug: check what we're about to encode
+	responseData, _ := json.Marshal(contract)
+	log.Printf("About to send response: %s", string(responseData))
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(responseData)
+}
+
+var bitcoinAPI *BitcoinAPI
+
 func main() {
 	loadInscriptions()
+	loadSmartContracts()
+
+	// Initialize Bitcoin API
+	bitcoinAPI = NewBitcoinAPI()
 
 	// Serve uploaded images
 	http.Handle("/uploads/", http.StripPrefix("/uploads/", http.FileServer(http.Dir("uploads/"))))
 
+	// Serve frontend files
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" {
+			http.ServeFile(w, r, "../index.html")
+			return
+		}
+		if r.URL.Path == "/app.js" {
+			http.ServeFile(w, r, "../app.js")
+			return
+		}
+		http.NotFound(w, r)
+	})
+
+	// Original stargate endpoints
 	http.HandleFunc("/api/blocks", handleBlocks)
+	http.HandleFunc("/api/blocks-with-contracts", handleBlocksWithContracts)
 	http.HandleFunc("/api/inscriptions", handleInscriptions)
 	http.HandleFunc("/api/inscribe", handleInscribe)
 	http.HandleFunc("/api/pending-transactions", handlePendingTransactions)
 	http.HandleFunc("/api/search", handleSearch)
 	http.HandleFunc("/api/inscription/", handleInscriptionContent)
+	http.HandleFunc("/api/qrcode", handleQRCode)
+
+	// Smart contract steganography endpoints
+	http.HandleFunc("/api/contract-stego/", handleContractStego)
+	http.HandleFunc("/api/contract-stego", handleCreateContractStego)
+
+	// Proxy to real steganography API (port 8080)
+	http.HandleFunc("/stego/", proxyToStegoAPI)
+	http.HandleFunc("/analyze/", proxyToStegoAPI)
+	http.HandleFunc("/generate/", proxyToStegoAPI)
+
+	// Bitcoin steganography scanning endpoints
+	http.HandleFunc("/bitcoin/v1/health", bitcoinAPI.handleHealth)
+	http.HandleFunc("/bitcoin/v1/info", bitcoinAPI.handleInfo)
+	http.HandleFunc("/bitcoin/v1/scan/transaction", bitcoinAPI.handleScanTransaction)
+	http.HandleFunc("/bitcoin/v1/scan/image", bitcoinAPI.handleScanImage)
+	http.HandleFunc("/bitcoin/v1/scan/block", bitcoinAPI.handleBlockScan)
+	http.HandleFunc("/bitcoin/v1/extract", bitcoinAPI.handleExtract)
+	http.HandleFunc("/bitcoin/v1/transaction/", bitcoinAPI.handleGetTransaction)
 
 	fmt.Println("Server starting on :3001")
+	fmt.Println("Frontend available at: http://localhost:3001")
+	fmt.Println("Stargate API endpoints at: http://localhost:3001/api/")
+	fmt.Println("Bitcoin steganography API at: http://localhost:3001/bitcoin/v1/")
+	fmt.Println("Smart contract steganography at: http://localhost:3001/api/contract-stego/")
+	fmt.Println("Proxy to steganography API (port 8080) at: http://localhost:3001/stego/")
 	log.Fatal(http.ListenAndServe(":3001", nil))
 }
