@@ -5,6 +5,15 @@ import (
 	"time"
 )
 
+// StarlightScannerInterface defines the interface for Starlight scanners
+type StarlightScannerInterface interface {
+	Initialize() error
+	ScanImage(imageData []byte, options ScanOptions) (*ScanResult, error)
+	ExtractMessage(imageData []byte, method string) (*ExtractionResult, error)
+	GetScannerInfo() ScannerInfo
+	IsInitialized() bool
+}
+
 // ScanOptions represents options for scanning operations
 type ScanOptions struct {
 	ExtractMessage      bool    `json:"extract_message"`
@@ -99,6 +108,21 @@ type BlockScanResponse struct {
 	ProcessingTimeMs      float64             `json:"processing_time_ms"`
 	Results               []TransactionResult `json:"results"`
 	RequestID             string              `json:"request_id"`
+}
+
+// SmartContractImage moved to main.go to avoid conflicts
+
+// BlockWithCounts represents a block with comprehensive counting statistics
+type BlockWithCounts struct {
+	ID                 string               `json:"id"`
+	Height             int64                `json:"height"`
+	Timestamp          int64                `json:"timestamp"`
+	TxCount            int                  `json:"tx_count"`
+	Size               int                  `json:"size"`
+	InscriptionCount   int                  `json:"inscription_count"`
+	WitnessImageCount  int                  `json:"witness_image_count"`
+	SmartContractCount int                  `json:"smart_contract_count"`
+	SmartContracts     []SmartContractImage `json:"smart_contracts"`
 }
 
 // ExtractionResult represents the result of extracting a hidden message
@@ -229,4 +253,55 @@ func NewErrorResponse(code, message, requestID string, details map[string]interf
 
 func (e ErrorResponse) ToJSON() ([]byte, error) {
 	return json.Marshal(e)
+}
+
+// MockStarlightScanner provides a mock implementation for testing
+type MockStarlightScanner struct{}
+
+// NewMockStarlightScanner creates a new mock scanner
+func NewMockStarlightScanner() *MockStarlightScanner {
+	return &MockStarlightScanner{}
+}
+
+// Initialize initializes the mock scanner
+func (m *MockStarlightScanner) Initialize() error {
+	return nil
+}
+
+// ScanImage scans an image with mock results
+func (m *MockStarlightScanner) ScanImage(imageData []byte, options ScanOptions) (*ScanResult, error) {
+	// Return mock results
+	return &ScanResult{
+		IsStego:          false,
+		StegoProbability: 0.1,
+		Confidence:       0.95,
+		Prediction:       "clean",
+	}, nil
+}
+
+// ExtractMessage extracts a message with mock results
+func (m *MockStarlightScanner) ExtractMessage(imageData []byte, method string) (*ExtractionResult, error) {
+	return &ExtractionResult{
+		MessageFound: false,
+		ExtractionDetails: map[string]interface{}{
+			"bits_extracted":      0,
+			"encoding":            "utf-8",
+			"corruption_detected": false,
+		},
+	}, nil
+}
+
+// GetScannerInfo returns mock scanner info
+func (m *MockStarlightScanner) GetScannerInfo() ScannerInfo {
+	return ScannerInfo{
+		ModelLoaded:  true,
+		ModelVersion: "mock-1.0.0",
+		ModelPath:    "mock-scanner",
+		Device:       "mock-device",
+	}
+}
+
+// IsInitialized returns true for mock scanner
+func (m *MockStarlightScanner) IsInitialized() bool {
+	return true
 }

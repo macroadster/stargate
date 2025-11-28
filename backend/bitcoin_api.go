@@ -43,15 +43,6 @@ func NewBitcoinAPI() *BitcoinAPI {
 	}
 }
 
-// StarlightScannerInterface defines the interface for Starlight scanners
-type StarlightScannerInterface interface {
-	Initialize() error
-	ScanImage(imageData []byte, options ScanOptions) (*ScanResult, error)
-	ExtractMessage(imageData []byte, method string) (*ExtractionResult, error)
-	GetScannerInfo() ScannerInfo
-	IsInitialized() bool
-}
-
 // generateRequestID generates a unique request ID
 func generateRequestID() string {
 	hash := md5.Sum([]byte(fmt.Sprintf("%d", time.Now().UnixNano())))

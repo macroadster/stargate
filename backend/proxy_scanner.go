@@ -77,7 +77,7 @@ func (p *ProxyScanner) Initialize() error {
 // ScanImage scans an image by proxying to Python API
 func (p *ProxyScanner) ScanImage(imageData []byte, options ScanOptions) (*ScanResult, error) {
 	if !p.initialized {
-		return nil, fmt.Errorf("proxy scanner not initialized")
+		return nil, fmt.Errorf("steganography scanner not available - ensure Python backend is running on port 8080")
 	}
 
 	// Create multipart form
@@ -163,7 +163,7 @@ func (p *ProxyScanner) ScanImage(imageData []byte, options ScanOptions) (*ScanRe
 // ExtractMessage extracts message by proxying to Python API
 func (p *ProxyScanner) ExtractMessage(imageData []byte, method string) (*ExtractionResult, error) {
 	if !p.initialized {
-		return nil, fmt.Errorf("proxy scanner not initialized")
+		return nil, fmt.Errorf("steganography scanner not available - ensure Python backend is running on port 8080")
 	}
 
 	// Create multipart form

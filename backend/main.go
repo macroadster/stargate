@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/skip2/go-qrcode"
+
 )
 
 type InscriptionRequest struct {
@@ -656,6 +657,45 @@ func handleCreateContractStego(w http.ResponseWriter, r *http.Request) {
 	w.Write(responseData)
 }
 
+func handleSmartContracts(w http.ResponseWriter, r *http.Request) {
+	enableCORS(w, r)
+	if r.Method == "OPTIONS" {
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"results": smartContracts,
+		"total":   len(smartContracts),
+	})
+}
+
+func handleBlockInscriptions(w http.ResponseWriter, r *http.Request) {
+	enableCORS(w, r)
+	if r.Method == "OPTIONS" {
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	height := r.URL.Query().Get("height")
+	if height == "" {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "height parameter required",
+		})
+		return
+	}
+
+	// Return mock data for now - TODO: Integrate with real inscription parsing
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"block_height": height,
+		"results":      []SmartContractImage{},
+		"total":        0,
+		"message":      "Real inscription parsing integration needed",
+	})
+}
+
 var bitcoinAPI *BitcoinAPI
 
 func main() {
@@ -694,6 +734,18 @@ func main() {
 	// Smart contract steganography endpoints
 	http.HandleFunc("/api/contract-stego/", handleContractStego)
 	http.HandleFunc("/api/contract-stego", handleCreateContractStego)
+
+	// Cleaned version endpoints
+	http.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":    "healthy",
+			"message":   "Backend is running (restored version with full functionality)",
+			"timestamp": time.Now().Unix(),
+		})
+	})
+	http.HandleFunc("/api/smart-contracts", handleSmartContracts)
+	http.HandleFunc("/api/block-inscriptions", handleBlockInscriptions)
 
 	// Proxy to real steganography API (port 8080)
 	http.HandleFunc("/stego/", proxyToStegoAPI)
