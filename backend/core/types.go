@@ -1,18 +1,13 @@
-package main
+package core
 
 import (
+	"crypto/md5"
 	"encoding/json"
+	"fmt"
 	"time"
 )
 
-// StarlightScannerInterface defines the interface for Starlight scanners
-type StarlightScannerInterface interface {
-	Initialize() error
-	ScanImage(imageData []byte, options ScanOptions) (*ScanResult, error)
-	ExtractMessage(imageData []byte, method string) (*ExtractionResult, error)
-	GetScannerInfo() ScannerInfo
-	IsInitialized() bool
-}
+// Shared types and utilities
 
 // ScanOptions represents options for scanning operations
 type ScanOptions struct {
@@ -110,7 +105,14 @@ type BlockScanResponse struct {
 	RequestID             string              `json:"request_id"`
 }
 
-// SmartContractImage moved to main.go to avoid conflicts
+// SmartContractImage represents a smart contract with steganographic image
+type SmartContractImage struct {
+	ContractID   string                 `json:"contract_id"`
+	BlockHeight  int64                  `json:"block_height"`
+	StegoImage   string                 `json:"stego_image_url"`
+	ContractType string                 `json:"contract_type"`
+	Metadata     map[string]interface{} `json:"metadata"`
+}
 
 // BlockWithCounts represents a block with comprehensive counting statistics
 type BlockWithCounts struct {
@@ -255,53 +257,17 @@ func (e ErrorResponse) ToJSON() ([]byte, error) {
 	return json.Marshal(e)
 }
 
-// MockStarlightScanner provides a mock implementation for testing
-type MockStarlightScanner struct{}
-
-// NewMockStarlightScanner creates a new mock scanner
-func NewMockStarlightScanner() *MockStarlightScanner {
-	return &MockStarlightScanner{}
+// generateRequestID generates a unique request ID
+func GenerateRequestID() string {
+	hash := md5.Sum([]byte(fmt.Sprintf("%d", time.Now().UnixNano())))
+	return fmt.Sprintf("%x", hash)[:16]
 }
 
-// Initialize initializes the mock scanner
-func (m *MockStarlightScanner) Initialize() error {
-	return nil
-}
-
-// ScanImage scans an image with mock results
-func (m *MockStarlightScanner) ScanImage(imageData []byte, options ScanOptions) (*ScanResult, error) {
-	// Return mock results
-	return &ScanResult{
-		IsStego:          false,
-		StegoProbability: 0.1,
-		Confidence:       0.95,
-		Prediction:       "clean",
-	}, nil
-}
-
-// ExtractMessage extracts a message with mock results
-func (m *MockStarlightScanner) ExtractMessage(imageData []byte, method string) (*ExtractionResult, error) {
-	return &ExtractionResult{
-		MessageFound: false,
-		ExtractionDetails: map[string]interface{}{
-			"bits_extracted":      0,
-			"encoding":            "utf-8",
-			"corruption_detected": false,
-		},
-	}, nil
-}
-
-// GetScannerInfo returns mock scanner info
-func (m *MockStarlightScanner) GetScannerInfo() ScannerInfo {
-	return ScannerInfo{
-		ModelLoaded:  true,
-		ModelVersion: "mock-1.0.0",
-		ModelPath:    "mock-scanner",
-		Device:       "mock-device",
-	}
-}
-
-// IsInitialized returns true for mock scanner
-func (m *MockStarlightScanner) IsInitialized() bool {
-	return true
+// StarlightScannerInterface defines the interface for Starlight scanners
+type StarlightScannerInterface interface {
+	Initialize() error
+	ScanImage(imageData []byte, options ScanOptions) (*ScanResult, error)
+	ExtractMessage(imageData []byte, method string) (*ExtractionResult, error)
+	GetScannerInfo() ScannerInfo
+	IsInitialized() bool
 }

@@ -1,4 +1,4 @@
-package main
+package bitcoin
 
 import (
 	"bytes"
@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"stargate-backend/core"
 )
 
 // RateLimiter manages API request rate limiting
@@ -20,6 +22,8 @@ type RateLimiter struct {
 	maxRequests int
 	windowStart time.Time
 	windowSize  time.Duration
+	minInterval time.Duration
+	lastRequest time.Time
 }
 
 // NewRateLimiter creates a new rate limiter
@@ -28,20 +32,34 @@ func NewRateLimiter(maxRequests int, windowSize time.Duration, minInterval time.
 		maxRequests: maxRequests,
 		windowSize:  windowSize,
 		windowStart: time.Now(),
+		minInterval: minInterval,
+		lastRequest: time.Time{},
 	}
 }
 
 // AllowRequest checks if a request is allowed
 func (rl *RateLimiter) AllowRequest() bool {
+	now := time.Now()
+
+	// Check minimum interval between requests
+	if !rl.lastRequest.IsZero() && now.Sub(rl.lastRequest) < rl.minInterval {
+		return false
+	}
+
 	rl.requests++
 
 	// Reset window if needed
-	if time.Since(rl.windowStart) >= rl.windowSize {
+	if now.Sub(rl.windowStart) >= rl.windowSize {
 		rl.requests = 1
-		rl.windowStart = time.Now()
+		rl.windowStart = now
 	}
 
-	return rl.requests <= rl.maxRequests
+	if rl.requests <= rl.maxRequests {
+		rl.lastRequest = now
+		return true
+	}
+
+	return false
 }
 
 // VOut represents a transaction output
@@ -108,7 +126,7 @@ func (btc *BitcoinNodeClient) GetCurrentHeight() (int64, error) {
 }
 
 // GetBlockData gets comprehensive block data
-func (btc *BitcoinNodeClient) GetBlockData(height int64) (interface{}, error) {
+func (btc *BitcoinNodeClient) GetBlockData(height int64) (any, error) {
 	if !btc.rateLimiter.AllowRequest() {
 		return nil, fmt.Errorf("rate limit exceeded")
 	}
@@ -130,7 +148,7 @@ func (btc *BitcoinNodeClient) GetBlockData(height int64) (interface{}, error) {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
 
-	var blockData interface{}
+	var blockData any
 	if err := json.Unmarshal(body, &blockData); err != nil {
 		return nil, fmt.Errorf("failed to decode block data: %w", err)
 	}
@@ -139,7 +157,7 @@ func (btc *BitcoinNodeClient) GetBlockData(height int64) (interface{}, error) {
 }
 
 // GetTransaction gets transaction data
-func (btc *BitcoinNodeClient) GetTransaction(txID string) (interface{}, error) {
+func (btc *BitcoinNodeClient) GetTransaction(txID string) (any, error) {
 	if !btc.rateLimiter.AllowRequest() {
 		return nil, fmt.Errorf("rate limit exceeded")
 	}
@@ -165,7 +183,7 @@ func (btc *BitcoinNodeClient) GetTransaction(txID string) (interface{}, error) {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
 
-	var txData interface{}
+	var txData any
 	if err := json.Unmarshal(body, &txData); err != nil {
 		return nil, fmt.Errorf("failed to decode transaction data: %w", err)
 	}
@@ -174,7 +192,7 @@ func (btc *BitcoinNodeClient) GetTransaction(txID string) (interface{}, error) {
 }
 
 // GetTransactionInfo gets detailed transaction information
-func (btc *BitcoinNodeClient) GetTransactionInfo(txID string, includeImages bool, imageFormat string) (*TransactionInfo, error) {
+func (btc *BitcoinNodeClient) GetTransactionInfo(txID string, includeImages bool, imageFormat string) (*core.TransactionInfo, error) {
 	if !btc.rateLimiter.AllowRequest() {
 		return nil, fmt.Errorf("rate limit exceeded")
 	}
@@ -200,24 +218,24 @@ func (btc *BitcoinNodeClient) GetTransactionInfo(txID string, includeImages bool
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
 
-	var txData map[string]interface{}
+	var txData map[string]any
 	if err := json.Unmarshal(body, &txData); err != nil {
 		return nil, fmt.Errorf("failed to decode transaction info: %w", err)
 	}
 
-	txInfo := &TransactionInfo{
+	txInfo := &core.TransactionInfo{
 		TransactionID: txID,
 		Status:        "confirmed",
 		TotalImages:   0,
 	}
 
 	// Extract block height
-	if blockHeight, ok := txData["status"].(map[string]interface{})["block_height"].(float64); ok {
+	if blockHeight, ok := txData["status"].(map[string]any)["block_height"].(float64); ok {
 		txInfo.BlockHeight = int(blockHeight)
 	}
 
 	// Extract timestamp
-	if blockTime, ok := txData["status"].(map[string]interface{})["block_time"].(float64); ok {
+	if blockTime, ok := txData["status"].(map[string]any)["block_time"].(float64); ok {
 		txInfo.Timestamp = fmt.Sprintf("%d", int64(blockTime))
 	}
 
@@ -335,7 +353,7 @@ func (btc *BitcoinNodeClient) GetBlockTransactions(blockHash string) ([]string, 
 	}
 
 	// Blockstream API returns an array of transaction objects, not strings
-	var transactionObjects []map[string]interface{}
+	var transactionObjects []map[string]any
 	if err := json.Unmarshal(body, &transactionObjects); err != nil {
 		return nil, fmt.Errorf("failed to decode transactions: %w", err)
 	}
@@ -352,7 +370,7 @@ func (btc *BitcoinNodeClient) GetBlockTransactions(blockHash string) ([]string, 
 }
 
 // ExtractImages extracts images from a transaction's witness data
-func (btc *BitcoinNodeClient) ExtractImages(txID string) ([]ImageInfo, error) {
+func (btc *BitcoinNodeClient) ExtractImages(txID string) ([]core.ImageInfo, error) {
 	if !btc.rateLimiter.AllowRequest() {
 		return nil, fmt.Errorf("rate limit exceeded")
 	}
@@ -374,28 +392,28 @@ func (btc *BitcoinNodeClient) ExtractImages(txID string) ([]ImageInfo, error) {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
 
-	var txData map[string]interface{}
+	var txData map[string]any
 	if err := json.Unmarshal(body, &txData); err != nil {
 		return nil, fmt.Errorf("failed to decode transaction: %w", err)
 	}
 
-	var images []ImageInfo
+	var images []core.ImageInfo
 
 	// Extract images from witness data
-	if vins, ok := txData["vin"].([]interface{}); ok {
+	if vins, ok := txData["vin"].([]any); ok {
 		for _, vin := range vins {
-			vinMap, ok := vin.(map[string]interface{})
+			vinMap, ok := vin.(map[string]any)
 			if !ok {
 				continue
 			}
 
 			// Check for witness data
-			if witness, ok := vinMap["witness"].([]interface{}); ok && len(witness) > 0 {
+			if witness, ok := vinMap["witness"].([]any); ok && len(witness) > 0 {
 				for _, witnessItem := range witness {
 					if witnessStr, ok := witnessItem.(string); ok {
 						// Try to detect image data in witness
 						if imageData := btc.extractImageFromWitness(witnessStr); imageData != nil {
-							images = append(images, ImageInfo{
+							images = append(images, core.ImageInfo{
 								Index:     len(images),
 								SizeBytes: len(imageData),
 								Format:    btc.detectImageFormat(imageData),

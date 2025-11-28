@@ -17,6 +17,7 @@ import (
 
 	"github.com/skip2/go-qrcode"
 
+	"stargate-backend/bitcoin"
 )
 
 type InscriptionRequest struct {
@@ -51,6 +52,11 @@ var (
 	mu                  sync.Mutex
 	inscriptionsFile    = "inscriptions.json"
 	contractsFile       = "smart_contracts.json"
+)
+
+var (
+	bitcoinAPI   *bitcoin.BitcoinAPI
+	blockMonitor *bitcoin.BlockMonitor
 )
 
 func enableCORS(w http.ResponseWriter, r *http.Request) {
@@ -123,7 +129,7 @@ func saveSmartContracts() {
 
 func extractWitnessImagesFromBlock(blockHash string) ([]interface{}, error) {
 	// Get transactions for this block
-	txIDs, err := bitcoinAPI.bitcoinClient.GetBlockTransactions(blockHash)
+	txIDs, err := bitcoinAPI.GetBitcoinClient().GetBlockTransactions(blockHash)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get block transactions: %w", err)
 	}
@@ -132,7 +138,7 @@ func extractWitnessImagesFromBlock(blockHash string) ([]interface{}, error) {
 
 	// Process each transaction to extract witness images
 	for _, txID := range txIDs {
-		images, err := bitcoinAPI.bitcoinClient.ExtractImages(txID)
+		images, err := bitcoinAPI.GetBitcoinClient().ExtractImages(txID)
 		if err != nil {
 			log.Printf("Failed to extract images from transaction %s: %v", txID, err)
 			continue
@@ -248,18 +254,22 @@ func handleBlocksWithContracts(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "Failed to process blocks", http.StatusInternalServerError)
 }
 
-func getContractsForBlock(blockHeight int64) []SmartContractImage {
-	var contracts []SmartContractImage
-	log.Printf("Looking for contracts in block %d, total contracts: %d", blockHeight, len(smartContracts))
-	for _, contract := range smartContracts {
-		log.Printf("Checking contract: %+v", contract)
-		if contract.BlockHeight == blockHeight {
-			log.Printf("Found matching contract: %+v", contract)
-			contracts = append(contracts, contract)
-		}
+func getContractsForBlock(blockHeight int64) int {
+	// Get block data to count inscriptions
+	blockResponse, err := blockMonitor.GetBlockInscriptions(blockHeight)
+	if err != nil {
+		log.Printf("Failed to get inscriptions for block %d: %v", blockHeight, err)
+		return 0
 	}
-	log.Printf("Returning %d contracts for block %d", len(contracts), blockHeight)
-	return contracts
+
+	if !blockResponse.Success {
+		log.Printf("Failed to get inscriptions for block %d: %s", blockHeight, blockResponse.Error)
+		return 0
+	}
+
+	// Return the count of inscriptions as "smart_contracts"
+	log.Printf("Block %d has %d inscriptions (counting as smart_contracts)", blockHeight, len(blockResponse.Inscriptions))
+	return len(blockResponse.Inscriptions)
 }
 
 func handleInscriptions(w http.ResponseWriter, r *http.Request) {
@@ -696,14 +706,122 @@ func handleBlockInscriptions(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-var bitcoinAPI *BitcoinAPI
+func handleBlockImages(w http.ResponseWriter, r *http.Request) {
+	enableCORS(w, r)
+	if r.Method == "OPTIONS" {
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	heightStr := r.URL.Query().Get("height")
+	if heightStr == "" {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "height parameter required",
+		})
+		return
+	}
+
+	height, err := strconv.ParseInt(heightStr, 10, 64)
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "invalid height parameter",
+		})
+		return
+	}
+
+	// Get block inscriptions from block monitor
+	response, err := blockMonitor.GetBlockInscriptions(height)
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	if !response.Success {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error":  response.Error,
+			"images": []interface{}{},
+			"total":  0,
+		})
+		return
+	}
+
+	var images []map[string]interface{}
+	for _, inscription := range response.Inscriptions {
+		// Only include inscriptions that have image files
+		if inscription.FileName != "" && inscription.FilePath != "" {
+			image := map[string]interface{}{
+				"tx_id":        inscription.TxID,
+				"file_name":    inscription.FileName,
+				"file_path":    inscription.FilePath,
+				"content_type": inscription.ContentType,
+				"size_bytes":   inscription.SizeBytes,
+				"content":      inscription.Content,
+			}
+			images = append(images, image)
+		}
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"images": images,
+		"total":  len(images),
+	})
+}
+
+func handleBlockImageFile(w http.ResponseWriter, r *http.Request) {
+	enableCORS(w, r)
+	if r.Method == "OPTIONS" {
+		return
+	}
+
+	// Extract height and filename from URL path
+	path := strings.TrimPrefix(r.URL.Path, "/api/block-image/")
+	parts := strings.Split(path, "/")
+	if len(parts) < 2 {
+		http.Error(w, "Invalid URL format", http.StatusBadRequest)
+		return
+	}
+
+	heightStr := parts[0]
+	filename := parts[1]
+
+	// Validate height
+	_, err := strconv.ParseInt(heightStr, 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid height parameter", http.StatusBadRequest)
+		return
+	}
+
+	// Construct file path
+	blockDir := fmt.Sprintf("blocks/%s_00000000", heightStr)
+	filePath := filepath.Join(blockDir, "images", filename)
+
+	// Check if file exists
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		http.Error(w, "File not found", http.StatusNotFound)
+		return
+	}
+
+	// Serve the file
+	http.ServeFile(w, r, filePath)
+}
 
 func main() {
 	loadInscriptions()
 	loadSmartContracts()
 
 	// Initialize Bitcoin API
-	bitcoinAPI = NewBitcoinAPI()
+	bitcoinAPI = bitcoin.NewBitcoinAPI()
+
+	// Initialize and start block monitor
+	blockMonitor = bitcoin.NewBlockMonitor(bitcoinAPI.GetBitcoinClient())
+	if err := blockMonitor.Start(); err != nil {
+		log.Printf("Failed to start block monitor: %v", err)
+	} else {
+		log.Println("Block monitor started successfully")
+	}
 
 	// Serve uploaded images
 	http.Handle("/uploads/", http.StripPrefix("/uploads/", http.FileServer(http.Dir("uploads/"))))
@@ -746,6 +864,8 @@ func main() {
 	})
 	http.HandleFunc("/api/smart-contracts", handleSmartContracts)
 	http.HandleFunc("/api/block-inscriptions", handleBlockInscriptions)
+	http.HandleFunc("/api/block-images", handleBlockImages)
+	http.HandleFunc("/api/block-image/", handleBlockImageFile)
 
 	// Proxy to real steganography API (port 8080)
 	http.HandleFunc("/stego/", proxyToStegoAPI)
@@ -753,13 +873,13 @@ func main() {
 	http.HandleFunc("/generate/", proxyToStegoAPI)
 
 	// Bitcoin steganography scanning endpoints
-	http.HandleFunc("/bitcoin/v1/health", bitcoinAPI.handleHealth)
-	http.HandleFunc("/bitcoin/v1/info", bitcoinAPI.handleInfo)
-	http.HandleFunc("/bitcoin/v1/scan/transaction", bitcoinAPI.handleScanTransaction)
-	http.HandleFunc("/bitcoin/v1/scan/image", bitcoinAPI.handleScanImage)
-	http.HandleFunc("/bitcoin/v1/scan/block", bitcoinAPI.handleBlockScan)
-	http.HandleFunc("/bitcoin/v1/extract", bitcoinAPI.handleExtract)
-	http.HandleFunc("/bitcoin/v1/transaction/", bitcoinAPI.handleGetTransaction)
+	http.HandleFunc("/bitcoin/v1/health", bitcoinAPI.HandleHealth)
+	http.HandleFunc("/bitcoin/v1/info", bitcoinAPI.HandleInfo)
+	http.HandleFunc("/bitcoin/v1/scan/transaction", bitcoinAPI.HandleScanTransaction)
+	http.HandleFunc("/bitcoin/v1/scan/image", bitcoinAPI.HandleScanImage)
+	http.HandleFunc("/bitcoin/v1/scan/block", bitcoinAPI.HandleBlockScan)
+	http.HandleFunc("/bitcoin/v1/extract", bitcoinAPI.HandleExtract)
+	http.HandleFunc("/bitcoin/v1/transaction/", bitcoinAPI.HandleGetTransaction)
 
 	fmt.Println("Server starting on :3001")
 	fmt.Println("Frontend available at: http://localhost:3001")

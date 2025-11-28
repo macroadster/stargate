@@ -1,14 +1,15 @@
-package main
+package starlight
 
 import (
 	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"mime/multipart"
 	"net/http"
 	"time"
+
+	"stargate-backend/core"
 )
 
 // ProxyScanner forwards requests to Python Starlight API on port 8080
@@ -57,16 +58,15 @@ func (p *ProxyScanner) Initialize() error {
 	}
 
 	// Parse health response
-	var health map[string]interface{}
+	var health map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&health); err != nil {
 		return fmt.Errorf("failed to parse health response: %w", err)
 	}
 
 	// Check if scanner is available
-	if scanner, ok := health["scanner"].(map[string]interface{}); ok {
+	if scanner, ok := health["scanner"].(map[string]any); ok {
 		if modelLoaded, ok := scanner["model_loaded"].(bool); ok && modelLoaded {
 			p.initialized = true
-			log.Printf("Proxy scanner connected to Python API with model loaded")
 			return nil
 		}
 	}
@@ -75,7 +75,7 @@ func (p *ProxyScanner) Initialize() error {
 }
 
 // ScanImage scans an image by proxying to Python API
-func (p *ProxyScanner) ScanImage(imageData []byte, options ScanOptions) (*ScanResult, error) {
+func (p *ProxyScanner) ScanImage(imageData []byte, options core.ScanOptions) (*core.ScanResult, error) {
 	if !p.initialized {
 		return nil, fmt.Errorf("steganography scanner not available - ensure Python backend is running on port 8080")
 	}
@@ -126,14 +126,14 @@ func (p *ProxyScanner) ScanImage(imageData []byte, options ScanOptions) (*ScanRe
 	}
 
 	// Parse response
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 
 	// Convert to ScanResult
-	scanResult := &ScanResult{}
-	if scanData, ok := result["scan_result"].(map[string]interface{}); ok {
+	scanResult := &core.ScanResult{}
+	if scanData, ok := result["scan_result"].(map[string]any); ok {
 		if isStego, ok := scanData["is_stego"].(bool); ok {
 			scanResult.IsStego = isStego
 		}
@@ -161,7 +161,7 @@ func (p *ProxyScanner) ScanImage(imageData []byte, options ScanOptions) (*ScanRe
 }
 
 // ExtractMessage extracts message by proxying to Python API
-func (p *ProxyScanner) ExtractMessage(imageData []byte, method string) (*ExtractionResult, error) {
+func (p *ProxyScanner) ExtractMessage(imageData []byte, method string) (*core.ExtractionResult, error) {
 	if !p.initialized {
 		return nil, fmt.Errorf("steganography scanner not available - ensure Python backend is running on port 8080")
 	}
@@ -210,22 +210,22 @@ func (p *ProxyScanner) ExtractMessage(imageData []byte, method string) (*Extract
 	}
 
 	// Parse response
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 
 	// Convert to ExtractionResult
-	extractionResult := &ExtractionResult{
+	extractionResult := &core.ExtractionResult{
 		MessageFound: false,
-		ExtractionDetails: map[string]interface{}{
+		ExtractionDetails: map[string]any{
 			"bits_extracted":      0,
 			"encoding":            "utf-8",
 			"corruption_detected": false,
 		},
 	}
 
-	if extractionData, ok := result["extraction_result"].(map[string]interface{}); ok {
+	if extractionData, ok := result["extraction_result"].(map[string]any); ok {
 		if msgFound, ok := extractionData["message_found"].(bool); ok {
 			extractionResult.MessageFound = msgFound
 		}
@@ -238,7 +238,7 @@ func (p *ProxyScanner) ExtractMessage(imageData []byte, method string) (*Extract
 		if conf, ok := extractionData["method_confidence"].(float64); ok {
 			extractionResult.MethodConfidence = conf
 		}
-		if details, ok := extractionData["extraction_details"].(map[string]interface{}); ok {
+		if details, ok := extractionData["extraction_details"].(map[string]any); ok {
 			extractionResult.ExtractionDetails = details
 		}
 	}
@@ -247,11 +247,11 @@ func (p *ProxyScanner) ExtractMessage(imageData []byte, method string) (*Extract
 }
 
 // GetScannerInfo returns info about proxied scanner
-func (p *ProxyScanner) GetScannerInfo() ScannerInfo {
+func (p *ProxyScanner) GetScannerInfo() core.ScannerInfo {
 	// Get real info from Python API
 	req, err := http.NewRequest("GET", p.apiURL+"/health", nil)
 	if err != nil {
-		return ScannerInfo{
+		return core.ScannerInfo{
 			ModelLoaded:  false,
 			ModelVersion: "unknown",
 			ModelPath:    "proxy",
@@ -263,7 +263,7 @@ func (p *ProxyScanner) GetScannerInfo() ScannerInfo {
 
 	resp, err := p.client.Do(req)
 	if err != nil {
-		return ScannerInfo{
+		return core.ScannerInfo{
 			ModelLoaded:  false,
 			ModelVersion: "unknown",
 			ModelPath:    "proxy",
@@ -272,9 +272,9 @@ func (p *ProxyScanner) GetScannerInfo() ScannerInfo {
 	}
 	defer resp.Body.Close()
 
-	var health map[string]interface{}
+	var health map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&health); err != nil {
-		return ScannerInfo{
+		return core.ScannerInfo{
 			ModelLoaded:  false,
 			ModelVersion: "unknown",
 			ModelPath:    "proxy",
@@ -283,8 +283,8 @@ func (p *ProxyScanner) GetScannerInfo() ScannerInfo {
 	}
 
 	// Extract scanner info
-	if scanner, ok := health["scanner"].(map[string]interface{}); ok {
-		info := ScannerInfo{
+	if scanner, ok := health["scanner"].(map[string]any); ok {
+		info := core.ScannerInfo{
 			ModelLoaded: true,
 			ModelPath:   "proxy-to-python-api",
 			Device:      "proxy",
@@ -303,7 +303,7 @@ func (p *ProxyScanner) GetScannerInfo() ScannerInfo {
 		return info
 	}
 
-	return ScannerInfo{
+	return core.ScannerInfo{
 		ModelLoaded:  p.initialized,
 		ModelVersion: "proxy-v1.0",
 		ModelPath:    "proxy-to-python-api",

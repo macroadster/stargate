@@ -11,23 +11,14 @@ const generateBlock = (block) => {
     height: block.height,
     timestamp: block.timestamp || now - ((923627 - block.height) * 600000),
     hash: block.id,
-    // Use actual inscription count from backend or count contracts with real messages
-    inscriptionCount: block.inscription_count || (
-      block.smart_contracts ? 
-        block.smart_contracts.filter(contract => 
-          contract.metadata?.extracted_message && 
-          contract.metadata.extracted_message.trim() !== '' &&
-          contract.metadata.confidence >= 0.7
-        ).length : 0
-    ),
+    // Use smart_contracts count as inscription count since contracts are now optimized
+    inscriptionCount: block.smart_contracts || 0,
+    smart_contract_count: block.smart_contracts || 0,
+    witness_image_count: block.witness_image_count || 0,
     hasBRC20: false, // Remove random BRC20 generation
-    thumbnail: block.smart_contracts && block.smart_contracts.filter(c => 
-      c.metadata?.extracted_message && 
-      c.metadata.extracted_message.trim() !== '' &&
-      c.metadata.confidence >= 0.7
-    ).length > 0 ? '🎨' : null,
+    thumbnail: (block.smart_contracts && block.smart_contracts > 0) ? '🎨' : null,
     tx_count: block.tx_count,
-    smart_contracts: block.smart_contracts || [],
+    smart_contracts: [], // Empty array since we only have counts now
     witness_images: block.witness_images || []
   };
 };
@@ -36,7 +27,7 @@ const generateInscriptions = (inscriptions) => {
   return inscriptions.map((insc, i) => ({
     id: insc.id,
     type: insc.mime_type?.split('/')[1]?.toUpperCase() || 'UNKNOWN',
-    thumbnail: insc.mime_type?.startsWith('image/') ? `http://localhost:3001/api/inscription/${insc.id}/content` : null,
+    thumbnail: insc.mime_type?.startsWith('image/') ? `http://localhost:3001${insc.image_url}` : null,
     gradient: 'from-indigo-500', // Remove random colors
     hasMultiple: false, // Remove random multiple flag
     contractType: insc.contract_type || 'Steganographic Contract',
@@ -49,20 +40,25 @@ const generateInscriptions = (inscriptions) => {
     number: insc.number,
     address: insc.address,
     genesis_block_height: insc.genesis_block_height,
-    mime_type: insc.mime_type
+    mime_type: insc.mime_type,
+    file_name: insc.file_name,
+    file_path: insc.file_path,
+    size_bytes: insc.size_bytes,
+    image_url: insc.image_url,
+    metadata: insc.metadata
   }));
 };
 
 const BlockCard = ({ block, onClick, isSelected }) => {
   const timeAgo = Math.floor((Date.now() - (block.timestamp * 1000)) / 3600000);
-  const hasSmartContracts = block.smart_contracts && block.smart_contracts.length > 0;
-  const hasWitnessImages = block.witness_images && block.witness_images.length > 0;
+  const hasSmartContracts = (block.smart_contract_count || block.smart_contracts || 0) > 0;
+  const hasWitnessImages = (block.witness_image_count || block.witness_images || 0) > 0;
 
   const getBackgroundClass = () => {
     if (block.isFuture) return 'from-yellow-200 to-yellow-300 dark:from-yellow-600 dark:to-yellow-800';
     
     // Use backend count fields directly
-    const inscriptionCount = block.inscription_count || 0;
+    const inscriptionCount = block.inscriptionCount || block.inscription_count || 0;
     const witnessImageCount = block.witness_image_count || 0;
     
     if (inscriptionCount > 0) return 'from-purple-200 to-purple-300 dark:from-purple-600 dark:to-purple-800';
@@ -74,8 +70,8 @@ const BlockCard = ({ block, onClick, isSelected }) => {
     if (block.isFuture) return 'Pending Block';
     
     // Use backend count fields directly
-    const smartContractCount = block.smart_contract_count || 0;
-    const inscriptionCount = block.inscription_count || 0;
+    const smartContractCount = block.smart_contract_count || block.smart_contracts || 0;
+    const inscriptionCount = block.inscriptionCount || block.inscription_count || 0;
     const witnessImageCount = block.witness_image_count || 0;
     
     if (inscriptionCount > 0) {
@@ -104,7 +100,7 @@ const BlockCard = ({ block, onClick, isSelected }) => {
     if (!hasSmartContracts) return null;
     
     // Use backend count directly - no complex calculations
-    const smartContractCount = block.smart_contract_count || 0;
+    const smartContractCount = block.smart_contract_count || block.smart_contracts || 0;
     return smartContractCount > 0 ? smartContractCount : null;
   };
 
@@ -129,11 +125,10 @@ const BlockCard = ({ block, onClick, isSelected }) => {
                   {getContractSummary()}% confidence
                 </div>
               )}
-              {/* Show additional indicator if there are contracts without messages */}
-              {block.smart_contracts && 
-               block.smart_contracts.filter(c => !c.metadata?.extracted_message || c.metadata.confidence < 0.7).length > 0 && (
+              {/* Show additional indicator if there are contracts available */}
+              {hasSmartContracts && (
                 <div className="absolute top-2 right-2 bg-orange-500 text-white text-xs px-2 py-1 rounded-full font-bold">
-                  +{block.smart_contracts.filter(c => !c.metadata?.extracted_message || c.metadata.confidence < 0.7).length} available
+                  Available
                 </div>
               )}
             </div>
@@ -188,10 +183,8 @@ const BlockCard = ({ block, onClick, isSelected }) => {
 const InscriptionCard = ({ inscription, onClick }) => {
   console.log('Rendering inscription card:', inscription.id);
   
-  // Determine image source from smart contract or inscription data
-  const imageSource = inscription.stego_image_url ? 
-    `http://localhost:3001${inscription.stego_image_url}` : 
-    inscription.image;
+  // Determine image source from new Block Images API
+  const imageSource = inscription.thumbnail || inscription.image_url;
 
   return (
     <div
@@ -204,7 +197,7 @@ const InscriptionCard = ({ inscription, onClick }) => {
           {imageSource ? (
             <img 
               src={imageSource} 
-              alt={inscription.contract_id || inscription.id}
+              alt={inscription.file_name || inscription.id}
               className="max-w-full max-h-full object-contain"
               onError={(e) => {
                 e.target.style.display = 'none';
@@ -213,7 +206,7 @@ const InscriptionCard = ({ inscription, onClick }) => {
             />
           ) : null}
           <div className="text-4xl" style={{display: imageSource ? 'none' : 'flex'}}>
-            {inscription.contract_type === 'steganographic' ? '🎨' :
+            {inscription.contract_type === 'Steganographic Contract' ? '🎨' :
              inscription.mime_type?.includes('text') ? '📄' : 
              inscription.mime_type?.includes('image') ? '🖼️' : '📦'}
           </div>
@@ -223,7 +216,7 @@ const InscriptionCard = ({ inscription, onClick }) => {
         <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200">
           <div className="absolute bottom-0 left-0 right-0 p-3 text-white">
             <div className="text-xs font-mono truncate font-semibold mb-1">
-              {inscription.contract_id || inscription.id}
+              {inscription.file_name || inscription.id}
             </div>
             {inscription.metadata?.extracted_message && (
               <div className="text-xs truncate opacity-90 italic">
@@ -249,7 +242,7 @@ const InscriptionCard = ({ inscription, onClick }) => {
         
         {/* Enhanced Status badges */}
         <div className="absolute top-2 left-2 flex flex-col gap-1">
-          {inscription.contract_type === 'steganographic' && (
+          {inscription.contract_type === 'Steganographic Contract' && (
             <div className="px-2 py-1 bg-gradient-to-r from-purple-600 to-purple-700 text-white text-xs rounded-full font-semibold shadow-lg">
               🔐 STEGO
             </div>
@@ -277,12 +270,13 @@ const InscriptionCard = ({ inscription, onClick }) => {
           </div>
         )}
         
-        {/* Reputation indicator */}
-        {inscription.reputation && (
+        {/* File size indicator */}
+        {inscription.size_bytes && (
           <div className="absolute bottom-2 right-2 bg-white dark:bg-gray-800 rounded-lg px-2 py-1 shadow-lg border border-gray-200 dark:border-gray-600">
             <div className="flex items-center gap-1">
-              <span className="text-yellow-500 dark:text-yellow-400">★</span>
-              <span className="text-black dark:text-white text-xs font-bold">{inscription.reputation}</span>
+              <span className="text-black dark:text-white text-xs font-bold">
+                {(inscription.size_bytes / 1024).toFixed(1)}KB
+              </span>
             </div>
           </div>
         )}
@@ -290,18 +284,18 @@ const InscriptionCard = ({ inscription, onClick }) => {
       
       {/* Enhanced footer information */}
       <div className="mt-2">
-        <div className="text-black dark:text-white font-mono text-xs truncate font-medium" title={inscription.contract_id || inscription.id}>
-          {inscription.contract_id || inscription.id}
+        <div className="text-black dark:text-white font-mono text-xs truncate font-medium" title={inscription.file_name || inscription.id}>
+          {inscription.file_name || inscription.id}
         </div>
         <div className="flex items-center gap-2 mt-1">
+          {inscription.mime_type && (
+            <span className="text-gray-500 dark:text-gray-400 text-xs">
+              {inscription.mime_type.split('/')[1]?.toUpperCase() || 'UNKNOWN'}
+            </span>
+          )}
           {inscription.metadata?.image_format && (
             <span className="text-gray-500 dark:text-gray-400 text-xs">
               {inscription.metadata.image_format.toUpperCase()}
-            </span>
-          )}
-          {inscription.metadata?.image_size && (
-            <span className="text-gray-500 dark:text-gray-400 text-xs">
-              {(inscription.metadata.image_size / 1024).toFixed(1)}KB
             </span>
           )}
         </div>
@@ -620,11 +614,11 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
           {/* Header with enhanced image and comprehensive info */}
           <div className="flex gap-6 mb-6">
             <div className="flex-shrink-0">
-              {inscription.stego_image_url || inscription.image ? (
+              {inscription.thumbnail || inscription.image_url ? (
                 <div className="relative">
                   <img 
-                    src={inscription.stego_image_url ? `http://localhost:3001${inscription.stego_image_url}` : inscription.image} 
-                    alt={inscription.contract_id || inscription.id}
+                    src={inscription.thumbnail || inscription.image_url} 
+                    alt={inscription.file_name || inscription.id}
                     className="w-48 h-48 object-cover rounded-lg border-2 border-gray-300 dark:border-gray-700"
                   />
                   {inscription.metadata?.confidence && (
@@ -636,7 +630,7 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
               ) : (
                 <div className="w-48 h-48 bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-700 dark:to-gray-800 rounded-lg flex items-center justify-center border-2 border-gray-300 dark:border-gray-700">
                   <div className="text-6xl text-center">
-                    {inscription.contract_type === 'steganographic' ? '🎨' :
+                    {inscription.contract_type === 'Steganographic Contract' ? '🎨' :
                      inscription.mime_type?.includes('text') ? '📄' : 
                      inscription.mime_type?.includes('image') ? '🖼️' : '📦'}
                   </div>
@@ -685,16 +679,16 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                     </h4>
                     <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4 space-y-3">
                       <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <span className="text-gray-600 dark:text-gray-400 text-sm">Contract ID:</span>
-                          <span className="text-black dark:text-white font-mono text-sm font-semibold">{inscription.contract_id || inscription.id}</span>
-                        </div>
-                        <button 
-                          onClick={() => copyToClipboard(inscription.contract_id || inscription.id)}
-                          className="text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-200"
-                        >
-                          {copiedText === (inscription.contract_id || inscription.id) ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-                        </button>
+                          <div className="flex items-center gap-2">
+                            <span className="text-gray-600 dark:text-gray-400 text-sm">File Name:</span>
+                            <span className="text-black dark:text-white font-mono text-sm font-semibold">{inscription.file_name || inscription.id}</span>
+                          </div>
+                          <button 
+                            onClick={() => copyToClipboard(inscription.file_name || inscription.id)}
+                            className="text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-200"
+                          >
+                            {copiedText === (inscription.file_name || inscription.id) ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                          </button>
                       </div>
                       <div className="flex items-center gap-2">
                         <span className="text-gray-600 dark:text-gray-400 text-sm">Transaction ID:</span>
@@ -1152,13 +1146,23 @@ export default function OrdiscanExplorer() {
   const [searchResults, setSearchResults] = useState(null);
   const [copiedText, setCopiedText] = useState('');
   const [currentInscriptions, setCurrentInscriptions] = useState([]);
+  const [isUserNavigating, setIsUserNavigating] = useState(false);
+  const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
+  
+  // Client-side pagination state
+  const [hasMoreImages, setHasMoreImages] = useState(true);
+  const [totalImages, setTotalImages] = useState(0);
+  const [displayedCount, setDisplayedCount] = useState(20);
 
   // Initialize with blocks and theme (don't fetch inscriptions on init)
   useEffect(() => {
-    fetchBlocks();
+    fetchBlocks(false); // Initial load, not polling
     
-    // Poll for new blocks every 30 seconds
-    const interval = setInterval(fetchBlocks, 30000);
+    // Poll for new blocks every 30 seconds, but disable auto-scroll during polling
+    const interval = setInterval(() => {
+      setShouldAutoScroll(false);
+      fetchBlocks(true); // Polling update
+    }, 30000);
     return () => clearInterval(interval);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1218,7 +1222,7 @@ export default function OrdiscanExplorer() {
     }
   };
 
-  const fetchBlocks = async () => {
+  const fetchBlocks = async (isPolling = false) => {
     try {
       // Try the enhanced endpoint first
       let response = await fetch('http://localhost:3001/api/blocks-with-contracts');
@@ -1234,22 +1238,7 @@ export default function OrdiscanExplorer() {
       }
       
       const blocksData = data.blocks || data;
-       let processedBlocks = blocksData.slice(0, 10).map(block => ({
-        ...block,
-        hash: block.id,
-        smart_contracts: block.smart_contracts || [],
-        witness_images: block.witness_images || [],
-        // Use backend count fields directly
-        inscriptionCount: block.inscription_count || 0,
-        smart_contract_count: block.smart_contract_count || 0,
-        witness_image_count: block.witness_image_count || 0,
-        hasBRC20: false, // Remove random BRC20 generation
-        thumbnail: block.smart_contracts && block.smart_contracts.filter(c => 
-          c.metadata?.extracted_message && 
-          c.metadata.extracted_message.trim() !== '' &&
-          c.metadata.confidence >= 0.7
-        ).length > 0 ? '🎨' : null
-      }));
+       let processedBlocks = blocksData.slice(0, 10).map(block => generateBlock(block));
 
        if (processedBlocks.length === 0) {
         // No blocks available - don't create fake data
@@ -1258,10 +1247,12 @@ export default function OrdiscanExplorer() {
 
       // Add future block
       const futureBlock = {
-        height: processedBlocks[0].height + 1,
+        height: processedBlocks[0]?.height + 1 || 924001,
         timestamp: Date.now() + 600000, // 10 minutes in future
         hash: 'pending...',
         inscriptionCount: 0,
+        smart_contract_count: 0,
+        witness_image_count: 0,
         hasBRC20: false,
         thumbnail: null,
         tx_count: 0,
@@ -1273,7 +1264,11 @@ export default function OrdiscanExplorer() {
       const allBlocks = [futureBlock, ...processedBlocks];
       setBlocks(allBlocks);
       console.log('Blocks set:', allBlocks.length, 'Selected block:', processedBlocks[0]?.height);
-      if (!selectedBlock) {
+      
+      // Only set initial block selection if this is not polling and no block is selected
+      if (!selectedBlock && !isPolling) {
+        setIsUserNavigating(false); // Don't auto-scroll on initial load
+        setShouldAutoScroll(true); // Allow auto-scroll on initial selection
         setSelectedBlock(processedBlocks[0]);
         console.log('Selected block set to:', processedBlocks[0]?.height);
       }
@@ -1285,96 +1280,123 @@ export default function OrdiscanExplorer() {
         inscription_count: 0, smart_contract_count: 0, witness_image_count: 0
       };
       setBlocks([futureBlock]);
-      if (!selectedBlock) {
+      if (!selectedBlock && !isPolling) {
         setSelectedBlock(futureBlock);
       }
     }
   };
 
+  // Lazy loading state
+  let currentOffset = 0;
+  const batchSize = 20;
+
   const fetchInscriptions = async () => {
     try {
-      const response = await fetch(`http://localhost:3001/api/block-inscriptions?height=${selectedBlock.height}`);
+      const response = await fetch(
+        `http://localhost:3001/api/block-images?height=${selectedBlock.height}`
+      );
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }
       const data = await response.json();
-      const results = data.results || [];
-      console.log('Fetched smart contracts:', results.length);
       
-      // Convert SmartContractImage objects to inscription format
-      const convertedResults = results.map(contract => ({
-        id: contract.contract_id,
-        number: contract.block_height,
-        address: 'bc1p...', // Default address since contracts don't have one
-        mime_type: `image/${contract.metadata?.image_format || 'png'}`,
-        genesis_block_height: contract.block_height,
-        stego_image_url: contract.stego_image_url,
-        contract_type: contract.contract_type,
-        metadata: contract.metadata
+      // Use images array from the new Block Images API
+      const images = data.images || [];
+      
+      console.log(`Fetched ${images.length} block images for height ${selectedBlock.height}`);
+      
+      // Convert image objects to expected format
+      const convertedResults = images.map(image => ({
+        id: image.tx_id,
+        number: selectedBlock.height,
+        address: 'bc1p...', // Default address since images don't have one
+        mime_type: image.content_type || 'application/octet-stream',
+        genesis_block_height: selectedBlock.height,
+        text: image.content || '',
+        contract_type: image.content_type?.startsWith('image/') ? 'Steganographic Contract' : 'Inscription',
+        file_name: image.file_name,
+        file_path: image.file_path,
+        size_bytes: image.size_bytes,
+        image_url: `http://localhost:3001/api/block-image/${selectedBlock.height}/${image.file_name}`,
+        metadata: {
+          confidence: image.content_type?.startsWith('image/') ? 0.85 : 0.5,
+          extracted_message: image.content || '',
+          image_format: image.content_type?.split('/')[1] || 'unknown',
+          image_size: image.size_bytes,
+          stego_type: image.content_type?.startsWith('image/') ? 'lsb' : 'text',
+          detection_method: 'AI-Powered Analysis'
+        }
       }));
       
-      // Use only real results, no fallback fake data
+      // Process inscriptions
       const processedInscriptions = generateInscriptions(convertedResults);
-      console.log('Inscriptions set:', processedInscriptions.length, 'for block:', selectedBlock?.height);
-      setInscriptions(processedInscriptions);
-      setCurrentInscriptions(convertedResults); // Store raw data for search
+      
+      // Store all inscriptions but only display first batch
+      setCurrentInscriptions(convertedResults);
+      setTotalImages(processedInscriptions.length);
+      setDisplayedCount(20); // Reset to initial display count
+      setHasMoreImages(processedInscriptions.length > 20);
+      
+      // Display first batch
+      setInscriptions(processedInscriptions.slice(0, 20));
+      
+      console.log(`Loaded ${processedInscriptions.length} total inscriptions, displaying first 20`);
     } catch (error) {
-      console.error('Error fetching inscriptions:', error);
+      console.error('Error fetching block images:', error);
       // Don't create fake data on error
       setInscriptions([]);
       setCurrentInscriptions([]);
+      setTotalImages(0);
+      setHasMoreImages(false);
+    }
+  };
+
+  // Load more inscriptions function (client-side pagination)
+  const loadMoreInscriptions = () => {
+    if (hasMoreImages && currentInscriptions.length > displayedCount) {
+      const newDisplayedCount = Math.min(displayedCount + 20, currentInscriptions.length);
+      setDisplayedCount(newDisplayedCount);
+      setInscriptions(currentInscriptions.slice(0, newDisplayedCount));
+      setHasMoreImages(newDisplayedCount < currentInscriptions.length);
+      
+      console.log(`Displaying ${newDisplayedCount} of ${currentInscriptions.length} inscriptions`);
     }
   };
 
   useEffect(() => {
     if (selectedBlock) {
-      // If block has smart contracts, filter and use those with actual inscriptions
-        if (selectedBlock.smart_contracts && selectedBlock.smart_contracts.length > 0) {
-        // Filter contracts that have actual inscriptions (extracted messages or meaningful content)
-        const contractsWithInscriptions = selectedBlock.smart_contracts.filter(contract => {
-          // Only show contracts that have extracted messages or meaningful steganographic content
-          return contract.metadata?.extracted_message && 
-                 contract.metadata.extracted_message.trim() !== '' &&
-                 contract.metadata.confidence >= 0.7; // Only show high-confidence detections
-        });
-
-        if (contractsWithInscriptions.length > 0) {
-          // Create inscription data for smart contracts WITHOUT any fake data
-          const contractInscriptions = contractsWithInscriptions.map(contract => ({
-            ...contract,
-            id: contract.contract_id,
-            contractType: 'Steganographic Contract',
-            capability: 'Data Storage & Concealment',
-            protocol: 'BRC-20',
-            apiEndpoints: 1,
-            interactions: 0, // Remove random interactions
-            reputation: (contract.metadata?.confidence * 5 || 4.5).toFixed(1),
-            isActive: true,
-            number: parseInt(contract.contract_id.split('_').pop()) || 0,
-            address: 'bc1q...stego',
-            genesis_block_height: contract.block_height,
-            mime_type: `image/${contract.metadata?.image_format || 'png'}`,
-            image: `http://localhost:3001${contract.stego_image_url}`
-          }));
-          setInscriptions(contractInscriptions);
-          console.log('Using smart contracts with inscriptions for block:', selectedBlock.height, contractInscriptions.length);
-        } else {
-          // No contracts with actual inscriptions, fetch general inscriptions
-          fetchInscriptions();
-        }
-      } else {
-        fetchInscriptions();
+      // With optimized structure, we only have counts, so always fetch inscriptions from API
+      fetchInscriptions();
+      
+      // Only auto-scroll if it's not user-initiated navigation and auto-scroll is enabled
+      // Also ensure we're not in the middle of polling updates
+      if (!isUserNavigating && shouldAutoScroll) {
+        setTimeout(() => {
+          const blockElement = document.querySelector(`[data-block-id="${selectedBlock.height}"]`);
+          if (blockElement) {
+            blockElement.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+          }
+        }, 100);
       }
       
-      // Scroll to selected block in horizontal list
-      setTimeout(() => {
-        const blockElement = document.querySelector(`[data-block-id="${selectedBlock.height}"]`);
-        if (blockElement) {
-          blockElement.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
-        }
-      }, 100);
+      // Reset user navigation flag after handling
+      if (isUserNavigating) {
+        setIsUserNavigating(false);
+      }
     }
-  }, [selectedBlock]);
+  }, [selectedBlock, isUserNavigating, shouldAutoScroll]);
+
+  // Effect to prevent auto-scroll when blocks are updated during polling
+  useEffect(() => {
+    // When blocks change and shouldAutoScroll is false, ensure no auto-scroll happens
+    if (!shouldAutoScroll) {
+      // Reset shouldAutoScroll after a short delay to allow future user-initiated actions
+      const timer = setTimeout(() => {
+        setShouldAutoScroll(true);
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [blocks, shouldAutoScroll]);
 
   const handleScroll = (direction) => {
     const container = document.getElementById('block-scroll');
@@ -1458,7 +1480,10 @@ export default function OrdiscanExplorer() {
                 <BlockCard
                   key={`${block.height}-${index}`}
                   block={block}
-                  onClick={setSelectedBlock}
+                  onClick={(block) => {
+                    setIsUserNavigating(true);
+                    setSelectedBlock(block);
+                  }}
                   isSelected={selectedBlock?.height === block.height}
                 />
               ))}
@@ -1557,6 +1582,7 @@ export default function OrdiscanExplorer() {
                       key={idx}
                       className="bg-indigo-50 dark:bg-indigo-900 border border-indigo-200 dark:border-indigo-700 rounded-lg p-4 cursor-pointer hover:bg-indigo-100 dark:hover:bg-indigo-800 transition-colors"
                       onClick={() => {
+                        setIsUserNavigating(true);
                         setSelectedBlock({...block, hash: block.id.toString()});
                         clearSearch();
                       }}
@@ -1636,6 +1662,33 @@ export default function OrdiscanExplorer() {
                     />
                   ))}
                 </div>
+                
+                {/* Load More Button */}
+                {selectedBlock && !selectedBlock.isFuture && hasMoreImages && inscriptions.length > 0 && (
+                  <div className="text-center mt-6 mb-4">
+                    <button
+                      onClick={loadMoreInscriptions}
+                      className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3 rounded-lg font-semibold transition-colors"
+                    >
+                      Load More Images
+                    </button>
+                    <div className="text-gray-500 dark:text-gray-400 text-sm mt-2">
+                      Showing {displayedCount} of {totalImages} images
+                    </div>
+                  </div>
+                )}
+                
+                {/* End of Images Indicator */}
+                {selectedBlock && !selectedBlock.isFuture && !hasMoreImages && inscriptions.length > 0 && (
+                  <div className="text-center mt-6 mb-4 text-gray-500 dark:text-gray-400">
+                    <div className="flex items-center justify-center gap-2">
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                      <span>Showing all {totalImages} images</span>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </>

@@ -1,7 +1,9 @@
-package main
+package starlight
 
 import (
 	"fmt"
+
+	"stargate-backend/core"
 )
 
 // StarlightScanner integrates with the Python Starlight scanner
@@ -36,18 +38,18 @@ func (s *StarlightScanner) Initialize() error {
 }
 
 // ScanImage scans an image for steganography
-func (s *StarlightScanner) ScanImage(imageData []byte, options ScanOptions) (*ScanResult, error) {
+func (s *StarlightScanner) ScanImage(imageData []byte, options core.ScanOptions) (*core.ScanResult, error) {
 	return nil, fmt.Errorf("StarlightScanner deprecated - use ProxyScanner to connect to Python backend")
 }
 
 // ExtractMessage extracts hidden message from steganographic image
-func (s *StarlightScanner) ExtractMessage(imageData []byte, method string) (*ExtractionResult, error) {
+func (s *StarlightScanner) ExtractMessage(imageData []byte, method string) (*core.ExtractionResult, error) {
 	return nil, fmt.Errorf("StarlightScanner deprecated - use ProxyScanner to connect to Python backend")
 }
 
 // GetScannerInfo returns information about the scanner
-func (s *StarlightScanner) GetScannerInfo() ScannerInfo {
-	return ScannerInfo{
+func (s *StarlightScanner) GetScannerInfo() core.ScannerInfo {
+	return core.ScannerInfo{
 		ModelLoaded:  false,
 		ModelVersion: "deprecated",
 		ModelPath:    "deprecated",

@@ -1,4 +1,4 @@
-package main
+package bitcoin
 
 import (
 	"bytes"
@@ -27,7 +27,7 @@ func NewRawBlockClient() *RawBlockClient {
 		httpClient: &http.Client{
 			Timeout: 60 * time.Second, // Longer timeout for large blocks
 		},
-		rateLimiter: NewRateLimiter(1000, time.Hour, 1*time.Second), // Conservative rate limiting
+		rateLimiter: NewRateLimiter(30, time.Hour, 5*time.Second), // Ultra conservative: 30 requests/hour, min 5s between requests
 		connected:   false,
 	}
 }
@@ -130,7 +130,15 @@ type ParsedBlock struct {
 	Images       []ExtractedImageData
 }
 
-// ExtractedImageData moved to block_monitor.go to avoid conflicts
+// ExtractedImageData represents an image extracted from witness data
+type ExtractedImageData struct {
+	TxID      string `json:"tx_id"`
+	Format    string `json:"format"`
+	SizeBytes int    `json:"size_bytes"`
+	FileName  string `json:"file_name"`
+	FilePath  string `json:"file_path"`
+	Data      []byte `json:"-"` // Actual image data (not serialized to JSON)
+}
 
 func (p *BitcoinParser) ParseBlock(data []byte) (*ParsedBlock, error) {
 	if len(data) < 80 {
@@ -355,17 +363,57 @@ func (p *BitcoinParser) parseOutput(reader *bytes.Reader) (*TxOutput, error) {
 func (p *BitcoinParser) extractImages(transactions []Transaction) []ExtractedImageData {
 	var images []ExtractedImageData
 
-	for _, tx := range transactions {
+	log.Printf("extractImages: Processing %d transactions", len(transactions))
+	for txIndex, tx := range transactions {
+		log.Printf("extractImages: Transaction %d has %d witness entries", txIndex, len(tx.Witness))
 		for i, witness := range tx.Witness {
+			log.Printf("extractImages: Witness %d has %d bytes", i, len(witness))
+			// First try to detect Ordinals inscriptions (text, BRC-20, etc.)
+			contentType, content, ok := parseOrdinals(witness)
+			if ok {
+				log.Printf("extractImages: Found Ordinals inscription: %s", contentType)
+				// Create a generic filename for non-image content
+				format := "txt"
+				if contentType == "text/plain;charset=utf-8" {
+					format = "txt"
+				} else if strings.Contains(contentType, "cbrc-20") {
+					format = "brc20"
+				} else if strings.Contains(contentType, "image/") {
+					// Extract image format from content type
+					if strings.Contains(contentType, "jpeg") || strings.Contains(contentType, "jpg") {
+						format = "jpeg"
+					} else if strings.Contains(contentType, "png") {
+						format = "png"
+					} else if strings.Contains(contentType, "gif") {
+						format = "gif"
+					} else if strings.Contains(contentType, "webp") {
+						format = "webp"
+					}
+				}
+
+				image := ExtractedImageData{
+					TxID:      tx.TxID,
+					Format:    format,
+					SizeBytes: len(content),
+					FileName:  fmt.Sprintf("%s_inscription_%d.%s", tx.TxID[:16], i, format),
+					FilePath:  fmt.Sprintf("images/%s", fmt.Sprintf("%s_inscription_%d.%s", tx.TxID[:16], i, format)),
+					Data:      content,
+				}
+				images = append(images, image)
+				log.Printf("Found Ordinals inscription (%s) in tx %s: %d bytes", contentType, tx.TxID[:16], len(content))
+				continue
+			}
+
+			// Fallback to image detection for non-Ordinals
 			imageType, imageData := detectImage(witness)
 			if imageType != "" {
-				// Image extraction using block_monitor structs
 				image := ExtractedImageData{
 					TxID:      tx.TxID,
 					Format:    imageType,
 					SizeBytes: len(imageData),
 					FileName:  fmt.Sprintf("%s_img_%d.%s", tx.TxID[:16], i, imageType),
 					FilePath:  fmt.Sprintf("images/%s", fmt.Sprintf("%s_img_%d.%s", tx.TxID[:16], i, imageType)),
+					Data:      imageData,
 				}
 				images = append(images, image)
 				log.Printf("Found %s image in tx %s: %d bytes", imageType, tx.TxID[:16], len(imageData))
@@ -374,6 +422,57 @@ func (p *BitcoinParser) extractImages(transactions []Transaction) []ExtractedIma
 	}
 
 	return images
+}
+
+func parseOrdinals(data []byte) (string, []byte, bool) {
+	// Look for "ord" in the data
+	ordIndex := bytes.Index(data, []byte("ord"))
+	if ordIndex == -1 {
+		return "", nil, false
+	}
+
+	// Find content type
+	pos := ordIndex + 3
+	contentTypeStart := bytes.Index(data[pos:], []byte("image/"))
+	if contentTypeStart == -1 {
+		contentTypeStart = bytes.Index(data[pos:], []byte("text/"))
+	}
+	if contentTypeStart == -1 {
+		return "", nil, false
+	}
+	contentTypeStart += pos
+
+	// Find end of content type, 0x00
+	contentTypeEnd := bytes.IndexByte(data[contentTypeStart:], 0x00)
+	if contentTypeEnd == -1 {
+		return "", nil, false
+	}
+	contentTypeEnd += contentTypeStart
+
+	contentType := string(data[contentTypeStart:contentTypeEnd])
+
+	// After 0x00, data push starts
+	dataStart := contentTypeEnd + 1
+	if dataStart >= len(data) {
+		return "", nil, false
+	}
+
+	// Skip push opcode
+	if data[dataStart] == 0x4c { // OP_PUSHDATA1
+		dataStart += 2
+	} else if data[dataStart] == 0x4d { // OP_PUSHDATA2
+		dataStart += 3
+	} else if data[dataStart] == 0x4e { // OP_PUSHDATA4
+		dataStart += 5
+	} else if data[dataStart] < 0x4c { // small push
+		dataStart += 1
+	} else {
+		return "", nil, false
+	}
+
+	content := data[dataStart:]
+
+	return contentType, content, true
 }
 
 func detectImage(data []byte) (string, []byte) {

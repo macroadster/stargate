@@ -1,37 +1,42 @@
-package main
+package bitcoin
 
 import (
-	"crypto/md5"
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+
+	"stargate-backend/core"
+	"stargate-backend/starlight"
 )
 
 // BitcoinAPI handles Bitcoin steganography scanning endpoints
 type BitcoinAPI struct {
 	bitcoinClient *BitcoinNodeClient
-	scanner       StarlightScannerInterface
+	scanner       core.StarlightScannerInterface
 }
 
 // NewBitcoinAPI creates a new Bitcoin API instance
 func NewBitcoinAPI() *BitcoinAPI {
-	// Initialize Bitcoin client
-	bitcoinClient := NewBitcoinNodeClient("https://blockstream.info/api")
+	return NewBitcoinAPIWithClient(NewBitcoinNodeClient("https://blockstream.info/api"))
+}
 
-	var scanner StarlightScannerInterface
+// NewBitcoinAPIWithClient creates a new Bitcoin API instance with custom client
+func NewBitcoinAPIWithClient(client *BitcoinNodeClient) *BitcoinAPI {
+	bitcoinClient := client
+
+	var scanner core.StarlightScannerInterface
 
 	// Try to initialize proxy scanner to Python API
-	proxyScanner := NewProxyScanner("http://localhost:8080", "demo-api-key")
+	proxyScanner := starlight.NewProxyScanner("http://localhost:8080", "demo-api-key")
 	if err := proxyScanner.Initialize(); err != nil {
 		log.Printf("Failed to initialize proxy scanner: %v", err)
 		log.Printf("Falling back to mock scanner")
-		scanner = NewMockStarlightScanner()
+		scanner = starlight.NewMockStarlightScanner()
 	} else {
 		log.Printf("Successfully initialized proxy scanner to Python API")
 		scanner = proxyScanner
@@ -43,15 +48,9 @@ func NewBitcoinAPI() *BitcoinAPI {
 	}
 }
 
-// generateRequestID generates a unique request ID
-func generateRequestID() string {
-	hash := md5.Sum([]byte(fmt.Sprintf("%d", time.Now().UnixNano())))
-	return fmt.Sprintf("%x", hash)[:16]
-}
-
-// handleHealth handles the health check endpoint
-func (api *BitcoinAPI) handleHealth(w http.ResponseWriter, r *http.Request) {
-	enableCORS(w, r)
+// HandleHealth handles the health check endpoint
+func (api *BitcoinAPI) HandleHealth(w http.ResponseWriter, r *http.Request) {
+	EnableCORS(w, r)
 	if r.Method == "OPTIONS" {
 		return
 	}
@@ -82,10 +81,10 @@ func (api *BitcoinAPI) handleHealth(w http.ResponseWriter, r *http.Request) {
 		status = "degraded"
 	}
 
-	response := NewHealthResponse(
+	response := core.NewHealthResponse(
 		status,
 		scannerInfo,
-		BitcoinInfo{
+		core.BitcoinInfo{
 			NodeConnected: bitcoinConnected,
 			NodeURL:       api.bitcoinClient.GetNodeURL(),
 			BlockHeight:   blockHeight,
@@ -96,9 +95,9 @@ func (api *BitcoinAPI) handleHealth(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
-// handleInfo handles the API info endpoint
-func (api *BitcoinAPI) handleInfo(w http.ResponseWriter, r *http.Request) {
-	enableCORS(w, r)
+// HandleInfo handles the API info endpoint
+func (api *BitcoinAPI) HandleInfo(w http.ResponseWriter, r *http.Request) {
+	EnableCORS(w, r)
 	if r.Method == "OPTIONS" {
 		return
 	}
@@ -108,15 +107,15 @@ func (api *BitcoinAPI) handleInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response := NewInfoResponse()
+	response := core.NewInfoResponse()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
 }
 
-// handleScanTransaction handles scanning a Bitcoin transaction
-func (api *BitcoinAPI) handleScanTransaction(w http.ResponseWriter, r *http.Request) {
+// HandleScanTransaction handles scanning a Bitcoin transaction
+func (api *BitcoinAPI) HandleScanTransaction(w http.ResponseWriter, r *http.Request) {
 	log.Printf("handleScanTransaction called")
-	enableCORS(w, r)
+	EnableCORS(w, r)
 	if r.Method == "OPTIONS" {
 		return
 	}
@@ -126,13 +125,13 @@ func (api *BitcoinAPI) handleScanTransaction(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	var request TransactionScanRequest
+	var request core.TransactionScanRequest
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		errorResp := NewErrorResponse(
+		errorResp := core.NewErrorResponse(
 			"INVALID_REQUEST",
 			"Invalid JSON request body",
-			generateRequestID(),
-			map[string]interface{}{"error": err.Error()},
+			core.GenerateRequestID(),
+			map[string]any{"error": err.Error()},
 		)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
@@ -142,10 +141,10 @@ func (api *BitcoinAPI) handleScanTransaction(w http.ResponseWriter, r *http.Requ
 
 	// Validate transaction ID
 	if len(request.TransactionID) != 64 {
-		errorResp := NewErrorResponse(
+		errorResp := core.NewErrorResponse(
 			"INVALID_TX_ID",
 			"Invalid Bitcoin transaction ID format",
-			generateRequestID(),
+			core.GenerateRequestID(),
 			nil,
 		)
 		w.Header().Set("Content-Type", "application/json")
@@ -155,16 +154,16 @@ func (api *BitcoinAPI) handleScanTransaction(w http.ResponseWriter, r *http.Requ
 	}
 
 	startTime := time.Now()
-	requestID := generateRequestID()
+	requestID := core.GenerateRequestID()
 
 	// Get transaction info
 	txInfo, err := api.bitcoinClient.GetTransactionInfo(request.TransactionID, true, "info")
 	if err != nil {
-		errorResp := NewErrorResponse(
+		errorResp := core.NewErrorResponse(
 			"TX_NOT_FOUND",
 			"Transaction not found on blockchain",
 			requestID,
-			map[string]interface{}{"error": err.Error()},
+			map[string]any{"error": err.Error()},
 		)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNotFound)
@@ -172,7 +171,7 @@ func (api *BitcoinAPI) handleScanTransaction(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	var images []ImageScanResult
+	var images []core.ImageScanResult
 	stegoDetected := false
 
 	// Extract and scan images if requested
@@ -186,11 +185,11 @@ func (api *BitcoinAPI) handleScanTransaction(w http.ResponseWriter, r *http.Requ
 			log.Printf("Successfully extracted %d images", len(imageDataList))
 			for i, imgData := range imageDataList {
 				// First add the image info even if scanning fails
-				imageScanResult := ImageScanResult{
+				imageScanResult := core.ImageScanResult{
 					Index:     i,
 					SizeBytes: imgData.SizeBytes,
 					Format:    imgData.Format,
-					ScanResult: ScanResult{
+					ScanResult: core.ScanResult{
 						IsStego:          false,
 						StegoProbability: 0.0,
 						Confidence:       0.0,
@@ -226,14 +225,14 @@ func (api *BitcoinAPI) handleScanTransaction(w http.ResponseWriter, r *http.Requ
 
 	processingTime := time.Since(startTime).Milliseconds()
 
-	scanResults := map[string]interface{}{
+	scanResults := map[string]any{
 		"images_found":       len(images),
 		"images_scanned":     len(images),
 		"stego_detected":     stegoDetected,
 		"processing_time_ms": processingTime,
 	}
 
-	response := TransactionScanResponse{
+	response := core.TransactionScanResponse{
 		TransactionID: request.TransactionID,
 		BlockHeight:   txInfo.BlockHeight,
 		Timestamp:     txInfo.Timestamp,
@@ -246,9 +245,9 @@ func (api *BitcoinAPI) handleScanTransaction(w http.ResponseWriter, r *http.Requ
 	json.NewEncoder(w).Encode(response)
 }
 
-// handleScanImage handles scanning a directly uploaded image
-func (api *BitcoinAPI) handleScanImage(w http.ResponseWriter, r *http.Request) {
-	enableCORS(w, r)
+// HandleScanImage handles scanning a directly uploaded image
+func (api *BitcoinAPI) HandleScanImage(w http.ResponseWriter, r *http.Request) {
+	EnableCORS(w, r)
 	if r.Method == "OPTIONS" {
 		return
 	}
@@ -281,11 +280,11 @@ func (api *BitcoinAPI) handleScanImage(w http.ResponseWriter, r *http.Request) {
 
 	// Check image size limit (10MB)
 	if len(imageData) > 10485760 {
-		errorResp := NewErrorResponse(
+		errorResp := core.NewErrorResponse(
 			"IMAGE_TOO_LARGE",
 			"Image exceeds size limit of 10MB",
-			generateRequestID(),
-			map[string]interface{}{"size_bytes": len(imageData)},
+			core.GenerateRequestID(),
+			map[string]any{"size_bytes": len(imageData)},
 		)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusRequestEntityTooLarge)
@@ -294,7 +293,7 @@ func (api *BitcoinAPI) handleScanImage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Parse scan options
-	options := ScanOptions{
+	options := core.ScanOptions{
 		ExtractMessage:      r.FormValue("extract_message") != "false",
 		ConfidenceThreshold: 0.5,
 		IncludeMetadata:     r.FormValue("include_metadata") != "false",
@@ -307,16 +306,16 @@ func (api *BitcoinAPI) handleScanImage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	startTime := time.Now()
-	requestID := generateRequestID()
+	requestID := core.GenerateRequestID()
 
 	// Scan the image
 	scanResult, err := api.scanner.ScanImage(imageData, options)
 	if err != nil {
-		errorResp := NewErrorResponse(
+		errorResp := core.NewErrorResponse(
 			"SCAN_FAILED",
 			"Steganography scan failed",
 			requestID,
-			map[string]interface{}{"error": err.Error()},
+			map[string]any{"error": err.Error()},
 		)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
@@ -326,13 +325,13 @@ func (api *BitcoinAPI) handleScanImage(w http.ResponseWriter, r *http.Request) {
 
 	processingTime := time.Since(startTime).Milliseconds()
 
-	imageInfo := map[string]interface{}{
+	imageInfo := map[string]any{
 		"filename":   header.Filename,
 		"size_bytes": len(imageData),
 		"format":     strings.ToLower(strings.TrimPrefix(header.Filename[strings.LastIndex(header.Filename, ".")+1:], "")),
 	}
 
-	response := DirectImageScanResponse{
+	response := core.DirectImageScanResponse{
 		ScanResult:       *scanResult,
 		ImageInfo:        imageInfo,
 		ProcessingTimeMs: float64(processingTime),
@@ -343,9 +342,9 @@ func (api *BitcoinAPI) handleScanImage(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
-// handleBlockScan handles scanning all transactions in a Bitcoin block
-func (api *BitcoinAPI) handleBlockScan(w http.ResponseWriter, r *http.Request) {
-	enableCORS(w, r)
+// HandleBlockScan handles scanning all transactions in a Bitcoin block
+func (api *BitcoinAPI) HandleBlockScan(w http.ResponseWriter, r *http.Request) {
+	EnableCORS(w, r)
 	if r.Method == "OPTIONS" {
 		return
 	}
@@ -355,13 +354,13 @@ func (api *BitcoinAPI) handleBlockScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var request BlockScanRequest
+	var request core.BlockScanRequest
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		errorResp := NewErrorResponse(
+		errorResp := core.NewErrorResponse(
 			"INVALID_REQUEST",
 			"Invalid JSON request body",
-			generateRequestID(),
-			map[string]interface{}{"error": err.Error()},
+			core.GenerateRequestID(),
+			map[string]any{"error": err.Error()},
 		)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
@@ -370,7 +369,7 @@ func (api *BitcoinAPI) handleBlockScan(w http.ResponseWriter, r *http.Request) {
 	}
 
 	startTime := time.Now()
-	requestID := generateRequestID()
+	requestID := core.GenerateRequestID()
 
 	// Get block information
 	var blockHash string
@@ -392,11 +391,11 @@ func (api *BitcoinAPI) handleBlockScan(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err != nil {
-		errorResp := NewErrorResponse(
+		errorResp := core.NewErrorResponse(
 			"BLOCK_NOT_FOUND",
 			"Block not found",
 			requestID,
-			map[string]interface{}{"error": err.Error()},
+			map[string]any{"error": err.Error()},
 		)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNotFound)
@@ -407,11 +406,11 @@ func (api *BitcoinAPI) handleBlockScan(w http.ResponseWriter, r *http.Request) {
 	// Get transactions in block
 	transactions, err := api.bitcoinClient.GetBlockTransactions(blockHash)
 	if err != nil {
-		errorResp := NewErrorResponse(
+		errorResp := core.NewErrorResponse(
 			"TRANSACTIONS_NOT_FOUND",
 			"Failed to get block transactions",
 			requestID,
-			map[string]interface{}{"error": err.Error()},
+			map[string]any{"error": err.Error()},
 		)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
@@ -422,7 +421,7 @@ func (api *BitcoinAPI) handleBlockScan(w http.ResponseWriter, r *http.Request) {
 	// Always scan all available transactions (Blockstream API limitation)
 	maxTxs := len(transactions)
 
-	var results []TransactionResult
+	var results []core.TransactionResult
 	totalStegoDetected := 0
 	totalImages := 0
 	totalImagesWithStego := 0
@@ -433,7 +432,7 @@ func (api *BitcoinAPI) handleBlockScan(w http.ResponseWriter, r *http.Request) {
 		txID := transactions[i]
 		txStartTime := time.Now()
 
-		txResult := TransactionResult{
+		txResult := core.TransactionResult{
 			TransactionID: txID,
 			BlockHeight:   blockHeight,
 			Status:        "completed",
@@ -476,7 +475,7 @@ func (api *BitcoinAPI) handleBlockScan(w http.ResponseWriter, r *http.Request) {
 					txResult.ExtractedMessage = "🎨 Congratulations! You found a steganographic message hidden in Bitcoin transaction " +
 						txID[:16] + "...\n\nThis demonstrates how secret data can be embedded within ordinary-looking images using steganography techniques. The message is encoded in least significant bits of image pixels, making it invisible to human eye but detectable by specialized AI analysis.\n\nBitcoin's blockchain provides a perfect medium for such hidden communications due to its immutable and public nature."
 
-					txResult.StegoDetails = map[string]interface{}{
+					txResult.StegoDetails = map[string]any{
 						"detection_method": "AI Pattern Recognition",
 						"stego_type":       "LSB (Least Significant Bit)",
 						"confidence":       0.947,
@@ -501,7 +500,7 @@ func (api *BitcoinAPI) handleBlockScan(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Block scan completed: %d txs, %d images, %d stego detected in %dms",
 		len(results), totalImages, totalStegoDetected, processingTime)
 
-	response := BlockScanResponse{
+	response := core.BlockScanResponse{
 		BlockID:               "block_" + requestID[:8],
 		BlockHeight:           blockHeight,
 		BlockHash:             blockHash,
@@ -519,9 +518,9 @@ func (api *BitcoinAPI) handleBlockScan(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
-// handleExtract handles message extraction from steganographic images
-func (api *BitcoinAPI) handleExtract(w http.ResponseWriter, r *http.Request) {
-	enableCORS(w, r)
+// HandleExtract handles message extraction from steganographic images
+func (api *BitcoinAPI) HandleExtract(w http.ResponseWriter, r *http.Request) {
+	EnableCORS(w, r)
 	if r.Method == "OPTIONS" {
 		return
 	}
@@ -556,16 +555,16 @@ func (api *BitcoinAPI) handleExtract(w http.ResponseWriter, r *http.Request) {
 	_ = r.FormValue("force_extract") == "true" // forceExtract parameter for future use
 
 	startTime := time.Now()
-	requestID := generateRequestID()
+	requestID := core.GenerateRequestID()
 
 	// Extract message
 	extractionResult, err := api.scanner.ExtractMessage(imageData, method)
 	if err != nil {
-		errorResp := NewErrorResponse(
+		errorResp := core.NewErrorResponse(
 			"EXTRACTION_FAILED",
 			"Message extraction failed",
 			requestID,
-			map[string]interface{}{"error": err.Error()},
+			map[string]any{"error": err.Error()},
 		)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
@@ -575,13 +574,13 @@ func (api *BitcoinAPI) handleExtract(w http.ResponseWriter, r *http.Request) {
 
 	processingTime := time.Since(startTime).Milliseconds()
 
-	imageInfo := map[string]interface{}{
+	imageInfo := map[string]any{
 		"filename":   header.Filename,
 		"size_bytes": len(imageData),
 		"format":     strings.ToLower(strings.TrimPrefix(header.Filename[strings.LastIndex(header.Filename, ".")+1:], "")),
 	}
 
-	response := ExtractResponse{
+	response := core.ExtractResponse{
 		ExtractionResult: *extractionResult,
 		ImageInfo:        imageInfo,
 		ProcessingTimeMs: float64(processingTime),
@@ -592,9 +591,9 @@ func (api *BitcoinAPI) handleExtract(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
-// handleGetTransaction handles getting transaction details
-func (api *BitcoinAPI) handleGetTransaction(w http.ResponseWriter, r *http.Request) {
-	enableCORS(w, r)
+// HandleGetTransaction handles getting transaction details
+func (api *BitcoinAPI) HandleGetTransaction(w http.ResponseWriter, r *http.Request) {
+	EnableCORS(w, r)
 	if r.Method == "OPTIONS" {
 		return
 	}
@@ -613,10 +612,10 @@ func (api *BitcoinAPI) handleGetTransaction(w http.ResponseWriter, r *http.Reque
 
 	txID := pathParts[2]
 	if len(txID) != 64 {
-		errorResp := NewErrorResponse(
+		errorResp := core.NewErrorResponse(
 			"INVALID_TX_ID",
 			"Invalid Bitcoin transaction ID format",
-			generateRequestID(),
+			core.GenerateRequestID(),
 			nil,
 		)
 		w.Header().Set("Content-Type", "application/json")
@@ -635,11 +634,11 @@ func (api *BitcoinAPI) handleGetTransaction(w http.ResponseWriter, r *http.Reque
 	// Get transaction info
 	txInfo, err := api.bitcoinClient.GetTransactionInfo(txID, includeImages, imageFormat)
 	if err != nil {
-		errorResp := NewErrorResponse(
+		errorResp := core.NewErrorResponse(
 			"TX_NOT_FOUND",
 			"Transaction not found on blockchain",
-			generateRequestID(),
-			map[string]interface{}{"error": err.Error()},
+			core.GenerateRequestID(),
+			map[string]any{"error": err.Error()},
 		)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNotFound)
@@ -649,4 +648,16 @@ func (api *BitcoinAPI) handleGetTransaction(w http.ResponseWriter, r *http.Reque
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(txInfo)
+}
+
+// GetBitcoinClient returns the underlying Bitcoin client
+func (api *BitcoinAPI) GetBitcoinClient() *BitcoinNodeClient {
+	return api.bitcoinClient
+}
+
+// EnableCORS enables CORS headers
+func EnableCORS(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 }
