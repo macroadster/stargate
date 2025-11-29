@@ -59,10 +59,10 @@ func (api *BitcoinAPI) HandleHealth(w http.ResponseWriter, r *http.Request) {
 	bitcoinConnected := api.bitcoinClient.TestConnection()
 	var blockHeight int
 	if bitcoinConnected {
-		var err error
-		blockHeight, err = api.bitcoinClient.GetBlockHeight()
-		if err != nil {
-			log.Printf("Failed to get block height: %v", err)
+		var heightErr error
+		blockHeight, heightErr = api.bitcoinClient.GetBlockHeight()
+		if heightErr != nil {
+			log.Printf("Failed to get block height: %v", heightErr)
 			blockHeight = 0
 		}
 	}
