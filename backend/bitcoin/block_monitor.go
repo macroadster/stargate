@@ -1,6 +1,7 @@
 package bitcoin
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"stargate-backend/core"
 )
 
 // BlockMonitor handles comprehensive Bitcoin block monitoring and data extraction
@@ -23,6 +26,7 @@ type BlockMonitor struct {
 	isRunning     bool
 	stopChan      chan bool
 	mu            sync.RWMutex
+	dataStorage   DataStorageInterface
 
 	// Configuration
 	checkInterval time.Duration
@@ -140,6 +144,20 @@ func NewBlockMonitor(client *BitcoinNodeClient) *BlockMonitor {
 	return &BlockMonitor{
 		bitcoinClient: client,
 		rawClient:     NewRawBlockClient(),
+		checkInterval: 5 * time.Minute, // Check every 5 minutes
+		blocksDir:     "blocks",
+		maxRetries:    3,
+		retryDelay:    10 * time.Second,
+		lastChecked:   time.Now(),
+	}
+}
+
+// NewBlockMonitorWithStorage creates a new block monitor with data storage
+func NewBlockMonitorWithStorage(client *BitcoinNodeClient, dataStorage DataStorageInterface) *BlockMonitor {
+	return &BlockMonitor{
+		bitcoinClient: client,
+		rawClient:     NewRawBlockClient(),
+		dataStorage:   dataStorage,
 		checkInterval: 5 * time.Minute, // Check every 5 minutes
 		blocksDir:     "blocks",
 		maxRetries:    3,
@@ -368,29 +386,59 @@ func (bm *BlockMonitor) ProcessBlock(height int64) error {
 		log.Printf("Failed to save images: %v", err)
 	}
 
+	// Scan images for steganography using the centralized API
+	scanResults, err := bm.scanBlockViaAPI(height)
+	if err != nil {
+		log.Printf("Failed to scan block via API: %v", err)
+		// Fallback: create empty scan results
+		scanResults = []map[string]any{}
+	} else {
+		stegoCount := bm.countStegoImagesFromAPIResponse(scanResults)
+		log.Printf("Steganography scan completed via API: %d images scanned, %d with stego detected",
+			len(scanResults), stegoCount)
+	}
+
 	// Create inscriptions data
 	inscriptions := bm.createInscriptionsFromImages(parsedBlock.Images)
 
-	// Save block summary JSON for frontend API
-	if err := bm.saveBlockSummary(blockDir, parsedBlock, inscriptions, height); err != nil {
+	// Save block summary JSON for frontend API with scan results
+	if err := bm.saveBlockSummaryWithScanResults(blockDir, parsedBlock, inscriptions, scanResults, height); err != nil {
 		log.Printf("Failed to save block summary: %v", err)
-	}
-
-	// Update global inscriptions index
-	if err := bm.updateGlobalInscriptions(height, parsedBlock.Hash, inscriptions, parsedBlock); err != nil {
-		log.Printf("Failed to update global inscriptions: %v", err)
 	}
 
 	processingTime := time.Since(startTime)
 	bm.lastProcessTime = processingTime
 
+	// Create block response for storage
+	blockResponse := &BlockInscriptionsResponse{
+		BlockHeight:       height,
+		BlockHash:         parsedBlock.Header.Hash,
+		Timestamp:         int64(parsedBlock.Header.Timestamp),
+		TotalTransactions: len(parsedBlock.Transactions),
+		Inscriptions:      inscriptions,
+		Images:            parsedBlock.Images,
+		SmartContracts:    bm.createSmartContractsFromScanResults(scanResults),
+		ProcessingTime:    processingTime.Milliseconds(),
+		Success:           true,
+	}
+
+	// Store in data storage if available
+	if bm.dataStorage != nil {
+		if err := bm.dataStorage.StoreBlockData(blockResponse, scanResults); err != nil {
+			log.Printf("Failed to store block data in storage: %v", err)
+		} else {
+			log.Printf("Successfully stored block %d data in storage", height)
+		}
+	}
+
 	// Update statistics
 	bm.totalTransactions += int64(len(parsedBlock.Transactions))
 	bm.totalImages += int64(len(parsedBlock.Images))
 	bm.totalInscriptions += int64(len(inscriptions))
+	bm.totalStegoContracts += int64(bm.countStegoImages(scanResults))
 
-	log.Printf("Successfully processed block %d in %v: %d txs, %d images, %d inscriptions",
-		height, processingTime, len(parsedBlock.Transactions), len(parsedBlock.Images), len(inscriptions))
+	log.Printf("Successfully processed block %d in %v: %d txs, %d images, %d inscriptions, %d stego detected",
+		height, processingTime, len(parsedBlock.Transactions), len(parsedBlock.Images), len(inscriptions), bm.countStegoImages(scanResults))
 
 	return nil
 }
@@ -565,45 +613,6 @@ func encodeVarIntSize(value int) int {
 	}
 }
 
-// updateGlobalInscriptions updates the global inscriptions index
-func (bm *BlockMonitor) updateGlobalInscriptions(height int64, blockHash string, inscriptions []InscriptionData, parsedBlock *ParsedBlock) error {
-	// Load existing global index
-	var globalIndex map[string]any
-	indexFile := filepath.Join(bm.blocksDir, "global_inscriptions.json")
-
-	if data, err := os.ReadFile(indexFile); err == nil {
-		json.Unmarshal(data, &globalIndex)
-	} else {
-		globalIndex = make(map[string]interface{})
-	}
-
-	// Calculate block size (sum of all transaction sizes + header)
-	blockSize := 80 // Block header is 80 bytes
-	for _, tx := range parsedBlock.Transactions {
-		blockSize += bm.calculateTransactionSize(tx)
-	}
-
-	// Add new block data
-	blockKey := fmt.Sprintf("%d_%s", height, blockHash)
-	globalIndex[blockKey] = map[string]any{
-		"height":       height,
-		"hash":         blockHash,
-		"timestamp":    time.Now().Unix(),
-		"inscriptions": inscriptions,
-		"image_count":  len(inscriptions),
-		"tx_count":     len(parsedBlock.Transactions),
-		"size":         blockSize,
-	}
-
-	// Save updated index
-	updatedJSON, err := json.MarshalIndent(globalIndex, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	return os.WriteFile(indexFile, updatedJSON, 0644)
-}
-
 // convertTransactions converts parsed transactions to transaction data format
 func (bm *BlockMonitor) convertTransactions(transactions []Transaction) []TransactionData {
 	var txData []TransactionData
@@ -621,6 +630,192 @@ func (bm *BlockMonitor) convertTransactions(transactions []Transaction) []Transa
 	}
 
 	return txData
+}
+
+// scanBlockViaAPI calls the /scan/block API endpoint to scan a block
+func (bm *BlockMonitor) scanBlockViaAPI(height int64) ([]map[string]any, error) {
+	// Create the request for the /scan/block API
+	request := core.BlockScanRequest{
+		BlockHeight: int(height),
+		ScanOptions: core.ScanOptions{
+			ExtractMessage:      true,
+			ConfidenceThreshold: 0.5,
+			IncludeMetadata:     true,
+		},
+	}
+
+	// Marshal the request
+	requestBody, err := json.Marshal(request)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal scan request: %w", err)
+	}
+
+	// Make HTTP request to local API
+	client := &http.Client{Timeout: 300 * time.Second} // 5 minute timeout for large blocks
+	resp, err := client.Post("http://localhost:3001/bitcoin/v1/scan/block", "application/json", bytes.NewBuffer(requestBody))
+	if err != nil {
+		return nil, fmt.Errorf("failed to call scan API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("scan API returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	// Parse the response
+	var scanResponse core.BlockScanResponse
+	if err := json.NewDecoder(resp.Body).Decode(&scanResponse); err != nil {
+		return nil, fmt.Errorf("failed to decode scan response: %w", err)
+	}
+
+	// Convert the API response to the expected format for block monitor
+	var results []map[string]any
+	for _, txResult := range scanResponse.Results {
+		if txResult.StegoDetected {
+			result := map[string]any{
+				"tx_id":             txResult.TransactionID,
+				"image_index":       0, // We don't have individual image info from API
+				"file_name":         fmt.Sprintf("tx_%s", txResult.TransactionID[:16]),
+				"size_bytes":        0,
+				"format":            "unknown",
+				"scanned_at":        time.Now().Unix(),
+				"is_stego":          txResult.StegoDetected,
+				"confidence":        0.0,
+				"stego_type":        "detected_via_api",
+				"extracted_message": txResult.ExtractedMessage,
+				"scan_error":        "",
+				"stego_details":     txResult.StegoDetails,
+			}
+			results = append(results, result)
+		}
+	}
+
+	return results, nil
+}
+
+// countStegoImagesFromAPIResponse counts stego detections from API response
+func (bm *BlockMonitor) countStegoImagesFromAPIResponse(scanResults []map[string]any) int {
+	count := 0
+	for _, result := range scanResults {
+		if isStego, ok := result["is_stego"].(bool); ok && isStego {
+			count++
+		}
+	}
+	return count
+}
+
+// countStegoImages counts how many images have steganography detected
+func (bm *BlockMonitor) countStegoImages(scanResults []map[string]any) int {
+	return bm.countStegoImagesFromAPIResponse(scanResults)
+}
+
+// saveBlockSummaryWithScanResults saves block summary including steganography scan results
+func (bm *BlockMonitor) saveBlockSummaryWithScanResults(blockDir string, parsedBlock *ParsedBlock, inscriptions []InscriptionData, scanResults []map[string]any, blockHeight int64) error {
+	// Count stego detections
+	stegoCount := bm.countStegoImages(scanResults)
+
+	// Create optimized smart contracts from scan results (only for stego images)
+	smartContracts := []SmartContractData{}
+	if stegoCount > 0 {
+		smartContracts = bm.createSmartContractsFromScanResults(scanResults)
+	}
+
+	// Create optimized summary with minimal data
+	summary := BlockInscriptionsResponse{
+		BlockHeight:       blockHeight,
+		BlockHash:         parsedBlock.Header.Hash,
+		Timestamp:         int64(parsedBlock.Header.Timestamp),
+		TotalTransactions: len(parsedBlock.Transactions),
+		Inscriptions:      inscriptions,
+		Images:            parsedBlock.Images,
+		SmartContracts:    smartContracts,
+		ProcessingTime:    time.Now().Unix(),
+		Success:           true,
+	}
+
+	// Create compact steganography summary (only once)
+	steganographySummary := map[string]any{
+		"total_images":   len(parsedBlock.Images),
+		"stego_detected": stegoCount > 0,
+		"stego_count":    stegoCount,
+		"scan_timestamp": time.Now().Unix(),
+	}
+
+	// Only include steganography data if detections exist
+	var enhancedSummary map[string]any
+	if stegoCount > 0 {
+		enhancedSummary = map[string]any{
+			"block_height":       summary.BlockHeight,
+			"block_hash":         summary.BlockHash,
+			"timestamp":          summary.Timestamp,
+			"total_transactions": summary.TotalTransactions,
+			"inscriptions":       summary.Inscriptions,
+			"images":             summary.Images,
+			"smart_contracts":    summary.SmartContracts,
+			"processing_time_ms": summary.ProcessingTime,
+			"success":            summary.Success,
+			"steganography_scan": steganographySummary,
+		}
+	} else {
+		enhancedSummary = map[string]any{
+			"block_height":       summary.BlockHeight,
+			"block_hash":         summary.BlockHash,
+			"timestamp":          summary.Timestamp,
+			"total_transactions": summary.TotalTransactions,
+			"inscriptions":       summary.Inscriptions,
+			"images":             summary.Images,
+			"smart_contracts":    []SmartContractData{},
+			"processing_time_ms": summary.ProcessingTime,
+			"success":            summary.Success,
+		}
+	}
+
+	summaryJSON, err := json.MarshalIndent(enhancedSummary, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal enhanced summary: %w", err)
+	}
+
+	summaryFile := filepath.Join(blockDir, "inscriptions.json")
+	if err := os.WriteFile(summaryFile, summaryJSON, 0644); err != nil {
+		return fmt.Errorf("failed to write summary file: %w", err)
+	}
+
+	return nil
+}
+
+// createSmartContractsFromScanResults creates smart contract data from steganography scan results
+func (bm *BlockMonitor) createSmartContractsFromScanResults(scanResults []map[string]any) []SmartContractData {
+	var contracts []SmartContractData
+
+	for _, result := range scanResults {
+		if isStego, ok := result["is_stego"].(bool); ok && isStego {
+			contract := SmartContractData{
+				ContractID:  fmt.Sprintf("stego_%v_%d", result["image_index"], time.Now().Unix()),
+				BlockHeight: 0, // Will be set by caller
+				ImagePath:   fmt.Sprintf("%v", result["file_name"]),
+				Confidence:  0.0,
+				Metadata: map[string]any{
+					"tx_id":             result["tx_id"],
+					"image_index":       result["image_index"],
+					"stego_type":        result["stego_type"],
+					"extracted_message": result["extracted_message"],
+					"scan_confidence":   result["confidence"],
+					"scan_timestamp":    result["scanned_at"],
+					"format":            result["format"],
+					"size_bytes":        result["size_bytes"],
+				},
+			}
+
+			if conf, ok := result["confidence"].(float64); ok {
+				contract.Confidence = conf
+			}
+
+			contracts = append(contracts, contract)
+		}
+	}
+
+	return contracts
 }
 
 // GetBlockInscriptions retrieves inscriptions for a specific block height

@@ -18,6 +18,8 @@ type ProxyScanner struct {
 	apiKey      string
 	client      *http.Client
 	initialized bool
+	maxRetries  int
+	retryDelay  time.Duration
 }
 
 // NewProxyScanner creates a new proxy scanner
@@ -34,6 +36,8 @@ func NewProxyScanner(apiURL string, apiKey string) *ProxyScanner {
 		apiKey:      apiKey,
 		client:      &http.Client{Timeout: 30 * time.Second},
 		initialized: false,
+		maxRetries:  3,
+		retryDelay:  1 * time.Second,
 	}
 }
 
@@ -314,4 +318,39 @@ func (p *ProxyScanner) GetScannerInfo() core.ScannerInfo {
 // IsInitialized returns initialization status
 func (p *ProxyScanner) IsInitialized() bool {
 	return p.initialized
+}
+
+// doRequestWithRetry executes an HTTP request with exponential backoff retry logic
+func (p *ProxyScanner) doRequestWithRetry(req *http.Request) (*http.Response, error) {
+	var lastErr error
+
+	for attempt := 0; attempt <= p.maxRetries; attempt++ {
+		if attempt > 0 {
+			// Exponential backoff: base delay * 2^(attempt-1) with jitter
+			backoffDelay := p.retryDelay * time.Duration(1<<(attempt-1))
+			// Add jitter to prevent thundering herd
+			jitter := time.Duration(float64(backoffDelay) * 0.1 * (0.5 + 0.5*float64(time.Now().UnixNano()%1000)/1000))
+			delay := backoffDelay + jitter
+
+			fmt.Printf("Retrying request to Python API (attempt %d/%d) after %v delay\n", attempt, p.maxRetries, delay)
+			time.Sleep(delay)
+		}
+
+		resp, err := p.client.Do(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		// Check for server errors that might be transient
+		if resp.StatusCode >= 500 {
+			resp.Body.Close()
+			lastErr = fmt.Errorf("server error: %d", resp.StatusCode)
+			continue
+		}
+
+		return resp, nil
+	}
+
+	return nil, fmt.Errorf("request failed after %d attempts: %w", p.maxRetries+1, lastErr)
 }

@@ -16,8 +16,8 @@ import (
 
 // BitcoinAPI handles Bitcoin steganography scanning endpoints
 type BitcoinAPI struct {
-	bitcoinClient *BitcoinNodeClient
-	scanner       core.StarlightScannerInterface
+	bitcoinClient  *BitcoinNodeClient
+	scannerManager *starlight.ScannerManager
 }
 
 // NewBitcoinAPI creates a new Bitcoin API instance
@@ -28,23 +28,18 @@ func NewBitcoinAPI() *BitcoinAPI {
 // NewBitcoinAPIWithClient creates a new Bitcoin API instance with custom client
 func NewBitcoinAPIWithClient(client *BitcoinNodeClient) *BitcoinAPI {
 	bitcoinClient := client
+	scannerManager := starlight.GetScannerManager()
 
-	var scanner core.StarlightScannerInterface
-
-	// Try to initialize proxy scanner to Python API
-	proxyScanner := starlight.NewProxyScanner("http://localhost:8080", "demo-api-key")
-	if err := proxyScanner.Initialize(); err != nil {
-		log.Printf("Failed to initialize proxy scanner: %v", err)
-		log.Printf("Falling back to mock scanner")
-		scanner = starlight.NewMockStarlightScanner()
+	// Initialize scanner with circuit breaker protection
+	if err := scannerManager.InitializeScanner(); err != nil {
+		log.Printf("Failed to initialize scanner manager: %v", err)
 	} else {
-		log.Printf("Successfully initialized proxy scanner to Python API")
-		scanner = proxyScanner
+		log.Printf("Scanner manager initialized successfully, using %s scanner", scannerManager.GetScannerType())
 	}
 
 	return &BitcoinAPI{
-		bitcoinClient: bitcoinClient,
-		scanner:       scanner,
+		bitcoinClient:  bitcoinClient,
+		scannerManager: scannerManager,
 	}
 }
 
@@ -72,24 +67,28 @@ func (api *BitcoinAPI) HandleHealth(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Get scanner info
-	scannerInfo := api.scanner.GetScannerInfo()
+	// Get scanner info and health status
+	scannerInfo := api.scannerManager.GetScannerInfo()
+	scannerHealth := api.scannerManager.GetHealthStatus()
 
 	// Determine overall status
 	status := "healthy"
-	if !bitcoinConnected || !api.scanner.IsInitialized() {
+	if !bitcoinConnected || !api.scannerManager.IsInitialized() {
 		status = "degraded"
 	}
 
-	response := core.NewHealthResponse(
-		status,
-		scannerInfo,
-		core.BitcoinInfo{
+	// Add scanner manager health to response
+	response := map[string]interface{}{
+		"status":          status,
+		"scanner":         scannerInfo,
+		"scanner_manager": scannerHealth,
+		"bitcoin": core.BitcoinInfo{
 			NodeConnected: bitcoinConnected,
 			NodeURL:       api.bitcoinClient.GetNodeURL(),
 			BlockHeight:   blockHeight,
 		},
-	)
+		"timestamp": time.Now().Format(time.RFC3339),
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
@@ -205,8 +204,8 @@ func (api *BitcoinAPI) HandleScanTransaction(w http.ResponseWriter, r *http.Requ
 					log.Printf("Failed to decode image %d: %v", i, err)
 					imageScanResult.ScanResult.ExtractionError = "Failed to decode image data"
 				} else {
-					// Try to scan image
-					scanResult, err := api.scanner.ScanImage(imageBytes, request.ScanOptions)
+					// Try to scan image using scanner manager
+					scanResult, err := api.scannerManager.ScanImage(imageBytes, request.ScanOptions)
 					if err != nil {
 						log.Printf("Failed to scan image %d: %v", i, err)
 						imageScanResult.ScanResult.ExtractionError = "Scanning failed: " + err.Error()
@@ -308,8 +307,8 @@ func (api *BitcoinAPI) HandleScanImage(w http.ResponseWriter, r *http.Request) {
 	startTime := time.Now()
 	requestID := core.GenerateRequestID()
 
-	// Scan the image
-	scanResult, err := api.scanner.ScanImage(imageData, options)
+	// Scan the image using scanner manager
+	scanResult, err := api.scannerManager.ScanImage(imageData, options)
 	if err != nil {
 		errorResp := core.NewErrorResponse(
 			"SCAN_FAILED",
@@ -458,8 +457,8 @@ func (api *BitcoinAPI) HandleBlockScan(w http.ResponseWriter, r *http.Request) {
 					continue
 				}
 
-				// Scan image using proxy scanner
-				scanResult, err := api.scanner.ScanImage(imageBytes, request.ScanOptions)
+				// Scan image using scanner manager
+				scanResult, err := api.scannerManager.ScanImage(imageBytes, request.ScanOptions)
 				if err != nil {
 					log.Printf("Failed to scan image from tx %s: %v", txID[:8], err)
 					continue
@@ -557,8 +556,8 @@ func (api *BitcoinAPI) HandleExtract(w http.ResponseWriter, r *http.Request) {
 	startTime := time.Now()
 	requestID := core.GenerateRequestID()
 
-	// Extract message
-	extractionResult, err := api.scanner.ExtractMessage(imageData, method)
+	// Extract message using scanner manager
+	extractionResult, err := api.scannerManager.ExtractMessage(imageData, method)
 	if err != nil {
 		errorResp := core.NewErrorResponse(
 			"EXTRACTION_FAILED",
