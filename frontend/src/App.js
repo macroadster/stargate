@@ -1,7 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Search, Copy, Check, Moon, Sun, ChevronLeft, ChevronRight, X } from 'lucide-react';
-import { QRCodeCanvas } from 'qrcode.react';
-import StegoAnalysisViewer from './StegoAnalysisViewer.js';
 
 // Process block data using real backend counts
 const generateBlock = (block) => {
@@ -50,7 +48,7 @@ const generateInscriptions = (inscriptions) => {
 };
 
 const BlockCard = ({ block, onClick, isSelected }) => {
-  const timeAgo = Math.floor((Date.now() - (block.timestamp * 1000)) / 3600000);
+
   const hasSmartContracts = (block.smart_contract_count || block.smart_contracts || 0) > 0;
   const hasWitnessImages = (block.witness_image_count || block.witness_images || 0) > 0;
 
@@ -1142,7 +1140,7 @@ export default function OrdiscanExplorer() {
   const [showInscribeModal, setShowInscribeModal] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [isDarkMode, setIsDarkMode] = useState(true);
-  const [pendingTransactions, setPendingTransactions] = useState([]);
+
   const [searchResults, setSearchResults] = useState(null);
   const [copiedText, setCopiedText] = useState('');
   const [currentInscriptions, setCurrentInscriptions] = useState([]);
@@ -1287,8 +1285,6 @@ export default function OrdiscanExplorer() {
   };
 
   // Lazy loading state
-  let currentOffset = 0;
-  const batchSize = 20;
 
   const fetchInscriptions = async () => {
     try {
@@ -1384,6 +1380,7 @@ export default function OrdiscanExplorer() {
         setIsUserNavigating(false);
       }
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedBlock, isUserNavigating, shouldAutoScroll]);
 
   // Effect to prevent auto-scroll when blocks are updated during polling
@@ -1700,7 +1697,6 @@ export default function OrdiscanExplorer() {
         <InscribeModal
           onClose={() => setShowInscribeModal(false)}
           blocks={blocks}
-          setPendingTransactions={setPendingTransactions}
         />
       )}
 
