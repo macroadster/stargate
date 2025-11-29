@@ -386,7 +386,7 @@ func (ds *DataStorage) loadCache() {
 		for i, img := range blockInfo.Images {
 			cacheEntry.Inscriptions[i] = bitcoin.InscriptionData{
 				TxID:        img.TxID,
-				Content:     "", // Not in inscriptions.json
+				Content:     "", // Content served via /api/block-image/ endpoint
 				ContentType: img.Format,
 				FileName:    img.FileName,
 				FilePath:    img.FilePath,
