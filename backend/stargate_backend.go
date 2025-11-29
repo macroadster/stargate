@@ -88,12 +88,24 @@ func setupRoutes(mux *http.ServeMux, container *container.Container) http.Handle
 	})
 
 	// Enhanced data API endpoints (keep existing functionality)
+	dataStorage := storage.NewDataStorage("blocks")
+	blockMonitor := bitcoin.NewBlockMonitorWithStorage(
+		bitcoin.NewBitcoinNodeClient("https://blockstream.info/api"),
+		dataStorage,
+	)
+
+	// Start the block monitor in background
+	go func() {
+		if err := blockMonitor.Start(); err != nil {
+			log.Printf("Failed to start block monitor: %v", err)
+		} else {
+			log.Println("Block monitor started successfully")
+		}
+	}()
+
 	dataAPI := api.NewDataAPI(
-		storage.NewDataStorage("data"),
-		bitcoin.NewBlockMonitorWithStorage(
-			bitcoin.NewBitcoinNodeClient("https://blockstream.info/api"),
-			storage.NewDataStorage("data"),
-		),
+		dataStorage,
+		blockMonitor,
 		bitcoin.NewBitcoinAPI(),
 	)
 

@@ -282,9 +282,12 @@ func (ds *DataStorage) saveBlockDataToFile(data interface{}) error {
 
 // loadBlockDataFromFile loads block data from JSON file
 func (ds *DataStorage) loadBlockDataFromFile(height int64) (interface{}, error) {
-	filename := filepath.Join(ds.dataDir, fmt.Sprintf("block_%d.json", height))
+	// Try blocks directory structure (height_hash/inscriptions.json)
+	blocksDir := "blocks"
+	blockDirPattern := filepath.Join(blocksDir, fmt.Sprintf("%d_00000000", height))
+	inscriptionsPath := filepath.Join(blockDirPattern, "inscriptions.json")
 
-	data, err := os.ReadFile(filename)
+	data, err := os.ReadFile(inscriptionsPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read block data file: %w", err)
 	}
@@ -301,29 +304,109 @@ func (ds *DataStorage) loadBlockDataFromFile(height int64) (interface{}, error) 
 	return &cacheEntry, nil
 }
 
-// loadCache loads existing cache from files
+// loadCache loads block data from blocks/[height]_[hash]/block.json files into cache
 func (ds *DataStorage) loadCache() {
-	files, err := os.ReadDir(ds.dataDir)
-	if err != nil {
-		log.Printf("Failed to read data directory: %v", err)
+	blocksDir := "blocks"
+
+	// Check if blocks directory exists
+	if _, err := os.Stat(blocksDir); err != nil {
+		if os.IsNotExist(err) {
+			log.Printf("Blocks directory does not exist, cache will be empty")
+			return
+		}
+		log.Printf("Failed to check blocks directory: %v", err)
 		return
 	}
 
-	for _, file := range files {
-		if !file.IsDir() && len(file.Name()) > 6 && file.Name()[:6] == "block_" {
-			var height int64
-			if _, err := fmt.Sscanf(file.Name(), "block_%d.json", &height); err == nil {
-				if data, err := ds.loadBlockDataFromFile(height); err == nil {
-					cacheData, ok := data.(*BlockDataCache)
-					if ok {
-						ds.cache[height] = cacheData
-					}
-				}
-			}
-		}
+	blockEntries, err := os.ReadDir(blocksDir)
+	if err != nil {
+		log.Printf("Failed to read blocks directory: %v", err)
+		return
 	}
 
-	log.Printf("Loaded %d block data entries into cache", len(ds.cache))
+	loadedCount := 0
+	for _, blockEntry := range blockEntries {
+		if !blockEntry.IsDir() {
+			continue
+		}
+
+		// Try to load inscriptions.json from this directory
+		inscriptionsJsonPath := filepath.Join(blocksDir, blockEntry.Name(), "inscriptions.json")
+		if _, err := os.Stat(inscriptionsJsonPath); err != nil {
+			continue // Skip if inscriptions.json doesn't exist
+		}
+
+		// Read and parse the inscriptions.json file
+		blockData, err := os.ReadFile(inscriptionsJsonPath)
+		if err != nil {
+			log.Printf("Warning: failed to read inscriptions file %s: %v", inscriptionsJsonPath, err)
+			continue
+		}
+
+		var blockInfo struct {
+			BlockHash   string `json:"block_hash"`
+			BlockHeight int64  `json:"block_height"`
+			Images      []struct {
+				TxID      string `json:"tx_id"`
+				Format    string `json:"format"`
+				SizeBytes int    `json:"size_bytes"`
+				FileName  string `json:"file_name"`
+				FilePath  string `json:"file_path"`
+			} `json:"images"`
+		}
+
+		if err := json.Unmarshal(blockData, &blockInfo); err != nil {
+			log.Printf("Warning: failed to parse inscriptions file %s: %v", inscriptionsJsonPath, err)
+			continue
+		}
+
+		// Convert to our cache format
+		cacheEntry := &BlockDataCache{
+			BlockHeight:    blockInfo.BlockHeight,
+			BlockHash:      blockInfo.BlockHash,
+			Timestamp:      0, // Not in inscriptions.json, using 0
+			Inscriptions:   make([]bitcoin.InscriptionData, len(blockInfo.Images)),
+			Images:         make([]bitcoin.ExtractedImageData, len(blockInfo.Images)),
+			SmartContracts: make([]bitcoin.SmartContractData, 0),
+			ScanResults:    make([]map[string]interface{}, 0),
+			ProcessingTime: 0,
+			Success:        true,
+			CacheTimestamp: time.Now(),
+			SteganographySummary: &bitcoin.SteganographySummary{
+				TotalImages:   len(blockInfo.Images),
+				StegoDetected: false,
+				StegoCount:    0,
+				ScanTimestamp: time.Now().Unix(),
+				AvgConfidence: 0,
+				StegoTypes:    []string{},
+			},
+		}
+
+		// Convert images to inscriptions
+		for i, img := range blockInfo.Images {
+			cacheEntry.Inscriptions[i] = bitcoin.InscriptionData{
+				TxID:        img.TxID,
+				Content:     "", // Not in inscriptions.json
+				ContentType: img.Format,
+				FileName:    img.FileName,
+				FilePath:    img.FilePath,
+				SizeBytes:   img.SizeBytes,
+			}
+
+			cacheEntry.Images[i] = bitcoin.ExtractedImageData{
+				TxID:      img.TxID,
+				FileName:  img.FileName,
+				FilePath:  img.FilePath,
+				SizeBytes: img.SizeBytes,
+			}
+		}
+
+		// Store in cache
+		ds.cache[blockInfo.BlockHeight] = cacheEntry
+		loadedCount++
+	}
+
+	log.Printf("Loaded %d blocks into cache from blocks/ directory", loadedCount)
 }
 
 // cleanOldCache removes expired cache entries

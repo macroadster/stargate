@@ -249,6 +249,75 @@ func (bm *BlockMonitor) monitorLoop() {
 	}
 }
 
+// updateRecentBlocksSummary creates a recent blocks summary file for frontend
+func (bm *BlockMonitor) updateRecentBlocksSummary() error {
+	// Get recent block directories
+	blocksDir := "blocks"
+	files, err := os.ReadDir(blocksDir)
+	if err != nil {
+		return fmt.Errorf("failed to read blocks directory: %w", err)
+	}
+
+	var recentBlocks []map[string]interface{}
+
+	// Collect recent blocks (up to 10 most recent)
+	for _, file := range files {
+		if file.IsDir() && len(file.Name()) > 8 {
+			var height int64
+			if _, err := fmt.Sscanf(file.Name(), "%d_", &height); err == nil {
+				// Try to read inscriptions.json
+				blockDirPath := filepath.Join(blocksDir, file.Name())
+				inscriptionsPath := filepath.Join(blockDirPath, "inscriptions.json")
+
+				if data, err := os.ReadFile(inscriptionsPath); err == nil {
+					var blockData map[string]interface{}
+					if err := json.Unmarshal(data, &blockData); err == nil {
+						// Add to recent blocks
+						recentBlocks = append(recentBlocks, blockData)
+					}
+				}
+			}
+		}
+	}
+
+	// Sort by height (descending)
+	for i := 0; i < len(recentBlocks); i++ {
+		for j := i + 1; j < len(recentBlocks); j++ {
+			height1, _ := recentBlocks[i]["block_height"].(float64)
+			height2, _ := recentBlocks[j]["block_height"].(float64)
+			if height1 < height2 {
+				recentBlocks[i], recentBlocks[j] = recentBlocks[j], recentBlocks[i]
+			}
+		}
+	}
+
+	// Take only top 10
+	if len(recentBlocks) > 10 {
+		recentBlocks = recentBlocks[:10]
+	}
+
+	// Create summary
+	summary := map[string]interface{}{
+		"blocks":       recentBlocks,
+		"total":        len(recentBlocks),
+		"last_updated": time.Now().Unix(),
+	}
+
+	// Save to blocks/recent-blocks.json
+	summaryJSON, err := json.MarshalIndent(summary, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal recent blocks summary: %w", err)
+	}
+
+	summaryPath := filepath.Join(blocksDir, "recent-blocks.json")
+	if err := os.WriteFile(summaryPath, summaryJSON, 0644); err != nil {
+		return fmt.Errorf("failed to write recent blocks summary: %w", err)
+	}
+
+	log.Printf("Updated recent blocks summary with %d blocks", len(recentBlocks))
+	return nil
+}
+
 // checkForNewBlocks checks for and processes new blocks more efficiently
 func (bm *BlockMonitor) checkForNewBlocks() error {
 	// Get current blockchain height from blockchain.info
@@ -317,6 +386,12 @@ func (bm *BlockMonitor) checkForNewBlocks() error {
 	}
 
 	bm.lastChecked = time.Now()
+
+	// Update recent blocks summary for frontend
+	if err := bm.updateRecentBlocksSummary(); err != nil {
+		log.Printf("Failed to update recent blocks summary: %v", err)
+	}
+
 	return nil
 }
 
