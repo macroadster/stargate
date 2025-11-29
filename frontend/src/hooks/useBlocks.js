@@ -33,8 +33,8 @@ export const useBlocks = () => {
         throw new Error(`HTTP ${response.status}`);
       }
       
-      const blocksData = data.blocks || data;
-      let processedBlocks = blocksData.slice(0, 10).map(block => generateBlock(block));
+      const blocksData = data.data || data.blocks || data;
+      let processedBlocks = Array.isArray(blocksData) ? blocksData.slice(0, 10).map(block => generateBlock(block)) : [];
 
       if (processedBlocks.length === 0) {
         processedBlocks = [];
