@@ -291,8 +291,12 @@ func (ds *DataStorage) loadBlockDataFromFile(height int64) (interface{}, error) 
 
 	var cacheEntry BlockDataCache
 	if err := json.Unmarshal(data, &cacheEntry); err != nil {
+		log.Printf("Failed to unmarshal block data for height %d: %v", height, err)
 		return nil, fmt.Errorf("failed to unmarshal block data: %w", err)
 	}
+
+	// Set cache timestamp
+	cacheEntry.CacheTimestamp = time.Now()
 
 	return &cacheEntry, nil
 }

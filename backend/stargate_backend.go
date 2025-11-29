@@ -1,8 +1,11 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"net/http"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"stargate-backend/api"
@@ -100,6 +103,29 @@ func setupRoutes(mux *http.ServeMux, container *container.Container) http.Handle
 	mux.HandleFunc("/api/data/updates", dataAPI.HandleRealtimeUpdates)
 	mux.HandleFunc("/api/data/scan", dataAPI.HandleScanBlockOnDemand)
 	mux.HandleFunc("/api/data/block-images", dataAPI.HandleGetBlockImages)
+	mux.HandleFunc("/api/block-images", dataAPI.HandleGetBlockImages)
+
+	// Serve block images
+	mux.HandleFunc("/api/block-image/", func(w http.ResponseWriter, r *http.Request) {
+		// Extract height and filename from URL path
+		pathParts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/block-image/"), "/")
+		if len(pathParts) < 2 {
+			http.Error(w, "Invalid URL format", http.StatusBadRequest)
+			return
+		}
+
+		height := pathParts[0]
+		filename := pathParts[1]
+
+		// Construct file path
+		imagePath := filepath.Join("blocks", fmt.Sprintf("%s_00000000", height), "images", filename)
+
+		// Log the image request
+		log.Printf("Serving image: block=%s, filename=%s, path=%s", height, filename, imagePath)
+
+		// Serve the file
+		http.ServeFile(w, r, imagePath)
+	})
 
 	// Bitcoin steganography scanning endpoints
 	bitcoinAPI := bitcoin.NewBitcoinAPI()

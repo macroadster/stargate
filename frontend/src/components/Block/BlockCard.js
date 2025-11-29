@@ -3,6 +3,8 @@ import React from 'react';
 const BlockCard = ({ block, onClick, isSelected }) => {
   const hasSmartContracts = (block.smart_contract_count || block.smart_contracts || 0) > 0;
   const hasWitnessImages = (block.witness_image_count || block.witness_images || 0) > 0;
+  
+
 
   const getBackgroundClass = () => {
     if (block.isFuture) return 'from-yellow-200 to-yellow-300 dark:from-yellow-600 dark:to-yellow-800';
@@ -23,7 +25,7 @@ const BlockCard = ({ block, onClick, isSelected }) => {
     const witnessImageCount = block.witness_image_count || 0;
     
     if (inscriptionCount > 0) {
-      return `${inscriptionCount} stego inscription${inscriptionCount !== 1 ? 's' : ''}`;
+      return `${inscriptionCount} inscription${inscriptionCount !== 1 ? 's' : ''}`;
     }
     
     if (smartContractCount > 0) {

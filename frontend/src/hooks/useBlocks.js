@@ -1,20 +1,31 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 
 const generateBlock = (block) => {
   const now = Date.now();
   
+  // Handle both data API and mempool API formats
+  const inscriptionCount = block.inscriptions ? block.inscriptions.length : (block.smart_contracts || 0);
+  const stegoCount = block.steganography_summary?.stego_count || 0;
+  
+  // For UI purposes, treat all inscriptions as "smart contracts" to show the badge
+  const displayContractCount = Math.max(inscriptionCount, stegoCount);
+  
+
+  
   return {
-    height: block.height,
-    timestamp: block.timestamp || now - ((923627 - block.height) * 600000),
-    hash: block.id,
-    inscriptionCount: block.smart_contracts || 0,
-    smart_contract_count: block.smart_contracts || 0,
-    witness_image_count: block.witness_image_count || 0,
+    height: block.block_height || block.height,
+    timestamp: block.timestamp || now - ((923627 - (block.block_height || block.height)) * 600000),
+    hash: block.block_hash || block.id,
+    inscriptionCount: inscriptionCount,
+    inscription_count: inscriptionCount,
+    smart_contract_count: displayContractCount,
+    smart_contracts: block.inscriptions || [],
+    witness_image_count: block.images ? block.images.length : 0,
     hasBRC20: false,
-    thumbnail: (block.smart_contracts && block.smart_contracts > 0) ? '🎨' : null,
-    tx_count: block.tx_count,
-    smart_contracts: [],
-    witness_images: block.witness_images || []
+    thumbnail: (inscriptionCount > 0) ? '🎨' : null,
+    tx_count: block.tx_count || inscriptionCount || 0,
+    smart_contracts: block.inscriptions || [],
+    witness_images: block.images || []
   };
 };
 
@@ -24,17 +35,22 @@ export const useBlocks = () => {
   const [isUserNavigating, setIsUserNavigating] = useState(false);
   const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
 
-  const fetchBlocks = async (isPolling = false) => {
+  const fetchBlocks = useCallback(async (isPolling = false) => {
     try {
-      let response = await fetch('http://localhost:3001/api/blocks?contracts=true');
+      let response = await fetch('http://localhost:3001/api/data/blocks?limit=10');
       let data = await response.json();
       
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }
       
-      const blocksData = data.data || data.blocks || data;
-      let processedBlocks = Array.isArray(blocksData) ? blocksData.slice(0, 10).map(block => generateBlock(block)) : [];
+      const blocksData = data.blocks || data.data || data;
+      console.log('Raw API response:', blocksData);
+      
+      let processedBlocks = Array.isArray(blocksData) ? blocksData.slice(0, 10).map(block => {
+        const generated = generateBlock(block);
+        return generated;
+      }) : [];
 
       if (processedBlocks.length === 0) {
         processedBlocks = [];
@@ -74,7 +90,7 @@ export const useBlocks = () => {
         setSelectedBlock(futureBlock);
       }
     }
-  };
+  }, [selectedBlock]);
 
   useEffect(() => {
     fetchBlocks(false);
@@ -84,7 +100,7 @@ export const useBlocks = () => {
       fetchBlocks(true);
     }, 30000);
     return () => clearInterval(interval);
-  }, [fetchBlocks]);
+  }, []);
 
   useEffect(() => {
     if (!shouldAutoScroll) {

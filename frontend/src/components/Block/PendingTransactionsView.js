@@ -12,7 +12,7 @@ const PendingTransactionsView = ({ setSelectedInscription }) => {
     try {
       const response = await fetch('http://localhost:3001/api/pending-transactions');
       const data = await response.json();
-      setPendingTxs(data || []);
+      setPendingTxs(data.data?.transactions || data || []);
     } catch (error) {
       console.error('Error fetching pending transactions:', error);
       setPendingTxs([]);
