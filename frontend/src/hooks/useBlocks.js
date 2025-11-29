@@ -84,7 +84,7 @@ export const useBlocks = () => {
       fetchBlocks(true);
     }, 30000);
     return () => clearInterval(interval);
-  }, []);
+  }, [fetchBlocks]);
 
   useEffect(() => {
     if (!shouldAutoScroll) {
