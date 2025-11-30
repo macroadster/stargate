@@ -55,7 +55,7 @@ The integration adds comprehensive Bitcoin transaction steganography detection c
 ### Build Instructions
 
 ```bash
-cd /home/eyang/sandbox/stargate/backend
+cd stargate/backend
 
 # Initialize Go module (first time only)
 go mod init stargate-backend
