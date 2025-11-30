@@ -343,14 +343,34 @@ func (api *DataAPI) HandleGetBlockImages(w http.ResponseWriter, r *http.Request)
 	// Enhance image data with scan results
 	var enhancedImages []map[string]interface{}
 	for i, image := range cacheData.Images {
+		// Determine proper content type based on format
+		contentType := "image/" + image.Format
+		if image.Format == "txt" || image.Format == "text" {
+			contentType = "text/plain"
+		} else if image.Format == "json" {
+			contentType = "application/json"
+		} else if image.Format == "html" {
+			contentType = "text/html"
+		}
+
 		enhancedImage := map[string]interface{}{
 			"tx_id":        image.TxID,
 			"file_name":    image.FileName,
 			"file_path":    image.FilePath,
 			"size_bytes":   image.SizeBytes,
 			"format":       image.Format,
-			"content_type": "image/" + image.Format,
+			"content_type": contentType,
 			"index":        i,
+		}
+
+		// Read text content for text files
+		if image.Format == "txt" || image.Format == "text" {
+			if content, err := api.dataStorage.ReadTextContent(height, image.FilePath); err == nil {
+				enhancedImage["content"] = content
+			} else {
+				log.Printf("Error reading text content for %s: %v", image.FilePath, err)
+				enhancedImage["content"] = ""
+			}
 		}
 
 		// Add scan results if available

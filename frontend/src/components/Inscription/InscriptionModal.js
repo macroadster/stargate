@@ -6,6 +6,9 @@ import ConfidenceIndicator from '../Common/ConfidenceIndicator';
 const InscriptionModal = ({ inscription, onClose }) => {
   const [activeTab, setActiveTab] = useState('overview');
   
+  const isActuallyImageFile = inscription.mime_type?.includes('image') && !inscription.image_url?.endsWith('.txt');
+  const modalImageSource = isActuallyImageFile ? (inscription.thumbnail || inscription.image_url) : null;
+  
   const markdownContent = `# Steganographic Smart Contract Analysis
 
 ## Contract Identity
@@ -47,8 +50,8 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white dark:bg-gray-800 rounded-lg max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto">
-        <div className="sticky top-0 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 p-4">
+      <div className="bg-white dark:bg-gray-800 rounded-lg max-w-4xl w-full mx-4 min-h-[60vh] overflow-x-hidden flex flex-col">
+        <div className="sticky top-0 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 p-4 flex-shrink-0">
           <div className="flex justify-between items-center">
             <h2 className="text-xl font-bold text-black dark:text-white">Inscription Details</h2>
             <button onClick={onClose} className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200">
@@ -57,13 +60,13 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
           </div>
         </div>
 
-        <div className="p-4">
-          <div className="flex gap-6 mb-6">
+        <div className="p-4 flex-1 overflow-y-auto">
+            <div className="flex gap-6 mb-6">
             <div className="flex-shrink-0">
-              {inscription.thumbnail || inscription.image_url ? (
+              {modalImageSource ? (
                 <div className="relative">
                   <img 
-                    src={inscription.thumbnail || inscription.image_url} 
+                    src={modalImageSource} 
                     alt={inscription.file_name || inscription.id}
                     className="w-48 h-48 object-cover rounded-lg border-2 border-gray-300 dark:border-gray-700"
                   />
@@ -89,17 +92,16 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
 
             <div className="mt-6">
               <div className="border-b border-gray-200 dark:border-gray-700 mb-6">
-                <div className="flex gap-6">
+                <div className="flex gap-6 relative">
                   {[
-                    { id: 'overview', label: 'Overview', icon: '📊' },
-                    { id: 'technical', label: 'Hidden Message', icon: '🔓' },
-                    { id: 'analysis', label: 'Analysis', icon: '🔍' },
+                    { id: 'overview', label: 'Details', icon: '📋' },
+                    { id: 'content', label: 'Content', icon: '📄' },
                     { id: 'blockchain', label: 'Blockchain', icon: '⛓️' }
                   ].map((tab) => (
                     <button
                       key={tab.id}
                       onClick={() => setActiveTab(tab.id)}
-                      className={`px-4 py-2 font-medium text-sm border-b-2 transition-colors flex items-center gap-2 ${
+                      className={`px-4 py-2 font-medium text-sm border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap ${
                         activeTab === tab.id
                           ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400'
                           : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
@@ -117,19 +119,22 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                   <div>
                     <h4 className="text-lg font-semibold text-black dark:text-white mb-3 flex items-center gap-2">
                       <span className="w-2 h-2 bg-purple-500 rounded-full"></span>
-                      Contract Identity
+                      Inscription Identity
                     </h4>
                     <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4 space-y-3">
                       <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <span className="text-gray-600 dark:text-gray-400 text-sm">File Name:</span>
-                            <span className="text-black dark:text-white font-mono text-sm font-semibold">{inscription.file_name || inscription.id}</span>
-                          </div>
-                          <CopyButton text={inscription.file_name || inscription.id} />
+                        <div className="flex items-center gap-2">
+                          <span className="text-gray-600 dark:text-gray-400 text-sm">Inscription ID:</span>
+                          <span className="text-black dark:text-white font-mono text-sm font-semibold">{inscription.id}</span>
+                        </div>
+                        <CopyButton text={inscription.id} />
                       </div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-gray-600 dark:text-gray-400 text-sm">Transaction ID:</span>
-                        <span className="text-black dark:text-white font-mono text-xs">{inscription.metadata?.transaction_id || 'Not available'}</span>
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="text-gray-600 dark:text-gray-400 text-sm">Transaction ID:</span>
+                          <span className="text-black dark:text-white font-mono text-xs">{inscription.id}</span>
+                        </div>
+                        <CopyButton text={inscription.id} />
                       </div>
                       <div className="flex items-center gap-4">
                         <div className="flex items-center gap-2">
@@ -137,12 +142,8 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                           <span className="text-black dark:text-white font-semibold">{inscription.block_height || inscription.genesis_block_height || 'Unknown'}</span>
                         </div>
                         <div className="flex items-center gap-2">
-                          <span className="text-gray-600 dark:text-gray-400 text-sm">Status:</span>
-                          <span className={`px-2 py-1 rounded text-xs font-semibold ${
-                            inscription.isActive ? 'bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-300' : 'bg-gray-100 dark:bg-gray-900 text-gray-800 dark:text-gray-300'
-                          }`}>
-                            {inscription.isActive ? 'Active' : 'Inactive'}
-                          </span>
+                          <span className="text-gray-600 dark:text-gray-400 text-sm">Type:</span>
+                          <span className="text-black dark:text-white font-semibold">{inscription.mime_type?.split('/')[1]?.toUpperCase() || 'UNKNOWN'}</span>
                         </div>
                       </div>
                     </div>
@@ -151,50 +152,107 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                   <div>
                     <h4 className="text-lg font-semibold text-black dark:text-white mb-3 flex items-center gap-2">
                       <span className="w-2 h-2 bg-blue-500 rounded-full"></span>
-                      Technical Specifications
+                      File Information
                     </h4>
                     <div className="grid grid-cols-2 gap-4">
                       <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
-                        <div className="text-gray-600 dark:text-gray-400 text-xs mb-1">Contract Type</div>
-                        <div className="text-black dark:text-white font-semibold">{inscription.contract_type || inscription.contractType || 'Steganographic'}</div>
+                        <div className="text-gray-600 dark:text-gray-400 text-xs mb-1">File Name</div>
+                        <div className="text-black dark:text-white font-semibold">{inscription.file_name || 'N/A'}</div>
                       </div>
                       <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
-                        <div className="text-gray-600 dark:text-gray-400 text-xs mb-1">Protocol Layer</div>
-                        <div className="text-black dark:text-white font-semibold">{inscription.protocol || 'BRC-20'}</div>
+                        <div className="text-gray-600 dark:text-gray-400 text-xs mb-1">File Size</div>
+                        <div className="text-black dark:text-white font-semibold">{inscription.size_bytes ? `${(inscription.size_bytes / 1024).toFixed(2)} KB` : 'Unknown'}</div>
                       </div>
                       <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
-                        <div className="text-gray-600 dark:text-gray-400 text-xs mb-1">Data Capability</div>
-                        <div className="text-black dark:text-white font-semibold">{inscription.capability || 'Data Storage & Concealment'}</div>
-                      </div>
-                      <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
-                        <div className="text-gray-600 dark:text-gray-400 text-xs mb-1">MIME Type</div>
+                        <div className="text-gray-600 dark:text-gray-400 text-xs mb-1">Content Type</div>
                         <div className="text-black dark:text-white font-semibold">{inscription.mime_type || 'Unknown'}</div>
+                      </div>
+                      <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
+                        <div className="text-gray-600 dark:text-gray-400 text-xs mb-1">Contract Type</div>
+                        <div className="text-black dark:text-white font-semibold">{inscription.contract_type || 'Standard'}</div>
                       </div>
                     </div>
                   </div>
 
-                  {inscription.metadata && (
+                  {inscription.metadata?.is_stego && (
                     <div>
                       <h4 className="text-lg font-semibold text-black dark:text-white mb-3 flex items-center gap-2">
                         <span className="w-2 h-2 bg-yellow-500 rounded-full"></span>
                         Steganographic Analysis
                       </h4>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
-                          <div className="text-gray-600 dark:text-gray-400 text-xs mb-1">Detection Method</div>
-                          <div className="text-black dark:text-white font-semibold">{inscription.metadata.detection_method || 'Analysis Required'}</div>
+                      <div className="bg-yellow-50 dark:bg-yellow-900 border border-yellow-200 dark:border-yellow-700 rounded-lg p-4">
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="bg-white dark:bg-gray-800 rounded-lg p-3">
+                            <div className="text-yellow-700 dark:text-yellow-300 text-xs mb-1">Detection Status</div>
+                            <div className="text-yellow-900 dark:text-yellow-100 font-semibold">Steganography Detected</div>
+                          </div>
+                          <div className="bg-white dark:bg-gray-800 rounded-lg p-3">
+                            <div className="text-yellow-700 dark:text-yellow-300 text-xs mb-1">Confidence Level</div>
+                            <div className="text-yellow-900 dark:text-yellow-100 font-semibold">{Math.round((inscription.metadata.confidence || 0) * 100)}%</div>
+                          </div>
+                          {inscription.metadata.stego_type && (
+                            <div className="bg-white dark:bg-gray-800 rounded-lg p-3">
+                              <div className="text-yellow-700 dark:text-yellow-300 text-xs mb-1">Method</div>
+                              <div className="text-yellow-900 dark:text-yellow-100 font-semibold">{inscription.metadata.stego_type.toUpperCase()}</div>
+                            </div>
+                          )}
+                          {inscription.metadata.extracted_message && (
+                            <div className="bg-white dark:bg-gray-800 rounded-lg p-3">
+                              <div className="text-yellow-700 dark:text-yellow-300 text-xs mb-1">Hidden Message</div>
+                              <div className="text-yellow-900 dark:text-yellow-100 font-semibold">Available</div>
+                            </div>
+                          )}
                         </div>
-                        <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
-                          <div className="text-gray-600 dark:text-gray-400 text-xs mb-1">Stego Type</div>
-                          <div className="text-black dark:text-white font-semibold">{inscription.metadata.stego_type || 'Unknown'}</div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {activeTab === 'content' && (
+                <div className="space-y-6">
+                  {inscription.text && (
+                    <div>
+                      <h4 className="text-lg font-semibold text-black dark:text-white mb-3 flex items-center gap-2">
+                        <span className="w-2 h-2 bg-blue-500 rounded-full"></span>
+                        Text Content
+                      </h4>
+                      <div className="bg-blue-50 dark:bg-blue-900 border border-blue-200 dark:border-blue-700 rounded-lg p-4">
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-start gap-2">
+                            <span className="text-blue-600 dark:text-blue-400 text-sm">📄</span>
+                            <span className="text-blue-800 dark:text-blue-200 text-sm font-medium">Inscription Text Data</span>
+                          </div>
+                          <CopyButton text={inscription.text} />
                         </div>
-                        <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
-                          <div className="text-gray-600 dark:text-gray-400 text-xs mb-1">Confidence Level</div>
-                          <ConfidenceIndicator confidence={inscription.metadata.confidence} />
+                        <div className={`bg-white dark:bg-gray-800 rounded p-4 max-h-96 min-h-[200px] overflow-y-auto ${
+                          inscription.text && inscription.text.length > 500 ? 'min-w-[600px]' : 'min-w-[80%]'
+                        }`}>
+                          <pre className="text-blue-900 dark:text-blue-100 font-mono text-sm leading-relaxed whitespace-pre-wrap">
+                            {inscription.text}
+                          </pre>
                         </div>
-                        <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
-                          <div className="text-gray-600 dark:text-gray-400 text-xs mb-1">Image Format</div>
-                          <div className="text-black dark:text-white font-semibold">{inscription.metadata.image_format || 'Unknown'}</div>
+                        <div className="mt-4 pt-4 border-t border-blue-200 dark:border-blue-700">
+                          <div className="grid grid-cols-3 gap-4 w-full">
+                            <div className="text-center">
+                              <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">
+                                {inscription.text.length}
+                              </div>
+                              <div className="text-sm text-blue-700 dark:text-blue-300">Characters</div>
+                            </div>
+                            <div className="text-center">
+                              <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">
+                                {inscription.text.split(' ').filter(word => word.length > 0).length}
+                              </div>
+                              <div className="text-sm text-blue-700 dark:text-blue-300">Words</div>
+                            </div>
+                            <div className="text-center">
+                              <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">
+                                {inscription.text.split('\n').length}
+                              </div>
+                              <div className="text-sm text-blue-700 dark:text-blue-300">Lines</div>
+                            </div>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -204,61 +262,55 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                     <div>
                       <h4 className="text-lg font-semibold text-black dark:text-white mb-3 flex items-center gap-2">
                         <span className="w-2 h-2 bg-green-500 rounded-full"></span>
-                        Extracted Intelligence
+                        Hidden Message
                       </h4>
-                      <div className="bg-yellow-50 dark:bg-yellow-900 border border-yellow-200 dark:border-yellow-700 rounded-lg p-4">
-                        <div className="flex items-start gap-2 mb-2">
-                          <span className="text-yellow-600 dark:text-yellow-400 text-sm">🔓</span>
-                          <span className="text-yellow-800 dark:text-yellow-200 text-sm font-medium">Hidden Message Decoded</span>
+                        <div className="bg-green-50 dark:bg-green-900 border border-green-200 dark:border-green-700 rounded-lg p-4">
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-start gap-2">
+                              <span className="text-green-600 dark:text-green-400 text-sm">🔓</span>
+                              <span className="text-green-800 dark:text-green-200 text-sm font-medium">Extracted Hidden Data</span>
+                            </div>
+                            <CopyButton text={inscription.metadata.extracted_message} />
+                          </div>
+                          <div className={`bg-white dark:bg-gray-800 rounded p-4 max-h-96 min-h-[200px] overflow-y-auto ${
+                          inscription.metadata?.extracted_message && inscription.metadata.extracted_message.length > 500 ? 'min-w-[600px]' : 'min-w-[80%]'
+                        }`}>
+                            <pre className="text-green-900 dark:text-green-100 font-mono text-sm leading-relaxed whitespace-pre-wrap">
+                              {inscription.metadata.extracted_message}
+                            </pre>
+                          </div>
+                        <div className="mt-4 pt-4 border-t border-green-200 dark:border-green-700">
+                          <div className="grid grid-cols-3 gap-4 w-full">
+                            <div className="text-center">
+                              <div className="text-2xl font-bold text-green-600 dark:text-green-400">
+                                {inscription.metadata.extracted_message.length}
+                              </div>
+                              <div className="text-sm text-green-700 dark:text-green-300">Characters</div>
+                            </div>
+                            <div className="text-center">
+                              <div className="text-2xl font-bold text-green-600 dark:text-green-400">
+                                {inscription.metadata.extracted_message.split(' ').filter(word => word.length > 0).length}
+                              </div>
+                              <div className="text-sm text-green-700 dark:text-green-300">Words</div>
+                            </div>
+                            <div className="text-center">
+                              <div className="text-2xl font-bold text-green-600 dark:text-green-400">
+                                {inscription.metadata.extracted_message.split('\n').length}
+                              </div>
+                              <div className="text-sm text-green-700 dark:text-green-300">Lines</div>
+                            </div>
+                          </div>
                         </div>
-                        <p className="text-yellow-900 dark:text-yellow-100 font-mono text-sm leading-relaxed">{inscription.metadata.extracted_message}</p>
                       </div>
                     </div>
                   )}
-                  
-                  <div>
-                    <h4 className="text-lg font-semibold text-black dark:text-white mb-3 flex items-center gap-2">
-                      <span className="w-2 h-2 bg-indigo-500 rounded-full"></span>
-                      Contract Performance
-                    </h4>
-                    <div className="grid grid-cols-3 gap-4">
-                       <div className="bg-gradient-to-br from-blue-50 to-blue-100 dark:from-blue-900 dark:to-blue-800 rounded-lg p-4 border border-blue-200 dark:border-blue-700">
-                         <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">{inscription.apiEndpoints || 0}</div>
-                         <div className="text-sm text-blue-700 dark:text-blue-300">API Endpoints</div>
-                       </div>
-                        <div className="bg-gradient-to-br from-green-50 to-green-100 dark:from-green-900 dark:to-green-800 rounded-lg p-4 border border-green-200 dark:border-green-700">
-                          <div className="text-2xl font-bold text-green-600 dark:text-green-400">{inscription.interactions || 0}</div>
-                          <div className="text-sm text-green-700 dark:text-green-300">Total Interactions</div>
-                        </div>
-                       <div className="bg-gradient-to-br from-purple-50 to-purple-100 dark:from-purple-900 dark:to-purple-800 rounded-lg p-4 border border-purple-200 dark:border-purple-700">
-                         <div className="text-2xl font-bold text-purple-600 dark:text-purple-400">{inscription.reputation || 'N/A'}</div>
-                         <div className="text-sm text-purple-700 dark:text-purple-300">Reputation Score</div>
-                       </div>
-                    </div>
-                  </div>
 
-                  {inscription.metadata && (
-                    <div>
-                      <h4 className="text-lg font-semibold text-black dark:text-white mb-3 flex items-center gap-2">
-                        <span className="w-2 h-2 bg-cyan-500 rounded-full"></span>
-                        Media Properties
-                      </h4>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
-                          <div className="text-gray-600 dark:text-gray-400 text-xs mb-1">File Size</div>
-                           <div className="text-black dark:text-white font-semibold">
-                             {inscription.metadata?.stego_type || 'Analysis Required'}
-                           </div>
-                           <div className="text-blue-600 dark:text-blue-400 text-xs mt-2">
-                             Real steganographic analysis required to determine encoding method
-                           </div>
-                        </div>
-                        <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
-                         <div className="text-gray-600 dark:text-gray-400 text-xs mb-1">Encoding Method</div>
-                         <div className="text-black dark:text-white font-semibold">
-                           Analysis Required
-                         </div>
-                        </div>
+                  {!inscription.text && !inscription.metadata?.extracted_message && (
+                    <div className="text-center py-12">
+                      <div className="text-6xl mb-4">📦</div>
+                      <div className="text-gray-600 dark:text-gray-400 font-semibold">No Text Content Available</div>
+                      <div className="text-gray-500 dark:text-gray-500 text-sm mt-2">
+                        This inscription contains binary data or media content that cannot be displayed as text.
                       </div>
                     </div>
                   )}
@@ -285,10 +337,15 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                         </div>
                         
                         <div className="bg-white dark:bg-gray-800 rounded-lg p-4 border border-green-300 dark:border-green-600">
-                          <div className="text-green-800 dark:text-green-200 text-xs font-mono mb-2 uppercase tracking-wider">Hidden Content:</div>
-                          <p className="text-green-900 dark:text-green-100 font-mono text-base leading-relaxed break-all">
-                            {inscription.metadata.extracted_message}
-                          </p>
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="text-green-800 dark:text-green-200 text-xs font-mono uppercase tracking-wider">Hidden Content:</div>
+                            <CopyButton text={inscription.metadata.extracted_message} />
+                          </div>
+                          <div className="bg-gray-50 dark:bg-gray-900 rounded p-3 max-h-64 overflow-y-auto">
+                            <pre className="text-green-900 dark:text-green-100 font-mono text-sm leading-relaxed whitespace-pre-wrap break-all">
+                              {inscription.metadata.extracted_message}
+                            </pre>
+                          </div>
                         </div>
 
                         <div className="mt-4 pt-4 border-t border-green-200 dark:border-green-700">
@@ -452,61 +509,28 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                   <div>
                     <h4 className="text-lg font-semibold text-black dark:text-white mb-3 flex items-center gap-2">
                       <span className="w-2 h-2 bg-purple-500 rounded-full"></span>
-                      Blockchain Integration
+                      Transaction Information
                     </h4>
                     <div className="bg-purple-50 dark:bg-purple-900 border border-purple-200 dark:border-purple-700 rounded-lg p-4">
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="bg-white dark:bg-gray-800 rounded-lg p-3">
-                          <div className="text-purple-700 dark:text-purple-300 text-xs mb-1">Network</div>
-                          <div className="text-purple-900 dark:text-purple-100 font-semibold">Bitcoin Mainnet</div>
-                        </div>
-                        <div className="bg-white dark:bg-gray-800 rounded-lg p-3">
-                          <div className="text-purple-700 dark:text-purple-300 text-xs mb-1">Consensus</div>
-                          <div className="text-purple-900 dark:text-purple-100 font-semibold">Proof of Work</div>
-                        </div>
-                        <div className="bg-white dark:bg-gray-800 rounded-lg p-3">
-                          <div className="text-purple-700 dark:text-purple-300 text-xs mb-1">Block Hash</div>
-                          <div className="text-purple-900 dark:text-purple-100 font-mono text-xs break-all">
-                            {inscription.metadata?.block_hash || 'Unknown'}
-                          </div>
-                        </div>
-                        <div className="bg-white dark:bg-gray-800 rounded-lg p-3">
-                          <div className="text-purple-700 dark:text-purple-300 text-xs mb-1">Deployment Time</div>
-                          <div className="text-purple-900 dark:text-purple-100 font-semibold">
-                            {inscription.metadata?.created_at ? new Date(inscription.metadata.created_at * 1000).toLocaleString() : 'Unknown'}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div>
-                    <h4 className="text-lg font-semibold text-black dark:text-white mb-3 flex items-center gap-2">
-                      <span className="w-2 h-2 bg-pink-500 rounded-full"></span>
-                      Transaction Details
-                    </h4>
-                    <div className="bg-pink-50 dark:bg-pink-900 border border-pink-200 dark:border-pink-700 rounded-lg p-4">
                       <div className="space-y-3">
                         <div className="flex items-center justify-between">
-                          <span className="text-pink-700 dark:text-pink-300 text-sm">Transaction ID</span>
+                          <span className="text-purple-700 dark:text-purple-300 text-sm">Transaction ID</span>
                           <div className="flex items-center gap-2">
-                            <span className="text-pink-900 dark:text-pink-100 font-mono text-xs">
-                              {inscription.metadata?.transaction_id?.slice(0, 8)}...
+                            <span className="text-purple-900 dark:text-purple-100 font-mono text-xs">
+                              {inscription.id?.slice(0, 12)}...
                             </span>
-                            <CopyButton text={inscription.metadata?.transaction_id || ''} />
+                            <CopyButton text={inscription.id || ''} />
                           </div>
                         </div>
                         <div className="flex items-center justify-between">
-                          <span className="text-pink-700 dark:text-pink-300 text-sm">Image Index</span>
-                          <span className="text-pink-900 dark:text-pink-100 font-semibold">
-                            #{inscription.metadata?.image_index || 'Unknown'}
+                          <span className="text-purple-700 dark:text-purple-300 text-sm">Block Height</span>
+                          <span className="text-purple-900 dark:text-purple-100 font-semibold">
+                            {inscription.block_height || inscription.genesis_block_height || 'Unknown'}
                           </span>
                         </div>
                         <div className="flex items-center justify-between">
-                          <span className="text-pink-700 dark:text-pink-300 text-sm">Timestamp</span>
-                          <span className="text-pink-900 dark:text-pink-100 font-semibold">
-                            {inscription.metadata?.created_at ? new Date(inscription.metadata.created_at * 1000).toISOString() : 'Unknown'}
-                          </span>
+                          <span className="text-purple-700 dark:text-purple-300 text-sm">Network</span>
+                          <span className="text-purple-900 dark:text-purple-100 font-semibold">Bitcoin Mainnet</span>
                         </div>
                       </div>
                     </div>
@@ -514,23 +538,55 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
 
                   <div>
                     <h4 className="text-lg font-semibold text-black dark:text-white mb-3 flex items-center gap-2">
-                      <span className="w-2 h-2 bg-green-500 rounded-full"></span>
-                      Verification Status
+                      <span className="w-2 h-2 bg-blue-500 rounded-full"></span>
+                      File Details
                     </h4>
-                    <div className="bg-green-50 dark:bg-green-900 border border-green-200 dark:border-green-700 rounded-lg p-4">
-                      <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 bg-green-500 rounded-full flex items-center justify-center">
-                          <span className="text-white text-sm">✓</span>
+                    <div className="bg-blue-50 dark:bg-blue-900 border border-blue-200 dark:border-blue-700 rounded-lg p-4">
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="bg-white dark:bg-gray-800 rounded-lg p-3">
+                          <div className="text-blue-700 dark:text-blue-300 text-xs mb-1">File Name</div>
+                          <div className="text-blue-900 dark:text-blue-100 font-semibold">{inscription.file_name || 'N/A'}</div>
                         </div>
-                        <div>
-                          <div className="text-green-900 dark:text-green-100 font-medium">Contract Verified</div>
-                          <div className="text-green-700 dark:text-green-300 text-sm">
-                            Steganographic content has been successfully verified and extracted
-                          </div>
+                        <div className="bg-white dark:bg-gray-800 rounded-lg p-3">
+                          <div className="text-blue-700 dark:text-blue-300 text-xs mb-1">File Size</div>
+                          <div className="text-blue-900 dark:text-blue-100 font-semibold">{inscription.size_bytes ? `${(inscription.size_bytes / 1024).toFixed(2)} KB` : 'Unknown'}</div>
+                        </div>
+                        <div className="bg-white dark:bg-gray-800 rounded-lg p-3">
+                          <div className="text-blue-700 dark:text-blue-300 text-xs mb-1">Content Type</div>
+                          <div className="text-blue-900 dark:text-blue-100 font-semibold">{inscription.mime_type || 'Unknown'}</div>
+                        </div>
+                        <div className="bg-white dark:bg-gray-800 rounded-lg p-3">
+                          <div className="text-blue-700 dark:text-blue-300 text-xs mb-1">Contract Type</div>
+                          <div className="text-blue-900 dark:text-blue-100 font-semibold">{inscription.contract_type || 'Standard'}</div>
                         </div>
                       </div>
                     </div>
                   </div>
+
+                  {inscription.metadata?.scanned_at && (
+                    <div>
+                      <h4 className="text-lg font-semibold text-black dark:text-white mb-3 flex items-center gap-2">
+                        <span className="w-2 h-2 bg-green-500 rounded-full"></span>
+                        Analysis Information
+                      </h4>
+                      <div className="bg-green-50 dark:bg-green-900 border border-green-200 dark:border-green-700 rounded-lg p-4">
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="bg-white dark:bg-gray-800 rounded-lg p-3">
+                            <div className="text-green-700 dark:text-green-300 text-xs mb-1">Scan Status</div>
+                            <div className="text-green-900 dark:text-green-100 font-semibold">
+                              {inscription.metadata.is_stego ? 'Steganography Detected' : 'No Hidden Data'}
+                            </div>
+                          </div>
+                          <div className="bg-white dark:bg-gray-800 rounded-lg p-3">
+                            <div className="text-green-700 dark:text-green-300 text-xs mb-1">Last Scanned</div>
+                            <div className="text-green-900 dark:text-green-100 font-semibold">
+                              {new Date(inscription.metadata.scanned_at * 1000).toLocaleString()}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

@@ -4,7 +4,7 @@ const generateInscriptions = (inscriptions) => {
   return inscriptions.map((insc, i) => ({
     id: insc.id,
     type: insc.mime_type?.split('/')[1]?.toUpperCase() || 'UNKNOWN',
-    thumbnail: insc.mime_type?.startsWith('image/') ? `http://localhost:3001${insc.image_url}` : null,
+    thumbnail: insc.mime_type?.startsWith('image/') ? insc.image_url : null,
     gradient: 'from-indigo-500',
     hasMultiple: false,
     contractType: insc.contract_type || 'Steganographic Contract',
@@ -22,6 +22,7 @@ const generateInscriptions = (inscriptions) => {
     file_path: insc.file_path,
     size_bytes: insc.size_bytes,
     image_url: insc.image_url,
+    text: insc.text, // Preserve the text content!
     metadata: insc.metadata
   }));
 };
@@ -29,9 +30,11 @@ const generateInscriptions = (inscriptions) => {
 export const useInscriptions = (selectedBlock) => {
   const [inscriptions, setInscriptions] = useState([]);
   const [currentInscriptions, setCurrentInscriptions] = useState([]);
+  const [allInscriptions, setAllInscriptions] = useState([]);
   const [hasMoreImages, setHasMoreImages] = useState(true);
   const [totalImages, setTotalImages] = useState(0);
   const [displayedCount, setDisplayedCount] = useState(20);
+  const [filterMode, setFilterMode] = useState('all'); // 'all' or 'text'
 
   const fetchInscriptions = async () => {
     if (!selectedBlock) return;
@@ -115,11 +118,18 @@ export const useInscriptions = (selectedBlock) => {
       const processedInscriptions = generateInscriptions(convertedResults);
       
       setCurrentInscriptions(convertedResults);
-      setTotalImages(processedInscriptions.length);
-      setDisplayedCount(20);
-      setHasMoreImages(processedInscriptions.length > 20);
+      setAllInscriptions(processedInscriptions);
       
-      setInscriptions(processedInscriptions.slice(0, 20));
+      // Apply filter if needed
+      const filteredInscriptions = filterMode === 'text' 
+        ? processedInscriptions.filter(ins => ins.text || ins.metadata?.extracted_message)
+        : processedInscriptions;
+      
+      setTotalImages(filteredInscriptions.length);
+      setDisplayedCount(20);
+      setHasMoreImages(filteredInscriptions.length > 20);
+      
+      setInscriptions(filteredInscriptions.slice(0, 20));
       
       console.log(`Loaded ${processedInscriptions.length} total inscriptions, displaying first 20`);
     } catch (error) {
@@ -132,14 +142,32 @@ export const useInscriptions = (selectedBlock) => {
   };
 
   const loadMoreInscriptions = () => {
-    if (hasMoreImages && currentInscriptions.length > displayedCount) {
-      const newDisplayedCount = Math.min(displayedCount + 20, currentInscriptions.length);
-      setDisplayedCount(newDisplayedCount);
-      setInscriptions(currentInscriptions.slice(0, newDisplayedCount));
-      setHasMoreImages(newDisplayedCount < currentInscriptions.length);
+    const sourceInscriptions = filterMode === 'text' 
+      ? allInscriptions.filter(ins => ins.text || ins.metadata?.extracted_message)
+      : allInscriptions;
       
-      console.log(`Displaying ${newDisplayedCount} of ${currentInscriptions.length} inscriptions`);
+    if (hasMoreImages && sourceInscriptions.length > displayedCount) {
+      const newDisplayedCount = Math.min(displayedCount + 20, sourceInscriptions.length);
+      setDisplayedCount(newDisplayedCount);
+      setInscriptions(sourceInscriptions.slice(0, newDisplayedCount));
+      setHasMoreImages(newDisplayedCount < sourceInscriptions.length);
+      
+      console.log(`Displaying ${newDisplayedCount} of ${sourceInscriptions.length} inscriptions`);
     }
+  };
+
+  const setFilter = (mode) => {
+    console.log('Setting filter to:', mode);
+    setFilterMode(mode);
+    const filteredInscriptions = mode === 'text' 
+      ? allInscriptions.filter(ins => ins.text || ins.metadata?.extracted_message)
+      : allInscriptions;
+    
+    console.log('Filtered inscriptions count:', filteredInscriptions.length);
+    setTotalImages(filteredInscriptions.length);
+    setDisplayedCount(Math.min(20, filteredInscriptions.length));
+    setHasMoreImages(filteredInscriptions.length > 20);
+    setInscriptions(filteredInscriptions.slice(0, 20));
   };
 
   useEffect(() => {
@@ -150,9 +178,13 @@ export const useInscriptions = (selectedBlock) => {
 
   return {
     inscriptions,
+    currentInscriptions,
+    allInscriptions,
     hasMoreImages,
     totalImages,
     displayedCount,
-    loadMoreInscriptions
+    loadMoreInscriptions,
+    setFilter,
+    filterMode
   };
 };

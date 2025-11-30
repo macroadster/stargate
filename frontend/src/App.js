@@ -6,7 +6,7 @@ import InscriptionCard from './components/Inscription/InscriptionCard';
 import PendingTransactionsView from './components/Block/PendingTransactionsView';
 import InscribeModal from './components/Inscription/InscribeModal';
 import InscriptionModal from './components/Inscription/InscriptionModal';
-import CopyButton from './components/Common/CopyButton';
+
 import { useBlocks } from './hooks/useBlocks';
 import { useInscriptions } from './hooks/useInscriptions';
 
@@ -48,10 +48,13 @@ export default function OrdiscanExplorer() {
 
   const {
     inscriptions,
+    allInscriptions,
     hasMoreImages,
     totalImages,
     displayedCount,
-    loadMoreInscriptions
+    loadMoreInscriptions,
+    setFilter,
+    filterMode
   } = useInscriptions(selectedBlock);
 
   useEffect(() => {

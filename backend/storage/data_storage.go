@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
@@ -395,6 +396,7 @@ func (ds *DataStorage) loadCache() {
 
 			cacheEntry.Images[i] = bitcoin.ExtractedImageData{
 				TxID:      img.TxID,
+				Format:    img.Format,
 				FileName:  img.FileName,
 				FilePath:  img.FilePath,
 				SizeBytes: img.SizeBytes,
@@ -409,14 +411,63 @@ func (ds *DataStorage) loadCache() {
 	log.Printf("Loaded %d blocks into cache from blocks/ directory", loadedCount)
 }
 
-// cleanOldCache removes expired cache entries
+// cleanOldCache removes expired cache entries but keeps at least 10 recent blocks
 func (ds *DataStorage) cleanOldCache() {
 	now := time.Now()
+
+	// Collect all heights and sort by cache timestamp
+	type cacheEntry struct {
+		height    int64
+		timestamp time.Time
+	}
+	var entries []cacheEntry
 	for height, cached := range ds.cache {
-		if now.Sub(cached.CacheTimestamp) > ds.cacheTimeout {
-			delete(ds.cache, height)
+		entries = append(entries, cacheEntry{height, cached.CacheTimestamp})
+	}
+
+	// Sort by timestamp (newest first)
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].timestamp.After(entries[j].timestamp)
+	})
+
+	// Keep at least 10 most recent blocks, remove expired ones beyond that
+	keepCount := 10
+	if len(entries) < keepCount {
+		keepCount = len(entries)
+	}
+
+	// Remove expired entries beyond the keep count
+	for i := keepCount; i < len(entries); i++ {
+		if now.Sub(entries[i].timestamp) > ds.cacheTimeout {
+			delete(ds.cache, entries[i].height)
+			log.Printf("Removed expired block %d from cache (older than %v minutes)", entries[i].height, ds.cacheTimeout.Minutes())
 		}
 	}
+
+	// Keep recent blocks even if expired (if we have less than 10 total)
+	for i := 0; i < keepCount; i++ {
+		if now.Sub(entries[i].timestamp) > ds.cacheTimeout {
+			// Refresh expired but keep it if we don't have enough blocks
+			log.Printf("Block %d expired but keeping in cache (only %d blocks cached)", entries[i].height, len(entries))
+		} else {
+			// Keep non-expired blocks
+			log.Printf("Keeping block %d in cache (age: %v minutes)", entries[i].height, now.Sub(entries[i].timestamp).Minutes())
+		}
+	}
+}
+
+// ReadTextContent reads the content of a text file
+func (ds *DataStorage) ReadTextContent(height int64, filePath string) (string, error) {
+	// Construct the full path to the text file
+	fullPath := filepath.Join("blocks", fmt.Sprintf("%d_00000000", height), filePath)
+
+	// Read the file content
+	content, err := os.ReadFile(fullPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read text file %s: %w", fullPath, err)
+	}
+
+	return string(content), nil
 }
 
 // CreateRealtimeUpdate creates a real-time update message

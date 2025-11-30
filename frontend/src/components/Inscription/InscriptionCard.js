@@ -1,11 +1,18 @@
-import React from 'react';
-import CopyButton from '../Common/CopyButton';
-import ConfidenceIndicator from '../Common/ConfidenceIndicator';
+import React, { useState } from 'react';
 
 const InscriptionCard = ({ inscription, onClick }) => {
   console.log('Rendering inscription card:', inscription.id);
+  const [showTextPreview, setShowTextPreview] = useState(false);
   
-  const imageSource = inscription.thumbnail || inscription.image_url;
+  const hasTextContent = inscription.text || inscription.metadata?.extracted_message;
+  const textContent = inscription.text || inscription.metadata?.extracted_message || '';
+  const isActuallyImageFile = inscription.mime_type?.includes('image') && !inscription.image_url?.endsWith('.txt');
+  const imageSource = isActuallyImageFile ? (inscription.thumbnail || inscription.image_url) : null;
+
+  const handleTextPreviewToggle = (e) => {
+    e.stopPropagation();
+    setShowTextPreview(!showTextPreview);
+  };
 
   return (
     <div
@@ -13,39 +20,37 @@ const InscriptionCard = ({ inscription, onClick }) => {
       className="relative group cursor-pointer"
     >
       <div className="relative overflow-hidden rounded-lg border-2 border-gray-300 dark:border-gray-700 hover:border-indigo-500 transition-all duration-200 bg-white dark:bg-gray-800">
-        <div className="h-32 flex items-center justify-center bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-700 dark:to-gray-800">
-          {imageSource ? (
-            <img 
-              src={imageSource} 
-              alt={inscription.file_name || inscription.id}
-              className="max-w-full max-h-full object-contain"
-              onError={(e) => {
-                e.target.style.display = 'none';
-                e.target.nextSibling.style.display = 'flex';
-              }}
-            />
-          ) : null}
-          <div className="text-4xl" style={{display: imageSource ? 'none' : 'flex'}}>
-            {inscription.contract_type === 'Steganographic Contract' ? '🎨' :
-             inscription.mime_type?.includes('text') ? '📄' : 
-             inscription.mime_type?.includes('image') ? '🖼️' : '📦'}
-          </div>
+        <div className="h-32 flex items-center justify-center bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-700 dark:to-gray-800 relative">
+          {showTextPreview && hasTextContent ? (
+            <div className="absolute inset-0 p-2 bg-white dark:bg-gray-900 rounded-lg overflow-hidden">
+              <div className="h-full overflow-y-auto text-xs font-mono text-gray-800 dark:text-gray-200 leading-tight">
+                {textContent.length > 200 ? `${textContent.slice(0, 200)}...` : textContent}
+              </div>
+            </div>
+          ) : (
+            <>
+              {imageSource && isActuallyImageFile ? (
+                <img 
+                  src={imageSource} 
+                  alt={inscription.file_name || inscription.id}
+                  className="max-w-full max-h-full object-contain"
+                  onError={(e) => {
+                    e.target.style.display = 'none';
+                    e.target.nextSibling.style.display = 'flex';
+                  }}
+                />
+              ) : null}
+              <div className="text-lg font-bold text-center px-2 text-gray-800 dark:text-gray-200" style={{display: imageSource && isActuallyImageFile ? 'none' : 'flex'}}>
+                {hasTextContent ? textContent.slice(0, 20) + (textContent.length > 20 ? '...' : '') : 
+                 inscription.contract_type === 'Steganographic Contract' ? '🎨' : '📦'}
+              </div>
+            </>
+          )}
         </div>
         
         <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200">
           <div className="absolute bottom-0 left-0 right-0 p-3 text-white">
-            <div className="text-xs font-mono truncate font-semibold mb-1">
-              {inscription.file_name || inscription.id}
-            </div>
-            {inscription.metadata?.extracted_message && (
-              <div className="text-xs truncate opacity-90 italic">
-                "{inscription.metadata.extracted_message.slice(0, 50)}{inscription.metadata.extracted_message.length > 50 ? '...' : ''}"
-              </div>
-            )}
-            {inscription.text && (
-              <div className="text-xs mt-1 truncate opacity-90">{inscription.text}</div>
-            )}
-            {inscription.metadata?.confidence && inscription.metadata.confidence > 0 && (
+            {inscription.metadata?.confidence && inscription.metadata.confidence > 0.1 && (
               <div className="flex items-center gap-2 mt-2">
                 <div className="w-full bg-green-400 rounded-full h-1">
                   <div 
@@ -84,6 +89,15 @@ const InscriptionCard = ({ inscription, onClick }) => {
               🔐 STEGO
             </div>
           )}
+          {hasTextContent && (
+            <button
+              onClick={handleTextPreviewToggle}
+              className="px-2 py-1 bg-gradient-to-r from-blue-600 to-blue-700 text-white text-xs rounded-full font-semibold shadow-lg hover:from-blue-700 hover:to-blue-800 transition-colors"
+              title={showTextPreview ? "Hide text preview" : "Show text preview"}
+            >
+              {showTextPreview ? "📝 Hide" : "📄 Text"}
+            </button>
+          )}
         </div>
         
         {inscription.size_bytes && (
@@ -98,18 +112,13 @@ const InscriptionCard = ({ inscription, onClick }) => {
       </div>
       
       <div className="mt-2">
-        <div className="text-black dark:text-white font-mono text-xs truncate font-medium" title={inscription.file_name || inscription.id}>
-          {inscription.file_name || inscription.id}
+        <div className="text-black dark:text-white font-mono text-xs truncate font-medium" title={inscription.id}>
+          {inscription.id}
         </div>
         <div className="flex items-center gap-2 mt-1">
           {inscription.mime_type && (
             <span className="text-gray-500 dark:text-gray-400 text-xs">
               {inscription.mime_type.split('/')[1]?.toUpperCase() || 'UNKNOWN'}
-            </span>
-          )}
-          {inscription.metadata?.image_format && (
-            <span className="text-gray-500 dark:text-gray-400 text-xs">
-              {inscription.metadata.image_format.toUpperCase()}
             </span>
           )}
         </div>
