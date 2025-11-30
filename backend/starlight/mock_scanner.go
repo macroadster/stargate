@@ -50,6 +50,22 @@ func (m *MockStarlightScanner) GetScannerInfo() core.ScannerInfo {
 	}
 }
 
+// ScanBlock scans a block with mock results
+func (m *MockStarlightScanner) ScanBlock(blockHeight int64, options core.ScanOptions) (*core.BlockScanResponse, error) {
+	// Return mock block scan results
+	return &core.BlockScanResponse{
+		BlockHeight:       blockHeight,
+		BlockHash:         "mock-block-hash",
+		Timestamp:         1234567890,
+		TotalInscriptions: 10,
+		ImagesScanned:     10,
+		StegoDetected:     0,
+		ProcessingTimeMs:  100.0,
+		Inscriptions:      []core.BlockScanInscription{},
+		RequestID:         "mock-request-id",
+	}, nil
+}
+
 // IsInitialized returns true for mock scanner
 func (m *MockStarlightScanner) IsInitialized() bool {
 	return true

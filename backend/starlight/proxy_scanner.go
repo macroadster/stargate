@@ -164,6 +164,60 @@ func (p *ProxyScanner) ScanImage(imageData []byte, options core.ScanOptions) (*c
 	return scanResult, nil
 }
 
+// ScanBlock scans an entire block using the Python API
+// NOTE: The Python API has a native /scan/block endpoint that efficiently scans
+// entire blocks in one request and automatically updates the inscriptions.json file.
+// However, we implement block scanning in the Go backend for architectural consistency.
+func (p *ProxyScanner) ScanBlock(blockHeight int64, options core.ScanOptions) (*core.BlockScanResponse, error) {
+	if !p.initialized {
+		return nil, fmt.Errorf("steganography scanner not available - ensure Python backend is running on port 8080")
+	}
+
+	// Create request payload
+	request := map[string]interface{}{
+		"block_height": blockHeight,
+		"scan_options": map[string]interface{}{
+			"extract_message":      options.ExtractMessage,
+			"confidence_threshold": options.ConfidenceThreshold,
+			"include_metadata":     options.IncludeMetadata,
+		},
+	}
+
+	requestBody, err := json.Marshal(request)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	// Create request
+	req, err := http.NewRequest("POST", p.apiURL+"/scan/block", bytes.NewBuffer(requestBody))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+p.apiKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	// Send request
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	// Parse response
+	var response core.BlockScanResponse
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &response, nil
+}
+
 // ExtractMessage extracts message by proxying to Python API
 func (p *ProxyScanner) ExtractMessage(imageData []byte, method string) (*core.ExtractionResult, error) {
 	if !p.initialized {

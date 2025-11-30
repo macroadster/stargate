@@ -90,19 +90,29 @@ type TransactionResult struct {
 	Error            string                 `json:"error,omitempty"`
 }
 
+// BlockScanInscription represents an inscription with scan results
+type BlockScanInscription struct {
+	TxID        string      `json:"tx_id"`
+	InputIndex  int         `json:"input_index"`
+	ContentType string      `json:"content_type"`
+	Content     string      `json:"content"`
+	SizeBytes   int         `json:"size_bytes"`
+	FileName    string      `json:"file_name"`
+	FilePath    string      `json:"file_path"`
+	ScanResult  *ScanResult `json:"scan_result,omitempty"`
+}
+
 // BlockScanResponse represents the response from a block scan
 type BlockScanResponse struct {
-	BlockID               string              `json:"block_id"`
-	BlockHeight           int                 `json:"block_height"`
-	BlockHash             string              `json:"block_hash"`
-	TotalTransactions     int                 `json:"total_transactions"`
-	ProcessedTransactions int                 `json:"processed_transactions"`
-	StegoDetected         int                 `json:"stego_detected"`
-	TotalImages           int                 `json:"total_images"`
-	ImagesWithStego       int                 `json:"images_with_stego"`
-	ProcessingTimeMs      float64             `json:"processing_time_ms"`
-	Results               []TransactionResult `json:"results"`
-	RequestID             string              `json:"request_id"`
+	BlockHeight       int64                  `json:"block_height"`
+	BlockHash         string                 `json:"block_hash"`
+	Timestamp         int64                  `json:"timestamp"`
+	TotalInscriptions int                    `json:"total_inscriptions"`
+	ImagesScanned     int                    `json:"images_scanned"`
+	StegoDetected     int                    `json:"stego_detected"`
+	ProcessingTimeMs  float64                `json:"processing_time_ms"`
+	Inscriptions      []BlockScanInscription `json:"inscriptions"`
+	RequestID         string                 `json:"request_id"`
 }
 
 // SmartContractImage represents a smart contract with steganographic image
@@ -267,6 +277,7 @@ func GenerateRequestID() string {
 type StarlightScannerInterface interface {
 	Initialize() error
 	ScanImage(imageData []byte, options ScanOptions) (*ScanResult, error)
+	ScanBlock(blockHeight int64, options ScanOptions) (*BlockScanResponse, error)
 	ExtractMessage(imageData []byte, method string) (*ExtractionResult, error)
 	GetScannerInfo() ScannerInfo
 	IsInitialized() bool

@@ -50,7 +50,7 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white dark:bg-gray-800 rounded-lg max-w-4xl w-full mx-4 min-h-[60vh] overflow-x-hidden flex flex-col">
+      <div className="bg-white dark:bg-gray-800 rounded-lg max-w-4xl w-full mx-4 min-h-[70vh] max-h-[80vh] overflow-hidden flex flex-col">
         <div className="sticky top-0 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 p-4 flex-shrink-0">
           <div className="flex justify-between items-center">
             <h2 className="text-xl font-bold text-black dark:text-white">Inscription Details</h2>
@@ -60,37 +60,34 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
           </div>
         </div>
 
-        <div className="p-4 flex-1 overflow-y-auto">
-            <div className="flex gap-6 mb-6">
-            <div className="flex-shrink-0">
-              {modalImageSource ? (
-                <div className="relative">
-                  <img 
-                    src={modalImageSource} 
-                    alt={inscription.file_name || inscription.id}
-                    className="w-48 h-48 object-cover rounded-lg border-2 border-gray-300 dark:border-gray-700"
-                  />
-                  {inscription.metadata?.confidence && inscription.metadata.confidence > 0 && (
-                    <div className="absolute top-2 right-2 bg-green-500 text-white text-xs px-2 py-1 rounded-md font-bold">
-                      {Math.round(inscription.metadata.confidence * 100)}%
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="w-48 h-48 bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-700 dark:to-gray-800 rounded-lg flex items-center justify-center border-2 border-gray-300 dark:border-gray-700">
-                  <div className="text-6xl text-center">
-                    {inscription.contract_type === 'Steganographic Contract' ? '🎨' :
-                     inscription.mime_type?.includes('text') ? '📄' : 
-                     inscription.mime_type?.includes('image') ? '🖼️' : '📦'}
+        <div className="p-4 flex-1 overflow-y-auto overflow-x-hidden">
+            <div className="flex flex-col lg:flex-row gap-6 mb-6">
+              <div className="flex-shrink-0">
+                {modalImageSource ? (
+                  <div className="relative">
+                    <img
+                      src={modalImageSource}
+                      alt={inscription.file_name || inscription.id}
+                      className="w-48 h-48 object-cover rounded-lg border-2 border-gray-300 dark:border-gray-700"
+                    />
+                    {inscription.metadata?.confidence && inscription.metadata.confidence > 0 && (
+                      <div className="absolute top-2 right-2 bg-green-500 text-white text-xs px-2 py-1 rounded-md font-bold">
+                        {Math.round(inscription.metadata.confidence * 100)}%
+                      </div>
+                    )}
                   </div>
-                </div>
-              )}
-            </div>
+                ) : (
+                  <div className="w-48 h-48 bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-700 dark:to-gray-800 rounded-lg flex items-center justify-center border-2 border-gray-300 dark:border-gray-700">
+                    <div className="text-6xl text-center">
+                      {inscription.contract_type === 'Steganographic Contract' ? '🎨' :
+                       inscription.mime_type?.includes('text') ? '📄' :
+                       inscription.mime_type?.includes('image') ? '🖼️' : '📦'}
+                    </div>
+                  </div>
+                )}
+              </div>
 
-            <div className="flex-1">
-            </div>
-
-            <div className="mt-6">
+              <div className="flex-1">
               <div className="border-b border-gray-200 dark:border-gray-700 mb-6">
                 <div className="flex gap-6 relative">
                   {[
@@ -225,10 +222,8 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                           </div>
                           <CopyButton text={inscription.text} />
                         </div>
-                        <div className={`bg-white dark:bg-gray-800 rounded p-4 max-h-96 min-h-[200px] overflow-y-auto ${
-                          inscription.text && inscription.text.length > 500 ? 'min-w-[600px]' : 'min-w-[80%]'
-                        }`}>
-                          <pre className="text-blue-900 dark:text-blue-100 font-mono text-sm leading-relaxed whitespace-pre-wrap">
+                        <div className="bg-white dark:bg-gray-800 rounded p-4 max-h-96 min-h-[200px] overflow-y-auto w-full">
+                          <pre className="text-blue-900 dark:text-blue-100 font-mono text-sm leading-relaxed whitespace-pre-wrap break-words max-w-full">
                             {inscription.text}
                           </pre>
                         </div>
@@ -272,10 +267,8 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                             </div>
                             <CopyButton text={inscription.metadata.extracted_message} />
                           </div>
-                          <div className={`bg-white dark:bg-gray-800 rounded p-4 max-h-96 min-h-[200px] overflow-y-auto ${
-                          inscription.metadata?.extracted_message && inscription.metadata.extracted_message.length > 500 ? 'min-w-[600px]' : 'min-w-[80%]'
-                        }`}>
-                            <pre className="text-green-900 dark:text-green-100 font-mono text-sm leading-relaxed whitespace-pre-wrap">
+                        <div className="bg-white dark:bg-gray-800 rounded p-4 max-h-96 min-h-[200px] overflow-y-auto w-full">
+                            <pre className="text-green-900 dark:text-green-100 font-mono text-sm leading-relaxed whitespace-pre-wrap break-words max-w-full">
                               {inscription.metadata.extracted_message}
                             </pre>
                           </div>
@@ -341,11 +334,11 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                             <div className="text-green-800 dark:text-green-200 text-xs font-mono uppercase tracking-wider">Hidden Content:</div>
                             <CopyButton text={inscription.metadata.extracted_message} />
                           </div>
-                          <div className="bg-gray-50 dark:bg-gray-900 rounded p-3 max-h-64 overflow-y-auto">
-                            <pre className="text-green-900 dark:text-green-100 font-mono text-sm leading-relaxed whitespace-pre-wrap break-all">
-                              {inscription.metadata.extracted_message}
-                            </pre>
-                          </div>
+                           <div className="bg-gray-50 dark:bg-gray-900 rounded p-3 max-h-64 overflow-y-auto">
+                             <pre className="text-green-900 dark:text-green-100 font-mono text-sm leading-relaxed whitespace-pre-wrap break-words max-w-full">
+                               {inscription.metadata.extracted_message}
+                             </pre>
+                           </div>
                         </div>
 
                         <div className="mt-4 pt-4 border-t border-green-200 dark:border-green-700">
@@ -421,8 +414,8 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                       <span className="w-2 h-2 bg-orange-500 rounded-full"></span>
                       Technical Architecture
                     </h4>
-                    <div className="bg-gray-100 dark:bg-gray-900 rounded-lg p-4">
-                      <pre className="text-gray-700 dark:text-gray-300 text-sm whitespace-pre-wrap font-mono leading-relaxed">
+                    <div className="bg-gray-100 dark:bg-gray-900 rounded-lg p-4 max-h-64 overflow-y-auto">
+                      <pre className="text-gray-700 dark:text-gray-300 text-sm whitespace-pre-wrap font-mono leading-relaxed max-w-full break-words">
                         {markdownContent}
                       </pre>
                     </div>
@@ -588,12 +581,12 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                     </div>
                   )}
                 </div>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
+               )}
+             </div>
+           </div>
+         </div>
+       </div>
+     </div>
   );
 };
 

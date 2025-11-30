@@ -52,41 +52,37 @@ export const useInscriptions = (selectedBlock) => {
       
       console.log(`Fetched ${images.length} block images for height ${selectedBlock.height}`);
       
-      const convertedResults = images.map(image => {
-        const hasEnhancedScanData = data.steganography_scan && data.steganography_scan.scan_results;
-        let scanResult = null;
-        
-        if (hasEnhancedScanData) {
-          const imageScanResult = data.steganography_scan.scan_results.find(
-            scan => scan.tx_id === image.tx_id && scan.image_index === image.input_index
-          );
-          
-          if (imageScanResult) {
-            scanResult = {
-              is_stego: imageScanResult.is_stego || false,
-              confidence: imageScanResult.confidence || 0.0,
-              stego_probability: imageScanResult.stego_probability || 0.0,
-              prediction: imageScanResult.prediction || 'clean',
-              stego_type: imageScanResult.stego_type || '',
-              extracted_message: imageScanResult.extracted_message || '',
-              scan_error: imageScanResult.scan_error || '',
-              scanned_at: imageScanResult.scanned_at
-            };
-          }
-        }
-        
-        if (!scanResult) {
-          scanResult = {
-            is_stego: false,
-            confidence: 0.0,
-            stego_probability: 0.0,
-            prediction: 'unanalyzed',
-            stego_type: '',
-            extracted_message: '',
-            scan_error: 'Analysis not performed',
-            scanned_at: Date.now() / 1000
-          };
-        }
+       const convertedResults = images.map(image => {
+         // Use scan_result directly from the image object
+         // NOTE: Scan results are embedded directly in each image object by the backend
+         // rather than in a separate steganography_scan section for simplicity
+         let scanResult = null;
+
+         if (image.scan_result) {
+           scanResult = {
+             is_stego: image.scan_result.is_stego || false,
+             confidence: image.scan_result.confidence || 0.0,
+             stego_probability: image.scan_result.stego_probability || 0.0,
+             prediction: image.scan_result.prediction || 'clean',
+             stego_type: image.scan_result.stego_type || '',
+             extracted_message: image.scan_result.extracted_message || '',
+             scan_error: image.scan_result.scan_error || '',
+             scanned_at: image.scan_result.scanned_at || Date.now() / 1000
+           };
+         }
+
+         if (!scanResult) {
+           scanResult = {
+             is_stego: false,
+             confidence: 0.0,
+             stego_probability: 0.0,
+             prediction: 'unanalyzed',
+             stego_type: '',
+             extracted_message: '',
+             scan_error: 'Analysis not performed',
+             scanned_at: Date.now() / 1000
+           };
+         }
         
         return {
           id: image.tx_id,

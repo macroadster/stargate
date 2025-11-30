@@ -24,7 +24,6 @@ const generateBlock = (block) => {
     hasBRC20: false,
     thumbnail: (inscriptionCount > 0) ? '🎨' : null,
     tx_count: block.tx_count || inscriptionCount || 0,
-    smart_contracts: block.inscriptions || [],
     witness_images: block.images || []
   };
 };

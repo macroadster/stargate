@@ -87,11 +87,15 @@ func setupRoutes(mux *http.ServeMux, container *container.Container) http.Handle
 		http.NotFound(w, r)
 	})
 
+	// Bitcoin API for scanning
+	bitcoinAPI := bitcoin.NewBitcoinAPI()
+
 	// Enhanced data API endpoints (keep existing functionality)
 	dataStorage := storage.NewDataStorage("blocks")
-	blockMonitor := bitcoin.NewBlockMonitorWithStorage(
+	blockMonitor := bitcoin.NewBlockMonitorWithStorageAndAPI(
 		bitcoin.NewBitcoinNodeClient("https://blockstream.info/api"),
 		dataStorage,
+		bitcoinAPI,
 	)
 
 	// Start the block monitor in background
@@ -106,7 +110,7 @@ func setupRoutes(mux *http.ServeMux, container *container.Container) http.Handle
 	dataAPI := api.NewDataAPI(
 		dataStorage,
 		blockMonitor,
-		bitcoin.NewBitcoinAPI(),
+		bitcoinAPI,
 	)
 
 	mux.HandleFunc("/api/data/block/", dataAPI.HandleGetBlockData)
@@ -140,7 +144,6 @@ func setupRoutes(mux *http.ServeMux, container *container.Container) http.Handle
 	})
 
 	// Bitcoin steganography scanning endpoints
-	bitcoinAPI := bitcoin.NewBitcoinAPI()
 	mux.HandleFunc("/bitcoin/v1/health", bitcoinAPI.HandleHealth)
 	mux.HandleFunc("/bitcoin/v1/info", bitcoinAPI.HandleInfo)
 	mux.HandleFunc("/bitcoin/v1/scan/transaction", bitcoinAPI.HandleScanTransaction)

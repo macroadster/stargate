@@ -113,6 +113,41 @@ func (sm *ScannerManager) ScanImage(imageData []byte, options core.ScanOptions) 
 	return result, nil
 }
 
+// ScanBlock scans an entire block using the underlying scanner
+func (sm *ScannerManager) ScanBlock(blockHeight int64, options core.ScanOptions) (*core.BlockScanResponse, error) {
+	sm.mutex.Lock()
+	defer sm.mutex.Unlock()
+
+	if !sm.initialized {
+		if err := sm.InitializeScanner(); err != nil {
+			return nil, fmt.Errorf("scanner not initialized: %v", err)
+		}
+	}
+
+	if !sm.circuitBreaker.CanExecute() {
+		return &core.BlockScanResponse{
+			BlockHeight:       blockHeight,
+			BlockHash:         "unknown",
+			Timestamp:         0,
+			TotalInscriptions: 0,
+			ImagesScanned:     0,
+			StegoDetected:     0,
+			ProcessingTimeMs:  0,
+			Inscriptions:      []core.BlockScanInscription{},
+			RequestID:         "circuit_breaker_open",
+		}, fmt.Errorf("circuit breaker open")
+	}
+
+	result, err := sm.scanner.ScanBlock(blockHeight, options)
+	if err != nil {
+		sm.circuitBreaker.RecordFailure()
+		return nil, err
+	}
+
+	sm.circuitBreaker.RecordSuccess()
+	return result, nil
+}
+
 // GetScannerType returns type of scanner being used
 func (sm *ScannerManager) GetScannerType() string {
 	sm.mutex.RLock()

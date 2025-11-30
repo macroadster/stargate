@@ -21,6 +21,7 @@ import (
 type BlockMonitor struct {
 	bitcoinClient *BitcoinNodeClient
 	rawClient     *RawBlockClient
+	bitcoinAPI    *BitcoinAPI
 	currentHeight int64
 	lastChecked   time.Time
 	isRunning     bool
@@ -166,6 +167,36 @@ func NewBlockMonitorWithStorage(client *BitcoinNodeClient, dataStorage DataStora
 	}
 }
 
+// NewBlockMonitorWithAPI creates a new block monitor with Bitcoin API
+func NewBlockMonitorWithAPI(client *BitcoinNodeClient, bitcoinAPI *BitcoinAPI) *BlockMonitor {
+	return &BlockMonitor{
+		bitcoinClient: client,
+		rawClient:     NewRawBlockClient(),
+		bitcoinAPI:    bitcoinAPI,
+		checkInterval: 5 * time.Minute, // Check every 5 minutes
+		blocksDir:     "blocks",
+		maxRetries:    3,
+		retryDelay:    10 * time.Second,
+		lastChecked:   time.Now(),
+	}
+}
+
+// NewBlockMonitorWithStorageAndAPI creates a new block monitor with data storage and Bitcoin API
+func NewBlockMonitorWithStorageAndAPI(client *BitcoinNodeClient, dataStorage DataStorageInterface, bitcoinAPI *BitcoinAPI) *BlockMonitor {
+	log.Printf("Creating block monitor with bitcoinAPI set: %v", bitcoinAPI != nil)
+	return &BlockMonitor{
+		bitcoinClient: client,
+		rawClient:     NewRawBlockClient(),
+		dataStorage:   dataStorage,
+		bitcoinAPI:    bitcoinAPI,
+		checkInterval: 5 * time.Minute, // Check every 5 minutes
+		blocksDir:     "blocks",
+		maxRetries:    3,
+		retryDelay:    10 * time.Second,
+		lastChecked:   time.Now(),
+	}
+}
+
 // Start begins the block monitoring process
 func (bm *BlockMonitor) Start() error {
 	bm.mu.Lock()
@@ -183,7 +214,7 @@ func (bm *BlockMonitor) Start() error {
 		return fmt.Errorf("failed to create blocks directory: %w", err)
 	}
 
-	log.Printf("Starting block monitor with %s interval", bm.checkInterval)
+	log.Printf("Starting block monitor with %s interval, bitcoinAPI set: %v", bm.checkInterval, bm.bitcoinAPI != nil)
 
 	go bm.monitorLoop()
 
@@ -426,7 +457,7 @@ func (bm *BlockMonitor) getCurrentHeightFromBlockchainInfo() (int64, error) {
 func (bm *BlockMonitor) ProcessBlock(height int64) error {
 	startTime := time.Now()
 
-	log.Printf("Processing block %d", height)
+	log.Printf("Processing block %d, bitcoinAPI set: %v", height, bm.bitcoinAPI != nil)
 
 	// Get raw block hex from blockchain.info
 	hexData, err := bm.rawClient.GetRawBlockHex(height)
@@ -461,17 +492,76 @@ func (bm *BlockMonitor) ProcessBlock(height int64) error {
 		log.Printf("Failed to save images: %v", err)
 	}
 
-	// Scan images for steganography using the centralized API
-	scanResults, err := bm.scanBlockViaAPI(height)
-	if err != nil {
-		log.Printf("Failed to scan block via API: %v", err)
-		// Fallback: create empty scan results
-		scanResults = []map[string]any{}
-	} else {
-		stegoCount := bm.countStegoImagesFromAPIResponse(scanResults)
-		log.Printf("Steganography scan completed via API: %d images scanned, %d with stego detected",
-			len(scanResults), stegoCount)
+	// Scan block for steganography using the scanner manager
+	// NOTE: We use the Go backend's /bitcoin/v1/scan/block endpoint via scannerManager.ScanBlock()
+	// instead of calling the Python API's /scan/block endpoint directly. While the Python API
+	// has an efficient /scan/block endpoint that scans entire blocks in one request and
+	// automatically updates inscriptions.json, we use the Go implementation for consistency
+	// with the existing architecture. The Python /scan/block endpoint requires filesystem access to
+	// the shared blocks directory.
+	var blockScanResponse *core.BlockScanResponse
+
+	if bm.bitcoinAPI != nil && bm.bitcoinAPI.scannerManager != nil {
+		log.Printf("Using scanner manager to scan block %d", height)
+		var err error
+		blockScanResponse, err = bm.bitcoinAPI.scannerManager.ScanBlock(height, core.ScanOptions{
+			ExtractMessage:      true,
+			ConfidenceThreshold: 0.5,
+			IncludeMetadata:     true,
+		})
+		if err != nil {
+			log.Printf("Failed to scan block via scanner manager: %v", err)
+			blockScanResponse = nil
+		}
 	}
+
+	// Convert block scan response to the format expected by the rest of the code
+	var scanResults []map[string]any
+	if blockScanResponse != nil {
+		// Use results from block scan
+		scanResults = make([]map[string]any, len(blockScanResponse.Inscriptions))
+		for i, inscription := range blockScanResponse.Inscriptions {
+			result := map[string]any{
+				"tx_id":             inscription.TxID,
+				"image_index":       i,
+				"file_name":         inscription.FileName,
+				"size_bytes":        inscription.SizeBytes,
+				"format":            "unknown", // Could extract from content_type
+				"scanned_at":        time.Now().Unix(),
+				"is_stego":          false,
+				"confidence":        0.0,
+				"stego_type":        "",
+				"extracted_message": "",
+				"scan_error":        "",
+				"stego_details":     nil,
+			}
+
+			if inscription.ScanResult != nil {
+				result["is_stego"] = inscription.ScanResult.IsStego
+				result["confidence"] = inscription.ScanResult.Confidence
+				if inscription.ScanResult.StegoType != "" {
+					result["stego_type"] = inscription.ScanResult.StegoType
+				}
+				if inscription.ScanResult.ExtractedMessage != "" {
+					result["extracted_message"] = inscription.ScanResult.ExtractedMessage
+				}
+				if inscription.ScanResult.ExtractionError != "" {
+					result["scan_error"] = inscription.ScanResult.ExtractionError
+				}
+			}
+
+			scanResults[i] = result
+		}
+		log.Printf("Block scan completed: %d inscriptions scanned, %d stego detected", blockScanResponse.TotalInscriptions, blockScanResponse.StegoDetected)
+	} else {
+		// Fallback to empty results
+		log.Printf("No block scan results available, using empty results for %d images", len(parsedBlock.Images))
+		scanResults = bm.createEmptyScanResults(len(parsedBlock.Images))
+	}
+
+	stegoCount := bm.countStegoImagesFromAPIResponse(scanResults)
+	log.Printf("Steganography scan completed: %d images scanned, %d with stego detected",
+		len(scanResults), stegoCount)
 
 	// Create inscriptions data
 	inscriptions := bm.createInscriptionsFromImages(parsedBlock.Images)
@@ -725,14 +815,13 @@ func (bm *BlockMonitor) scanBlockViaAPI(height int64) ([]map[string]any, error) 
 		return nil, fmt.Errorf("failed to marshal scan request: %w", err)
 	}
 
-	// Make HTTP request to starlight scanner directly
+	// Make HTTP request to the Go backend's Bitcoin API
 	client := &http.Client{Timeout: 300 * time.Second} // 5 minute timeout for large blocks
-	req, err := http.NewRequest("POST", "http://localhost:8080/scan/block", bytes.NewBuffer(requestBody))
+	req, err := http.NewRequest("POST", "http://localhost:3001/bitcoin/v1/scan/block", bytes.NewBuffer(requestBody))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer demo-api-key")
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to call scan API: %w", err)
@@ -752,24 +841,37 @@ func (bm *BlockMonitor) scanBlockViaAPI(height int64) ([]map[string]any, error) 
 
 	// Convert the API response to the expected format for block monitor
 	var results []map[string]any
-	for _, txResult := range scanResponse.Results {
-		if txResult.StegoDetected {
-			result := map[string]any{
-				"tx_id":             txResult.TransactionID,
-				"image_index":       0, // We don't have individual image info from API
-				"file_name":         fmt.Sprintf("tx_%s", txResult.TransactionID[:16]),
-				"size_bytes":        0,
-				"format":            "unknown",
-				"scanned_at":        time.Now().Unix(),
-				"is_stego":          txResult.StegoDetected,
-				"confidence":        0.0,
-				"stego_type":        "detected_via_api",
-				"extracted_message": txResult.ExtractedMessage,
-				"scan_error":        "",
-				"stego_details":     txResult.StegoDetails,
-			}
-			results = append(results, result)
+	for i, inscription := range scanResponse.Inscriptions {
+		result := map[string]any{
+			"tx_id":             inscription.TxID,
+			"image_index":       i,
+			"file_name":         inscription.FileName,
+			"size_bytes":        inscription.SizeBytes,
+			"format":            "unknown",
+			"scanned_at":        time.Now().Unix(),
+			"is_stego":          false,
+			"confidence":        0.0,
+			"stego_type":        "",
+			"extracted_message": "",
+			"scan_error":        "",
+			"stego_details":     nil,
 		}
+
+		if inscription.ScanResult != nil {
+			result["is_stego"] = inscription.ScanResult.IsStego
+			result["confidence"] = inscription.ScanResult.Confidence
+			if inscription.ScanResult.StegoType != "" {
+				result["stego_type"] = inscription.ScanResult.StegoType
+			}
+			if inscription.ScanResult.ExtractedMessage != "" {
+				result["extracted_message"] = inscription.ScanResult.ExtractedMessage
+			}
+			if inscription.ScanResult.ExtractionError != "" {
+				result["scan_error"] = inscription.ScanResult.ExtractionError
+			}
+		}
+
+		results = append(results, result)
 	}
 
 	return results, nil
@@ -789,6 +891,87 @@ func (bm *BlockMonitor) countStegoImagesFromAPIResponse(scanResults []map[string
 // countStegoImages counts how many images have steganography detected
 func (bm *BlockMonitor) countStegoImages(scanResults []map[string]any) int {
 	return bm.countStegoImagesFromAPIResponse(scanResults)
+}
+
+// scanImagesDirectly scans images using the BitcoinAPI directly
+func (bm *BlockMonitor) scanImagesDirectly(images []ExtractedImageData) ([]map[string]any, error) {
+	log.Printf("scanImagesDirectly called with %d images", len(images))
+	var results []map[string]any
+
+	for i, image := range images {
+		// Create scan result for this image
+		result := map[string]any{
+			"tx_id":             image.TxID,
+			"image_index":       i,
+			"file_name":         image.FileName,
+			"size_bytes":        image.SizeBytes,
+			"format":            image.Format,
+			"scanned_at":        time.Now().Unix(),
+			"is_stego":          false,
+			"confidence":        0.0,
+			"stego_type":        "",
+			"extracted_message": "",
+			"scan_error":        "",
+			"stego_details":     nil,
+		}
+
+		// Try to scan the image using the scanner manager
+		if bm.bitcoinAPI != nil && bm.bitcoinAPI.scannerManager != nil {
+			log.Printf("Scanning image %d: %s (%d bytes)", i, image.FileName, len(image.Data))
+			scanResult, err := bm.bitcoinAPI.scannerManager.ScanImage(image.Data, core.ScanOptions{
+				ExtractMessage:      true,
+				ConfidenceThreshold: 0.5,
+				IncludeMetadata:     true,
+			})
+			if err != nil {
+				log.Printf("Failed to scan image %s: %v", image.FileName, err)
+				result["scan_error"] = err.Error()
+			} else {
+				log.Printf("Scanned image %s: is_stego=%v, confidence=%.2f", image.FileName, scanResult.IsStego, scanResult.Confidence)
+				result["is_stego"] = scanResult.IsStego
+				result["confidence"] = scanResult.Confidence
+				if scanResult.StegoType != "" {
+					result["stego_type"] = scanResult.StegoType
+				}
+				if scanResult.ExtractedMessage != "" {
+					result["extracted_message"] = scanResult.ExtractedMessage
+				}
+				if scanResult.ExtractionError != "" {
+					result["scan_error"] = scanResult.ExtractionError
+				}
+			}
+		} else {
+			log.Printf("Scanner not available for image %s", image.FileName)
+			result["scan_error"] = "Scanner not available"
+		}
+
+		results = append(results, result)
+	}
+
+	log.Printf("scanImagesDirectly completed, scanned %d images", len(results))
+	return results, nil
+}
+
+// createEmptyScanResults creates empty scan results for all images
+func (bm *BlockMonitor) createEmptyScanResults(count int) []map[string]any {
+	results := make([]map[string]any, count)
+	for i := 0; i < count; i++ {
+		results[i] = map[string]any{
+			"tx_id":             "",
+			"image_index":       i,
+			"file_name":         "",
+			"size_bytes":        0,
+			"format":            "",
+			"scanned_at":        time.Now().Unix(),
+			"is_stego":          false,
+			"confidence":        0.0,
+			"stego_type":        "",
+			"extracted_message": "",
+			"scan_error":        "not_scanned",
+			"stego_details":     nil,
+		}
+	}
+	return results
 }
 
 // saveBlockSummaryWithScanResults saves block summary including steganography scan results
@@ -823,6 +1006,44 @@ func (bm *BlockMonitor) saveBlockSummaryWithScanResults(blockDir string, parsedB
 		"scan_timestamp": time.Now().Unix(),
 	}
 
+	// Create enhanced images with scan results
+	enhancedImages := make([]map[string]any, len(summary.Images))
+	for i, image := range summary.Images {
+		enhancedImage := map[string]any{
+			"tx_id":      image.TxID,
+			"format":     image.Format,
+			"size_bytes": image.SizeBytes,
+			"file_name":  image.FileName,
+			"file_path":  image.FilePath,
+		}
+
+		// Add scan result if available
+		if len(scanResults) > i {
+			scanResult := scanResults[i]
+			if scanResult != nil {
+				enhancedImage["scan_result"] = scanResult
+			} else {
+				// Default scan result for unscanned images
+				enhancedImage["scan_result"] = map[string]any{
+					"is_stego":          false,
+					"stego_probability": 0.0,
+					"confidence":        0.0,
+					"prediction":        "not_scanned",
+				}
+			}
+		} else {
+			// Default scan result for unscanned images
+			enhancedImage["scan_result"] = map[string]any{
+				"is_stego":          false,
+				"stego_probability": 0.0,
+				"confidence":        0.0,
+				"prediction":        "not_scanned",
+			}
+		}
+
+		enhancedImages[i] = enhancedImage
+	}
+
 	// Only include steganography data if detections exist
 	var enhancedSummary map[string]any
 	if stegoCount > 0 {
@@ -832,7 +1053,7 @@ func (bm *BlockMonitor) saveBlockSummaryWithScanResults(blockDir string, parsedB
 			"timestamp":          summary.Timestamp,
 			"total_transactions": summary.TotalTransactions,
 			"inscriptions":       summary.Inscriptions,
-			"images":             summary.Images,
+			"images":             enhancedImages,
 			"smart_contracts":    summary.SmartContracts,
 			"processing_time_ms": summary.ProcessingTime,
 			"success":            summary.Success,
@@ -845,7 +1066,7 @@ func (bm *BlockMonitor) saveBlockSummaryWithScanResults(blockDir string, parsedB
 			"timestamp":          summary.Timestamp,
 			"total_transactions": summary.TotalTransactions,
 			"inscriptions":       summary.Inscriptions,
-			"images":             summary.Images,
+			"images":             enhancedImages,
 			"smart_contracts":    []SmartContractData{},
 			"processing_time_ms": summary.ProcessingTime,
 			"success":            summary.Success,

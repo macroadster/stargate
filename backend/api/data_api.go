@@ -274,7 +274,7 @@ func (api *DataAPI) HandleScanBlockOnDemand(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Process the block
-	log.Printf("On-demand scan requested for block %d", request.BlockHeight)
+	log.Printf("On-demand scan requested for block %d, force_scan=%v", request.BlockHeight, request.ForceScan)
 	err := api.blockMonitor.ProcessBlock(request.BlockHeight)
 	if err != nil {
 		http.Error(w, "Failed to scan block: "+err.Error(), http.StatusInternalServerError)
@@ -360,7 +360,7 @@ func (api *DataAPI) HandleGetBlockImages(w http.ResponseWriter, r *http.Request)
 			"size_bytes":   image.SizeBytes,
 			"format":       image.Format,
 			"content_type": contentType,
-			"index":        i,
+			"input_index":  i,
 		}
 
 		// Read text content for text files
