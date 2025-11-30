@@ -77,9 +77,30 @@ function MainContent() {
       if (block) {
         setSelectedBlock(block);
         setIsUserNavigating(true);
+      } else {
+        // Block not in recent blocks, fetch it
+        fetch(`http://localhost:3001/api/data/block/${height}`)
+          .then(response => response.json())
+          .then(data => {
+            // Create block object from data
+            const fetchedBlock = {
+              height: parseInt(height),
+              hash: data.block_hash,
+              timestamp: data.timestamp,
+              tx_count: data.tx_count || 0,
+              isFuture: false
+            };
+            setSelectedBlock(fetchedBlock);
+            setIsUserNavigating(true);
+          })
+          .catch(error => {
+            console.error('Error fetching block:', error);
+            // Navigate back to home if block not found
+            navigate('/');
+          });
       }
     }
-  }, [height, blocks, setSelectedBlock, setIsUserNavigating]);
+  }, [height, blocks, setSelectedBlock, setIsUserNavigating, navigate]);
 
   useEffect(() => {
     if (isDarkMode) {

@@ -725,9 +725,15 @@ func (bm *BlockMonitor) scanBlockViaAPI(height int64) ([]map[string]any, error) 
 		return nil, fmt.Errorf("failed to marshal scan request: %w", err)
 	}
 
-	// Make HTTP request to local API
+	// Make HTTP request to starlight scanner directly
 	client := &http.Client{Timeout: 300 * time.Second} // 5 minute timeout for large blocks
-	resp, err := client.Post("http://localhost:3001/bitcoin/v1/scan/block", "application/json", bytes.NewBuffer(requestBody))
+	req, err := http.NewRequest("POST", "http://localhost:8080/scan/block", bytes.NewBuffer(requestBody))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer demo-api-key")
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to call scan API: %w", err)
 	}
