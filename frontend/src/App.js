@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Search, Moon, Sun, ChevronLeft, ChevronRight, X, Check, Copy } from 'lucide-react';
+import { Routes, Route, useParams, useNavigate } from 'react-router-dom';
 
 import BlockCard from './components/Block/BlockCard';
 import InscriptionCard from './components/Inscription/InscriptionCard';
@@ -28,33 +29,36 @@ const formatTimeAgo = (timestamp) => {
   }
 };
 
-export default function OrdiscanExplorer() {
+function MainContent() {
+  const { height } = useParams();
+  const navigate = useNavigate();
   const [showInscribeModal, setShowInscribeModal] = useState(false);
   const [selectedInscription, setSelectedInscription] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [isDarkMode, setIsDarkMode] = useState(true);
   const [searchResults, setSearchResults] = useState(null);
   const [copiedText, setCopiedText] = useState('');
+  const sentinelRef = useRef(null);
 
   const {
     blocks,
     selectedBlock,
     isUserNavigating,
     shouldAutoScroll,
-    handleBlockSelect,
+    handleBlockSelect: originalHandleBlockSelect,
     setSelectedBlock,
     setIsUserNavigating
   } = useBlocks();
 
+  const handleBlockSelect = (block) => {
+    originalHandleBlockSelect(block);
+    navigate(`/block/${block.height}`);
+  };
+
   const {
     inscriptions,
-    allInscriptions,
     hasMoreImages,
-    totalImages,
-    displayedCount,
-    loadMoreInscriptions,
-    setFilter,
-    filterMode
+    loadMoreInscriptions
   } = useInscriptions(selectedBlock);
 
   useEffect(() => {
@@ -66,6 +70,16 @@ export default function OrdiscanExplorer() {
       setIsDarkMode(prefersDark);
     }
   }, []);
+
+  useEffect(() => {
+    if (height && blocks.length > 0) {
+      const block = blocks.find(b => b.height === parseInt(height));
+      if (block) {
+        setSelectedBlock(block);
+        setIsUserNavigating(true);
+      }
+    }
+  }, [height, blocks, setSelectedBlock, setIsUserNavigating]);
 
   useEffect(() => {
     if (isDarkMode) {
@@ -86,12 +100,32 @@ export default function OrdiscanExplorer() {
           }
         }, 100);
       }
-      
+
       if (isUserNavigating) {
         setIsUserNavigating(false);
       }
     }
   }, [selectedBlock, isUserNavigating, shouldAutoScroll, setIsUserNavigating]);
+
+  useEffect(() => {
+    if (!hasMoreImages || !sentinelRef.current) return;
+
+    const sentinel = sentinelRef.current;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          loadMoreInscriptions();
+        }
+      },
+      { threshold: 1.0 }
+    );
+
+    observer.observe(sentinel);
+
+    return () => {
+      observer.unobserve(sentinel);
+    };
+  }, [hasMoreImages, loadMoreInscriptions]);
 
   const toggleTheme = () => {
     setIsDarkMode(!isDarkMode);
@@ -370,41 +404,21 @@ export default function OrdiscanExplorer() {
                   </h3>
                 </div>
 
-                <div className="grid grid-cols-5 gap-4">
-                  {console.log('Rendering inscriptions grid:', inscriptions.length)}
-                  {inscriptions.map((inscription, idx) => (
-                    <InscriptionCard
-                      key={idx}
-                      inscription={inscription}
-                      onClick={setSelectedInscription}
-                    />
-                  ))}
-                </div>
-                
-                {selectedBlock && !selectedBlock.isFuture && hasMoreImages && inscriptions.length > 0 && (
-                  <div className="text-center mt-6 mb-4">
-                    <button
-                      onClick={loadMoreInscriptions}
-                      className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3 rounded-lg font-semibold transition-colors"
-                    >
-                      Load More Images
-                    </button>
-                    <div className="text-gray-500 dark:text-gray-400 text-sm mt-2">
-                      Showing {displayedCount} of {totalImages} images
-                    </div>
-                  </div>
-                )}
-                
-                {selectedBlock && !selectedBlock.isFuture && !hasMoreImages && inscriptions.length > 0 && (
-                  <div className="text-center mt-6 mb-4 text-gray-500 dark:text-gray-400">
-                    <div className="flex items-center justify-center gap-2">
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                      </svg>
-                      <span>Showing all {totalImages} images</span>
-                    </div>
-                  </div>
-                )}
+                 <div className="grid grid-cols-5 gap-4">
+                   {console.log('Rendering inscriptions grid:', inscriptions.length)}
+                   {inscriptions.map((inscription, idx) => (
+                     <InscriptionCard
+                       key={idx}
+                       inscription={inscription}
+                       onClick={setSelectedInscription}
+                     />
+                   ))}
+                   {hasMoreImages && (
+                     <div ref={sentinelRef} className="col-span-5 flex justify-center py-4">
+                       <div className="text-gray-500 dark:text-gray-400">Loading more...</div>
+                     </div>
+                   )}
+                 </div>
               </div>
             )}
           </>
@@ -441,5 +455,14 @@ export default function OrdiscanExplorer() {
        </footer>
 
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <Routes>
+      <Route path="/" element={<MainContent />} />
+      <Route path="/block/:height" element={<MainContent />} />
+    </Routes>
   );
 }
