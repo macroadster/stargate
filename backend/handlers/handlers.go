@@ -122,13 +122,19 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 	text := r.FormValue("text")
 	price := r.FormValue("price")
 
-	// Get file
+	// Get file (optional)
+	var file io.ReadCloser
+	var filename string
+
 	file, header, err := r.FormFile("image")
-	if err != nil {
-		h.sendError(w, http.StatusBadRequest, "Image file required")
+	if err != nil && err != http.ErrMissingFile {
+		h.sendError(w, http.StatusBadRequest, "Error processing image file")
 		return
 	}
-	defer file.Close()
+	if err == nil {
+		defer file.Close()
+		filename = header.Filename
+	}
 
 	// Create inscription request
 	req := models.InscribeRequest{
@@ -137,7 +143,7 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 	}
 
 	// Create inscription
-	inscription, err := h.inscriptionService.CreateInscription(req, file, header.Filename)
+	inscription, err := h.inscriptionService.CreateInscription(req, file, filename)
 	if err != nil {
 		h.sendError(w, http.StatusInternalServerError, "Failed to create inscription")
 		return

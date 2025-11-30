@@ -78,26 +78,52 @@ function MainContent() {
         setSelectedBlock(block);
         setIsUserNavigating(true);
       } else {
-        // Block not in recent blocks, fetch it
-        fetch(`http://localhost:3001/api/data/block/${height}`)
-          .then(response => response.json())
-          .then(data => {
-            // Create block object from data
-            const fetchedBlock = {
-              height: parseInt(height),
-              hash: data.block_hash,
-              timestamp: data.timestamp,
-              tx_count: data.tx_count || 0,
-              isFuture: false
-            };
-            setSelectedBlock(fetchedBlock);
-            setIsUserNavigating(true);
+        // Block not in recent blocks, trigger scan and fetch it
+        fetch(`http://localhost:3001/api/data/scan`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            block_height: parseInt(height),
+            force_scan: true
           })
-          .catch(error => {
-            console.error('Error fetching block:', error);
-            // Navigate back to home if block not found
-            navigate('/');
-          });
+        })
+        .then(scanResponse => scanResponse.json())
+        .then(scanData => {
+          console.log('Block scanned successfully:', scanData);
+          // Create block object from scanned data
+          const fetchedBlock = {
+            height: parseInt(height),
+            hash: scanData.block_data?.block_hash || scanData.block_data?.block_hash,
+            timestamp: scanData.block_data?.timestamp || scanData.block_data?.timestamp,
+            tx_count: scanData.block_data?.inscriptions?.length || 0,
+            isFuture: false
+          };
+          setSelectedBlock(fetchedBlock);
+          setIsUserNavigating(true);
+        })
+        .catch(error => {
+          console.error('Error scanning block:', error);
+          // Try regular fetch as fallback
+          fetch(`http://localhost:3001/api/data/block/${height}`)
+            .then(response => response.json())
+            .then(data => {
+              const fetchedBlock = {
+                height: parseInt(height),
+                hash: data.block_hash,
+                timestamp: data.timestamp,
+                tx_count: data.tx_count || 0,
+                isFuture: false
+              };
+              setSelectedBlock(fetchedBlock);
+              setIsUserNavigating(true);
+            })
+            .catch(fetchError => {
+              console.error('Error fetching block:', fetchError);
+              navigate('/');
+            });
+        });
       }
     }
   }, [height, blocks, setSelectedBlock, setIsUserNavigating, navigate]);

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { X } from 'lucide-react';
+import { QRCodeCanvas } from 'qrcode.react';
 
 const InscribeModal = ({ onClose, setPendingTransactions }) => {
   const [step, setStep] = useState(1);
@@ -7,6 +8,7 @@ const InscribeModal = ({ onClose, setPendingTransactions }) => {
   const [embedText, setEmbedText] = useState('');
   const [price, setPrice] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [paymentData, setPaymentData] = useState(null);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -27,14 +29,16 @@ const InscribeModal = ({ onClose, setPendingTransactions }) => {
         const result = await response.json();
         console.log('Inscription successful:', result);
         
-        setTimeout(() => {
-          fetch('http://localhost:3001/api/pending-transactions')
-            .then(res => res.json())
-            .then(data => setPendingTransactions(data || []))
-            .catch(err => console.error('Error fetching pending transactions:', err));
-        }, 1000);
+        // Generate payment QR code data
+        const paymentAddress = "bc1qexampleaddress123456789"; // Demo address
+        const paymentAmount = price;
+        setPaymentData({
+          address: paymentAddress,
+          amount: paymentAmount,
+          inscriptionId: result.id
+        });
         
-        onClose();
+        setStep(2);
       } else {
         console.error('Inscription failed');
       }
@@ -118,14 +122,56 @@ const InscribeModal = ({ onClose, setPendingTransactions }) => {
         ) : (
           <div className="text-center py-8">
             <div className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
-              Payment Step Coming Soon
+              Complete Payment
             </div>
-            <button
-              onClick={() => setStep(1)}
-              className="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700"
-            >
-              Back
-            </button>
+            
+            {paymentData && (
+              <div className="space-y-4">
+                <div className="flex justify-center mb-4">
+                  <QRCodeCanvas 
+                    value={`bitcoin:${paymentData.address}?amount=${paymentData.amount}`}
+                    size={200}
+                    level="M"
+                    includeMargin={true}
+                  />
+                </div>
+                
+                <div className="text-sm text-gray-600 dark:text-gray-400">
+                  <p className="mb-2">Send <span className="font-mono font-bold">{paymentData.amount} BTC</span></p>
+                  <p className="mb-2">to address:</p>
+                  <p className="font-mono text-xs bg-gray-100 dark:bg-gray-700 p-2 rounded break-all">
+                    {paymentData.address}
+                  </p>
+                </div>
+                
+                <div className="text-xs text-gray-500 dark:text-gray-500">
+                  Inscription ID: {paymentData.inscriptionId}
+                </div>
+              </div>
+            )}
+            
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => setStep(1)}
+                className="flex-1 px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700"
+              >
+                Back
+              </button>
+              <button
+                onClick={() => {
+                  setTimeout(() => {
+                    fetch('http://localhost:3001/api/pending-transactions')
+                      .then(res => res.json())
+                      .then(data => setPendingTransactions(data || []))
+                      .catch(err => console.error('Error fetching pending transactions:', err));
+                  }, 1000);
+                  onClose();
+                }}
+                className="flex-1 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700"
+              >
+                Payment Sent
+              </button>
+            </div>
           </div>
         )}
       </div>

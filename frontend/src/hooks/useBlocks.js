@@ -36,6 +36,7 @@ export const useBlocks = () => {
 
   const fetchBlocks = useCallback(async (isPolling = false) => {
     try {
+      // Fetch recent blocks
       let response = await fetch('http://localhost:3001/api/data/blocks?limit=10');
       let data = await response.json();
       
@@ -70,7 +71,44 @@ export const useBlocks = () => {
         isFuture: true
       };
 
-      const allBlocks = [futureBlock, ...processedBlocks];
+      // Always include historical blocks
+      const historicalBlocks = [
+        {
+          height: 0,
+          hash: "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f",
+          timestamp: 1231006505,
+          tx_count: 1,
+          inscriptionCount: 0,
+          smart_contract_count: 0,
+          witness_image_count: 0,
+          hasBRC20: false,
+          thumbnail: null,
+          smart_contracts: [],
+          witness_images: []
+        },
+        {
+          height: 1,
+          hash: "00000000839a8e6986a95d95f6cc2d4c03074568ab5364770a7c6ea",
+          timestamp: 1231006505,
+          tx_count: 1,
+          inscriptionCount: 0,
+          smart_contract_count: 0,
+          witness_image_count: 0,
+          hasBRC20: false,
+          thumbnail: null,
+          smart_contracts: [],
+          witness_images: []
+        }
+      ];
+
+      // Combine historical blocks with recent blocks, removing duplicates
+      const recentBlockHeights = new Set(processedBlocks.map(b => b.height));
+      const filteredHistorical = historicalBlocks.filter(hb => !recentBlockHeights.has(hb.height));
+      
+      const allBlocks = [futureBlock, ...filteredHistorical, ...processedBlocks];
+      // Sort by height (descending for display)
+      allBlocks.sort((a, b) => b.height - a.height);
+      
       setBlocks(allBlocks);
       
       if (!selectedBlock && !isPolling) {
@@ -89,7 +127,7 @@ export const useBlocks = () => {
         setSelectedBlock(futureBlock);
       }
     }
-  }, [selectedBlock]);
+  }, []);
 
   useEffect(() => {
     fetchBlocks(false);
@@ -99,7 +137,7 @@ export const useBlocks = () => {
       fetchBlocks(true);
     }, 30000);
     return () => clearInterval(interval);
-  }, []);
+  }, [fetchBlocks]);
 
   useEffect(() => {
     if (!shouldAutoScroll) {

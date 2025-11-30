@@ -98,6 +98,38 @@ func setupRoutes(mux *http.ServeMux, container *container.Container) http.Handle
 		bitcoinAPI,
 	)
 
+	// Pre-cache historical blocks (with rate limiting)
+	go func() {
+		log.Println("Pre-caching historical Bitcoin blocks...")
+		// Start with most important blocks first
+		priorityBlocks := []int64{0, 174923, 481824}
+		otherBlocks := []int64{1, 210000, 420000, 630000, 709632}
+
+		// Cache priority blocks immediately
+		for _, height := range priorityBlocks {
+			log.Printf("Caching priority historical block %d...", height)
+			if err := blockMonitor.ProcessBlock(height); err != nil {
+				log.Printf("Failed to cache block %d: %v", height, err)
+			} else {
+				log.Printf("Successfully cached block %d", height)
+			}
+			time.Sleep(2 * time.Second) // Longer delay for priority blocks
+		}
+
+		// Cache other blocks with longer delays
+		for _, height := range otherBlocks {
+			log.Printf("Caching historical block %d...", height)
+			if err := blockMonitor.ProcessBlock(height); err != nil {
+				log.Printf("Failed to cache block %d: %v", height, err)
+			} else {
+				log.Printf("Successfully cached block %d", height)
+			}
+			time.Sleep(5 * time.Second) // Much longer delay to avoid rate limits
+		}
+
+		log.Println("Historical blocks caching completed")
+	}()
+
 	// Start the block monitor in background
 	go func() {
 		if err := blockMonitor.Start(); err != nil {

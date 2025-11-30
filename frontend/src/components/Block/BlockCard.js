@@ -9,40 +9,104 @@ const BlockCard = ({ block, onClick, isSelected }) => {
   const getBackgroundClass = () => {
     if (block.isFuture) return 'from-yellow-200 to-yellow-300 dark:from-yellow-600 dark:to-yellow-800';
     
-    const inscriptionCount = block.inscriptionCount || block.inscription_count || 0;
-    const witnessImageCount = block.witness_image_count || 0;
+    // Check for historical significance first
+    const historical = getHistoricalSignificance(block.height, block.timestamp);
+    if (historical) {
+      return historical.color;
+    }
     
-    if (inscriptionCount > 0) return 'from-purple-200 to-purple-300 dark:from-purple-600 dark:to-purple-800';
-    if (witnessImageCount > 0) return 'from-green-200 to-green-300 dark:from-green-600 dark:to-green-800';
-    return 'from-gray-200 to-gray-300 dark:from-gray-700 dark:to-gray-800';
+    const txCount = block.tx_count || 0;
+    
+    if (txCount > 3000) return 'from-blue-200 to-blue-300 dark:from-blue-600 dark:to-blue-800';
+    if (txCount > 0) return 'from-gray-200 to-gray-300 dark:from-gray-700 dark:to-gray-800';
+    return 'from-red-200 to-red-300 dark:from-red-600 dark:to-red-800';
+  };
+
+  const getHistoricalSignificance = (height, timestamp) => {
+    // Famous historical blocks
+    const historicalBlocks = {
+      0: { 
+        title: "Genesis Block", 
+        description: "First ever Bitcoin block - 'The Times 03/Jan/2009 Chancellor on brink of second bailout for banks'",
+        emoji: "🌅",
+        color: "from-yellow-200 to-yellow-300 dark:from-yellow-600 dark:to-yellow-800"
+      },
+      1: { 
+        title: "Block 1", 
+        description: "Second block, mined by Satoshi Nakamoto",
+        emoji: "🔨",
+        color: "from-gray-200 to-gray-300 dark:from-gray-700 dark:to-gray-800"
+      },
+      174923: { 
+        title: "Pizza Day Block", 
+        description: "First commercial Bitcoin transaction - 2 pizzas for 10,000 BTC (May 22, 2010)",
+        emoji: "🍕",
+        color: "from-orange-200 to-orange-300 dark:from-orange-600 dark:to-orange-800"
+      },
+      210000: { 
+        title: "First BIP 91 Block", 
+        description: "First block signaling readiness for SegWit activation",
+        emoji: "🚦",
+        color: "from-cyan-200 to-cyan-300 dark:from-cyan-600 dark:to-cyan-800"
+      },
+      481824: { 
+        title: "SegWit Activation", 
+        description: "Segregated Witness officially activated on Bitcoin network",
+        emoji: "⚡",
+        color: "from-blue-200 to-blue-300 dark:from-blue-600 dark:to-blue-800"
+      },
+      709632: { 
+        title: "First Halving", 
+        description: "First Bitcoin block halving - reward reduced from 50 to 25 BTC",
+        emoji: "⛏️",
+        color: "from-purple-200 to-purple-300 dark:from-purple-600 dark:to-purple-800"
+      },
+      420000: { 
+        title: "Halving #2", 
+        description: "Second Bitcoin halving - reward reduced from 25 to 12.5 BTC",
+        emoji: "💎",
+        color: "from-indigo-200 to-indigo-300 dark:from-indigo-600 dark:to-indigo-800"
+      },
+      630000: { 
+        title: "Halving #3", 
+        description: "Third Bitcoin halving - reward reduced from 12.5 to 6.25 BTC",
+        emoji: "🔷",
+        color: "from-pink-200 to-pink-300 dark:from-pink-600 dark:to-pink-800"
+      }
+    };
+    
+    return historicalBlocks[height] || null;
   };
 
   const getBadgeText = () => {
     if (block.isFuture) return 'Pending Block';
     
-    const smartContractCount = block.smart_contract_count || block.smart_contracts || 0;
-    const inscriptionCount = block.inscriptionCount || block.inscription_count || 0;
-    const witnessImageCount = block.witness_image_count || 0;
+    const historical = getHistoricalSignificance(block.height, block.timestamp);
+    if (historical) {
+      return historical.title;
+    }
     
+    const inscriptionCount = block.inscriptionCount || block.inscription_count || 0;
+    const txCount = block.tx_count || 0;
+    
+    // Show inscription count for modern blocks with inscriptions
     if (inscriptionCount > 0) {
       return `${inscriptionCount} inscription${inscriptionCount !== 1 ? 's' : ''}`;
     }
     
-    if (smartContractCount > 0) {
-      return `${smartContractCount} stego contract${smartContractCount !== 1 ? 's' : ''}`;
+    // Show transaction count for blocks without inscriptions or historical blocks
+    if (txCount > 0) {
+      return `${txCount} transaction${txCount !== 1 ? 's' : ''}`;
     }
     
-    if (witnessImageCount > 0) {
-      return `${witnessImageCount} witness image${witnessImageCount !== 1 ? 's' : ''}`;
-    }
-    
-    return 'No inscriptions';
+    return 'Empty block';
   };
 
   const getBadgeClass = () => {
     if (block.isFuture) return 'text-yellow-800 dark:text-yellow-200';
-    if (hasSmartContracts) return 'text-purple-700 dark:text-purple-200';
-    if (hasWitnessImages) return 'text-green-700 dark:text-green-200';
+    const txCount = block.tx_count || 0;
+    if (txCount > 3000) return 'text-blue-700 dark:text-blue-200';
+    if (txCount > 0) return 'text-gray-700 dark:text-gray-200';
     return 'text-indigo-700 dark:text-indigo-200';
   };
 
@@ -76,22 +140,30 @@ const BlockCard = ({ block, onClick, isSelected }) => {
         isSelected ? 'border-indigo-500' : block.isFuture ? 'border-yellow-400' : 'border-gray-300 dark:border-gray-700'
       } bg-gradient-to-br ${getBackgroundClass()}`}>
         <div className="h-32 flex items-center justify-center bg-black bg-opacity-20 relative">
-          {hasSmartContracts ? (
-            <div className="text-center">
-              <div className="text-6xl">🎨</div>
-              {hasSmartContracts && (
-                <div className="absolute top-2 right-2 bg-orange-500 text-white text-xs px-2 py-1 rounded-full font-bold">
-                  Available
+          {(() => {
+            const historical = getHistoricalSignificance(block.height, block.timestamp);
+            if (historical) {
+              return (
+                <div className="text-center">
+                  <div className="text-6xl">{historical.emoji}</div>
                 </div>
-              )}
-            </div>
-          ) : hasWitnessImages ? (
-            <div className="text-6xl">🖼️</div>
-          ) : block.thumbnail ? (
-            <div className="text-6xl">{block.thumbnail}</div>
-          ) : (
-            <div className="text-gray-600 text-sm">No inscriptions</div>
-          )}
+              );
+            }
+            if (hasSmartContracts) {
+              return (
+                <div className="text-center">
+                  <div className="text-6xl">🎨</div>
+                </div>
+              );
+            }
+            if (hasWitnessImages) {
+              return <div className="text-6xl">🖼️</div>;
+            }
+            if (block.thumbnail) {
+              return <div className="text-6xl">{block.thumbnail}</div>;
+            }
+            return <div className="text-6xl">⛏️</div>;
+          })()}
         </div>
         
         <div className={`p-3 ${block.isFuture ? 'bg-yellow-500 bg-opacity-40' : 'bg-black bg-opacity-40 dark:bg-black dark:bg-opacity-40 bg-white bg-opacity-60'}`}>
@@ -104,28 +176,49 @@ const BlockCard = ({ block, onClick, isSelected }) => {
           <div className={`text-xs ${block.isFuture ? 'text-yellow-700 dark:text-yellow-300' : 'text-gray-600 dark:text-gray-400'}`}>
             {block.isFuture ? 'Next block' : formatTimeAgo(block.timestamp)}
           </div>
-          {block.tx_count && (
-            <div className="text-xs text-gray-500 dark:text-gray-400">
-              {block.tx_count} transactions
-            </div>
-          )}
+        {(() => {
+          const historical = getHistoricalSignificance(block.height, block.timestamp);
+          if (historical) {
+            return (
+              <div className="text-xs text-gray-600 dark:text-gray-400 italic">
+                {historical.description}
+              </div>
+            );
+          }
+          if (block.tx_count) {
+            return (
+              <div className="text-xs text-gray-500 dark:text-gray-400">
+                {block.tx_count} transactions
+              </div>
+            );
+          }
+          return null;
+        })()}
         </div>
         
-        {hasSmartContracts && (
-          <div className="absolute top-2 right-2 bg-purple-600 text-white text-xs px-2 py-1 rounded-md font-bold">
-            STEGO
+        {block.tx_count > 3000 && (
+          <div className="absolute top-2 right-2 bg-blue-600 text-white text-xs px-2 py-1 rounded-md font-bold">
+            BUSY
           </div>
         )}
-        {hasWitnessImages && (
-          <div className="absolute top-2 left-2 bg-green-600 text-white text-xs px-2 py-1 rounded-md font-bold">
-            WITNESS
-          </div>
-        )}
-        {block.hasBRC20 && !hasSmartContracts && !hasWitnessImages && (
-          <div className="absolute top-2 right-2 bg-orange-600 text-white text-xs px-2 py-1 rounded-md font-bold">
-            BRC-20
-          </div>
-        )}
+        {(() => {
+          const historical = getHistoricalSignificance(block.height, block.timestamp);
+          if (historical) {
+            return (
+              <div className="absolute top-2 right-2 bg-orange-600 text-white text-xs px-2 py-1 rounded-md font-bold">
+                HISTORIC
+              </div>
+            );
+          }
+          if (block.tx_count > 0 && block.tx_count <= 3000) {
+            return (
+              <div className="absolute top-2 right-2 bg-gray-600 text-white text-xs px-2 py-1 rounded-md font-bold">
+                ACTIVE
+              </div>
+            );
+          }
+          return null;
+        })()}
       </div>
     </div>
   );
