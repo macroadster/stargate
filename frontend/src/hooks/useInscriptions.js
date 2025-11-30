@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 
 const generateInscriptions = (inscriptions) => {
   return inscriptions.map((insc, i) => ({
@@ -36,7 +36,7 @@ export const useInscriptions = (selectedBlock) => {
   const [displayedCount, setDisplayedCount] = useState(20);
   const [filterMode, setFilterMode] = useState('all'); // 'all' or 'text'
 
-  const fetchInscriptions = async () => {
+  const fetchInscriptions = useCallback(async () => {
     if (!selectedBlock) return;
     
     try {
@@ -135,7 +135,7 @@ export const useInscriptions = (selectedBlock) => {
       setTotalImages(0);
       setHasMoreImages(false);
     }
-  };
+  }, [selectedBlock, filterMode]);
 
   const loadMoreInscriptions = () => {
     const sourceInscriptions = filterMode === 'text' 
@@ -170,7 +170,7 @@ export const useInscriptions = (selectedBlock) => {
     if (selectedBlock) {
       fetchInscriptions();
     }
-  }, [selectedBlock]);
+  }, [selectedBlock, fetchInscriptions]);
 
   return {
     inscriptions,

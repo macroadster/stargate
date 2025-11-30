@@ -48,16 +48,26 @@ func (api *DataAPI) HandleGetBlockData(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Extract block height from URL
-	pathParts := splitPath(r.URL.Path)
-	if len(pathParts) < 3 {
-		http.Error(w, "Invalid URL format", http.StatusBadRequest)
-		return
+	// Extract block height from URL - use simpler approach
+	path := r.URL.Path
+	log.Printf("Request path: %s", path)
+
+	// Handle both /api/data/block/0 and /api/data/block/0/ formats
+	var heightStr string
+	if strings.HasSuffix(path, "/") {
+		// /api/data/block/0/ -> extract after last slash
+		parts := strings.Split(strings.TrimSuffix(path, "/"), "/")
+		heightStr = parts[len(parts)-1]
+	} else {
+		// /api/data/block/0 -> extract after last slash
+		parts := strings.Split(path, "/")
+		heightStr = parts[len(parts)-1]
 	}
 
-	heightStr := pathParts[2]
+	log.Printf("Extracted height string: %s", heightStr)
 	height, err := strconv.ParseInt(heightStr, 10, 64)
 	if err != nil {
+		log.Printf("ParseInt error: %v", err)
 		http.Error(w, "Invalid block height", http.StatusBadRequest)
 		return
 	}
@@ -65,8 +75,23 @@ func (api *DataAPI) HandleGetBlockData(w http.ResponseWriter, r *http.Request) {
 	// Get block data from storage
 	blockData, err := api.dataStorage.GetBlockData(height)
 	if err != nil {
-		http.Error(w, "Block data not found", http.StatusNotFound)
-		return
+		// Trigger on-demand scan for historical blocks
+		log.Printf("Block %d not in local storage, triggering on-demand scan", height)
+
+		scanErr := api.blockMonitor.ProcessBlock(height)
+		if scanErr != nil {
+			log.Printf("Failed to scan block %d: %v", height, scanErr)
+			http.Error(w, "Failed to scan block", http.StatusInternalServerError)
+			return
+		}
+
+		// Try getting data again after scan
+		blockData, err = api.dataStorage.GetBlockData(height)
+		if err != nil {
+			log.Printf("Block %d still not found after scan: %v", height, err)
+			http.Error(w, "Block data not found", http.StatusNotFound)
+			return
+		}
 	}
 
 	// Validate data integrity

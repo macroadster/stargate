@@ -36,7 +36,11 @@ func NewInscriptionService(inscriptionsFile string) *InscriptionService {
 func (s *InscriptionService) GetAllInscriptions() ([]models.InscriptionRequest, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	return s.loadInscriptions()
+}
 
+// loadInscriptions loads inscriptions from file without locking
+func (s *InscriptionService) loadInscriptions() ([]models.InscriptionRequest, error) {
 	var inscriptions []models.InscriptionRequest
 
 	file, err := os.Open(s.inscriptionsFile)
@@ -57,14 +61,14 @@ func (s *InscriptionService) GetAllInscriptions() ([]models.InscriptionRequest, 
 
 // CreateInscription creates a new inscription
 func (s *InscriptionService) CreateInscription(req models.InscribeRequest, file io.Reader, filename string) (*models.InscriptionRequest, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	// Load existing inscriptions
-	inscriptions, err := s.GetAllInscriptions()
+	// Load existing inscriptions without holding the write lock
+	inscriptions, err := s.loadInscriptions()
 	if err != nil {
 		return nil, err
 	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	// Parse price
 	price, _ := strconv.ParseFloat(req.Price, 64)
@@ -75,20 +79,26 @@ func (s *InscriptionService) CreateInscription(req models.InscribeRequest, file 
 		return nil, fmt.Errorf("failed to create uploads directory: %w", err)
 	}
 
-	// Generate filename
+	// Generate filename and handle file
 	timestamp := time.Now().Unix()
-	imageFilename := fmt.Sprintf("%d_%s", timestamp, filename)
-	imagePath := filepath.Join(uploadsDir, imageFilename)
+	var imagePath string
 
-	// Save file
-	dst, err := os.Create(imagePath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to save file: %w", err)
-	}
-	defer dst.Close()
+	if file != nil && filename != "" {
+		imageFilename := fmt.Sprintf("%d_%s", timestamp, filename)
+		imagePath = filepath.Join(uploadsDir, imageFilename)
 
-	if _, err := io.Copy(dst, file); err != nil {
-		return nil, fmt.Errorf("failed to copy file: %w", err)
+		// Save file
+		dst, err := os.Create(imagePath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to save file: %w", err)
+		}
+		defer dst.Close()
+
+		if _, err := io.Copy(dst, file); err != nil {
+			return nil, fmt.Errorf("failed to copy file: %w", err)
+		}
+	} else {
+		imagePath = "" // No image provided
 	}
 
 	// Create inscription
