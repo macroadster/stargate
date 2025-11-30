@@ -6,9 +6,9 @@
 ```bash
 cd frontend
 npm install
-npm start          # Dev server on localhost:3000
-npm run build      # Production build
-npm test           # Run Jest tests
+npm start > frontend.log &        # Dev server on localhost:3000
+npm run build                     # Production build
+npm test                          # Run Jest tests
 npm test -- --testNamePattern="SpecificTest"  # Run single test
 ```
 
@@ -16,7 +16,7 @@ npm test -- --testNamePattern="SpecificTest"  # Run single test
 ```bash
 cd backend
 go mod tidy        # Install dependencies
-go run stargate_backend.go  # Dev server on localhost:3001
+go run stargate_backend.go > backend.log & # Dev server on localhost:3001
 go build           # Build binary
 go test ./...      # Run all tests (when implemented)
 go test -run TestSpecificFunction  # Run single test
