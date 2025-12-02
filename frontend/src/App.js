@@ -211,6 +211,95 @@ function MainContent() {
     }
   };
 
+  const renderInlineSearch = () => {
+    if (searchResults === null) return null;
+
+    const inscriptionResults = searchResults?.inscriptions || [];
+    const blockResults = searchResults?.blocks || [];
+    
+    const hasResults = (inscriptionResults && inscriptionResults.length > 0) || (blockResults && blockResults.length > 0);
+    if (!hasResults) return null;
+
+    const onSelectBlock = (block) => {
+      setSelectedBlock({ ...block, hash: block.id?.toString() || block.hash });
+      clearSearch();
+    };
+
+    const onSelectInscription = (tx) => {
+      const inscription = {
+        id: tx.id,
+        contractType: 'Custom Contract',
+        capability: 'Data Storage',
+        protocol: 'BRC-20',
+        apiEndpoints: 0,
+        interactions: 0,
+        reputation: 'N/A',
+        isActive: tx.status === 'confirmed',
+        number: parseInt(tx.id?.split('_')[1]) || 0,
+        address: 'bc1q...',
+        genesis_block_height: tx.blockHeight || 0,
+        mime_type: 'text/plain',
+        text: tx.text || '',
+        metadata: tx.metadata || {},
+      };
+      setSelectedInscription(inscription);
+      clearSearch();
+    };
+
+    return (
+      <div className="absolute mt-2 w-96 max-h-96 overflow-y-auto bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50">
+        {inscriptionResults.length > 0 && (
+          <div className="p-3 border-b border-gray-200 dark:border-gray-800">
+            <div className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-2">Inscriptions</div>
+            <div className="space-y-2">
+              {inscriptionResults.slice(0, 5).map((tx, idx) => (
+                <button
+                  key={`ins-${idx}`}
+                  onClick={() => onSelectInscription(tx)}
+                  className="w-full text-left p-2 rounded bg-yellow-50 dark:bg-yellow-900/40 hover:bg-yellow-100 dark:hover:bg-yellow-800 transition-colors"
+                >
+                  <div className="flex items-center justify-between text-xs mb-1">
+                    <span className="px-2 py-0.5 rounded bg-yellow-600 text-white text-[11px]">Inscribe</span>
+                    <span className="text-yellow-800 dark:text-yellow-200">{tx.status || 'pending'}</span>
+                  </div>
+                  <div className="text-yellow-900 dark:text-yellow-100 font-mono text-xs break-all">{tx.id}</div>
+                  {tx.text && <div className="text-yellow-700 dark:text-yellow-300 text-xs truncate mt-1">{tx.text}</div>}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        {blockResults.length > 0 && (
+          <div className="p-3">
+            <div className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-2">Blocks</div>
+            <div className="space-y-2">
+              {blockResults.slice(0, 5).map((b, idx) => (
+                <button
+                  key={`blk-${idx}`}
+                  onClick={() => onSelectBlock(b)}
+                  className="w-full text-left p-2 rounded bg-indigo-50 dark:bg-indigo-900/40 hover:bg-indigo-100 dark:hover:bg-indigo-800 transition-colors"
+                >
+                  <div className="flex items-center justify-between text-xs mb-1">
+                    <span className="px-2 py-0.5 rounded bg-indigo-600 text-white text-[11px]">Block</span>
+                    <span className="text-indigo-800 dark:text-indigo-200">{b.tx_count || 0} tx</span>
+                  </div>
+                  <div className="text-indigo-900 dark:text-indigo-100 font-mono text-xs break-all">
+                    #{b.height} • {b.id || b.hash}
+                  </div>
+                  {b.timestamp && (
+                    <div className="text-indigo-700 dark:text-indigo-300 text-[11px] mt-1">
+                      {new Date(b.timestamp * 1000).toLocaleString()}
+                    </div>
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="min-h-screen bg-white dark:bg-gray-950 text-black dark:text-white">
       <header className="bg-gray-100 dark:bg-gray-900 border-b border-gray-300 dark:border-gray-800">
@@ -259,6 +348,7 @@ function MainContent() {
                     <X className="w-4 h-4" />
                   </button>
                 )}
+                {renderInlineSearch()}
               </div>
               <button className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold">
                 Connect
