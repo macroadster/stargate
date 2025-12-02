@@ -6,7 +6,10 @@ import ConfidenceIndicator from '../Common/ConfidenceIndicator';
 const InscriptionModal = ({ inscription, onClose }) => {
   const [activeTab, setActiveTab] = useState('overview');
   
-  const isActuallyImageFile = inscription.mime_type?.includes('image') && !inscription.image_url?.endsWith('.txt');
+  const isActuallyImageFile =
+    inscription.mime_type?.includes('image') &&
+    !inscription.image_url?.endsWith('.txt') &&
+    (inscription.image_url || inscription.thumbnail);
   const modalImageSource = isActuallyImageFile ? (inscription.thumbnail || inscription.image_url) : null;
   
   const markdownContent = `# Steganographic Smart Contract Analysis
@@ -50,10 +53,10 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white dark:bg-gray-800 rounded-lg max-w-4xl w-full mx-4 min-h-[70vh] max-h-[80vh] overflow-hidden flex flex-col">
+      <div className="bg-white dark:bg-gray-800 rounded-lg max-w-5xl w-full mx-4 min-h-[80vh] max-h-[85vh] overflow-hidden flex flex-col shadow-2xl">
         <div className="sticky top-0 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 p-4 flex-shrink-0">
           <div className="flex justify-between items-center">
-            <h2 className="text-xl font-bold text-black dark:text-white">Inscription Details</h2>
+            <h2 className="text-xl font-bold text-black dark:text-white">Smart Contract Details</h2>
             <button onClick={onClose} className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200">
               <X className="w-5 h-5" />
             </button>
@@ -119,19 +122,21 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                       Inscription Identity
                     </h4>
                     <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4 space-y-3">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <span className="text-gray-600 dark:text-gray-400 text-sm">Inscription ID:</span>
-                          <span className="text-black dark:text-white font-mono text-sm font-semibold">{inscription.id}</span>
+                      <div className="space-y-2">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex items-start gap-2">
+                            <span className="text-gray-600 dark:text-gray-400 text-sm whitespace-nowrap">Inscription ID:</span>
+                            <span className="text-black dark:text-white font-mono text-xs break-all leading-tight">{inscription.id}</span>
+                          </div>
+                          <CopyButton text={inscription.id} />
                         </div>
-                        <CopyButton text={inscription.id} />
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <span className="text-gray-600 dark:text-gray-400 text-sm">Transaction ID:</span>
-                          <span className="text-black dark:text-white font-mono text-xs">{inscription.id}</span>
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex items-start gap-2">
+                            <span className="text-gray-600 dark:text-gray-400 text-sm whitespace-nowrap">Transaction ID:</span>
+                            <span className="text-black dark:text-white font-mono text-xs break-all leading-tight">{inscription.metadata?.transaction_id || inscription.id}</span>
+                          </div>
+                          <CopyButton text={inscription.metadata?.transaction_id || inscription.id} />
                         </div>
-                        <CopyButton text={inscription.id} />
                       </div>
                       <div className="flex items-center gap-4">
                         <div className="flex items-center gap-2">

@@ -3,6 +3,7 @@ package starlight
 import (
 	"fmt"
 	"log"
+	"os"
 	"sync"
 	"time"
 
@@ -64,7 +65,11 @@ func (sm *ScannerManager) InitializeScanner() error {
 	}
 
 	// Try to initialize proxy scanner first
-	proxyScanner := NewProxyScanner("http://localhost:8080", "demo-api-key")
+	baseURL := os.Getenv("STARGATE_PROXY_BASE")
+	if baseURL == "" {
+		baseURL = "http://localhost:8080"
+	}
+	proxyScanner := NewProxyScanner(baseURL, "demo-api-key")
 	if proxyScanner != nil {
 		initErr := proxyScanner.Initialize()
 		if initErr == nil {

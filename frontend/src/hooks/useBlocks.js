@@ -6,6 +6,7 @@ const generateBlock = (block) => {
   // Handle both data API and mempool API formats
   const inscriptionCount = block.inscriptions ? block.inscriptions.length : (block.smart_contracts || 0);
   const stegoCount = block.steganography_summary?.stego_count || 0;
+  const txCount = block.tx_count ?? block.total_transactions ?? block.TotalTransactions ?? 0;
   
   // For UI purposes, treat all inscriptions as "smart contracts" to show the badge
   const displayContractCount = Math.max(inscriptionCount, stegoCount);
@@ -23,7 +24,7 @@ const generateBlock = (block) => {
     witness_image_count: block.images ? block.images.length : 0,
     hasBRC20: false,
     thumbnail: (inscriptionCount > 0) ? '🎨' : null,
-    tx_count: block.tx_count || inscriptionCount || 0,
+    tx_count: txCount,
     witness_images: block.images || []
   };
 };
@@ -32,12 +33,13 @@ export const useBlocks = () => {
   const [blocks, setBlocks] = useState([]);
   const [selectedBlock, setSelectedBlock] = useState(null);
   const [isUserNavigating, setIsUserNavigating] = useState(false);
-  const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
+  const [blockLimit, setBlockLimit] = useState(20);
 
-  const fetchBlocks = useCallback(async (isPolling = false) => {
+  const fetchBlocks = useCallback(async (isPolling = false, limitOverride) => {
     try {
       // Fetch recent blocks
-      let response = await fetch('http://localhost:3001/api/data/blocks?limit=10');
+      const limit = limitOverride || blockLimit;
+      let response = await fetch(`http://localhost:3001/api/data/blocks?limit=${limit}`);
       let data = await response.json();
       
       if (!response.ok) {
@@ -45,108 +47,91 @@ export const useBlocks = () => {
       }
       
       const blocksData = data.blocks || data.data || data;
-      console.log('Raw API response:', blocksData);
-      
-      let processedBlocks = Array.isArray(blocksData) ? blocksData.slice(0, 10).map(block => {
-        const generated = generateBlock(block);
-        return generated;
-      }) : [];
 
-      if (processedBlocks.length === 0) {
-        processedBlocks = [];
+      let processedBlocks = Array.isArray(blocksData)
+        ? blocksData
+            .map(generateBlock)
+            .filter(b => b.height)
+        : [];
+
+      // Deduplicate by height and sort desc
+      const seen = new Set();
+      processedBlocks = processedBlocks
+        .filter(b => {
+          if (seen.has(b.height)) return false;
+          seen.add(b.height);
+          return true;
+        })
+        .sort((a, b) => b.height - a.height)
+        .slice(0, limit);
+
+      // Pin genesis if missing
+      const genesisHeight = 0;
+      if (!processedBlocks.some(b => b.height === genesisHeight)) {
+        processedBlocks.push({
+          height: genesisHeight,
+          timestamp: 1231006505,
+          hash: '000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f',
+          inscriptionCount: 0,
+          smart_contract_count: 0,
+          witness_image_count: 0,
+          hasBRC20: false,
+          thumbnail: null,
+          tx_count: 1,
+          smart_contracts: [],
+          witness_images: [],
+          isGenesis: true
+        });
       }
 
-      const futureBlock = {
-        height: processedBlocks[0]?.height + 1 || 924001,
-        timestamp: Date.now() + 600000,
-        hash: 'pending...',
-        inscriptionCount: 0,
-        smart_contract_count: 0,
-        witness_image_count: 0,
-        hasBRC20: false,
-        thumbnail: null,
-        tx_count: 0,
-        smart_contracts: [],
-        witness_images: [],
-        isFuture: true
-      };
-
-      // Always include historical blocks
-      const historicalBlocks = [
-        {
-          height: 0,
-          hash: "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f",
-          timestamp: 1231006505,
-          tx_count: 1,
+      // Add a future/pending block one height above the latest known real block
+      if (processedBlocks.length > 0) {
+        const maxHeight = processedBlocks.reduce((max, b) => Math.max(max, b.height), 0);
+        const nextHeight = maxHeight + 1;
+        processedBlocks.unshift({
+          height: nextHeight,
+          timestamp: Date.now() + 600000,
+          hash: 'pending...',
           inscriptionCount: 0,
           smart_contract_count: 0,
           witness_image_count: 0,
           hasBRC20: false,
           thumbnail: null,
+          tx_count: 0,
           smart_contracts: [],
-          witness_images: []
-        },
-        {
-          height: 1,
-          hash: "00000000839a8e6986a95d95f6cc2d4c03074568ab5364770a7c6ea",
-          timestamp: 1231006505,
-          tx_count: 1,
-          inscriptionCount: 0,
-          smart_contract_count: 0,
-          witness_image_count: 0,
-          hasBRC20: false,
-          thumbnail: null,
-          smart_contracts: [],
-          witness_images: []
-        }
-      ];
+          witness_images: [],
+          isFuture: true
+        });
+      }
 
-      // Combine historical blocks with recent blocks, removing duplicates
-      const recentBlockHeights = new Set(processedBlocks.map(b => b.height));
-      const filteredHistorical = historicalBlocks.filter(hb => !recentBlockHeights.has(hb.height));
-      
-      const allBlocks = [futureBlock, ...filteredHistorical, ...processedBlocks];
-      // Sort by height (descending for display)
-      allBlocks.sort((a, b) => b.height - a.height);
-      
-      setBlocks(allBlocks);
-      
-      if (!selectedBlock && !isPolling) {
+      setBlocks(processedBlocks);
+
+      if (!selectedBlock && processedBlocks.length && !isPolling) {
         setIsUserNavigating(false);
-        setShouldAutoScroll(true);
         setSelectedBlock(processedBlocks[0]);
       }
     } catch (error) {
       console.error('Error fetching blocks:', error);
-      const futureBlock = {
-        height: 924001, timestamp: Date.now() + 600000, hash: 'pending...', tx_count: 0, smart_contracts: [], witness_images: [], isFuture: true,
-        inscription_count: 0, smart_contract_count: 0, witness_image_count: 0
-      };
-      setBlocks([futureBlock]);
+      setBlocks([]);
       if (!selectedBlock && !isPolling) {
-        setSelectedBlock(futureBlock);
+        setSelectedBlock(null);
       }
     }
-  }, []);
+  }, [selectedBlock, blockLimit]);
+
+  const loadMoreBlocks = useCallback(() => {
+    setBlockLimit((prev) => Math.min(prev + 10, 100));
+    fetchBlocks(true, blockLimit + 10);
+  }, [fetchBlocks, blockLimit]);
 
   useEffect(() => {
     fetchBlocks(false);
     
     const interval = setInterval(() => {
-      setShouldAutoScroll(false);
       fetchBlocks(true);
     }, 30000);
     return () => clearInterval(interval);
   }, [fetchBlocks]);
-
-  useEffect(() => {
-    if (!shouldAutoScroll) {
-      const timer = setTimeout(() => {
-        setShouldAutoScroll(true);
-      }, 1000);
-      return () => clearTimeout(timer);
-    }
-  }, [blocks, shouldAutoScroll]);
 
   const handleBlockSelect = (block) => {
     setIsUserNavigating(true);
@@ -157,9 +142,9 @@ export const useBlocks = () => {
     blocks,
     selectedBlock,
     isUserNavigating,
-    shouldAutoScroll,
     handleBlockSelect,
     setSelectedBlock,
-    setIsUserNavigating
+    setIsUserNavigating,
+    loadMoreBlocks
   };
 };

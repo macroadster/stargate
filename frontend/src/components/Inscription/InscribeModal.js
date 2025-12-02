@@ -9,6 +9,11 @@ const InscribeModal = ({ onClose, setPendingTransactions }) => {
   const [price, setPrice] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [paymentData, setPaymentData] = useState(null);
+  const buildPlaceholderImage = () => {
+    const pngBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/Ptq4YQAAAABJRU5ErkJggg==";
+    const bytes = Uint8Array.from(atob(pngBase64), c => c.charCodeAt(0));
+    return new File([bytes], "placeholder.png", { type: "image/png" });
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -16,13 +21,15 @@ const InscribeModal = ({ onClose, setPendingTransactions }) => {
 
     try {
       const formData = new FormData();
-      if (imageFile) formData.append('image', imageFile);
-      formData.append('text', embedText);
-      formData.append('price', price);
+      const uploadImage = imageFile || buildPlaceholderImage();
+      formData.append('image', uploadImage);
+      formData.append('message', embedText);
+      formData.append('method', 'alpha');
 
-      const response = await fetch('http://localhost:3001/api/inscribe', {
+      const backendBase = `${window.location.protocol}//${window.location.hostname}:3001`;
+      const response = await fetch(`${backendBase}/api/inscribe`, {
         method: 'POST',
-        body: formData,
+        body: formData
       });
 
       if (response.ok) {
@@ -160,7 +167,7 @@ const InscribeModal = ({ onClose, setPendingTransactions }) => {
               <button
                 onClick={() => {
                   setTimeout(() => {
-                    fetch('http://localhost:3001/api/pending-transactions')
+                    fetch(`${window.location.protocol}//${window.location.hostname}:3001/api/pending-transactions`)
                       .then(res => res.json())
                       .then(data => setPendingTransactions(data || []))
                       .catch(err => console.error('Error fetching pending transactions:', err));

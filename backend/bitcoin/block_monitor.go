@@ -146,7 +146,7 @@ func NewBlockMonitor(client *BitcoinNodeClient) *BlockMonitor {
 		bitcoinClient: client,
 		rawClient:     NewRawBlockClient(),
 		checkInterval: 5 * time.Minute, // Check every 5 minutes
-		blocksDir:     "blocks",
+		blocksDir:     blocksDirFromEnv(),
 		maxRetries:    3,
 		retryDelay:    10 * time.Second,
 		lastChecked:   time.Now(),
@@ -160,7 +160,7 @@ func NewBlockMonitorWithStorage(client *BitcoinNodeClient, dataStorage DataStora
 		rawClient:     NewRawBlockClient(),
 		dataStorage:   dataStorage,
 		checkInterval: 5 * time.Minute, // Check every 5 minutes
-		blocksDir:     "blocks",
+		blocksDir:     blocksDirFromEnv(),
 		maxRetries:    3,
 		retryDelay:    10 * time.Second,
 		lastChecked:   time.Now(),
@@ -174,7 +174,7 @@ func NewBlockMonitorWithAPI(client *BitcoinNodeClient, bitcoinAPI *BitcoinAPI) *
 		rawClient:     NewRawBlockClient(),
 		bitcoinAPI:    bitcoinAPI,
 		checkInterval: 5 * time.Minute, // Check every 5 minutes
-		blocksDir:     "blocks",
+		blocksDir:     blocksDirFromEnv(),
 		maxRetries:    3,
 		retryDelay:    10 * time.Second,
 		lastChecked:   time.Now(),
@@ -190,11 +190,18 @@ func NewBlockMonitorWithStorageAndAPI(client *BitcoinNodeClient, dataStorage Dat
 		dataStorage:   dataStorage,
 		bitcoinAPI:    bitcoinAPI,
 		checkInterval: 5 * time.Minute, // Check every 5 minutes
-		blocksDir:     "blocks",
+		blocksDir:     blocksDirFromEnv(),
 		maxRetries:    3,
 		retryDelay:    10 * time.Second,
 		lastChecked:   time.Now(),
 	}
+}
+
+func blocksDirFromEnv() string {
+	if v := os.Getenv("BLOCKS_DIR"); v != "" {
+		return v
+	}
+	return "blocks"
 }
 
 // Start begins the block monitoring process
@@ -630,7 +637,7 @@ func (bm *BlockMonitor) saveBlockData(blockDir string, parsedBlock *ParsedBlock,
 		Transactions:    bm.convertTransactions(parsedBlock.Transactions),
 		ExtractedImages: parsedBlock.Images,
 		Metadata: BlockMetadata{
-			SourceFile:     fmt.Sprintf("block_%d.hex", parsedBlock.Header.Hash),
+			SourceFile:     fmt.Sprintf("block_%s.hex", parsedBlock.Header.Hash),
 			FileSize:       int64(len(hexData)),
 			ParserVersion:  "1.0.0",
 			ProcessingTime: time.Now().Unix(),

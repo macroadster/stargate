@@ -44,10 +44,10 @@ const BlockCard = ({ block, onClick, isSelected }) => {
         color: "from-orange-200 to-orange-300 dark:from-orange-600 dark:to-orange-800"
       },
       210000: { 
-        title: "First BIP 91 Block", 
-        description: "First block signaling readiness for SegWit activation",
-        emoji: "🚦",
-        color: "from-cyan-200 to-cyan-300 dark:from-cyan-600 dark:to-cyan-800"
+        title: "First Halving", 
+        description: "Reward reduced from 50 → 25 BTC (Nov 2012)",
+        emoji: "💎",
+        color: "from-purple-200 to-purple-300 dark:from-purple-600 dark:to-purple-800"
       },
       481824: { 
         title: "SegWit Activation", 
@@ -56,22 +56,28 @@ const BlockCard = ({ block, onClick, isSelected }) => {
         color: "from-blue-200 to-blue-300 dark:from-blue-600 dark:to-blue-800"
       },
       709632: { 
-        title: "First Halving", 
-        description: "First Bitcoin block halving - reward reduced from 50 to 25 BTC",
-        emoji: "⛏️",
-        color: "from-purple-200 to-purple-300 dark:from-purple-600 dark:to-purple-800"
+        title: "Taproot Activation", 
+        description: "Schnorr signatures and Tapscript go live (Nov 2021)",
+        emoji: "🌲",
+        color: "from-green-200 to-green-300 dark:from-green-600 dark:to-green-800"
       },
       420000: { 
         title: "Halving #2", 
         description: "Second Bitcoin halving - reward reduced from 25 to 12.5 BTC",
-        emoji: "💎",
+        emoji: "🔷",
         color: "from-indigo-200 to-indigo-300 dark:from-indigo-600 dark:to-indigo-800"
       },
       630000: { 
         title: "Halving #3", 
         description: "Third Bitcoin halving - reward reduced from 12.5 to 6.25 BTC",
-        emoji: "🔷",
+        emoji: "⛏️",
         color: "from-pink-200 to-pink-300 dark:from-pink-600 dark:to-pink-800"
+      },
+      840000: {
+        title: "Halving #4",
+        description: "Fourth Bitcoin halving - reward reduced from 6.25 to 3.125 BTC",
+        emoji: "🪙",
+        color: "from-cyan-200 to-cyan-300 dark:from-cyan-600 dark:to-cyan-800"
       }
     };
     
