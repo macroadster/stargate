@@ -15,13 +15,13 @@ import (
 
 // DataAPI handles enhanced API endpoints for block monitoring data
 type DataAPI struct {
-	dataStorage  *storage.DataStorage
+	dataStorage  storage.ExtendedDataStorage
 	blockMonitor *bitcoin.BlockMonitor
 	bitcoinAPI   *bitcoin.BitcoinAPI
 }
 
 // NewDataAPI creates a new data API instance
-func NewDataAPI(dataStorage *storage.DataStorage, blockMonitor *bitcoin.BlockMonitor, bitcoinAPI *bitcoin.BitcoinAPI) *DataAPI {
+func NewDataAPI(dataStorage storage.ExtendedDataStorage, blockMonitor *bitcoin.BlockMonitor, bitcoinAPI *bitcoin.BitcoinAPI) *DataAPI {
 	return &DataAPI{
 		dataStorage:  dataStorage,
 		blockMonitor: blockMonitor,
@@ -154,7 +154,7 @@ func (api *DataAPI) HandleGetRecentBlocks(w http.ResponseWriter, r *http.Request
 		if ok && blockData.BlockHeight > 0 {
 			// Get actual transaction count from block data
 			log.Printf("Block %d: loaded %d inscriptions", blockData.BlockHeight, len(blockData.Inscriptions))
-			txCount := api.getTransactionCount(blockData.BlockHeight)
+			txCount := api.getTransactionCount(blockData)
 			log.Printf("Block %d: %d inscriptions, %d transactions", blockData.BlockHeight, len(blockData.Inscriptions), txCount)
 
 			// Treat inscriptions as smart contracts for frontend compatibility
@@ -393,7 +393,8 @@ func (api *DataAPI) HandleGetBlockImages(w http.ResponseWriter, r *http.Request)
 			if content, err := api.dataStorage.ReadTextContent(height, image.FilePath); err == nil {
 				enhancedImage["content"] = content
 			} else {
-				log.Printf("Error reading text content for %s: %v", image.FilePath, err)
+				// Storage backends like Postgres don't expose filesystem reads; skip gracefully.
+				log.Printf("Skipping text content for %s: %v", image.FilePath, err)
 				enhancedImage["content"] = ""
 			}
 		}
@@ -480,14 +481,19 @@ func (api *DataAPI) monitorUpdates(updates chan *storage.RealtimeUpdate) {
 	}
 }
 
-// getTransactionCount gets the actual transaction count from block.json file
-func (api *DataAPI) getTransactionCount(blockHeight int64) int {
-	// For now, return known correct count for block 925679
-	// TODO: Implement proper JSON parsing
-	if blockHeight == 925679 {
-		return 2693
+// getTransactionCount returns a best-effort transaction count.
+func (api *DataAPI) getTransactionCount(blockData *storage.BlockDataCache) int {
+	if blockData == nil {
+		return 0
 	}
-
-	// Fallback to inscription count for other blocks
+	if blockData.TxCount > 0 {
+		return blockData.TxCount
+	}
+	if len(blockData.Images) > 0 {
+		return len(blockData.Images)
+	}
+	if len(blockData.Inscriptions) > 0 {
+		return len(blockData.Inscriptions)
+	}
 	return 0
 }

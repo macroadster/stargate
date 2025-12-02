@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,6 +16,46 @@ import (
 	"stargate-backend/middleware"
 	"stargate-backend/storage"
 )
+
+func contentTypeForFormat(format string) string {
+	switch strings.ToLower(format) {
+	case "png":
+		return "image/png"
+	case "jpg", "jpeg":
+		return "image/jpeg"
+	case "gif":
+		return "image/gif"
+	case "webp":
+		return "image/webp"
+	case "txt", "text":
+		return "text/plain"
+	default:
+		return "application/octet-stream"
+	}
+}
+
+// findImagePath searches for an image file within the blocks directory using the real block hash folder.
+func findImagePath(height string, filename string) (string, bool) {
+	baseDir := os.Getenv("BLOCKS_DIR")
+	if baseDir == "" {
+		baseDir = "blocks"
+	}
+
+	// Try explicit directory pattern first (height_*)
+	pattern := filepath.Join(baseDir, fmt.Sprintf("%s_*", height), "images", filename)
+	matches, err := filepath.Glob(pattern)
+	if err == nil && len(matches) > 0 {
+		return matches[0], true
+	}
+
+	// Fallback to legacy pattern with zero hash suffix
+	legacy := filepath.Join(baseDir, fmt.Sprintf("%s_00000000", height), "images", filename)
+	if info, err := os.Stat(legacy); err == nil && !info.IsDir() {
+		return legacy, true
+	}
+
+	return "", false
+}
 
 func main() {
 	// Initialize dependency container
@@ -60,6 +102,10 @@ func setupRoutes(mux *http.ServeMux, container *container.Container) http.Handle
 	mux.HandleFunc("/api/contract-stego", container.SmartContractHandler.HandleGetContract)
 	mux.HandleFunc("/api/contract-stego/create", container.SmartContractHandler.HandleCreateContract)
 
+	// Ingestion endpoints
+	mux.HandleFunc("/api/ingest-inscription", container.IngestionHandler.HandleIngest)
+	mux.HandleFunc("/api/ingest-inscription/", container.IngestionHandler.HandleGetIngestion)
+
 	// Search endpoints
 	mux.HandleFunc("/api/search", container.SearchHandler.HandleSearch)
 
@@ -72,7 +118,12 @@ func setupRoutes(mux *http.ServeMux, container *container.Container) http.Handle
 	mux.HandleFunc("/generate/", container.ProxyHandler.HandleProxy)
 
 	// Serve uploaded files
-	mux.Handle("/uploads/", http.StripPrefix("/uploads/", http.FileServer(http.Dir("uploads/"))))
+	uploadsDir := os.Getenv("UPLOADS_DIR")
+	if uploadsDir == "" {
+		uploadsDir = "/data/uploads"
+	}
+	_ = os.MkdirAll(uploadsDir, 0755)
+	mux.Handle("/uploads/", http.StripPrefix("/uploads/", http.FileServer(http.Dir(uploadsDir))))
 
 	// Serve frontend files
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -91,7 +142,7 @@ func setupRoutes(mux *http.ServeMux, container *container.Container) http.Handle
 	bitcoinAPI := bitcoin.NewBitcoinAPI()
 
 	// Enhanced data API endpoints (keep existing functionality)
-	dataStorage := storage.NewDataStorage("blocks")
+	dataStorage := container.DataStorage
 	blockMonitor := bitcoin.NewBlockMonitorWithStorageAndAPI(
 		bitcoin.NewBitcoinNodeClient("https://blockstream.info/api"),
 		dataStorage,
@@ -165,14 +216,33 @@ func setupRoutes(mux *http.ServeMux, container *container.Container) http.Handle
 		height := pathParts[0]
 		filename := pathParts[1]
 
-		// Construct file path
-		imagePath := filepath.Join("blocks", fmt.Sprintf("%s_00000000", height), "images", filename)
+		// Try to locate the image on disk (blocks/<height>_<hash>/images/<filename>)
+		if fsPath, ok := findImagePath(height, filename); ok {
+			log.Printf("Serving image from filesystem: %s", fsPath)
+			http.ServeFile(w, r, fsPath)
+			return
+		}
 
-		// Log the image request
-		log.Printf("Serving image: block=%s, filename=%s, path=%s", height, filename, imagePath)
+		// Fallback to Postgres storage: delegate to data API to build an in-memory response
+		h, _ := strconv.ParseInt(height, 10, 64)
+		if cache, err := dataStorage.GetBlockData(h); err == nil {
+			if block, ok := cache.(*storage.BlockDataCache); ok {
+				for _, img := range block.Images {
+					if img.FileName == filename {
+						if len(img.Data) == 0 {
+							// Inline bytes not present (e.g., DB-only storage)
+							http.NotFound(w, r)
+							return
+						}
+						w.Header().Set("Content-Type", contentTypeForFormat(img.Format))
+						_, _ = w.Write(img.Data)
+						return
+					}
+				}
+			}
+		}
 
-		// Serve the file
-		http.ServeFile(w, r, imagePath)
+		http.NotFound(w, r)
 	})
 
 	// Bitcoin steganography scanning endpoints

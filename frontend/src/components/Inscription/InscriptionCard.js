@@ -50,15 +50,18 @@ const InscriptionCard = ({ inscription, onClick }) => {
         
         <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200">
           <div className="absolute bottom-0 left-0 right-0 p-3 text-white">
-            {inscription.metadata?.confidence && inscription.metadata.confidence > 0.1 && (
+            {((inscription.metadata?.confidence && inscription.metadata.confidence > 0.1) ||
+              (inscription.metadata?.stego_probability && inscription.metadata.stego_probability > 0.1)) && (
               <div className="flex items-center gap-2 mt-2">
                 <div className="w-full bg-green-400 rounded-full h-1">
                   <div 
                     className="bg-green-600 h-1 rounded-full" 
-                    style={{width: `${Math.round(inscription.metadata.confidence * 100)}%`}}
+                    style={{width: `${Math.round((inscription.metadata.confidence || inscription.metadata.stego_probability || 0) * 100)}%`}}
                   ></div>
                 </div>
-                <span className="text-xs font-semibold">{Math.round(inscription.metadata.confidence * 100)}%</span>
+                <span className="text-xs font-semibold">
+                  {Math.round((inscription.metadata.confidence || inscription.metadata.stego_probability || 0) * 100)}%
+                </span>
               </div>
             )}
             

@@ -419,19 +419,134 @@ func (p *BitcoinParser) extractImages(transactions []Transaction) []ExtractedIma
 				log.Printf("Found %s image in tx %s: %d bytes", imageType, tx.TxID[:16], len(imageData))
 			}
 		}
+
+		// Also inspect OP_RETURN outputs for embedded data (e.g., starlight/stargate ingest)
+		for outIdx, output := range tx.Outputs {
+			if len(output.ScriptPubKey) == 0 || output.ScriptPubKey[0] != 0x6a { // OP_RETURN
+				continue
+			}
+
+			payloads := extractOpReturnPayloads(output.ScriptPubKey)
+			for pIdx, payload := range payloads {
+				if len(payload) == 0 {
+					continue
+				}
+
+				// Attempt Ordinals-style payload parse first
+				if contentType, content, ok := parseOrdinals(payload); ok {
+					format := "txt"
+					if strings.Contains(contentType, "jpeg") || strings.Contains(contentType, "jpg") {
+						format = "jpeg"
+					} else if strings.Contains(contentType, "png") {
+						format = "png"
+					} else if strings.Contains(contentType, "gif") {
+						format = "gif"
+					} else if strings.Contains(contentType, "webp") {
+						format = "webp"
+					}
+
+					image := ExtractedImageData{
+						TxID:      tx.TxID,
+						Format:    format,
+						SizeBytes: len(content),
+						FileName:  fmt.Sprintf("%s_opret_%d_%d.%s", tx.TxID[:16], outIdx, pIdx, format),
+						FilePath:  fmt.Sprintf("images/%s", fmt.Sprintf("%s_opret_%d_%d.%s", tx.TxID[:16], outIdx, pIdx, format)),
+						Data:      content,
+					}
+					images = append(images, image)
+					log.Printf("Found OP_RETURN Ordinals payload (%s) in tx %s output %d", contentType, tx.TxID[:16], outIdx)
+					continue
+				}
+
+				// Fallback to raw image signature detection
+				if imageType, imageData := detectImage(payload); imageType != "" {
+					image := ExtractedImageData{
+						TxID:      tx.TxID,
+						Format:    imageType,
+						SizeBytes: len(imageData),
+						FileName:  fmt.Sprintf("%s_opret_%d_%d.%s", tx.TxID[:16], outIdx, pIdx, imageType),
+						FilePath:  fmt.Sprintf("images/%s", fmt.Sprintf("%s_opret_%d_%d.%s", tx.TxID[:16], outIdx, pIdx, imageType)),
+						Data:      imageData,
+					}
+					images = append(images, image)
+					log.Printf("Found OP_RETURN %s image in tx %s output %d", imageType, tx.TxID[:16], outIdx)
+				}
+			}
+		}
 	}
 
 	return images
 }
 
+func extractOpReturnPayloads(script []byte) [][]byte {
+	if len(script) == 0 || script[0] != 0x6a { // OP_RETURN
+		return nil
+	}
+
+	var payloads [][]byte
+	pos := 1
+	for pos < len(script) {
+		opcode := script[pos]
+		pos++
+
+		var dataLen int
+		switch {
+		case opcode <= 75:
+			dataLen = int(opcode)
+		case opcode == 0x4c: // OP_PUSHDATA1
+			if pos >= len(script) {
+				return payloads
+			}
+			dataLen = int(script[pos])
+			pos++
+		case opcode == 0x4d: // OP_PUSHDATA2
+			if pos+1 >= len(script) {
+				return payloads
+			}
+			dataLen = int(script[pos]) | int(script[pos+1])<<8
+			pos += 2
+		case opcode == 0x4e: // OP_PUSHDATA4
+			if pos+3 >= len(script) {
+				return payloads
+			}
+			dataLen = int(script[pos]) | int(script[pos+1])<<8 | int(script[pos+2])<<16 | int(script[pos+3])<<24
+			pos += 4
+		default:
+			continue
+		}
+
+		if dataLen < 0 || pos+dataLen > len(script) {
+			return payloads
+		}
+
+		payload := script[pos : pos+dataLen]
+		payloads = append(payloads, payload)
+		pos += dataLen
+	}
+
+	return payloads
+}
+
 func parseOrdinals(data []byte) (string, []byte, bool) {
-	// Look for "ord" in the data
+	// Prefer parsing opcode pushes (works for witness and OP_RETURN scripts)
+	pushes := parsePushData(data)
+	for i := 0; i < len(pushes); i++ {
+		if bytes.Equal(pushes[i], []byte("ord")) && i+2 < len(pushes) {
+			contentType := string(pushes[i+1])
+			if !strings.Contains(contentType, "/") {
+				continue
+			}
+			content := pushes[i+2]
+			return contentType, content, true
+		}
+	}
+
+	// Fallback: legacy heuristic search inside raw bytes
 	ordIndex := bytes.Index(data, []byte("ord"))
 	if ordIndex == -1 {
 		return "", nil, false
 	}
 
-	// Find content type
 	pos := ordIndex + 3
 	contentTypeStart := bytes.Index(data[pos:], []byte("image/"))
 	if contentTypeStart == -1 {
@@ -442,7 +557,6 @@ func parseOrdinals(data []byte) (string, []byte, bool) {
 	}
 	contentTypeStart += pos
 
-	// Find end of content type, 0x00
 	contentTypeEnd := bytes.IndexByte(data[contentTypeStart:], 0x00)
 	if contentTypeEnd == -1 {
 		return "", nil, false
@@ -451,13 +565,11 @@ func parseOrdinals(data []byte) (string, []byte, bool) {
 
 	contentType := string(data[contentTypeStart:contentTypeEnd])
 
-	// After 0x00, data push starts
 	dataStart := contentTypeEnd + 1
 	if dataStart >= len(data) {
 		return "", nil, false
 	}
 
-	// Skip push opcode
 	if data[dataStart] == 0x4c { // OP_PUSHDATA1
 		dataStart += 2
 	} else if data[dataStart] == 0x4d { // OP_PUSHDATA2
@@ -508,6 +620,50 @@ func detectImage(data []byte) (string, []byte) {
 	}
 
 	return "", nil
+}
+
+// parsePushData walks a script/witness blob and returns pushdata slices.
+func parsePushData(script []byte) [][]byte {
+	var pushes [][]byte
+	i := 0
+	for i < len(script) {
+		op := script[i]
+		i++
+
+		var dataLen int
+		switch {
+		case op <= 75:
+			dataLen = int(op)
+		case op == 0x4c: // OP_PUSHDATA1
+			if i >= len(script) {
+				return pushes
+			}
+			dataLen = int(script[i])
+			i++
+		case op == 0x4d: // OP_PUSHDATA2
+			if i+1 >= len(script) {
+				return pushes
+			}
+			dataLen = int(script[i]) | int(script[i+1])<<8
+			i += 2
+		case op == 0x4e: // OP_PUSHDATA4
+			if i+3 >= len(script) {
+				return pushes
+			}
+			dataLen = int(script[i]) | int(script[i+1])<<8 | int(script[i+2])<<16 | int(script[i+3])<<24
+			i += 4
+		default:
+			// Non-push opcode; skip
+			continue
+		}
+
+		if dataLen < 0 || i+dataLen > len(script) {
+			return pushes
+		}
+		pushes = append(pushes, script[i:i+dataLen])
+		i += dataLen
+	}
+	return pushes
 }
 
 func readVarInt(reader *bytes.Reader) (uint64, error) {

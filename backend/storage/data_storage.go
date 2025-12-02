@@ -21,11 +21,19 @@ type DataStorage struct {
 	cacheTimeout time.Duration
 }
 
+// ExtendedDataStorage includes the core interface plus helper methods used by APIs.
+type ExtendedDataStorage interface {
+	bitcoin.DataStorageInterface
+	CreateRealtimeUpdate(updateType string, blockHeight int64, data interface{}) *RealtimeUpdate
+	ReadTextContent(height int64, filePath string) (string, error)
+}
+
 // BlockDataCache represents cached block data with metadata
 type BlockDataCache struct {
 	BlockHeight          int64                         `json:"block_height"`
 	BlockHash            string                        `json:"block_hash"`
 	Timestamp            int64                         `json:"timestamp"`
+	TxCount              int                           `json:"tx_count"`
 	Inscriptions         []bitcoin.InscriptionData     `json:"inscriptions"`
 	Images               []bitcoin.ExtractedImageData  `json:"images"`
 	SmartContracts       []bitcoin.SmartContractData   `json:"smart_contracts"`
@@ -76,6 +84,7 @@ func (ds *DataStorage) StoreBlockData(blockResponse *bitcoin.BlockInscriptionsRe
 		BlockHeight:          blockResponse.BlockHeight,
 		BlockHash:            blockResponse.BlockHash,
 		Timestamp:            blockResponse.Timestamp,
+		TxCount:              blockResponse.TotalTransactions,
 		Inscriptions:         blockResponse.Inscriptions,
 		Images:               blockResponse.Images,
 		SmartContracts:       blockResponse.SmartContracts,
@@ -127,36 +136,25 @@ func (ds *DataStorage) GetRecentBlocks(limit int) ([]interface{}, error) {
 	ds.mu.RLock()
 	defer ds.mu.RUnlock()
 
-	var recentBlocks []interface{}
-
-	// Get sorted block heights from cache
-	var heights []int64
-	for height := range ds.cache {
-		heights = append(heights, height)
+	var cacheList []*BlockDataCache
+	for _, cached := range ds.cache {
+		cacheList = append(cacheList, cached)
 	}
 
-	// Simple sort (could be optimized for large datasets)
-	for i := 0; i < len(heights); i++ {
-		for j := i + 1; j < len(heights); j++ {
-			if heights[i] < heights[j] {
-				heights[i], heights[j] = heights[j], heights[i]
-			}
-		}
+	sort.Slice(cacheList, func(i, j int) bool {
+		return cacheList[i].BlockHeight > cacheList[j].BlockHeight
+	})
+
+	if limit > 0 && len(cacheList) > limit {
+		cacheList = cacheList[:limit]
 	}
 
-	// Take the most recent blocks
-	count := len(heights)
-	if count > limit {
-		count = limit
+	result := make([]interface{}, 0, len(cacheList))
+	for _, c := range cacheList {
+		result = append(result, c)
 	}
 
-	for i := 0; i < count; i++ {
-		if cached, exists := ds.cache[heights[i]]; exists {
-			recentBlocks = append(recentBlocks, cached)
-		}
-	}
-
-	return recentBlocks, nil
+	return result, nil
 }
 
 // GetSteganographyStats returns overall steganography statistics
@@ -284,8 +282,7 @@ func (ds *DataStorage) saveBlockDataToFile(data interface{}) error {
 // loadBlockDataFromFile loads block data from JSON file
 func (ds *DataStorage) loadBlockDataFromFile(height int64) (interface{}, error) {
 	// Try blocks directory structure (height_hash/inscriptions.json)
-	blocksDir := "blocks"
-	blockDirPattern := filepath.Join(blocksDir, fmt.Sprintf("%d_00000000", height))
+	blockDirPattern := filepath.Join(ds.dataDir, fmt.Sprintf("%d_00000000", height))
 	inscriptionsPath := filepath.Join(blockDirPattern, "inscriptions.json")
 
 	data, err := os.ReadFile(inscriptionsPath)
@@ -307,10 +304,8 @@ func (ds *DataStorage) loadBlockDataFromFile(height int64) (interface{}, error) 
 
 // loadCache loads block data from blocks/[height]_[hash]/block.json files into cache
 func (ds *DataStorage) loadCache() {
-	blocksDir := "blocks"
-
 	// Check if blocks directory exists
-	if _, err := os.Stat(blocksDir); err != nil {
+	if _, err := os.Stat(ds.dataDir); err != nil {
 		if os.IsNotExist(err) {
 			log.Printf("Blocks directory does not exist, cache will be empty")
 			return
@@ -319,7 +314,7 @@ func (ds *DataStorage) loadCache() {
 		return
 	}
 
-	blockEntries, err := os.ReadDir(blocksDir)
+	blockEntries, err := os.ReadDir(ds.dataDir)
 	if err != nil {
 		log.Printf("Failed to read blocks directory: %v", err)
 		return
@@ -332,7 +327,7 @@ func (ds *DataStorage) loadCache() {
 		}
 
 		// Try to load inscriptions.json from this directory
-		inscriptionsJsonPath := filepath.Join(blocksDir, blockEntry.Name(), "inscriptions.json")
+		inscriptionsJsonPath := filepath.Join(ds.dataDir, blockEntry.Name(), "inscriptions.json")
 		if _, err := os.Stat(inscriptionsJsonPath); err != nil {
 			continue // Skip if inscriptions.json doesn't exist
 		}

@@ -35,13 +35,25 @@ export const useInscriptions = (selectedBlock) => {
   const [totalImages, setTotalImages] = useState(0);
   const [displayedCount, setDisplayedCount] = useState(20);
   const [filterMode, setFilterMode] = useState('all'); // 'all' or 'text'
+  const [lastFetchedHeight, setLastFetchedHeight] = useState(null);
 
   const fetchInscriptions = useCallback(async () => {
-    if (!selectedBlock) return;
+    if (!selectedBlock || selectedBlock.isFuture || !selectedBlock.height) {
+      setInscriptions([]);
+      setCurrentInscriptions([]);
+      setAllInscriptions([]);
+      setHasMoreImages(false);
+      setTotalImages(0);
+      setDisplayedCount(0);
+      setLastFetchedHeight(null);
+      return;
+    }
+    if (selectedBlock.height === lastFetchedHeight) return;
     
     try {
+      const apiBase = process.env.REACT_APP_API_BASE || `${window.location.protocol}//${window.location.hostname}:3001`;
       const response = await fetch(
-        `http://localhost:3001/api/block-images?height=${selectedBlock.height}`
+        `${apiBase}/api/block-images?height=${selectedBlock.height}`
       );
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
@@ -52,7 +64,7 @@ export const useInscriptions = (selectedBlock) => {
       
       console.log(`Fetched ${images.length} block images for height ${selectedBlock.height}`);
       
-       const convertedResults = images.map(image => {
+       const convertedResults = await Promise.all(images.map(async (image) => {
          // Use scan_result directly from the image object
          // NOTE: Scan results are embedded directly in each image object by the backend
          // rather than in a separate steganography_scan section for simplicity
@@ -83,6 +95,19 @@ export const useInscriptions = (selectedBlock) => {
              scanned_at: Date.now() / 1000
            };
          }
+        let textContent = image.content || '';
+
+        // For text inscriptions without inline content, fetch the text payload
+        if (!textContent && (image.content_type || '').startsWith('text/')) {
+          try {
+            const resp = await fetch(`${apiBase}/api/block-image/${selectedBlock.height}/${image.file_name}`);
+            if (resp.ok) {
+              textContent = await resp.text();
+            }
+          } catch (fetchErr) {
+            console.error('Failed to fetch text content for', image.file_name, fetchErr);
+          }
+        }
         
         return {
           id: image.tx_id,
@@ -90,12 +115,12 @@ export const useInscriptions = (selectedBlock) => {
           address: 'bc1p...',
           mime_type: image.content_type || 'application/octet-stream',
           genesis_block_height: selectedBlock.height,
-          text: image.content || '',
+          text: textContent || '',
           contract_type: scanResult.is_stego ? 'Steganographic Contract' : 'Inscription',
           file_name: image.file_name,
           file_path: image.file_path,
           size_bytes: image.size_bytes,
-          image_url: `http://localhost:3001/api/block-image/${selectedBlock.height}/${image.file_name}`,
+          image_url: `${apiBase}/api/block-image/${selectedBlock.height}/${image.file_name}`,
           metadata: {
             confidence: scanResult.confidence,
             extracted_message: scanResult.extracted_message,
@@ -109,7 +134,7 @@ export const useInscriptions = (selectedBlock) => {
             is_stego: scanResult.is_stego
           }
         };
-      });
+      }));
       
       const processedInscriptions = generateInscriptions(convertedResults);
       
@@ -126,6 +151,7 @@ export const useInscriptions = (selectedBlock) => {
       setHasMoreImages(filteredInscriptions.length > 20);
       
       setInscriptions(filteredInscriptions.slice(0, 20));
+      setLastFetchedHeight(selectedBlock.height);
       
       console.log(`Loaded ${processedInscriptions.length} total inscriptions, displaying first 20`);
     } catch (error) {
@@ -135,7 +161,7 @@ export const useInscriptions = (selectedBlock) => {
       setTotalImages(0);
       setHasMoreImages(false);
     }
-  }, [selectedBlock, filterMode]);
+  }, [selectedBlock, filterMode, lastFetchedHeight]);
 
   const loadMoreInscriptions = () => {
     const sourceInscriptions = filterMode === 'text' 

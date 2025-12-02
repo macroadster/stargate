@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, Moon, Sun, ChevronLeft, ChevronRight, X, Check, Copy } from 'lucide-react';
+import { Search, Moon, Sun, X, Check, Copy } from 'lucide-react';
 import { Routes, Route, useParams, useNavigate } from 'react-router-dom';
 
 import BlockCard from './components/Block/BlockCard';
@@ -39,15 +39,16 @@ function MainContent() {
   const [searchResults, setSearchResults] = useState(null);
   const [copiedText, setCopiedText] = useState('');
   const sentinelRef = useRef(null);
+  const [hideBrc20, setHideBrc20] = useState(true);
 
   const {
     blocks,
     selectedBlock,
     isUserNavigating,
-    shouldAutoScroll,
     handleBlockSelect: originalHandleBlockSelect,
     setSelectedBlock,
-    setIsUserNavigating
+    setIsUserNavigating,
+    loadMoreBlocks
   } = useBlocks();
 
   const handleBlockSelect = (block) => {
@@ -61,6 +62,14 @@ function MainContent() {
     loadMoreInscriptions
   } = useInscriptions(selectedBlock);
 
+  const filteredInscriptions = inscriptions.filter((inscription) => {
+    if (!hideBrc20) return true;
+    const text = inscription.text || '';
+    const name = inscription.file_name || '';
+    const isBrc = text.toLowerCase().includes('brc-20') || text.toLowerCase().includes('brc20') || name.toLowerCase().includes('brc-20') || name.toLowerCase().includes('brc20');
+    return !isBrc;
+  });
+
   useEffect(() => {
     const savedTheme = localStorage.getItem('theme');
     if (savedTheme) {
@@ -73,11 +82,12 @@ function MainContent() {
 
   useEffect(() => {
     if (height && blocks.length > 0) {
-      const block = blocks.find(b => b.height === parseInt(height));
-      if (block) {
+      const targetHeight = parseInt(height);
+      const block = blocks.find(b => b.height === targetHeight);
+      if (block && block.height !== selectedBlock?.height) {
         setSelectedBlock(block);
         setIsUserNavigating(true);
-      } else {
+      } else if (!block) {
         // Block not in recent blocks, trigger scan and fetch it
         fetch(`http://localhost:3001/api/data/scan`, {
           method: 'POST',
@@ -94,7 +104,7 @@ function MainContent() {
           console.log('Block scanned successfully:', scanData);
           // Create block object from scanned data
           const fetchedBlock = {
-            height: parseInt(height),
+            height: targetHeight,
             hash: scanData.block_data?.block_hash || scanData.block_data?.block_hash,
             timestamp: scanData.block_data?.timestamp || scanData.block_data?.timestamp,
             tx_count: scanData.block_data?.inscriptions?.length || 0,
@@ -110,7 +120,7 @@ function MainContent() {
             .then(response => response.json())
             .then(data => {
               const fetchedBlock = {
-                height: parseInt(height),
+                height: targetHeight,
                 hash: data.block_hash,
                 timestamp: data.timestamp,
                 tx_count: data.tx_count || 0,
@@ -126,7 +136,7 @@ function MainContent() {
         });
       }
     }
-  }, [height, blocks, setSelectedBlock, setIsUserNavigating, navigate]);
+  }, [height, blocks, selectedBlock, setSelectedBlock, setIsUserNavigating, navigate]);
 
   useEffect(() => {
     if (isDarkMode) {
@@ -137,22 +147,12 @@ function MainContent() {
     localStorage.setItem('theme', isDarkMode ? 'dark' : 'light');
   }, [isDarkMode]);
 
+  // Stop auto-scrolling; only user-driven navigation
   useEffect(() => {
-    if (selectedBlock) {
-      if (!isUserNavigating && shouldAutoScroll) {
-        setTimeout(() => {
-          const blockElement = document.querySelector(`[data-block-id="${selectedBlock.height}"]`);
-          if (blockElement) {
-            blockElement.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
-          }
-        }, 100);
-      }
-
-      if (isUserNavigating) {
-        setIsUserNavigating(false);
-      }
+    if (isUserNavigating) {
+      setIsUserNavigating(false);
     }
-  }, [selectedBlock, isUserNavigating, shouldAutoScroll, setIsUserNavigating]);
+  }, [selectedBlock, isUserNavigating, setIsUserNavigating]);
 
   useEffect(() => {
     if (!hasMoreImages || !sentinelRef.current) return;
@@ -185,9 +185,11 @@ function MainContent() {
     }
 
     try {
-      const response = await fetch(`http://localhost:3001/api/search?q=${encodeURIComponent(query)}`);
+      const apiBase = process.env.REACT_APP_API_BASE || `${window.location.protocol}//${window.location.hostname}:3001`;
+      const response = await fetch(`${apiBase}/api/search?q=${encodeURIComponent(query)}`);
       const data = await response.json();
-      setSearchResults(data);
+      const payload = data?.data || data;
+      setSearchResults(payload);
     } catch (error) {
       console.error('Search error:', error);
       setSearchResults({ inscriptions: [], blocks: [] });
@@ -209,14 +211,6 @@ function MainContent() {
     }
   };
 
-  const handleScroll = (direction) => {
-    const container = document.getElementById('block-scroll');
-    if (container) {
-      const scrollAmount = 200;
-      container.scrollBy({ left: direction === 'left' ? -scrollAmount : scrollAmount, behavior: 'smooth' });
-    }
-  };
-
   return (
     <div className="min-h-screen bg-white dark:bg-gray-950 text-black dark:text-white">
       <header className="bg-gray-100 dark:bg-gray-900 border-b border-gray-300 dark:border-gray-800">
@@ -234,6 +228,13 @@ function MainContent() {
                 <button onClick={() => setShowInscribeModal(true)} className="text-indigo-600 dark:text-indigo-400 hover:text-black dark:hover:text-white bg-transparent border-none cursor-pointer">Inscribe</button>
                 <button className="text-gray-600 dark:text-gray-400 hover:text-black dark:hover:text-white bg-transparent border-none cursor-pointer">Blocks</button>
                 <button className="text-gray-600 dark:text-gray-400 hover:text-black dark:hover:text-white bg-transparent border-none cursor-pointer">Contracts</button>
+                <button
+                  onClick={() => setHideBrc20(!hideBrc20)}
+                  className={`text-sm px-3 py-1 rounded-full border ${hideBrc20 ? 'border-indigo-500 text-indigo-600 dark:text-indigo-300' : 'border-gray-400 text-gray-600 dark:text-gray-300'} bg-transparent cursor-pointer`}
+                  title="Toggle BRC-20 visibility"
+                >
+                  {hideBrc20 ? 'Hide BRC-20' : 'Show BRC-20'}
+                </button>
               </nav>
             </div>
             
@@ -273,17 +274,15 @@ function MainContent() {
       <div className="bg-gray-100 dark:bg-gray-900 border-b border-gray-300 dark:border-gray-800 relative">
         <div className="container mx-auto px-6 py-8">
           <div className="relative pt-6">
-            <button
-              onClick={() => handleScroll('left')}
-              className="absolute left-0 top-1/2 -translate-y-1/2 z-10 bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700 rounded-full p-2 text-black dark:text-white"
-            >
-              <ChevronLeft className="w-5 h-5" />
-            </button>
-
-            <div
+                        <div
               id="block-scroll"
-              className="flex gap-4 overflow-x-auto pb-4 px-12 scrollbar-hide"
-              style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+              className="flex gap-4 overflow-x-auto whitespace-nowrap pb-4 px-12"
+              onScroll={(e) => {
+                const el = e.currentTarget;
+                if (el.scrollLeft + el.clientWidth >= el.scrollWidth - 50) {
+                  loadMoreBlocks();
+                }
+              }}
             >
               {blocks.map((block, index) => (
                 <BlockCard
@@ -295,12 +294,6 @@ function MainContent() {
               ))}
             </div>
 
-            <button
-              onClick={() => handleScroll('right')}
-              className="absolute right-0 top-1/2 -translate-y-1/2 z-10 bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700 rounded-full p-2 text-black dark:text-white"
-            >
-              <ChevronRight className="w-5 h-5" />
-            </button>
           </div>
         </div>
       </div>
@@ -453,7 +446,7 @@ function MainContent() {
 
                  <div className="grid grid-cols-5 gap-4">
                    {console.log('Rendering inscriptions grid:', inscriptions.length)}
-                   {inscriptions.map((inscription, idx) => (
+                   {filteredInscriptions.map((inscription, idx) => (
                      <InscriptionCard
                        key={idx}
                        inscription={inscription}

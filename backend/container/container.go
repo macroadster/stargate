@@ -1,8 +1,12 @@
 package container
 
 import (
+	"log"
+	"os"
+	"path/filepath"
 	"stargate-backend/handlers"
 	"stargate-backend/services"
+	"stargate-backend/storage"
 )
 
 // Container holds all application dependencies
@@ -13,6 +17,8 @@ type Container struct {
 	SmartContractService *services.SmartContractService
 	QRCodeService        *services.QRCodeService
 	HealthService        *services.HealthService
+	DataStorage          storage.ExtendedDataStorage
+	IngestionService     *services.IngestionService
 
 	// Handlers
 	HealthHandler        *handlers.HealthHandler
@@ -22,25 +28,58 @@ type Container struct {
 	SearchHandler        *handlers.SearchHandler
 	QRCodeHandler        *handlers.QRCodeHandler
 	ProxyHandler         *handlers.ProxyHandler
+	IngestionHandler     *handlers.IngestionHandler
 }
 
 // NewContainer creates a new dependency container
 func NewContainer() *Container {
+	storageType := os.Getenv("STARGATE_STORAGE")
+	pgDSN := os.Getenv("STARGATE_PG_DSN")
+
 	// Initialize services
-	inscriptionService := services.NewInscriptionService("inscriptions.json")
+	dataDir := "/data"
+	if env := os.Getenv("DATA_DIR"); env != "" {
+		dataDir = env
+	}
+	inscriptionsFile := os.Getenv("INSCRIPTIONS_FILE")
+	if inscriptionsFile == "" {
+		inscriptionsFile = filepath.Join(dataDir, "inscriptions.json")
+	}
+	if err := os.MkdirAll(filepath.Dir(inscriptionsFile), 0755); err != nil {
+		log.Printf("failed to ensure data dir: %v", err)
+	}
+	inscriptionService := services.NewInscriptionService(inscriptionsFile)
 	blockService := services.NewBlockService()
 	contractService := services.NewSmartContractService("smart_contracts.json")
 	qrService := services.NewQRCodeService()
 	healthService := services.NewHealthService()
+	ingestionService, _ := services.NewIngestionService(pgDSN)
+
+	// Data storage selection
+	var dataStorage storage.ExtendedDataStorage
+	dataStorage = storage.NewDataStorage("blocks")
+	if storageType == "postgres" && pgDSN != "" {
+		if pgStore, err := storage.NewPostgresStorage(pgDSN); err != nil {
+			log.Printf("Failed to init Postgres storage, falling back to filesystem: %v", err)
+		} else {
+			log.Printf("Using Postgres storage backend")
+			dataStorage = pgStore
+		}
+	}
 
 	// Initialize handlers
 	healthHandler := handlers.NewHealthHandler(healthService)
-	inscriptionHandler := handlers.NewInscriptionHandler(inscriptionService)
+	inscriptionHandler := handlers.NewInscriptionHandler(inscriptionService, ingestionService)
 	blockHandler := handlers.NewBlockHandler(blockService)
 	contractHandler := handlers.NewSmartContractHandler(contractService)
-	searchHandler := handlers.NewSearchHandler(inscriptionService, blockService)
+	searchHandler := handlers.NewSearchHandler(inscriptionService, blockService, dataStorage)
 	qrHandler := handlers.NewQRCodeHandler(qrService)
-	proxyHandler := handlers.NewProxyHandler("http://localhost:8080")
+	proxyBase := os.Getenv("STARGATE_PROXY_BASE")
+	if proxyBase == "" {
+		proxyBase = "http://localhost:8080"
+	}
+	proxyHandler := handlers.NewProxyHandler(proxyBase)
+	ingestionHandler := handlers.NewIngestionHandler(ingestionService)
 
 	return &Container{
 		// Services
@@ -49,6 +88,8 @@ func NewContainer() *Container {
 		SmartContractService: contractService,
 		QRCodeService:        qrService,
 		HealthService:        healthService,
+		DataStorage:          dataStorage,
+		IngestionService:     ingestionService,
 
 		// Handlers
 		HealthHandler:        healthHandler,
@@ -58,5 +99,6 @@ func NewContainer() *Container {
 		SearchHandler:        searchHandler,
 		QRCodeHandler:        qrHandler,
 		ProxyHandler:         proxyHandler,
+		IngestionHandler:     ingestionHandler,
 	}
 }
