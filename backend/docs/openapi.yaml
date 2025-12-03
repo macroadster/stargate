@@ -1,0 +1,205 @@
+openapi: 3.0.3
+info:
+  title: Stargate Backend API
+  version: "1.0.0"
+  description: |
+    REST API served by the Stargate Go backend. Static frontend assets are also delivered by this server.
+servers:
+  - url: http://localhost:3001
+paths:
+  /api/health:
+    get:
+      summary: Health check
+      responses:
+        '200':
+          description: Service health including storage and Bitcoin connectivity.
+  /api/inscriptions:
+    get:
+      summary: List inscriptions (recent or pending)
+      responses:
+        '200':
+          description: Array of inscription metadata.
+  /api/inscribe:
+    post:
+      summary: Create a new inscription request
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                text:
+                  type: string
+      responses:
+        '200':
+          description: Created inscription payload.
+  /api/pending-transactions:
+    get:
+      summary: Pending inscriptions
+      responses:
+        '200':
+          description: Pending inscription list.
+  /api/blocks:
+    get:
+      summary: Recent blocks with inscription counts
+      responses:
+        '200':
+          description: Block summaries.
+  /api/data/blocks:
+    get:
+      summary: Recent block cache
+      responses:
+        '200':
+          description: Cached block data.
+  /api/data/block/{height}:
+    get:
+      summary: Block details by height
+      parameters:
+        - in: path
+          name: height
+          schema:
+            type: integer
+          required: true
+      responses:
+        '200':
+          description: Block data and inscriptions.
+  /api/data/stats:
+    get:
+      summary: Steganography statistics
+      responses:
+        '200':
+          description: Stats payload.
+  /api/data/scan:
+    post:
+      summary: Trigger scan of a block height
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                blockHeight:
+                  type: integer
+      responses:
+        '200':
+          description: Scan queued/executed.
+  /api/search:
+    get:
+      summary: Search inscriptions/blocks
+      parameters:
+        - in: query
+          name: q
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Search results.
+  /api/qrcode:
+    get:
+      summary: Generate QR code
+      parameters:
+        - in: query
+          name: text
+          schema:
+            type: string
+      responses:
+        '200':
+          description: QR image bytes.
+  /api/ingest-inscription:
+    post:
+      summary: Receive inscription image from Starlight
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Stored inscription payload.
+  /api/ingest-inscription/{id}:
+    get:
+      summary: Fetch ingestion status by ID
+      parameters:
+        - in: path
+          name: id
+          schema:
+            type: string
+          required: true
+      responses:
+        '200':
+          description: Ingestion status/details.
+  /bitcoin/v1/health:
+    get:
+      summary: Bitcoin scanner health
+      responses:
+        '200':
+          description: Scanner and Bitcoin node status.
+  /bitcoin/v1/info:
+    get:
+      summary: Bitcoin scanner info
+      responses:
+        '200':
+          description: Capability description.
+  /bitcoin/v1/scan/transaction:
+    post:
+      summary: Scan a transaction for steganography
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                transactionId:
+                  type: string
+      responses:
+        '200':
+          description: Scan results.
+  /bitcoin/v1/scan/image:
+    post:
+      summary: Scan an uploaded image for steganography
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: Scan results.
+  /bitcoin/v1/scan/block:
+    post:
+      summary: Scan a cached Bitcoin block
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                blockHeight:
+                  type: integer
+      responses:
+        '200':
+          description: Scan results.
+  /bitcoin/v1/extract:
+    post:
+      summary: Extract embedded message from an image
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: Extraction result.

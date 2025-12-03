@@ -35,7 +35,16 @@ func Logging(next http.Handler) http.Handler {
 		next.ServeHTTP(wrapped, r)
 
 		duration := time.Since(start)
-		log.Printf("%s %s %d %v", r.Method, r.URL.Path, wrapped.statusCode, duration)
+		entry := map[string]interface{}{
+			"ts":       start.UTC().Format(time.RFC3339Nano),
+			"method":   r.Method,
+			"path":     r.URL.Path,
+			"status":   wrapped.statusCode,
+			"duration": duration.String(),
+		}
+		if err := json.NewEncoder(log.Writer()).Encode(entry); err != nil {
+			log.Printf("%s %s %d %v", r.Method, r.URL.Path, wrapped.statusCode, duration)
+		}
 	})
 }
 
@@ -62,6 +71,18 @@ func Recovery(next http.Handler) http.Handler {
 			}
 		}()
 
+		next.ServeHTTP(w, r)
+	})
+}
+
+// SecurityHeaders middleware
+func SecurityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload")
+		w.Header().Set("X-Frame-Options", "SAMEORIGIN")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
 		next.ServeHTTP(w, r)
 	})
 }

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { API_BASE } from '../apiBase';
 
 const generateBlock = (block) => {
   const now = Date.now();
@@ -39,7 +40,7 @@ export const useBlocks = () => {
     try {
       // Fetch recent blocks
       const limit = limitOverride || blockLimit;
-      let response = await fetch(`http://localhost:3001/api/data/blocks?limit=${limit}`);
+      let response = await fetch(`${API_BASE}/api/data/blocks?limit=${limit}`);
       let data = await response.json();
       
       if (!response.ok) {

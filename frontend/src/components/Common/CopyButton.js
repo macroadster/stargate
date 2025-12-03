@@ -5,6 +5,10 @@ const CopyButton = ({ text, className = "" }) => {
   const [copiedText, setCopiedText] = useState('');
 
   const copyToClipboard = async (textToCopy) => {
+    if (!navigator?.clipboard?.writeText) {
+      console.warn('Clipboard API unavailable in this context');
+      return;
+    }
     try {
       await navigator.clipboard.writeText(textToCopy);
       setCopiedText(textToCopy);

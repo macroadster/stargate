@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Stargate Backend API Docs</title>
+  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5.17.14/swagger-ui.css" />
+  <style>
+    body { margin: 0; background: #0f172a; }
+    #swagger-ui { max-width: 1200px; margin: 0 auto; padding: 12px; }
+    .links { max-width: 1200px; margin: 0 auto; padding: 12px; color: #e2e8f0; }
+    .links a { color: #93c5fd; margin-right: 12px; }
+  </style>
+</head>
+<body>
+  <div class="links">
+    <strong>API Docs:</strong>
+    <a href="/api/docs/openapi.yaml">OpenAPI (YAML)</a>
+    <a href="/api/health">Health</a>
+    <a href="/metrics">Metrics</a>
+    <span>|</span>
+    <a href="https://starlight.local/docs" target="_blank" rel="noreferrer">Starlight FastAPI Docs</a>
+  </div>
+  <div id="swagger-ui"></div>
+  <script src="https://unpkg.com/swagger-ui-dist@5.17.14/swagger-ui-bundle.js"></script>
+  <script>
+    window.onload = () => {
+      SwaggerUIBundle({
+        url: '/api/docs/openapi.yaml',
+        dom_id: '#swagger-ui',
+        presets: [SwaggerUIBundle.presets.apis],
+        layout: "BaseLayout",
+        docExpansion: "none",
+        defaultModelExpandDepth: 1,
+        defaultModelsExpandDepth: 1
+      });
+    };
+  </script>
+</body>
+</html>

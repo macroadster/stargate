@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { API_BASE } from '../apiBase';
 
 const generateInscriptions = (inscriptions) => {
   return inscriptions.map((insc, i) => ({
@@ -51,9 +52,8 @@ export const useInscriptions = (selectedBlock) => {
     if (selectedBlock.height === lastFetchedHeight) return;
     
     try {
-      const apiBase = process.env.REACT_APP_API_BASE || `${window.location.protocol}//${window.location.hostname}:3001`;
       const response = await fetch(
-        `${apiBase}/api/block-images?height=${selectedBlock.height}`
+        `${API_BASE}/api/block-images?height=${selectedBlock.height}`
       );
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
@@ -100,7 +100,7 @@ export const useInscriptions = (selectedBlock) => {
         // For text inscriptions without inline content, fetch the text payload
         if (!textContent && (image.content_type || '').startsWith('text/')) {
           try {
-            const resp = await fetch(`${apiBase}/api/block-image/${selectedBlock.height}/${image.file_name}`);
+            const resp = await fetch(`${API_BASE}/api/block-image/${selectedBlock.height}/${image.file_name}`);
             if (resp.ok) {
               textContent = await resp.text();
             }
@@ -120,7 +120,7 @@ export const useInscriptions = (selectedBlock) => {
           file_name: image.file_name,
           file_path: image.file_path,
           size_bytes: image.size_bytes,
-          image_url: `${apiBase}/api/block-image/${selectedBlock.height}/${image.file_name}`,
+          image_url: `${API_BASE}/api/block-image/${selectedBlock.height}/${image.file_name}`,
           metadata: {
             confidence: scanResult.confidence,
             extracted_message: scanResult.extracted_message,

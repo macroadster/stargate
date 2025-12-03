@@ -10,6 +10,7 @@ import InscriptionModal from './components/Inscription/InscriptionModal';
 
 import { useBlocks } from './hooks/useBlocks';
 import { useInscriptions } from './hooks/useInscriptions';
+import { API_BASE } from './apiBase';
 
 const formatTimeAgo = (timestamp) => {
   const now = Date.now();
@@ -89,7 +90,7 @@ function MainContent() {
         setIsUserNavigating(true);
       } else if (!block) {
         // Block not in recent blocks, trigger scan and fetch it
-        fetch(`http://localhost:3001/api/data/scan`, {
+        fetch(`${API_BASE}/api/data/scan`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -116,7 +117,7 @@ function MainContent() {
         .catch(error => {
           console.error('Error scanning block:', error);
           // Try regular fetch as fallback
-          fetch(`http://localhost:3001/api/data/block/${height}`)
+          fetch(`${API_BASE}/api/data/block/${height}`)
             .then(response => response.json())
             .then(data => {
               const fetchedBlock = {
@@ -185,8 +186,7 @@ function MainContent() {
     }
 
     try {
-      const apiBase = process.env.REACT_APP_API_BASE || `${window.location.protocol}//${window.location.hostname}:3001`;
-      const response = await fetch(`${apiBase}/api/search?q=${encodeURIComponent(query)}`);
+      const response = await fetch(`${API_BASE}/api/search?q=${encodeURIComponent(query)}`);
       const data = await response.json();
       const payload = data?.data || data;
       setSearchResults(payload);

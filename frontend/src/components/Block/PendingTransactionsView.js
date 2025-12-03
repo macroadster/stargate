@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import InscriptionCard from '../Inscription/InscriptionCard';
+import { API_BASE } from '../../apiBase';
 
 const PendingTransactionsView = ({ setSelectedInscription }) => {
   const [pendingTxs, setPendingTxs] = useState([]);
@@ -10,10 +11,11 @@ const PendingTransactionsView = ({ setSelectedInscription }) => {
 
   const fetchPendingTransactions = async () => {
     try {
-      const apiBase = process.env.REACT_APP_API_BASE || `${window.location.protocol}//${window.location.hostname}:3001`;
-      const response = await fetch(`${apiBase}/api/pending-transactions`);
+      const response = await fetch(`${API_BASE}/api/pending-transactions`);
       const data = await response.json();
-      setPendingTxs(data.data?.transactions || data || []);
+      const raw = data?.data?.transactions ?? data;
+      const normalized = Array.isArray(raw) ? raw : [];
+      setPendingTxs(normalized);
     } catch (error) {
       console.error('Error fetching pending transactions:', error);
       setPendingTxs([]);
@@ -21,10 +23,10 @@ const PendingTransactionsView = ({ setSelectedInscription }) => {
   };
 
   const mappedInscriptions = useMemo(() => {
-    const apiBase = process.env.REACT_APP_API_BASE || `${window.location.protocol}//${window.location.hostname}:3001`;
-    return (pendingTxs || []).map((tx) => {
+    const list = Array.isArray(pendingTxs) ? pendingTxs : [];
+    return list.map((tx) => {
       const uploadFile = tx.imageData ? tx.imageData.split('/').pop() : null;
-      const imageUrl = uploadFile ? `${apiBase}/uploads/${uploadFile}` : null;
+      const imageUrl = uploadFile ? `${API_BASE}/uploads/${uploadFile}` : null;
       return {
         id: tx.id,
         contract_type: 'Pending Contract',
