@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Search, Moon, Sun, X, Check, Copy } from 'lucide-react';
-import { Routes, Route, useParams, useNavigate } from 'react-router-dom';
+import { Routes, Route, useParams, useNavigate, useLocation } from 'react-router-dom';
 
 import BlockCard from './components/Block/BlockCard';
 import InscriptionCard from './components/Inscription/InscriptionCard';
@@ -33,6 +33,7 @@ const formatTimeAgo = (timestamp) => {
 function MainContent() {
   const { height } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const [showInscribeModal, setShowInscribeModal] = useState(false);
   const [selectedInscription, setSelectedInscription] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -62,6 +63,8 @@ function MainContent() {
     hasMoreImages,
     loadMoreInscriptions
   } = useInscriptions(selectedBlock);
+
+  const isPendingRoute = location.pathname === '/pending';
 
   const filteredInscriptions = inscriptions.filter((inscription) => {
     if (!hideBrc20) return true;
@@ -138,6 +141,16 @@ function MainContent() {
       }
     }
   }, [height, blocks, selectedBlock, setSelectedBlock, setIsUserNavigating, navigate]);
+
+  useEffect(() => {
+    if (!isPendingRoute || !blocks.length) return;
+
+    const pendingBlock = blocks.find((b) => b.isFuture);
+    if (pendingBlock && selectedBlock?.height !== pendingBlock.height) {
+      setSelectedBlock(pendingBlock);
+      setIsUserNavigating(true);
+    }
+  }, [blocks, isPendingRoute, selectedBlock, setSelectedBlock, setIsUserNavigating]);
 
   useEffect(() => {
     if (isDarkMode) {
@@ -315,8 +328,18 @@ function MainContent() {
               
               <nav className="flex gap-6 text-sm">
                 <button onClick={() => setShowInscribeModal(true)} className="text-indigo-600 dark:text-indigo-400 hover:text-black dark:hover:text-white bg-transparent border-none cursor-pointer">Inscribe</button>
-                <button className="text-gray-600 dark:text-gray-400 hover:text-black dark:hover:text-white bg-transparent border-none cursor-pointer">Blocks</button>
-                <button className="text-gray-600 dark:text-gray-400 hover:text-black dark:hover:text-white bg-transparent border-none cursor-pointer">Contracts</button>
+                <button
+                  onClick={() => navigate('/')}
+                  className="text-gray-600 dark:text-gray-400 hover:text-black dark:hover:text-white bg-transparent border-none cursor-pointer"
+                >
+                  Blocks
+                </button>
+                <button
+                  onClick={() => navigate('/pending')}
+                  className="text-gray-600 dark:text-gray-400 hover:text-black dark:hover:text-white bg-transparent border-none cursor-pointer"
+                >
+                  Contracts
+                </button>
                 <button
                   onClick={() => setHideBrc20(!hideBrc20)}
                   className={`text-sm px-3 py-1 rounded-full border ${hideBrc20 ? 'border-indigo-500 text-indigo-600 dark:text-indigo-300' : 'border-gray-400 text-gray-600 dark:text-gray-300'} bg-transparent cursor-pointer`}
@@ -593,6 +616,7 @@ export default function App() {
     <Routes>
       <Route path="/" element={<MainContent />} />
       <Route path="/block/:height" element={<MainContent />} />
+      <Route path="/pending" element={<MainContent />} />
     </Routes>
   );
 }
