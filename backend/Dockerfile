@@ -13,6 +13,7 @@ FROM debian:bookworm-slim
 RUN useradd -m -u 1000 stargate && apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=builder /out/stargate /usr/local/bin/stargate
+COPY --from=builder /app/docs ./docs
 # Frontend assets (optional). Create placeholders to satisfy static paths.
 RUN mkdir -p /app/frontend /app/uploads
 

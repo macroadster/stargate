@@ -42,21 +42,26 @@ A modern, full-stack web application for exploring Bitcoin Ordinals inscriptions
 - Go 1.21+
 - Git
 
-### Backend Setup
+### Local Backend (no containers)
 ```bash
 cd backend
 go mod tidy
-go run main.go
+./run_dev.sh  # exports sensible defaults then runs `go run .`
 ```
 Server starts on `http://localhost:3001`
+- Metrics: `http://localhost:3001/metrics`
 
-### Frontend Setup
+### Local Frontend (no containers)
 ```bash
 cd frontend
 npm install
 npm start
 ```
 App runs on `http://localhost:3000`
+
+### API Docs
+- Backend OpenAPI: `http://localhost:3001/api/docs/openapi.yaml` (load in Swagger UI/Insomnia); Swagger UI at `/api/docs/` and metrics at `/metrics`
+- Starlight FastAPI (when running locally): `http://localhost:8080/docs` (private, used by Stargate)
 
 ## 📖 Usage
 

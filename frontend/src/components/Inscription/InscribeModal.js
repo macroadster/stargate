@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { X } from 'lucide-react';
+import { API_BASE } from '../../apiBase';
 import { QRCodeCanvas } from 'qrcode.react';
 
 const InscribeModal = ({ onClose, setPendingTransactions }) => {
@@ -26,8 +27,7 @@ const InscribeModal = ({ onClose, setPendingTransactions }) => {
       formData.append('message', embedText);
       formData.append('method', 'alpha');
 
-      const backendBase = `${window.location.protocol}//${window.location.hostname}:3001`;
-      const response = await fetch(`${backendBase}/api/inscribe`, {
+      const response = await fetch(`${API_BASE}/api/inscribe`, {
         method: 'POST',
         body: formData
       });
@@ -167,7 +167,7 @@ const InscribeModal = ({ onClose, setPendingTransactions }) => {
               <button
                 onClick={() => {
                   setTimeout(() => {
-                    fetch(`${window.location.protocol}//${window.location.hostname}:3001/api/pending-transactions`)
+                    fetch(`${API_BASE}/api/pending-transactions`)
                       .then(res => res.json())
                       .then(data => setPendingTransactions(data || []))
                       .catch(err => console.error('Error fetching pending transactions:', err));

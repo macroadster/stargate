@@ -15,6 +15,8 @@ import (
 	"stargate-backend/container"
 	"stargate-backend/middleware"
 	"stargate-backend/storage"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 func contentTypeForFormat(format string) string {
@@ -67,11 +69,12 @@ func main() {
 	// Apply middleware to all routes
 	handler := middleware.Recovery(
 		middleware.Logging(
+			middleware.SecurityHeaders(
 			middleware.CORS(
 				middleware.Timeout(30 * time.Second)(
 					setupRoutes(mux, container),
 				),
-			),
+			)),
 		),
 	)
 
@@ -88,6 +91,11 @@ func main() {
 func setupRoutes(mux *http.ServeMux, container *container.Container) http.Handler {
 	// Health endpoints
 	mux.HandleFunc("/api/health", container.HealthHandler.HandleHealth)
+	mux.HandleFunc("/api/docs", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/api/docs/", http.StatusFound)
+	})
+	mux.Handle("/api/docs/", http.StripPrefix("/api/docs/", http.FileServer(http.Dir("./docs"))))
+	mux.Handle("/metrics", promhttp.Handler())
 
 	// Inscription endpoints
 	mux.HandleFunc("/api/inscriptions", container.InscriptionHandler.HandleGetInscriptions)
