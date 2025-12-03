@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { API_BASE } from '../apiBase';
 
 const generateBlock = (block) => {
@@ -31,10 +31,52 @@ const generateBlock = (block) => {
 };
 
 export const useBlocks = () => {
+  const historicalCacheRef = useRef({});
   const [blocks, setBlocks] = useState([]);
   const [selectedBlock, setSelectedBlock] = useState(null);
   const [isUserNavigating, setIsUserNavigating] = useState(false);
   const [blockLimit, setBlockLimit] = useState(20);
+  const historicalHeights = useRef([
+    0, // genesis (kept for completeness; separately pinned below)
+    1,
+    174923, // Pizza Day
+    210000, // Halving #1
+    420000, // Halving #2
+    481824, // SegWit
+    630000, // Halving #3
+    709632, // Taproot
+    840000  // Halving #4
+  ]);
+
+  const fetchHistoricalBlocks = useCallback(async (currentBlocks) => {
+    const presentHeights = new Set(currentBlocks.map((b) => b.height));
+    const missing = historicalHeights.current.filter(
+      (h) => !presentHeights.has(h) && !historicalCacheRef.current[h]
+    );
+
+    if (missing.length > 0) {
+      const fetched = await Promise.all(
+        missing.map(async (height) => {
+          try {
+            const res = await fetch(`${API_BASE}/api/data/block/${height}`);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+            const block = generateBlock({ ...data, block_height: height });
+            historicalCacheRef.current[height] = block;
+            return block;
+          } catch (err) {
+            console.error(`Error fetching historical block ${height}:`, err);
+            return null;
+          }
+        })
+      );
+      fetched.filter(Boolean).forEach((b) => {
+        historicalCacheRef.current[b.height] = b;
+      });
+    }
+
+    return Object.values(historicalCacheRef.current);
+  }, []);
 
   const fetchBlocks = useCallback(async (isPolling = false, limitOverride) => {
     try {
@@ -49,18 +91,18 @@ export const useBlocks = () => {
       
       const blocksData = data.blocks || data.data || data;
 
-      let processedBlocks = Array.isArray(blocksData)
+      const recentBlocks = Array.isArray(blocksData)
         ? blocksData
             .map(generateBlock)
             .filter(b => b.height)
         : [];
 
-      // Deduplicate by height and sort desc
-      const seen = new Set();
-      processedBlocks = processedBlocks
+      // Deduplicate by height and sort desc, keep only recent window for the live feed
+      const seenRecent = new Set();
+      let processedBlocks = recentBlocks
         .filter(b => {
-          if (seen.has(b.height)) return false;
-          seen.add(b.height);
+          if (seenRecent.has(b.height)) return false;
+          seenRecent.add(b.height);
           return true;
         })
         .sort((a, b) => b.height - a.height)
@@ -85,11 +127,15 @@ export const useBlocks = () => {
         });
       }
 
+      // Add historical blocks (e.g., Taproot, halvings) so they always show up
+      const historicalBlocks = await fetchHistoricalBlocks(processedBlocks);
+      processedBlocks = [...processedBlocks, ...historicalBlocks];
+
       // Add a future/pending block one height above the latest known real block
       if (processedBlocks.length > 0) {
         const maxHeight = processedBlocks.reduce((max, b) => Math.max(max, b.height), 0);
         const nextHeight = maxHeight + 1;
-        processedBlocks.unshift({
+        processedBlocks.push({
           height: nextHeight,
           timestamp: Date.now() + 600000,
           hash: 'pending...',
@@ -105,6 +151,16 @@ export const useBlocks = () => {
         });
       }
 
+      // Final dedupe & sort after adding pinned blocks
+      const seenFinal = new Set();
+      processedBlocks = processedBlocks
+        .filter(b => {
+          if (seenFinal.has(b.height)) return false;
+          seenFinal.add(b.height);
+          return true;
+        })
+        .sort((a, b) => b.height - a.height);
+
       setBlocks(processedBlocks);
 
       if (!selectedBlock && processedBlocks.length && !isPolling) {
@@ -118,7 +174,7 @@ export const useBlocks = () => {
         setSelectedBlock(null);
       }
     }
-  }, [selectedBlock, blockLimit]);
+  }, [selectedBlock, blockLimit, fetchHistoricalBlocks]);
 
   const loadMoreBlocks = useCallback(() => {
     setBlockLimit((prev) => Math.min(prev + 10, 100));
