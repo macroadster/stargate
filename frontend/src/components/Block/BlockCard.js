@@ -1,7 +1,12 @@
 import React from 'react';
 
 const BlockCard = ({ block, onClick, isSelected }) => {
-  const hasSmartContracts = (block.smart_contract_count || block.smart_contracts || 0) > 0;
+  const smartContractCount =
+    block.smart_contract_count ||
+    (Array.isArray(block.smart_contracts) ? block.smart_contracts.length : 0) ||
+    (block.steganography_summary ? block.steganography_summary.stego_count : 0) ||
+    0;
+  const hasSmartContracts = smartContractCount > 0;
   const hasWitnessImages = (block.witness_image_count || block.witness_images || 0) > 0;
   const inscriptionCount = block.inscription_count ?? block.inscriptionCount ?? 0;
   const hasImages = block.has_images !== undefined ? block.has_images : inscriptionCount > 0;
@@ -93,13 +98,11 @@ const BlockCard = ({ block, onClick, isSelected }) => {
       return historical.title;
     }
     
-    const inscriptionCount = block.inscriptionCount || block.inscription_count || 0;
-    const txCount = block.tx_count || 0;
-    
-    // Show inscription count for modern blocks with inscriptions
-    if (inscriptionCount > 0) {
-      return `${inscriptionCount} inscription${inscriptionCount !== 1 ? 's' : ''}`;
+    if (smartContractCount > 0) {
+      return `${smartContractCount} smart contract${smartContractCount === 1 ? '' : 's'}`;
     }
+
+    const txCount = block.tx_count || 0;
     
     // Show transaction count for blocks without inscriptions or historical blocks
     if (txCount > 0) {
@@ -205,14 +208,12 @@ const BlockCard = ({ block, onClick, isSelected }) => {
               </div>
             );
           }
-          if (block.tx_count) {
-            return (
-              <div className="text-xs text-gray-500 dark:text-gray-400">
-                {block.tx_count} transactions
-              </div>
-            );
-          }
-          return null;
+          const txCount = block.tx_count || 0;
+          return (
+            <div className="text-xs text-gray-500 dark:text-gray-400">
+              Smart contracts: {smartContractCount} • Transactions: {txCount}
+            </div>
+          );
         })()}
         </div>
         
