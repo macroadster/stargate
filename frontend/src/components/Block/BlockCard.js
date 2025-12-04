@@ -1,11 +1,9 @@
 import React from 'react';
 
 const BlockCard = ({ block, onClick, isSelected }) => {
-  const smartContractCount =
-    block.smart_contract_count ||
-    (Array.isArray(block.smart_contracts) ? block.smart_contracts.length : 0) ||
-    (block.steganography_summary ? block.steganography_summary.stego_count : 0) ||
-    0;
+  const stegoCount = block.steganography_summary?.stego_count || 0;
+  // Treat smart contracts as stego detections from the scanner.
+  const smartContractCount = stegoCount;
   const hasSmartContracts = smartContractCount > 0;
   const hasWitnessImages = (block.witness_image_count || block.witness_images || 0) > 0;
   const inscriptionCount = block.inscription_count ?? block.inscriptionCount ?? 0;
@@ -187,9 +185,15 @@ const BlockCard = ({ block, onClick, isSelected }) => {
             {getBadgeText()}
           </div>
           <div className="flex items-center gap-2 mb-2 text-[11px]">
-            <span className={`px-2 py-0.5 rounded-full ${hasImages ? 'bg-green-100 text-green-700 dark:bg-green-900/60 dark:text-green-200' : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300'}`}>
-              {hasImages ? `${inscriptionCount} inscription${inscriptionCount === 1 ? '' : 's'}` : 'No inscriptions'}
-            </span>
+            {smartContractCount > 0 ? (
+              <span className="px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 dark:bg-purple-900/60 dark:text-purple-200">
+                {smartContractCount} smart contract{smartContractCount === 1 ? '' : 's'}
+              </span>
+            ) : (
+              <span className={`px-2 py-0.5 rounded-full ${hasImages ? 'bg-green-100 text-green-700 dark:bg-green-900/60 dark:text-green-200' : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300'}`}>
+                {hasImages ? `${inscriptionCount} inscription${inscriptionCount === 1 ? '' : 's'}` : 'No inscriptions'}
+              </span>
+            )}
             {hasWitnessImages && (
               <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/60 dark:text-blue-200">
                 Witness images
@@ -208,12 +212,14 @@ const BlockCard = ({ block, onClick, isSelected }) => {
               </div>
             );
           }
-          const txCount = block.tx_count || 0;
-          return (
-            <div className="text-xs text-gray-500 dark:text-gray-400">
-              Smart contracts: {smartContractCount} • Transactions: {txCount}
-            </div>
-          );
+          if (block.tx_count) {
+            return (
+              <div className="text-xs text-gray-500 dark:text-gray-400">
+                {block.tx_count} transactions
+              </div>
+            );
+          }
+          return null;
         })()}
         </div>
         
