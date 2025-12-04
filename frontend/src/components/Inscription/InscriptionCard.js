@@ -123,6 +123,11 @@ const InscriptionCard = ({ inscription, onClick }) => {
               {inscription.mime_type.split('/')[1]?.toUpperCase() || 'UNKNOWN'}
             </span>
           )}
+          {hasTextContent && (
+            <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/60 dark:text-blue-200 text-[11px] font-semibold">
+              TEXT
+            </span>
+          )}
         </div>
       </div>
     </div>
