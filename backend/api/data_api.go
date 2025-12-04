@@ -31,12 +31,14 @@ type DataAPI struct {
 
 // NewDataAPI creates a new data API instance
 func NewDataAPI(dataStorage storage.ExtendedDataStorage, blockMonitor *bitcoin.BlockMonitor, bitcoinAPI *bitcoin.BitcoinAPI) *DataAPI {
-	return &DataAPI{
+	api := &DataAPI{
 		dataStorage:  dataStorage,
 		blockMonitor: blockMonitor,
 		bitcoinAPI:   bitcoinAPI,
 		txIndex:      make(map[string]int64),
 	}
+	api.buildTxIndex()
+	return api
 }
 
 // resolveBlocksDir returns the directory that holds block JSON artifacts.
@@ -1058,13 +1060,16 @@ func (api *DataAPI) HandleContent(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodOptions {
 		return
 	}
+	if len(api.txIndex) == 0 {
+		api.buildTxIndex()
+	}
 	path := strings.TrimPrefix(r.URL.Path, "/content/")
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 	if len(parts) == 0 || parts[0] == "" {
 		http.Error(w, "missing txid", http.StatusBadRequest)
 		return
 	}
-	txid := parts[0]
+	txid := normalizeTxID(parts[0])
 	isManifest := len(parts) > 1 && parts[1] == "manifest"
 
 	if isManifest {
@@ -1145,7 +1150,7 @@ func (api *DataAPI) findInscriptionsByTx(txid string) (int64, []bitcoin.Inscript
 		if block, err := api.loadBlock(height); err == nil {
 			var hits []bitcoin.InscriptionData
 			for _, ins := range block.Inscriptions {
-				if ins.TxID == txid {
+				if normalizeTxID(ins.TxID) == txid {
 					hits = append(hits, ins)
 				}
 			}
@@ -1163,7 +1168,7 @@ func (api *DataAPI) findInscriptionsByTx(txid string) (int64, []bitcoin.Inscript
 		}
 		var hits []bitcoin.InscriptionData
 		for _, ins := range block.Inscriptions {
-			if ins.TxID == txid {
+			if normalizeTxID(ins.TxID) == txid {
 				hits = append(hits, ins)
 			}
 		}
@@ -1180,7 +1185,11 @@ func (api *DataAPI) loadInscriptionContent(height int64, ins bitcoin.Inscription
 	content := []byte(ins.Content)
 	mimeType := inferMime(ins.ContentType, content, ins.FileName)
 
-	if len(content) == 0 {
+	needsFS := len(content) == 0 ||
+		strings.HasPrefix(strings.ToLower(strings.TrimSpace(ins.Content)), "extracted from transaction") ||
+		(strings.HasPrefix(mimeType, "image/") && ins.SizeBytes > len(content))
+
+	if needsFS {
 		base := strings.TrimRight(api.resolveBlocksDir(), "/")
 		blockDir := fmt.Sprintf("%s/%d_00000000", base, height)
 		fsPath := filepath.Join(blockDir, ins.FilePath)
@@ -1206,12 +1215,30 @@ func sha256Hex(b []byte) string {
 // inferMime attempts to produce a better content type when missing or generic.
 func inferMime(current string, content []byte, fileName string) string {
 	m := strings.ToLower(strings.TrimSpace(current))
+	// Prefer explicit image types by filename if type is missing or generic.
 	if m == "" || m == "application/octet-stream" {
-		if strings.HasSuffix(strings.ToLower(fileName), ".html") {
+		lowerName := strings.ToLower(fileName)
+		switch {
+		case strings.HasSuffix(lowerName, ".jpg"), strings.HasSuffix(lowerName, ".jpeg"):
+			m = "image/jpeg"
+		case strings.HasSuffix(lowerName, ".png"):
+			m = "image/png"
+		case strings.HasSuffix(lowerName, ".gif"):
+			m = "image/gif"
+		case strings.HasSuffix(lowerName, ".webp"):
+			m = "image/webp"
+		case strings.HasSuffix(lowerName, ".svg"):
+			m = "image/svg+xml"
+		case strings.HasSuffix(lowerName, ".bmp"):
+			m = "image/bmp"
+		case strings.HasSuffix(lowerName, ".html"), strings.HasSuffix(lowerName, ".htm"):
 			m = "text/html"
-		} else if strings.HasSuffix(strings.ToLower(fileName), ".json") {
+		case strings.HasSuffix(lowerName, ".json"):
 			m = "application/json"
 		}
+	}
+	if m == "" || m == "application/octet-stream" {
+		// leave empty; fall back to content sniffing below
 	}
 	if m == "" {
 		trim := strings.TrimSpace(string(content))
@@ -1244,6 +1271,32 @@ func isMostlyPrintable(s string) bool {
 		}
 	}
 	return printable >= len(s)/2
+}
+
+// normalizeTxID trims ordinal-style suffixes (e.g., i0) to compare canonical txids.
+func normalizeTxID(txid string) string {
+	if idx := strings.Index(txid, "i"); idx > 0 {
+		if len(txid)-idx <= 4 { // common patterns like i0, i00
+			return txid[:idx]
+		}
+	}
+	return txid
+}
+
+// buildTxIndex creates a simple in-memory map from txid to block height for faster lookup.
+func (api *DataAPI) buildTxIndex() {
+	heights := api.listAvailableBlockHeights()
+	for _, h := range heights {
+		block, err := api.loadBlock(h)
+		if err != nil {
+			continue
+		}
+		for _, ins := range block.Inscriptions {
+			if ins.TxID != "" {
+				api.txIndex[normalizeTxID(ins.TxID)] = h
+			}
+		}
+	}
 }
 
 // Helper functions
