@@ -3,6 +3,8 @@ import React from 'react';
 const BlockCard = ({ block, onClick, isSelected }) => {
   const hasSmartContracts = (block.smart_contract_count || block.smart_contracts || 0) > 0;
   const hasWitnessImages = (block.witness_image_count || block.witness_images || 0) > 0;
+  const inscriptionCount = block.inscription_count ?? block.inscriptionCount ?? 0;
+  const hasImages = block.has_images !== undefined ? block.has_images : inscriptionCount > 0;
 
 
   const getBackgroundClass = () => {
@@ -180,6 +182,16 @@ const BlockCard = ({ block, onClick, isSelected }) => {
           </div>
           <div className={`text-xs mb-2 font-semibold ${getBadgeClass()}`}>
             {getBadgeText()}
+          </div>
+          <div className="flex items-center gap-2 mb-2 text-[11px]">
+            <span className={`px-2 py-0.5 rounded-full ${hasImages ? 'bg-green-100 text-green-700 dark:bg-green-900/60 dark:text-green-200' : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300'}`}>
+              {hasImages ? `${inscriptionCount} inscription${inscriptionCount === 1 ? '' : 's'}` : 'No inscriptions'}
+            </span>
+            {hasWitnessImages && (
+              <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/60 dark:text-blue-200">
+                Witness images
+              </span>
+            )}
           </div>
           <div className={`text-xs ${block.isFuture ? 'text-yellow-700 dark:text-yellow-300' : 'text-gray-600 dark:text-gray-400'}`}>
             {block.isFuture ? 'Next block' : formatTimeAgo(block.timestamp)}

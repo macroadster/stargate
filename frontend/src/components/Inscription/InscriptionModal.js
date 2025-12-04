@@ -5,6 +5,7 @@ import ConfidenceIndicator from '../Common/ConfidenceIndicator';
 
 const InscriptionModal = ({ inscription, onClose }) => {
   const [activeTab, setActiveTab] = useState('overview');
+  const [monoContent, setMonoContent] = useState(true);
   
   const isActuallyImageFile =
     inscription.mime_type?.includes('image') &&
@@ -227,8 +228,19 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                           </div>
                           <CopyButton text={inscription.text} />
                         </div>
+                        <div className="flex items-center gap-3 mb-3">
+                          <label className="flex items-center gap-2 text-sm text-blue-800 dark:text-blue-200">
+                            <input
+                              type="checkbox"
+                              checked={monoContent}
+                              onChange={() => setMonoContent(!monoContent)}
+                              className="form-checkbox h-4 w-4 text-blue-600"
+                            />
+                            Monospace
+                          </label>
+                        </div>
                         <div className="bg-white dark:bg-gray-800 rounded p-4 max-h-96 min-h-[200px] overflow-y-auto w-full">
-                          <pre className="text-blue-900 dark:text-blue-100 font-mono text-sm leading-relaxed whitespace-pre-wrap break-words max-w-full">
+                          <pre className={`${monoContent ? 'font-mono text-sm' : 'font-sans text-sm'} text-blue-900 dark:text-blue-100 leading-relaxed whitespace-pre-wrap break-words max-w-full`}>
                             {inscription.text}
                           </pre>
                         </div>

@@ -647,12 +647,14 @@ func (api *DataAPI) HandleGetBlockInscriptionsPaginated(w http.ResponseWriter, r
 		return
 	}
 	if r.Method != http.MethodGet {
+		log.Printf("block-inscriptions: invalid method %s", r.Method)
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	parts := splitPath(r.URL.Path)
 	if len(parts) < 4 {
+		log.Printf("block-inscriptions: invalid path %s", r.URL.Path)
 		http.Error(w, "invalid path", http.StatusBadRequest)
 		return
 	}
@@ -660,6 +662,7 @@ func (api *DataAPI) HandleGetBlockInscriptionsPaginated(w http.ResponseWriter, r
 	heightStr := parts[3]
 	height, err := strconv.ParseInt(heightStr, 10, 64)
 	if err != nil {
+		log.Printf("block-inscriptions: invalid height %q", heightStr)
 		http.Error(w, "invalid height", http.StatusBadRequest)
 		return
 	}
@@ -677,8 +680,11 @@ func (api *DataAPI) HandleGetBlockInscriptionsPaginated(w http.ResponseWriter, r
 		fields = "summary"
 	}
 
+	log.Printf("block-inscriptions: height=%d cursor=%s limit=%d filter=%s fields=%s", height, cursor, limit, filter, fields)
+
 	block, err := api.loadBlock(height)
 	if err != nil {
+		log.Printf("block-inscriptions: block %d not found: %v", height, err)
 		http.Error(w, "block not found", http.StatusNotFound)
 		return
 	}
@@ -785,12 +791,14 @@ func (api *DataAPI) HandleStegoCallback(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if r.Method != http.MethodPost {
+		log.Printf("stego-callback: invalid method %s", r.Method)
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
+		log.Printf("stego-callback: read body error: %v", err)
 		http.Error(w, "unable to read body", http.StatusBadRequest)
 		return
 	}
@@ -798,6 +806,7 @@ func (api *DataAPI) HandleStegoCallback(w http.ResponseWriter, r *http.Request) 
 	secret := os.Getenv("STARLIGHT_CALLBACK_SECRET")
 	if secret != "" {
 		if !api.verifySignature(secret, body, r.Header.Get("X-Starlight-Signature")) {
+			log.Printf("stego-callback: signature verification failed")
 			http.Error(w, "invalid signature", http.StatusUnauthorized)
 			return
 		}
@@ -809,7 +818,9 @@ func (api *DataAPI) HandleStegoCallback(w http.ResponseWriter, r *http.Request) 
 		BlockHeight  int64                    `json:"block_height"`
 	}
 	if err := json.Unmarshal(body, &batchProbe); err == nil && len(batchProbe.Inscriptions) > 0 && batchProbe.BlockHeight > 0 {
+		log.Printf("stego-callback: batch payload height=%d count=%d", batchProbe.BlockHeight, len(batchProbe.Inscriptions))
 		if err := api.handleStegoBatch(batchProbe.BlockHeight, body, w); err != nil {
+			log.Printf("stego-callback: batch error height=%d: %v", batchProbe.BlockHeight, err)
 			http.Error(w, err.Error(), http.StatusBadRequest)
 		}
 		return
@@ -828,17 +839,20 @@ func (api *DataAPI) HandleStegoCallback(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if err := json.Unmarshal(body, &payload); err != nil {
+		log.Printf("stego-callback: invalid JSON: %v", err)
 		http.Error(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
 
 	if payload.BlockHeight == 0 {
+		log.Printf("stego-callback: missing block height")
 		http.Error(w, "missing block height", http.StatusBadRequest)
 		return
 	}
 
 	block, err := api.loadBlock(payload.BlockHeight)
 	if err != nil {
+		log.Printf("stego-callback: block %d not found: %v", payload.BlockHeight, err)
 		http.Error(w, "block not found", http.StatusNotFound)
 		return
 	}
