@@ -214,6 +214,7 @@ func setupRoutes(mux *http.ServeMux, container *container.Container) http.Handle
 	mux.HandleFunc("/api/data/block-images", dataAPI.HandleGetBlockImages)
 	mux.HandleFunc("/api/block-images", dataAPI.HandleGetBlockImages)
 	mux.HandleFunc("/api/stego/callback", dataAPI.HandleStegoCallback)
+	mux.HandleFunc("/content/", dataAPI.HandleContent)
 
 	// Serve block images
 	mux.HandleFunc("/api/block-image/", func(w http.ResponseWriter, r *http.Request) {

@@ -25,6 +25,8 @@ type DataAPI struct {
 	dataStorage  storage.ExtendedDataStorage
 	blockMonitor *bitcoin.BlockMonitor
 	bitcoinAPI   *bitcoin.BitcoinAPI
+	// simple in-memory index of tx -> block height for manifest/content lookup
+	txIndex map[string]int64
 }
 
 // NewDataAPI creates a new data API instance
@@ -33,6 +35,7 @@ func NewDataAPI(dataStorage storage.ExtendedDataStorage, blockMonitor *bitcoin.B
 		dataStorage:  dataStorage,
 		blockMonitor: blockMonitor,
 		bitcoinAPI:   bitcoinAPI,
+		txIndex:      make(map[string]int64),
 	}
 }
 
@@ -1047,6 +1050,200 @@ func (api *DataAPI) handleStegoBatch(blockHeight int64, body []byte, w http.Resp
 	})
 
 	return nil
+}
+
+// HandleContent routes content requests to raw or manifest responses.
+func (api *DataAPI) HandleContent(w http.ResponseWriter, r *http.Request) {
+	api.EnableCORS(w, r)
+	if r.Method == http.MethodOptions {
+		return
+	}
+	path := strings.TrimPrefix(r.URL.Path, "/content/")
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(parts) == 0 || parts[0] == "" {
+		http.Error(w, "missing txid", http.StatusBadRequest)
+		return
+	}
+	txid := parts[0]
+	isManifest := len(parts) > 1 && parts[1] == "manifest"
+
+	if isManifest {
+		api.handleContentManifest(w, r, txid)
+		return
+	}
+	api.handleContentRaw(w, r, txid)
+}
+
+// handleContentRaw returns raw payload for a txid (optionally by witness).
+func (api *DataAPI) handleContentRaw(w http.ResponseWriter, r *http.Request, txid string) {
+	witnessParam := r.URL.Query().Get("witness")
+	var witnessIndex *int
+	if witnessParam != "" {
+		if wi, err := strconv.Atoi(witnessParam); err == nil {
+			witnessIndex = &wi
+		}
+	}
+
+	height, insList, err := api.findInscriptionsByTx(txid)
+	if err != nil || len(insList) == 0 {
+		http.Error(w, "inscription not found", http.StatusNotFound)
+		return
+	}
+
+	inscription := insList[0]
+	if witnessIndex != nil {
+		for _, ins := range insList {
+			if ins.InputIndex == *witnessIndex {
+				inscription = ins
+				break
+			}
+		}
+	}
+
+	content, mimeType := api.loadInscriptionContent(height, inscription)
+	w.Header().Set("Content-Type", mimeType)
+	w.Header().Set("X-Inscription-Mime", mimeType)
+	w.Header().Set("X-Inscription-Size", fmt.Sprintf("%d", len(content)))
+	w.Header().Set("X-Inscription-Hash", sha256Hex(content))
+	w.Write(content)
+}
+
+// handleContentManifest returns a JSON manifest of all inscription parts for a txid.
+func (api *DataAPI) handleContentManifest(w http.ResponseWriter, r *http.Request, txid string) {
+	height, insList, err := api.findInscriptionsByTx(txid)
+	if err != nil {
+		http.Error(w, "inscription not found", http.StatusNotFound)
+		return
+	}
+
+	parts := []map[string]interface{}{}
+	for _, ins := range insList {
+		content, mimeType := api.loadInscriptionContent(height, ins)
+		parts = append(parts, map[string]interface{}{
+			"witness_index": ins.InputIndex,
+			"size_bytes":    len(content),
+			"mime_type":     mimeType,
+			"hash":          sha256Hex(content),
+			"primary":       ins.InputIndex == insList[0].InputIndex,
+			"url":           fmt.Sprintf("/content/%s?witness=%d", txid, ins.InputIndex),
+		})
+	}
+
+	resp := map[string]interface{}{
+		"tx_id":        txid,
+		"block_height": height,
+		"parts":        parts,
+		"stitch_hint":  "unknown",
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+// findInscriptionsByTx scans known blocks to locate a txid.
+func (api *DataAPI) findInscriptionsByTx(txid string) (int64, []bitcoin.InscriptionData, error) {
+	if height, ok := api.txIndex[txid]; ok {
+		if block, err := api.loadBlock(height); err == nil {
+			var hits []bitcoin.InscriptionData
+			for _, ins := range block.Inscriptions {
+				if ins.TxID == txid {
+					hits = append(hits, ins)
+				}
+			}
+			if len(hits) > 0 {
+				return height, hits, nil
+			}
+		}
+	}
+
+	heights := api.listAvailableBlockHeights()
+	for _, h := range heights {
+		block, err := api.loadBlock(h)
+		if err != nil {
+			continue
+		}
+		var hits []bitcoin.InscriptionData
+		for _, ins := range block.Inscriptions {
+			if ins.TxID == txid {
+				hits = append(hits, ins)
+			}
+		}
+		if len(hits) > 0 {
+			api.txIndex[txid] = h
+			return h, hits, nil
+		}
+	}
+	return 0, nil, fmt.Errorf("not found")
+}
+
+// loadInscriptionContent fetches inscription payload and inferred MIME.
+func (api *DataAPI) loadInscriptionContent(height int64, ins bitcoin.InscriptionData) ([]byte, string) {
+	content := []byte(ins.Content)
+	mimeType := inferMime(ins.ContentType, content, ins.FileName)
+
+	if len(content) == 0 {
+		base := strings.TrimRight(api.resolveBlocksDir(), "/")
+		blockDir := fmt.Sprintf("%s/%d_00000000", base, height)
+		fsPath := filepath.Join(blockDir, ins.FilePath)
+		if data, err := os.ReadFile(fsPath); err == nil {
+			content = data
+			mimeType = inferMime(ins.ContentType, content, ins.FileName)
+		}
+	}
+
+	// Trim trailing single 'h' artifact on text payloads.
+	if strings.HasPrefix(mimeType, "text/") && len(content) > 0 && content[len(content)-1] == 'h' {
+		content = content[:len(content)-1]
+	}
+
+	return content, mimeType
+}
+
+func sha256Hex(b []byte) string {
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
+}
+
+// inferMime attempts to produce a better content type when missing or generic.
+func inferMime(current string, content []byte, fileName string) string {
+	m := strings.ToLower(strings.TrimSpace(current))
+	if m == "" || m == "application/octet-stream" {
+		if strings.HasSuffix(strings.ToLower(fileName), ".html") {
+			m = "text/html"
+		} else if strings.HasSuffix(strings.ToLower(fileName), ".json") {
+			m = "application/json"
+		}
+	}
+	if m == "" {
+		trim := strings.TrimSpace(string(content))
+		lower := strings.ToLower(trim)
+		if strings.HasPrefix(lower, "<!doctype") || strings.HasPrefix(lower, "<html") {
+			m = "text/html"
+		} else if json.Valid(content) {
+			m = "application/json"
+		} else if isMostlyPrintable(trim) {
+			m = "text/plain"
+		} else {
+			m = "application/octet-stream"
+		}
+	}
+	return m
+}
+
+func isMostlyPrintable(s string) bool {
+	if s == "" {
+		return false
+	}
+	printable := 0
+	for _, r := range s {
+		if r == '\n' || r == '\r' || r == '\t' {
+			printable++
+			continue
+		}
+		if r >= 32 && r < 127 {
+			printable++
+		}
+	}
+	return printable >= len(s)/2
 }
 
 // Helper functions
