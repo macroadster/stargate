@@ -61,7 +61,9 @@ function MainContent() {
   const {
     inscriptions,
     hasMoreImages,
-    loadMoreInscriptions
+    loadMoreInscriptions,
+    isLoading: isLoadingInscriptions,
+    error: inscriptionsError
   } = useInscriptions(selectedBlock);
 
   const isPendingRoute = location.pathname === '/pending';
@@ -523,26 +525,48 @@ function MainContent() {
                     Smart Contracts
                   </h3>
                 </div>
+                {inscriptionsError && (
+                  <div className="mb-4 rounded-lg border border-red-200 bg-red-50 text-red-800 dark:border-red-800 dark:bg-red-900/40 dark:text-red-100 px-4 py-3 text-sm">
+                    {inscriptionsError}
+                  </div>
+                )}
 
-                 {filteredInscriptions.length === 0 ? (
+                 {filteredInscriptions.length === 0 && isLoadingInscriptions && (
+                   <div className="grid grid-cols-5 gap-4">
+                     {Array.from({ length: 5 }).map((_, i) => (
+                       <div key={i} className="h-48 rounded-lg bg-gray-200 dark:bg-gray-800 animate-pulse" />
+                     ))}
+                   </div>
+                 )}
+
+                 {filteredInscriptions.length === 0 && !isLoadingInscriptions && (
                    <div className="text-gray-500 dark:text-gray-400 py-6">
                      No inscriptions found for this block.
                    </div>
-                 ) : (
-                   <div className="grid grid-cols-5 gap-4">
-                     {filteredInscriptions.map((inscription, idx) => (
-                       <InscriptionCard
-                         key={idx}
-                         inscription={inscription}
-                         onClick={setSelectedInscription}
-                       />
-                     ))}
-                     {hasMoreImages && (
-                       <div ref={sentinelRef} className="col-span-5 flex justify-center py-4">
-                         <div className="text-gray-500 dark:text-gray-400">Loading more...</div>
+                 )}
+
+                 {filteredInscriptions.length > 0 && (
+                   <>
+                     <div className="grid grid-cols-5 gap-4">
+                       {filteredInscriptions.map((inscription, idx) => (
+                         <InscriptionCard
+                           key={idx}
+                           inscription={inscription}
+                           onClick={setSelectedInscription}
+                         />
+                       ))}
+                       {hasMoreImages && (
+                         <div ref={sentinelRef} className="col-span-5 flex justify-center py-4">
+                           <div className="text-gray-500 dark:text-gray-400">Loading more...</div>
+                         </div>
+                       )}
+                     </div>
+                     {!hasMoreImages && (
+                       <div className="text-center text-gray-500 dark:text-gray-400 text-sm mt-4">
+                         You&apos;ve reached the end of inscriptions for this block.
                        </div>
                      )}
-                   </div>
+                   </>
                  )}
               </div>
             )}

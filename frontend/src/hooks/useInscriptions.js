@@ -38,6 +38,7 @@ export const useInscriptions = (selectedBlock) => {
   const [lastFetchedHeight, setLastFetchedHeight] = useState(null);
   const [nextCursor, setNextCursor] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState(null);
 
   const fetchInscriptions = useCallback(async (cursor = null) => {
     if (!selectedBlock || !selectedBlock.height) {
@@ -48,6 +49,7 @@ export const useInscriptions = (selectedBlock) => {
       setTotalImages(0);
       setLastFetchedHeight(null);
       setNextCursor(null);
+      setError(null);
       return;
     }
     // Do not fetch for pending or known-empty blocks; clear state so UI can show empty state.
@@ -59,6 +61,7 @@ export const useInscriptions = (selectedBlock) => {
       setTotalImages(0);
       setLastFetchedHeight(selectedBlock.height);
       setNextCursor(null);
+      setError(null);
       return;
     }
     if (isLoading) return;
@@ -71,6 +74,7 @@ export const useInscriptions = (selectedBlock) => {
     
     try {
       setIsLoading(true);
+      setError(null);
       const url = new URL(`${API_BASE}/api/data/block-inscriptions/${selectedBlock.height}`);
       url.searchParams.set('limit', 20);
       url.searchParams.set('fields', 'summary');
@@ -174,6 +178,7 @@ export const useInscriptions = (selectedBlock) => {
       setInscriptions(filteredInscriptions);
       setLastFetchedHeight(selectedBlock.height);
       setNextCursor(data.next_cursor || null);
+      setError(null);
     } catch (error) {
       if (String(error?.message || '').includes('404')) {
         // Historical/pinned block not available; treat as empty without spamming logs
@@ -185,6 +190,7 @@ export const useInscriptions = (selectedBlock) => {
         setLastFetchedHeight(selectedBlock.height);
         setNextCursor(null);
         setIsLoading(false);
+        setError(null);
         return;
       }
       console.error('Error fetching block images:', error);
@@ -192,6 +198,7 @@ export const useInscriptions = (selectedBlock) => {
       setCurrentInscriptions([]);
       setTotalImages(0);
       setHasMoreImages(false);
+      setError('Failed to load inscriptions. Please retry.');
     } finally {
       setIsLoading(false);
     }
@@ -227,6 +234,8 @@ export const useInscriptions = (selectedBlock) => {
     totalImages,
     loadMoreInscriptions,
     setFilter,
-    filterMode
+    filterMode,
+    isLoading,
+    error
   };
 };
