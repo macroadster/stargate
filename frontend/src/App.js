@@ -85,59 +85,15 @@ function MainContent() {
   }, []);
 
   useEffect(() => {
-    if (height && blocks.length > 0) {
-      const targetHeight = parseInt(height);
+    const targetHeight = height !== undefined ? parseInt(height, 10) : null;
+    if (targetHeight === 0) {
+      return; // Genesis is pinned; ignore selection to avoid sticky behavior
+    }
+    if (targetHeight !== null && !Number.isNaN(targetHeight) && blocks.length > 0) {
       const block = blocks.find(b => b.height === targetHeight);
       if (block && block.height !== selectedBlock?.height) {
         setSelectedBlock(block);
         setIsUserNavigating(true);
-      } else if (!block) {
-        // Block not in recent blocks, trigger scan and fetch it
-        fetch(`${API_BASE}/api/data/scan`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            block_height: parseInt(height),
-            force_scan: true
-          })
-        })
-        .then(scanResponse => scanResponse.json())
-        .then(scanData => {
-          console.log('Block scanned successfully:', scanData);
-          // Create block object from scanned data
-          const fetchedBlock = {
-            height: targetHeight,
-            hash: scanData.block_data?.block_hash || scanData.block_data?.block_hash,
-            timestamp: scanData.block_data?.timestamp || scanData.block_data?.timestamp,
-            tx_count: scanData.block_data?.inscriptions?.length || 0,
-            isFuture: false
-          };
-          setSelectedBlock(fetchedBlock);
-          setIsUserNavigating(true);
-        })
-        .catch(error => {
-          console.error('Error scanning block:', error);
-          // Try regular fetch as fallback
-          fetch(`${API_BASE}/api/data/block/${height}`)
-            .then(response => response.json())
-            .then(data => {
-              const fetchedBlock = {
-                height: targetHeight,
-                hash: data.block_hash,
-                timestamp: data.timestamp,
-                tx_count: data.tx_count || 0,
-                isFuture: false
-              };
-              setSelectedBlock(fetchedBlock);
-              setIsUserNavigating(true);
-            })
-            .catch(fetchError => {
-              console.error('Error fetching block:', fetchError);
-              navigate('/');
-            });
-        });
       }
     }
   }, [height, blocks, selectedBlock, setSelectedBlock, setIsUserNavigating, navigate]);
@@ -526,7 +482,6 @@ function MainContent() {
           </div>
         ) : selectedBlock && (
           <>
-            {console.log('Rendering block:', selectedBlock.height, 'isFuture:', selectedBlock.isFuture, 'inscriptions:', inscriptions.length)}
             <div className="mb-8">
               <h2 className="text-4xl font-bold mb-4 text-black dark:text-white">Block {selectedBlock.height}</h2>
               <div className="flex items-center gap-4 text-sm">
@@ -557,21 +512,26 @@ function MainContent() {
                   </h3>
                 </div>
 
-                 <div className="grid grid-cols-5 gap-4">
-                   {console.log('Rendering inscriptions grid:', inscriptions.length)}
-                   {filteredInscriptions.map((inscription, idx) => (
-                     <InscriptionCard
-                       key={idx}
-                       inscription={inscription}
-                       onClick={setSelectedInscription}
-                     />
-                   ))}
-                   {hasMoreImages && (
-                     <div ref={sentinelRef} className="col-span-5 flex justify-center py-4">
-                       <div className="text-gray-500 dark:text-gray-400">Loading more...</div>
-                     </div>
-                   )}
-                 </div>
+                 {filteredInscriptions.length === 0 ? (
+                   <div className="text-gray-500 dark:text-gray-400 py-6">
+                     No inscriptions found for this block.
+                   </div>
+                 ) : (
+                   <div className="grid grid-cols-5 gap-4">
+                     {filteredInscriptions.map((inscription, idx) => (
+                       <InscriptionCard
+                         key={idx}
+                         inscription={inscription}
+                         onClick={setSelectedInscription}
+                       />
+                     ))}
+                     {hasMoreImages && (
+                       <div ref={sentinelRef} className="col-span-5 flex justify-center py-4">
+                         <div className="text-gray-500 dark:text-gray-400">Loading more...</div>
+                       </div>
+                     )}
+                   </div>
+                 )}
               </div>
             )}
           </>

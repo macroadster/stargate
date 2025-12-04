@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 
 const InscriptionCard = ({ inscription, onClick }) => {
-  console.log('Rendering inscription card:', inscription.id);
   const [showTextPreview, setShowTextPreview] = useState(false);
   
   const hasTextContent = inscription.text || inscription.metadata?.extracted_message;

@@ -34,67 +34,79 @@ export const useInscriptions = (selectedBlock) => {
   const [allInscriptions, setAllInscriptions] = useState([]);
   const [hasMoreImages, setHasMoreImages] = useState(true);
   const [totalImages, setTotalImages] = useState(0);
-  const [displayedCount, setDisplayedCount] = useState(20);
   const [filterMode, setFilterMode] = useState('all'); // 'all' or 'text'
   const [lastFetchedHeight, setLastFetchedHeight] = useState(null);
+  const [nextCursor, setNextCursor] = useState(null);
+  const [isLoading, setIsLoading] = useState(false);
 
-  const fetchInscriptions = useCallback(async () => {
-    if (!selectedBlock || selectedBlock.isFuture || !selectedBlock.height) {
+  const fetchInscriptions = useCallback(async (cursor = null) => {
+    if (!selectedBlock || !selectedBlock.height) {
       setInscriptions([]);
       setCurrentInscriptions([]);
       setAllInscriptions([]);
       setHasMoreImages(false);
       setTotalImages(0);
-      setDisplayedCount(0);
       setLastFetchedHeight(null);
+      setNextCursor(null);
       return;
     }
-    if (selectedBlock.height === lastFetchedHeight) return;
+    if (selectedBlock.isFuture || selectedBlock.has_images === false) return; // Do not fetch for pending or known-empty blocks
+    if (isLoading) return;
+    if (!cursor && lastFetchedHeight === selectedBlock.height) return;
+    if (!cursor && lastFetchedHeight !== selectedBlock.height) {
+      setAllInscriptions([]);
+      setInscriptions([]);
+      setNextCursor(null);
+    }
     
     try {
-      const response = await fetch(
-        `${API_BASE}/api/block-images?height=${selectedBlock.height}`
-      );
+      setIsLoading(true);
+      const url = new URL(`${API_BASE}/api/data/block-inscriptions/${selectedBlock.height}`);
+      url.searchParams.set('limit', 20);
+      url.searchParams.set('fields', 'summary');
+      if (filterMode === 'text') {
+        url.searchParams.set('filter', 'text');
+      }
+      if (cursor) {
+        url.searchParams.set('cursor', cursor);
+      }
+
+      const response = await fetch(url.toString());
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }
       const data = await response.json();
-      
-      const images = data.images || [];
-      
-      console.log(`Fetched ${images.length} block images for height ${selectedBlock.height}`);
-      
-       const convertedResults = await Promise.all(images.map(async (image) => {
-         // Use scan_result directly from the image object
-         // NOTE: Scan results are embedded directly in each image object by the backend
-         // rather than in a separate steganography_scan section for simplicity
-         let scanResult = null;
 
-         if (image.scan_result) {
-           scanResult = {
-             is_stego: image.scan_result.is_stego || false,
-             confidence: image.scan_result.confidence || 0.0,
-             stego_probability: image.scan_result.stego_probability || 0.0,
-             prediction: image.scan_result.prediction || 'clean',
-             stego_type: image.scan_result.stego_type || '',
-             extracted_message: image.scan_result.extracted_message || '',
-             scan_error: image.scan_result.scan_error || '',
-             scanned_at: image.scan_result.scanned_at || Date.now() / 1000
-           };
-         }
+      const images = data.inscriptions || [];
 
-         if (!scanResult) {
-           scanResult = {
-             is_stego: false,
-             confidence: 0.0,
-             stego_probability: 0.0,
-             prediction: 'unanalyzed',
-             stego_type: '',
-             extracted_message: '',
-             scan_error: 'Analysis not performed',
-             scanned_at: Date.now() / 1000
-           };
-         }
+      const convertedResults = await Promise.all(images.map(async (image) => {
+        let scanResult = null;
+
+        if (image.scan_result) {
+          scanResult = {
+            is_stego: image.scan_result.is_stego || false,
+            confidence: image.scan_result.confidence || 0.0,
+            stego_probability: image.scan_result.stego_probability || 0.0,
+            prediction: image.scan_result.prediction || 'clean',
+            stego_type: image.scan_result.stego_type || '',
+            extracted_message: image.scan_result.extracted_message || '',
+            scan_error: image.scan_result.scan_error || '',
+            scanned_at: image.scan_result.scanned_at || Date.now() / 1000
+          };
+        }
+
+        if (!scanResult) {
+          scanResult = {
+            is_stego: false,
+            confidence: 0.0,
+            stego_probability: 0.0,
+            prediction: 'unanalyzed',
+            stego_type: '',
+            extracted_message: '',
+            scan_error: 'Analysis not performed',
+            scanned_at: Date.now() / 1000
+          };
+        }
         let textContent = image.content || '';
 
         // For text inscriptions without inline content, fetch the text payload
@@ -137,59 +149,58 @@ export const useInscriptions = (selectedBlock) => {
       }));
       
       const processedInscriptions = generateInscriptions(convertedResults);
-      
+
+      const merged = cursor ? [...allInscriptions, ...processedInscriptions] : processedInscriptions;
       setCurrentInscriptions(convertedResults);
-      setAllInscriptions(processedInscriptions);
+      setAllInscriptions(merged);
       
       // Apply filter if needed
       const filteredInscriptions = filterMode === 'text' 
-        ? processedInscriptions.filter(ins => ins.text || ins.metadata?.extracted_message)
-        : processedInscriptions;
+        ? merged.filter(ins => ins.text || ins.metadata?.extracted_message)
+        : merged;
       
       setTotalImages(filteredInscriptions.length);
-      setDisplayedCount(20);
-      setHasMoreImages(filteredInscriptions.length > 20);
-      
-      setInscriptions(filteredInscriptions.slice(0, 20));
+      setHasMoreImages(Boolean(data.has_more));
+      setInscriptions(filteredInscriptions);
       setLastFetchedHeight(selectedBlock.height);
-      
-      console.log(`Loaded ${processedInscriptions.length} total inscriptions, displaying first 20`);
+      setNextCursor(data.next_cursor || null);
     } catch (error) {
+      if (String(error?.message || '').includes('404')) {
+        // Historical/pinned block not available; treat as empty without spamming logs
+        setInscriptions([]);
+        setCurrentInscriptions([]);
+        setAllInscriptions([]);
+        setTotalImages(0);
+        setHasMoreImages(false);
+        setLastFetchedHeight(selectedBlock.height);
+        setNextCursor(null);
+        setIsLoading(false);
+        return;
+      }
       console.error('Error fetching block images:', error);
       setInscriptions([]);
       setCurrentInscriptions([]);
       setTotalImages(0);
       setHasMoreImages(false);
+    } finally {
+      setIsLoading(false);
     }
-  }, [selectedBlock, filterMode, lastFetchedHeight]);
+  }, [selectedBlock, filterMode, lastFetchedHeight, isLoading, allInscriptions]);
 
   const loadMoreInscriptions = () => {
-    const sourceInscriptions = filterMode === 'text' 
-      ? allInscriptions.filter(ins => ins.text || ins.metadata?.extracted_message)
-      : allInscriptions;
-      
-    if (hasMoreImages && sourceInscriptions.length > displayedCount) {
-      const newDisplayedCount = Math.min(displayedCount + 20, sourceInscriptions.length);
-      setDisplayedCount(newDisplayedCount);
-      setInscriptions(sourceInscriptions.slice(0, newDisplayedCount));
-      setHasMoreImages(newDisplayedCount < sourceInscriptions.length);
-      
-      console.log(`Displaying ${newDisplayedCount} of ${sourceInscriptions.length} inscriptions`);
-    }
+    if (!hasMoreImages || !nextCursor) return;
+    fetchInscriptions(nextCursor);
   };
 
   const setFilter = (mode) => {
-    console.log('Setting filter to:', mode);
     setFilterMode(mode);
     const filteredInscriptions = mode === 'text' 
       ? allInscriptions.filter(ins => ins.text || ins.metadata?.extracted_message)
       : allInscriptions;
     
-    console.log('Filtered inscriptions count:', filteredInscriptions.length);
     setTotalImages(filteredInscriptions.length);
-    setDisplayedCount(Math.min(20, filteredInscriptions.length));
-    setHasMoreImages(filteredInscriptions.length > 20);
-    setInscriptions(filteredInscriptions.slice(0, 20));
+    setHasMoreImages(filteredInscriptions.length > 0);
+    setInscriptions(filteredInscriptions);
   };
 
   useEffect(() => {
@@ -204,7 +215,6 @@ export const useInscriptions = (selectedBlock) => {
     allInscriptions,
     hasMoreImages,
     totalImages,
-    displayedCount,
     loadMoreInscriptions,
     setFilter,
     filterMode

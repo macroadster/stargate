@@ -35,6 +35,9 @@ type Container struct {
 func NewContainer() *Container {
 	storageType := os.Getenv("STARGATE_STORAGE")
 	pgDSN := os.Getenv("STARGATE_PG_DSN")
+	if pgDSN == "" {
+		pgDSN = os.Getenv("DATABASE_URL") // fallback env name
+	}
 
 	// Initialize services
 	dataDir := "/data"
@@ -53,7 +56,16 @@ func NewContainer() *Container {
 	contractService := services.NewSmartContractService("smart_contracts.json")
 	qrService := services.NewQRCodeService()
 	healthService := services.NewHealthService()
-	ingestionService, _ := services.NewIngestionService(pgDSN)
+	var ingestionService *services.IngestionService
+	if pgDSN != "" {
+		if svc, err := services.NewIngestionService(pgDSN); err != nil {
+			log.Printf("failed to init ingestion service (postgres): %v", err)
+		} else {
+			ingestionService = svc
+		}
+	} else {
+		log.Printf("ingestion service disabled: STARGATE_PG_DSN not set")
+	}
 
 	// Data storage selection
 	var dataStorage storage.ExtendedDataStorage
