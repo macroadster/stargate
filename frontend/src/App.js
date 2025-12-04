@@ -86,23 +86,35 @@ function MainContent() {
 
   useEffect(() => {
     const targetHeight = height !== undefined ? parseInt(height, 10) : null;
-    if (targetHeight === 0) {
-      return; // Genesis is pinned; ignore selection to avoid sticky behavior
-    }
-    if (targetHeight !== null && !Number.isNaN(targetHeight) && blocks.length > 0) {
+    // Only hydrate selection from the route when we don't already have one.
+    if (!selectedBlock && targetHeight !== null && !Number.isNaN(targetHeight) && blocks.length > 0) {
       const block = blocks.find(b => b.height === targetHeight);
-      if (block && block.height !== selectedBlock?.height) {
+      if (block) {
         setSelectedBlock(block);
         setIsUserNavigating(true);
       }
+
     }
   }, [height, blocks, selectedBlock, setSelectedBlock, setIsUserNavigating, navigate]);
+
+  // If selection and route diverge (race between click and router), force the route to the selected block.
+  useEffect(() => {
+    if (!selectedBlock) return;
+    const currentHeight = height !== undefined ? parseInt(height, 10) : null;
+    if (currentHeight !== selectedBlock.height) {
+      navigate(`/block/${selectedBlock.height}`, { replace: true });
+      // Clear the user navigation flag once the route is synced
+      setIsUserNavigating(false);
+    }
+  }, [selectedBlock, height, navigate, setIsUserNavigating]);
 
   useEffect(() => {
     if (!isPendingRoute || !blocks.length) return;
 
+    // Only auto-select pending once when nothing is selected; avoid overriding user selection on this page.
     const pendingBlock = blocks.find((b) => b.isFuture);
-    if (pendingBlock && selectedBlock?.height !== pendingBlock.height) {
+    if (pendingBlock && !selectedBlock) {
+      console.debug('[blocks] pending auto-select', pendingBlock.height);
       setSelectedBlock(pendingBlock);
       setIsUserNavigating(true);
     }

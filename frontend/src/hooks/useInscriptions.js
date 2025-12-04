@@ -50,7 +50,17 @@ export const useInscriptions = (selectedBlock) => {
       setNextCursor(null);
       return;
     }
-    if (selectedBlock.isFuture || selectedBlock.has_images === false) return; // Do not fetch for pending or known-empty blocks
+    // Do not fetch for pending or known-empty blocks; clear state so UI can show empty state.
+    if (selectedBlock.isFuture || selectedBlock.has_images === false) {
+      setInscriptions([]);
+      setCurrentInscriptions([]);
+      setAllInscriptions([]);
+      setHasMoreImages(false);
+      setTotalImages(0);
+      setLastFetchedHeight(selectedBlock.height);
+      setNextCursor(null);
+      return;
+    }
     if (isLoading) return;
     if (!cursor && lastFetchedHeight === selectedBlock.height) return;
     if (!cursor && lastFetchedHeight !== selectedBlock.height) {

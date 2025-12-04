@@ -3,8 +3,6 @@ import React from 'react';
 const BlockCard = ({ block, onClick, isSelected }) => {
   const hasSmartContracts = (block.smart_contract_count || block.smart_contracts || 0) > 0;
   const hasWitnessImages = (block.witness_image_count || block.witness_images || 0) > 0;
-  const isGenesis = Number(block.height) === 0;
-  
 
 
   const getBackgroundClass = () => {
@@ -138,14 +136,13 @@ const BlockCard = ({ block, onClick, isSelected }) => {
   return (
     <div
       onClick={() => {
-        if (isGenesis) return;
         onClick(block);
       }}
       data-block-id={block.height}
       className={`relative flex-shrink-0 w-40 transition-all ${
         isSelected ? 'scale-102' : 'hover:scale-102'
-      } ${block.isFuture ? 'opacity-75' : ''} ${isGenesis ? 'cursor-not-allowed opacity-80' : 'cursor-pointer'}`}
-      title={isGenesis ? 'Genesis block is pinned and not selectable' : undefined}
+      } ${block.isFuture ? 'opacity-75' : ''} cursor-pointer`}
+      title={undefined}
     >
       <div className={`rounded-xl overflow-hidden border-2 ${
         isSelected ? 'border-indigo-500' : block.isFuture ? 'border-yellow-400' : 'border-gray-300 dark:border-gray-700'
