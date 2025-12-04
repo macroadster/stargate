@@ -13,7 +13,7 @@ const generateBlock = (block) => {
   // For UI purposes, treat all inscriptions as "smart contracts" to show the badge
   const displayContractCount = Math.max(inscriptionCount, stegoCount);
 
-  const resolvedHeight = block.block_height ?? block.height ?? 0;
+  const resolvedHeight = Number(block.block_height ?? block.height ?? 0);
   const resolvedTimestamp =
     block.timestamp ??
     (resolvedHeight > 0
@@ -45,6 +45,7 @@ export const useBlocks = () => {
   const [hasMore, setHasMore] = useState(true);
   const loadingRef = useRef(false);
   const blocksRef = useRef([]);
+  const manualSelectedHeight = useRef(null);
   const pinnedMilestones = useRef([
     0, // genesis
     174923, // Pizza Day
@@ -139,7 +140,13 @@ export const useBlocks = () => {
       setNextCursor(data.next_cursor || null);
       setHasMore(Boolean(data.has_more));
 
-      if (!selectedBlock && deduped.length && !isPolling) {
+      // Keep a user-selected block pinned even as new data loads.
+      if (manualSelectedHeight.current) {
+        const match = deduped.find((b) => b.height === manualSelectedHeight.current);
+        if (match) {
+          setSelectedBlock({ ...match });
+        }
+      } else if (!selectedBlock && deduped.length && !isPolling) {
         setIsUserNavigating(false);
         setSelectedBlock(deduped[0]);
       }
@@ -170,11 +177,10 @@ export const useBlocks = () => {
   }, []);
 
   const handleBlockSelect = (block) => {
-    if (Number(block?.height) === 0) {
-      return; // Skip selecting genesis to avoid sticky state
-    }
+    // Clone to avoid React bailing when the same object reference recurs between polls.
+    manualSelectedHeight.current = block.height;
     setIsUserNavigating(true);
-    setSelectedBlock(block);
+    setSelectedBlock({ ...block });
   };
 
   return {

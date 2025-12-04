@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -716,12 +717,22 @@ func (api *DataAPI) HandleGetBlockInscriptionsPaginated(w http.ResponseWriter, r
 
 	var responseItems []map[string]interface{}
 	for i, ins := range selected {
+		// Derive a safe content type; some historical entries may miss it.
+		contentType := ins.ContentType
+		if contentType == "" {
+			if strings.HasSuffix(strings.ToLower(ins.FileName), ".txt") {
+				contentType = "text/plain"
+			} else {
+				contentType = "application/octet-stream"
+			}
+		}
+
 		entry := map[string]interface{}{
 			"id":                   fmt.Sprintf("%s_%d", ins.TxID, ins.InputIndex),
 			"tx_id":                ins.TxID,
 			"file_name":            ins.FileName,
 			"file_path":            ins.FilePath,
-			"content_type":         ins.ContentType,
+			"content_type":         contentType,
 			"size_bytes":           ins.SizeBytes,
 			"genesis_block_height": height,
 			"number":               height,
@@ -729,8 +740,24 @@ func (api *DataAPI) HandleGetBlockInscriptionsPaginated(w http.ResponseWriter, r
 			"image_url":            fmt.Sprintf("/api/block-image/%d/%s", height, ins.FileName),
 		}
 
-		if fields == "full" {
-			entry["content"] = ins.Content
+		// If this looks like a text inscription, try to hydrate content from disk when missing or placeholder.
+		isTextType := strings.HasPrefix(strings.ToLower(contentType), "text/") || strings.HasSuffix(strings.ToLower(ins.FileName), ".txt")
+		inscriptionContent := ins.Content
+		if isTextType {
+			// Detect placeholder content and attempt to read the actual file.
+			looksPlaceholder := inscriptionContent == "" || strings.HasPrefix(inscriptionContent, "Extracted from transaction")
+			if looksPlaceholder {
+				blockDir := fmt.Sprintf("%s/%d_00000000", strings.TrimRight(api.resolveBlocksDir(), "/"), height)
+				textPath := filepath.Join(blockDir, ins.FilePath)
+				if data, err := os.ReadFile(textPath); err == nil {
+					inscriptionContent = string(data)
+				}
+			}
+		}
+
+		// Always include textual content so the UI can render inscriptions without extra fetches.
+		if fields == "full" || isTextType || inscriptionContent != "" {
+			entry["content"] = inscriptionContent
 		}
 
 		if len(block.ScanResults) > i {
