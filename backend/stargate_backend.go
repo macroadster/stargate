@@ -70,11 +70,11 @@ func main() {
 	handler := middleware.Recovery(
 		middleware.Logging(
 			middleware.SecurityHeaders(
-			middleware.CORS(
-				middleware.Timeout(30 * time.Second)(
-					setupRoutes(mux, container),
-				),
-			)),
+				middleware.CORS(
+					middleware.Timeout(30 * time.Second)(
+						setupRoutes(mux, container),
+					),
+				)),
 		),
 	)
 
@@ -206,11 +206,14 @@ func setupRoutes(mux *http.ServeMux, container *container.Container) http.Handle
 
 	mux.HandleFunc("/api/data/block/", dataAPI.HandleGetBlockData)
 	mux.HandleFunc("/api/data/blocks", dataAPI.HandleGetRecentBlocks)
+	mux.HandleFunc("/api/data/block-summaries", dataAPI.HandleGetBlockSummaries)
+	mux.HandleFunc("/api/data/block-inscriptions/", dataAPI.HandleGetBlockInscriptionsPaginated)
 	mux.HandleFunc("/api/data/stats", dataAPI.HandleGetSteganographyStats)
 	mux.HandleFunc("/api/data/updates", dataAPI.HandleRealtimeUpdates)
 	mux.HandleFunc("/api/data/scan", dataAPI.HandleScanBlockOnDemand)
 	mux.HandleFunc("/api/data/block-images", dataAPI.HandleGetBlockImages)
 	mux.HandleFunc("/api/block-images", dataAPI.HandleGetBlockImages)
+	mux.HandleFunc("/api/stego/callback", dataAPI.HandleStegoCallback)
 
 	// Serve block images
 	mux.HandleFunc("/api/block-image/", func(w http.ResponseWriter, r *http.Request) {

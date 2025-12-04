@@ -47,6 +47,10 @@ func (h *IngestionHandler) HandleIngest(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	if h.service == nil {
+		http.Error(w, "ingestion service not configured", http.StatusServiceUnavailable)
+		return
+	}
 	if !h.authorize(r) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
@@ -95,6 +99,10 @@ func (h *IngestionHandler) HandleGetIngestion(w http.ResponseWriter, r *http.Req
 	}
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if h.service == nil {
+		http.Error(w, "ingestion service not configured", http.StatusServiceUnavailable)
 		return
 	}
 	if !h.authorize(r) {

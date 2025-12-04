@@ -4,9 +4,9 @@ const deriveApiBase = () => {
   }
   const { origin, protocol, hostname } = window.location;
 
-  // Ingress: frontend host starlight.local, backend host stargate.local
+  // Ingress: prefer same origin to avoid CORS; backend also routed on starlight.local via /api paths
   if (hostname === 'starlight.local') {
-    return `${protocol}//stargate.local`;
+    return `${protocol}//${hostname}`;
   }
 
   // Local dev/port-forward: UI on 3000/8081, backend on 3001

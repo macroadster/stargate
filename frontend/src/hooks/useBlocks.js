@@ -3,42 +3,50 @@ import { API_BASE } from '../apiBase';
 
 const generateBlock = (block) => {
   const now = Date.now();
-  
+
   // Handle both data API and mempool API formats
-  const inscriptionCount = block.inscriptions ? block.inscriptions.length : (block.smart_contracts || 0);
+  const inscriptionCount = block.inscription_count ?? (block.inscriptions ? block.inscriptions.length : (block.smart_contracts || 0));
+  const hasImages = block.has_images ?? (inscriptionCount > 0);
   const stegoCount = block.steganography_summary?.stego_count || 0;
   const txCount = block.tx_count ?? block.total_transactions ?? block.TotalTransactions ?? 0;
-  
+
   // For UI purposes, treat all inscriptions as "smart contracts" to show the badge
   const displayContractCount = Math.max(inscriptionCount, stegoCount);
-  
 
-  
+  const resolvedHeight = block.block_height ?? block.height ?? 0;
+  const resolvedTimestamp =
+    block.timestamp ??
+    (resolvedHeight > 0
+      ? now - ((923627 - resolvedHeight) * 600000)
+      : 1231006505);
+
   return {
-    height: block.block_height || block.height,
-    timestamp: block.timestamp || now - ((923627 - (block.block_height || block.height)) * 600000),
-    hash: block.block_hash || block.id,
+    height: resolvedHeight,
+    timestamp: resolvedTimestamp,
+    hash: block.block_hash ?? block.id ?? `block-${resolvedHeight}`,
     inscriptionCount: inscriptionCount,
     inscription_count: inscriptionCount,
     smart_contract_count: displayContractCount,
     smart_contracts: block.inscriptions || [],
     witness_image_count: block.images ? block.images.length : 0,
     hasBRC20: false,
-    thumbnail: (inscriptionCount > 0) ? '🎨' : null,
+    has_images: hasImages,
+    thumbnail: hasImages ? '🎨' : null,
     tx_count: txCount,
     witness_images: block.images || []
   };
 };
 
 export const useBlocks = () => {
-  const historicalCacheRef = useRef({});
   const [blocks, setBlocks] = useState([]);
   const [selectedBlock, setSelectedBlock] = useState(null);
   const [isUserNavigating, setIsUserNavigating] = useState(false);
-  const [blockLimit, setBlockLimit] = useState(20);
-  const historicalHeights = useRef([
-    0, // genesis (kept for completeness; separately pinned below)
-    1,
+  const [nextCursor, setNextCursor] = useState(null);
+  const [hasMore, setHasMore] = useState(true);
+  const loadingRef = useRef(false);
+  const blocksRef = useRef([]);
+  const pinnedMilestones = useRef([
+    0, // genesis
     174923, // Pizza Day
     210000, // Halving #1
     420000, // Halving #2
@@ -48,48 +56,22 @@ export const useBlocks = () => {
     840000  // Halving #4
   ]);
 
-  const fetchHistoricalBlocks = useCallback(async (currentBlocks) => {
-    const presentHeights = new Set(currentBlocks.map((b) => b.height));
-    const missing = historicalHeights.current.filter(
-      (h) => !presentHeights.has(h) && !historicalCacheRef.current[h]
-    );
-
-    if (missing.length > 0) {
-      const fetched = await Promise.all(
-        missing.map(async (height) => {
-          try {
-            const res = await fetch(`${API_BASE}/api/data/block/${height}`);
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            const data = await res.json();
-            const block = generateBlock({ ...data, block_height: height });
-            historicalCacheRef.current[height] = block;
-            return block;
-          } catch (err) {
-            console.error(`Error fetching historical block ${height}:`, err);
-            return null;
-          }
-        })
-      );
-      fetched.filter(Boolean).forEach((b) => {
-        historicalCacheRef.current[b.height] = b;
-      });
-    }
-
-    return Object.values(historicalCacheRef.current);
-  }, []);
-
-  const fetchBlocks = useCallback(async (isPolling = false, limitOverride) => {
+  const fetchBlocks = useCallback(async (cursor = null, isPolling = false) => {
+    if (loadingRef.current) return;
+    loadingRef.current = true;
     try {
-      // Fetch recent blocks
-      const limit = limitOverride || blockLimit;
-      let response = await fetch(`${API_BASE}/api/data/blocks?limit=${limit}`);
-      let data = await response.json();
-      
+      const url = new URL(`${API_BASE}/api/data/block-summaries`);
+      url.searchParams.set('limit', 20);
+      if (cursor) url.searchParams.set('cursor_height', cursor);
+
+      const response = await fetch(url.toString());
+      const data = await response.json();
+
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }
-      
-      const blocksData = data.blocks || data.data || data;
+
+      const blocksData = data.blocks || [];
 
       const recentBlocks = Array.isArray(blocksData)
         ? blocksData
@@ -97,46 +79,45 @@ export const useBlocks = () => {
             .filter(b => b.height)
         : [];
 
-      // Deduplicate by height and sort desc, keep only recent window for the live feed
-      const seenRecent = new Set();
-      let processedBlocks = recentBlocks
-        .filter(b => {
-          if (seenRecent.has(b.height)) return false;
-          seenRecent.add(b.height);
-          return true;
-        })
-        .sort((a, b) => b.height - a.height)
-        .slice(0, limit);
+      const combined = [...blocksRef.current, ...recentBlocks];
+      const seenFinal = new Set();
+      let deduped = combined.filter((b) => {
+        if (seenFinal.has(b.height)) return false;
+        seenFinal.add(b.height);
+        return true;
+      }).sort((a, b) => b.height - a.height);
 
-      // Pin genesis if missing
-      const genesisHeight = 0;
-      if (!processedBlocks.some(b => b.height === genesisHeight)) {
-        processedBlocks.push({
-          height: genesisHeight,
-          timestamp: 1231006505,
-          hash: '000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f',
-          inscriptionCount: 0,
-          smart_contract_count: 0,
-          witness_image_count: 0,
-          hasBRC20: false,
-          thumbnail: null,
-          tx_count: 1,
-          smart_contracts: [],
-          witness_images: [],
-          isGenesis: true
-        });
-      }
+      // Always include milestone blocks
+      pinnedMilestones.current.forEach((height) => {
+        if (!deduped.some((b) => b.height === height)) {
+          deduped.push({
+            height,
+            timestamp: height === 0 ? 1231006505 : Date.now() - 600000 * 10,
+            hash: height === 0 ? '000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f' : `milestone-${height}`,
+            inscriptionCount: 0,
+            smart_contract_count: 0,
+            witness_image_count: 0,
+            hasBRC20: false,
+            thumbnail: null,
+            tx_count: 0,
+            smart_contracts: [],
+            witness_images: [],
+            isGenesis: height === 0,
+            has_images: false
+          });
+        }
+      });
 
-      // Add historical blocks (e.g., Taproot, halvings) so they always show up
-      const historicalBlocks = await fetchHistoricalBlocks(processedBlocks);
-      processedBlocks = [...processedBlocks, ...historicalBlocks];
+      // Add pending/future placeholder one above the highest real block
+      const realMaxHeight = deduped
+        .filter((b) => !b.isFuture && typeof b.height === 'number' && b.height > 0)
+        .reduce((max, b) => Math.max(max, b.height || 0), 0);
 
-      // Add a future/pending block one height above the latest known real block
-      if (processedBlocks.length > 0) {
-        const maxHeight = processedBlocks.reduce((max, b) => Math.max(max, b.height), 0);
-        const nextHeight = maxHeight + 1;
-        processedBlocks.push({
-          height: nextHeight,
+      if (realMaxHeight > 0) {
+        const futureHeight = realMaxHeight + 1;
+        deduped = deduped.filter((b) => !b.isFuture);
+        deduped.push({
+          height: futureHeight,
           timestamp: Date.now() + 600000,
           hash: 'pending...',
           inscriptionCount: 0,
@@ -151,21 +132,16 @@ export const useBlocks = () => {
         });
       }
 
-      // Final dedupe & sort after adding pinned blocks
-      const seenFinal = new Set();
-      processedBlocks = processedBlocks
-        .filter(b => {
-          if (seenFinal.has(b.height)) return false;
-          seenFinal.add(b.height);
-          return true;
-        })
-        .sort((a, b) => b.height - a.height);
+      deduped = deduped.sort((a, b) => b.height - a.height);
 
-      setBlocks(processedBlocks);
+      blocksRef.current = deduped;
+      setBlocks(deduped);
+      setNextCursor(data.next_cursor || null);
+      setHasMore(Boolean(data.has_more));
 
-      if (!selectedBlock && processedBlocks.length && !isPolling) {
+      if (!selectedBlock && deduped.length && !isPolling) {
         setIsUserNavigating(false);
-        setSelectedBlock(processedBlocks[0]);
+        setSelectedBlock(deduped[0]);
       }
     } catch (error) {
       console.error('Error fetching blocks:', error);
@@ -173,24 +149,30 @@ export const useBlocks = () => {
       if (!selectedBlock && !isPolling) {
         setSelectedBlock(null);
       }
+    } finally {
+      loadingRef.current = false;
     }
-  }, [selectedBlock, blockLimit, fetchHistoricalBlocks]);
+  }, [selectedBlock]);
 
   const loadMoreBlocks = useCallback(() => {
-    setBlockLimit((prev) => Math.min(prev + 10, 100));
-    fetchBlocks(true, blockLimit + 10);
-  }, [fetchBlocks, blockLimit]);
+    if (!hasMore || !nextCursor) return;
+    if (loadingRef.current) return;
+    fetchBlocks(nextCursor, true);
+  }, [fetchBlocks, hasMore, nextCursor]);
 
   useEffect(() => {
-    fetchBlocks(false);
-    
+    fetchBlocks(null, false);
     const interval = setInterval(() => {
-      fetchBlocks(true);
+      fetchBlocks(null, true);
     }, 30000);
     return () => clearInterval(interval);
-  }, [fetchBlocks]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleBlockSelect = (block) => {
+    if (Number(block?.height) === 0) {
+      return; // Skip selecting genesis to avoid sticky state
+    }
     setIsUserNavigating(true);
     setSelectedBlock(block);
   };
