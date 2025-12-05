@@ -8,6 +8,7 @@ const BlockCard = ({ block, onClick, isSelected }) => {
   const hasWitnessImages = (block.witness_image_count || block.witness_images || 0) > 0;
   const inscriptionCount = block.inscription_count ?? block.inscriptionCount ?? 0;
   const hasImages = block.has_images !== undefined ? block.has_images : inscriptionCount > 0;
+  const txCount = block.tx_count || 0;
 
 
   const getBackgroundClass = () => {
@@ -96,23 +97,14 @@ const BlockCard = ({ block, onClick, isSelected }) => {
       return historical.title;
     }
     
-    if (smartContractCount > 0) {
-      return `${smartContractCount} smart contract${smartContractCount === 1 ? '' : 's'}`;
-    }
-
-    const txCount = block.tx_count || 0;
-    
-    // Show transaction count for blocks without inscriptions or historical blocks
-    if (txCount > 0) {
-      return `${txCount} transaction${txCount !== 1 ? 's' : ''}`;
-    }
-    
+    if (smartContractCount > 0) return 'Smart contracts detected';
+    if (hasImages) return 'Inscriptions present';
+    if (txCount > 0) return 'Active block';
     return 'Empty block';
   };
 
   const getBadgeClass = () => {
     if (block.isFuture) return 'text-yellow-800 dark:text-yellow-200';
-    const txCount = block.tx_count || 0;
     if (txCount > 3000) return 'text-blue-700 dark:text-blue-200';
     if (txCount > 0) return 'text-gray-700 dark:text-gray-200';
     return 'text-indigo-700 dark:text-indigo-200';
@@ -184,6 +176,11 @@ const BlockCard = ({ block, onClick, isSelected }) => {
           <div className={`text-xs mb-2 font-semibold ${getBadgeClass()}`}>
             {getBadgeText()}
           </div>
+          <div className="space-y-1 mb-2 text-xs text-gray-600 dark:text-gray-400">
+            <div>{`${smartContractCount} smart contract${smartContractCount === 1 ? '' : 's'}`}</div>
+            <div>{formatTimeAgo(block.timestamp)}</div>
+            <div>{`${txCount} transaction${txCount === 1 ? '' : 's'}`}</div>
+          </div>
           <div className="flex items-center gap-2 mb-2 text-[11px]">
             {smartContractCount > 0 ? (
               <span className="px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 dark:bg-purple-900/60 dark:text-purple-200">
@@ -200,22 +197,12 @@ const BlockCard = ({ block, onClick, isSelected }) => {
               </span>
             )}
           </div>
-          <div className={`text-xs ${block.isFuture ? 'text-yellow-700 dark:text-yellow-300' : 'text-gray-600 dark:text-gray-400'}`}>
-            {block.isFuture ? 'Next block' : formatTimeAgo(block.timestamp)}
-          </div>
         {(() => {
           const historical = getHistoricalSignificance(block.height, block.timestamp);
           if (historical) {
             return (
               <div className="text-xs text-gray-600 dark:text-gray-400 italic">
                 {historical.description}
-              </div>
-            );
-          }
-          if (block.tx_count) {
-            return (
-              <div className="text-xs text-gray-500 dark:text-gray-400">
-                {block.tx_count} transactions
               </div>
             );
           }

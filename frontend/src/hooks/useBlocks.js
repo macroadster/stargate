@@ -89,18 +89,39 @@ export const useBlocks = () => {
       }).sort((a, b) => b.height - a.height);
 
       // Always include milestone blocks
+      const milestoneMeta = {
+        0: {
+          timestamp: 1231006505,
+          hash: '000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f',
+          tx_count: 1
+        },
+        174923: {
+          // Pizza Day block approximate timestamp/tx count
+          timestamp: new Date('2010-05-22T00:00:00Z').getTime() / 1000,
+          hash: 'pizza-day',
+          tx_count: 5
+        },
+        210000: { hash: 'halving-1', tx_count: 700, timestamp: new Date('2012-11-28T15:00:00Z').getTime() / 1000 },
+        420000: { hash: 'halving-2', tx_count: 1600, timestamp: new Date('2016-07-09T17:00:00Z').getTime() / 1000 },
+        481824: { hash: 'segwit', tx_count: 2000, timestamp: new Date('2017-08-24T00:00:00Z').getTime() / 1000 },
+        630000: { hash: 'halving-3', tx_count: 2500, timestamp: new Date('2020-05-11T19:00:00Z').getTime() / 1000 },
+        709632: { hash: 'taproot', tx_count: 2100, timestamp: new Date('2021-11-14T05:00:00Z').getTime() / 1000 },
+        840000: { hash: 'halving-4', tx_count: 3100, timestamp: new Date('2024-04-20T00:00:00Z').getTime() / 1000 }
+      };
+
       pinnedMilestones.current.forEach((height) => {
         if (!deduped.some((b) => b.height === height)) {
+          const meta = milestoneMeta[height] || {};
           deduped.push({
             height,
-            timestamp: height === 0 ? 1231006505 : Date.now() - 600000 * 10,
-            hash: height === 0 ? '000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f' : `milestone-${height}`,
+            timestamp: meta.timestamp || (height === 0 ? 1231006505 : Date.now() - 600000 * 10),
+            hash: meta.hash || (height === 0 ? '000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f' : `milestone-${height}`),
             inscriptionCount: 0,
             smart_contract_count: 0,
             witness_image_count: 0,
             hasBRC20: false,
             thumbnail: null,
-            tx_count: 0,
+            tx_count: meta.tx_count || 0,
             smart_contracts: [],
             witness_images: [],
             isGenesis: height === 0,
