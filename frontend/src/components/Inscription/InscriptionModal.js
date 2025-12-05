@@ -12,9 +12,11 @@ const InscriptionModal = ({ inscription, onClose }) => {
     !inscription.image_url?.endsWith('.txt') &&
     (inscription.image_url || inscription.thumbnail);
   const modalImageSource = isActuallyImageFile ? (inscription.thumbnail || inscription.image_url) : null;
-  const isHtmlContent = (inscription.mime_type || '').startsWith('text/html');
-  const isSvgContent = (inscription.mime_type || '') === 'image/svg+xml';
+  const mime = (inscription.mime_type || '').toLowerCase();
+  const isHtmlContent = mime.includes('text/html') || mime.includes('application/xhtml');
+  const isSvgContent = mime === 'image/svg+xml' || (mime.includes('svg') && mime.includes('xml'));
   const sandboxSrc = inscription.image_url || inscription.thumbnail;
+  const inlineDoc = (isHtmlContent || isSvgContent) ? (inscription.text || '') : '';
   
   const markdownContent = `# Steganographic Smart Contract Analysis
 
@@ -217,7 +219,7 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
 
               {activeTab === 'content' && (
                 <div className="space-y-6">
-                  {(isHtmlContent || isSvgContent) && sandboxSrc && (
+                  {(isHtmlContent || isSvgContent) && (sandboxSrc || inlineDoc) && (
                     <div>
                       <h4 className="text-lg font-semibold text-black dark:text-white mb-3 flex items-center gap-2">
                         <span className="w-2 h-2 bg-indigo-500 rounded-full"></span>
@@ -226,7 +228,8 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                       <div className="rounded-lg border border-indigo-200 dark:border-indigo-700 overflow-hidden bg-gray-50 dark:bg-gray-900">
                         <iframe
                           title="inscription-sandbox"
-                          src={sandboxSrc}
+                          src={sandboxSrc || undefined}
+                          srcDoc={sandboxSrc ? undefined : inlineDoc}
                           sandbox=""
                           referrerPolicy="no-referrer"
                           className="w-full min-h-[420px] bg-white"
