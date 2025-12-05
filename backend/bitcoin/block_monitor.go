@@ -289,11 +289,19 @@ func (bm *BlockMonitor) monitorLoop() {
 
 // updateRecentBlocksSummary creates a recent blocks summary file for frontend
 func (bm *BlockMonitor) updateRecentBlocksSummary() error {
-	// Get recent block directories
-	blocksDir := "blocks"
+	blocksDir := bm.blocksDir
+	if blocksDir == "" {
+		blocksDir = blocksDirFromEnv()
+	}
+
+	// Ensure the directory exists so we don't fail with a missing relative path when running in a container.
+	if err := os.MkdirAll(blocksDir, 0755); err != nil {
+		return fmt.Errorf("failed to ensure blocks directory: %w", err)
+	}
+
 	files, err := os.ReadDir(blocksDir)
 	if err != nil {
-		return fmt.Errorf("failed to read blocks directory: %w", err)
+		return fmt.Errorf("failed to read blocks directory %s: %w", blocksDir, err)
 	}
 
 	var recentBlocks []map[string]interface{}
@@ -676,12 +684,13 @@ func (bm *BlockMonitor) saveImages(blockDir string, images []ExtractedImageData)
 	}
 
 	for _, image := range images {
-		imageFile := filepath.Join(imagesDir, image.FileName)
+		cleaned := sanitizeExtractedImage(image)
+		imageFile := filepath.Join(imagesDir, cleaned.FileName)
 		// Save the actual image data
-		if err := os.WriteFile(imageFile, image.Data, 0644); err != nil {
-			log.Printf("Failed to save image %s: %v", image.FileName, err)
+		if err := os.WriteFile(imageFile, cleaned.Data, 0644); err != nil {
+			log.Printf("Failed to save image %s: %v", cleaned.FileName, err)
 		} else {
-			log.Printf("Successfully saved image %s (%d bytes)", image.FileName, len(image.Data))
+			log.Printf("Successfully saved image %s (%d bytes)", cleaned.FileName, len(cleaned.Data))
 		}
 	}
 
@@ -693,14 +702,31 @@ func (bm *BlockMonitor) createInscriptionsFromImages(images []ExtractedImageData
 	var inscriptions []InscriptionData
 
 	for i, image := range images {
+		cleaned := sanitizeExtractedImage(image)
+		contentType := image.ContentType
+		if contentType == "" {
+			if strings.HasPrefix(image.Format, "text") || image.Format == "txt" {
+				contentType = "text/plain"
+			} else {
+				contentType = fmt.Sprintf("image/%s", image.Format)
+			}
+		}
+		content := ""
+		if strings.HasPrefix(contentType, "text/") {
+			content = string(cleaned.Data)
+		} else {
+			// Avoid storing binary blobs in the DB payload; rely on disk + /content API for retrieval.
+			content = ""
+		}
+
 		inscription := InscriptionData{
 			TxID:        image.TxID,
 			InputIndex:  i,
-			ContentType: fmt.Sprintf("image/%s", image.Format),
-			Content:     fmt.Sprintf("Extracted from transaction %s", image.TxID),
-			SizeBytes:   image.SizeBytes,
-			FileName:    image.FileName,
-			FilePath:    image.FilePath,
+			ContentType: contentType,
+			Content:     content,
+			SizeBytes:   cleaned.SizeBytes,
+			FileName:    cleaned.FileName,
+			FilePath:    cleaned.FilePath,
 		}
 		inscriptions = append(inscriptions, inscription)
 	}
@@ -710,13 +736,19 @@ func (bm *BlockMonitor) createInscriptionsFromImages(images []ExtractedImageData
 
 // saveBlockSummary saves a comprehensive block summary for frontend API
 func (bm *BlockMonitor) saveBlockSummary(blockDir string, parsedBlock *ParsedBlock, inscriptions []InscriptionData, blockHeight int64) error {
+	cleanedImages := make([]ExtractedImageData, len(parsedBlock.Images))
+	for i, img := range parsedBlock.Images {
+		cleanedImages[i] = sanitizeExtractedImage(img)
+	}
+	cleanedInscriptions := sanitizeInscriptionsForDisk(inscriptions)
+
 	summary := BlockInscriptionsResponse{
 		BlockHeight:       blockHeight,
 		BlockHash:         parsedBlock.Header.Hash,
 		Timestamp:         int64(parsedBlock.Header.Timestamp),
 		TotalTransactions: len(parsedBlock.Transactions),
-		Inscriptions:      inscriptions,
-		Images:            parsedBlock.Images,
+		Inscriptions:      cleanedInscriptions,
+		Images:            cleanedImages,
 		SmartContracts:    []SmartContractData{},
 		ProcessingTime:    time.Now().Unix(),
 		Success:           true,
@@ -785,18 +817,160 @@ func encodeVarIntSize(value int) int {
 	}
 }
 
+// sanitizeExtractedImage removes opcode prefixes and stray metadata from payloads before persisting to disk.
+func sanitizeExtractedImage(img ExtractedImageData) ExtractedImageData {
+	cleaned := img
+	data := img.Data
+	mime := strings.ToLower(strings.TrimSpace(img.ContentType))
+	if mime == "" && img.Format != "" {
+		if strings.HasPrefix(img.Format, "text") || img.Format == "txt" {
+			mime = "text/plain"
+		} else {
+			mime = fmt.Sprintf("image/%s", img.Format)
+		}
+	}
+
+	if strings.HasPrefix(mime, "image/") {
+		if strings.HasPrefix(mime, "image/svg") {
+			// Treat SVG as text-like for cleanup.
+			if cleanedData := stripPushdataPrefixLocal(data); len(cleanedData) > 0 {
+				data = cleanedData
+			}
+			if cleanedData := stripNonPrintablePrefixLocal(data); len(cleanedData) > 0 {
+				data = cleanedData
+			}
+			if idx := bytes.IndexByte(data, '<'); idx >= 0 {
+				data = data[idx:]
+			}
+		} else if trimmed := trimToImageSignatureLocal(data); len(trimmed) > 0 {
+			data = trimmed
+		}
+	} else {
+		if cleanedData := stripPushdataPrefixLocal(data); len(cleanedData) > 0 {
+			data = cleanedData
+		}
+		if cleanedData := stripNonPrintablePrefixLocal(data); len(cleanedData) > 0 {
+			data = cleanedData
+		}
+		// HTML bodies may have leading metadata/prefix bytes before the first tag.
+		if strings.HasPrefix(mime, "text/html") || strings.HasSuffix(strings.ToLower(img.FileName), ".html") {
+			if idx := bytes.IndexByte(data, '<'); idx >= 0 {
+				data = data[idx:]
+			}
+		}
+	}
+
+	cleaned.Data = data
+	cleaned.SizeBytes = len(data)
+	return cleaned
+}
+
+// sanitizeInscriptionsForDisk cleans inscription content before writing JSON summaries.
+func sanitizeInscriptionsForDisk(inscriptions []InscriptionData) []InscriptionData {
+	out := make([]InscriptionData, len(inscriptions))
+	for i, ins := range inscriptions {
+		cleaned := ins
+		data := []byte(ins.Content)
+		mime := strings.ToLower(strings.TrimSpace(ins.ContentType))
+
+		if strings.HasPrefix(mime, "image/") {
+			if trimmed := trimToImageSignatureLocal(data); len(trimmed) > 0 {
+				data = trimmed
+			}
+		} else if strings.HasPrefix(mime, "image/svg") {
+			// Treat SVG as text-ish.
+			if cleanedData := stripPushdataPrefixLocal(data); len(cleanedData) > 0 {
+				data = cleanedData
+			}
+			if cleanedData := stripNonPrintablePrefixLocal(data); len(cleanedData) > 0 {
+				data = cleanedData
+			}
+			if idx := bytes.IndexByte(data, '<'); idx >= 0 {
+				data = data[idx:]
+			}
+		} else {
+			if cleanedData := stripPushdataPrefixLocal(data); len(cleanedData) > 0 {
+				data = cleanedData
+			}
+			if cleanedData := stripNonPrintablePrefixLocal(data); len(cleanedData) > 0 {
+				data = cleanedData
+			}
+			if strings.HasPrefix(mime, "text/html") || strings.HasSuffix(strings.ToLower(ins.FileName), ".html") {
+				if idx := bytes.IndexByte(data, '<'); idx >= 0 {
+					data = data[idx:]
+				}
+			}
+		}
+
+		cleaned.Content = string(data)
+		cleaned.SizeBytes = len(data)
+		out[i] = cleaned
+	}
+	return out
+}
+
+// stripPushdataPrefixLocal removes a leading push opcode (OP_PUSH, OP_PUSHDATA1/2/4) from a payload when present.
+func stripPushdataPrefixLocal(b []byte) []byte {
+	if len(b) == 0 {
+		return b
+	}
+	op := b[0]
+	switch {
+	case op <= 75:
+		if len(b) > int(op) {
+			return b[1:]
+		}
+	case op == 0x4c && len(b) > 1: // OP_PUSHDATA1
+		l := int(b[1])
+		if len(b) >= 2+l {
+			return b[2:]
+		}
+	case op == 0x4d && len(b) > 2: // OP_PUSHDATA2
+		l := int(b[1]) | int(b[2])<<8
+		if len(b) >= 3+l {
+			return b[3:]
+		}
+	case op == 0x4e && len(b) > 4: // OP_PUSHDATA4
+		l := int(b[1]) | int(b[2])<<8 | int(b[3])<<16 | int(b[4])<<24
+		if len(b) >= 5+l {
+			return b[5:]
+		}
+	}
+	return b
+}
+
+// stripNonPrintablePrefixLocal trims leading control bytes to get to the printable payload.
+func stripNonPrintablePrefixLocal(b []byte) []byte {
+	i := 0
+	for i < len(b) {
+		c := b[i]
+		if c == '\n' || c == '\r' || c == '\t' || (c >= 32 && c < 127) {
+			break
+		}
+		i++
+	}
+	if i > 0 && i < len(b) {
+		return b[i:]
+	}
+	return b
+}
+
 // convertTransactions converts parsed transactions to transaction data format
 func (bm *BlockMonitor) convertTransactions(transactions []Transaction) []TransactionData {
 	var txData []TransactionData
 
 	for _, tx := range transactions {
+		witnessCount := 0
+		for _, stack := range tx.InputWitnesses {
+			witnessCount += len(stack)
+		}
 		data := TransactionData{
 			TxID:       tx.TxID,
 			Height:     0, // Will be set by caller
 			Time:       int64(tx.Locktime),
 			Status:     "confirmed",
-			HasImages:  len(tx.Witness) > 0,
-			ImageCount: len(tx.Witness),
+			HasImages:  witnessCount > 0,
+			ImageCount: witnessCount,
 		}
 		txData = append(txData, data)
 	}
@@ -986,6 +1160,13 @@ func (bm *BlockMonitor) saveBlockSummaryWithScanResults(blockDir string, parsedB
 	// Count stego detections
 	stegoCount := bm.countStegoImages(scanResults)
 
+	// Clean payloads before persisting to disk so downstream consumers don't see opcode metadata.
+	cleanedImages := make([]ExtractedImageData, len(parsedBlock.Images))
+	for i, img := range parsedBlock.Images {
+		cleanedImages[i] = sanitizeExtractedImage(img)
+	}
+	cleanedInscriptions := sanitizeInscriptionsForDisk(inscriptions)
+
 	// Create optimized smart contracts from scan results (only for stego images)
 	smartContracts := []SmartContractData{}
 	if stegoCount > 0 {
@@ -998,8 +1179,8 @@ func (bm *BlockMonitor) saveBlockSummaryWithScanResults(blockDir string, parsedB
 		BlockHash:         parsedBlock.Header.Hash,
 		Timestamp:         int64(parsedBlock.Header.Timestamp),
 		TotalTransactions: len(parsedBlock.Transactions),
-		Inscriptions:      inscriptions,
-		Images:            parsedBlock.Images,
+		Inscriptions:      cleanedInscriptions,
+		Images:            cleanedImages,
 		SmartContracts:    smartContracts,
 		ProcessingTime:    time.Now().Unix(),
 		Success:           true,
@@ -1007,15 +1188,15 @@ func (bm *BlockMonitor) saveBlockSummaryWithScanResults(blockDir string, parsedB
 
 	// Create compact steganography summary (only once)
 	steganographySummary := map[string]any{
-		"total_images":   len(parsedBlock.Images),
+		"total_images":   len(cleanedImages),
 		"stego_detected": stegoCount > 0,
 		"stego_count":    stegoCount,
 		"scan_timestamp": time.Now().Unix(),
 	}
 
 	// Create enhanced images with scan results
-	enhancedImages := make([]map[string]any, len(summary.Images))
-	for i, image := range summary.Images {
+	enhancedImages := make([]map[string]any, len(cleanedImages))
+	for i, image := range cleanedImages {
 		enhancedImage := map[string]any{
 			"tx_id":      image.TxID,
 			"format":     image.Format,
