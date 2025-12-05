@@ -1,8 +1,10 @@
 package api
 
 import (
+	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -59,7 +61,13 @@ func (api *DataAPI) loadBlockFromDisk(height int64) (*storage.BlockDataCache, er
 
 	data, err := os.ReadFile(filePath)
 	if err != nil {
-		return nil, fmt.Errorf("read block file: %w", err)
+		// Try directory-based layout: <height>_00000000/inscriptions.json
+		dirPath := fmt.Sprintf("%s/%d_00000000/inscriptions.json", baseDir, height)
+		if data2, err2 := os.ReadFile(dirPath); err2 == nil {
+			data = data2
+		} else {
+			return nil, fmt.Errorf("read block file: %w", err)
+		}
 	}
 
 	var raw struct {
@@ -123,16 +131,21 @@ func (api *DataAPI) listAvailableBlockHeights() []int64 {
 	var heights []int64
 	if err == nil {
 		for _, entry := range entries {
-			if entry.IsDir() {
-				continue
-			}
 			name := entry.Name()
-			if !strings.HasPrefix(name, "block_") || !strings.HasSuffix(name, ".json") {
+			if entry.IsDir() {
+				// Support directory naming like 926464_00000000
+				if idx := strings.Index(name, "_"); idx > 0 {
+					if h, err := strconv.ParseInt(name[:idx], 10, 64); err == nil {
+						heights = append(heights, h)
+					}
+				}
 				continue
 			}
-			raw := strings.TrimSuffix(strings.TrimPrefix(name, "block_"), ".json")
-			if h, err := strconv.ParseInt(raw, 10, 64); err == nil {
-				heights = append(heights, h)
+			if strings.HasPrefix(name, "block_") && strings.HasSuffix(name, ".json") {
+				raw := strings.TrimSuffix(strings.TrimPrefix(name, "block_"), ".json")
+				if h, err := strconv.ParseInt(raw, 10, 64); err == nil {
+					heights = append(heights, h)
+				}
 			}
 		}
 	}
@@ -211,9 +224,15 @@ func (api *DataAPI) HandleGetBlockData(w http.ResponseWriter, r *http.Request) {
 		// Try getting data again after scan
 		blockData, err = api.dataStorage.GetBlockData(height)
 		if err != nil {
-			log.Printf("Block %d still not found after scan: %v", height, err)
-			http.Error(w, "Block data not found", http.StatusNotFound)
-			return
+			// Try filesystem cache as a fallback if DB upsert failed.
+			if cache, diskErr := api.loadBlockFromDisk(height); diskErr == nil {
+				blockData = cache
+				log.Printf("Served block %d from disk fallback after DB miss", height)
+			} else {
+				log.Printf("Block %d still not found after scan: %v (disk fallback error: %v)", height, err, diskErr)
+				http.Error(w, "Block data not found", http.StatusNotFound)
+				return
+			}
 		}
 	}
 
@@ -730,17 +749,12 @@ func (api *DataAPI) HandleGetBlockInscriptionsPaginated(w http.ResponseWriter, r
 	for i, ins := range selected {
 		// Derive a safe content type; some historical entries may miss it.
 		contentType := ins.ContentType
-		if contentType == "" {
-			if strings.HasSuffix(strings.ToLower(ins.FileName), ".txt") {
-				contentType = "text/plain"
-			} else {
-				contentType = "application/octet-stream"
-			}
-		}
+		contentType = inferMime(contentType, nil, ins.FileName)
 
 		entry := map[string]interface{}{
 			"id":                   fmt.Sprintf("%s_%d", ins.TxID, ins.InputIndex),
 			"tx_id":                ins.TxID,
+			"input_index":          ins.InputIndex,
 			"file_name":            ins.FileName,
 			"file_path":            ins.FilePath,
 			"content_type":         contentType,
@@ -748,7 +762,12 @@ func (api *DataAPI) HandleGetBlockInscriptionsPaginated(w http.ResponseWriter, r
 			"genesis_block_height": height,
 			"number":               height,
 			"address":              "bc1p...",
-			"image_url":            fmt.Sprintf("/api/block-image/%d/%s", height, ins.FileName),
+			"image_url": fmt.Sprintf("/content/%s%s", ins.TxID, func() string {
+				if ins.InputIndex >= 0 {
+					return fmt.Sprintf("?witness=%d", ins.InputIndex)
+				}
+				return ""
+			}()),
 		}
 
 		// If this looks like a text inscription, try to hydrate content from disk when missing or placeholder.
@@ -1060,9 +1079,8 @@ func (api *DataAPI) HandleContent(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodOptions {
 		return
 	}
-	if len(api.txIndex) == 0 {
-		api.buildTxIndex()
-	}
+	// Rebuild the tx index on each request to pick up newly processed blocks.
+	api.buildTxIndex()
 	path := strings.TrimPrefix(r.URL.Path, "/content/")
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 	if len(parts) == 0 || parts[0] == "" {
@@ -1106,6 +1124,12 @@ func (api *DataAPI) handleContentRaw(w http.ResponseWriter, r *http.Request, txi
 	}
 
 	content, mimeType := api.loadInscriptionContent(height, inscription)
+	log.Printf("content served tx=%s len=%d first8=%x", txid, len(content), func() []byte {
+		if len(content) >= 8 {
+			return content[:8]
+		}
+		return content
+	}())
 	w.Header().Set("Content-Type", mimeType)
 	w.Header().Set("X-Inscription-Mime", mimeType)
 	w.Header().Set("X-Inscription-Size", fmt.Sprintf("%d", len(content)))
@@ -1185,23 +1209,69 @@ func (api *DataAPI) loadInscriptionContent(height int64, ins bitcoin.Inscription
 	content := []byte(ins.Content)
 	mimeType := inferMime(ins.ContentType, content, ins.FileName)
 
-	needsFS := len(content) == 0 ||
-		strings.HasPrefix(strings.ToLower(strings.TrimSpace(ins.Content)), "extracted from transaction") ||
-		(strings.HasPrefix(mimeType, "image/") && ins.SizeBytes > len(content))
+	base := strings.TrimRight(api.resolveBlocksDir(), "/")
+	blockDir := fmt.Sprintf("%s/%d_00000000", base, height)
+	fsPath := filepath.Join(blockDir, ins.FilePath)
+	if data, err := os.ReadFile(fsPath); err == nil {
+		// Prefer filesystem copy whenever it exists; it's the source of truth.
+		content = data
+		mimeType = inferMime(ins.ContentType, content, ins.FileName)
+	} else {
+		log.Printf("content fallback to cached: tx=%s height=%d path=%s err=%v", ins.TxID, height, fsPath, err)
+		// Attempt to regenerate the block on-demand if the file is missing.
+		if api.blockMonitor != nil {
+			if scanErr := api.blockMonitor.ProcessBlock(height); scanErr == nil {
+				if data, err2 := os.ReadFile(fsPath); err2 == nil {
+					content = data
+					mimeType = inferMime(ins.ContentType, content, ins.FileName)
+				}
+			}
+		}
+	}
 
-	if needsFS {
-		base := strings.TrimRight(api.resolveBlocksDir(), "/")
-		blockDir := fmt.Sprintf("%s/%d_00000000", base, height)
-		fsPath := filepath.Join(blockDir, ins.FilePath)
-		if data, err := os.ReadFile(fsPath); err == nil {
-			content = data
+	// If content is base64-encoded (used for binary payloads in DB), decode it.
+	if strings.HasPrefix(mimeType, "image/") && len(ins.Content) > 0 && looksBase64(ins.Content) && len(content) == len(ins.Content) {
+		if decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(ins.Content)); err == nil && len(decoded) > 0 {
+			content = decoded
 			mimeType = inferMime(ins.ContentType, content, ins.FileName)
 		}
+	}
+
+	// Attempt to rebuild from pushdatas; if parsing fails we keep the original.
+	if rebuilt, ok := extractPushPayload(content); ok {
+		content = rebuilt
+		mimeType = inferMime(ins.ContentType, content, ins.FileName)
+	}
+
+	// If this is an image but the payload has leading garbage, trim to the first valid signature.
+	if strings.HasPrefix(mimeType, "image/") {
+		if trimmed := trimToImageSignature(content); len(trimmed) > 0 {
+			content = trimmed
+		}
+		// Re-evaluate MIME after trimming.
+		mimeType = inferMime(ins.ContentType, content, ins.FileName)
 	}
 
 	// Trim trailing single 'h' artifact on text payloads.
 	if strings.HasPrefix(mimeType, "text/") && len(content) > 0 && content[len(content)-1] == 'h' {
 		content = content[:len(content)-1]
+	}
+
+	// Strip leading pushdata opcodes that may have been preserved in extraction.
+	if strings.HasPrefix(mimeType, "text/") {
+		if cleaned := stripPushdataPrefix(content); len(cleaned) > 0 {
+			content = cleaned
+		}
+		if cleaned := stripNonPrintablePrefix(content); len(cleaned) > 0 {
+			content = cleaned
+		}
+	}
+
+	// For HTML payloads, trim any stray metadata bytes that appear before the first tag.
+	if strings.HasPrefix(mimeType, "text/html") {
+		if idx := bytes.IndexByte(content, '<'); idx > 0 {
+			content = content[idx:]
+		}
 	}
 
 	return content, mimeType
@@ -1215,10 +1285,21 @@ func sha256Hex(b []byte) string {
 // inferMime attempts to produce a better content type when missing or generic.
 func inferMime(current string, content []byte, fileName string) string {
 	m := strings.ToLower(strings.TrimSpace(current))
+	if m == "image/txt" {
+		m = "text/plain"
+	}
+	if m == "image/avif" {
+		return "image/avif"
+	}
+	if m == "image/svg" {
+		m = "image/svg+xml"
+	}
 	// Prefer explicit image types by filename if type is missing or generic.
 	if m == "" || m == "application/octet-stream" {
 		lowerName := strings.ToLower(fileName)
 		switch {
+		case strings.HasSuffix(lowerName, ".avif"):
+			m = "image/avif"
 		case strings.HasSuffix(lowerName, ".jpg"), strings.HasSuffix(lowerName, ".jpeg"):
 			m = "image/jpeg"
 		case strings.HasSuffix(lowerName, ".png"):
@@ -1245,6 +1326,8 @@ func inferMime(current string, content []byte, fileName string) string {
 		lower := strings.ToLower(trim)
 		if strings.HasPrefix(lower, "<!doctype") || strings.HasPrefix(lower, "<html") {
 			m = "text/html"
+		} else if strings.HasPrefix(lower, "<svg") {
+			m = "image/svg+xml"
 		} else if json.Valid(content) {
 			m = "application/json"
 		} else if isMostlyPrintable(trim) {
@@ -1253,7 +1336,174 @@ func inferMime(current string, content []byte, fileName string) string {
 			m = "application/octet-stream"
 		}
 	}
+
+	if (m == "" || m == "application/octet-stream") && isAVIF(content) {
+		m = "image/avif"
+	}
+
 	return m
+}
+
+func isAVIF(b []byte) bool {
+	if len(b) < 12 {
+		return false
+	}
+	// ISO BMFF: size(4) 'ftyp' then brand.
+	if b[4] == 'f' && b[5] == 't' && b[6] == 'y' && b[7] == 'p' {
+		brand := string(b[8:12])
+		if brand == "avif" || brand == "avis" {
+			return true
+		}
+	}
+	// Search for ftypavif within the first 64 bytes.
+	if idx := bytes.Index(b, []byte("ftypavif")); idx >= 0 && idx < 64 {
+		return true
+	}
+	return false
+}
+
+// extractPushPayload rebuilds a script blob by concatenating its pushdatas in order.
+// Non-push opcodes are discarded; if parsing fails, the original buffer is returned.
+func extractPushPayload(script []byte) ([]byte, bool) {
+	ops, ok := parseScriptOpsLocal(script)
+	if !ok || len(ops) == 0 {
+		return script, false
+	}
+	var out bytes.Buffer
+	pushes := 0
+	for _, op := range ops {
+		if op.isPush {
+			out.Write(op.data)
+			pushes++
+		}
+	}
+	if pushes == 0 {
+		return script, false
+	}
+
+	total := 0
+	for _, op := range ops {
+		if op.isPush {
+			total += len(op.data)
+		}
+	}
+	// Require that total pushed bytes are at least as large as the script; otherwise
+	// we likely mis-parsed plain text and should preserve the original.
+	if total < len(script) && total < 256 { // tiny total suggests bad parse
+		return script, false
+	}
+
+	return out.Bytes(), true
+}
+
+// looksBase64 returns true if the string is plausibly base64-encoded.
+func looksBase64(s string) bool {
+	trim := strings.TrimSpace(s)
+	if len(trim) == 0 || len(trim)%4 != 0 {
+		return false
+	}
+	for i := 0; i < len(trim); i++ {
+		c := trim[i]
+		if !(c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '+' || c == '/' || c == '=') {
+			return false
+		}
+	}
+	return true
+}
+
+// trimToImageSignature scans for known image headers and slices from the first match.
+func trimToImageSignature(b []byte) []byte {
+	if len(b) < 8 {
+		return b
+	}
+	sigs := [][]byte{
+		{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}, // PNG
+		{0xFF, 0xD8, 0xFF},       // JPEG
+		[]byte("RIFF"),           // WEBP (we also check WEBP marker)
+		{0x47, 0x49, 0x46, 0x38}, // GIF
+		[]byte("ftypavif"),       // AVIF (ISO BMFF)
+	}
+	for _, sig := range sigs {
+		if idx := bytes.Index(b, sig); idx >= 0 {
+			// For RIFF/WEBP, ensure WEBP marker exists.
+			if sig[0] == 'R' && len(b) >= idx+12 {
+				if !(b[idx+8] == 'W' && b[idx+9] == 'E' && b[idx+10] == 'B' && b[idx+11] == 'P') {
+					continue
+				}
+			}
+			if string(sig) == "ftypavif" {
+				// Ensure we return from the start of the ftyp box.
+				if idx >= 4 {
+					return b[idx-4:]
+				}
+			}
+			return b[idx:]
+		}
+	}
+	return b
+}
+
+type scriptOpLocal struct {
+	opcode byte
+	data   []byte
+	isPush bool
+}
+
+// Minimal script parser (duplicate of bitcoin.parseScriptOps) to avoid dependency loops.
+// Returns ops and ok==true if the entire script was consumed successfully.
+func parseScriptOpsLocal(script []byte) ([]scriptOpLocal, bool) {
+	var ops []scriptOpLocal
+	i := 0
+	for i < len(script) {
+		op := script[i]
+		i++
+
+		switch {
+		case op <= 75:
+			l := int(op)
+			if l < 0 || i+l > len(script) {
+				return ops, false
+			}
+			ops = append(ops, scriptOpLocal{opcode: op, data: script[i : i+l], isPush: true})
+			i += l
+		case op == 0x4c: // OP_PUSHDATA1
+			if i >= len(script) {
+				return ops, false
+			}
+			l := int(script[i])
+			i++
+			if l < 0 || i+l > len(script) {
+				return ops, false
+			}
+			ops = append(ops, scriptOpLocal{opcode: op, data: script[i : i+l], isPush: true})
+			i += l
+		case op == 0x4d: // OP_PUSHDATA2
+			if i+1 >= len(script) {
+				return ops, false
+			}
+			l := int(script[i]) | int(script[i+1])<<8
+			i += 2
+			if l < 0 || i+l > len(script) {
+				return ops, false
+			}
+			ops = append(ops, scriptOpLocal{opcode: op, data: script[i : i+l], isPush: true})
+			i += l
+		case op == 0x4e: // OP_PUSHDATA4
+			if i+3 >= len(script) {
+				return ops, false
+			}
+			l := int(script[i]) | int(script[i+1])<<8 | int(script[i+2])<<16 | int(script[i+3])<<24
+			i += 4
+			if l < 0 || i+l > len(script) {
+				return ops, false
+			}
+			ops = append(ops, scriptOpLocal{opcode: op, data: script[i : i+l], isPush: true})
+			i += l
+		default:
+			ops = append(ops, scriptOpLocal{opcode: op, isPush: false})
+		}
+	}
+	return ops, true
 }
 
 func isMostlyPrintable(s string) bool {
@@ -1281,6 +1531,52 @@ func normalizeTxID(txid string) string {
 		}
 	}
 	return txid
+}
+
+// stripPushdataPrefix removes a leading push opcode (OP_PUSH, OP_PUSHDATA1/2/4) from a payload when present.
+func stripPushdataPrefix(b []byte) []byte {
+	if len(b) == 0 {
+		return b
+	}
+	op := b[0]
+	switch {
+	case op <= 75:
+		if len(b) > int(op) {
+			return b[1:]
+		}
+	case op == 0x4c && len(b) > 1: // OP_PUSHDATA1
+		l := int(b[1])
+		if len(b) >= 2+l {
+			return b[2:]
+		}
+	case op == 0x4d && len(b) > 2: // OP_PUSHDATA2
+		l := int(b[1]) | int(b[2])<<8
+		if len(b) >= 3+l {
+			return b[3:]
+		}
+	case op == 0x4e && len(b) > 4: // OP_PUSHDATA4
+		l := int(b[1]) | int(b[2])<<8 | int(b[3])<<16 | int(b[4])<<24
+		if len(b) >= 5+l {
+			return b[5:]
+		}
+	}
+	return b
+}
+
+// stripNonPrintablePrefix trims leading control bytes to get to the printable payload.
+func stripNonPrintablePrefix(b []byte) []byte {
+	i := 0
+	for i < len(b) {
+		c := b[i]
+		if c == '\n' || c == '\r' || c == '\t' || (c >= 32 && c < 127) {
+			break
+		}
+		i++
+	}
+	if i > 0 && i < len(b) {
+		return b[i:]
+	}
+	return b
 }
 
 // buildTxIndex creates a simple in-memory map from txid to block height for faster lookup.

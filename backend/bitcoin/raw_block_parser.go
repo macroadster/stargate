@@ -98,13 +98,14 @@ type BlockHeader struct {
 
 // Transaction represents a Bitcoin transaction
 type Transaction struct {
-	Version    int32
-	Inputs     []TxInput
-	Outputs    []TxOutput
-	Witness    [][]byte
-	Locktime   uint32
-	HasWitness bool
-	TxID       string
+	Version        int32
+	Inputs         []TxInput
+	Outputs        []TxOutput
+	Witness        [][]byte   // flat list of all witness stack items (legacy)
+	InputWitnesses [][][]byte // grouped by input: input -> stack items
+	Locktime       uint32
+	HasWitness     bool
+	TxID           string
 }
 
 // TxInput represents a transaction input
@@ -113,6 +114,73 @@ type TxInput struct {
 	PreviousIndex uint32
 	ScriptSig     []byte
 	Sequence      uint32
+}
+
+// computeTxID serializes the transaction without witness data and hashes it (double SHA256).
+func computeTxID(tx *Transaction) string {
+	var buf bytes.Buffer
+
+	// Version
+	versionBytes := make([]byte, 4)
+	binary.LittleEndian.PutUint32(versionBytes, uint32(tx.Version))
+	buf.Write(versionBytes)
+
+	// Input count
+	buf.Write(encodeVarInt(len(tx.Inputs)))
+	for _, in := range tx.Inputs {
+		// prev tx hash (little endian)
+		prev, _ := hex.DecodeString(in.PreviousTxID)
+		buf.Write(reverseBytes(prev))
+		// prev index
+		idx := make([]byte, 4)
+		binary.LittleEndian.PutUint32(idx, in.PreviousIndex)
+		buf.Write(idx)
+		// scriptSig
+		buf.Write(encodeVarInt(len(in.ScriptSig)))
+		buf.Write(in.ScriptSig)
+		// sequence
+		seq := make([]byte, 4)
+		binary.LittleEndian.PutUint32(seq, in.Sequence)
+		buf.Write(seq)
+	}
+
+	// Output count
+	buf.Write(encodeVarInt(len(tx.Outputs)))
+	for _, out := range tx.Outputs {
+		val := make([]byte, 8)
+		binary.LittleEndian.PutUint64(val, uint64(out.Value))
+		buf.Write(val)
+		buf.Write(encodeVarInt(len(out.ScriptPubKey)))
+		buf.Write(out.ScriptPubKey)
+	}
+
+	// Locktime
+	lock := make([]byte, 4)
+	binary.LittleEndian.PutUint32(lock, tx.Locktime)
+	buf.Write(lock)
+
+	hash := doubleSHA256(buf.Bytes())
+	return hex.EncodeToString(reverseBytes(hash))
+}
+
+// encodeVarInt writes a Bitcoin-style varint.
+func encodeVarInt(n int) []byte {
+	switch {
+	case n < 0xfd:
+		return []byte{byte(n)}
+	case n <= 0xffff:
+		b := []byte{0xfd, 0, 0}
+		binary.LittleEndian.PutUint16(b[1:], uint16(n))
+		return b
+	case n <= 0xffffffff:
+		b := []byte{0xfe, 0, 0, 0, 0}
+		binary.LittleEndian.PutUint32(b[1:], uint32(n))
+		return b
+	default:
+		b := []byte{0xff, 0, 0, 0, 0, 0, 0, 0, 0}
+		binary.LittleEndian.PutUint64(b[1:], uint64(n))
+		return b
+	}
 }
 
 // TxOutput represents a transaction output
@@ -132,12 +200,13 @@ type ParsedBlock struct {
 
 // ExtractedImageData represents an image extracted from witness data
 type ExtractedImageData struct {
-	TxID      string `json:"tx_id"`
-	Format    string `json:"format"`
-	SizeBytes int    `json:"size_bytes"`
-	FileName  string `json:"file_name"`
-	FilePath  string `json:"file_path"`
-	Data      []byte `json:"-"` // Actual image data (not serialized to JSON)
+	TxID        string `json:"tx_id"`
+	Format      string `json:"format"`
+	ContentType string `json:"content_type,omitempty"`
+	SizeBytes   int    `json:"size_bytes"`
+	FileName    string `json:"file_name"`
+	FilePath    string `json:"file_path"`
+	Data        []byte `json:"-"` // Actual image data (not serialized to JSON)
 }
 
 func (p *BitcoinParser) ParseBlock(data []byte) (*ParsedBlock, error) {
@@ -191,8 +260,6 @@ func (p *BitcoinParser) ParseBlock(data []byte) (*ParsedBlock, error) {
 }
 
 func (p *BitcoinParser) parseTransaction(reader *bytes.Reader) (*Transaction, error) {
-	startPos, _ := reader.Seek(0, io.SeekCurrent)
-
 	tx := &Transaction{}
 
 	// Read version (4 bytes)
@@ -256,6 +323,7 @@ func (p *BitcoinParser) parseTransaction(reader *bytes.Reader) (*Transaction, er
 				return nil, fmt.Errorf("failed to read witness count: %w", err)
 			}
 
+			var stackItems [][]byte
 			for j := 0; j < int(witnessCount); j++ {
 				witnessData, err := readVarInt(reader)
 				if err != nil {
@@ -268,7 +336,9 @@ func (p *BitcoinParser) parseTransaction(reader *bytes.Reader) (*Transaction, er
 				}
 
 				tx.Witness = append(tx.Witness, witnessBytes)
+				stackItems = append(stackItems, witnessBytes)
 			}
+			tx.InputWitnesses = append(tx.InputWitnesses, stackItems)
 		}
 	}
 
@@ -279,15 +349,8 @@ func (p *BitcoinParser) parseTransaction(reader *bytes.Reader) (*Transaction, er
 	}
 	tx.Locktime = binary.LittleEndian.Uint32(locktimeBytes)
 
-	// Calculate transaction ID (simplified - would need full serialization)
-	endPos, _ := reader.Seek(0, io.SeekCurrent)
-	txData := make([]byte, endPos-startPos)
-	reader.Seek(startPos, io.SeekStart)
-	io.ReadFull(reader, txData)
-	reader.Seek(endPos, io.SeekStart)
-
-	txHash := doubleSHA256(txData)
-	tx.TxID = hex.EncodeToString(reverseBytes(txHash))
+	// Calculate transaction ID (non-witness serialization per consensus).
+	tx.TxID = computeTxID(tx)
 
 	return tx, nil
 }
@@ -362,44 +425,71 @@ func (p *BitcoinParser) parseOutput(reader *bytes.Reader) (*TxOutput, error) {
 
 func (p *BitcoinParser) extractImages(transactions []Transaction) []ExtractedImageData {
 	var images []ExtractedImageData
+	seen := make(map[string]bool) // content hash dedupe
 
 	log.Printf("extractImages: Processing %d transactions", len(transactions))
 	for txIndex, tx := range transactions {
-		log.Printf("extractImages: Transaction %d has %d witness entries", txIndex, len(tx.Witness))
+		log.Printf("extractImages: Transaction %d has %d inputs with witness", txIndex, len(tx.InputWitnesses))
+		for inIdx, stack := range tx.InputWitnesses {
+			for itemIdx, witness := range stack {
+				log.Printf("extractImages: Input %d witness %d has %d bytes", inIdx, itemIdx, len(witness))
+
+				if ordinalPayloads := extractOrdinalPayloads(witness); len(ordinalPayloads) > 0 {
+					for ordIdx, payload := range ordinalPayloads {
+						format := formatFromContentType(payload.contentType)
+						image := ExtractedImageData{
+							TxID:        tx.TxID,
+							Format:      format,
+							ContentType: payload.contentType,
+							SizeBytes:   len(payload.payload),
+							FileName:    fmt.Sprintf("%s_in%d_w%d_i%d.%s", tx.TxID[:16], inIdx, itemIdx, ordIdx, format),
+							FilePath:    fmt.Sprintf("images/%s", fmt.Sprintf("%s_in%d_w%d_i%d.%s", tx.TxID[:16], inIdx, itemIdx, ordIdx, format)),
+							Data:        payload.payload,
+						}
+						if dedupImage(&image, seen) {
+							images = append(images, image)
+						}
+					}
+					continue
+				}
+
+				// Fallback to image detection for non-Ordinals payloads.
+				if imageType, imageData := detectImage(witness); imageType != "" {
+					image := ExtractedImageData{
+						TxID:      tx.TxID,
+						Format:    imageType,
+						SizeBytes: len(imageData),
+						FileName:  fmt.Sprintf("%s_img_%d.%s", tx.TxID[:16], itemIdx, imageType),
+						FilePath:  fmt.Sprintf("images/%s", fmt.Sprintf("%s_img_%d.%s", tx.TxID[:16], itemIdx, imageType)),
+						Data:      imageData,
+					}
+					if dedupImage(&image, seen) {
+						images = append(images, image)
+					}
+				}
+			}
+		}
+
+		// Legacy flat witness handling (fallback).
 		for i, witness := range tx.Witness {
-			log.Printf("extractImages: Witness %d has %d bytes", i, len(witness))
 			// First try to detect Ordinals inscriptions (text, BRC-20, etc.)
 			contentType, content, ok := parseOrdinals(witness)
 			if ok {
 				log.Printf("extractImages: Found Ordinals inscription: %s", contentType)
-				// Create a generic filename for non-image content
-				format := "txt"
-				if contentType == "text/plain;charset=utf-8" {
-					format = "txt"
-				} else if strings.Contains(contentType, "cbrc-20") {
-					format = "brc20"
-				} else if strings.Contains(contentType, "image/") {
-					// Extract image format from content type
-					if strings.Contains(contentType, "jpeg") || strings.Contains(contentType, "jpg") {
-						format = "jpeg"
-					} else if strings.Contains(contentType, "png") {
-						format = "png"
-					} else if strings.Contains(contentType, "gif") {
-						format = "gif"
-					} else if strings.Contains(contentType, "webp") {
-						format = "webp"
-					}
-				}
+				format := formatFromContentType(contentType)
 
 				image := ExtractedImageData{
-					TxID:      tx.TxID,
-					Format:    format,
-					SizeBytes: len(content),
-					FileName:  fmt.Sprintf("%s_inscription_%d.%s", tx.TxID[:16], i, format),
-					FilePath:  fmt.Sprintf("images/%s", fmt.Sprintf("%s_inscription_%d.%s", tx.TxID[:16], i, format)),
-					Data:      content,
+					TxID:        tx.TxID,
+					Format:      format,
+					ContentType: contentType,
+					SizeBytes:   len(content),
+					FileName:    fmt.Sprintf("%s_inscription_%d.%s", tx.TxID[:16], i, format),
+					FilePath:    fmt.Sprintf("images/%s", fmt.Sprintf("%s_inscription_%d.%s", tx.TxID[:16], i, format)),
+					Data:        content,
 				}
-				images = append(images, image)
+				if dedupImage(&image, seen) {
+					images = append(images, image)
+				}
 				log.Printf("Found Ordinals inscription (%s) in tx %s: %d bytes", contentType, tx.TxID[:16], len(content))
 				continue
 			}
@@ -415,8 +505,31 @@ func (p *BitcoinParser) extractImages(transactions []Transaction) []ExtractedIma
 					FilePath:  fmt.Sprintf("images/%s", fmt.Sprintf("%s_img_%d.%s", tx.TxID[:16], i, imageType)),
 					Data:      imageData,
 				}
-				images = append(images, image)
+				if dedupImage(&image, seen) {
+					images = append(images, image)
+				}
 				log.Printf("Found %s image in tx %s: %d bytes", imageType, tx.TxID[:16], len(imageData))
+			}
+		}
+
+		// Inspect scriptSig for legacy inscriptions.
+		for inIdx, input := range tx.Inputs {
+			if len(input.ScriptSig) == 0 {
+				continue
+			}
+			if contentType, content, ok := parseOrdinals(input.ScriptSig); ok {
+				format := formatFromContentType(contentType)
+				image := ExtractedImageData{
+					TxID:        tx.TxID,
+					Format:      format,
+					ContentType: contentType,
+					SizeBytes:   len(content),
+					FileName:    fmt.Sprintf("%s_input_%d.%s", tx.TxID[:16], inIdx, format),
+					FilePath:    fmt.Sprintf("images/%s", fmt.Sprintf("%s_input_%d.%s", tx.TxID[:16], inIdx, format)),
+					Data:        content,
+				}
+				images = append(images, image)
+				log.Printf("Found Ordinals inscription in scriptSig of tx %s input %d", tx.TxID[:16], inIdx)
 			}
 		}
 
@@ -434,24 +547,16 @@ func (p *BitcoinParser) extractImages(transactions []Transaction) []ExtractedIma
 
 				// Attempt Ordinals-style payload parse first
 				if contentType, content, ok := parseOrdinals(payload); ok {
-					format := "txt"
-					if strings.Contains(contentType, "jpeg") || strings.Contains(contentType, "jpg") {
-						format = "jpeg"
-					} else if strings.Contains(contentType, "png") {
-						format = "png"
-					} else if strings.Contains(contentType, "gif") {
-						format = "gif"
-					} else if strings.Contains(contentType, "webp") {
-						format = "webp"
-					}
+					format := formatFromContentType(contentType)
 
 					image := ExtractedImageData{
-						TxID:      tx.TxID,
-						Format:    format,
-						SizeBytes: len(content),
-						FileName:  fmt.Sprintf("%s_opret_%d_%d.%s", tx.TxID[:16], outIdx, pIdx, format),
-						FilePath:  fmt.Sprintf("images/%s", fmt.Sprintf("%s_opret_%d_%d.%s", tx.TxID[:16], outIdx, pIdx, format)),
-						Data:      content,
+						TxID:        tx.TxID,
+						Format:      format,
+						ContentType: contentType,
+						SizeBytes:   len(content),
+						FileName:    fmt.Sprintf("%s_opret_%d_%d.%s", tx.TxID[:16], outIdx, pIdx, format),
+						FilePath:    fmt.Sprintf("images/%s", fmt.Sprintf("%s_opret_%d_%d.%s", tx.TxID[:16], outIdx, pIdx, format)),
+						Data:        content,
 					}
 					images = append(images, image)
 					log.Printf("Found OP_RETURN Ordinals payload (%s) in tx %s output %d", contentType, tx.TxID[:16], outIdx)
@@ -528,63 +633,47 @@ func extractOpReturnPayloads(script []byte) [][]byte {
 }
 
 func parseOrdinals(data []byte) (string, []byte, bool) {
-	// Prefer parsing opcode pushes (works for witness and OP_RETURN scripts)
-	pushes := parsePushData(data)
-	for i := 0; i < len(pushes); i++ {
-		if bytes.Equal(pushes[i], []byte("ord")) && i+2 < len(pushes) {
-			contentType := string(pushes[i+1])
-			if !strings.Contains(contentType, "/") {
-				continue
-			}
-			content := pushes[i+2]
-			return contentType, content, true
-		}
-	}
-
-	// Fallback: legacy heuristic search inside raw bytes
-	ordIndex := bytes.Index(data, []byte("ord"))
-	if ordIndex == -1 {
+	payloads := extractOrdinalPayloads(data)
+	if len(payloads) == 0 {
 		return "", nil, false
 	}
+	return payloads[0].contentType, payloads[0].payload, true
+}
 
-	pos := ordIndex + 3
-	contentTypeStart := bytes.Index(data[pos:], []byte("image/"))
-	if contentTypeStart == -1 {
-		contentTypeStart = bytes.Index(data[pos:], []byte("text/"))
+func formatFromContentType(contentType string) string {
+	format := "txt"
+	switch {
+	case strings.Contains(contentType, "jpeg") || strings.Contains(contentType, "jpg"):
+		format = "jpeg"
+	case strings.Contains(contentType, "png"):
+		format = "png"
+	case strings.Contains(contentType, "gif"):
+		format = "gif"
+	case strings.Contains(contentType, "webp"):
+		format = "webp"
+	case strings.Contains(contentType, "avif"):
+		format = "avif"
+	case strings.Contains(contentType, "svg"):
+		format = "svg"
+	case strings.Contains(contentType, "cbrc-20"):
+		format = "brc20"
 	}
-	if contentTypeStart == -1 {
-		return "", nil, false
+	return format
+}
+
+// isLikelyMIME performs a small sanity check to avoid mistaking URLs for MIME types.
+func isLikelyMIME(s string) bool {
+	if strings.Contains(s, "://") || strings.ContainsAny(s, " \t\r\n") {
+		return false
 	}
-	contentTypeStart += pos
+	parts := strings.Split(s, "/")
+	return len(parts) == 2 && parts[0] != "" && parts[1] != ""
+}
 
-	contentTypeEnd := bytes.IndexByte(data[contentTypeStart:], 0x00)
-	if contentTypeEnd == -1 {
-		return "", nil, false
-	}
-	contentTypeEnd += contentTypeStart
-
-	contentType := string(data[contentTypeStart:contentTypeEnd])
-
-	dataStart := contentTypeEnd + 1
-	if dataStart >= len(data) {
-		return "", nil, false
-	}
-
-	if data[dataStart] == 0x4c { // OP_PUSHDATA1
-		dataStart += 2
-	} else if data[dataStart] == 0x4d { // OP_PUSHDATA2
-		dataStart += 3
-	} else if data[dataStart] == 0x4e { // OP_PUSHDATA4
-		dataStart += 5
-	} else if data[dataStart] < 0x4c { // small push
-		dataStart += 1
-	} else {
-		return "", nil, false
-	}
-
-	content := data[dataStart:]
-
-	return contentType, content, true
+// selectPayloadChunk concatenates all payload chunks in order.
+// Many inscriptions split bodies across multiple pushdatas; always join them.
+func selectPayloadChunk(chunks [][]byte) []byte {
+	return bytes.Join(chunks, []byte{})
 }
 
 func detectImage(data []byte) (string, []byte) {
@@ -619,51 +708,195 @@ func detectImage(data []byte) (string, []byte) {
 		return "webp", data
 	}
 
+	// AVIF: ISO BMFF with ftyp brand avif/avis
+	if len(data) >= 12 &&
+		data[4] == 'f' && data[5] == 't' && data[6] == 'y' && data[7] == 'p' {
+		brand := string(data[8:12])
+		if brand == "avif" || brand == "avis" {
+			return "avif", data
+		}
+	}
+
 	return "", nil
 }
 
-// parsePushData walks a script/witness blob and returns pushdata slices.
-func parsePushData(script []byte) [][]byte {
-	var pushes [][]byte
+// trimToImageSignatureLocal mirrors the API-level helper to avoid dependency cycles.
+func trimToImageSignatureLocal(b []byte) []byte {
+	if len(b) < 8 {
+		return b
+	}
+	sigs := [][]byte{
+		{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}, // PNG
+		{0xFF, 0xD8, 0xFF},       // JPEG
+		[]byte("RIFF"),           // WEBP (check WEBP marker)
+		{0x47, 0x49, 0x46, 0x38}, // GIF
+		[]byte("ftypavif"),       // AVIF
+	}
+	for _, sig := range sigs {
+		if idx := bytes.Index(b, sig); idx >= 0 {
+			if sig[0] == 'R' && len(b) >= idx+12 {
+				if !(b[idx+8] == 'W' && b[idx+9] == 'E' && b[idx+10] == 'B' && b[idx+11] == 'P') {
+					continue
+				}
+			}
+			if string(sig) == "ftypavif" {
+				if idx >= 4 {
+					return b[idx-4:]
+				}
+			}
+			return b[idx:]
+		}
+	}
+	return b
+}
+
+// dedupImage returns true if the image is new; false if we've already seen the same payload.
+func dedupImage(img *ExtractedImageData, seen map[string]bool) bool {
+	if len(img.Data) == 0 {
+		return false
+	}
+
+	// If the payload looks like an image but has leading metadata, trim to the first valid signature.
+	if strings.HasPrefix(img.ContentType, "image/") || strings.HasPrefix(img.Format, "png") || strings.HasPrefix(img.Format, "webp") || strings.HasPrefix(img.Format, "jpeg") {
+		if trimmed := trimToImageSignatureLocal(img.Data); len(trimmed) > 0 {
+			img.Data = trimmed
+			img.SizeBytes = len(trimmed)
+		}
+	}
+
+	hash := sha256.Sum256(img.Data)
+	key := fmt.Sprintf("%s|%s|%x", img.TxID, img.ContentType, hash)
+	if seen[key] {
+		return false
+	}
+	seen[key] = true
+	return true
+}
+
+// scriptOp represents a parsed script operation.
+type scriptOp struct {
+	opcode byte
+	data   []byte
+	isPush bool
+}
+
+// ordinalPayload represents a parsed Ordinals inscription inside a script.
+type ordinalPayload struct {
+	contentType string
+	payload     []byte
+}
+
+// extractOrdinalPayloads walks a script and returns all Ordinal envelopes it finds.
+func extractOrdinalPayloads(data []byte) []ordinalPayload {
+	ops := parseScriptOps(data)
+	var results []ordinalPayload
+
+	for i := 0; i < len(ops); i++ {
+		op := ops[i]
+		if !op.isPush || !bytes.Equal(op.data, []byte("ord")) {
+			continue
+		}
+
+		var contentType string
+		var chunks [][]byte
+		started := false
+
+		for j := i + 1; j < len(ops); j++ {
+			next := ops[j]
+			if !next.isPush {
+				// Stop once we hit control opcodes after payload starts (e.g., OP_ENDIF).
+				if started {
+					i = j
+					break
+				}
+				continue
+			}
+
+			if contentType == "" && isLikelyMIME(string(next.data)) {
+				contentType = string(next.data)
+				continue
+			}
+
+			if contentType != "" {
+				if len(next.data) == 0 && !started {
+					continue
+				}
+				chunks = append(chunks, next.data)
+				if len(next.data) > 0 {
+					started = true
+				}
+			}
+		}
+
+		if contentType != "" && len(chunks) > 0 {
+			payload := selectPayloadChunk(chunks)
+			results = append(results, ordinalPayload{
+				contentType: contentType,
+				payload:     payload,
+			})
+		}
+	}
+
+	return results
+}
+
+// parseScriptOps walks a script/witness blob and returns ordered operations,
+// preserving both push data and control opcodes so we can reconstruct Ord envelopes.
+func parseScriptOps(script []byte) []scriptOp {
+	var ops []scriptOp
 	i := 0
 	for i < len(script) {
 		op := script[i]
 		i++
 
-		var dataLen int
 		switch {
 		case op <= 75:
-			dataLen = int(op)
+			// Raw push of N bytes
+			dataLen := int(op)
+			if dataLen < 0 || i+dataLen > len(script) {
+				return ops
+			}
+			ops = append(ops, scriptOp{opcode: op, data: script[i : i+dataLen], isPush: true})
+			i += dataLen
 		case op == 0x4c: // OP_PUSHDATA1
 			if i >= len(script) {
-				return pushes
+				return ops
 			}
-			dataLen = int(script[i])
+			dataLen := int(script[i])
 			i++
+			if dataLen < 0 || i+dataLen > len(script) {
+				return ops
+			}
+			ops = append(ops, scriptOp{opcode: op, data: script[i : i+dataLen], isPush: true})
+			i += dataLen
 		case op == 0x4d: // OP_PUSHDATA2
 			if i+1 >= len(script) {
-				return pushes
+				return ops
 			}
-			dataLen = int(script[i]) | int(script[i+1])<<8
+			dataLen := int(script[i]) | int(script[i+1])<<8
 			i += 2
+			if dataLen < 0 || i+dataLen > len(script) {
+				return ops
+			}
+			ops = append(ops, scriptOp{opcode: op, data: script[i : i+dataLen], isPush: true})
+			i += dataLen
 		case op == 0x4e: // OP_PUSHDATA4
 			if i+3 >= len(script) {
-				return pushes
+				return ops
 			}
-			dataLen = int(script[i]) | int(script[i+1])<<8 | int(script[i+2])<<16 | int(script[i+3])<<24
+			dataLen := int(script[i]) | int(script[i+1])<<8 | int(script[i+2])<<16 | int(script[i+3])<<24
 			i += 4
+			if dataLen < 0 || i+dataLen > len(script) {
+				return ops
+			}
+			ops = append(ops, scriptOp{opcode: op, data: script[i : i+dataLen], isPush: true})
+			i += dataLen
 		default:
-			// Non-push opcode; skip
-			continue
+			// Non-push opcode (OP_IF/ENDIF/OP_1 etc)
+			ops = append(ops, scriptOp{opcode: op, isPush: false})
 		}
-
-		if dataLen < 0 || i+dataLen > len(script) {
-			return pushes
-		}
-		pushes = append(pushes, script[i:i+dataLen])
-		i += dataLen
 	}
-	return pushes
+	return ops
 }
 
 func readVarInt(reader *bytes.Reader) (uint64, error) {
