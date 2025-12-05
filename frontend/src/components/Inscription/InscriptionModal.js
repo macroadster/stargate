@@ -12,6 +12,9 @@ const InscriptionModal = ({ inscription, onClose }) => {
     !inscription.image_url?.endsWith('.txt') &&
     (inscription.image_url || inscription.thumbnail);
   const modalImageSource = isActuallyImageFile ? (inscription.thumbnail || inscription.image_url) : null;
+  const isHtmlContent = (inscription.mime_type || '').startsWith('text/html');
+  const isSvgContent = (inscription.mime_type || '') === 'image/svg+xml';
+  const sandboxSrc = inscription.image_url || inscription.thumbnail;
   
   const markdownContent = `# Steganographic Smart Contract Analysis
 
@@ -214,7 +217,28 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
 
               {activeTab === 'content' && (
                 <div className="space-y-6">
-                  {inscription.text && (
+                  {(isHtmlContent || isSvgContent) && sandboxSrc && (
+                    <div>
+                      <h4 className="text-lg font-semibold text-black dark:text-white mb-3 flex items-center gap-2">
+                        <span className="w-2 h-2 bg-indigo-500 rounded-full"></span>
+                        Sandboxed Preview
+                      </h4>
+                      <div className="rounded-lg border border-indigo-200 dark:border-indigo-700 overflow-hidden bg-gray-50 dark:bg-gray-900">
+                        <iframe
+                          title="inscription-sandbox"
+                          src={sandboxSrc}
+                          sandbox=""
+                          referrerPolicy="no-referrer"
+                          className="w-full min-h-[420px] bg-white"
+                        />
+                      </div>
+                      <div className="text-xs text-gray-600 dark:text-gray-400 mt-2">
+                        Rendered in an isolated sandbox (scripts/DOM access blocked).
+                      </div>
+                    </div>
+                  )}
+
+                  {inscription.text && !(isHtmlContent || isSvgContent) && (
                     <div>
                       <h4 className="text-lg font-semibold text-black dark:text-white mb-3 flex items-center gap-2">
                         <span className="w-2 h-2 bg-blue-500 rounded-full"></span>
