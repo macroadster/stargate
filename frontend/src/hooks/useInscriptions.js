@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { API_BASE } from '../apiBase';
+import { API_BASE, CONTENT_BASE } from '../apiBase';
 
 const generateInscriptions = (inscriptions) => {
   return inscriptions.map((insc, i) => ({
@@ -126,7 +126,11 @@ export const useInscriptions = (selectedBlock) => {
         // For text inscriptions without inline content, fetch the text payload
         if (!textContent && (image.content_type || '').startsWith('text/')) {
           try {
-            const resp = await fetch(`${API_BASE}/api/block-image/${selectedBlock.height}/${image.file_name}`);
+            let textUrl = `${CONTENT_BASE}/content/${image.tx_id || image.id}`;
+            if (typeof image.input_index === 'number') {
+              textUrl += `?witness=${image.input_index}`;
+            }
+            const resp = await fetch(textUrl);
             if (resp.ok) {
               textContent = await resp.text();
             }
@@ -146,7 +150,7 @@ export const useInscriptions = (selectedBlock) => {
           file_name: image.file_name,
           file_path: image.file_path,
           size_bytes: image.size_bytes,
-          image_url: `${API_BASE}/api/block-image/${selectedBlock.height}/${image.file_name}`,
+          image_url: `${CONTENT_BASE}/content/${image.tx_id || image.id}${typeof image.input_index === 'number' ? `?witness=${image.input_index}` : ''}`,
           metadata: {
             confidence: scanResult.confidence,
             extracted_message: scanResult.extracted_message,

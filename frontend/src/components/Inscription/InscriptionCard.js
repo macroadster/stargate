@@ -3,10 +3,16 @@ import React, { useState } from 'react';
 const InscriptionCard = ({ inscription, onClick }) => {
   const [showTextPreview, setShowTextPreview] = useState(false);
   
+  const mime = (inscription.mime_type || '').toLowerCase();
   const hasTextContent = inscription.text || inscription.metadata?.extracted_message;
   const textContent = inscription.text || inscription.metadata?.extracted_message || '';
-  const isActuallyImageFile = inscription.mime_type?.includes('image') && !inscription.image_url?.endsWith('.txt');
+  const isActuallyImageFile = mime.includes('image') && !((inscription.image_url || '').endsWith('.txt'));
+  const isTextMime = mime.startsWith('text/');
+  const isHtmlContent = mime.includes('text/html') || mime.includes('application/xhtml');
+  const isSvgContent = mime === 'image/svg+xml' || (mime.includes('svg') && mime.includes('xml'));
   const imageSource = isActuallyImageFile ? (inscription.thumbnail || inscription.image_url) : null;
+  const sandboxSrc = inscription.thumbnail || inscription.image_url;
+  const sandboxDoc = (isHtmlContent || isSvgContent) ? (inscription.text || '') : '';
 
   const handleTextPreviewToggle = (e) => {
     e.stopPropagation();
@@ -25,6 +31,17 @@ const InscriptionCard = ({ inscription, onClick }) => {
               <div className="h-full overflow-y-auto text-xs font-mono text-gray-800 dark:text-gray-200 leading-tight">
                 {textContent.length > 200 ? `${textContent.slice(0, 200)}...` : textContent}
               </div>
+            </div>
+          ) : (isHtmlContent || isSvgContent) && (sandboxSrc || sandboxDoc) ? (
+            <div className="absolute inset-0">
+              <iframe
+                title={`inscription-${inscription.id}`}
+                src={sandboxSrc || undefined}
+                srcDoc={sandboxSrc ? undefined : sandboxDoc}
+                sandbox=""
+                referrerPolicy="no-referrer"
+                className="w-full h-full border-0"
+              />
             </div>
           ) : (
             <>
@@ -123,7 +140,7 @@ const InscriptionCard = ({ inscription, onClick }) => {
               {inscription.mime_type.split('/')[1]?.toUpperCase() || 'UNKNOWN'}
             </span>
           )}
-          {hasTextContent && (
+          {isTextMime && (
             <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/60 dark:text-blue-200 text-[11px] font-semibold">
               TEXT
             </span>

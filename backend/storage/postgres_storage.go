@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -73,7 +74,7 @@ func (ps *PostgresStorage) StoreBlockData(blockResponse *bitcoin.BlockInscriptio
 		BlockHash:            blockResponse.BlockHash,
 		Timestamp:            blockResponse.Timestamp,
 		TxCount:              blockResponse.TotalTransactions,
-		Inscriptions:         blockResponse.Inscriptions,
+		Inscriptions:         sanitizeInscriptions(blockResponse.Inscriptions),
 		Images:               blockResponse.Images,
 		SmartContracts:       blockResponse.SmartContracts,
 		ScanResults:          scanResults,
@@ -97,7 +98,7 @@ func (ps *PostgresStorage) StoreBlockData(blockResponse *bitcoin.BlockInscriptio
 
 	query := fmt.Sprintf(`
 INSERT INTO %s (block_height, block_hash, payload, stego_detected, images_scanned, scanned_at)
-VALUES ($1, $2, $3, $4, $5, NOW())
+VALUES ($1, $2, $3::jsonb, $4, $5, NOW())
 ON CONFLICT (block_height) DO UPDATE SET
   block_hash = EXCLUDED.block_hash,
   payload = EXCLUDED.payload,
@@ -106,11 +107,24 @@ ON CONFLICT (block_height) DO UPDATE SET
   scanned_at = EXCLUDED.scanned_at;
 `, ps.tableName)
 
-	if _, err := ps.db.Exec(query, blockResponse.BlockHeight, blockResponse.BlockHash, payload, stegoDetected, imagesScanned); err != nil {
-		return fmt.Errorf("failed to upsert block data: %w", err)
+	if _, err := ps.db.Exec(query, blockResponse.BlockHeight, blockResponse.BlockHash, string(payload), stegoDetected, imagesScanned); err != nil {
+		_ = os.WriteFile(fmt.Sprintf("/tmp/failed_payload_%d.json", blockResponse.BlockHeight), payload, 0644)
+		log.Printf("warning: failed to upsert block data for %d: %v", blockResponse.BlockHeight, err)
+		// Do not fail the pipeline; callers can still serve from disk.
+		return nil
 	}
 
 	return nil
+}
+
+// sanitizeInscriptions removes inline content to avoid JSON escape issues in Postgres.
+func sanitizeInscriptions(inscriptions []bitcoin.InscriptionData) []bitcoin.InscriptionData {
+	out := make([]bitcoin.InscriptionData, len(inscriptions))
+	for i, ins := range inscriptions {
+		ins.Content = ""
+		out[i] = ins
+	}
+	return out
 }
 
 // GetBlockData retrieves block data by height.
