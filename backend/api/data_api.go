@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"stargate-backend/bitcoin"
@@ -29,6 +30,7 @@ type DataAPI struct {
 	bitcoinAPI   *bitcoin.BitcoinAPI
 	// simple in-memory index of tx -> block height for manifest/content lookup
 	txIndex map[string]int64
+	txMu    sync.RWMutex
 }
 
 // NewDataAPI creates a new data API instance
@@ -1170,7 +1172,7 @@ func (api *DataAPI) handleContentManifest(w http.ResponseWriter, r *http.Request
 
 // findInscriptionsByTx scans known blocks to locate a txid.
 func (api *DataAPI) findInscriptionsByTx(txid string) (int64, []bitcoin.InscriptionData, error) {
-	if height, ok := api.txIndex[txid]; ok {
+	if height, ok := api.lookupTxHeight(txid); ok {
 		if block, err := api.loadBlock(height); err == nil {
 			var hits []bitcoin.InscriptionData
 			for _, ins := range block.Inscriptions {
@@ -1197,7 +1199,9 @@ func (api *DataAPI) findInscriptionsByTx(txid string) (int64, []bitcoin.Inscript
 			}
 		}
 		if len(hits) > 0 {
+			api.txMu.Lock()
 			api.txIndex[txid] = h
+			api.txMu.Unlock()
 			return h, hits, nil
 		}
 	}
@@ -1237,10 +1241,12 @@ func (api *DataAPI) loadInscriptionContent(height int64, ins bitcoin.Inscription
 		}
 	}
 
-	// Attempt to rebuild from pushdatas; if parsing fails we keep the original.
-	if rebuilt, ok := extractPushPayload(content); ok {
-		content = rebuilt
-		mimeType = inferMime(ins.ContentType, content, ins.FileName)
+	// Attempt to rebuild from pushdatas for text-like payloads only.
+	if !strings.HasPrefix(mimeType, "image/") {
+		if rebuilt, ok := extractPushPayload(content); ok {
+			content = rebuilt
+			mimeType = inferMime(ins.ContentType, content, ins.FileName)
+		}
 	}
 
 	// If this is an image but the payload has leading garbage, trim to the first valid signature.
@@ -1582,6 +1588,7 @@ func stripNonPrintablePrefix(b []byte) []byte {
 // buildTxIndex creates a simple in-memory map from txid to block height for faster lookup.
 func (api *DataAPI) buildTxIndex() {
 	heights := api.listAvailableBlockHeights()
+	newIndex := make(map[string]int64)
 	for _, h := range heights {
 		block, err := api.loadBlock(h)
 		if err != nil {
@@ -1589,10 +1596,20 @@ func (api *DataAPI) buildTxIndex() {
 		}
 		for _, ins := range block.Inscriptions {
 			if ins.TxID != "" {
-				api.txIndex[normalizeTxID(ins.TxID)] = h
+				newIndex[normalizeTxID(ins.TxID)] = h
 			}
 		}
 	}
+	api.txMu.Lock()
+	api.txIndex = newIndex
+	api.txMu.Unlock()
+}
+
+func (api *DataAPI) lookupTxHeight(txid string) (int64, bool) {
+	api.txMu.RLock()
+	h, ok := api.txIndex[txid]
+	api.txMu.RUnlock()
+	return h, ok
 }
 
 // Helper functions
