@@ -71,12 +71,13 @@ func (s *IngestionService) Create(rec IngestionRecord) error {
 	if err != nil {
 		return err
 	}
+	metadataParam := string(metadataJSON)
 	query := fmt.Sprintf(`
 INSERT INTO %s (id, filename, method, message_length, image_base64, metadata, status)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
 ON CONFLICT (id) DO NOTHING;
 `, s.tableName)
-	_, err = s.db.Exec(query, rec.ID, rec.Filename, rec.Method, rec.MessageLength, rec.ImageBase64, metadataJSON, rec.Status)
+	_, err = s.db.Exec(query, rec.ID, rec.Filename, rec.Method, rec.MessageLength, rec.ImageBase64, metadataParam, rec.Status)
 	return err
 }
 
@@ -89,6 +90,18 @@ func (s *IngestionService) Get(id string) (*IngestionRecord, error) {
 	}
 	rec.Metadata, _ = fromJSONB(metadataRaw)
 	return &rec, nil
+}
+
+// UpdateStatusWithNote sets the status and appends a validation note into metadata.validation.
+func (s *IngestionService) UpdateStatusWithNote(id, status, note string) error {
+	query := fmt.Sprintf(`
+UPDATE %s
+SET status = $2,
+    metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('validation', $3::text)
+WHERE id = $1
+`, s.tableName)
+	_, err := s.db.Exec(query, id, status, note)
+	return err
 }
 
 // ListRecent returns recent ingestions, optionally filtered by status.

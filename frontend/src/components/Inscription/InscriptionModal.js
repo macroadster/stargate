@@ -1,11 +1,50 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { X } from 'lucide-react';
+import toast from 'react-hot-toast';
 import CopyButton from '../Common/CopyButton';
 import ConfidenceIndicator from '../Common/ConfidenceIndicator';
+import { API_BASE } from '../../apiBase';
 
 const InscriptionModal = ({ inscription, onClose }) => {
   const [activeTab, setActiveTab] = useState('overview');
   const [monoContent, setMonoContent] = useState(true);
+  const [proposalItems, setProposalItems] = useState([]);
+  const [isLoadingProposals, setIsLoadingProposals] = useState(false);
+  const [proposalError, setProposalError] = useState('');
+  const [approvingId, setApprovingId] = useState('');
+  const lastFetchedKeyRef = React.useRef('');
+  const hasFetchedRef = React.useRef(false);
+  const inscriptionMessageRaw = inscription.text || inscription.metadata?.embedded_message || inscription.metadata?.extracted_message || '';
+  const inscriptionPriceRaw = inscription.price ?? inscription.metadata?.price ?? null;
+  const inscriptionAddressRaw = inscription.address ?? inscription.metadata?.address ?? '';
+  const contractCandidates = useMemo(() => {
+    const ids = [
+      inscription.contract_id,
+      inscription.id,
+      inscription.metadata?.contract_id,
+      inscription.metadata?.ingestion_id,
+    ].filter(Boolean);
+    // de-dupe to keep stable keys
+    return Array.from(new Set(ids));
+  }, [inscription.contract_id, inscription.id, inscription.metadata?.contract_id, inscription.metadata?.ingestion_id]);
+  const contractKey = useMemo(() => contractCandidates.join('|'), [contractCandidates]);
+
+  let parsedPayload = null;
+  if (typeof inscriptionMessageRaw === 'string') {
+    try {
+      const maybe = JSON.parse(inscriptionMessageRaw);
+      if (maybe && typeof maybe === 'object') {
+        parsedPayload = maybe;
+      }
+    } catch {
+      // not json
+    }
+  }
+
+  const inscriptionMessage = parsedPayload?.message || inscriptionMessageRaw;
+  const inscriptionPrice = parsedPayload?.price ?? inscriptionPriceRaw;
+  const inscriptionAddress = parsedPayload?.address ?? inscriptionAddressRaw;
+  const textContent = inscriptionMessage || '';
   
   const isActuallyImageFile =
     inscription.mime_type?.includes('image') &&
@@ -17,6 +56,80 @@ const InscriptionModal = ({ inscription, onClose }) => {
   const isSvgContent = mime === 'image/svg+xml' || (mime.includes('svg') && mime.includes('xml'));
   const sandboxSrc = inscription.image_url || inscription.thumbnail;
   const inlineDoc = (isHtmlContent || isSvgContent) ? (inscription.text || '') : '';
+  const fetchWithTimeout = async (url, options = {}, timeoutMs = 6000) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await fetch(url, { ...options, signal: controller.signal });
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  const loadProposals = React.useCallback(async () => {
+    if (!contractCandidates.length) return;
+    // Prevent hammering the endpoint for the same contract if data is already present.
+    if (lastFetchedKeyRef.current === contractKey && hasFetchedRef.current) {
+      return;
+    }
+    lastFetchedKeyRef.current = contractKey;
+    setIsLoadingProposals(true);
+    setProposalError('');
+    try {
+      const res = await fetchWithTimeout(`${API_BASE}/mcp/v1/proposals`, {}, 6000);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      let items = (data?.proposals || []).filter((p) => {
+        const tasks = Array.isArray(p.tasks) ? p.tasks : [];
+        const suggested = Array.isArray(p.metadata?.suggested_tasks) ? p.metadata.suggested_tasks : [];
+        const hasMatchingTasks = [...tasks, ...suggested].some((t) => contractCandidates.includes(t.contract_id));
+        const idMatch = contractCandidates.includes(p.id);
+        const metaContract = p.metadata?.contract_id && contractCandidates.includes(p.metadata.contract_id);
+        const ingestMatch = p.metadata?.ingestion_id && contractCandidates.includes(p.metadata.ingestion_id);
+        return idMatch || hasMatchingTasks || metaContract || ingestMatch;
+      });
+      const approvedOnly = items.filter((p) => (p.status || '').toLowerCase() === 'approved');
+      if (approvedOnly.length > 0) {
+        items = approvedOnly;
+      }
+      setProposalItems(items);
+      if (items.length > 0) {
+        hasFetchedRef.current = true;
+      }
+    } catch (err) {
+      console.error('Failed to load proposals', err);
+      const reason = err.name === 'AbortError' ? 'timed out' : 'service unavailable';
+      setProposalError(`Unable to load proposals for this contract (${reason}).`);
+      setProposalItems([]);
+    } finally {
+      setIsLoadingProposals(false);
+    }
+  }, [contractCandidates, contractKey]);
+
+  useEffect(() => {
+    loadProposals();
+  }, [contractKey, contractCandidates, loadProposals]);
+
+  const approveProposal = async (proposalId) => {
+    if (!proposalId) return;
+    setApprovingId(proposalId);
+    setProposalError('');
+    try {
+      const res = await fetchWithTimeout(`${API_BASE}/mcp/v1/proposals/${proposalId}/approve`, { method: 'POST' }, 6000);
+      if (!res.ok) {
+        const body = await res.text();
+        throw new Error(body || `HTTP ${res.status}`);
+      }
+      await loadProposals();
+      toast.success('Proposal approved & published');
+    } catch (err) {
+      console.error('Failed to approve proposal', err);
+      setProposalError(`Approve failed: ${err.message}`);
+      toast.error('Approval failed');
+    } finally {
+      setApprovingId('');
+    }
+  };
   
   const markdownContent = `# Steganographic Smart Contract Analysis
 
@@ -102,6 +215,7 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                   {[
                     { id: 'overview', label: 'Details', icon: '📋' },
                     { id: 'content', label: 'Content', icon: '📄' },
+                    { id: 'proposals', label: 'Proposals', icon: '🗂️' },
                     { id: 'blockchain', label: 'Blockchain', icon: '⛓️' }
                   ].map((tab) => (
                     <button
@@ -117,6 +231,21 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                       {tab.label}
                     </button>
                   ))}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
+                <div className="p-3 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50">
+                  <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">Price (BTC)</div>
+                  <div className="text-sm text-gray-900 dark:text-gray-100">
+                    {inscriptionPrice !== null && inscriptionPrice !== undefined && inscriptionPrice !== '' ? inscriptionPrice : 'Not specified'}
+                  </div>
+                </div>
+                <div className="p-3 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50">
+                  <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">Wallet Address</div>
+                  <div className="text-sm text-gray-900 dark:text-gray-100 break-words">
+                    {inscriptionAddress ? inscriptionAddress : 'Not provided'}
+                  </div>
                 </div>
               </div>
 
@@ -217,6 +346,120 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                 </div>
               )}
 
+              {activeTab === 'proposals' && (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="text-lg font-semibold text-black dark:text-white">Proposals for this contract</h4>
+                      <p className="text-sm text-gray-500 dark:text-gray-400">Tasks and budgets attached to this smart contract.</p>
+                    </div>
+                  </div>
+                  {proposalError && <div className="text-sm text-red-500">{proposalError}</div>}
+                  {isLoadingProposals ? (
+                    <div className="text-sm text-gray-500 dark:text-gray-400">Loading proposals...</div>
+                  ) : proposalItems.length === 0 ? (
+                    <div className="text-sm text-gray-500 dark:text-gray-400">No proposals found for this contract.</div>
+                  ) : (
+                    proposalItems.map((p) => {
+                      const tasks = Array.isArray(p.tasks) && p.tasks.length > 0
+                        ? p.tasks
+                        : (Array.isArray(p.metadata?.suggested_tasks) ? p.metadata.suggested_tasks : []);
+                      const totalTaskBudget = tasks.reduce((sum, t) => sum + (t.budget_sats || 0), 0);
+                      // Gracefully show human text when description_md/title are JSON blobs
+                      const prettyTitle = (() => {
+                        if (typeof p.title === 'string') {
+                          try {
+                            const o = JSON.parse(p.title);
+                            if (o?.message) return o.message;
+                          } catch (_) {}
+                        }
+                        return p.title;
+                      })();
+                      const prettyDesc = (() => {
+                        if (typeof p.description_md === 'string') {
+                          try {
+                            const o = JSON.parse(p.description_md);
+                            if (o?.message) return o.message;
+                          } catch (_) {}
+                        }
+                        return p.description_md;
+                      })();
+                      return (
+                        <div key={p.id} className="border border-gray-200 dark:border-gray-700 rounded-lg p-3 bg-gray-50 dark:bg-gray-900/60">
+                          <div className="flex justify-between items-center mb-1">
+                            <h5 className="text-base font-semibold text-black dark:text-white">{prettyTitle}</h5>
+                            <span className={`text-xs px-2 py-0.5 rounded border ${
+                              (p.status || '').toLowerCase() === 'approved'
+                                ? 'bg-emerald-100 dark:bg-emerald-900/40 border-emerald-400 text-emerald-700 dark:text-emerald-200'
+                                : 'bg-gray-200 dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200'
+                            }`}>
+                              {p.status || 'pending'}
+                            </span>
+                          </div>
+                          <div className="text-xs text-gray-500 dark:text-gray-400 mb-2 break-all">ID: {p.id}</div>
+                          <div className="text-sm text-gray-800 dark:text-gray-200 whitespace-pre-line mb-3">
+                            {prettyDesc}
+                          </div>
+                          <div className="grid grid-cols-2 gap-2 text-sm text-gray-600 dark:text-gray-300 mb-3">
+                            <div>Budget: {p.budget_sats || totalTaskBudget || 0} sats</div>
+                            <div>Tasks: {tasks.length}</div>
+                            {p.visible_pixel_hash && (
+                              <div className="col-span-2 break-all text-xs text-gray-500 dark:text-gray-400">
+                                Evidence hash: {p.visible_pixel_hash}
+                              </div>
+                            )}
+                          </div>
+                          {tasks.length > 0 && (
+                            <div className="bg-gray-100 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded p-2">
+                              <div className="text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">Tasks (with status)</div>
+                              <ul className="text-sm text-gray-700 dark:text-gray-200 list-disc pl-4 space-y-1">
+                                {tasks.map((t) => {
+                                  const status = (t.status || 'pending').toLowerCase();
+                                  const statusClasses = status === 'approved'
+                                    ? 'bg-emerald-100 dark:bg-emerald-900/40 border-emerald-400 text-emerald-700 dark:text-emerald-200'
+                                    : status === 'available'
+                                      ? 'bg-blue-100 dark:bg-blue-900/40 border-blue-400 text-blue-700 dark:text-blue-200'
+                                      : 'bg-amber-100 dark:bg-amber-900/40 border-amber-400 text-amber-800 dark:text-amber-200';
+                                  return (
+                                    <li key={t.task_id || t.title} className="flex items-center gap-2 flex-wrap">
+                                      <span className="font-semibold">{t.title}</span>
+                                      {t.budget_sats ? <span className="text-gray-600 dark:text-gray-300">— {t.budget_sats} sats</span> : null}
+                                      <span className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] border ${statusClasses}`}>
+                                        {status}
+                                      </span>
+                                      {Array.isArray(t.skills || t.skills_required) && (t.skills || t.skills_required).length > 0 && (
+                                        <span className="text-[11px] text-gray-500 dark:text-gray-400">
+                                          • {(t.skills || t.skills_required).join(', ')}
+                                        </span>
+                                      )}
+                                    </li>
+                                  );
+                                })}
+                              </ul>
+                            </div>
+                          )}
+                          <div className="flex justify-end mt-3">
+                            <button
+                              onClick={() => approveProposal(p.id)}
+                              disabled={approvingId === p.id || (p.status || '').toLowerCase() === 'approved'}
+                              className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-sm disabled:opacity-60"
+                            >
+                              {approvingId === p.id
+                                ? 'Processing…'
+                                : (p.status || '').toLowerCase() === 'approved'
+                                  ? 'Published'
+                                  : tasks.every((t) => (t.status || '').toLowerCase() === 'claimed')
+                                    ? 'Publish'
+                                    : 'Approve'}
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              )}
+
               {activeTab === 'content' && (
                 <div className="space-y-6">
                   {(isHtmlContent || isSvgContent) && (sandboxSrc || inlineDoc) && (
@@ -241,7 +484,7 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                     </div>
                   )}
 
-                  {inscription.text && !(isHtmlContent || isSvgContent) && (
+                  {textContent && !(isHtmlContent || isSvgContent) && (
                     <div>
                       <h4 className="text-lg font-semibold text-black dark:text-white mb-3 flex items-center gap-2">
                         <span className="w-2 h-2 bg-blue-500 rounded-full"></span>
@@ -253,7 +496,7 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                             <span className="text-blue-600 dark:text-blue-400 text-sm">📄</span>
                             <span className="text-blue-800 dark:text-blue-200 text-sm font-medium">Inscription Text Data</span>
                           </div>
-                          <CopyButton text={inscription.text} />
+                          <CopyButton text={textContent} />
                         </div>
                         <div className="flex items-center gap-3 mb-3">
                           <label className="flex items-center gap-2 text-sm text-blue-800 dark:text-blue-200">
@@ -268,26 +511,26 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                         </div>
                         <div className="bg-white dark:bg-gray-800 rounded p-4 max-h-96 min-h-[200px] overflow-y-auto w-full">
                           <pre className={`${monoContent ? 'font-mono text-sm' : 'font-sans text-sm'} text-blue-900 dark:text-blue-100 leading-relaxed whitespace-pre-wrap break-words max-w-full`}>
-                            {inscription.text}
+                            {textContent}
                           </pre>
                         </div>
                         <div className="mt-4 pt-4 border-t border-blue-200 dark:border-blue-700">
                           <div className="grid grid-cols-3 gap-4 w-full">
                             <div className="text-center">
                               <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">
-                                {inscription.text.length}
+                                {textContent.length}
                               </div>
                               <div className="text-sm text-blue-700 dark:text-blue-300">Characters</div>
                             </div>
                             <div className="text-center">
                               <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">
-                                {inscription.text.split(' ').filter(word => word.length > 0).length}
+                                {textContent.split(' ').filter(word => word.length > 0).length}
                               </div>
                               <div className="text-sm text-blue-700 dark:text-blue-300">Words</div>
                             </div>
                             <div className="text-center">
                               <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">
-                                {inscription.text.split('\n').length}
+                                {textContent.split('\n').length}
                               </div>
                               <div className="text-sm text-blue-700 dark:text-blue-300">Lines</div>
                             </div>

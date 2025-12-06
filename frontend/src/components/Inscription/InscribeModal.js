@@ -8,6 +8,7 @@ const InscribeModal = ({ onClose, setPendingTransactions }) => {
   const [imageFile, setImageFile] = useState(null);
   const [embedText, setEmbedText] = useState('');
   const [price, setPrice] = useState('');
+  const [address, setAddress] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [paymentData, setPaymentData] = useState(null);
   const buildPlaceholderImage = () => {
@@ -16,20 +17,41 @@ const InscribeModal = ({ onClose, setPendingTransactions }) => {
     return new File([bytes], "placeholder.png", { type: "image/png" });
   };
 
+  const toBase64 = (file) => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result || '';
+      const base64 = typeof result === 'string' ? result.split(',')[1] || '' : '';
+      resolve(base64);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setIsSubmitting(true);
 
     try {
-      const formData = new FormData();
       const uploadImage = imageFile || buildPlaceholderImage();
-      formData.append('image', uploadImage);
-      formData.append('message', embedText);
-      formData.append('method', 'alpha');
+      const payload = {
+        message: embedText,
+        price,
+        address,
+        method: 'alpha',
+      };
+
+      if (uploadImage) {
+        payload.image_base64 = await toBase64(uploadImage);
+        payload.filename = uploadImage.name;
+      }
 
       const response = await fetch(`${API_BASE}/api/inscribe`, {
         method: 'POST',
-        body: formData
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
       });
 
       if (response.ok) {
@@ -109,6 +131,20 @@ const InscribeModal = ({ onClose, setPendingTransactions }) => {
               />
             </div>
 
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                Wallet Address
+              </label>
+              <input
+                type="text"
+                value={address}
+                onChange={(e) => setAddress(e.target.value)}
+                required
+                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:bg-gray-700 dark:text-white"
+                placeholder="bc1..."
+              />
+            </div>
+
             <div className="flex gap-3">
               <button
                 type="button"
@@ -169,7 +205,12 @@ const InscribeModal = ({ onClose, setPendingTransactions }) => {
                   setTimeout(() => {
                     fetch(`${API_BASE}/api/pending-transactions`)
                       .then(res => res.json())
-                      .then(data => setPendingTransactions(data || []))
+                      .then((data) => {
+                        if (typeof setPendingTransactions === 'function') {
+                          const txs = data?.data?.transactions ?? data?.transactions ?? data ?? [];
+                          setPendingTransactions(Array.isArray(txs) ? txs : []);
+                        }
+                      })
                       .catch(err => console.error('Error fetching pending transactions:', err));
                   }, 1000);
                   onClose();
