@@ -4,7 +4,6 @@ import { API_BASE } from '../../apiBase';
 
 const PendingTransactionsView = ({ setSelectedInscription }) => {
   const [pendingTxs, setPendingTxs] = useState([]);
-
   useEffect(() => {
     fetchPendingTransactions();
   }, []);
@@ -37,7 +36,7 @@ const PendingTransactionsView = ({ setSelectedInscription }) => {
         reputation: 'Pending',
         isActive: false,
         number: parseInt(tx.id.split('_')[1]) || 0,
-        address: 'bc1q...pending',
+        address: tx.address || 'bc1q...pending',
         genesis_block_height: tx.blockHeight || 0,
         mime_type: imageUrl ? 'image/png' : 'text/plain',
         text: tx.text,
@@ -80,6 +79,7 @@ const PendingTransactionsView = ({ setSelectedInscription }) => {
           No pending transactions
         </div>
       )}
+
     </div>
   );
 };

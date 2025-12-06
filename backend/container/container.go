@@ -7,6 +7,7 @@ import (
 	"stargate-backend/handlers"
 	"stargate-backend/services"
 	"stargate-backend/storage"
+	"time"
 )
 
 // Container holds all application dependencies
@@ -58,11 +59,7 @@ func NewContainer() *Container {
 	healthService := services.NewHealthService()
 	var ingestionService *services.IngestionService
 	if pgDSN != "" {
-		if svc, err := services.NewIngestionService(pgDSN); err != nil {
-			log.Printf("failed to init ingestion service (postgres): %v", err)
-		} else {
-			ingestionService = svc
-		}
+		ingestionService = initIngestionService(pgDSN)
 	} else {
 		log.Printf("ingestion service disabled: STARGATE_PG_DSN not set")
 	}
@@ -113,4 +110,19 @@ func NewContainer() *Container {
 		ProxyHandler:         proxyHandler,
 		IngestionHandler:     ingestionHandler,
 	}
+}
+
+// initIngestionService retries connecting to Postgres a few times to avoid startup races.
+func initIngestionService(pgDSN string) *services.IngestionService {
+	const maxAttempts = 5
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		if svc, err := services.NewIngestionService(pgDSN); err == nil {
+			return svc
+		} else {
+			log.Printf("failed to init ingestion service (attempt %d/%d): %v", attempt, maxAttempts, err)
+		}
+		time.Sleep(time.Duration(attempt) * time.Second)
+	}
+	log.Printf("ingestion service disabled after retries")
+	return nil
 }

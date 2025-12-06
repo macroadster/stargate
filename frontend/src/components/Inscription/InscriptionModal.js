@@ -5,6 +5,12 @@ import CopyButton from '../Common/CopyButton';
 import ConfidenceIndicator from '../Common/ConfidenceIndicator';
 import { API_BASE } from '../../apiBase';
 
+// Determines whether the proposal action (Approve/Publish) should be shown.
+export const shouldShowProposalAction = (status) => {
+  const s = (status || '').toLowerCase();
+  return !(s === 'rejected' || s === 'published');
+};
+
 const InscriptionModal = ({ inscription, onClose }) => {
   const [activeTab, setActiveTab] = useState('overview');
   const [monoContent, setMonoContent] = useState(true);
@@ -12,20 +18,31 @@ const InscriptionModal = ({ inscription, onClose }) => {
   const [isLoadingProposals, setIsLoadingProposals] = useState(false);
   const [proposalError, setProposalError] = useState('');
   const [approvingId, setApprovingId] = useState('');
+  const [submissions, setSubmissions] = useState({});
   const lastFetchedKeyRef = React.useRef('');
   const hasFetchedRef = React.useRef(false);
+  const refreshIntervalRef = React.useRef(null);
   const inscriptionMessageRaw = inscription.text || inscription.metadata?.embedded_message || inscription.metadata?.extracted_message || '';
   const inscriptionPriceRaw = inscription.price ?? inscription.metadata?.price ?? null;
   const inscriptionAddressRaw = inscription.address ?? inscription.metadata?.address ?? '';
   const contractCandidates = useMemo(() => {
-    const ids = [
+    const rawIds = [
       inscription.contract_id,
       inscription.id,
       inscription.metadata?.contract_id,
       inscription.metadata?.ingestion_id,
     ].filter(Boolean);
-    // de-dupe to keep stable keys
-    return Array.from(new Set(ids));
+    const expanded = new Set();
+    rawIds.forEach((id) => {
+      expanded.add(id);
+      // Consider prefixed/unprefixed wish-* variants so proposals line up with inscription IDs.
+      if (id.startsWith('wish-')) {
+        expanded.add(id.replace(/^wish-/, ''));
+      } else {
+        expanded.add(`wish-${id}`);
+      }
+    });
+    return Array.from(expanded);
   }, [inscription.contract_id, inscription.id, inscription.metadata?.contract_id, inscription.metadata?.ingestion_id]);
   const contractKey = useMemo(() => contractCandidates.join('|'), [contractCandidates]);
 
@@ -68,10 +85,6 @@ const InscriptionModal = ({ inscription, onClose }) => {
 
   const loadProposals = React.useCallback(async () => {
     if (!contractCandidates.length) return;
-    // Prevent hammering the endpoint for the same contract if data is already present.
-    if (lastFetchedKeyRef.current === contractKey && hasFetchedRef.current) {
-      return;
-    }
     lastFetchedKeyRef.current = contractKey;
     setIsLoadingProposals(true);
     setProposalError('');
@@ -88,10 +101,23 @@ const InscriptionModal = ({ inscription, onClose }) => {
         const ingestMatch = p.metadata?.ingestion_id && contractCandidates.includes(p.metadata.ingestion_id);
         return idMatch || hasMatchingTasks || metaContract || ingestMatch;
       });
-      const approvedOnly = items.filter((p) => (p.status || '').toLowerCase() === 'approved');
-      if (approvedOnly.length > 0) {
-        items = approvedOnly;
-      }
+      const submissionsByKey = {};
+      (data?.submissions || []).forEach((s) => {
+        const key = s.task_id || s.claim_id;
+        if (key) {
+          submissionsByKey[key] = s;
+        }
+      });
+      setSubmissions(submissionsByKey);
+      // Sort approved first, then pending/others, preserving matches
+      items = items.sort((a, b) => {
+        const sa = (a.status || '').toLowerCase();
+        const sb = (b.status || '').toLowerCase();
+        if (sa === sb) return 0;
+        if (sa === 'approved') return -1;
+        if (sb === 'approved') return 1;
+        return 0;
+      });
       setProposalItems(items);
       if (items.length > 0) {
         hasFetchedRef.current = true;
@@ -108,20 +134,30 @@ const InscriptionModal = ({ inscription, onClose }) => {
 
   useEffect(() => {
     loadProposals();
+    // Poll every 30s for live status updates.
+    refreshIntervalRef.current = setInterval(() => {
+      loadProposals();
+    }, 30000);
+    return () => {
+      if (refreshIntervalRef.current) {
+        clearInterval(refreshIntervalRef.current);
+      }
+    };
   }, [contractKey, contractCandidates, loadProposals]);
 
-  const approveProposal = async (proposalId) => {
+  const approveProposal = async (proposalId, isPublish = false) => {
     if (!proposalId) return;
     setApprovingId(proposalId);
     setProposalError('');
     try {
-      const res = await fetchWithTimeout(`${API_BASE}/mcp/v1/proposals/${proposalId}/approve`, { method: 'POST' }, 6000);
+      const endpoint = isPublish ? 'publish' : 'approve';
+      const res = await fetchWithTimeout(`${API_BASE}/mcp/v1/proposals/${proposalId}/${endpoint}`, { method: 'POST' }, 6000);
       if (!res.ok) {
         const body = await res.text();
         throw new Error(body || `HTTP ${res.status}`);
       }
       await loadProposals();
-      toast.success('Proposal approved & published');
+      toast.success(isPublish ? 'Proposal published' : 'Proposal approved & published');
     } catch (err) {
       console.error('Failed to approve proposal', err);
       setProposalError(`Approve failed: ${err.message}`);
@@ -348,11 +384,19 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
 
               {activeTab === 'proposals' && (
                 <div className="space-y-4">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
                     <div>
                       <h4 className="text-lg font-semibold text-black dark:text-white">Proposals for this contract</h4>
                       <p className="text-sm text-gray-500 dark:text-gray-400">Tasks and budgets attached to this smart contract.</p>
                     </div>
+                    <button
+                      onClick={loadProposals}
+                      disabled={isLoadingProposals}
+                      className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-full border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-60"
+                    >
+                      <span className="text-xs">↻</span>
+                      {isLoadingProposals ? 'Refreshing…' : 'Refresh'}
+                    </button>
                   </div>
                   {proposalError && <div className="text-sm text-red-500">{proposalError}</div>}
                   {isLoadingProposals ? (
@@ -420,6 +464,7 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                                     : status === 'available'
                                       ? 'bg-blue-100 dark:bg-blue-900/40 border-blue-400 text-blue-700 dark:text-blue-200'
                                       : 'bg-amber-100 dark:bg-amber-900/40 border-amber-400 text-amber-800 dark:text-amber-200';
+                                  const submission = submissions[t.task_id] || (t.active_claim_id ? submissions[t.active_claim_id] : null);
                                   return (
                                     <li key={t.task_id || t.title} className="flex items-center gap-2 flex-wrap">
                                       <span className="font-semibold">{t.title}</span>
@@ -432,6 +477,11 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                                           • {(t.skills || t.skills_required).join(', ')}
                                         </span>
                                       )}
+                                      {submission && (
+                                        <span className="text-[11px] text-emerald-600 dark:text-emerald-300">
+                                          • submission: {submission.status || 'pending'} {submission.completion_proof?.link ? `(${submission.completion_proof.link})` : ''}
+                                        </span>
+                                      )}
                                     </li>
                                   );
                                 })}
@@ -439,19 +489,37 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                             </div>
                           )}
                           <div className="flex justify-end mt-3">
+                            {(() => {
+                              const statusLower = (p.status || '').toLowerCase();
+                              const hideAction = !shouldShowProposalAction(p.status);
+                              if (hideAction) {
+                                return null;
+                              }
+                              const statusForTask = (t) => (t.status || '').toLowerCase();
+                              const allFinal = tasks.length > 0 && tasks.every((t) => ['approved', 'published', 'completed'].includes(statusForTask(t)));
+                              const publishReady = statusLower === 'approved' && tasks.length > 0 &&
+                                tasks.every((t) => ['claimed', 'submitted', 'pending_review', 'approved', 'published', 'completed'].includes(statusForTask(t)));
+                              const isPublished = statusLower === 'approved' && allFinal;
+                              const buttonLabel = approvingId === p.id
+                                ? 'Processing…'
+                                : isPublished
+                                  ? 'Published'
+                                  : publishReady
+                                    ? 'Publish'
+                                    : statusLower === 'approved'
+                                      ? 'Publish'
+                                      : 'Approve';
+
+                              return (
                             <button
-                              onClick={() => approveProposal(p.id)}
-                              disabled={approvingId === p.id || (p.status || '').toLowerCase() === 'approved'}
+                              onClick={() => approveProposal(p.id, statusLower === 'approved')}
+                              disabled={approvingId === p.id || isPublished}
                               className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-sm disabled:opacity-60"
                             >
-                              {approvingId === p.id
-                                ? 'Processing…'
-                                : (p.status || '').toLowerCase() === 'approved'
-                                  ? 'Published'
-                                  : tasks.every((t) => (t.status || '').toLowerCase() === 'claimed')
-                                    ? 'Publish'
-                                    : 'Approve'}
+                              {buttonLabel}
                             </button>
+                              );
+                            })()}
                           </div>
                         </div>
                       );

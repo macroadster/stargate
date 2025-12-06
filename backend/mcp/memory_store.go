@@ -1,0 +1,472 @@
+package mcp
+
+import (
+	"context"
+	"fmt"
+	"slices"
+	"strings"
+	"sync"
+	"time"
+)
+
+// MemoryStore holds in-memory MCP data. It is intentionally simple for the MVP and can be swapped for persistent storage later.
+type MemoryStore struct {
+	mu          sync.RWMutex
+	contracts   map[string]Contract
+	tasks       map[string]Task
+	claims      map[string]Claim
+	submissions map[string]Submission
+	proposals   map[string]Proposal
+	claimTTL    time.Duration
+}
+
+// NewMemoryStore seeds fixtures and returns a MemoryStore.
+func NewMemoryStore(claimTTL time.Duration) *MemoryStore {
+	contracts, tasks := SeedData()
+	cMap := make(map[string]Contract, len(contracts))
+	for _, c := range contracts {
+		cMap[c.ContractID] = c
+	}
+	tMap := make(map[string]Task, len(tasks))
+	for _, t := range tasks {
+		tMap[t.TaskID] = t
+	}
+	return &MemoryStore{
+		contracts:   cMap,
+		tasks:       tMap,
+		claims:      make(map[string]Claim),
+		submissions: make(map[string]Submission),
+		proposals:   make(map[string]Proposal),
+		claimTTL:    claimTTL,
+	}
+}
+
+func containsSkill(all []string, skills []string) bool {
+	for _, want := range skills {
+		if slices.ContainsFunc(all, func(s string) bool { return strings.EqualFold(s, want) }) {
+			return true
+		}
+	}
+	return len(skills) == 0
+}
+
+func proposalHasSkills(p Proposal, skills []string) bool {
+	if len(skills) == 0 {
+		return true
+	}
+	for _, t := range p.Tasks {
+		if containsSkill(t.Skills, skills) {
+			return true
+		}
+	}
+	return false
+}
+
+// ListContracts returns all contracts filtered by status and skill.
+func (s *MemoryStore) ListContracts(status string, skills []string) ([]Contract, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]Contract, 0, len(s.contracts))
+	for _, c := range s.contracts {
+		if status != "" && !strings.EqualFold(status, c.Status) {
+			continue
+		}
+		if len(skills) > 0 && !containsSkill(c.Skills, skills) {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out, nil
+}
+
+// ListTasks returns tasks filtered by a TaskFilter.
+func (s *MemoryStore) ListTasks(filter TaskFilter) ([]Task, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	out := make([]Task, 0, len(s.tasks))
+	for _, t := range s.tasks {
+		if filter.Status != "" && !strings.EqualFold(filter.Status, t.Status) {
+			continue
+		}
+		if filter.ContractID != "" && !strings.EqualFold(filter.ContractID, t.ContractID) {
+			continue
+		}
+		if filter.ClaimedBy != "" && !strings.EqualFold(filter.ClaimedBy, t.ClaimedBy) {
+			continue
+		}
+		if len(filter.Skills) > 0 && !containsSkill(t.Skills, filter.Skills) {
+			continue
+		}
+		if filter.MinBudgetSats > 0 && t.BudgetSats < filter.MinBudgetSats {
+			continue
+		}
+		out = append(out, t)
+	}
+
+	start := filter.Offset
+	if start < 0 {
+		start = 0
+	}
+	end := start + filter.Limit
+	if filter.Limit == 0 || end > len(out) {
+		end = len(out)
+	}
+	return out[start:end], nil
+}
+
+// GetTask returns a task by ID.
+func (s *MemoryStore) GetTask(id string) (Task, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	t, ok := s.tasks[id]
+	if !ok {
+		return Task{}, ErrTaskNotFound
+	}
+	return t, nil
+}
+
+// GetContract returns a contract by ID.
+func (s *MemoryStore) GetContract(id string) (Contract, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	c, ok := s.contracts[id]
+	if !ok {
+		return Contract{}, fmt.Errorf("contract %s not found", id)
+	}
+	return c, nil
+}
+
+// ClaimTask reserves a task for an AI. It is idempotent if the same AI reclaims before expiry.
+func (s *MemoryStore) ClaimTask(taskID, aiID string, estimatedCompletion *time.Time) (Claim, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	task, ok := s.tasks[taskID]
+	if !ok {
+		return Claim{}, ErrTaskNotFound
+	}
+
+	// Existing claim?
+	for _, c := range s.claims {
+		if c.TaskID == taskID {
+			if c.AiIdentifier == aiID && c.Status == "active" && time.Now().Before(c.ExpiresAt) {
+				return c, nil
+			}
+			if c.Status == "active" && time.Now().Before(c.ExpiresAt) {
+				return Claim{}, ErrTaskTaken
+			}
+		}
+	}
+
+	claimID := fmt.Sprintf("CLAIM-%d", time.Now().UnixNano())
+	expires := time.Now().Add(s.claimTTL)
+	claim := Claim{
+		ClaimID:      claimID,
+		TaskID:       taskID,
+		AiIdentifier: aiID,
+		Status:       "active",
+		ExpiresAt:    expires,
+		CreatedAt:    time.Now(),
+	}
+	task.Status = "claimed"
+	task.ClaimedBy = aiID
+	task.ClaimedAt = &claim.CreatedAt
+	task.ClaimExpires = &expires
+	task.ActiveClaimID = claimID
+
+	s.claims[claimID] = claim
+	s.tasks[taskID] = task
+
+	_ = estimatedCompletion // placeholder until persisted in model
+	return claim, nil
+}
+
+// SubmitWork records a submission for a claim.
+func (s *MemoryStore) SubmitWork(claimID string, deliverables map[string]interface{}, proof map[string]interface{}) (Submission, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	claim, ok := s.claims[claimID]
+	if !ok {
+		return Submission{}, ErrClaimNotFound
+	}
+	if claim.Status != "active" {
+		return Submission{}, fmt.Errorf("claim %s not active", claimID)
+	}
+	if time.Now().After(claim.ExpiresAt) {
+		claim.Status = "expired"
+		s.claims[claimID] = claim
+		return Submission{}, fmt.Errorf("claim %s expired", claimID)
+	}
+
+	subID := fmt.Sprintf("SUB-%d", time.Now().UnixNano())
+	sub := Submission{
+		SubmissionID:    subID,
+		ClaimID:         claimID,
+		Status:          "pending_review",
+		Deliverables:    deliverables,
+		CompletionProof: proof,
+		CreatedAt:       time.Now(),
+	}
+	s.submissions[subID] = sub
+
+	// Update task/claim state to submitted.
+	task := s.tasks[claim.TaskID]
+	task.Status = "submitted"
+	task.ActiveClaimID = claimID
+	s.tasks[claim.TaskID] = task
+
+	claim.Status = "submitted"
+	s.claims[claimID] = claim
+
+	return sub, nil
+}
+
+// ListSubmissions returns submissions for the provided task IDs.
+func (s *MemoryStore) ListSubmissions(ctx context.Context, taskIDs []string) ([]Submission, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if len(taskIDs) == 0 {
+		return nil, nil
+	}
+	taskSet := make(map[string]struct{}, len(taskIDs))
+	for _, id := range taskIDs {
+		taskSet[id] = struct{}{}
+	}
+	out := make([]Submission, 0)
+	for _, sub := range s.submissions {
+		if claim, ok := s.claims[sub.ClaimID]; ok {
+			if _, hit := taskSet[claim.TaskID]; hit {
+				sub.TaskID = claim.TaskID
+				out = append(out, sub)
+			}
+		}
+	}
+	return out, nil
+}
+
+// TaskStatus returns task status, including claim info if present.
+func (s *MemoryStore) TaskStatus(taskID string) (map[string]interface{}, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	task, ok := s.tasks[taskID]
+	if !ok {
+		return nil, ErrTaskNotFound
+	}
+
+	var claim *Claim
+	for _, c := range s.claims {
+		if c.TaskID == taskID {
+			// pick active/most recent
+			cc := c
+			claim = &cc
+			break
+		}
+	}
+
+	resp := map[string]interface{}{
+		"task_id":           task.TaskID,
+		"status":            task.Status,
+		"claimed_by":        task.ClaimedBy,
+		"claim_expires_at":  task.ClaimExpires,
+		"claimed_at":        task.ClaimedAt,
+		"time_remaining_hr": nil,
+	}
+	if claim != nil {
+		final := strings.EqualFold(task.Status, "published") || strings.EqualFold(task.Status, "approved") || strings.EqualFold(task.Status, "completed")
+		remaining := time.Until(claim.ExpiresAt).Hours()
+		resp["time_remaining_hr"] = remaining
+		resp["claim_id"] = claim.ClaimID
+		switch strings.ToLower(claim.Status) {
+		case "submitted", "pending_review":
+			if !final {
+				resp["status"] = "submitted"
+			}
+		case "active":
+			if !final && (task.Status == "" || strings.EqualFold(task.Status, "available") || strings.EqualFold(task.Status, "approved")) {
+				resp["status"] = "claimed"
+			}
+		case "complete":
+			resp["status"] = "approved"
+		}
+	}
+	return resp, nil
+}
+
+// GetTaskProof returns the Merkle proof for a task.
+func (s *MemoryStore) GetTaskProof(taskID string) (*MerkleProof, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	task, ok := s.tasks[taskID]
+	if !ok {
+		return nil, ErrTaskNotFound
+	}
+	return task.MerkleProof, nil
+}
+
+// ContractFunding returns the contract and any proofs of funding (mocked for MVP).
+func (s *MemoryStore) ContractFunding(contractID string) (Contract, []MerkleProof, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	contract, ok := s.contracts[contractID]
+	if !ok {
+		return Contract{}, nil, fmt.Errorf("contract %s not found", contractID)
+	}
+	proofs := []MerkleProof{}
+	for _, t := range s.tasks {
+		if t.ContractID == contractID && t.MerkleProof != nil {
+			proofs = append(proofs, *t.MerkleProof)
+		}
+	}
+	return contract, proofs, nil
+}
+
+// Close implements Store; nothing to close for memory.
+func (s *MemoryStore) Close() {}
+
+// UpdateTaskProof replaces the merkle_proof for a task in memory.
+func (s *MemoryStore) UpdateTaskProof(ctx context.Context, taskID string, proof *MerkleProof) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.tasks[taskID]
+	if !ok {
+		return ErrTaskNotFound
+	}
+	t.MerkleProof = proof
+	s.tasks[taskID] = t
+	return nil
+}
+
+// Proposal operations (memory, for testing).
+func (s *MemoryStore) CreateProposal(ctx context.Context, p Proposal) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.proposals[p.ID] = p
+	return nil
+}
+
+func (s *MemoryStore) ListProposals(ctx context.Context, filter ProposalFilter) ([]Proposal, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []Proposal
+	for _, p := range s.proposals {
+		if filter.Status != "" && !strings.EqualFold(filter.Status, p.Status) {
+			continue
+		}
+		if filter.ContractID != "" {
+			contractID := p.Metadata["contract_id"]
+			if contractID == nil {
+				contractID = p.Metadata["ingestion_id"]
+			}
+			cid, _ := contractID.(string)
+			if cid == "" {
+				cid = p.ID
+			}
+			if cid != filter.ContractID {
+				continue
+			}
+		}
+		if filter.MinBudget > 0 && p.BudgetSats < filter.MinBudget {
+			continue
+		}
+		if len(filter.Skills) > 0 && !proposalHasSkills(p, filter.Skills) {
+			continue
+		}
+		out = append(out, p)
+	}
+	if filter.Offset > 0 && filter.Offset < len(out) {
+		out = out[filter.Offset:]
+	}
+	if filter.MaxResults > 0 && filter.MaxResults < len(out) {
+		out = out[:filter.MaxResults]
+	}
+	return out, nil
+}
+
+func (s *MemoryStore) GetProposal(ctx context.Context, id string) (Proposal, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	p, ok := s.proposals[id]
+	if !ok {
+		return Proposal{}, fmt.Errorf("proposal %s not found", id)
+	}
+	return p, nil
+}
+
+func (s *MemoryStore) ApproveProposal(ctx context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, ok := s.proposals[id]
+	if !ok {
+		return fmt.Errorf("proposal %s not found", id)
+	}
+	// Reject if another proposal is already approved/published for the same contract.
+	contractID := contractIDFromMeta(p.Metadata, id)
+	for pid, other := range s.proposals {
+		if pid == id {
+			continue
+		}
+		otherCID := contractIDFromMeta(other.Metadata, other.ID)
+		if otherCID == contractID && (strings.EqualFold(other.Status, "approved") || strings.EqualFold(other.Status, "published")) {
+			return fmt.Errorf("another proposal is already approved/published for contract %s", contractID)
+		}
+	}
+	// Auto-reject other pending proposals for this contract.
+	for pid, other := range s.proposals {
+		if pid == id {
+			continue
+		}
+		otherCID := contractIDFromMeta(other.Metadata, other.ID)
+		if otherCID == contractID && strings.EqualFold(other.Status, "pending") {
+			other.Status = "rejected"
+			s.proposals[pid] = other
+		}
+	}
+	p.Status = "approved"
+	for i, t := range s.tasks {
+		if t.ContractID == contractID {
+			t.Status = "approved"
+			s.tasks[i] = t
+		}
+	}
+	s.proposals[id] = p
+	return nil
+}
+
+// PublishProposal marks tasks as published for the proposal's contract.
+func (s *MemoryStore) PublishProposal(ctx context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, ok := s.proposals[id]
+	if !ok {
+		return fmt.Errorf("proposal %s not found", id)
+	}
+	if !strings.EqualFold(p.Status, "approved") && !strings.EqualFold(p.Status, "published") {
+		return fmt.Errorf("proposal %s must be approved before publish", id)
+	}
+	contractID := contractIDFromMeta(p.Metadata, id)
+	for i, t := range s.tasks {
+		if t.ContractID == contractID {
+			switch strings.ToLower(t.Status) {
+			case "submitted", "pending_review", "claimed", "approved":
+				t.Status = "published"
+				s.tasks[i] = t
+			}
+		}
+	}
+	for id, c := range s.claims {
+		task, ok := s.tasks[c.TaskID]
+		if !ok || task.ContractID != contractID {
+			continue
+		}
+		if strings.EqualFold(c.Status, "submitted") || strings.EqualFold(c.Status, "pending_review") || strings.EqualFold(c.Status, "active") || strings.EqualFold(c.Status, "approved") {
+			c.Status = "complete"
+			s.claims[id] = c
+		}
+	}
+	p.Status = "published"
+	s.proposals[id] = p
+	return nil
+}

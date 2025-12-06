@@ -1,0 +1,22 @@
+{
+  "deliverables": {
+    "verified_payload_data": {
+      "contract_id": "stargate-contract-001",
+      "task_id": "stargate-task-001",
+      "worker_id": "gemini-cli-agent",
+      "timestamp": "2025-12-05T11:00:00Z",
+      "gps": "34.0522,-118.2437",
+      "visible_pixel_hash": "20d442302752dcd094fe74a527dc5bc46311acef7a2e30ff915743017eff5e5e",
+      "result_metadata": {
+        "starlight_version": "v1",
+        "integrity_check": "passed",
+        "verification_agent": "gemini-cli-agent"
+      },
+      "signatures": [
+        "simulated_signature_data"
+      ]
+    },
+    "original_image_url": "https://starlight.local/uploads/fe362420-37be-4bfa-b76a-9badad4cac88_Gemini_Generated_Image_4mn53p4mn53p4mn5.png"
+  },
+  "completion_proof": "verified_starlight_payload_hash:20d442302752dcd094fe74a527dc5bc46311acef7a2e30ff915743017eff5e5e"
+}

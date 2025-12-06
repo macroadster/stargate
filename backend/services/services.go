@@ -109,6 +109,7 @@ func (s *InscriptionService) CreateInscription(req models.InscribeRequest, file 
 		ImageData: imagePath,
 		Text:      req.Text,
 		Price:     price,
+		Address:   req.Address,
 		Timestamp: timestamp,
 		ID:        fmt.Sprintf("pending_%d", timestamp),
 		Status:    "pending",

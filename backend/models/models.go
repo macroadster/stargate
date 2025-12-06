@@ -5,6 +5,7 @@ type InscriptionRequest struct {
 	ImageData string  `json:"imageData"`
 	Text      string  `json:"text"`
 	Price     float64 `json:"price"`
+	Address   string  `json:"address,omitempty"`
 	Timestamp int64   `json:"timestamp"`
 	ID        string  `json:"id"`
 	Status    string  `json:"status"`
@@ -94,8 +95,9 @@ type CreateContractRequest struct {
 
 // InscribeRequest represents inscription request
 type InscribeRequest struct {
-	Text  string `json:"text"`
-	Price string `json:"price"`
+	Text    string `json:"text"`
+	Price   string `json:"price"`
+	Address string `json:"address,omitempty"`
 }
 
 // SearchRequest represents search request

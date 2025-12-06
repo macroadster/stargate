@@ -177,33 +177,107 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 	}
 
 	// Parse multipart form
-	if err := r.ParseMultipartForm(32 << 20); err != nil {
-		h.sendError(w, http.StatusBadRequest, "Failed to parse form")
-		return
+	contentType := r.Header.Get("Content-Type")
+	bodyBytes, _ := io.ReadAll(r.Body)
+	defer r.Body.Close()
+	isJSON := strings.HasPrefix(contentType, "application/json") || strings.HasPrefix(contentType, "application/json;") || (len(bodyBytes) > 0 && strings.TrimSpace(string(bodyBytes))[0] == '{')
+
+	var (
+		text        string
+		method      string
+		price       string
+		address     string
+		filename    string
+		imgBytes    []byte
+		imageErr    error
+		imageReader io.ReadCloser
+	)
+
+	if isJSON {
+		var payload struct {
+			Message     string `json:"message"`
+			Text        string `json:"text"`
+			Method      string `json:"method"`
+			Price       string `json:"price"`
+			Address     string `json:"address"`
+			ImageBase64 string `json:"image_base64"`
+			Filename    string `json:"filename"`
+		}
+		if err := json.Unmarshal(bodyBytes, &payload); err != nil {
+			h.sendError(w, http.StatusBadRequest, "Invalid JSON")
+			return
+		}
+		text = payload.Message
+		if text == "" {
+			text = payload.Text
+		}
+		method = payload.Method
+		price = payload.Price
+		address = payload.Address
+		filename = payload.Filename
+		if method == "" {
+			method = "alpha"
+		}
+		if payload.ImageBase64 != "" {
+			imgBytes, imageErr = base64.StdEncoding.DecodeString(payload.ImageBase64)
+			if imageErr != nil {
+				h.sendError(w, http.StatusBadRequest, "Invalid base64 image")
+				return
+			}
+		}
+	} else {
+		// Reset the body for multipart parsing
+		r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		if err := r.ParseMultipartForm(32 << 20); err != nil {
+			h.sendError(w, http.StatusBadRequest, "Failed to parse form")
+			return
+		}
+
+		text = r.FormValue("text")
+		if text == "" {
+			text = r.FormValue("message")
+		}
+		method = r.FormValue("method")
+		if method == "" {
+			method = "alpha"
+		}
+		price = r.FormValue("price")
+		address = r.FormValue("address")
+
+		// Get file (optional)
+		file, header, err := r.FormFile("image")
+		if err != nil && err != http.ErrMissingFile {
+			h.sendError(w, http.StatusBadRequest, "Error processing image file")
+			return
+		}
+		if err == nil {
+			imageReader = file
+			filename = header.Filename
+		}
 	}
 
-	// Get form values
-	text := r.FormValue("text")
 	if text == "" {
-		text = r.FormValue("message")
-	}
-	method := r.FormValue("method")
-	if method == "" {
-		method = "alpha"
-	}
-
-	// Get file (optional)
-	var file io.ReadCloser
-	var filename string
-
-	file, header, err := r.FormFile("image")
-	if err != nil && err != http.ErrMissingFile {
-		h.sendError(w, http.StatusBadRequest, "Error processing image file")
+		h.sendError(w, http.StatusBadRequest, "Message is required for inscription")
 		return
 	}
-	if err == nil {
-		defer file.Close()
-		filename = header.Filename
+
+	if imageErr != nil {
+		h.sendError(w, http.StatusBadRequest, "Invalid image data")
+		return
+	}
+
+	if price == "" {
+		price = "0"
+	}
+
+	// Slurp image bytes from multipart file if present
+	if imageReader != nil {
+		defer imageReader.Close()
+		if b, err := io.ReadAll(imageReader); err == nil {
+			imgBytes = b
+		} else {
+			imageErr = err
+		}
 	}
 
 	// Proxy to starlight /inscribe to avoid direct frontend → Python exposure
@@ -212,10 +286,6 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 		writer := multipart.NewWriter(&buf)
 
 		// File part (required by starlight)
-		var imgBytes []byte
-		if file != nil {
-			imgBytes, _ = io.ReadAll(file)
-		}
 		if len(imgBytes) == 0 {
 			imgBytes = placeholderPNG()
 			if filename == "" {
@@ -225,8 +295,17 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 		part, _ := writer.CreateFormFile("image", filename)
 		part.Write(imgBytes)
 
-		// Text & method
-		writer.WriteField("message", text)
+		// Text & method (embed message, price, address as JSON string)
+		embedPayload := map[string]string{
+			"message": text,
+			"price":   price,
+			"address": address,
+		}
+		if msgJSON, err := json.Marshal(embedPayload); err == nil {
+			writer.WriteField("message", string(msgJSON))
+		} else {
+			writer.WriteField("message", text)
+		}
 		writer.WriteField("method", method)
 		writer.Close()
 
@@ -256,14 +335,51 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 
 	// Fallback to legacy local inscription creation
 	req := models.InscribeRequest{
-		Text:  text,
-		Price: "0",
+		Text:    text,
+		Price:   price,
+		Address: address,
 	}
-	inscription, err := h.inscriptionService.CreateInscription(req, io.NopCloser(bytes.NewReader(placeholderPNG())), "placeholder.png")
+	fallbackBytes := imgBytes
+	if len(fallbackBytes) == 0 {
+		fallbackBytes = placeholderPNG()
+		if filename == "" {
+			filename = "placeholder.png"
+		}
+	}
+
+	inscription, err := h.inscriptionService.CreateInscription(req, io.NopCloser(bytes.NewReader(fallbackBytes)), filename)
 	if err != nil {
 		h.sendError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to create inscription: %v", err))
 		return
 	}
+
+	// Auto-create ingestion record for MCP sync so proposals are generated.
+	if h.ingestionService != nil {
+		imgB64 := base64.StdEncoding.EncodeToString(fallbackBytes)
+		meta := map[string]interface{}{
+			"embedded_message": text,
+			"message":          text,
+			"price":            price,
+			"address":          address,
+			"ingestion_id":     inscription.ID,
+		}
+		ingRec := services.IngestionRecord{
+			ID:            inscription.ID,
+			Filename:      filename,
+			Method:        method,
+			MessageLength: len(text),
+			ImageBase64:   imgB64,
+			Metadata:      meta,
+			Status:        "pending",
+		}
+		if ingRec.Filename == "" {
+			ingRec.Filename = "inscription.png"
+		}
+		if err := h.ingestionService.Create(ingRec); err != nil {
+			fmt.Printf("Failed to create ingestion record for %s: %v\n", inscription.ID, err)
+		}
+	}
+
 	h.sendSuccess(w, map[string]string{
 		"status": "success",
 		"id":     inscription.ID,

@@ -17,6 +17,16 @@ type PGStore struct {
 	claimTTL time.Duration
 }
 
+func contractIDFromMeta(meta map[string]interface{}, id string) string {
+	contractID := id
+	if cid, ok := meta["contract_id"].(string); ok && strings.TrimSpace(cid) != "" {
+		contractID = cid
+	} else if cid, ok := meta["ingestion_id"].(string); ok && strings.TrimSpace(cid) != "" {
+		contractID = cid
+	}
+	return contractID
+}
+
 // NewPGStore connects, initializes schema, and optionally seeds fixtures.
 func NewPGStore(ctx context.Context, dsn string, claimTTL time.Duration, seed bool) (*PGStore, error) {
 	pool, err := pgxpool.New(ctx, dsn)
@@ -199,15 +209,28 @@ FROM mcp_tasks WHERE contract_id = ANY($1)
 	defer rows.Close()
 
 	liveTasks := make(map[string]Task)
+	taskIDs := make([]string, 0)
 	for rows.Next() {
 		t, err := scanTask(rows)
 		if err != nil {
 			continue
 		}
 		liveTasks[t.TaskID] = t
+		taskIDs = append(taskIDs, t.TaskID)
 	}
 	if len(liveTasks) == 0 {
 		return
+	}
+
+	// attach active claims
+	tasksSlice := make([]Task, 0, len(liveTasks))
+	for _, t := range liveTasks {
+		tasksSlice = append(tasksSlice, t)
+	}
+	tasksSlice = s.attachActiveClaims(ctx, tasksSlice, taskIDs)
+	liveTasks = make(map[string]Task, len(tasksSlice))
+	for _, t := range tasksSlice {
+		liveTasks[t.TaskID] = t
 	}
 
 	if len(p.Tasks) == 0 {
@@ -223,6 +246,7 @@ FROM mcp_tasks WHERE contract_id = ANY($1)
 			p.Tasks[i].ClaimedBy = lt.ClaimedBy
 			p.Tasks[i].ClaimedAt = lt.ClaimedAt
 			p.Tasks[i].ClaimExpires = lt.ClaimExpires
+			p.Tasks[i].ActiveClaimID = lt.ActiveClaimID
 			if len(lt.Skills) > 0 {
 				p.Tasks[i].Skills = lt.Skills
 			}
@@ -237,13 +261,16 @@ func (s *PGStore) ListTasks(filter TaskFilter) ([]Task, error) {
 SELECT task_id, contract_id, goal_id, title, description, budget_sats, skills, status, claimed_by, claimed_at, claim_expires_at, difficulty, estimated_hours, requirements, merkle_proof
 FROM mcp_tasks
 WHERE ($1 = '' OR status = $1)
-`, filter.Status)
+AND ($2 = '' OR contract_id = $2)
+AND ($3 = '' OR claimed_by = $3)
+`, filter.Status, filter.ContractID, filter.ClaimedBy)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
 	var out []Task
+	taskIDs := make([]string, 0)
 	for rows.Next() {
 		task, err := scanTask(rows)
 		if err != nil {
@@ -256,7 +283,9 @@ WHERE ($1 = '' OR status = $1)
 			continue
 		}
 		out = append(out, task)
+		taskIDs = append(taskIDs, task.TaskID)
 	}
+	out = s.attachActiveClaims(ctx, out, taskIDs)
 	if filter.Offset > 0 && filter.Offset < len(out) {
 		out = out[filter.Offset:]
 	}
@@ -279,6 +308,10 @@ FROM mcp_tasks WHERE task_id=$1
 			return Task{}, ErrTaskNotFound
 		}
 		return Task{}, err
+	}
+	out := s.attachActiveClaims(ctx, []Task{task}, []string{id})
+	if len(out) > 0 {
+		return out[0], nil
 	}
 	return task, nil
 }
@@ -423,6 +456,40 @@ VALUES ($1,$2,$3,$4,$5,$6)
 	return sub, nil
 }
 
+// ListSubmissions returns submissions for the given task IDs by joining claims.
+func (s *PGStore) ListSubmissions(ctx context.Context, taskIDs []string) ([]Submission, error) {
+	if len(taskIDs) == 0 {
+		return nil, nil
+	}
+	rows, err := s.pool.Query(ctx, `
+SELECT s.submission_id, s.claim_id, c.task_id, s.status, s.deliverables, s.completion_proof, s.created_at
+FROM mcp_submissions s
+JOIN mcp_claims c ON c.claim_id = s.claim_id
+WHERE c.task_id = ANY($1::text[])
+ORDER BY s.created_at DESC
+`, taskIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Submission
+	for rows.Next() {
+		var sub Submission
+		var delivJSON, proofJSON []byte
+		if err := rows.Scan(&sub.SubmissionID, &sub.ClaimID, &sub.TaskID, &sub.Status, &delivJSON, &proofJSON, &sub.CreatedAt); err != nil {
+			return nil, err
+		}
+		if len(delivJSON) > 0 {
+			_ = json.Unmarshal(delivJSON, &sub.Deliverables)
+		}
+		if len(proofJSON) > 0 {
+			_ = json.Unmarshal(proofJSON, &sub.CompletionProof)
+		}
+		out = append(out, sub)
+	}
+	return out, rows.Err()
+}
+
 // TaskStatus returns task status, including claim info if present.
 func (s *PGStore) TaskStatus(taskID string) (map[string]interface{}, error) {
 	task, err := s.GetTask(taskID)
@@ -452,9 +519,31 @@ LIMIT 1
 		"time_remaining_hr": nil,
 	}
 	if claim.ClaimID != "" {
+		final := strings.EqualFold(task.Status, "published") || strings.EqualFold(task.Status, "approved") || strings.EqualFold(task.Status, "completed")
+		switch strings.ToLower(claim.Status) {
+		case "submitted", "pending_review":
+			if !final {
+				resp["status"] = "submitted"
+			}
+		case "active":
+			if !final && (task.Status == "" || strings.EqualFold(task.Status, "available") || strings.EqualFold(task.Status, "approved")) {
+				resp["status"] = "claimed"
+			}
+		case "complete":
+			resp["status"] = "approved"
+		}
 		remaining := time.Until(claim.ExpiresAt).Hours()
 		resp["time_remaining_hr"] = remaining
 		resp["claim_id"] = claim.ClaimID
+		if resp["claimed_by"] == "" {
+			resp["claimed_by"] = claim.AiIdentifier
+		}
+		if resp["claim_expires_at"] == nil && !claim.ExpiresAt.IsZero() {
+			resp["claim_expires_at"] = claim.ExpiresAt
+		}
+		if resp["claimed_at"] == nil && !claim.CreatedAt.IsZero() {
+			resp["claimed_at"] = claim.CreatedAt
+		}
 	}
 	return resp, nil
 }
@@ -586,12 +675,12 @@ ON CONFLICT (id) DO NOTHING
 	return err
 }
 
-func (s *PGStore) ListProposals(ctx context.Context, status string) ([]Proposal, error) {
+func (s *PGStore) ListProposals(ctx context.Context, filter ProposalFilter) ([]Proposal, error) {
 	query := `SELECT id, title, description_md, visible_pixel_hash, budget_sats, status, metadata, created_at FROM mcp_proposals`
 	var args []interface{}
-	if status != "" {
+	if filter.Status != "" {
 		query += " WHERE status=$1"
-		args = append(args, status)
+		args = append(args, filter.Status)
 	}
 	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
@@ -609,7 +698,32 @@ func (s *PGStore) ListProposals(ctx context.Context, status string) ([]Proposal,
 		_ = json.Unmarshal(meta, &p.Metadata)
 		populateProposalTasks(&p)
 		s.hydrateProposalTasks(ctx, &p)
+		if filter.ContractID != "" {
+			contractID := p.Metadata["contract_id"]
+			if contractID == nil {
+				contractID = p.Metadata["ingestion_id"]
+			}
+			cid, _ := contractID.(string)
+			if cid == "" {
+				cid = p.ID
+			}
+			if cid != filter.ContractID {
+				continue
+			}
+		}
+		if filter.MinBudget > 0 && p.BudgetSats < filter.MinBudget {
+			continue
+		}
+		if len(filter.Skills) > 0 && !proposalHasSkills(p, filter.Skills) {
+			continue
+		}
 		out = append(out, p)
+	}
+	if filter.Offset > 0 && filter.Offset < len(out) {
+		out = out[filter.Offset:]
+	}
+	if filter.MaxResults > 0 && filter.MaxResults < len(out) {
+		out = out[:filter.MaxResults]
 	}
 	return out, rows.Err()
 }
@@ -634,8 +748,84 @@ FROM mcp_proposals WHERE id=$1
 }
 
 func (s *PGStore) ApproveProposal(ctx context.Context, id string) error {
-	_, err := s.pool.Exec(ctx, `UPDATE mcp_proposals SET status='approved' WHERE id=$1`, id)
-	return err
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var metaJSON []byte
+	if err := tx.QueryRow(ctx, `SELECT metadata FROM mcp_proposals WHERE id=$1`, id).Scan(&metaJSON); err != nil {
+		return err
+	}
+
+	var meta map[string]interface{}
+	_ = json.Unmarshal(metaJSON, &meta)
+	contractID := contractIDFromMeta(meta, id)
+
+	// Block double-approval/publish for the same contract.
+	var conflict int
+	if err := tx.QueryRow(ctx, `
+SELECT count(*) FROM mcp_proposals 
+WHERE id<>$1 AND status IN ('approved','published') 
+AND (
+  metadata->>'contract_id' = $2 OR 
+  metadata->>'ingestion_id' = $2 OR 
+  id = $2
+)`, id, contractID).Scan(&conflict); err != nil {
+		return err
+	}
+	if conflict > 0 {
+		return fmt.Errorf("another proposal is already approved/published for contract %s", contractID)
+	}
+	// Auto-reject any other pending proposals for this contract.
+	_, _ = tx.Exec(ctx, `
+UPDATE mcp_proposals SET status='rejected' 
+WHERE id<>$1 AND status='pending' AND (
+  metadata->>'contract_id' = $2 OR 
+  metadata->>'ingestion_id' = $2 OR 
+  id = $2
+)`, id, contractID)
+
+	if _, err := tx.Exec(ctx, `UPDATE mcp_proposals SET status='approved' WHERE id=$1`, id); err != nil {
+		return err
+	}
+
+	return tx.Commit(ctx)
+}
+
+// PublishProposal marks tasks for a proposal's contract as published.
+func (s *PGStore) PublishProposal(ctx context.Context, id string) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var status string
+	var metaJSON []byte
+	if err := tx.QueryRow(ctx, `SELECT status, metadata FROM mcp_proposals WHERE id=$1`, id).Scan(&status, &metaJSON); err != nil {
+		return err
+	}
+	if !strings.EqualFold(status, "approved") && !strings.EqualFold(status, "published") {
+		return fmt.Errorf("proposal %s must be approved before publish", id)
+	}
+
+	var meta map[string]interface{}
+	_ = json.Unmarshal(metaJSON, &meta)
+	contractID := contractIDFromMeta(meta, id)
+
+	if _, err := tx.Exec(ctx, `UPDATE mcp_tasks SET status='published' WHERE contract_id=$1 AND status IN ('submitted','pending_review','claimed','approved')`, contractID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE mcp_claims SET status='complete' WHERE task_id IN (SELECT task_id FROM mcp_tasks WHERE contract_id=$1) AND status IN ('submitted','pending_review','active','approved')`, contractID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE mcp_proposals SET status='published' WHERE id=$1`, id); err != nil {
+		return err
+	}
+
+	return tx.Commit(ctx)
 }
 
 // populateProposalTasks hydrates Tasks from metadata suggested_tasks or embedded_message.
@@ -705,4 +895,72 @@ func scanTask(scanner interface {
 		}
 	}
 	return t, nil
+}
+
+// attachActiveClaims enriches tasks with active claim ids from the claims table.
+func (s *PGStore) attachActiveClaims(ctx context.Context, tasks []Task, taskIDs []string) []Task {
+	if len(tasks) == 0 || len(taskIDs) == 0 {
+		return tasks
+	}
+	rows, err := s.pool.Query(ctx, `
+SELECT task_id, claim_id, status, ai_identifier, expires_at, created_at FROM mcp_claims
+WHERE task_id = ANY($1::text[]) AND status IN ('active','submitted','pending_review') 
+ORDER BY created_at DESC
+`, taskIDs)
+	if err != nil {
+		return tasks
+	}
+	defer rows.Close()
+	type claimInfo struct {
+		claimID   string
+		status    string
+		ai        string
+		expiresAt time.Time
+		createdAt time.Time
+	}
+	claimMap := make(map[string]claimInfo)
+	for rows.Next() {
+		var taskID, claimID, status, ai string
+		var expiresAt, createdAt time.Time
+		if err := rows.Scan(&taskID, &claimID, &status, &ai, &expiresAt, &createdAt); err == nil {
+			if _, ok := claimMap[taskID]; !ok {
+				claimMap[taskID] = claimInfo{
+					claimID:   claimID,
+					status:    status,
+					ai:        ai,
+					expiresAt: expiresAt,
+					createdAt: createdAt,
+				}
+			}
+		}
+	}
+	for i, t := range tasks {
+		if c, ok := claimMap[t.TaskID]; ok {
+			t.ActiveClaimID = c.claimID
+			if t.ClaimedBy == "" {
+				t.ClaimedBy = c.ai
+			}
+			if t.ClaimedAt == nil && !c.createdAt.IsZero() {
+				t.ClaimedAt = &c.createdAt
+			}
+			if t.ClaimExpires == nil && !c.expiresAt.IsZero() {
+				t.ClaimExpires = &c.expiresAt
+			}
+			final := strings.EqualFold(t.Status, "published") || strings.EqualFold(t.Status, "approved") || strings.EqualFold(t.Status, "completed")
+			switch strings.ToLower(c.status) {
+			case "submitted", "pending_review":
+				if !final {
+					t.Status = "submitted"
+				}
+			case "active":
+				if !final && (t.Status == "" || strings.EqualFold(t.Status, "available") || strings.EqualFold(t.Status, "approved")) {
+					t.Status = "claimed"
+				}
+			case "complete":
+				t.Status = "approved"
+			}
+			tasks[i] = t
+		}
+	}
+	return tasks
 }

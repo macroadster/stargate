@@ -7,6 +7,7 @@ import InscriptionCard from './components/Inscription/InscriptionCard';
 import PendingTransactionsView from './components/Block/PendingTransactionsView';
 import InscribeModal from './components/Inscription/InscribeModal';
 import InscriptionModal from './components/Inscription/InscriptionModal';
+import DiscoverPage from './components/Discover/DiscoverPage';
 
 import { useBlocks } from './hooks/useBlocks';
 import { useInscriptions } from './hooks/useInscriptions';
@@ -42,6 +43,7 @@ function MainContent() {
   const [copiedText, setCopiedText] = useState('');
   const sentinelRef = useRef(null);
   const [hideBrc20, setHideBrc20] = useState(true);
+  // MCP proposal management handled in inscription modal.
 
   const {
     blocks,
@@ -184,6 +186,8 @@ function MainContent() {
     setSearchResults(null);
   };
 
+  // Top-level proposals panel removed; handled in inscription modal.
+
   const copyToClipboard = async (text) => {
     try {
       await navigator.clipboard.writeText(text);
@@ -309,6 +313,12 @@ function MainContent() {
                   className="text-gray-600 dark:text-gray-400 hover:text-black dark:hover:text-white bg-transparent border-none cursor-pointer"
                 >
                   Contracts
+                </button>
+                <button
+                  onClick={() => navigate('/discover')}
+                  className="text-gray-600 dark:text-gray-400 hover:text-black dark:hover:text-white bg-transparent border-none cursor-pointer"
+                >
+                  Discover
                 </button>
                 <button
                   onClick={() => setHideBrc20(!hideBrc20)}
@@ -613,6 +623,7 @@ export default function App() {
       <Route path="/" element={<MainContent />} />
       <Route path="/block/:height" element={<MainContent />} />
       <Route path="/pending" element={<MainContent />} />
+      <Route path="/discover" element={<DiscoverPage />} />
     </Routes>
   );
 }
