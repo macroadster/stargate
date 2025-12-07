@@ -1,3 +1,6 @@
 backend/blocks/*
 backend/uploads/*
+backend/.cache/
+backend/.gocache/
+backend/.gomodcache/
 **/*.log
