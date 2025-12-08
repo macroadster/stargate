@@ -3,6 +3,7 @@ import { X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import CopyButton from '../Common/CopyButton';
 import ConfidenceIndicator from '../Common/ConfidenceIndicator';
+import DeliverablesReview from '../Review/DeliverablesReview';
 import { API_BASE } from '../../apiBase';
 
 // Determines whether the proposal action (Approve/Publish) should be shown.
@@ -248,12 +249,13 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
               <div className="flex-1">
               <div className="border-b border-gray-200 dark:border-gray-700 mb-6">
                 <div className="flex gap-6 relative">
-                  {[
-                    { id: 'overview', label: 'Details', icon: '📋' },
-                    { id: 'content', label: 'Content', icon: '📄' },
-                    { id: 'proposals', label: 'Proposals', icon: '🗂️' },
-                    { id: 'blockchain', label: 'Blockchain', icon: '⛓️' }
-                  ].map((tab) => (
+{[
+  { id: 'overview', label: 'Details', icon: '📋' },
+  { id: 'content', label: 'Content', icon: '📄' },
+  { id: 'proposals', label: 'Proposals', icon: '🗂️' },
+  { id: 'deliverables', label: 'Deliverables', icon: '✅' },
+  { id: 'blockchain', label: 'Blockchain', icon: '⛓️' }
+].map((tab) => (
                     <button
                       key={tab.id}
                       onClick={() => setActiveTab(tab.id)}
@@ -526,6 +528,14 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                     })
                   )}
                 </div>
+              )}
+
+              {activeTab === 'deliverables' && (
+                <DeliverablesReview
+                  proposalItems={proposalItems}
+                  submissions={submissions}
+                  onRefresh={loadProposals}
+                />
               )}
 
               {activeTab === 'content' && (
