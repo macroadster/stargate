@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stargate Backend API Documentation</title>
+    <link rel="stylesheet" type="text/css" href="https://unpkg.com/swagger-ui-dist@5.10.5/swagger-ui.css" />
+    <style>
+        html {
+            box-sizing: border-box;
+            overflow: -moz-scrollbars-vertical;
+            overflow-y: scroll;
+        }
+        *, *:before, *:after {
+            box-sizing: inherit;
+        }
+        body {
+            margin:0;
+            background: #fafafa;
+        }
+        .swagger-ui .topbar {
+            background-color: #1a1a1a;
+            border-bottom: 1px solid #2a2a2a;
+        }
+        .swagger-ui .topbar .download-url-wrapper {
+            display: none;
+        }
+        .info {
+            margin: 50px 0;
+        }
+        .swagger-ui .info .title {
+            color: #3b4151;
+        }
+    </style>
+</head>
+<body>
+    <div id="swagger-ui"></div>
+    <script src="https://unpkg.com/swagger-ui-dist@5.10.5/swagger-ui-bundle.js"></script>
+    <script src="https://unpkg.com/swagger-ui-dist@5.10.5/swagger-ui-standalone-preset.js"></script>
+    <script>
+        window.onload = function() {
+            const ui = SwaggerUIBundle({
+                url: '/docs/openapi.yaml',
+                dom_id: '#swagger-ui',
+                deepLinking: true,
+                presets: [
+                    SwaggerUIBundle.presets.apis,
+                    SwaggerUIStandalonePreset
+                ],
+                plugins: [
+                    SwaggerUIBundle.plugins.DownloadUrl
+                ],
+                layout: "StandaloneLayout",
+                defaultModelsExpandDepth: 2,
+                defaultModelExpandDepth: 2,
+                tryItOutEnabled: true,
+                displayRequestDuration: true,
+                docExpansion: "list",
+                operationsSorter: "alpha",
+                tagsSorter: "alpha",
+                filter: true,
+                supportedSubmitMethods: ['get', 'post', 'put', 'delete', 'patch'],
+                onComplete: function() {
+                    console.log("Swagger UI loaded successfully");
+                },
+                requestInterceptor: function(request) {
+                    // Add API key for MCP endpoints if available
+                    if (request.url.includes('/mcp/v1/')) {
+                        const apiKey = localStorage.getItem('mcp_api_key') || prompt('Enter MCP API Key:');
+                        if (apiKey) {
+                            localStorage.setItem('mcp_api_key', apiKey);
+                            request.headers['X-API-Key'] = apiKey;
+                        }
+                    }
+                    return request;
+                },
+                responseInterceptor: function(response) {
+                    return response;
+                }
+            });
+
+            // Add custom styling for API key management
+            setTimeout(() => {
+                const authContainer = document.querySelector('.auth-wrapper');
+                if (authContainer) {
+                    const apiKeyButton = document.createElement('button');
+                    apiKeyButton.textContent = 'Set MCP API Key';
+                    apiKeyButton.className = 'btn authorize';
+                    apiKeyButton.style.marginLeft = '10px';
+                    apiKeyButton.onclick = function() {
+                        const apiKey = prompt('Enter MCP API Key:');
+                        if (apiKey) {
+                            localStorage.setItem('mcp_api_key', apiKey);
+                            alert('MCP API Key saved. Refresh the page to apply.');
+                        }
+                    };
+                    authContainer.appendChild(apiKeyButton);
+                }
+            }, 1000);
+        };
+    </script>
+</body>
+</html>

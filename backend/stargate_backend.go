@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
@@ -13,7 +14,9 @@ import (
 	"stargate-backend/api"
 	"stargate-backend/bitcoin"
 	"stargate-backend/container"
+	"stargate-backend/mcp"
 	"stargate-backend/middleware"
+	"stargate-backend/services"
 	"stargate-backend/storage"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -59,9 +62,154 @@ func findImagePath(height string, filename string) (string, bool) {
 	return "", false
 }
 
+// initializeMCPServer sets up the MCP server with proper store selection
+func initializeMCPServer() *mcp.Server {
+	// Load MCP configuration
+	storeDriver := os.Getenv("MCP_STORE_DRIVER")
+	if storeDriver == "" {
+		storeDriver = "memory"
+	}
+
+	pgDsn := os.Getenv("MCP_PG_DSN")
+	apiKey := os.Getenv("MCP_API_KEY")
+
+	// TTL configuration
+	ttlHours := 72
+	if raw := os.Getenv("MCP_DEFAULT_CLAIM_TTL_HOURS"); raw != "" {
+		if v, err := strconv.Atoi(raw); err == nil && v > 0 {
+			ttlHours = v
+		}
+	}
+	claimTTL := time.Duration(ttlHours) * time.Hour
+
+	// Seed configuration
+	seed := true
+	if raw := os.Getenv("MCP_SEED_FIXTURES"); raw != "" {
+		if v, err := strconv.ParseBool(raw); err == nil {
+			seed = v
+		}
+	}
+
+	// Initialize store based on driver
+	var store mcp.Store
+	var err error
+	var ingestionSvc *services.IngestionService
+
+	switch storeDriver {
+	case "postgres":
+		if pgDsn == "" {
+			log.Printf("MCP_PG_DSN not set, falling back to memory store")
+			store = mcp.NewMemoryStore(claimTTL)
+		} else {
+			store, err = mcp.NewPGStore(context.Background(), pgDsn, claimTTL, seed)
+			if err != nil {
+				log.Printf("failed to connect to PostgreSQL (%v), falling back to memory store", err)
+				store = mcp.NewMemoryStore(claimTTL)
+			} else {
+				// PostgreSQL connected successfully, try to create ingestion service
+				if svc, serr := services.NewIngestionService(pgDsn); serr != nil {
+					log.Printf("ingestion service unavailable for proposal creation: %v", serr)
+				} else {
+					ingestionSvc = svc
+				}
+			}
+		}
+	default:
+		store = mcp.NewMemoryStore(claimTTL)
+	}
+
+	// Log the actual store type being used
+	actualStoreType := "memory"
+	if err == nil && pgDsn != "" {
+		actualStoreType = "postgres"
+	}
+	log.Printf("MCP server initialized with %s store (requested: %s)", actualStoreType, storeDriver)
+
+	return mcp.NewServer(store, apiKey, ingestionSvc)
+}
+
+// startMCPServices starts background services for MCP when using PostgreSQL
+func startMCPServices() {
+	storeDriver := os.Getenv("MCP_STORE_DRIVER")
+	if storeDriver != "postgres" {
+		return
+	}
+
+	pgDsn := os.Getenv("MCP_PG_DSN")
+	if pgDsn == "" {
+		log.Printf("MCP_PG_DSN not set, skipping MCP background services")
+		return
+	}
+
+	// Create a temporary store for sync services
+	ttlHours := 72
+	if raw := os.Getenv("MCP_DEFAULT_CLAIM_TTL_HOURS"); raw != "" {
+		if v, err := strconv.Atoi(raw); err == nil && v > 0 {
+			ttlHours = v
+		}
+	}
+	claimTTL := time.Duration(ttlHours) * time.Hour
+
+	store, err := mcp.NewPGStore(context.Background(), pgDsn, claimTTL, false)
+	if err != nil {
+		log.Printf("failed to create store for MCP services (%v), skipping background services", err)
+		return
+	}
+
+	// Start ingestion -> MCP sync
+	if os.Getenv("MCP_ENABLE_INGEST_SYNC") != "false" {
+		syncInterval := 30 * time.Second
+		if raw := os.Getenv("MCP_INGEST_SYNC_INTERVAL_SEC"); raw != "" {
+			if v, err := strconv.Atoi(raw); err == nil && v > 0 {
+				syncInterval = time.Duration(v) * time.Second
+			}
+		}
+
+		if err := mcp.StartIngestionSync(context.Background(), pgDsn, store, syncInterval); err != nil {
+			log.Printf("ingestion sync disabled (init error): %v", err)
+		} else {
+			log.Printf("ingestion sync enabled (interval=%s)", syncInterval)
+		}
+	}
+
+	// Start funding proof refresher
+	if os.Getenv("MCP_ENABLE_FUNDING_SYNC") != "false" {
+		fundingInterval := 60 * time.Second
+		if raw := os.Getenv("MCP_FUNDING_SYNC_INTERVAL_SEC"); raw != "" {
+			if v, err := strconv.Atoi(raw); err == nil && v > 0 {
+				fundingInterval = time.Duration(v) * time.Second
+			}
+		}
+
+		fundingProvider := "mock"
+		if env := os.Getenv("MCP_FUNDING_PROVIDER"); env != "" {
+			fundingProvider = env
+		}
+		fundingAPIBase := "https://blockstream.info/api"
+		if env := os.Getenv("MCP_FUNDING_API_BASE"); env != "" {
+			fundingAPIBase = env
+		}
+
+		provider := mcp.NewFundingProvider(fundingProvider, fundingAPIBase)
+		if err := mcp.StartFundingSync(context.Background(), store, provider, fundingInterval); err != nil {
+			log.Printf("funding sync disabled (init error): %v", err)
+		} else {
+			log.Printf("funding sync enabled (interval=%s)", fundingInterval)
+		}
+	}
+}
+
 func main() {
+	log.Println("=== STARTING STARGATE BACKEND ===")
+
 	// Initialize dependency container
 	container := container.NewContainer()
+
+	// Initialize MCP server
+	mcpServer := initializeMCPServer()
+
+	// Start MCP background services if using PostgreSQL
+	startMCPServices()
 
 	// Set up middleware chain
 	mux := http.NewServeMux()
@@ -72,7 +220,7 @@ func main() {
 			middleware.SecurityHeaders(
 				middleware.CORS(
 					middleware.Timeout(30 * time.Second)(
-						setupRoutes(mux, container),
+						setupRoutes(mux, container, mcpServer),
 					),
 				)),
 		),
@@ -84,17 +232,29 @@ func main() {
 	log.Println("Bitcoin steganography API at: http://localhost:3001/bitcoin/v1/")
 	log.Println("Smart contract steganography at: http://localhost:3001/api/contract-stego/")
 	log.Println("Proxy to steganography API (port 8080) at: http://localhost:3001/stego/")
+	log.Println("MCP (Machine Control Protocol) API at: http://localhost:3001/mcp/v1")
 
 	log.Fatal(http.ListenAndServe(":3001", handler))
 }
 
-func setupRoutes(mux *http.ServeMux, container *container.Container) http.Handler {
+func setupRoutes(mux *http.ServeMux, container *container.Container, mcpServer *mcp.Server) http.Handler {
 	// Health endpoints
 	mux.HandleFunc("/api/health", container.HealthHandler.HandleHealth)
+
+	// API Documentation - includes Swagger UI
 	mux.HandleFunc("/api/docs", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/api/docs/", http.StatusFound)
 	})
 	mux.Handle("/api/docs/", http.StripPrefix("/api/docs/", http.FileServer(http.Dir("./docs"))))
+
+	// Swagger UI redirect
+	mux.HandleFunc("/swagger", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/api/docs/swagger.html", http.StatusFound)
+	})
+	mux.HandleFunc("/swagger/", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/api/docs/swagger.html", http.StatusFound)
+	})
+
 	mux.Handle("/metrics", promhttp.Handler())
 
 	// Inscription endpoints
@@ -266,5 +426,12 @@ func setupRoutes(mux *http.ServeMux, container *container.Container) http.Handle
 	mux.HandleFunc("/bitcoin/v1/extract", bitcoinAPI.HandleExtract)
 	mux.HandleFunc("/bitcoin/v1/transaction/", bitcoinAPI.HandleGetTransaction)
 
+	// Register MCP server routes
+	if mcpServer != nil {
+		mcpServer.RegisterRoutes(mux)
+		log.Printf("MCP routes registered")
+	}
+
+	log.Printf("All routes registered, returning handler")
 	return mux
 }
