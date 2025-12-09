@@ -68,6 +68,15 @@ export default function DiscoverPage() {
         const msg = await res.text();
         throw new Error(msg || `HTTP ${res.status}`);
       }
+      
+      // Show success message for resubmissions
+      const submission = submissionsByTask[claimId];
+      if (submission && ['rejected', 'reviewed'].includes(submission.status?.toLowerCase())) {
+        setError('Work resubmitted successfully! Your previous submission status: ' + submission.status);
+      } else {
+        setError('Work submitted successfully!');
+      }
+      
       await loadProposals();
       setSubmitNotes((p) => ({ ...p, [taskId]: '' }));
       setSubmitProof((p) => ({ ...p, [taskId]: '' }));
@@ -127,9 +136,16 @@ export default function DiscoverPage() {
   const submissionsByTask = useMemo(() => {
     const map = {};
     submissions.forEach((s) => {
-      const key = s.task_id || s.claim_id;
-      if (key && !map[key]) {
-        map[key] = s;
+      // Primary mapping by submission_id
+      if (s.submission_id && !map[s.submission_id]) {
+        map[s.submission_id] = s;
+      }
+      // Secondary mappings for task_id and claim_id lookups
+      if (s.task_id && !map[s.task_id]) {
+        map[s.task_id] = s;
+      }
+      if (s.claim_id && !map[s.claim_id]) {
+        map[s.claim_id] = s;
       }
     });
     return map;
@@ -235,35 +251,59 @@ export default function DiscoverPage() {
                           )}
                           {t.active_claim_id && submissionsByTask[t.active_claim_id] && (
                             <div className="text-[11px] text-emerald-600 dark:text-emerald-300 mt-1">
-                              Submission: {submissionsByTask[t.active_claim_id].status || 'pending'} • {submissionsByTask[t.active_claim_id].completion_proof?.link || ''}
+                              Submission: {submissionsByTask[t.active_claim_id].status || 'pending'} ({submissionsByTask[t.active_claim_id].submission_id || 'no ID'}) • {submissionsByTask[t.active_claim_id].completion_proof?.link || ''}
                             </div>
                           )}
                           {t.active_claim_id &&
                             aiId &&
-                            (!t.claimed_by || t.claimed_by.toLowerCase() === aiId.toLowerCase()) &&
-                            (t.status || '').toLowerCase() !== 'submitted' && (
-                            <div className="mt-2 space-y-2">
-                              <textarea
-                                className="w-full rounded bg-gray-100 dark:bg-gray-800 text-sm px-2 py-1"
-                                placeholder="Notes / deliverables"
-                                value={submitNotes[t.task_id] || ''}
-                                onChange={(e) => setSubmitNotes((p) => ({ ...p, [t.task_id]: e.target.value }))}
-                              />
-                              <input
-                                className="w-full rounded bg-gray-100 dark:bg-gray-800 text-sm px-2 py-1"
-                                placeholder="Proof link (optional)"
-                                value={submitProof[t.task_id] || ''}
-                                onChange={(e) => setSubmitProof((p) => ({ ...p, [t.task_id]: e.target.value }))}
-                              />
-                              <button
-                                onClick={() => submitWork(t.active_claim_id, t.task_id)}
-                                disabled={submitting[t.task_id]}
-                                className="text-sm px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-60"
-                              >
-                                {submitting[t.task_id] ? 'Submitting…' : 'Submit work'}
-                              </button>
+                            (!t.claimed_by || t.claimed_by.toLowerCase() === aiId.toLowerCase()) && (
+                            <div className="mt-2">
+                              {(() => {
+                                const submission = submissionsByTask[t.active_claim_id];
+                                const canResubmit = !submission || 
+                                                  ['rejected', 'reviewed'].includes(submission?.status?.toLowerCase()) ||
+                                                  (t.status || '').toLowerCase() !== 'submitted';
+                                
+                                if (!canResubmit) return null;
+                                
+                                return (
+                                  <div className="space-y-2">
+                                    {submission && (
+                                      <div className="text-xs text-gray-600 dark:text-gray-400 mb-2 p-2 bg-yellow-50 dark:bg-yellow-900/20 rounded">
+                                        Current submission: <strong>{submission.status}</strong>
+                                        {submission.status === 'rejected' && (
+                                          <span> - You can resubmit with updated work.</span>
+                                        )}
+                                        {submission.status === 'reviewed' && (
+                                          <span> - You can submit additional work if needed.</span>
+                                        )}
+                                      </div>
+                                    )}
+                                    <textarea
+                                      className="w-full rounded bg-gray-100 dark:bg-gray-800 text-sm px-2 py-1"
+                                      placeholder={submission ? "Updated notes / deliverables" : "Notes / deliverables"}
+                                      value={submitNotes[t.task_id] || ''}
+                                      onChange={(e) => setSubmitNotes((p) => ({ ...p, [t.task_id]: e.target.value }))}
+                                    />
+                                    <input
+                                      className="w-full rounded bg-gray-100 dark:bg-gray-800 text-sm px-2 py-1"
+                                      placeholder="Proof link (optional)"
+                                      value={submitProof[t.task_id] || ''}
+                                      onChange={(e) => setSubmitProof((p) => ({ ...p, [t.task_id]: e.target.value }))}
+                                    />
+                                    <button
+                                      onClick={() => submitWork(t.active_claim_id, t.task_id)}
+                                      disabled={submitting[t.task_id]}
+                                      className="text-sm px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-60"
+                                    >
+                                      {submitting[t.task_id] ? 'Submitting…' : (submission ? 'Resubmit Work' : 'Submit work')}
+                                    </button>
+                                  </div>
+                                );
+                              })()}
                             </div>
                           )}
+                          
                           {!t.claimed_by && (t.status || '').toLowerCase() === 'available' && (
                             <div className="mt-2">
                               <button
@@ -320,8 +360,30 @@ export default function DiscoverPage() {
                     <div className="text-xs text-gray-500">Claimed: {formatDate(t.claimed_at)} • Expires: {formatCountdown(t.claim_expires_at)}</div>
                     <div className="text-xs text-gray-500">Budget: {t.budget_sats} sats</div>
                     {t.activeClaimId && submissionsByTask[t.activeClaimId] && (
-                      <div className="text-[11px] text-emerald-600 dark:text-emerald-300">
-                        Submission: {submissionsByTask[t.activeClaimId].status || 'pending'} {submissionsByTask[t.activeClaimId].completion_proof?.link ? `• ${submissionsByTask[t.activeClaimId].completion_proof.link}` : ''}
+                      <div className="space-y-1">
+                        <div className="text-[11px] text-emerald-600 dark:text-emerald-300">
+                          Submission: {submissionsByTask[t.activeClaimId].status || 'pending'} ({submissionsByTask[t.activeClaimId].submission_id || 'no ID'}) {submissionsByTask[t.activeClaimId].completion_proof?.link ? `• ${submissionsByTask[t.activeClaimId].completion_proof.link}` : ''}
+                        </div>
+                        {submissionsByTask[t.activeClaimId].status === 'rejected' && (
+                          <div className="text-[10px] text-red-600 dark:text-red-400 px-2 py-1 bg-red-50 dark:bg-red-900/20 rounded">
+                            ⚠️ Work was rejected - you can resubmit with improvements
+                          </div>
+                        )}
+                        {submissionsByTask[t.activeClaimId].status === 'reviewed' && (
+                          <div className="text-[10px] text-blue-600 dark:text-blue-400 px-2 py-1 bg-blue-50 dark:bg-blue-900/20 rounded">
+                            👁️ Work was reviewed - you can submit additional work if needed
+                          </div>
+                        )}
+                        {submissionsByTask[t.activeClaimId].status === 'pending_review' && (
+                          <div className="text-[10px] text-yellow-600 dark:text-yellow-400 px-2 py-1 bg-yellow-50 dark:bg-yellow-900/20 rounded">
+                            ⏳ Work is pending review
+                          </div>
+                        )}
+                        {submissionsByTask[t.activeClaimId].status === 'approved' && (
+                          <div className="text-[10px] text-green-600 dark:text-green-400 px-2 py-1 bg-green-50 dark:bg-green-900/20 rounded">
+                            ✅ Work was approved
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>

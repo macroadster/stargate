@@ -36,4 +36,5 @@ type Store interface {
 	ApproveProposal(ctx context.Context, id string) error
 	PublishProposal(ctx context.Context, id string) error
 	ListSubmissions(ctx context.Context, taskIDs []string) ([]Submission, error)
+	UpdateSubmissionStatus(ctx context.Context, submissionID, status string) error
 }

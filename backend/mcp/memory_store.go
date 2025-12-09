@@ -191,9 +191,26 @@ func (s *MemoryStore) SubmitWork(claimID string, deliverables map[string]interfa
 	if !ok {
 		return Submission{}, ErrClaimNotFound
 	}
-	if claim.Status != "active" {
-		return Submission{}, fmt.Errorf("claim %s not active", claimID)
+	// Allow submissions on active claims OR submitted claims with existing rejected/reviewed submissions
+	if claim.Status != "active" && claim.Status != "submitted" {
+		return Submission{}, fmt.Errorf("claim %s not active or submitted", claimID)
 	}
+
+	// For submitted claims, check if there's an existing submission that allows resubmission
+	if claim.Status == "submitted" {
+		for _, sub := range s.submissions {
+			if sub.ClaimID == claimID && (sub.Status == "rejected" || sub.Status == "reviewed") {
+				// Allow resubmission - reactivate the claim for new submission
+				claim.Status = "active"
+				s.claims[claimID] = claim
+				goto SubmitWork
+			}
+		}
+		// If submitted claim has no rejected/reviewed submissions, don't allow new submission
+		return Submission{}, fmt.Errorf("claim %s already submitted with no eligible resubmission", claimID)
+	}
+
+SubmitWork:
 	if time.Now().After(claim.ExpiresAt) {
 		claim.Status = "expired"
 		s.claims[claimID] = claim
@@ -468,5 +485,37 @@ func (s *MemoryStore) PublishProposal(ctx context.Context, id string) error {
 	}
 	p.Status = "published"
 	s.proposals[id] = p
+	return nil
+}
+
+// UpdateSubmissionStatus updates the status of a submission and related entities.
+func (s *MemoryStore) UpdateSubmissionStatus(ctx context.Context, submissionID, status string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	sub, ok := s.submissions[submissionID]
+	if !ok {
+		return ErrClaimNotFound // close enough
+	}
+
+	sub.Status = status
+	s.submissions[submissionID] = sub
+
+	if status == "accepted" {
+		claim, ok := s.claims[sub.ClaimID]
+		if !ok {
+			return nil // should not happen
+		}
+		claim.Status = "complete"
+		s.claims[sub.ClaimID] = claim
+
+		task, ok := s.tasks[claim.TaskID]
+		if !ok {
+			return nil // should not happen
+		}
+		task.Status = "approved"
+		s.tasks[claim.TaskID] = task
+	}
+
 	return nil
 }

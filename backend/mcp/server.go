@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -54,6 +55,8 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/mcp/v1/skills", s.authWrap(s.handleSkills))
 	mux.HandleFunc("/mcp/v1/proposals", s.authWrap(s.handleProposals))
 	mux.HandleFunc("/mcp/v1/proposals/", s.authWrap(s.handleProposals))
+	mux.HandleFunc("/mcp/v1/submissions", s.authWrap(s.handleSubmissions))
+	mux.HandleFunc("/mcp/v1/submissions/", s.authWrap(s.handleSubmissions))
 	mux.HandleFunc("/mcp/v1/events", s.authWrap(s.handleEvents))
 }
 
@@ -871,4 +874,291 @@ func buildProposalFromIngestion(body proposalCreateBody, rec *services.Ingestion
 		Metadata:         meta,
 	}
 	return p, nil
+}
+
+// submissionReviewBody captures POST payload for reviewing submissions.
+type submissionReviewBody struct {
+	Action string `json:"action"` // review | approve | reject
+	Notes  string `json:"notes"`
+}
+
+// submissionReworkBody captures POST payload for reworking submissions.
+type submissionReworkBody struct {
+	Deliverables map[string]interface{} `json:"deliverables"`
+	Notes        string                 `json:"notes"`
+}
+
+// handleSubmissions manages submission endpoints for review and rework.
+func (s *Server) handleSubmissions(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/mcp/v1/submissions")
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+
+	switch r.Method {
+	case http.MethodGet:
+		if path == "" || path == "/" {
+			// List submissions with optional filters
+			contractID := r.URL.Query().Get("contract_id")
+			taskIDs := splitCSV(r.URL.Query().Get("task_ids"))
+			status := r.URL.Query().Get("status")
+
+			var submissions []Submission
+			var err error
+
+			if len(taskIDs) > 0 {
+				submissions, err = s.store.ListSubmissions(r.Context(), taskIDs)
+			} else if contractID != "" {
+				// Get tasks for contract, then submissions for those tasks
+				tasks, err := s.store.ListTasks(TaskFilter{ContractID: contractID})
+				if err != nil {
+					Error(w, http.StatusInternalServerError, err.Error())
+					return
+				}
+				taskIDs = make([]string, len(tasks))
+				for i, task := range tasks {
+					taskIDs[i] = task.TaskID
+				}
+				submissions, err = s.store.ListSubmissions(r.Context(), taskIDs)
+			} else {
+				// Get all tasks, then all submissions
+				tasks, err := s.store.ListTasks(TaskFilter{})
+				if err != nil {
+					Error(w, http.StatusInternalServerError, err.Error())
+					return
+				}
+				taskIDs = make([]string, len(tasks))
+				for i, task := range tasks {
+					taskIDs[i] = task.TaskID
+				}
+				submissions, err = s.store.ListSubmissions(r.Context(), taskIDs)
+			}
+
+			if err != nil {
+				Error(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+
+			// Filter by status if provided
+			if status != "" {
+				filtered := make([]Submission, 0)
+				for _, sub := range submissions {
+					if strings.EqualFold(sub.Status, status) {
+						filtered = append(filtered, sub)
+					}
+				}
+				submissions = filtered
+			}
+
+			// Convert to map for easier frontend consumption
+			submissionMap := make(map[string]Submission)
+			for _, sub := range submissions {
+				submissionMap[sub.SubmissionID] = sub
+			}
+
+			JSON(w, http.StatusOK, map[string]interface{}{
+				"submissions": submissionMap,
+				"total":       len(submissions),
+			})
+			return
+		}
+
+		// GET /mcp/v1/submissions/{submissionId}
+		if len(parts) >= 1 && parts[0] != "" {
+			submissionID := parts[0]
+			log.Printf("GET submission by ID: %s", submissionID)
+
+			// We need to get all submissions to find the specific one
+			// This is not optimal but works for the current store interface
+			tasks, err := s.store.ListTasks(TaskFilter{})
+			if err != nil {
+				Error(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+
+			taskIDs := make([]string, len(tasks))
+			for i, task := range tasks {
+				taskIDs[i] = task.TaskID
+			}
+
+			submissions, err := s.store.ListSubmissions(r.Context(), taskIDs)
+			if err != nil {
+				Error(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+
+			log.Printf("Found %d submissions for contract", len(submissions))
+			for _, sub := range submissions {
+				log.Printf("Checking submission ID: %s == %s ?", sub.SubmissionID, submissionID)
+				if sub.SubmissionID == submissionID {
+					log.Printf("Found matching submission: %s", submissionID)
+					JSON(w, http.StatusOK, sub)
+					return
+				}
+			}
+
+			log.Printf("No matching submission found for ID: %s", submissionID)
+			Error(w, http.StatusNotFound, "submission not found")
+			return
+		}
+
+		Error(w, http.StatusBadRequest, "invalid submission endpoint")
+		return
+
+	case http.MethodPost:
+		if len(parts) >= 2 && parts[1] == "review" {
+			// POST /mcp/v1/submissions/{submissionId}/review
+			submissionID := parts[0]
+
+			var body submissionReviewBody
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				Error(w, http.StatusBadRequest, "invalid json")
+				return
+			}
+
+			if body.Action == "" {
+				Error(w, http.StatusBadRequest, "action is required")
+				return
+			}
+
+			// Validate action
+			validActions := map[string]bool{
+				"review":  true,
+				"approve": true,
+				"reject":  true,
+			}
+			if !validActions[body.Action] {
+				Error(w, http.StatusBadRequest, "invalid action. must be: review, approve, or reject")
+				return
+			}
+
+			// Update submission status
+			var newStatus string
+			switch body.Action {
+			case "review":
+				newStatus = "reviewed"
+			case "approve":
+				newStatus = "approved"
+			case "reject":
+				newStatus = "rejected"
+			}
+
+			ctx := r.Context()
+			err := s.store.UpdateSubmissionStatus(ctx, submissionID, newStatus)
+			if err != nil {
+				if strings.Contains(err.Error(), "not found") {
+					Error(w, http.StatusNotFound, "submission not found")
+					return
+				}
+				Error(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+
+			// Record event
+			s.recordEvent(Event{
+				Type:      "review",
+				EntityID:  submissionID,
+				Actor:     "reviewer",
+				Message:   fmt.Sprintf("submission %s", body.Action),
+				CreatedAt: time.Now(),
+			})
+
+			JSON(w, http.StatusOK, map[string]interface{}{
+				"message":       fmt.Sprintf("submission %sd successfully", body.Action),
+				"status":        newStatus,
+				"submission_id": submissionID,
+			})
+			return
+		}
+
+		if len(parts) >= 2 && parts[1] == "rework" {
+			// POST /mcp/v1/submissions/{submissionId}/rework
+			submissionID := parts[0]
+
+			var body submissionReworkBody
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				Error(w, http.StatusBadRequest, "invalid json")
+				return
+			}
+
+			if body.Deliverables == nil && body.Notes == "" {
+				Error(w, http.StatusBadRequest, "deliverables or notes must be provided")
+				return
+			}
+
+			// Get the original submission to update it
+			tasks, err := s.store.ListTasks(TaskFilter{})
+			if err != nil {
+				Error(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+
+			taskIDs := make([]string, len(tasks))
+			for i, task := range tasks {
+				taskIDs[i] = task.TaskID
+			}
+
+			submissions, err := s.store.ListSubmissions(r.Context(), taskIDs)
+			if err != nil {
+				Error(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+
+			var originalSubmission *Submission
+			for _, sub := range submissions {
+				if sub.SubmissionID == submissionID {
+					originalSubmission = &sub
+					break
+				}
+			}
+
+			if originalSubmission == nil {
+				Error(w, http.StatusNotFound, "submission not found")
+				return
+			}
+
+			// Update deliverables if provided
+			if body.Deliverables != nil {
+				originalSubmission.Deliverables = body.Deliverables
+			}
+
+			// Add rework notes to deliverables
+			if body.Notes != "" {
+				if originalSubmission.Deliverables == nil {
+					originalSubmission.Deliverables = make(map[string]interface{})
+				}
+				originalSubmission.Deliverables["rework_notes"] = body.Notes
+				originalSubmission.Deliverables["reworked_at"] = time.Now().Format(time.RFC3339)
+			}
+
+			// Reset status to pending_review
+			ctx := r.Context()
+			err = s.store.UpdateSubmissionStatus(ctx, submissionID, "pending_review")
+			if err != nil {
+				Error(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+
+			// Record event
+			s.recordEvent(Event{
+				Type:      "rework",
+				EntityID:  submissionID,
+				Actor:     "claimant",
+				Message:   "submission reworked",
+				CreatedAt: time.Now(),
+			})
+
+			JSON(w, http.StatusOK, map[string]interface{}{
+				"message":       "rework submitted successfully",
+				"status":        "pending_review",
+				"submission_id": submissionID,
+			})
+			return
+		}
+
+		Error(w, http.StatusBadRequest, "invalid submission endpoint")
+		return
+
+	default:
+		Error(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
 }

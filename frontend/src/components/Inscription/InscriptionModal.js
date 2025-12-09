@@ -102,13 +102,30 @@ const InscriptionModal = ({ inscription, onClose }) => {
         const ingestMatch = p.metadata?.ingestion_id && contractCandidates.includes(p.metadata.ingestion_id);
         return idMatch || hasMatchingTasks || metaContract || ingestMatch;
       });
+      // Create comprehensive submission mapping with all IDs
       const submissionsByKey = {};
       (data?.submissions || []).forEach((s) => {
-        const key = s.task_id || s.claim_id;
-        if (key) {
-          submissionsByKey[key] = s;
+        // Map by submission_id (primary key for API calls)
+        if (s.submission_id) {
+          submissionsByKey[s.submission_id] = s;
+        }
+        // Also map by task_id and claim_id for lookup, but prioritize newest by created_at
+        if (s.task_id) {
+          const existing = submissionsByKey[s.task_id];
+          if (!existing || new Date(s.created_at) > new Date(existing.created_at)) {
+              submissionsByKey[s.task_id] = s;
+          }
+          submissionsByKey[s.task_id] = s;
+        }
+        if (s.claim_id) {
+          const existing = submissionsByKey[s.claim_id];
+          if (!existing || new Date(s.created_at) > new Date(existing.created_at)) {
+            submissionsByKey[s.claim_id] = s;
+          }
+          submissionsByKey[s.claim_id] = s;
         }
       });
+      console.log('InscriptionModal: Final submissions map:', submissionsByKey);
       setSubmissions(submissionsByKey);
       // Sort approved first, then pending/others, preserving matches
       items = items.sort((a, b) => {

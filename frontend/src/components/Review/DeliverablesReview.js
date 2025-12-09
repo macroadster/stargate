@@ -5,6 +5,17 @@ import { API_BASE } from '../../apiBase';
 import CopyButton from '../Common/CopyButton';
 
 const DeliverablesReview = ({ proposalItems, submissions, onRefresh }) => {
+  // Add key to force re-render when submissions change
+  const submissionsKey = JSON.stringify(submissions);
+  
+  // Reset state when submissions prop changes
+  React.useEffect(() => {
+    setReviewNotes({});
+    setExpandedTasks({});
+    setProofContent({});
+    setLoadingProof({});
+    setReviewingId('');
+  }, [submissionsKey]);
   const [filterStatus, setFilterStatus] = useState('all');
   const [expandedTasks, setExpandedTasks] = useState({});
   const [reviewingId, setReviewingId] = useState('');
@@ -12,23 +23,57 @@ const DeliverablesReview = ({ proposalItems, submissions, onRefresh }) => {
   const [proofContent, setProofContent] = useState({});
   const [loadingProof, setLoadingProof] = useState({});
 
+
+  // Handle both array and object formats for submissions
+  const submissionsArray = Array.isArray(submissions) ? submissions : Object.values(submissions || {});
+  const submissionsMap = {};
+  console.log('DeliverablesReview: Raw submissions data:', submissions);
+  console.log('DeliverablesReview: Submissions array:', submissionsArray);
+  
+  // Create submission map by submission_id for API calls
+  // Create submission map by submission_id for API calls
+  submissionsArray.forEach(submission => {
+    if (submission.submission_id) {
+      submissionsMap[submission.submission_id] = submission;
+    }
+    // Also map by task_id and claim_id for lookup
+    if (submission.task_id) {
+      submissionsMap[submission.task_id] = submission;
+    }
+    if (submission.claim_id) {
+      submissionsMap[submission.claim_id] = submission;
+    }
+  });
+  console.log('DeliverablesReview: Final submissions map:', submissionsMap);
+
   const allDeliverables = proposalItems.flatMap(proposal => {
     const tasks = Array.isArray(proposal.tasks) && proposal.tasks.length > 0
       ? proposal.tasks
       : (Array.isArray(proposal.metadata?.suggested_tasks) ? proposal.metadata.suggested_tasks : []);
     
     return tasks.map(task => {
-      const submissionKey = task.task_id || task.active_claim_id;
-      const submission = submissions[submissionKey] || null;
+      // Find submission by task_id or claim_id
+      const submission = submissions[task.task_id] || submissions[task.active_claim_id] || null;
       
-      return {
+      console.log('Processing task:', task.task_id, 'submission found:', submission);
+      console.log('Submission details:', {
+        submission_id: submission?.submission_id,
+        task_id: submission?.task_id,
+        claim_id: submission?.claim_id,
+        status: submission?.status
+      });
+      
+      const result = {
         ...task,
         proposal,
         submission,
-        submissionKey, // Store the key used to retrieve submission
+        submissionKey: submission?.submission_id, // Use actual submission_id for API calls
         proposalId: proposal.id,
         proposalTitle: proposal.title
       };
+      
+      console.log('Final deliverable object:', result);
+      return result;
     });
   }).filter(item => item.submission);
 
@@ -45,9 +90,12 @@ const DeliverablesReview = ({ proposalItems, submissions, onRefresh }) => {
   };
 
   const reviewDeliverable = async (submissionId, action) => {
+    console.log('DeliverablesReview: reviewDeliverable called with submissionId:', submissionId, 'action:', action);
     setReviewingId(submissionId);
     try {
-      const res = await fetch(`${API_BASE}/mcp/v1/submissions/${submissionId}/review`, {
+      const reviewUrl = `${API_BASE}/mcp/v1/submissions/${submissionId}/review`;
+      console.log('DeliverablesReview: Making review request to:', reviewUrl);
+      const res = await fetch(reviewUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -234,6 +282,7 @@ const DeliverablesReview = ({ proposalItems, submissions, onRefresh }) => {
         </div>
         
         <div className="flex items-center gap-2">
+
           <Filter className="w-4 h-4 text-gray-500" />
           <select
             value={filterStatus}
@@ -511,6 +560,8 @@ const DeliverablesReview = ({ proposalItems, submissions, onRefresh }) => {
           </div>
         ))}
       </div>
+
+
     </div>
   );
 };

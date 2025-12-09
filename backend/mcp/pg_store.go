@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -404,11 +405,20 @@ UPDATE mcp_tasks SET status='claimed', claimed_by=$2, claimed_at=$3, claim_expir
 // SubmitWork records a submission for a claim.
 func (s *PGStore) SubmitWork(claimID string, deliverables map[string]interface{}, proof map[string]interface{}) (Submission, error) {
 	ctx := context.Background()
+
+	// Log the submission attempt
+	log.Printf("SubmitWork called for claimID: %s", claimID)
+
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return Submission{}, err
+		log.Printf("Failed to begin transaction: %v", err)
+		return Submission{}, fmt.Errorf("database transaction failed: %v", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() {
+		if r := tx.Rollback(ctx); r != nil {
+			log.Printf("Warning: transaction rollback failed: %v", r)
+		}
+	}()
 
 	var claim Claim
 	err = tx.QueryRow(ctx, `SELECT claim_id, task_id, ai_identifier, status, expires_at, created_at FROM mcp_claims WHERE claim_id=$1`, claimID).
@@ -416,12 +426,61 @@ func (s *PGStore) SubmitWork(claimID string, deliverables map[string]interface{}
 	if err != nil {
 		return Submission{}, ErrClaimNotFound
 	}
-	if claim.Status != "active" {
-		return Submission{}, fmt.Errorf("claim %s not active", claimID)
+	// Allow submissions on active claims OR submitted claims with existing rejected/reviewed submissions
+	if claim.Status != "active" && claim.Status != "submitted" {
+		return Submission{}, fmt.Errorf("claim %s not active or submitted", claimID)
 	}
 	if time.Now().After(claim.ExpiresAt) {
 		_, _ = tx.Exec(ctx, `UPDATE mcp_claims SET status='expired' WHERE claim_id=$1`, claimID)
 		return Submission{}, fmt.Errorf("claim %s expired", claimID)
+	}
+
+	// For submitted claims, check if there's an existing submission that allows resubmission
+	if claim.Status == "submitted" {
+		// Query existing submissions for this claim
+		log.Printf("Querying existing submissions for claimID: %s", claimID)
+		rows, err := tx.Query(ctx, `SELECT status FROM mcp_submissions WHERE claim_id=$1`, claimID)
+		if err != nil {
+			log.Printf("Failed to query existing submissions: %v", err)
+			return Submission{}, err
+		}
+		defer rows.Close()
+
+		canResubmit := false
+		existingStatuses := make([]string, 0)
+		for rows.Next() {
+			var existingStatus string
+			if err := rows.Scan(&existingStatus); err != nil {
+				log.Printf("Failed to scan submission status: %v", err)
+				continue
+			}
+			existingStatuses = append(existingStatuses, existingStatus)
+			if existingStatus == "rejected" || existingStatus == "reviewed" {
+				canResubmit = true
+				log.Printf("Found eligible resubmission status: %s", existingStatus)
+				break
+			}
+		}
+
+		// Close rows before any updates
+		rows.Close()
+
+		log.Printf("Existing submission statuses for claim %s: %v", claimID, existingStatuses)
+
+		if !canResubmit {
+			return Submission{}, fmt.Errorf("claim %s already submitted with no eligible resubmission", claimID)
+		}
+
+		// Reactivate the claim for resubmission
+		log.Printf("Reactivating claim %s for resubmission", claimID)
+		if _, err := tx.Exec(ctx, `UPDATE mcp_claims SET status='active' WHERE claim_id=$1`, claimID); err != nil {
+			log.Printf("Failed to reactivate claim: %v", err)
+			return Submission{}, err
+		}
+		log.Printf("Successfully reactivated claim %s", claimID)
+
+		// Brief pause to allow connection pool to recover
+		time.Sleep(10 * time.Millisecond)
 	}
 
 	subID := fmt.Sprintf("SUB-%d", time.Now().UnixNano())
@@ -436,23 +495,34 @@ func (s *PGStore) SubmitWork(claimID string, deliverables map[string]interface{}
 		CreatedAt:       time.Now(),
 	}
 
+	log.Printf("Creating new submission: ID=%s, ClaimID=%s", subID, claimID)
+
 	if _, err := tx.Exec(ctx, `
-INSERT INTO mcp_submissions (submission_id, claim_id, status, deliverables, completion_proof, created_at)
-VALUES ($1,$2,$3,$4,$5,$6)
-`, sub.SubmissionID, sub.ClaimID, sub.Status, delivJSON, proofJSON, sub.CreatedAt); err != nil {
+	INSERT INTO mcp_submissions (submission_id, claim_id, status, deliverables, completion_proof, created_at)
+	VALUES ($1,$2,$3,$4,$5,$6)
+	`, sub.SubmissionID, sub.ClaimID, sub.Status, delivJSON, proofJSON, sub.CreatedAt); err != nil {
+		log.Printf("Failed to insert submission: %v", err)
 		return Submission{}, err
 	}
+	log.Printf("Inserted submission, updating claim and task status to submitted")
 
+	// Update claim and task status to submitted for the new submission
 	if _, err := tx.Exec(ctx, `UPDATE mcp_claims SET status='submitted' WHERE claim_id=$1`, claimID); err != nil {
+		log.Printf("Failed to update claim status: %v", err)
 		return Submission{}, err
 	}
 	if _, err := tx.Exec(ctx, `UPDATE mcp_tasks SET status='submitted' WHERE task_id=$1`, claim.TaskID); err != nil {
+		log.Printf("Failed to update task status: %v", err)
 		return Submission{}, err
 	}
 
+	log.Printf("Committing transaction for submission %s", subID)
 	if err := tx.Commit(ctx); err != nil {
+		log.Printf("Failed to commit transaction: %v", err)
 		return Submission{}, err
 	}
+
+	log.Printf("Successfully created submission %s for claim %s", subID, claimID)
 	return sub, nil
 }
 
@@ -963,4 +1033,46 @@ ORDER BY created_at DESC
 		}
 	}
 	return tasks
+}
+
+// UpdateSubmissionStatus updates the status of a submission and related entities.
+func (s *PGStore) UpdateSubmissionStatus(ctx context.Context, submissionID, status string) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	// Get claim_id from submission
+	var claimID string
+	err = tx.QueryRow(ctx, `SELECT claim_id FROM mcp_submissions WHERE submission_id=$1`, submissionID).Scan(&claimID)
+	if err != nil {
+		if strings.Contains(err.Error(), "no rows") {
+			return ErrClaimNotFound
+		}
+		return err
+	}
+
+	// Update submission status
+	if _, err := tx.Exec(ctx, `UPDATE mcp_submissions SET status=$2 WHERE submission_id=$1`, submissionID, status); err != nil {
+		return err
+	}
+
+	// On approval, update task and claim
+	if status == "accepted" {
+		var taskID string
+		err = tx.QueryRow(ctx, `SELECT task_id FROM mcp_claims WHERE claim_id=$1`, claimID).Scan(&taskID)
+		if err != nil {
+			return err // should not happen if submission existed
+		}
+
+		if _, err := tx.Exec(ctx, `UPDATE mcp_tasks SET status='approved' WHERE task_id=$1`, taskID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE mcp_claims SET status='complete' WHERE claim_id=$1`, claimID); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit(ctx)
 }
