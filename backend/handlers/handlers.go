@@ -103,6 +103,12 @@ func placeholderPNG() []byte {
 }
 
 // HandleGetInscriptions handles getting all inscriptions
+// @Summary Get all pending inscriptions (smart contracts)
+// @Description Get all pending inscriptions (smart contracts)
+// @Tags Inscriptions
+// @Produce  json
+// @Success 200 {object} models.PendingTransactionsResponse
+// @Router /api/pending-transactions [get]
 func (h *InscriptionHandler) HandleGetInscriptions(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		h.sendError(w, http.StatusMethodNotAllowed, "Method not allowed")

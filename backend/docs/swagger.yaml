@@ -1,0 +1,44 @@
+definitions:
+  models.InscriptionRequest:
+    properties:
+      address:
+        type: string
+      id:
+        type: string
+      imageData:
+        type: string
+      price:
+        type: number
+      status:
+        type: string
+      text:
+        type: string
+      timestamp:
+        type: integer
+    type: object
+  models.PendingTransactionsResponse:
+    properties:
+      total:
+        type: integer
+      transactions:
+        items:
+          $ref: '#/definitions/models.InscriptionRequest'
+        type: array
+    type: object
+info:
+  contact: {}
+paths:
+  /api/pending-transactions:
+    get:
+      description: Get all pending inscriptions (smart contracts)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.PendingTransactionsResponse'
+      summary: Get all pending inscriptions (smart contracts)
+      tags:
+      - Inscriptions
+swagger: "2.0"

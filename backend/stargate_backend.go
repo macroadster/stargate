@@ -19,6 +19,7 @@ import (
 	"stargate-backend/services"
 	"stargate-backend/storage"
 
+	"github.com/mark3labs/mcp-go/server"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
@@ -63,7 +64,7 @@ func findImagePath(height string, filename string) (string, bool) {
 }
 
 // initializeMCPServer sets up the MCP server with proper store selection
-func initializeMCPServer() *mcp.Server {
+func initializeMCPServer() *mcp.MCPServer {
 	// Load MCP configuration
 	storeDriver := os.Getenv("MCP_STORE_DRIVER")
 	if storeDriver == "" {
@@ -125,7 +126,7 @@ func initializeMCPServer() *mcp.Server {
 	}
 	log.Printf("MCP server initialized with %s store (requested: %s)", actualStoreType, storeDriver)
 
-	return mcp.NewServer(store, apiKey, ingestionSvc)
+	return mcp.NewMCPServer(store, apiKey, ingestionSvc)
 }
 
 // startMCPServices starts background services for MCP when using PostgreSQL
@@ -202,14 +203,73 @@ func startMCPServices() {
 func main() {
 	log.Println("=== STARTING STARGATE BACKEND ===")
 
-	// Initialize dependency container
-	container := container.NewContainer()
+	// Check what modes to run
+	runHTTP := os.Getenv("STARGATE_MODE") != "mcp-only"
+	runMCP := os.Getenv("STARGATE_MODE") != "http-only"
+
+	// If neither specified, run both (default behavior)
+	if os.Getenv("STARGATE_MODE") == "" {
+		runHTTP = true
+		runMCP = true
+	}
+
+	// Start HTTP server in background if requested
+	if runHTTP {
+		go runHTTPServer()
+	}
+
+	// Start MCP server in foreground if requested
+	if runMCP {
+		runMCPServer()
+		return // MCP server runs in foreground
+	}
+
+	// If only HTTP mode, wait indefinitely
+	if runHTTP && !runMCP {
+		select {} // Block forever
+	}
+}
+
+func runMCPServer() {
+	log.Println("=== STARTING STARGATE MCP SERVER ===")
 
 	// Initialize MCP server
 	mcpServer := initializeMCPServer()
+	if mcpServer == nil {
+		log.Fatal("Failed to initialize MCP server")
+	}
 
-	// Start MCP background services if using PostgreSQL
-	startMCPServices()
+	// Start MCP background services if using PostgreSQL AND HTTP server is not also running
+	if os.Getenv("STARGATE_MODE") != "http-only" && os.Getenv("STARGATE_MODE") != "both" {
+		startMCPServices()
+	} else {
+		log.Println("MCP background services skipped (handled by HTTP process)")
+	}
+
+	log.Println("Stargate MCP server starting on stdio transport")
+	log.Printf("Server: Stargate MCP Server v1.0.0")
+
+	// Start MCP server using stdio transport
+	if err := server.ServeStdio(mcpServer.GetMCPServer()); err != nil {
+		log.Fatalf("MCP server error: %v", err)
+	}
+}
+
+func runHTTPServer() {
+	log.Println("=== STARTING STARGATE HTTP SERVER ===")
+
+	// Initialize dependency container
+	container := container.NewContainer()
+
+	// Initialize MCP server (for background services, but not HTTP routes)
+	mcpServer := initializeMCPServer()
+
+	// Start MCP background services if using PostgreSQL AND MCP server is not running separately
+	if os.Getenv("STARGATE_MODE") != "mcp-only" && os.Getenv("STARGATE_MODE") != "both" {
+		startMCPServices()
+	} else {
+		log.Println("MCP background services skipped (will be handled by separate MCP process)")
+	}
 
 	// Set up middleware chain
 	mux := http.NewServeMux()
@@ -226,18 +286,28 @@ func main() {
 		),
 	)
 
-	log.Println("Server starting on :3001")
-	log.Println("Frontend available at: http://localhost:3001")
-	log.Println("Stargate API endpoints at: http://localhost:3001/api/")
-	log.Println("Bitcoin steganography API at: http://localhost:3001/bitcoin/v1/")
-	log.Println("Smart contract steganography at: http://localhost:3001/api/contract-stego/")
-	log.Println("Proxy to steganography API (port 8080) at: http://localhost:3001/stego/")
-	log.Println("MCP (Machine Control Protocol) API at: http://localhost:3001/mcp/v1")
+	// Determine HTTP port (allow override when both modes running)
+	httpPort := os.Getenv("STARGATE_HTTP_PORT")
+	if httpPort == "" {
+		httpPort = "3001"
+	}
 
-	log.Fatal(http.ListenAndServe(":3001", handler))
+	log.Printf("Server starting on :%s", httpPort)
+	log.Printf("Frontend available at: http://localhost:%s", httpPort)
+	log.Printf("Stargate API endpoints at: http://localhost:%s/api/", httpPort)
+	log.Printf("Bitcoin steganography API at: http://localhost:%s/bitcoin/v1/", httpPort)
+	log.Printf("Smart contract steganography at: http://localhost:%s/api/contract-stego/", httpPort)
+	log.Printf("Proxy to steganography API (port 8080) at: http://localhost:%s/stego/", httpPort)
+	if os.Getenv("STARGATE_MODE") == "" || os.Getenv("STARGATE_MODE") == "both" {
+		log.Println("Note: MCP server running in same process")
+	} else {
+		log.Println("Note: MCP server available via separate process (STARGATE_MODE=mcp)")
+	}
+
+	log.Fatal(http.ListenAndServe(":"+httpPort, handler))
 }
 
-func setupRoutes(mux *http.ServeMux, container *container.Container, mcpServer *mcp.Server) http.Handler {
+func setupRoutes(mux *http.ServeMux, container *container.Container, mcpServer *mcp.MCPServer) http.Handler {
 	// Health endpoints
 	mux.HandleFunc("/api/health", container.HealthHandler.HandleHealth)
 
@@ -426,10 +496,10 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, mcpServer *
 	mux.HandleFunc("/bitcoin/v1/extract", bitcoinAPI.HandleExtract)
 	mux.HandleFunc("/bitcoin/v1/transaction/", bitcoinAPI.HandleGetTransaction)
 
-	// Register MCP server routes
+	// Note: New MCP server uses stdio transport, not HTTP routes
+	// The MCP server will be available via stdio when run separately
 	if mcpServer != nil {
-		mcpServer.RegisterRoutes(mux)
-		log.Printf("MCP routes registered")
+		log.Printf("MCP server initialized (available via stdio transport)")
 	}
 
 	log.Printf("All routes registered, returning handler")

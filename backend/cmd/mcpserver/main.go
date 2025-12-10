@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"log"
-	"net/http"
 	"os"
 	"strconv"
 	"time"
@@ -11,7 +10,7 @@ import (
 	"stargate-backend/mcp"
 	"stargate-backend/services"
 
-	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/mark3labs/mcp-go/server"
 )
 
 type config struct {
@@ -120,7 +119,7 @@ func main() {
 	}
 	defer store.Close()
 
-	// Start ingestion -> MCP sync when using Postgres.
+	// Start ingestion -> MCP sync when using Postgres
 	if cfg.StoreDriver == "postgres" && cfg.IngestSync {
 		if err := mcp.StartIngestionSync(context.Background(), cfg.PGDSN, store, cfg.SyncInterval); err != nil {
 			log.Printf("ingestion sync disabled (init error): %v", err)
@@ -129,7 +128,7 @@ func main() {
 		}
 	}
 
-	// Start funding proof refresher (mock provider by default).
+	// Start funding proof refresher (mock provider by default)
 	if cfg.StoreDriver == "postgres" && cfg.FundingSync {
 		provider := mcp.NewFundingProvider(cfg.FundingProvider, cfg.FundingAPIBase)
 		if err := mcp.StartFundingSync(context.Background(), store, provider, cfg.FundingInterval); err != nil {
@@ -139,18 +138,14 @@ func main() {
 		}
 	}
 
-	server := mcp.NewServer(store, cfg.APIKey, ingestSvc)
+	// Create new MCP server using mcp-go
+	mcpServer := mcp.NewMCPServer(store, cfg.APIKey, ingestSvc)
 
-	mux := http.NewServeMux()
-	server.RegisterRoutes(mux)
-	mux.Handle("/metrics", promhttp.Handler())
+	log.Printf("Stargate MCP server starting (driver=%s)", cfg.StoreDriver)
+	log.Printf("Server: Stargate MCP Server v1.0.0")
 
-	addr := ":" + cfg.Port
-	log.Printf("Stargate MCP server starting on %s (driver=%s)", addr, cfg.StoreDriver)
-	log.Printf("Health: http://localhost%s/healthz", addr)
-	log.Printf("API:    http://localhost%s/mcp/v1", addr)
-
-	if err := http.ListenAndServe(addr, mux); err != nil {
-		log.Fatalf("server failed: %v", err)
+	// Start the MCP server using stdio transport
+	if err := server.ServeStdio(mcpServer.GetMCPServer()); err != nil {
+		log.Fatalf("Server error: %v", err)
 	}
 }

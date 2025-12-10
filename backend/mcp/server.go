@@ -345,6 +345,10 @@ func (s *Server) handleSkills(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	skillSet := make(map[string]struct{})
+	// Add default skills
+	skillSet["contract_bidding"] = struct{}{}
+	skillSet["get_pending_transactions"] = struct{}{}
+
 	for _, t := range tasks {
 		for _, skill := range t.Skills {
 			key := strings.ToLower(strings.TrimSpace(skill))

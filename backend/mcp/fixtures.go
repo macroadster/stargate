@@ -73,6 +73,18 @@ func SeedData() ([]Contract, []Task) {
 				SeenAt:             seen,
 			},
 		},
+		{
+			TaskID:         "TASK-get-pending-txs",
+			ContractID:     "CONTRACT-550e8400",
+			GoalID:         "GOAL-002",
+			Title:          "Get Pending Transactions",
+			Description:    "Get a list of pending transactions (inscriptions/smart contracts).",
+			BudgetSats:     1_000_000,
+			Skills:         []string{"api", "get_pending_transactions"},
+			Status:         "available",
+			Difficulty:     "beginner",
+			EstimatedHours: 1,
+		},
 	}
 
 	return contracts, tasks
