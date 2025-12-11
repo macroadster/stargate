@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Search, Moon, Sun, X, Check, Copy } from 'lucide-react';
 import { Routes, Route, useParams, useNavigate, useLocation } from 'react-router-dom';
 
+
 import BlockCard from './components/Block/BlockCard';
 import InscriptionCard from './components/Inscription/InscriptionCard';
 import PendingTransactionsView from './components/Block/PendingTransactionsView';
@@ -52,7 +53,8 @@ function MainContent() {
     handleBlockSelect: originalHandleBlockSelect,
     setSelectedBlock,
     setIsUserNavigating,
-    loadMoreBlocks
+    loadMoreBlocks,
+    refreshBlocks
   } = useBlocks();
 
   const handleBlockSelect = (block) => {
@@ -118,7 +120,6 @@ function MainContent() {
     // Only auto-select pending once when nothing is selected; avoid overriding user selection on this page.
     const pendingBlock = blocks.find((b) => b.isFuture);
     if (pendingBlock && !selectedBlock) {
-      console.debug('[blocks] pending auto-select', pendingBlock.height);
       setSelectedBlock(pendingBlock);
       setIsUserNavigating(true);
     }
@@ -132,13 +133,6 @@ function MainContent() {
     }
     localStorage.setItem('theme', isDarkMode ? 'dark' : 'light');
   }, [isDarkMode]);
-
-  // Stop auto-scrolling; only user-driven navigation
-  useEffect(() => {
-    if (isUserNavigating) {
-      setIsUserNavigating(false);
-    }
-  }, [selectedBlock, isUserNavigating, setIsUserNavigating]);
 
   useEffect(() => {
     if (!hasMoreImages || !sentinelRef.current) return;
@@ -159,6 +153,17 @@ function MainContent() {
       observer.unobserve(sentinel);
     };
   }, [hasMoreImages, loadMoreInscriptions]);
+
+
+
+  // Stop auto-scrolling; only user-driven navigation
+  useEffect(() => {
+    if (isUserNavigating) {
+      setIsUserNavigating(false);
+    }
+  }, [selectedBlock, isUserNavigating, setIsUserNavigating]);
+
+
 
   const toggleTheme = () => {
     setIsDarkMode(!isDarkMode);
@@ -197,6 +202,8 @@ function MainContent() {
       console.error('Failed to copy:', error);
     }
   };
+
+
 
   const renderInlineSearch = () => {
     if (searchResults === null) return null;
@@ -555,40 +562,41 @@ function MainContent() {
                    </div>
                  )}
 
-                 {filteredInscriptions.length > 0 && (
-                   <>
-                     <div className="grid grid-cols-5 gap-4">
-                       {filteredInscriptions.map((inscription, idx) => (
-                         <InscriptionCard
-                           key={idx}
-                           inscription={inscription}
-                           onClick={setSelectedInscription}
-                         />
-                       ))}
-                       {hasMoreImages && (
-                         <div ref={sentinelRef} className="col-span-5 flex justify-center py-4">
-                           <div className="text-gray-500 dark:text-gray-400">Loading more...</div>
-                         </div>
-                       )}
-                     </div>
-                     {!hasMoreImages && (
-                       <div className="text-center text-gray-500 dark:text-gray-400 text-sm mt-4">
-                         You&apos;ve reached the end of inscriptions for this block.
-                       </div>
-                     )}
-                   </>
-                 )}
+                  {filteredInscriptions.length > 0 && (
+                    <>
+                      <div className="grid grid-cols-5 gap-4">
+                        {filteredInscriptions.map((inscription, idx) => (
+                          <InscriptionCard
+                            key={idx}
+                            inscription={inscription}
+                            onClick={setSelectedInscription}
+                          />
+                        ))}
+                        {hasMoreImages && (
+                          <div ref={sentinelRef} className="col-span-5 flex justify-center py-4">
+                            <div className="text-gray-500 dark:text-gray-400">Loading more...</div>
+                          </div>
+                        )}
+                      </div>
+                      {!hasMoreImages && (
+                        <div className="text-center text-gray-500 dark:text-gray-400 text-sm mt-4">
+                          You&apos;ve reached the end of inscriptions for this block.
+                        </div>
+                      )}
+                    </>
+                  )}
               </div>
             )}
           </>
         )}
        </div>
 
-       {showInscribeModal && (
-         <InscribeModal
-           onClose={() => setShowInscribeModal(false)}
-         />
-       )}
+        {showInscribeModal && (
+          <InscribeModal
+            onClose={() => setShowInscribeModal(false)}
+            onSuccess={refreshBlocks}
+          />
+        )}
 
        {selectedInscription && (
          <InscriptionModal

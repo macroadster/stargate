@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { API_BASE, CONTENT_BASE } from '../apiBase';
 
 const generateInscriptions = (inscriptions) => {
@@ -32,6 +32,7 @@ export const useInscriptions = (selectedBlock) => {
   const [inscriptions, setInscriptions] = useState([]);
   const [currentInscriptions, setCurrentInscriptions] = useState([]);
   const [allInscriptions, setAllInscriptions] = useState([]);
+  const allInscriptionsRef = useRef([]);
   const [hasMoreImages, setHasMoreImages] = useState(true);
   const [totalImages, setTotalImages] = useState(0);
   const [filterMode, setFilterMode] = useState('all'); // 'all' or 'text'
@@ -44,6 +45,7 @@ export const useInscriptions = (selectedBlock) => {
     if (!selectedBlock || !selectedBlock.height) {
       setInscriptions([]);
       setCurrentInscriptions([]);
+      allInscriptionsRef.current = [];
       setAllInscriptions([]);
       setHasMoreImages(false);
       setTotalImages(0);
@@ -56,6 +58,7 @@ export const useInscriptions = (selectedBlock) => {
     if (selectedBlock.isFuture || selectedBlock.has_images === false) {
       setInscriptions([]);
       setCurrentInscriptions([]);
+      allInscriptionsRef.current = [];
       setAllInscriptions([]);
       setHasMoreImages(false);
       setTotalImages(0);
@@ -67,6 +70,7 @@ export const useInscriptions = (selectedBlock) => {
     if (isLoading) return;
     if (!cursor && lastFetchedHeight === selectedBlock.height) return;
     if (!cursor && lastFetchedHeight !== selectedBlock.height) {
+      allInscriptionsRef.current = [];
       setAllInscriptions([]);
       setInscriptions([]);
       setNextCursor(null);
@@ -96,7 +100,7 @@ export const useInscriptions = (selectedBlock) => {
       const convertedResults = await Promise.all(images.map(async (image) => {
         let scanResult = null;
 
-        if (image.scan_result) {
+        if (image.scan_result && typeof image.scan_result === 'object') {
           scanResult = {
             is_stego: image.scan_result.is_stego || false,
             confidence: image.scan_result.confidence || 0.0,
@@ -168,8 +172,9 @@ export const useInscriptions = (selectedBlock) => {
       
       const processedInscriptions = generateInscriptions(convertedResults);
 
-      const merged = cursor ? [...allInscriptions, ...processedInscriptions] : processedInscriptions;
+      const merged = cursor ? [...allInscriptionsRef.current, ...processedInscriptions] : processedInscriptions;
       setCurrentInscriptions(convertedResults);
+      allInscriptionsRef.current = merged;
       setAllInscriptions(merged);
       
       // Apply filter if needed
@@ -188,6 +193,7 @@ export const useInscriptions = (selectedBlock) => {
         // Historical/pinned block not available; treat as empty without spamming logs
         setInscriptions([]);
         setCurrentInscriptions([]);
+        allInscriptionsRef.current = [];
         setAllInscriptions([]);
         setTotalImages(0);
         setHasMoreImages(false);
@@ -206,7 +212,7 @@ export const useInscriptions = (selectedBlock) => {
     } finally {
       setIsLoading(false);
     }
-  }, [selectedBlock, filterMode, lastFetchedHeight, isLoading, allInscriptions]);
+  }, [selectedBlock, filterMode, lastFetchedHeight, isLoading]);
 
   const loadMoreInscriptions = () => {
     if (!hasMoreImages || !nextCursor) return;
@@ -215,10 +221,10 @@ export const useInscriptions = (selectedBlock) => {
 
   const setFilter = (mode) => {
     setFilterMode(mode);
-    const filteredInscriptions = mode === 'text' 
-      ? allInscriptions.filter(ins => ins.text || ins.metadata?.extracted_message)
-      : allInscriptions;
-    
+    const filteredInscriptions = mode === 'text'
+      ? allInscriptionsRef.current.filter(ins => ins.text || ins.metadata?.extracted_message)
+      : allInscriptionsRef.current;
+
     setTotalImages(filteredInscriptions.length);
     setHasMoreImages(filteredInscriptions.length > 0);
     setInscriptions(filteredInscriptions);

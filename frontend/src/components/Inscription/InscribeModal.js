@@ -3,7 +3,7 @@ import { X } from 'lucide-react';
 import { API_BASE } from '../../apiBase';
 import { QRCodeCanvas } from 'qrcode.react';
 
-const InscribeModal = ({ onClose, setPendingTransactions }) => {
+const InscribeModal = ({ onClose, onSuccess }) => {
   const [step, setStep] = useState(1);
   const [imageFile, setImageFile] = useState(null);
   const [embedText, setEmbedText] = useState('');
@@ -56,8 +56,7 @@ const InscribeModal = ({ onClose, setPendingTransactions }) => {
 
       if (response.ok) {
         const result = await response.json();
-        console.log('Inscription successful:', result);
-        
+
         // Generate payment QR code data
         const paymentAddress = "bc1qexampleaddress123456789"; // Demo address
         const paymentAmount = price;
@@ -66,8 +65,9 @@ const InscribeModal = ({ onClose, setPendingTransactions }) => {
           amount: paymentAmount,
           inscriptionId: result.id
         });
-        
+
         setStep(2);
+        if (onSuccess) onSuccess();
       } else {
         console.error('Inscription failed');
       }
@@ -202,17 +202,7 @@ const InscribeModal = ({ onClose, setPendingTransactions }) => {
               </button>
               <button
                 onClick={() => {
-                  setTimeout(() => {
-                    fetch(`${API_BASE}/api/pending-transactions`)
-                      .then(res => res.json())
-                      .then((data) => {
-                        if (typeof setPendingTransactions === 'function') {
-                          const txs = data?.data?.transactions ?? data?.transactions ?? data ?? [];
-                          setPendingTransactions(Array.isArray(txs) ? txs : []);
-                        }
-                      })
-                      .catch(err => console.error('Error fetching pending transactions:', err));
-                  }, 1000);
+                  if (onSuccess) onSuccess();
                   onClose();
                 }}
                 className="flex-1 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700"

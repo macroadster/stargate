@@ -88,6 +88,9 @@ export const useBlocks = () => {
         return true;
       }).sort((a, b) => b.height - a.height);
 
+      // Limit to last 200 blocks to prevent memory accumulation
+      deduped = deduped.slice(0, 200);
+
       // Always include milestone blocks
       const milestoneMeta = {
         0: {
@@ -204,6 +207,8 @@ export const useBlocks = () => {
     setSelectedBlock({ ...block });
   };
 
+  const refreshBlocks = () => fetchBlocks(null, false);
+
   return {
     blocks,
     selectedBlock,
@@ -211,6 +216,7 @@ export const useBlocks = () => {
     handleBlockSelect,
     setSelectedBlock,
     setIsUserNavigating,
-    loadMoreBlocks
+    loadMoreBlocks,
+    refreshBlocks
   };
 };

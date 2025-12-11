@@ -25,10 +25,15 @@ const DeliverablesReview = ({ proposalItems, submissions, onRefresh }) => {
 
 
   // Handle both array and object formats for submissions
-  const submissionsArray = Array.isArray(submissions) ? submissions : Object.values(submissions || {});
+  const submissionsObj = (submissions && typeof submissions === 'object') ? submissions : {};
+  let submissionsArray;
+  try {
+    submissionsArray = Array.isArray(submissions) ? submissions : (submissionsObj ? Object.keys(submissionsObj).map(key => submissionsObj[key]) : []);
+  } catch (e) {
+    console.error('Error processing submissions:', e, submissions);
+    submissionsArray = [];
+  }
   const submissionsMap = {};
-  console.log('DeliverablesReview: Raw submissions data:', submissions);
-  console.log('DeliverablesReview: Submissions array:', submissionsArray);
   
   // Create submission map by submission_id for API calls
   // Create submission map by submission_id for API calls
@@ -44,7 +49,6 @@ const DeliverablesReview = ({ proposalItems, submissions, onRefresh }) => {
       submissionsMap[submission.claim_id] = submission;
     }
   });
-  console.log('DeliverablesReview: Final submissions map:', submissionsMap);
 
   const allDeliverables = proposalItems.flatMap(proposal => {
     const tasks = Array.isArray(proposal.tasks) && proposal.tasks.length > 0
@@ -53,16 +57,8 @@ const DeliverablesReview = ({ proposalItems, submissions, onRefresh }) => {
     
     return tasks.map(task => {
       // Find submission by task_id or claim_id
-      const submission = submissions[task.task_id] || submissions[task.active_claim_id] || null;
-      
-      console.log('Processing task:', task.task_id, 'submission found:', submission);
-      console.log('Submission details:', {
-        submission_id: submission?.submission_id,
-        task_id: submission?.task_id,
-        claim_id: submission?.claim_id,
-        status: submission?.status
-      });
-      
+      const submission = submissionsObj[task.task_id] || submissionsObj[task.active_claim_id] || null;
+
       const result = {
         ...task,
         proposal,
@@ -71,8 +67,7 @@ const DeliverablesReview = ({ proposalItems, submissions, onRefresh }) => {
         proposalId: proposal.id,
         proposalTitle: proposal.title
       };
-      
-      console.log('Final deliverable object:', result);
+
       return result;
     });
   }).filter(item => item.submission);
@@ -90,11 +85,9 @@ const DeliverablesReview = ({ proposalItems, submissions, onRefresh }) => {
   };
 
   const reviewDeliverable = async (submissionId, action) => {
-    console.log('DeliverablesReview: reviewDeliverable called with submissionId:', submissionId, 'action:', action);
     setReviewingId(submissionId);
     try {
       const reviewUrl = `${API_BASE}/api/smart_contract/submissions/${submissionId}/review`;
-      console.log('DeliverablesReview: Making review request to:', reviewUrl);
       const res = await fetch(reviewUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

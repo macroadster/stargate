@@ -699,14 +699,21 @@ func (api *DataAPI) HandleGetBlockInscriptionsPaginated(w http.ResponseWriter, r
 			limit = parsed
 		}
 	}
-	cursor := r.URL.Query().Get("cursor")
+	cursorStr := r.URL.Query().Get("cursor")
 	filter := r.URL.Query().Get("filter")
 	fields := r.URL.Query().Get("fields")
 	if fields == "" {
 		fields = "summary"
 	}
 
-	log.Printf("block-inscriptions: height=%d cursor=%s limit=%d filter=%s fields=%s", height, cursor, limit, filter, fields)
+	cursor := 0
+	if cursorStr != "" {
+		if parsed, err := strconv.Atoi(cursorStr); err == nil && parsed >= 0 {
+			cursor = parsed
+		}
+	}
+
+	log.Printf("block-inscriptions: height=%d cursor=%d limit=%d filter=%s fields=%s", height, cursor, limit, filter, fields)
 
 	block, err := api.loadBlock(height)
 	if err != nil {
@@ -726,14 +733,9 @@ func (api *DataAPI) HandleGetBlockInscriptionsPaginated(w http.ResponseWriter, r
 		inscriptions = filtered
 	}
 
-	start := 0
-	if cursor != "" {
-		for idx, ins := range inscriptions {
-			if ins.FileName == cursor {
-				start = idx + 1
-				break
-			}
-		}
+	start := cursor
+	if start > len(inscriptions) {
+		start = len(inscriptions)
 	}
 
 	end := start + limit
@@ -742,9 +744,12 @@ func (api *DataAPI) HandleGetBlockInscriptionsPaginated(w http.ResponseWriter, r
 	}
 
 	selected := inscriptions[start:end]
-	var nextCursor string
-	if end < len(inscriptions) {
-		nextCursor = inscriptions[end-1].FileName
+	var nextCursor interface{}
+	hasMore := end < len(inscriptions)
+	if hasMore {
+		nextCursor = strconv.Itoa(end)
+	} else {
+		nextCursor = nil
 	}
 
 	var responseItems []map[string]interface{}
@@ -801,12 +806,9 @@ func (api *DataAPI) HandleGetBlockInscriptionsPaginated(w http.ResponseWriter, r
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"block_height": height,
 		"inscriptions": responseItems,
-		"returned":     len(responseItems),
-		"total":        len(inscriptions),
+		"has_more":     hasMore,
 		"next_cursor":  nextCursor,
-		"has_more":     nextCursor != "",
 	})
 }
 

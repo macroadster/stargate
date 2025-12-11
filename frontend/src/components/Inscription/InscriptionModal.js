@@ -125,7 +125,6 @@ const InscriptionModal = ({ inscription, onClose }) => {
           submissionsByKey[s.claim_id] = s;
         }
       });
-      console.log('InscriptionModal: Final submissions map:', submissionsByKey);
       setSubmissions(submissionsByKey);
       // Sort approved first, then pending/others, preserving matches
       items = items.sort((a, b) => {

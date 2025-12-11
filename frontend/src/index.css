@@ -2,6 +2,14 @@
 @tailwind components;
 @tailwind utilities;
 
+html {
+  background: white;
+}
+
+.dark html {
+  background: rgb(3 7 18); /* gray-950 */
+}
+
 body {
   margin: 0;
   overflow: auto;
