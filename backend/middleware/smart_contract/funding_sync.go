@@ -1,15 +1,18 @@
-package mcp
+package smart_contract
 
 import (
 	"context"
 	"errors"
 	"log"
 	"time"
+
+	"stargate-backend/core/smart_contract"
+	scstore "stargate-backend/storage/smart_contract"
 )
 
 // FundingProvider fetches up-to-date funding proofs for a task.
 type FundingProvider interface {
-	FetchProof(ctx context.Context, task Task) (*MerkleProof, error)
+	FetchProof(ctx context.Context, task smart_contract.Task) (*smart_contract.MerkleProof, error)
 }
 
 // NewFundingProvider selects a provider based on name.
@@ -30,7 +33,7 @@ func NewMockFundingProvider() FundingProvider {
 	return &mockFundingProvider{}
 }
 
-func (m *mockFundingProvider) FetchProof(ctx context.Context, task Task) (*MerkleProof, error) {
+func (m *mockFundingProvider) FetchProof(ctx context.Context, task smart_contract.Task) (*smart_contract.MerkleProof, error) {
 	if task.MerkleProof == nil {
 		return nil, errors.New("no proof to upgrade")
 	}
@@ -51,14 +54,14 @@ func (m *mockFundingProvider) FetchProof(ctx context.Context, task Task) (*Merkl
 		proof.BlockHeaderMerkleRoot = proof.TxID
 	}
 	if len(proof.ProofPath) == 0 {
-		proof.ProofPath = []ProofNode{{Hash: proof.TxID, Direction: "left"}}
+		proof.ProofPath = []smart_contract.ProofNode{{Hash: proof.TxID, Direction: "left"}}
 	}
 	return &proof, nil
 }
 
 // StartFundingSync periodically refreshes provisional proofs using the provider.
 func StartFundingSync(ctx context.Context, store Store, provider FundingProvider, interval time.Duration) error {
-	pgStore, ok := store.(*PGStore)
+	pgStore, ok := store.(*scstore.PGStore)
 	if !ok {
 		return errors.New("funding sync requires Postgres store")
 	}
@@ -79,8 +82,8 @@ func StartFundingSync(ctx context.Context, store Store, provider FundingProvider
 	return nil
 }
 
-func refreshProofs(ctx context.Context, store *PGStore, provider FundingProvider) error {
-	tasks, err := store.ListTasks(TaskFilter{Status: ""})
+func refreshProofs(ctx context.Context, store *scstore.PGStore, provider FundingProvider) error {
+	tasks, err := store.ListTasks(smart_contract.TaskFilter{Status: ""})
 	if err != nil {
 		return err
 	}

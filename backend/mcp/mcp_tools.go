@@ -7,6 +7,10 @@ import (
 	"strings"
 	"time"
 
+	"stargate-backend/core/smart_contract"
+	scmiddleware "stargate-backend/middleware/smart_contract"
+	scstore "stargate-backend/storage/smart_contract"
+
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
@@ -34,7 +38,7 @@ func (s *MCPServer) registerListProposalsTool() {
 			}
 		}
 
-		filter := ProposalFilter{
+		filter := smart_contract.ProposalFilter{
 			Status:     toString(args["status"]),
 			Skills:     skills,
 			MinBudget:  toInt64(args["min_budget_sats"]),
@@ -126,7 +130,7 @@ func (s *MCPServer) registerCreateProposalTool() {
 
 		budgetSats := toInt64(args["budget_sats"])
 		if budgetSats == 0 {
-			budgetSats = defaultBudgetSats()
+			budgetSats = scstore.DefaultBudgetSats()
 		}
 
 		metadata := toMap(args["metadata"])
@@ -148,7 +152,7 @@ func (s *MCPServer) registerCreateProposalTool() {
 			}
 
 			// Build proposal from ingestion
-			proposalBody := proposalCreateBody{
+			proposalBody := scmiddleware.ProposalCreateBody{
 				ID:               id,
 				IngestionID:      ingestionID,
 				ContractID:       contractID,
@@ -160,7 +164,7 @@ func (s *MCPServer) registerCreateProposalTool() {
 				Metadata:         metadata,
 			}
 
-			proposal, err := buildProposalFromIngestion(proposalBody, rec)
+			proposal, err := scmiddleware.BuildProposalFromIngestion(proposalBody, rec)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -179,11 +183,11 @@ func (s *MCPServer) registerCreateProposalTool() {
 		}
 
 		// Manual creation
-		var tasks []Task
+		var tasks []smart_contract.Task
 		if taskSlice, ok := args["tasks"].([]interface{}); ok {
 			for i, taskInterface := range taskSlice {
 				if taskMap, ok := taskInterface.(map[string]interface{}); ok {
-					task := Task{
+					task := smart_contract.Task{
 						TaskID:      toString(taskMap["task_id"]),
 						ContractID:  toString(taskMap["contract_id"]),
 						GoalID:      toString(taskMap["goal_id"]),
@@ -208,7 +212,7 @@ func (s *MCPServer) registerCreateProposalTool() {
 			}
 		}
 
-		proposal := Proposal{
+		proposal := smart_contract.Proposal{
 			ID:               id,
 			Title:            title,
 			DescriptionMD:    toString(args["description_md"]),
@@ -318,14 +322,14 @@ func (s *MCPServer) registerListSubmissionsTool() {
 			}
 		}
 
-		var submissions []Submission
+		var submissions []smart_contract.Submission
 		var err error
 
 		if len(taskIDs) > 0 {
 			submissions, err = s.store.ListSubmissions(ctx, taskIDs)
 		} else if contractID != "" {
 			// Get tasks for contract, then submissions for those tasks
-			tasks, err := s.store.ListTasks(TaskFilter{ContractID: contractID})
+			tasks, err := s.store.ListTasks(smart_contract.TaskFilter{ContractID: contractID})
 			if err != nil {
 				return mcp.NewToolResultError(fmt.Sprintf("Failed to get tasks: %v", err)), nil
 			}
@@ -336,7 +340,7 @@ func (s *MCPServer) registerListSubmissionsTool() {
 			submissions, err = s.store.ListSubmissions(ctx, taskIDs)
 		} else {
 			// Get all tasks, then all submissions
-			tasks, err := s.store.ListTasks(TaskFilter{})
+			tasks, err := s.store.ListTasks(smart_contract.TaskFilter{})
 			if err != nil {
 				return mcp.NewToolResultError(fmt.Sprintf("Failed to get tasks: %v", err)), nil
 			}
@@ -353,7 +357,7 @@ func (s *MCPServer) registerListSubmissionsTool() {
 
 		// Filter by status if provided
 		if status != "" {
-			filtered := make([]Submission, 0)
+			filtered := make([]smart_contract.Submission, 0)
 			for _, sub := range submissions {
 				if strings.EqualFold(sub.Status, status) {
 					filtered = append(filtered, sub)
@@ -363,7 +367,7 @@ func (s *MCPServer) registerListSubmissionsTool() {
 		}
 
 		// Convert to map for easier consumption
-		submissionMap := make(map[string]Submission)
+		submissionMap := make(map[string]smart_contract.Submission)
 		for _, sub := range submissions {
 			submissionMap[sub.SubmissionID] = sub
 		}
@@ -391,7 +395,7 @@ func (s *MCPServer) registerGetSubmissionTool() {
 		}
 
 		// Get all tasks to find submission
-		tasks, err := s.store.ListTasks(TaskFilter{})
+		tasks, err := s.store.ListTasks(smart_contract.TaskFilter{})
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Failed to get tasks: %v", err)), nil
 		}
@@ -500,7 +504,7 @@ func (s *MCPServer) registerReworkSubmissionTool() {
 		}
 
 		// Get the original submission
-		tasks, err := s.store.ListTasks(TaskFilter{})
+		tasks, err := s.store.ListTasks(smart_contract.TaskFilter{})
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Failed to get tasks: %v", err)), nil
 		}
@@ -515,7 +519,7 @@ func (s *MCPServer) registerReworkSubmissionTool() {
 			return mcp.NewToolResultError(fmt.Sprintf("Failed to get submissions: %v", err)), nil
 		}
 
-		var originalSubmission *Submission
+		var originalSubmission *smart_contract.Submission
 		for _, sub := range submissions {
 			if sub.SubmissionID == submissionID {
 				originalSubmission = &sub
@@ -570,7 +574,7 @@ func (s *MCPServer) registerListEventsTool() {
 	s.mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		// For now, return empty events since the original server has in-memory events
 		// In a real implementation, you'd want to persist events or use the existing event system
-		events := []Event{}
+		events := []smart_contract.Event{}
 
 		result := map[string]interface{}{
 			"events": events,
@@ -590,14 +594,14 @@ func (s *MCPServer) publishProposalTasks(ctx context.Context, proposalID string)
 	if len(p.Tasks) == 0 {
 		// Try to derive tasks from metadata embedded_message
 		if em, ok := p.Metadata["embedded_message"].(string); ok && em != "" {
-			p.Tasks = BuildTasksFromMarkdown(p.ID, em, p.VisiblePixelHash, p.BudgetSats, fundingAddressFromMeta(p.Metadata))
+			p.Tasks = scstore.BuildTasksFromMarkdown(p.ID, em, p.VisiblePixelHash, p.BudgetSats, scstore.FundingAddressFromMeta(p.Metadata))
 		}
 		if len(p.Tasks) == 0 {
 			return nil
 		}
 	}
 	// Build a contract from the proposal, then upsert tasks
-	contract := Contract{
+	contract := smart_contract.Contract{
 		ContractID:          p.ID,
 		Title:               p.Title,
 		TotalBudgetSats:     p.BudgetSats,
@@ -606,15 +610,15 @@ func (s *MCPServer) publishProposalTasks(ctx context.Context, proposalID string)
 		Status:              "active",
 	}
 	// Preserve hashes/funding if present
-	fundingAddr := fundingAddressFromMeta(p.Metadata)
-	tasks := make([]Task, 0, len(p.Tasks))
+	fundingAddr := scstore.FundingAddressFromMeta(p.Metadata)
+	tasks := make([]smart_contract.Task, 0, len(p.Tasks))
 	for _, t := range p.Tasks {
 		task := t
 		if task.ContractID == "" {
 			task.ContractID = p.ID
 		}
 		if task.MerkleProof == nil && p.VisiblePixelHash != "" {
-			task.MerkleProof = &MerkleProof{
+			task.MerkleProof = &smart_contract.MerkleProof{
 				VisiblePixelHash:   p.VisiblePixelHash,
 				FundedAmountSats:   p.BudgetSats / int64(len(p.Tasks)),
 				FundingAddress:     fundingAddr,
@@ -627,7 +631,7 @@ func (s *MCPServer) publishProposalTasks(ctx context.Context, proposalID string)
 		tasks = append(tasks, task)
 	}
 	if pg, ok := s.store.(interface {
-		UpsertContractWithTasks(context.Context, Contract, []Task) error
+		UpsertContractWithTasks(context.Context, smart_contract.Contract, []smart_contract.Task) error
 	}); ok {
 		if err := pg.UpsertContractWithTasks(ctx, contract, tasks); err != nil {
 			return err

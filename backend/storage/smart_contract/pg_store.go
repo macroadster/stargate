@@ -1,4 +1,4 @@
-package mcp
+package smart_contract
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"stargate-backend/core/smart_contract"
 )
 
 // PGStore persists MCP state in Postgres.
@@ -158,7 +159,7 @@ func (s *PGStore) Close() {
 }
 
 // ListContracts returns all contracts filtered by status and skill.
-func (s *PGStore) ListContracts(status string, skills []string) ([]Contract, error) {
+func (s *PGStore) ListContracts(status string, skills []string) ([]smart_contract.Contract, error) {
 	ctx := context.Background()
 	rows, err := s.pool.Query(ctx, `
 SELECT contract_id, title, total_budget_sats, goals_count, available_tasks_count, status, skills
@@ -170,9 +171,9 @@ WHERE ($1 = '' OR status = $1)
 	}
 	defer rows.Close()
 
-	var out []Contract
+	var out []smart_contract.Contract
 	for rows.Next() {
-		var c Contract
+		var c smart_contract.Contract
 		if err := rows.Scan(&c.ContractID, &c.Title, &c.TotalBudgetSats, &c.GoalsCount, &c.AvailableTasksCount, &c.Status, &c.Skills); err != nil {
 			return nil, err
 		}
@@ -185,7 +186,7 @@ WHERE ($1 = '' OR status = $1)
 }
 
 // hydrateProposalTasks updates proposal tasks with live task statuses from the DB.
-func (s *PGStore) hydrateProposalTasks(ctx context.Context, p *Proposal) {
+func (s *PGStore) hydrateProposalTasks(ctx context.Context, p *smart_contract.Proposal) {
 	if p == nil {
 		return
 	}
@@ -209,7 +210,7 @@ FROM mcp_tasks WHERE contract_id = ANY($1)
 	}
 	defer rows.Close()
 
-	liveTasks := make(map[string]Task)
+	liveTasks := make(map[string]smart_contract.Task)
 	taskIDs := make([]string, 0)
 	for rows.Next() {
 		t, err := scanTask(rows)
@@ -224,12 +225,12 @@ FROM mcp_tasks WHERE contract_id = ANY($1)
 	}
 
 	// attach active claims
-	tasksSlice := make([]Task, 0, len(liveTasks))
+	tasksSlice := make([]smart_contract.Task, 0, len(liveTasks))
 	for _, t := range liveTasks {
 		tasksSlice = append(tasksSlice, t)
 	}
 	tasksSlice = s.attachActiveClaims(ctx, tasksSlice, taskIDs)
-	liveTasks = make(map[string]Task, len(tasksSlice))
+	liveTasks = make(map[string]smart_contract.Task, len(tasksSlice))
 	for _, t := range tasksSlice {
 		liveTasks[t.TaskID] = t
 	}
@@ -256,7 +257,7 @@ FROM mcp_tasks WHERE contract_id = ANY($1)
 }
 
 // ListTasks returns tasks filtered by a TaskFilter.
-func (s *PGStore) ListTasks(filter TaskFilter) ([]Task, error) {
+func (s *PGStore) ListTasks(filter smart_contract.TaskFilter) ([]smart_contract.Task, error) {
 	ctx := context.Background()
 	rows, err := s.pool.Query(ctx, `
 SELECT task_id, contract_id, goal_id, title, description, budget_sats, skills, status, claimed_by, claimed_at, claim_expires_at, difficulty, estimated_hours, requirements, merkle_proof
@@ -270,7 +271,7 @@ AND ($3 = '' OR claimed_by = $3)
 	}
 	defer rows.Close()
 
-	var out []Task
+	var out []smart_contract.Task
 	taskIDs := make([]string, 0)
 	for rows.Next() {
 		task, err := scanTask(rows)
@@ -297,7 +298,7 @@ AND ($3 = '' OR claimed_by = $3)
 }
 
 // GetTask returns a task by ID.
-func (s *PGStore) GetTask(id string) (Task, error) {
+func (s *PGStore) GetTask(id string) (smart_contract.Task, error) {
 	ctx := context.Background()
 	row := s.pool.QueryRow(ctx, `
 SELECT task_id, contract_id, goal_id, title, description, budget_sats, skills, status, claimed_by, claimed_at, claim_expires_at, difficulty, estimated_hours, requirements, merkle_proof
@@ -306,11 +307,11 @@ FROM mcp_tasks WHERE task_id=$1
 	task, err := scanTask(row)
 	if err != nil {
 		if strings.Contains(err.Error(), "no rows") {
-			return Task{}, ErrTaskNotFound
+			return smart_contract.Task{}, ErrTaskNotFound
 		}
-		return Task{}, err
+		return smart_contract.Task{}, err
 	}
-	out := s.attachActiveClaims(ctx, []Task{task}, []string{id})
+	out := s.attachActiveClaims(ctx, []smart_contract.Task{task}, []string{id})
 	if len(out) > 0 {
 		return out[0], nil
 	}
@@ -318,28 +319,28 @@ FROM mcp_tasks WHERE task_id=$1
 }
 
 // GetContract returns a contract by ID.
-func (s *PGStore) GetContract(id string) (Contract, error) {
+func (s *PGStore) GetContract(id string) (smart_contract.Contract, error) {
 	ctx := context.Background()
-	var c Contract
+	var c smart_contract.Contract
 	err := s.pool.QueryRow(ctx, `
 SELECT contract_id, title, total_budget_sats, goals_count, available_tasks_count, status, skills
 FROM mcp_contracts WHERE contract_id=$1
 `, id).Scan(&c.ContractID, &c.Title, &c.TotalBudgetSats, &c.GoalsCount, &c.AvailableTasksCount, &c.Status, &c.Skills)
 	if err != nil {
 		if strings.Contains(err.Error(), "no rows") {
-			return Contract{}, fmt.Errorf("contract %s not found", id)
+			return smart_contract.Contract{}, fmt.Errorf("contract %s not found", id)
 		}
-		return Contract{}, err
+		return smart_contract.Contract{}, err
 	}
 	return c, nil
 }
 
 // ClaimTask reserves a task for an AI. It is idempotent if the same AI reclaims before expiry.
-func (s *PGStore) ClaimTask(taskID, aiID string, estimatedCompletion *time.Time) (Claim, error) {
+func (s *PGStore) ClaimTask(taskID, aiID string, estimatedCompletion *time.Time) (smart_contract.Claim, error) {
 	ctx := context.Background()
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return Claim{}, err
+		return smart_contract.Claim{}, err
 	}
 	defer tx.Rollback(ctx)
 
@@ -348,31 +349,31 @@ SELECT task_id, contract_id, goal_id, title, description, budget_sats, skills, s
 FROM mcp_tasks WHERE task_id=$1 FOR UPDATE
 `, taskID))
 	if err != nil {
-		return Claim{}, ErrTaskNotFound
+		return smart_contract.Claim{}, ErrTaskNotFound
 	}
 
 	rows, err := tx.Query(ctx, `SELECT claim_id, task_id, ai_identifier, status, expires_at, created_at FROM mcp_claims WHERE task_id=$1`, taskID)
 	if err != nil {
-		return Claim{}, err
+		return smart_contract.Claim{}, err
 	}
 	defer rows.Close()
 	now := time.Now()
 	for rows.Next() {
-		var c Claim
+		var c smart_contract.Claim
 		if err := rows.Scan(&c.ClaimID, &c.TaskID, &c.AiIdentifier, &c.Status, &c.ExpiresAt, &c.CreatedAt); err != nil {
-			return Claim{}, err
+			return smart_contract.Claim{}, err
 		}
 		if c.Status == "active" && now.Before(c.ExpiresAt) {
 			if c.AiIdentifier == aiID {
 				return c, tx.Commit(ctx)
 			}
-			return Claim{}, ErrTaskTaken
+			return smart_contract.Claim{}, ErrTaskTaken
 		}
 	}
 
 	claimID := fmt.Sprintf("CLAIM-%d", time.Now().UnixNano())
 	expires := now.Add(s.claimTTL)
-	claim := Claim{
+	claim := smart_contract.Claim{
 		ClaimID:      claimID,
 		TaskID:       taskID,
 		AiIdentifier: aiID,
@@ -385,25 +386,25 @@ FROM mcp_tasks WHERE task_id=$1 FOR UPDATE
 INSERT INTO mcp_claims (claim_id, task_id, ai_identifier, status, expires_at, created_at)
 VALUES ($1,$2,$3,$4,$5,$6)
 `, claim.ClaimID, claim.TaskID, claim.AiIdentifier, claim.Status, claim.ExpiresAt, claim.CreatedAt); err != nil {
-		return Claim{}, err
+		return smart_contract.Claim{}, err
 	}
 
 	_, err = tx.Exec(ctx, `
 UPDATE mcp_tasks SET status='claimed', claimed_by=$2, claimed_at=$3, claim_expires_at=$4 WHERE task_id=$1
 `, taskID, aiID, claim.CreatedAt, claim.ExpiresAt)
 	if err != nil {
-		return Claim{}, err
+		return smart_contract.Claim{}, err
 	}
 
 	_ = estimatedCompletion // placeholder to persist ETA later
 	if err := tx.Commit(ctx); err != nil {
-		return Claim{}, err
+		return smart_contract.Claim{}, err
 	}
 	return claim, nil
 }
 
 // SubmitWork records a submission for a claim.
-func (s *PGStore) SubmitWork(claimID string, deliverables map[string]interface{}, proof map[string]interface{}) (Submission, error) {
+func (s *PGStore) SubmitWork(claimID string, deliverables map[string]interface{}, proof map[string]interface{}) (smart_contract.Submission, error) {
 	ctx := context.Background()
 
 	// Log the submission attempt
@@ -412,7 +413,7 @@ func (s *PGStore) SubmitWork(claimID string, deliverables map[string]interface{}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		log.Printf("Failed to begin transaction: %v", err)
-		return Submission{}, fmt.Errorf("database transaction failed: %v", err)
+		return smart_contract.Submission{}, fmt.Errorf("database transaction failed: %v", err)
 	}
 	defer func() {
 		if r := tx.Rollback(ctx); r != nil {
@@ -420,19 +421,19 @@ func (s *PGStore) SubmitWork(claimID string, deliverables map[string]interface{}
 		}
 	}()
 
-	var claim Claim
+	var claim smart_contract.Claim
 	err = tx.QueryRow(ctx, `SELECT claim_id, task_id, ai_identifier, status, expires_at, created_at FROM mcp_claims WHERE claim_id=$1`, claimID).
 		Scan(&claim.ClaimID, &claim.TaskID, &claim.AiIdentifier, &claim.Status, &claim.ExpiresAt, &claim.CreatedAt)
 	if err != nil {
-		return Submission{}, ErrClaimNotFound
+		return smart_contract.Submission{}, ErrClaimNotFound
 	}
 	// Allow submissions on active claims OR submitted claims with existing rejected/reviewed submissions
 	if claim.Status != "active" && claim.Status != "submitted" {
-		return Submission{}, fmt.Errorf("claim %s not active or submitted", claimID)
+		return smart_contract.Submission{}, fmt.Errorf("claim %s not active or submitted", claimID)
 	}
 	if time.Now().After(claim.ExpiresAt) {
 		_, _ = tx.Exec(ctx, `UPDATE mcp_claims SET status='expired' WHERE claim_id=$1`, claimID)
-		return Submission{}, fmt.Errorf("claim %s expired", claimID)
+		return smart_contract.Submission{}, fmt.Errorf("claim %s expired", claimID)
 	}
 
 	// For submitted claims, check if there's an existing submission that allows resubmission
@@ -442,7 +443,7 @@ func (s *PGStore) SubmitWork(claimID string, deliverables map[string]interface{}
 		rows, err := tx.Query(ctx, `SELECT status FROM mcp_submissions WHERE claim_id=$1`, claimID)
 		if err != nil {
 			log.Printf("Failed to query existing submissions: %v", err)
-			return Submission{}, err
+			return smart_contract.Submission{}, err
 		}
 		defer rows.Close()
 
@@ -468,14 +469,14 @@ func (s *PGStore) SubmitWork(claimID string, deliverables map[string]interface{}
 		log.Printf("Existing submission statuses for claim %s: %v", claimID, existingStatuses)
 
 		if !canResubmit {
-			return Submission{}, fmt.Errorf("claim %s already submitted with no eligible resubmission", claimID)
+			return smart_contract.Submission{}, fmt.Errorf("claim %s already submitted with no eligible resubmission", claimID)
 		}
 
 		// Reactivate the claim for resubmission
 		log.Printf("Reactivating claim %s for resubmission", claimID)
 		if _, err := tx.Exec(ctx, `UPDATE mcp_claims SET status='active' WHERE claim_id=$1`, claimID); err != nil {
 			log.Printf("Failed to reactivate claim: %v", err)
-			return Submission{}, err
+			return smart_contract.Submission{}, err
 		}
 		log.Printf("Successfully reactivated claim %s", claimID)
 
@@ -486,7 +487,7 @@ func (s *PGStore) SubmitWork(claimID string, deliverables map[string]interface{}
 	subID := fmt.Sprintf("SUB-%d", time.Now().UnixNano())
 	delivJSON, _ := json.Marshal(deliverables)
 	proofJSON, _ := json.Marshal(proof)
-	sub := Submission{
+	sub := smart_contract.Submission{
 		SubmissionID:    subID,
 		ClaimID:         claimID,
 		Status:          "pending_review",
@@ -502,24 +503,24 @@ func (s *PGStore) SubmitWork(claimID string, deliverables map[string]interface{}
 	VALUES ($1,$2,$3,$4,$5,$6)
 	`, sub.SubmissionID, sub.ClaimID, sub.Status, delivJSON, proofJSON, sub.CreatedAt); err != nil {
 		log.Printf("Failed to insert submission: %v", err)
-		return Submission{}, err
+		return smart_contract.Submission{}, err
 	}
 	log.Printf("Inserted submission, updating claim and task status to submitted")
 
 	// Update claim and task status to submitted for the new submission
 	if _, err := tx.Exec(ctx, `UPDATE mcp_claims SET status='submitted' WHERE claim_id=$1`, claimID); err != nil {
 		log.Printf("Failed to update claim status: %v", err)
-		return Submission{}, err
+		return smart_contract.Submission{}, err
 	}
 	if _, err := tx.Exec(ctx, `UPDATE mcp_tasks SET status='submitted' WHERE task_id=$1`, claim.TaskID); err != nil {
 		log.Printf("Failed to update task status: %v", err)
-		return Submission{}, err
+		return smart_contract.Submission{}, err
 	}
 
 	log.Printf("Committing transaction for submission %s", subID)
 	if err := tx.Commit(ctx); err != nil {
 		log.Printf("Failed to commit transaction: %v", err)
-		return Submission{}, err
+		return smart_contract.Submission{}, err
 	}
 
 	log.Printf("Successfully created submission %s for claim %s", subID, claimID)
@@ -527,7 +528,7 @@ func (s *PGStore) SubmitWork(claimID string, deliverables map[string]interface{}
 }
 
 // ListSubmissions returns submissions for the given task IDs by joining claims.
-func (s *PGStore) ListSubmissions(ctx context.Context, taskIDs []string) ([]Submission, error) {
+func (s *PGStore) ListSubmissions(ctx context.Context, taskIDs []string) ([]smart_contract.Submission, error) {
 	if len(taskIDs) == 0 {
 		return nil, nil
 	}
@@ -542,9 +543,9 @@ ORDER BY s.created_at DESC
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Submission
+	var out []smart_contract.Submission
 	for rows.Next() {
-		var sub Submission
+		var sub smart_contract.Submission
 		var delivJSON, proofJSON []byte
 		if err := rows.Scan(&sub.SubmissionID, &sub.ClaimID, &sub.TaskID, &sub.Status, &delivJSON, &proofJSON, &sub.CreatedAt); err != nil {
 			return nil, err
@@ -568,7 +569,7 @@ func (s *PGStore) TaskStatus(taskID string) (map[string]interface{}, error) {
 	}
 
 	ctx := context.Background()
-	var claim Claim
+	var claim smart_contract.Claim
 	err = s.pool.QueryRow(ctx, `
 SELECT claim_id, task_id, ai_identifier, status, expires_at, created_at
 FROM mcp_claims
@@ -577,7 +578,7 @@ ORDER BY created_at DESC
 LIMIT 1
 `, taskID).Scan(&claim.ClaimID, &claim.TaskID, &claim.AiIdentifier, &claim.Status, &claim.ExpiresAt, &claim.CreatedAt)
 	if err != nil {
-		claim = Claim{}
+		claim = smart_contract.Claim{}
 	}
 
 	resp := map[string]interface{}{
@@ -619,7 +620,7 @@ LIMIT 1
 }
 
 // GetTaskProof returns the Merkle proof for a task.
-func (s *PGStore) GetTaskProof(taskID string) (*MerkleProof, error) {
+func (s *PGStore) GetTaskProof(taskID string) (*smart_contract.MerkleProof, error) {
 	task, err := s.GetTask(taskID)
 	if err != nil {
 		return nil, err
@@ -628,30 +629,30 @@ func (s *PGStore) GetTaskProof(taskID string) (*MerkleProof, error) {
 }
 
 // ContractFunding returns the contract and any proofs of funding.
-func (s *PGStore) ContractFunding(contractID string) (Contract, []MerkleProof, error) {
+func (s *PGStore) ContractFunding(contractID string) (smart_contract.Contract, []smart_contract.MerkleProof, error) {
 	contract, err := s.GetContract(contractID)
 	if err != nil {
-		return Contract{}, nil, err
+		return smart_contract.Contract{}, nil, err
 	}
 	ctx := context.Background()
 	rows, err := s.pool.Query(ctx, `SELECT merkle_proof FROM mcp_tasks WHERE contract_id=$1`, contractID)
 	if err != nil {
-		return Contract{}, nil, err
+		return smart_contract.Contract{}, nil, err
 	}
 	defer rows.Close()
 
-	var proofs []MerkleProof
+	var proofs []smart_contract.MerkleProof
 	for rows.Next() {
 		var proofJSON []byte
 		if err := rows.Scan(&proofJSON); err != nil {
-			return Contract{}, nil, err
+			return smart_contract.Contract{}, nil, err
 		}
 		if len(proofJSON) == 0 {
 			continue
 		}
-		var proof MerkleProof
+		var proof smart_contract.MerkleProof
 		if err := json.Unmarshal(proofJSON, &proof); err != nil {
-			return Contract{}, nil, err
+			return smart_contract.Contract{}, nil, err
 		}
 		proofs = append(proofs, proof)
 	}
@@ -659,7 +660,7 @@ func (s *PGStore) ContractFunding(contractID string) (Contract, []MerkleProof, e
 }
 
 // UpsertContractWithTasks persists a contract and its tasks idempotently.
-func (s *PGStore) UpsertContractWithTasks(ctx context.Context, contract Contract, tasks []Task) error {
+func (s *PGStore) UpsertContractWithTasks(ctx context.Context, contract smart_contract.Contract, tasks []smart_contract.Task) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -715,7 +716,7 @@ ON CONFLICT (task_id) DO UPDATE SET
 }
 
 // UpdateTaskProof replaces the merkle_proof for a task.
-func (s *PGStore) UpdateTaskProof(ctx context.Context, taskID string, proof *MerkleProof) error {
+func (s *PGStore) UpdateTaskProof(ctx context.Context, taskID string, proof *smart_contract.MerkleProof) error {
 	if proof == nil {
 		return nil
 	}
@@ -728,7 +729,7 @@ func (s *PGStore) UpdateTaskProof(ctx context.Context, taskID string, proof *Mer
 }
 
 // Proposal operations
-func (s *PGStore) CreateProposal(ctx context.Context, p Proposal) error {
+func (s *PGStore) CreateProposal(ctx context.Context, p smart_contract.Proposal) error {
 	metaMap := p.Metadata
 	if metaMap == nil {
 		metaMap = map[string]interface{}{}
@@ -745,7 +746,7 @@ ON CONFLICT (id) DO NOTHING
 	return err
 }
 
-func (s *PGStore) ListProposals(ctx context.Context, filter ProposalFilter) ([]Proposal, error) {
+func (s *PGStore) ListProposals(ctx context.Context, filter smart_contract.ProposalFilter) ([]smart_contract.Proposal, error) {
 	query := `SELECT id, title, description_md, visible_pixel_hash, budget_sats, status, metadata, created_at FROM mcp_proposals`
 	var args []interface{}
 	if filter.Status != "" {
@@ -758,9 +759,9 @@ func (s *PGStore) ListProposals(ctx context.Context, filter ProposalFilter) ([]P
 	}
 	defer rows.Close()
 
-	var out []Proposal
+	var out []smart_contract.Proposal
 	for rows.Next() {
-		var p Proposal
+		var p smart_contract.Proposal
 		var meta []byte
 		if err := rows.Scan(&p.ID, &p.Title, &p.DescriptionMD, &p.VisiblePixelHash, &p.BudgetSats, &p.Status, &meta, &p.CreatedAt); err != nil {
 			return nil, err
@@ -798,8 +799,8 @@ func (s *PGStore) ListProposals(ctx context.Context, filter ProposalFilter) ([]P
 	return out, rows.Err()
 }
 
-func (s *PGStore) GetProposal(ctx context.Context, id string) (Proposal, error) {
-	var p Proposal
+func (s *PGStore) GetProposal(ctx context.Context, id string) (smart_contract.Proposal, error) {
+	var p smart_contract.Proposal
 	var meta []byte
 	err := s.pool.QueryRow(ctx, `
 SELECT id, title, description_md, visible_pixel_hash, budget_sats, status, metadata, created_at
@@ -807,9 +808,9 @@ FROM mcp_proposals WHERE id=$1
 `, id).Scan(&p.ID, &p.Title, &p.DescriptionMD, &p.VisiblePixelHash, &p.BudgetSats, &p.Status, &meta, &p.CreatedAt)
 	if err != nil {
 		if strings.Contains(err.Error(), "no rows") {
-			return Proposal{}, fmt.Errorf("proposal %s not found", id)
+			return smart_contract.Proposal{}, fmt.Errorf("proposal %s not found", id)
 		}
-		return Proposal{}, err
+		return smart_contract.Proposal{}, err
 	}
 	_ = json.Unmarshal(meta, &p.Metadata)
 	populateProposalTasks(&p)
@@ -899,12 +900,12 @@ func (s *PGStore) PublishProposal(ctx context.Context, id string) error {
 }
 
 // populateProposalTasks hydrates Tasks from metadata suggested_tasks or embedded_message.
-func populateProposalTasks(p *Proposal) {
+func populateProposalTasks(p *smart_contract.Proposal) {
 	if p == nil {
 		return
 	}
 	if p.BudgetSats == 0 {
-		p.BudgetSats = defaultBudgetSats()
+		p.BudgetSats = DefaultBudgetSats()
 		if p.Metadata == nil {
 			p.Metadata = map[string]interface{}{}
 		}
@@ -914,10 +915,10 @@ func populateProposalTasks(p *Proposal) {
 		p.Metadata = map[string]interface{}{}
 	}
 	if _, ok := p.Metadata["funding_address"]; !ok {
-		p.Metadata["funding_address"] = fundingAddressFromMeta(p.Metadata)
+		p.Metadata["funding_address"] = FundingAddressFromMeta(p.Metadata)
 	}
 	if tasksRaw, ok := p.Metadata["suggested_tasks"]; ok {
-		var tasks []Task
+		var tasks []smart_contract.Task
 		if b, err := json.Marshal(tasksRaw); err == nil {
 			_ = json.Unmarshal(b, &tasks)
 		}
@@ -927,14 +928,14 @@ func populateProposalTasks(p *Proposal) {
 		}
 	}
 	if em, ok := p.Metadata["embedded_message"].(string); ok && em != "" && len(p.Tasks) == 0 {
-		p.Tasks = BuildTasksFromMarkdown(p.ID, em, p.VisiblePixelHash, p.BudgetSats, fundingAddressFromMeta(p.Metadata))
+		p.Tasks = BuildTasksFromMarkdown(p.ID, em, p.VisiblePixelHash, p.BudgetSats, FundingAddressFromMeta(p.Metadata))
 	}
 }
 
 func scanTask(scanner interface {
 	Scan(dest ...interface{}) error
-}) (Task, error) {
-	var t Task
+}) (smart_contract.Task, error) {
+	var t smart_contract.Task
 	var reqJSON, proofJSON []byte
 	var claimedBy sql.NullString
 	var claimedAt, claimExpires sql.NullTime
@@ -942,7 +943,7 @@ func scanTask(scanner interface {
 		&t.TaskID, &t.ContractID, &t.GoalID, &t.Title, &t.Description, &t.BudgetSats, &t.Skills, &t.Status,
 		&claimedBy, &claimedAt, &claimExpires, &t.Difficulty, &t.EstimatedHours, &reqJSON, &proofJSON,
 	); err != nil {
-		return Task{}, err
+		return smart_contract.Task{}, err
 	}
 	if claimedBy.Valid {
 		t.ClaimedBy = claimedBy.String
@@ -959,7 +960,7 @@ func scanTask(scanner interface {
 		_ = json.Unmarshal(reqJSON, &t.Requirements)
 	}
 	if len(proofJSON) > 0 {
-		var proof MerkleProof
+		var proof smart_contract.MerkleProof
 		if err := json.Unmarshal(proofJSON, &proof); err == nil {
 			t.MerkleProof = &proof
 		}
@@ -968,7 +969,7 @@ func scanTask(scanner interface {
 }
 
 // attachActiveClaims enriches tasks with active claim ids from the claims table.
-func (s *PGStore) attachActiveClaims(ctx context.Context, tasks []Task, taskIDs []string) []Task {
+func (s *PGStore) attachActiveClaims(ctx context.Context, tasks []smart_contract.Task, taskIDs []string) []smart_contract.Task {
 	if len(tasks) == 0 || len(taskIDs) == 0 {
 		return tasks
 	}

@@ -1,4 +1,4 @@
-package mcp
+package smart_contract
 
 import (
 	"context"
@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+
+	"stargate-backend/core/smart_contract"
 )
 
 type blockstreamProvider struct {
@@ -30,7 +32,7 @@ type merkleProofResponse struct {
 	Pos         int      `json:"pos"`
 }
 
-func (p *blockstreamProvider) FetchProof(ctx context.Context, task Task) (*MerkleProof, error) {
+func (p *blockstreamProvider) FetchProof(ctx context.Context, task smart_contract.Task) (*smart_contract.MerkleProof, error) {
 	if task.MerkleProof == nil || task.MerkleProof.TxID == "" {
 		return nil, fmt.Errorf("no tx_id on task")
 	}
@@ -59,9 +61,9 @@ func (p *blockstreamProvider) FetchProof(ctx context.Context, task Task) (*Merkl
 	proof.ConfirmationStatus = "confirmed"
 	now := time.Now()
 	proof.ConfirmedAt = &now
-	proof.ProofPath = make([]ProofNode, 0, len(mp.Merkle))
+	proof.ProofPath = make([]smart_contract.ProofNode, 0, len(mp.Merkle))
 	for _, h := range mp.Merkle {
-		proof.ProofPath = append(proof.ProofPath, ProofNode{Hash: h, Direction: "left"})
+		proof.ProofPath = append(proof.ProofPath, smart_contract.ProofNode{Hash: h, Direction: "left"})
 	}
 	if proof.BlockHeaderMerkleRoot == "" && len(mp.Merkle) > 0 {
 		proof.BlockHeaderMerkleRoot = mp.Merkle[len(mp.Merkle)-1]

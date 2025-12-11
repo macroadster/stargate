@@ -9,6 +9,7 @@ import (
 
 	"stargate-backend/mcp"
 	"stargate-backend/services"
+	scstore "stargate-backend/storage/smart_contract"
 
 	"github.com/mark3labs/mcp-go/server"
 )
@@ -103,7 +104,7 @@ func main() {
 		if cfg.PGDSN == "" {
 			log.Fatal("MCP_PG_DSN required when MCP_STORE_DRIVER=postgres")
 		}
-		store, err = mcp.NewPGStore(ctx, cfg.PGDSN, cfg.ClaimTTL, cfg.Seed)
+		store, err = scstore.NewPGStore(ctx, cfg.PGDSN, cfg.ClaimTTL, cfg.Seed)
 		if err == nil {
 			if svc, serr := services.NewIngestionService(cfg.PGDSN); serr != nil {
 				log.Printf("ingestion service unavailable for proposal creation: %v", serr)
@@ -112,7 +113,7 @@ func main() {
 			}
 		}
 	default:
-		store = mcp.NewMemoryStore(cfg.ClaimTTL)
+		store = scstore.NewMemoryStore(cfg.ClaimTTL)
 	}
 	if err != nil {
 		log.Fatalf("failed to init store: %v", err)

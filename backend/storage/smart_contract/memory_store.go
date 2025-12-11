@@ -1,4 +1,4 @@
-package mcp
+package smart_contract
 
 import (
 	"context"
@@ -7,36 +7,38 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"stargate-backend/core/smart_contract"
 )
 
 // MemoryStore holds in-memory MCP data. It is intentionally simple for the MVP and can be swapped for persistent storage later.
 type MemoryStore struct {
 	mu          sync.RWMutex
-	contracts   map[string]Contract
-	tasks       map[string]Task
-	claims      map[string]Claim
-	submissions map[string]Submission
-	proposals   map[string]Proposal
+	contracts   map[string]smart_contract.Contract
+	tasks       map[string]smart_contract.Task
+	claims      map[string]smart_contract.Claim
+	submissions map[string]smart_contract.Submission
+	proposals   map[string]smart_contract.Proposal
 	claimTTL    time.Duration
 }
 
 // NewMemoryStore seeds fixtures and returns a MemoryStore.
 func NewMemoryStore(claimTTL time.Duration) *MemoryStore {
 	contracts, tasks := SeedData()
-	cMap := make(map[string]Contract, len(contracts))
+	cMap := make(map[string]smart_contract.Contract, len(contracts))
 	for _, c := range contracts {
 		cMap[c.ContractID] = c
 	}
-	tMap := make(map[string]Task, len(tasks))
+	tMap := make(map[string]smart_contract.Task, len(tasks))
 	for _, t := range tasks {
 		tMap[t.TaskID] = t
 	}
 	return &MemoryStore{
 		contracts:   cMap,
 		tasks:       tMap,
-		claims:      make(map[string]Claim),
-		submissions: make(map[string]Submission),
-		proposals:   make(map[string]Proposal),
+		claims:      make(map[string]smart_contract.Claim),
+		submissions: make(map[string]smart_contract.Submission),
+		proposals:   make(map[string]smart_contract.Proposal),
 		claimTTL:    claimTTL,
 	}
 }
@@ -50,7 +52,7 @@ func containsSkill(all []string, skills []string) bool {
 	return len(skills) == 0
 }
 
-func proposalHasSkills(p Proposal, skills []string) bool {
+func proposalHasSkills(p smart_contract.Proposal, skills []string) bool {
 	if len(skills) == 0 {
 		return true
 	}
@@ -63,10 +65,10 @@ func proposalHasSkills(p Proposal, skills []string) bool {
 }
 
 // ListContracts returns all contracts filtered by status and skill.
-func (s *MemoryStore) ListContracts(status string, skills []string) ([]Contract, error) {
+func (s *MemoryStore) ListContracts(status string, skills []string) ([]smart_contract.Contract, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	out := make([]Contract, 0, len(s.contracts))
+	out := make([]smart_contract.Contract, 0, len(s.contracts))
 	for _, c := range s.contracts {
 		if status != "" && !strings.EqualFold(status, c.Status) {
 			continue
@@ -80,11 +82,11 @@ func (s *MemoryStore) ListContracts(status string, skills []string) ([]Contract,
 }
 
 // ListTasks returns tasks filtered by a TaskFilter.
-func (s *MemoryStore) ListTasks(filter TaskFilter) ([]Task, error) {
+func (s *MemoryStore) ListTasks(filter smart_contract.TaskFilter) ([]smart_contract.Task, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	out := make([]Task, 0, len(s.tasks))
+	out := make([]smart_contract.Task, 0, len(s.tasks))
 	for _, t := range s.tasks {
 		if filter.Status != "" && !strings.EqualFold(filter.Status, t.Status) {
 			continue
@@ -116,35 +118,35 @@ func (s *MemoryStore) ListTasks(filter TaskFilter) ([]Task, error) {
 }
 
 // GetTask returns a task by ID.
-func (s *MemoryStore) GetTask(id string) (Task, error) {
+func (s *MemoryStore) GetTask(id string) (smart_contract.Task, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	t, ok := s.tasks[id]
 	if !ok {
-		return Task{}, ErrTaskNotFound
+		return smart_contract.Task{}, ErrTaskNotFound
 	}
 	return t, nil
 }
 
 // GetContract returns a contract by ID.
-func (s *MemoryStore) GetContract(id string) (Contract, error) {
+func (s *MemoryStore) GetContract(id string) (smart_contract.Contract, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	c, ok := s.contracts[id]
 	if !ok {
-		return Contract{}, fmt.Errorf("contract %s not found", id)
+		return smart_contract.Contract{}, fmt.Errorf("contract %s not found", id)
 	}
 	return c, nil
 }
 
 // ClaimTask reserves a task for an AI. It is idempotent if the same AI reclaims before expiry.
-func (s *MemoryStore) ClaimTask(taskID, aiID string, estimatedCompletion *time.Time) (Claim, error) {
+func (s *MemoryStore) ClaimTask(taskID, aiID string, estimatedCompletion *time.Time) (smart_contract.Claim, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	task, ok := s.tasks[taskID]
 	if !ok {
-		return Claim{}, ErrTaskNotFound
+		return smart_contract.Claim{}, ErrTaskNotFound
 	}
 
 	// Existing claim?
@@ -154,14 +156,14 @@ func (s *MemoryStore) ClaimTask(taskID, aiID string, estimatedCompletion *time.T
 				return c, nil
 			}
 			if c.Status == "active" && time.Now().Before(c.ExpiresAt) {
-				return Claim{}, ErrTaskTaken
+				return smart_contract.Claim{}, ErrTaskTaken
 			}
 		}
 	}
 
 	claimID := fmt.Sprintf("CLAIM-%d", time.Now().UnixNano())
 	expires := time.Now().Add(s.claimTTL)
-	claim := Claim{
+	claim := smart_contract.Claim{
 		ClaimID:      claimID,
 		TaskID:       taskID,
 		AiIdentifier: aiID,
@@ -183,17 +185,17 @@ func (s *MemoryStore) ClaimTask(taskID, aiID string, estimatedCompletion *time.T
 }
 
 // SubmitWork records a submission for a claim.
-func (s *MemoryStore) SubmitWork(claimID string, deliverables map[string]interface{}, proof map[string]interface{}) (Submission, error) {
+func (s *MemoryStore) SubmitWork(claimID string, deliverables map[string]interface{}, proof map[string]interface{}) (smart_contract.Submission, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	claim, ok := s.claims[claimID]
 	if !ok {
-		return Submission{}, ErrClaimNotFound
+		return smart_contract.Submission{}, ErrClaimNotFound
 	}
 	// Allow submissions on active claims OR submitted claims with existing rejected/reviewed submissions
 	if claim.Status != "active" && claim.Status != "submitted" {
-		return Submission{}, fmt.Errorf("claim %s not active or submitted", claimID)
+		return smart_contract.Submission{}, fmt.Errorf("claim %s not active or submitted", claimID)
 	}
 
 	// For submitted claims, check if there's an existing submission that allows resubmission
@@ -207,18 +209,18 @@ func (s *MemoryStore) SubmitWork(claimID string, deliverables map[string]interfa
 			}
 		}
 		// If submitted claim has no rejected/reviewed submissions, don't allow new submission
-		return Submission{}, fmt.Errorf("claim %s already submitted with no eligible resubmission", claimID)
+		return smart_contract.Submission{}, fmt.Errorf("claim %s already submitted with no eligible resubmission", claimID)
 	}
 
 SubmitWork:
 	if time.Now().After(claim.ExpiresAt) {
 		claim.Status = "expired"
 		s.claims[claimID] = claim
-		return Submission{}, fmt.Errorf("claim %s expired", claimID)
+		return smart_contract.Submission{}, fmt.Errorf("claim %s expired", claimID)
 	}
 
 	subID := fmt.Sprintf("SUB-%d", time.Now().UnixNano())
-	sub := Submission{
+	sub := smart_contract.Submission{
 		SubmissionID:    subID,
 		ClaimID:         claimID,
 		Status:          "pending_review",
@@ -241,7 +243,7 @@ SubmitWork:
 }
 
 // ListSubmissions returns submissions for the provided task IDs.
-func (s *MemoryStore) ListSubmissions(ctx context.Context, taskIDs []string) ([]Submission, error) {
+func (s *MemoryStore) ListSubmissions(ctx context.Context, taskIDs []string) ([]smart_contract.Submission, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if len(taskIDs) == 0 {
@@ -251,7 +253,7 @@ func (s *MemoryStore) ListSubmissions(ctx context.Context, taskIDs []string) ([]
 	for _, id := range taskIDs {
 		taskSet[id] = struct{}{}
 	}
-	out := make([]Submission, 0)
+	out := make([]smart_contract.Submission, 0)
 	for _, sub := range s.submissions {
 		if claim, ok := s.claims[sub.ClaimID]; ok {
 			if _, hit := taskSet[claim.TaskID]; hit {
@@ -273,7 +275,7 @@ func (s *MemoryStore) TaskStatus(taskID string) (map[string]interface{}, error) 
 		return nil, ErrTaskNotFound
 	}
 
-	var claim *Claim
+	var claim *smart_contract.Claim
 	for _, c := range s.claims {
 		if c.TaskID == taskID {
 			// pick active/most recent
@@ -313,7 +315,7 @@ func (s *MemoryStore) TaskStatus(taskID string) (map[string]interface{}, error) 
 }
 
 // GetTaskProof returns the Merkle proof for a task.
-func (s *MemoryStore) GetTaskProof(taskID string) (*MerkleProof, error) {
+func (s *MemoryStore) GetTaskProof(taskID string) (*smart_contract.MerkleProof, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	task, ok := s.tasks[taskID]
@@ -324,14 +326,14 @@ func (s *MemoryStore) GetTaskProof(taskID string) (*MerkleProof, error) {
 }
 
 // ContractFunding returns the contract and any proofs of funding (mocked for MVP).
-func (s *MemoryStore) ContractFunding(contractID string) (Contract, []MerkleProof, error) {
+func (s *MemoryStore) ContractFunding(contractID string) (smart_contract.Contract, []smart_contract.MerkleProof, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	contract, ok := s.contracts[contractID]
 	if !ok {
-		return Contract{}, nil, fmt.Errorf("contract %s not found", contractID)
+		return smart_contract.Contract{}, nil, fmt.Errorf("contract %s not found", contractID)
 	}
-	proofs := []MerkleProof{}
+	proofs := []smart_contract.MerkleProof{}
 	for _, t := range s.tasks {
 		if t.ContractID == contractID && t.MerkleProof != nil {
 			proofs = append(proofs, *t.MerkleProof)
@@ -344,7 +346,7 @@ func (s *MemoryStore) ContractFunding(contractID string) (Contract, []MerkleProo
 func (s *MemoryStore) Close() {}
 
 // UpdateTaskProof replaces the merkle_proof for a task in memory.
-func (s *MemoryStore) UpdateTaskProof(ctx context.Context, taskID string, proof *MerkleProof) error {
+func (s *MemoryStore) UpdateTaskProof(ctx context.Context, taskID string, proof *smart_contract.MerkleProof) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	t, ok := s.tasks[taskID]
@@ -357,17 +359,17 @@ func (s *MemoryStore) UpdateTaskProof(ctx context.Context, taskID string, proof 
 }
 
 // Proposal operations (memory, for testing).
-func (s *MemoryStore) CreateProposal(ctx context.Context, p Proposal) error {
+func (s *MemoryStore) CreateProposal(ctx context.Context, p smart_contract.Proposal) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.proposals[p.ID] = p
 	return nil
 }
 
-func (s *MemoryStore) ListProposals(ctx context.Context, filter ProposalFilter) ([]Proposal, error) {
+func (s *MemoryStore) ListProposals(ctx context.Context, filter smart_contract.ProposalFilter) ([]smart_contract.Proposal, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	var out []Proposal
+	var out []smart_contract.Proposal
 	for _, p := range s.proposals {
 		if filter.Status != "" && !strings.EqualFold(filter.Status, p.Status) {
 			continue
@@ -402,12 +404,12 @@ func (s *MemoryStore) ListProposals(ctx context.Context, filter ProposalFilter) 
 	return out, nil
 }
 
-func (s *MemoryStore) GetProposal(ctx context.Context, id string) (Proposal, error) {
+func (s *MemoryStore) GetProposal(ctx context.Context, id string) (smart_contract.Proposal, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	p, ok := s.proposals[id]
 	if !ok {
-		return Proposal{}, fmt.Errorf("proposal %s not found", id)
+		return smart_contract.Proposal{}, fmt.Errorf("proposal %s not found", id)
 	}
 	return p, nil
 }

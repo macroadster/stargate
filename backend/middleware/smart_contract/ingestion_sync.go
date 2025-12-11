@@ -1,4 +1,4 @@
-package mcp
+package smart_contract
 
 import (
 	"context"
@@ -8,18 +8,19 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"stargate-backend/core/smart_contract"
 	"stargate-backend/services"
+	scstore "stargate-backend/storage/smart_contract"
 )
 
 // StartIngestionSync polls starlight_ingestions for pending records, validates embedded payloads,
 // and upserts contracts/tasks into the MCP store. It requires a Postgres-backed store.
 func StartIngestionSync(ctx context.Context, dsn string, store Store, interval time.Duration) error {
-	pgStore, ok := store.(*PGStore)
+	pgStore, ok := store.(*scstore.PGStore)
 	if !ok {
 		return errors.New("ingestion sync requires Postgres store")
 	}
@@ -69,7 +70,7 @@ type embeddedContract struct {
 	Tasks               []embeddedTask `json:"tasks"`
 }
 
-func syncOnce(ctx context.Context, ingest *services.IngestionService, store *PGStore) error {
+func syncOnce(ctx context.Context, ingest *services.IngestionService, store *scstore.PGStore) error {
 	recs, err := ingest.ListRecent("pending", 25)
 	if err != nil {
 		return err
@@ -90,7 +91,7 @@ func syncOnce(ctx context.Context, ingest *services.IngestionService, store *PGS
 	return nil
 }
 
-func processRecord(ctx context.Context, rec services.IngestionRecord, ingest *services.IngestionService, store *PGStore) error {
+func processRecord(ctx context.Context, rec services.IngestionRecord, ingest *services.IngestionService, store *scstore.PGStore) error {
 	meta := copyMeta(rec.Metadata)
 	raw, _ := meta["embedded_message"].(string)
 	if normalized, updatedMeta, err := normalizeEmbedded(raw, meta); err == nil {
@@ -117,7 +118,7 @@ func processRecord(ctx context.Context, rec services.IngestionRecord, ingest *se
 		if (t.MerkleProof == nil || t.MerkleProof.VisiblePixelHash == "") && rec.ImageBase64 != "" {
 			if h, err := hashBase64(rec.ImageBase64); err == nil {
 				if t.MerkleProof == nil {
-					t.MerkleProof = &MerkleProof{}
+					t.MerkleProof = &smart_contract.MerkleProof{}
 				}
 				t.MerkleProof.VisiblePixelHash = h
 			}
@@ -136,15 +137,15 @@ func processRecord(ctx context.Context, rec services.IngestionRecord, ingest *se
 	return ingest.UpdateStatusWithNote(rec.ID, "verified", "ingested into MCP")
 }
 
-func parseEmbeddedContract(raw string) (Contract, []Task, error) {
+func parseEmbeddedContract(raw string) (smart_contract.Contract, []smart_contract.Task, error) {
 	if raw == "" {
-		return Contract{}, nil, errors.New("no embedded message")
+		return smart_contract.Contract{}, nil, errors.New("no embedded message")
 	}
 	var embedded embeddedContract
 	if err := json.Unmarshal([]byte(raw), &embedded); err != nil {
-		return Contract{}, nil, err
+		return smart_contract.Contract{}, nil, err
 	}
-	contract := Contract{
+	contract := smart_contract.Contract{
 		ContractID:          embedded.ContractID,
 		Title:               embedded.Title,
 		TotalBudgetSats:     embedded.TotalBudgetSats,
@@ -153,9 +154,9 @@ func parseEmbeddedContract(raw string) (Contract, []Task, error) {
 		Status:              embedded.Status,
 	}
 
-	tasks := make([]Task, 0, len(embedded.Tasks))
+	tasks := make([]smart_contract.Task, 0, len(embedded.Tasks))
 	for _, et := range embedded.Tasks {
-		t := Task{
+		t := smart_contract.Task{
 			TaskID:      et.TaskID,
 			ContractID:  et.ContractID,
 			GoalID:      et.GoalID,
@@ -173,10 +174,10 @@ func parseEmbeddedContract(raw string) (Contract, []Task, error) {
 
 // parseMarkdownWish converts a markdown wish + metadata (budget/funding address) into a contract+tasks.
 // parseMarkdownProposal builds a proposal from markdown wish and suggested tasks.
-func parseMarkdownProposal(ingestionID, markdown string, meta map[string]interface{}, imageBase64 string) (Proposal, error) {
+func parseMarkdownProposal(ingestionID, markdown string, meta map[string]interface{}, imageBase64 string) (smart_contract.Proposal, error) {
 	md := strings.TrimSpace(markdown)
 	if md == "" {
-		return Proposal{}, errors.New("empty markdown wish")
+		return smart_contract.Proposal{}, errors.New("empty markdown wish")
 	}
 
 	lines := strings.Split(md, "\n")
@@ -202,22 +203,19 @@ func parseMarkdownProposal(ingestionID, markdown string, meta map[string]interfa
 
 	contractID := fmt.Sprintf("wish-%s", ingestionID)
 	budget := budgetFromMeta(meta)
-	fundingAddr := fundingAddressFromMeta(meta)
+	fundingAddr := scstore.FundingAddressFromMeta(meta)
 
 	// Default proof placeholder with funding info (provisional).
-	defaultProof := &MerkleProof{
+	defaultProof := &smart_contract.MerkleProof{
 		FundedAmountSats:   budget,
 		FundingAddress:     fundingAddr,
 		ConfirmationStatus: "provisional",
 	}
-	if h, err := hashBase64(imageBase64); err == nil {
-		defaultProof.VisiblePixelHash = h
-	}
 
-	var tasks []Task
+	var tasks []smart_contract.Task
 	for i, b := range bullets {
 		taskID := fmt.Sprintf("%s-task-%d", contractID, i+1)
-		tasks = append(tasks, Task{
+		tasks = append(tasks, smart_contract.Task{
 			TaskID:      taskID,
 			ContractID:  contractID,
 			GoalID:      "wish",
@@ -236,7 +234,7 @@ func parseMarkdownProposal(ingestionID, markdown string, meta map[string]interfa
 	meta["budget_sats"] = budget
 	meta["funding_address"] = fundingAddr
 
-	return Proposal{
+	return smart_contract.Proposal{
 		ID:               contractID,
 		Title:            title,
 		DescriptionMD:    md,
@@ -250,7 +248,7 @@ func parseMarkdownProposal(ingestionID, markdown string, meta map[string]interfa
 
 func budgetFromMeta(meta map[string]interface{}) int64 {
 	if meta == nil {
-		return defaultBudgetSats()
+		return scstore.DefaultBudgetSats()
 	}
 	// budget_sats or funding_btc fields
 	if v, ok := meta["budget_sats"]; ok {
@@ -267,10 +265,10 @@ func budgetFromMeta(meta map[string]interface{}) int64 {
 	if sats := btcToSats(meta["price"]); sats > 0 {
 		return sats
 	}
-	return defaultBudgetSats()
+	return scstore.DefaultBudgetSats()
 }
 
-func decodeProof(v map[string]interface{}) *MerkleProof {
+func decodeProof(v map[string]interface{}) *smart_contract.MerkleProof {
 	if v == nil {
 		return nil
 	}
@@ -278,7 +276,7 @@ func decodeProof(v map[string]interface{}) *MerkleProof {
 	if err != nil {
 		return nil
 	}
-	var proof MerkleProof
+	var proof smart_contract.MerkleProof
 	if err := json.Unmarshal(jsonBytes, &proof); err != nil {
 		return nil
 	}
@@ -344,29 +342,4 @@ func btcToSats(v interface{}) int64 {
 		}
 	}
 	return 0
-}
-
-func defaultBudgetSats() int64 {
-	if raw := os.Getenv("MCP_DEFAULT_BUDGET_SATS"); raw != "" {
-		if v, err := strconv.ParseInt(raw, 10, 64); err == nil && v > 0 {
-			return v
-		}
-	}
-	// default mock budget for simulations
-	return 100_000
-}
-
-func fundingAddressFromMeta(meta map[string]interface{}) string {
-	if meta != nil {
-		if v, ok := meta["funding_address"].(string); ok && strings.TrimSpace(v) != "" {
-			return v
-		}
-		if v, ok := meta["address"].(string); ok && strings.TrimSpace(v) != "" {
-			return v
-		}
-	}
-	if v := os.Getenv("MCP_DEFAULT_FUNDING_ADDRESS"); strings.TrimSpace(v) != "" {
-		return v
-	}
-	return "bc1p-simulated-funding-address"
 }

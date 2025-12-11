@@ -41,8 +41,8 @@ func NewContainer() *Container {
 	}
 
 	// Initialize services
-	dataDir := "/data"
-	if env := os.Getenv("DATA_DIR"); env != "" {
+	dataDir := "blocks"
+	if env := os.Getenv("BLOCKS_DIR"); env != "" {
 		dataDir = env
 	}
 	inscriptionsFile := os.Getenv("INSCRIPTIONS_FILE")
@@ -66,7 +66,7 @@ func NewContainer() *Container {
 
 	// Data storage selection
 	var dataStorage storage.ExtendedDataStorage
-	dataStorage = storage.NewDataStorage("blocks")
+	dataStorage = storage.NewDataStorage(dataDir)
 	if storageType == "postgres" && pgDSN != "" {
 		if pgStore, err := storage.NewPostgresStorage(pgDSN); err != nil {
 			log.Printf("Failed to init Postgres storage, falling back to filesystem: %v", err)

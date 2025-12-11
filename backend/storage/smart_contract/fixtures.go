@@ -1,16 +1,20 @@
-package mcp
+package smart_contract
 
-import "time"
+import (
+	"time"
+
+	"stargate-backend/core/smart_contract"
+)
 
 // SeedData returns in-memory demo contracts/tasks/proofs.
-func SeedData() ([]Contract, []Task) {
+func SeedData() ([]smart_contract.Contract, []smart_contract.Task) {
 	seen := time.Now().Add(-10 * time.Minute)
 	confirm := time.Now().Add(-5 * time.Minute)
-	proof := &MerkleProof{
+	proof := &smart_contract.MerkleProof{
 		TxID:                  "a1b2c3d4e5f6",
 		BlockHeight:           830001,
 		BlockHeaderMerkleRoot: "99887766554433221100",
-		ProofPath: []ProofNode{
+		ProofPath: []smart_contract.ProofNode{
 			{Hash: "112233", Direction: "right"},
 			{Hash: "445566", Direction: "left"},
 		},
@@ -20,7 +24,7 @@ func SeedData() ([]Contract, []Task) {
 		ConfirmedAt:        &confirm,
 	}
 
-	contracts := []Contract{
+	contracts := []smart_contract.Contract{
 		{
 			ContractID:          "CONTRACT-550e8400",
 			Title:               "Trading Bot Development",
@@ -32,7 +36,7 @@ func SeedData() ([]Contract, []Task) {
 		},
 	}
 
-	tasks := []Task{
+	tasks := []smart_contract.Task{
 		{
 			TaskID:         "TASK-7f3b9c2a",
 			ContractID:     "CONTRACT-550e8400",
@@ -61,11 +65,11 @@ func SeedData() ([]Contract, []Task) {
 			Status:         "available",
 			Difficulty:     "beginner",
 			EstimatedHours: 5,
-			MerkleProof: &MerkleProof{
+			MerkleProof: &smart_contract.MerkleProof{
 				TxID:                  "b2c3d4e5f6a1",
 				BlockHeight:           830002,
 				BlockHeaderMerkleRoot: "aa9988776655",
-				ProofPath: []ProofNode{
+				ProofPath: []smart_contract.ProofNode{
 					{Hash: "778899", Direction: "left"},
 				},
 				FundedAmountSats:   3_000_000,

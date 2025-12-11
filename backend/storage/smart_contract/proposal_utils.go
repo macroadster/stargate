@@ -1,12 +1,14 @@
-package mcp
+package smart_contract
 
 import (
 	"fmt"
 	"strings"
+
+	"stargate-backend/core/smart_contract"
 )
 
 // BuildTasksFromMarkdown derives tasks from a markdown wish. Uses bullets as tasks; fallback single task.
-func BuildTasksFromMarkdown(proposalID, markdown string, visibleHash string, budget int64, fundingAddress string) []Task {
+func BuildTasksFromMarkdown(proposalID, markdown string, visibleHash string, budget int64, fundingAddress string) []smart_contract.Task {
 	md := strings.TrimSpace(markdown)
 	lines := strings.Split(md, "\n")
 	var bullets []string
@@ -24,10 +26,10 @@ func BuildTasksFromMarkdown(proposalID, markdown string, visibleHash string, bud
 		perTaskBudget = budget / int64(len(bullets))
 	}
 
-	var tasks []Task
+	var tasks []smart_contract.Task
 	for i, b := range bullets {
 		taskID := fmt.Sprintf("%s-task-%d", proposalID, i+1)
-		tasks = append(tasks, Task{
+		tasks = append(tasks, smart_contract.Task{
 			TaskID:      taskID,
 			ContractID:  proposalID,
 			GoalID:      "wish",
@@ -36,7 +38,7 @@ func BuildTasksFromMarkdown(proposalID, markdown string, visibleHash string, bud
 			BudgetSats:  perTaskBudget,
 			Skills:      []string{"planning", "manual-review", "proposal-discovery"},
 			Status:      "available",
-			MerkleProof: &MerkleProof{
+			MerkleProof: &smart_contract.MerkleProof{
 				VisiblePixelHash:   visibleHash,
 				FundedAmountSats:   perTaskBudget,
 				FundingAddress:     fundingAddress,

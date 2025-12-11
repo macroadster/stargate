@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"stargate-backend/core/smart_contract"
+	scmiddleware "stargate-backend/middleware/smart_contract"
 	"stargate-backend/services"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -16,13 +18,13 @@ import (
 // MCPServer wraps the mcp-go server with our business logic
 type MCPServer struct {
 	mcpServer    *server.MCPServer
-	store        Store
+	store        scmiddleware.Store
 	apiKey       string
 	ingestionSvc *services.IngestionService
 }
 
 // NewMCPServer creates a new MCP server using the mcp-go library
-func NewMCPServer(store Store, apiKey string, ingestSvc *services.IngestionService) *MCPServer {
+func NewMCPServer(store scmiddleware.Store, apiKey string, ingestSvc *services.IngestionService) *MCPServer {
 	// Create the MCP server
 	mcpServer := server.NewMCPServer(
 		"Stargate MCP Server",
@@ -197,7 +199,7 @@ func (s *MCPServer) registerListTasksTool() {
 			}
 		}
 
-		filter := TaskFilter{
+		filter := smart_contract.TaskFilter{
 			Skills:        skills,
 			MaxDifficulty: toString(args["max_difficulty"]),
 			Status:        toString(args["status"]),
@@ -385,7 +387,7 @@ func (s *MCPServer) registerListSkillsTool() {
 	)
 
 	s.mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		tasks, err := s.store.ListTasks(TaskFilter{})
+		tasks, err := s.store.ListTasks(smart_contract.TaskFilter{})
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Failed to list tasks: %v", err)), nil
 		}

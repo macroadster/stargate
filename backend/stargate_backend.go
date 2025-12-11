@@ -16,12 +16,58 @@ import (
 	"stargate-backend/container"
 	"stargate-backend/mcp"
 	"stargate-backend/middleware"
+	scmiddleware "stargate-backend/middleware/smart_contract"
 	"stargate-backend/services"
 	"stargate-backend/storage"
+	scstore "stargate-backend/storage/smart_contract"
 
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
+
+func getMCPStore() scmiddleware.Store {
+	storeDriver := os.Getenv("MCP_STORE_DRIVER")
+	if storeDriver == "" {
+		storeDriver = "memory"
+	}
+
+	pgDsn := os.Getenv("MCP_PG_DSN")
+
+	// TTL configuration
+	ttlHours := 72
+	if raw := os.Getenv("MCP_DEFAULT_CLAIM_TTL_HOURS"); raw != "" {
+		if v, err := strconv.Atoi(raw); err == nil && v > 0 {
+			ttlHours = v
+		}
+	}
+	claimTTL := time.Duration(ttlHours) * time.Hour
+
+	// Seed configuration
+	seed := true
+	if raw := os.Getenv("MCP_SEED_FIXTURES"); raw != "" {
+		if v, err := strconv.ParseBool(raw); err == nil {
+			seed = v
+		}
+	}
+
+	// Initialize store based on driver
+	switch storeDriver {
+	case "postgres":
+		if pgDsn == "" {
+			log.Printf("MCP_PG_DSN not set, falling back to memory store")
+			return scstore.NewMemoryStore(claimTTL)
+		} else {
+			if store, err := scstore.NewPGStore(context.Background(), pgDsn, claimTTL, seed); err != nil {
+				log.Printf("failed to connect to PostgreSQL (%v), falling back to memory store", err)
+				return scstore.NewMemoryStore(claimTTL)
+			} else {
+				return store
+			}
+		}
+	default:
+		return scstore.NewMemoryStore(claimTTL)
+	}
+}
 
 func contentTypeForFormat(format string) string {
 	switch strings.ToLower(format) {
@@ -92,7 +138,7 @@ func initializeMCPServer() *mcp.MCPServer {
 	}
 
 	// Initialize store based on driver
-	var store mcp.Store
+	var store scmiddleware.Store
 	var err error
 	var ingestionSvc *services.IngestionService
 
@@ -100,12 +146,12 @@ func initializeMCPServer() *mcp.MCPServer {
 	case "postgres":
 		if pgDsn == "" {
 			log.Printf("MCP_PG_DSN not set, falling back to memory store")
-			store = mcp.NewMemoryStore(claimTTL)
+			store = scstore.NewMemoryStore(claimTTL)
 		} else {
-			store, err = mcp.NewPGStore(context.Background(), pgDsn, claimTTL, seed)
+			store, err = scstore.NewPGStore(context.Background(), pgDsn, claimTTL, seed)
 			if err != nil {
 				log.Printf("failed to connect to PostgreSQL (%v), falling back to memory store", err)
-				store = mcp.NewMemoryStore(claimTTL)
+				store = scstore.NewMemoryStore(claimTTL)
 			} else {
 				// PostgreSQL connected successfully, try to create ingestion service
 				if svc, serr := services.NewIngestionService(pgDsn); serr != nil {
@@ -116,7 +162,7 @@ func initializeMCPServer() *mcp.MCPServer {
 			}
 		}
 	default:
-		store = mcp.NewMemoryStore(claimTTL)
+		store = scstore.NewMemoryStore(claimTTL)
 	}
 
 	// Log the actual store type being used
@@ -151,7 +197,7 @@ func startMCPServices() {
 	}
 	claimTTL := time.Duration(ttlHours) * time.Hour
 
-	store, err := mcp.NewPGStore(context.Background(), pgDsn, claimTTL, false)
+	store, err := scstore.NewPGStore(context.Background(), pgDsn, claimTTL, false)
 	if err != nil {
 		log.Printf("failed to create store for MCP services (%v), skipping background services", err)
 		return
@@ -166,7 +212,7 @@ func startMCPServices() {
 			}
 		}
 
-		if err := mcp.StartIngestionSync(context.Background(), pgDsn, store, syncInterval); err != nil {
+		if err := scmiddleware.StartIngestionSync(context.Background(), pgDsn, store, syncInterval); err != nil {
 			log.Printf("ingestion sync disabled (init error): %v", err)
 		} else {
 			log.Printf("ingestion sync enabled (interval=%s)", syncInterval)
@@ -191,8 +237,8 @@ func startMCPServices() {
 			fundingAPIBase = env
 		}
 
-		provider := mcp.NewFundingProvider(fundingProvider, fundingAPIBase)
-		if err := mcp.StartFundingSync(context.Background(), store, provider, fundingInterval); err != nil {
+		provider := scmiddleware.NewFundingProvider(fundingProvider, fundingAPIBase)
+		if err := scmiddleware.StartFundingSync(context.Background(), store, provider, fundingInterval); err != nil {
 			log.Printf("funding sync disabled (init error): %v", err)
 		} else {
 			log.Printf("funding sync enabled (interval=%s)", fundingInterval)
@@ -297,6 +343,7 @@ func runHTTPServer() {
 	log.Printf("Stargate API endpoints at: http://localhost:%s/api/", httpPort)
 	log.Printf("Bitcoin steganography API at: http://localhost:%s/bitcoin/v1/", httpPort)
 	log.Printf("Smart contract steganography at: http://localhost:%s/api/contract-stego/", httpPort)
+	log.Printf("MCP REST API at: http://localhost:%s/mcp/v1/", httpPort)
 	log.Printf("Proxy to steganography API (port 8080) at: http://localhost:%s/stego/", httpPort)
 	if os.Getenv("STARGATE_MODE") == "" || os.Getenv("STARGATE_MODE") == "both" {
 		log.Println("Note: MCP server running in same process")
@@ -308,6 +355,17 @@ func runHTTPServer() {
 }
 
 func setupRoutes(mux *http.ServeMux, container *container.Container, mcpServer *mcp.MCPServer) http.Handler {
+	// Initialize MCP REST server for HTTP routes
+	mcpStore := getMCPStore()
+	apiKey := os.Getenv("MCP_API_KEY")
+	var ingestionSvc *services.IngestionService
+	if pgDsn := os.Getenv("MCP_PG_DSN"); pgDsn != "" {
+		if svc, err := services.NewIngestionService(pgDsn); err == nil {
+			ingestionSvc = svc
+		}
+	}
+	mcpRestServer := scmiddleware.NewServer(mcpStore, apiKey, ingestionSvc)
+	mcpRestServer.RegisterRoutes(mux)
 	// Health endpoints
 	mux.HandleFunc("/api/health", container.HealthHandler.HandleHealth)
 

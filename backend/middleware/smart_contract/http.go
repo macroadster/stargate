@@ -1,4 +1,4 @@
-package mcp
+package smart_contract
 
 import (
 	"encoding/json"

@@ -1,4 +1,4 @@
-package mcp
+package smart_contract
 
 import (
 	"context"
@@ -11,7 +11,9 @@ import (
 	"sync"
 	"time"
 
+	"stargate-backend/core/smart_contract"
 	"stargate-backend/services"
+	scstore "stargate-backend/storage/smart_contract"
 )
 
 // Server wires handlers for MCP endpoints.
@@ -19,14 +21,14 @@ type Server struct {
 	store        Store
 	apiKey       string
 	ingestionSvc *services.IngestionService
-	events       []Event
+	events       []smart_contract.Event
 	eventsMu     sync.Mutex
 	listenersMu  sync.Mutex
-	listeners    []chan Event
+	listeners    []chan smart_contract.Event
 }
 
 // proposalCreateBody captures POST payload for creating proposals.
-type proposalCreateBody struct {
+type ProposalCreateBody struct {
 	ID               string                 `json:"id"`
 	IngestionID      string                 `json:"ingestion_id"`
 	ContractID       string                 `json:"contract_id"`
@@ -36,7 +38,7 @@ type proposalCreateBody struct {
 	BudgetSats       int64                  `json:"budget_sats"`
 	Status           string                 `json:"status"`
 	Metadata         map[string]interface{} `json:"metadata"`
-	Tasks            []Task                 `json:"tasks"`
+	Tasks            []smart_contract.Task  `json:"tasks"`
 }
 
 // NewServer builds a Server with the given store.
@@ -134,7 +136,7 @@ func (s *Server) handleTasks(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		if path == "" {
-			filter := TaskFilter{
+			filter := smart_contract.TaskFilter{
 				Skills:        splitCSV(r.URL.Query().Get("skills")),
 				MaxDifficulty: r.URL.Query().Get("max_difficulty"),
 				Status:        r.URL.Query().Get("status"),
@@ -265,7 +267,7 @@ claim_success:
 		"message":    "Task reserved. Submit work before expiration.",
 	})
 
-	s.recordEvent(Event{
+	s.recordEvent(smart_contract.Event{
 		Type:      "claim",
 		EntityID:  taskID,
 		Actor:     body.AiIdentifier,
@@ -321,7 +323,7 @@ func (s *Server) handleClaims(w http.ResponseWriter, r *http.Request) {
 	if who, ok := body.Deliverables["submitted_by"].(string); ok && who != "" {
 		actor = who
 	}
-	s.recordEvent(Event{
+	s.recordEvent(smart_contract.Event{
 		Type:      "submit",
 		EntityID:  claimID,
 		Actor:     actor,
@@ -339,7 +341,7 @@ func (s *Server) handleSkills(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tasks, err := s.store.ListTasks(TaskFilter{})
+	tasks, err := s.store.ListTasks(smart_contract.TaskFilter{})
 	if err != nil {
 		Error(w, http.StatusInternalServerError, err.Error())
 		return
@@ -408,14 +410,14 @@ func int64FromQuery(r *http.Request, key string, def int64) int64 {
 }
 
 // recordEvent appends an event to the in-memory log with a small bounded buffer.
-func (s *Server) recordEvent(evt Event) {
+func (s *Server) recordEvent(evt smart_contract.Event) {
 	const maxEvents = 200
 	if evt.CreatedAt.IsZero() {
 		evt.CreatedAt = time.Now()
 	}
 	s.eventsMu.Lock()
 	defer s.eventsMu.Unlock()
-	s.events = append([]Event{evt}, s.events...)
+	s.events = append([]smart_contract.Event{evt}, s.events...)
 	if len(s.events) > maxEvents {
 		s.events = s.events[:maxEvents]
 	}
@@ -444,7 +446,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 
 		// Send recent buffer first
 		s.eventsMu.Lock()
-		initial := make([]Event, len(s.events))
+		initial := make([]smart_contract.Event, len(s.events))
 		copy(initial, s.events)
 		s.eventsMu.Unlock()
 		for i := len(initial) - 1; i >= 0; i-- { // oldest first
@@ -457,7 +459,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		}
 		flusher.Flush()
 
-		ch := make(chan Event, 10)
+		ch := make(chan smart_contract.Event, 10)
 		s.listenersMu.Lock()
 		s.listeners = append(s.listeners, ch)
 		s.listenersMu.Unlock()
@@ -485,10 +487,10 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		limit = 0
 	}
 	s.eventsMu.Lock()
-	events := make([]Event, len(s.events))
+	events := make([]smart_contract.Event, len(s.events))
 	copy(events, s.events)
 	s.eventsMu.Unlock()
-	filtered := make([]Event, 0, len(events))
+	filtered := make([]smart_contract.Event, 0, len(events))
 	for _, evt := range events {
 		if eventMatches(evt, filterType, filterActor, filterEntity) {
 			filtered = append(filtered, evt)
@@ -504,7 +506,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 }
 
 // broadcastEvent pushes an event to connected listeners without blocking.
-func (s *Server) broadcastEvent(evt Event) {
+func (s *Server) broadcastEvent(evt smart_contract.Event) {
 	s.listenersMu.Lock()
 	defer s.listenersMu.Unlock()
 	for _, ch := range s.listeners {
@@ -518,7 +520,7 @@ func (s *Server) broadcastEvent(evt Event) {
 
 // tryPublishTasksForTaskID attempts to find a proposal that contains the given taskID and publish its tasks.
 func (s *Server) tryPublishTasksForTaskID(ctx context.Context, taskID string) error {
-	proposals, err := s.store.ListProposals(ctx, ProposalFilter{})
+	proposals, err := s.store.ListProposals(ctx, smart_contract.ProposalFilter{})
 	if err != nil {
 		return err
 	}
@@ -532,7 +534,7 @@ func (s *Server) tryPublishTasksForTaskID(ctx context.Context, taskID string) er
 	return ErrTaskNotFound
 }
 
-func (s *Server) removeListener(ch chan Event) {
+func (s *Server) removeListener(ch chan smart_contract.Event) {
 	s.listenersMu.Lock()
 	defer s.listenersMu.Unlock()
 	for i, c := range s.listeners {
@@ -544,7 +546,7 @@ func (s *Server) removeListener(ch chan Event) {
 	}
 }
 
-func eventMatches(evt Event, t string, actor string, entity string) bool {
+func eventMatches(evt smart_contract.Event, t string, actor string, entity string) bool {
 	if t != "" && !strings.EqualFold(evt.Type, t) {
 		return false
 	}
@@ -566,14 +568,14 @@ func (s *Server) publishProposalTasks(ctx context.Context, proposalID string) er
 	if len(p.Tasks) == 0 {
 		// Try to derive tasks from metadata embedded_message.
 		if em, ok := p.Metadata["embedded_message"].(string); ok && em != "" {
-			p.Tasks = BuildTasksFromMarkdown(p.ID, em, p.VisiblePixelHash, p.BudgetSats, fundingAddressFromMeta(p.Metadata))
+			p.Tasks = scstore.BuildTasksFromMarkdown(p.ID, em, p.VisiblePixelHash, p.BudgetSats, scstore.FundingAddressFromMeta(p.Metadata))
 		}
 		if len(p.Tasks) == 0 {
 			return nil
 		}
 	}
 	// Build a contract from the proposal, then upsert tasks.
-	contract := Contract{
+	contract := smart_contract.Contract{
 		ContractID:          p.ID,
 		Title:               p.Title,
 		TotalBudgetSats:     p.BudgetSats,
@@ -582,15 +584,15 @@ func (s *Server) publishProposalTasks(ctx context.Context, proposalID string) er
 		Status:              "active",
 	}
 	// Preserve hashes/funding if present.
-	fundingAddr := fundingAddressFromMeta(p.Metadata)
-	tasks := make([]Task, 0, len(p.Tasks))
+	fundingAddr := scstore.FundingAddressFromMeta(p.Metadata)
+	tasks := make([]smart_contract.Task, 0, len(p.Tasks))
 	for _, t := range p.Tasks {
 		task := t
 		if task.ContractID == "" {
 			task.ContractID = p.ID
 		}
 		if task.MerkleProof == nil && p.VisiblePixelHash != "" {
-			task.MerkleProof = &MerkleProof{
+			task.MerkleProof = &smart_contract.MerkleProof{
 				VisiblePixelHash:   p.VisiblePixelHash,
 				FundedAmountSats:   p.BudgetSats / int64(len(p.Tasks)),
 				FundingAddress:     fundingAddr,
@@ -603,12 +605,12 @@ func (s *Server) publishProposalTasks(ctx context.Context, proposalID string) er
 		tasks = append(tasks, task)
 	}
 	if pg, ok := s.store.(interface {
-		UpsertContractWithTasks(context.Context, Contract, []Task) error
+		UpsertContractWithTasks(context.Context, smart_contract.Contract, []smart_contract.Task) error
 	}); ok {
 		if err := pg.UpsertContractWithTasks(ctx, contract, tasks); err != nil {
 			return err
 		}
-		s.recordEvent(Event{
+		s.recordEvent(smart_contract.Event{
 			Type:      "publish",
 			EntityID:  proposalID,
 			Actor:     "system",
@@ -639,7 +641,7 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 			if err := s.publishProposalTasks(r.Context(), id); err != nil {
 				log.Printf("failed to publish tasks for proposal %s: %v", id, err)
 			}
-			s.recordEvent(Event{
+			s.recordEvent(smart_contract.Event{
 				Type:      "approve",
 				EntityID:  id,
 				Actor:     "approver",
@@ -659,7 +661,7 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 				Error(w, http.StatusBadRequest, err.Error())
 				return
 			}
-			s.recordEvent(Event{
+			s.recordEvent(smart_contract.Event{
 				Type:      "publish",
 				EntityID:  id,
 				Actor:     "approver",
@@ -679,7 +681,7 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 			Error(w, http.StatusUnsupportedMediaType, "Content-Type must be application/json")
 			return
 		}
-		var body proposalCreateBody
+		var body ProposalCreateBody
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			Error(w, http.StatusBadRequest, "invalid json")
 			return
@@ -692,7 +694,7 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 				Error(w, http.StatusNotFound, "ingestion not found")
 				return
 			}
-			proposal, err := buildProposalFromIngestion(body, rec)
+			proposal, err := BuildProposalFromIngestion(body, rec)
 			if err != nil {
 				Error(w, http.StatusBadRequest, err.Error())
 				return
@@ -721,7 +723,7 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 			body.Status = "pending"
 		}
 		if body.BudgetSats == 0 {
-			body.BudgetSats = defaultBudgetSats()
+			body.BudgetSats = scstore.DefaultBudgetSats()
 		}
 		if body.Metadata == nil {
 			body.Metadata = map[string]interface{}{}
@@ -740,7 +742,7 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 				body.Tasks[i].Status = "available"
 			}
 		}
-		p := Proposal{
+		p := smart_contract.Proposal{
 			ID:               body.ID,
 			Title:            body.Title,
 			DescriptionMD:    body.DescriptionMD,
@@ -765,7 +767,7 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		if path == "" {
 			minBudget := int64FromQuery(r, "min_budget_sats", 0)
-			filter := ProposalFilter{
+			filter := smart_contract.ProposalFilter{
 				Status:     r.URL.Query().Get("status"),
 				Skills:     splitCSV(r.URL.Query().Get("skills")),
 				MinBudget:  minBudget,
@@ -807,7 +809,7 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 }
 
 // buildProposalFromIngestion derives a proposal from a pending ingestion record.
-func buildProposalFromIngestion(body proposalCreateBody, rec *services.IngestionRecord) (Proposal, error) {
+func BuildProposalFromIngestion(body ProposalCreateBody, rec *services.IngestionRecord) (smart_contract.Proposal, error) {
 	meta := copyMeta(rec.Metadata)
 	if meta == nil {
 		meta = map[string]interface{}{}
@@ -862,11 +864,11 @@ func buildProposalFromIngestion(body proposalCreateBody, rec *services.Ingestion
 	tasks := body.Tasks
 	if len(tasks) == 0 {
 		if em, _ := meta["embedded_message"].(string); em != "" {
-			tasks = BuildTasksFromMarkdown(id, em, visible, budget, fundingAddressFromMeta(meta))
+			tasks = scstore.BuildTasksFromMarkdown(id, em, visible, budget, scstore.FundingAddressFromMeta(meta))
 		}
 	}
 
-	p := Proposal{
+	p := smart_contract.Proposal{
 		ID:               id,
 		Title:            title,
 		DescriptionMD:    desc,
@@ -905,14 +907,14 @@ func (s *Server) handleSubmissions(w http.ResponseWriter, r *http.Request) {
 			taskIDs := splitCSV(r.URL.Query().Get("task_ids"))
 			status := r.URL.Query().Get("status")
 
-			var submissions []Submission
+			var submissions []smart_contract.Submission
 			var err error
 
 			if len(taskIDs) > 0 {
 				submissions, err = s.store.ListSubmissions(r.Context(), taskIDs)
 			} else if contractID != "" {
 				// Get tasks for contract, then submissions for those tasks
-				tasks, err := s.store.ListTasks(TaskFilter{ContractID: contractID})
+				tasks, err := s.store.ListTasks(smart_contract.TaskFilter{ContractID: contractID})
 				if err != nil {
 					Error(w, http.StatusInternalServerError, err.Error())
 					return
@@ -924,7 +926,7 @@ func (s *Server) handleSubmissions(w http.ResponseWriter, r *http.Request) {
 				submissions, err = s.store.ListSubmissions(r.Context(), taskIDs)
 			} else {
 				// Get all tasks, then all submissions
-				tasks, err := s.store.ListTasks(TaskFilter{})
+				tasks, err := s.store.ListTasks(smart_contract.TaskFilter{})
 				if err != nil {
 					Error(w, http.StatusInternalServerError, err.Error())
 					return
@@ -943,7 +945,7 @@ func (s *Server) handleSubmissions(w http.ResponseWriter, r *http.Request) {
 
 			// Filter by status if provided
 			if status != "" {
-				filtered := make([]Submission, 0)
+				filtered := make([]smart_contract.Submission, 0)
 				for _, sub := range submissions {
 					if strings.EqualFold(sub.Status, status) {
 						filtered = append(filtered, sub)
@@ -953,7 +955,7 @@ func (s *Server) handleSubmissions(w http.ResponseWriter, r *http.Request) {
 			}
 
 			// Convert to map for easier frontend consumption
-			submissionMap := make(map[string]Submission)
+			submissionMap := make(map[string]smart_contract.Submission)
 			for _, sub := range submissions {
 				submissionMap[sub.SubmissionID] = sub
 			}
@@ -972,7 +974,7 @@ func (s *Server) handleSubmissions(w http.ResponseWriter, r *http.Request) {
 
 			// We need to get all submissions to find the specific one
 			// This is not optimal but works for the current store interface
-			tasks, err := s.store.ListTasks(TaskFilter{})
+			tasks, err := s.store.ListTasks(smart_contract.TaskFilter{})
 			if err != nil {
 				Error(w, http.StatusInternalServerError, err.Error())
 				return
@@ -1057,7 +1059,7 @@ func (s *Server) handleSubmissions(w http.ResponseWriter, r *http.Request) {
 			}
 
 			// Record event
-			s.recordEvent(Event{
+			s.recordEvent(smart_contract.Event{
 				Type:      "review",
 				EntityID:  submissionID,
 				Actor:     "reviewer",
@@ -1089,7 +1091,7 @@ func (s *Server) handleSubmissions(w http.ResponseWriter, r *http.Request) {
 			}
 
 			// Get the original submission to update it
-			tasks, err := s.store.ListTasks(TaskFilter{})
+			tasks, err := s.store.ListTasks(smart_contract.TaskFilter{})
 			if err != nil {
 				Error(w, http.StatusInternalServerError, err.Error())
 				return
@@ -1106,7 +1108,7 @@ func (s *Server) handleSubmissions(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			var originalSubmission *Submission
+			var originalSubmission *smart_contract.Submission
 			for _, sub := range submissions {
 				if sub.SubmissionID == submissionID {
 					originalSubmission = &sub
@@ -1142,7 +1144,7 @@ func (s *Server) handleSubmissions(w http.ResponseWriter, r *http.Request) {
 			}
 
 			// Record event
-			s.recordEvent(Event{
+			s.recordEvent(smart_contract.Event{
 				Type:      "rework",
 				EntityID:  submissionID,
 				Actor:     "claimant",

@@ -1,23 +1,25 @@
-package mcp
+package smart_contract
 
 import (
 	"context"
 	"testing"
 	"time"
+
+	"stargate-backend/core/smart_contract"
 )
 
 func TestApproveProposalPreventsDoubleApproval(t *testing.T) {
 	store := NewMemoryStore(time.Hour)
 	ctx := context.Background()
 
-	pendingA := Proposal{
+	pendingA := smart_contract.Proposal{
 		ID:     "p-a",
 		Status: "pending",
 		Metadata: map[string]interface{}{
 			"contract_id": "contract-123",
 		},
 	}
-	pendingB := Proposal{
+	pendingB := smart_contract.Proposal{
 		ID:     "p-b",
 		Status: "pending",
 		Metadata: map[string]interface{}{
@@ -54,7 +56,7 @@ func TestPublishRequiresApprovedAndFinalizes(t *testing.T) {
 	contractID := "contract-publish"
 	taskID := "task-1"
 
-	prop := Proposal{
+	prop := smart_contract.Proposal{
 		ID:     "p-publish",
 		Status: "pending",
 		Metadata: map[string]interface{}{
@@ -65,7 +67,7 @@ func TestPublishRequiresApprovedAndFinalizes(t *testing.T) {
 		t.Fatalf("create proposal: %v", err)
 	}
 
-	store.tasks[taskID] = Task{
+	store.tasks[taskID] = smart_contract.Task{
 		TaskID:     taskID,
 		ContractID: contractID,
 		Status:     "submitted",
