@@ -18,55 +18,12 @@ import (
 	"stargate-backend/middleware"
 	scmiddleware "stargate-backend/middleware/smart_contract"
 	"stargate-backend/services"
+	"stargate-backend/starlight"
 	"stargate-backend/storage"
 	scstore "stargate-backend/storage/smart_contract"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
-
-func getMCPStore() scmiddleware.Store {
-	storeDriver := os.Getenv("MCP_STORE_DRIVER")
-	if storeDriver == "" {
-		storeDriver = "memory"
-	}
-
-	pgDsn := os.Getenv("MCP_PG_DSN")
-
-	// TTL configuration
-	ttlHours := 72
-	if raw := os.Getenv("MCP_DEFAULT_CLAIM_TTL_HOURS"); raw != "" {
-		if v, err := strconv.Atoi(raw); err == nil && v > 0 {
-			ttlHours = v
-		}
-	}
-	claimTTL := time.Duration(ttlHours) * time.Hour
-
-	// Seed configuration
-	seed := true
-	if raw := os.Getenv("MCP_SEED_FIXTURES"); raw != "" {
-		if v, err := strconv.ParseBool(raw); err == nil {
-			seed = v
-		}
-	}
-
-	// Initialize store based on driver
-	switch storeDriver {
-	case "postgres":
-		if pgDsn == "" {
-			log.Printf("MCP_PG_DSN not set, falling back to memory store")
-			return scstore.NewMemoryStore(claimTTL)
-		} else {
-			if store, err := scstore.NewPGStore(context.Background(), pgDsn, claimTTL, seed); err != nil {
-				log.Printf("failed to connect to PostgreSQL (%v), falling back to memory store", err)
-				return scstore.NewMemoryStore(claimTTL)
-			} else {
-				return store
-			}
-		}
-	default:
-		return scstore.NewMemoryStore(claimTTL)
-	}
-}
 
 func contentTypeForFormat(format string) string {
 	switch strings.ToLower(format) {
@@ -108,8 +65,8 @@ func findImagePath(height string, filename string) (string, bool) {
 	return "", false
 }
 
-// initializeMCPServer sets up the MCP server with proper store selection
-func initializeMCPServer() *mcp.MCPServer {
+// initializeMCPComponents sets up the MCP components needed for HTTP access
+func initializeMCPComponents() (scmiddleware.Store, string, *services.IngestionService) {
 	// Load MCP configuration
 	storeDriver := os.Getenv("MCP_STORE_DRIVER")
 	if storeDriver == "" {
@@ -169,9 +126,9 @@ func initializeMCPServer() *mcp.MCPServer {
 	if err == nil && pgDsn != "" {
 		actualStoreType = "postgres"
 	}
-	log.Printf("MCP server initialized with %s store (requested: %s)", actualStoreType, storeDriver)
+	log.Printf("MCP components initialized with %s store (requested: %s)", actualStoreType, storeDriver)
 
-	return mcp.NewMCPServer(store, apiKey, ingestionSvc)
+	return store, apiKey, ingestionSvc
 }
 
 // startMCPServices starts background services for MCP when using PostgreSQL
@@ -261,11 +218,12 @@ func runHTTPServer() {
 	// Initialize dependency container
 	container := container.NewContainer()
 
-	// Initialize MCP server (for background services and HTTP routes)
-	mcpServer := initializeMCPServer()
+	// Initialize MCP components (for HTTP routes)
+	store, apiKey, ingestionSvc := initializeMCPComponents()
 
 	// Initialize HTTP MCP server (always enabled)
-	httpMCPServer := mcp.NewHTTPMCPServer(mcpServer)
+	scannerManager := starlight.GetScannerManager()
+	httpMCPServer := mcp.NewHTTPMCPServer(store, apiKey, ingestionSvc, scannerManager)
 
 	// Start MCP background services if using PostgreSQL AND MCP server is not running separately
 	if os.Getenv("STARGATE_MODE") != "mcp-only" && os.Getenv("STARGATE_MODE") != "both" {
@@ -286,7 +244,7 @@ func runHTTPServer() {
 			middleware.SecurityHeaders(
 				middleware.CORS(
 					middleware.Timeout(30 * time.Second)(
-						setupRoutes(mux, container, mcpServer),
+						setupRoutes(mux, container, store, apiKey, ingestionSvc),
 					),
 				)),
 		),
@@ -311,17 +269,9 @@ func runHTTPServer() {
 	log.Fatal(http.ListenAndServe(":"+httpPort, handler))
 }
 
-func setupRoutes(mux *http.ServeMux, container *container.Container, mcpServer *mcp.MCPServer) http.Handler {
+func setupRoutes(mux *http.ServeMux, container *container.Container, store scmiddleware.Store, apiKey string, ingestionSvc *services.IngestionService) http.Handler {
 	// Initialize MCP REST server for HTTP routes
-	mcpStore := getMCPStore()
-	apiKey := os.Getenv("MCP_API_KEY")
-	var ingestionSvc *services.IngestionService
-	if pgDsn := os.Getenv("MCP_PG_DSN"); pgDsn != "" {
-		if svc, err := services.NewIngestionService(pgDsn); err == nil {
-			ingestionSvc = svc
-		}
-	}
-	mcpRestServer := scmiddleware.NewServer(mcpStore, apiKey, ingestionSvc)
+	mcpRestServer := scmiddleware.NewServer(store, apiKey, ingestionSvc)
 	mcpRestServer.RegisterRoutes(mux)
 	// Health endpoints
 	mux.HandleFunc("/api/health", container.HealthHandler.HandleHealth)
@@ -511,11 +461,7 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, mcpServer *
 	mux.HandleFunc("/bitcoin/v1/extract", bitcoinAPI.HandleExtract)
 	mux.HandleFunc("/bitcoin/v1/transaction/", bitcoinAPI.HandleGetTransaction)
 
-	// Note: New MCP server uses stdio transport, not HTTP routes
-	// The MCP server will be available via stdio when run separately
-	if mcpServer != nil {
-		log.Printf("MCP server initialized (available via stdio transport)")
-	}
+	// MCP tools are available via HTTP endpoints at /mcp/
 
 	log.Printf("All routes registered, returning handler")
 	return mux

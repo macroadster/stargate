@@ -165,13 +165,19 @@ func (sm *ScannerManager) GetHealthStatus() map[string]interface{} {
 	sm.mutex.RLock()
 	defer sm.mutex.RUnlock()
 
+	circuitBreakerStatus := map[string]interface{}{
+		"state":    "unknown",
+		"failures": 0,
+	}
+	if sm.circuitBreaker != nil {
+		circuitBreakerStatus["state"] = sm.circuitBreaker.GetState()
+		circuitBreakerStatus["failures"] = sm.circuitBreaker.GetFailures()
+	}
+
 	status := map[string]interface{}{
-		"initialized":  sm.initialized,
-		"scanner_type": sm.scannerType,
-		"circuit_breaker": map[string]interface{}{
-			"state":    sm.circuitBreaker.GetState(),
-			"failures": sm.circuitBreaker.GetFailures(),
-		},
+		"initialized":     sm.initialized,
+		"scanner_type":    sm.scannerType,
+		"circuit_breaker": circuitBreakerStatus,
 	}
 
 	if sm.scanner != nil {

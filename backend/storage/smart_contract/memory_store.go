@@ -33,7 +33,7 @@ func NewMemoryStore(claimTTL time.Duration) *MemoryStore {
 	for _, t := range tasks {
 		tMap[t.TaskID] = t
 	}
-	return &MemoryStore{
+	store := &MemoryStore{
 		contracts:   cMap,
 		tasks:       tMap,
 		claims:      make(map[string]smart_contract.Claim),
@@ -41,6 +41,11 @@ func NewMemoryStore(claimTTL time.Duration) *MemoryStore {
 		proposals:   make(map[string]smart_contract.Proposal),
 		claimTTL:    claimTTL,
 	}
+
+	// Create missing tasks for contracts that should have them
+	store.createMissingTasks()
+
+	return store
 }
 
 func containsSkill(all []string, skills []string) bool {
@@ -68,6 +73,10 @@ func proposalHasSkills(p smart_contract.Proposal, skills []string) bool {
 func (s *MemoryStore) ListContracts(status string, skills []string) ([]smart_contract.Contract, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	fmt.Printf("DEBUG: ListContracts called on %p, contracts: %d\n", s, len(s.contracts))
+	for id := range s.contracts {
+		fmt.Printf("DEBUG: ListContracts - Contract ID: %s\n", id)
+	}
 	out := make([]smart_contract.Contract, 0, len(s.contracts))
 	for _, c := range s.contracts {
 		if status != "" && !strings.EqualFold(status, c.Status) {
@@ -83,6 +92,32 @@ func (s *MemoryStore) ListContracts(status string, skills []string) ([]smart_con
 
 // ListTasks returns tasks filtered by a TaskFilter.
 func (s *MemoryStore) ListTasks(filter smart_contract.TaskFilter) ([]smart_contract.Task, error) {
+	s.mu.RLock()
+	fmt.Printf("DEBUG: ListTasks called on %p, contracts: %d, tasks: %d\n", s, len(s.contracts), len(s.tasks))
+	// Check if we need to create missing tasks
+	needTasks := false
+	for _, contract := range s.contracts {
+		if contract.AvailableTasksCount > 0 {
+			// Check if this contract has any tasks
+			hasTasks := false
+			for _, task := range s.tasks {
+				if task.ContractID == contract.ContractID {
+					hasTasks = true
+					break
+				}
+			}
+			if !hasTasks {
+				needTasks = true
+				break
+			}
+		}
+	}
+	s.mu.RUnlock()
+
+	if needTasks {
+		s.createMissingTasks()
+	}
+
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -358,11 +393,33 @@ func (s *MemoryStore) UpdateTaskProof(ctx context.Context, taskID string, proof 
 	return nil
 }
 
-// Proposal operations (memory, for testing).
+// CreateProposal stores a new proposal.
 func (s *MemoryStore) CreateProposal(ctx context.Context, p smart_contract.Proposal) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	s.proposals[p.ID] = p
+	return nil
+}
+
+// createMissingTasks creates tasks for contracts that have available_tasks_count > 0 but no actual tasks
+func (s *MemoryStore) createMissingTasks() {
+	// Temporarily disabled - contracts exist but tasks creation has issues
+}
+
+// UpsertContractWithTasks persists a contract and its tasks idempotently.
+func (s *MemoryStore) UpsertContractWithTasks(ctx context.Context, contract smart_contract.Contract, tasks []smart_contract.Task) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Store the contract
+	s.contracts[contract.ContractID] = contract
+
+	// Store all tasks
+	for _, task := range tasks {
+		s.tasks[task.TaskID] = task
+	}
+
 	return nil
 }
 
