@@ -20,13 +20,24 @@ type PGStore struct {
 }
 
 func contractIDFromMeta(meta map[string]interface{}, id string) string {
-	contractID := id
-	if cid, ok := meta["contract_id"].(string); ok && strings.TrimSpace(cid) != "" {
-		contractID = cid
-	} else if cid, ok := meta["ingestion_id"].(string); ok && strings.TrimSpace(cid) != "" {
-		contractID = cid
+	// Use visible_pixel_hash as the canonical contract identifier
+	// since it uniquely identifies the steganography content
+	if hash, ok := meta["visible_pixel_hash"].(string); ok && strings.TrimSpace(hash) != "" {
+		return hash
 	}
-	return contractID
+
+	// Fallback to explicit contract_id if provided
+	if cid, ok := meta["contract_id"].(string); ok && strings.TrimSpace(cid) != "" {
+		return cid
+	}
+
+	// Fallback to ingestion_id for proposals created from ingestion
+	if cid, ok := meta["ingestion_id"].(string); ok && strings.TrimSpace(cid) != "" {
+		return cid
+	}
+
+	// Final fallback to proposal ID
+	return id
 }
 
 // NewPGStore connects, initializes schema, and optionally seeds fixtures.
@@ -837,11 +848,12 @@ func (s *PGStore) ApproveProposal(ctx context.Context, id string) error {
 	// Block double-approval/publish for the same contract.
 	var conflict int
 	if err := tx.QueryRow(ctx, `
-SELECT count(*) FROM mcp_proposals 
-WHERE id<>$1 AND status IN ('approved','published') 
+SELECT count(*) FROM mcp_proposals
+WHERE id<>$1 AND status IN ('approved','published')
 AND (
-  metadata->>'contract_id' = $2 OR 
-  metadata->>'ingestion_id' = $2 OR 
+  metadata->>'contract_id' = $2 OR
+  metadata->>'ingestion_id' = $2 OR
+  metadata->>'visible_pixel_hash' = $2 OR
   id = $2
 )`, id, contractID).Scan(&conflict); err != nil {
 		return err
@@ -851,10 +863,11 @@ AND (
 	}
 	// Auto-reject any other pending proposals for this contract.
 	_, _ = tx.Exec(ctx, `
-UPDATE mcp_proposals SET status='rejected' 
+UPDATE mcp_proposals SET status='rejected'
 WHERE id<>$1 AND status='pending' AND (
-  metadata->>'contract_id' = $2 OR 
-  metadata->>'ingestion_id' = $2 OR 
+  metadata->>'contract_id' = $2 OR
+  metadata->>'ingestion_id' = $2 OR
+  metadata->>'visible_pixel_hash' = $2 OR
   id = $2
 )`, id, contractID)
 

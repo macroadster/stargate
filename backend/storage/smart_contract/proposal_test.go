@@ -50,6 +50,57 @@ func TestApproveProposalPreventsDoubleApproval(t *testing.T) {
 	}
 }
 
+func TestPixelHashDeterminesContractIdentity(t *testing.T) {
+	store := NewMemoryStore(time.Hour)
+	ctx := context.Background()
+
+	pixelHash := "abc123pixelhash"
+
+	// Create first proposal with pixel hash
+	proposalA := smart_contract.Proposal{
+		ID:     "proposal-a",
+		Status: "pending",
+		Metadata: map[string]interface{}{
+			"visible_pixel_hash": pixelHash,
+		},
+	}
+	if err := store.CreateProposal(ctx, proposalA); err != nil {
+		t.Fatalf("create proposal A: %v", err)
+	}
+
+	// Create second proposal with same pixel hash
+	proposalB := smart_contract.Proposal{
+		ID:     "proposal-b",
+		Status: "pending",
+		Metadata: map[string]interface{}{
+			"visible_pixel_hash": pixelHash,
+		},
+	}
+	if err := store.CreateProposal(ctx, proposalB); err != nil {
+		t.Fatalf("create proposal B: %v", err)
+	}
+
+	// Approve first proposal
+	if err := store.ApproveProposal(ctx, proposalA.ID); err != nil {
+		t.Fatalf("approve first proposal: %v", err)
+	}
+
+	// Try to approve second proposal - should fail
+	if err := store.ApproveProposal(ctx, proposalB.ID); err == nil {
+		t.Fatalf("expected second approval to fail for same pixel hash")
+	}
+
+	gotA, _ := store.GetProposal(ctx, proposalA.ID)
+	if gotA.Status != "approved" {
+		t.Fatalf("expected proposal A approved, got %s", gotA.Status)
+	}
+
+	gotB, _ := store.GetProposal(ctx, proposalB.ID)
+	if gotB.Status != "rejected" {
+		t.Fatalf("expected proposal B rejected due to same pixel hash, got %s", gotB.Status)
+	}
+}
+
 func TestPublishRequiresApprovedAndFinalizes(t *testing.T) {
 	store := NewMemoryStore(time.Hour)
 	ctx := context.Background()
