@@ -93,7 +93,7 @@ const DeliverablesReview = ({ proposalItems, submissions, onRefresh }) => {
     console.log('DeliverablesReview: reviewDeliverable called with submissionId:', submissionId, 'action:', action);
     setReviewingId(submissionId);
     try {
-      const reviewUrl = `${API_BASE}/mcp/v1/submissions/${submissionId}/review`;
+      const reviewUrl = `${API_BASE}/api/smart_contract/submissions/${submissionId}/review`;
       console.log('DeliverablesReview: Making review request to:', reviewUrl);
       const res = await fetch(reviewUrl, {
         method: 'POST',

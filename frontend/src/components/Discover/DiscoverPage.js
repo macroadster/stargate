@@ -38,7 +38,7 @@ export default function DiscoverPage() {
       if (skills) params.set('skills', skills);
       if (minBudget) params.set('min_budget_sats', minBudget);
       if (contractId) params.set('contract_id', contractId);
-      const res = await fetch(`${API_BASE}/mcp/v1/proposals?${params.toString()}`);
+      const res = await fetch(`${API_BASE}/api/smart_contract/proposals?${params.toString()}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setProposals(data.proposals || []);
@@ -56,7 +56,7 @@ export default function DiscoverPage() {
     if (!claimId) return;
     setSubmitting((prev) => ({ ...prev, [taskId]: true }));
     try {
-      const res = await fetch(`${API_BASE}/mcp/v1/claims/${claimId}/submit`, {
+      const res = await fetch(`${API_BASE}/api/smart_contract/claims/${claimId}/submit`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -95,7 +95,7 @@ export default function DiscoverPage() {
     }
     setClaiming((prev) => ({ ...prev, [taskId]: true }));
     try {
-      const res = await fetch(`${API_BASE}/mcp/v1/tasks/${taskId}/claim`, {
+      const res = await fetch(`${API_BASE}/api/smart_contract/tasks/${taskId}/claim`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ai_identifier: aiId }),
@@ -410,7 +410,7 @@ function ActivityFeed() {
 
   const loadEvents = async () => {
     try {
-      const res = await fetch(`${API_BASE}/mcp/v1/events?limit=20`);
+      const res = await fetch(`${API_BASE}/api/smart_contract/events?limit=20`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setEvents(data.events || []);
@@ -423,7 +423,7 @@ function ActivityFeed() {
     loadEvents();
     let es;
     try {
-      es = new EventSource(`${API_BASE}/mcp/v1/events`, { withCredentials: false });
+      es = new EventSource(`${API_BASE}/api/smart_contract/events`, { withCredentials: false });
       es.onmessage = (evt) => {
         try {
           const parsed = JSON.parse(evt.data);

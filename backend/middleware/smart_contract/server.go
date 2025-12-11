@@ -49,17 +49,17 @@ func NewServer(store Store, apiKey string, ingest *services.IngestionService) *S
 // RegisterRoutes attaches handlers to the mux.
 func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/healthz", s.handleHealth)
-	mux.HandleFunc("/mcp/v1/contracts", s.authWrap(s.handleContracts))
-	mux.HandleFunc("/mcp/v1/contracts/", s.authWrap(s.handleContracts))
-	mux.HandleFunc("/mcp/v1/tasks", s.authWrap(s.handleTasks))
-	mux.HandleFunc("/mcp/v1/tasks/", s.authWrap(s.handleTasks))
-	mux.HandleFunc("/mcp/v1/claims/", s.authWrap(s.handleClaims))
-	mux.HandleFunc("/mcp/v1/skills", s.authWrap(s.handleSkills))
-	mux.HandleFunc("/mcp/v1/proposals", s.authWrap(s.handleProposals))
-	mux.HandleFunc("/mcp/v1/proposals/", s.authWrap(s.handleProposals))
-	mux.HandleFunc("/mcp/v1/submissions", s.authWrap(s.handleSubmissions))
-	mux.HandleFunc("/mcp/v1/submissions/", s.authWrap(s.handleSubmissions))
-	mux.HandleFunc("/mcp/v1/events", s.authWrap(s.handleEvents))
+	mux.HandleFunc("/api/smart_contract/contracts", s.authWrap(s.handleContracts))
+	mux.HandleFunc("/api/smart_contract/contracts/", s.authWrap(s.handleContracts))
+	mux.HandleFunc("/api/smart_contract/tasks", s.authWrap(s.handleTasks))
+	mux.HandleFunc("/api/smart_contract/tasks/", s.authWrap(s.handleTasks))
+	mux.HandleFunc("/api/smart_contract/claims/", s.authWrap(s.handleClaims))
+	mux.HandleFunc("/api/smart_contract/skills", s.authWrap(s.handleSkills))
+	mux.HandleFunc("/api/smart_contract/proposals", s.authWrap(s.handleProposals))
+	mux.HandleFunc("/api/smart_contract/proposals/", s.authWrap(s.handleProposals))
+	mux.HandleFunc("/api/smart_contract/submissions", s.authWrap(s.handleSubmissions))
+	mux.HandleFunc("/api/smart_contract/submissions/", s.authWrap(s.handleSubmissions))
+	mux.HandleFunc("/api/smart_contract/events", s.authWrap(s.handleEvents))
 }
 
 func (s *Server) authWrap(next http.HandlerFunc) http.HandlerFunc {
@@ -84,7 +84,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleContracts(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/mcp/v1/contracts")
+	path := strings.TrimPrefix(r.URL.Path, "/api/smart_contract/contracts")
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 
 	switch r.Method {
@@ -130,7 +130,7 @@ func (s *Server) handleContracts(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleTasks(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/mcp/v1/tasks")
+	path := strings.TrimPrefix(r.URL.Path, "/api/smart_contract/tasks")
 	path = strings.Trim(path, "/")
 
 	switch r.Method {
@@ -277,7 +277,7 @@ claim_success:
 }
 
 func (s *Server) handleClaims(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/mcp/v1/claims/")
+	path := strings.TrimPrefix(r.URL.Path, "/api/smart_contract/claims/")
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 	if len(parts) == 0 || parts[0] == "" {
 		Error(w, http.StatusBadRequest, "claim id required")
@@ -624,7 +624,7 @@ func (s *Server) publishProposalTasks(ctx context.Context, proposalID string) er
 
 // handleProposals supports listing, getting, and approving proposals.
 func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/mcp/v1/proposals")
+	path := strings.TrimPrefix(r.URL.Path, "/api/smart_contract/proposals")
 	path = strings.Trim(path, "/")
 
 	switch r.Method {
@@ -896,7 +896,7 @@ type submissionReworkBody struct {
 
 // handleSubmissions manages submission endpoints for review and rework.
 func (s *Server) handleSubmissions(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/mcp/v1/submissions")
+	path := strings.TrimPrefix(r.URL.Path, "/api/smart_contract/submissions")
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 
 	switch r.Method {

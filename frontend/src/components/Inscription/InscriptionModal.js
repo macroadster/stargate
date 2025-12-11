@@ -90,7 +90,7 @@ const InscriptionModal = ({ inscription, onClose }) => {
     setIsLoadingProposals(true);
     setProposalError('');
     try {
-      const res = await fetchWithTimeout(`${API_BASE}/mcp/v1/proposals`, {}, 6000);
+      const res = await fetchWithTimeout(`${API_BASE}/api/smart_contract/proposals`, {}, 6000);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       let items = (data?.proposals || []).filter((p) => {
@@ -169,7 +169,7 @@ const InscriptionModal = ({ inscription, onClose }) => {
     setProposalError('');
     try {
       const endpoint = isPublish ? 'publish' : 'approve';
-      const res = await fetchWithTimeout(`${API_BASE}/mcp/v1/proposals/${proposalId}/${endpoint}`, { method: 'POST' }, 6000);
+      const res = await fetchWithTimeout(`${API_BASE}/api/smart_contract/proposals/${proposalId}/${endpoint}`, { method: 'POST' }, 6000);
       if (!res.ok) {
         const body = await res.text();
         throw new Error(body || `HTTP ${res.status}`);

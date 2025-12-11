@@ -21,7 +21,6 @@ import (
 	"stargate-backend/storage"
 	scstore "stargate-backend/storage/smart_contract"
 
-	"github.com/mark3labs/mcp-go/server"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
@@ -249,56 +248,11 @@ func startMCPServices() {
 func main() {
 	log.Println("=== STARTING STARGATE BACKEND ===")
 
-	// Check what modes to run
-	runHTTP := os.Getenv("STARGATE_MODE") != "mcp-only"
-	runMCP := os.Getenv("STARGATE_MODE") != "http-only"
+	// Start HTTP server (includes MCP endpoints)
+	go runHTTPServer()
 
-	// If neither specified, run both (default behavior)
-	if os.Getenv("STARGATE_MODE") == "" {
-		runHTTP = true
-		runMCP = true
-	}
-
-	// Start HTTP server in background if requested
-	if runHTTP {
-		go runHTTPServer()
-	}
-
-	// Start MCP server in foreground if requested
-	if runMCP {
-		runMCPServer()
-		return // MCP server runs in foreground
-	}
-
-	// If only HTTP mode, wait indefinitely
-	if runHTTP && !runMCP {
-		select {} // Block forever
-	}
-}
-
-func runMCPServer() {
-	log.Println("=== STARTING STARGATE MCP SERVER ===")
-
-	// Initialize MCP server
-	mcpServer := initializeMCPServer()
-	if mcpServer == nil {
-		log.Fatal("Failed to initialize MCP server")
-	}
-
-	// Start MCP background services if using PostgreSQL AND HTTP server is not also running
-	if os.Getenv("STARGATE_MODE") != "http-only" && os.Getenv("STARGATE_MODE") != "both" {
-		startMCPServices()
-	} else {
-		log.Println("MCP background services skipped (handled by HTTP process)")
-	}
-
-	log.Println("Stargate MCP server starting on stdio transport")
-	log.Printf("Server: Stargate MCP Server v1.0.0")
-
-	// Start MCP server using stdio transport
-	if err := server.ServeStdio(mcpServer.GetMCPServer()); err != nil {
-		log.Fatalf("MCP server error: %v", err)
-	}
+	// Wait indefinitely
+	select {} // Block forever
 }
 
 func runHTTPServer() {
@@ -307,8 +261,11 @@ func runHTTPServer() {
 	// Initialize dependency container
 	container := container.NewContainer()
 
-	// Initialize MCP server (for background services, but not HTTP routes)
+	// Initialize MCP server (for background services and HTTP routes)
 	mcpServer := initializeMCPServer()
+
+	// Initialize HTTP MCP server (always enabled)
+	httpMCPServer := mcp.NewHTTPMCPServer(mcpServer)
 
 	// Start MCP background services if using PostgreSQL AND MCP server is not running separately
 	if os.Getenv("STARGATE_MODE") != "mcp-only" && os.Getenv("STARGATE_MODE") != "both" {
@@ -319,6 +276,9 @@ func runHTTPServer() {
 
 	// Set up middleware chain
 	mux := http.NewServeMux()
+
+	// Register HTTP MCP routes
+	httpMCPServer.RegisterRoutes(mux)
 
 	// Apply middleware to all routes
 	handler := middleware.Recovery(
@@ -343,13 +303,10 @@ func runHTTPServer() {
 	log.Printf("Stargate API endpoints at: http://localhost:%s/api/", httpPort)
 	log.Printf("Bitcoin steganography API at: http://localhost:%s/bitcoin/v1/", httpPort)
 	log.Printf("Smart contract steganography at: http://localhost:%s/api/contract-stego/", httpPort)
-	log.Printf("MCP REST API at: http://localhost:%s/mcp/v1/", httpPort)
+	log.Printf("Smart contract API at: http://localhost:%s/api/smart_contract/", httpPort)
+	log.Printf("MCP HTTP tools at: http://localhost:%s/mcp/tools", httpPort)
+	log.Printf("MCP HTTP calls at: http://localhost:%s/mcp/call", httpPort)
 	log.Printf("Proxy to steganography API (port 8080) at: http://localhost:%s/stego/", httpPort)
-	if os.Getenv("STARGATE_MODE") == "" || os.Getenv("STARGATE_MODE") == "both" {
-		log.Println("Note: MCP server running in same process")
-	} else {
-		log.Println("Note: MCP server available via separate process (STARGATE_MODE=mcp)")
-	}
 
 	log.Fatal(http.ListenAndServe(":"+httpPort, handler))
 }

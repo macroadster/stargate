@@ -14,7 +14,7 @@ const SubmissionReview = ({ submissionId, onApprove, onReject, onClose }) => {
 
   const fetchSubmission = async () => {
     try {
-      const response = await fetch(`${API_BASE}/mcp/v1/submissions/${submissionId}`);
+      const response = await fetch(`${API_BASE}/api/smart_contract/submissions/${submissionId}`);
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const data = await response.json();
       setSubmission(data);

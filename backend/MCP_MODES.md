@@ -1,55 +1,57 @@
-# Stargate Backend - Multi-Mode Operation
+# Stargate Backend - Unified HTTP Server
 
-The Stargate backend supports multiple operational modes that can run simultaneously or independently:
+The Stargate backend runs as a unified HTTP server with all endpoints available on a single port. Both REST API and MCP tools are accessible via different URL prefixes.
 
-## Mode Options
+## Server Architecture
 
-### HTTP Server Mode (Default)
-Runs the full HTTP API server with all endpoints including:
-- REST API endpoints
-- Bitcoin steganography API  
-- Smart contract endpoints
-- Block data API
-- Frontend serving
-- MCP background services (if PostgreSQL enabled and MCP not running separately)
+### Single HTTP Server
+All functionality is available through one HTTP server on port 3001 (default):
+- REST API endpoints at `/api/*`
+- Smart contract API at `/api/smart_contract/*` 
+- Bitcoin steganography API at `/bitcoin/v1/*`
+- MCP HTTP tools at `/mcp/*`
+- Frontend serving at `/`
+- Background services for MCP and data synchronization
 
-### MCP Server Mode
-Runs the MCP (Machine Control Protocol) server using stdio transport for integration with MCP clients like Claude Desktop, Cursor, etc.
-
-### Both Modes (Default)
-When `STARGATE_MODE` is not set, both HTTP and MCP servers run simultaneously:
-- HTTP server runs in background on :3001
-- MCP server runs in foreground via stdio
-- Background services coordinated to avoid conflicts
+### URL Prefix Separation
+Different functionality is separated by URL prefixes:
+- `/api/smart_contract/*` - Smart contract REST API
+- `/mcp/tools` - List available MCP tools
+- `/mcp/call` - Execute MCP tools via HTTP POST
 
 ## Usage
 
-### Run Both Modes (Default)
+### Start Server
 ```bash
-# Both HTTP and MCP (default)
+# Start unified server (default port 3001)
 go run .
 
-# Explicitly both modes
-STARGATE_MODE=both go run .
+# Custom port
+STARGATE_HTTP_PORT=8080 go run .
 ```
 
-### HTTP Only Mode
+### Access Points
+
+#### REST API
 ```bash
-# Only HTTP server
-STARGATE_MODE=http-only go run .
+# Smart contract API
+curl http://localhost:3001/api/smart_contract/contracts
+
+# Other APIs
+curl http://localhost:3001/api/blocks
+curl http://localhost:3001/bitcoin/v1/info
 ```
 
-### MCP Only Mode
+#### MCP Tools via HTTP
 ```bash
-# Only MCP server
-STARGATE_MODE=mcp-only go run .
-```
+# List available tools
+curl http://localhost:3001/mcp/tools
 
-### Legacy Mode Names
-For backward compatibility:
-- `STARGATE_MODE=mcp` → MCP only mode
-- `STARGATE_MODE=http` → HTTP only mode  
-- `STARGATE_MODE=""` (empty) → Both modes (default)
+# Call a tool
+curl -X POST http://localhost:3001/mcp/call \
+  -H "Content-Type: application/json" \
+  -d '{"tool": "list_contracts", "arguments": {"status": "active"}}'
+```
 
 ### Access Points
 
@@ -131,17 +133,28 @@ The MCP server exposes 18 tools:
 
 ### MCP Client Configuration
 
-For Claude Desktop, add to your MCP configuration:
+#### HTTP MCP Access (Recommended)
+
+For any HTTP client (web apps, scripts, other services):
+
+```bash
+# Direct HTTP calls
+curl -X POST http://localhost:3001/mcp/call \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: your-api-key" \
+  -d '{"tool": "list_tasks", "arguments": {"status": "available"}}'
+```
+
+#### For Claude Desktop (Stdio Transport)
+
+If you need stdio transport for Claude Desktop, you would need to modify the code to disable HTTP MCP, but the recommended approach is to use the HTTP endpoints directly from Claude via web requests or build a proxy.
 
 ```json
 {
   "mcpServers": {
-    "stargate": {
-      "command": "go",
-      "args": ["run", "."],
-      "env": {
-        "STARGATE_MODE": "mcp"
-      }
+    "stargate-http": {
+      "command": "curl",
+      "args": ["-X", "POST", "http://localhost:3001/mcp/call", "-H", "Content-Type: application/json", "-d", "{\"tool\": \"{{tool}}\", \"arguments\": {{arguments}}}"]
     }
   }
 }
@@ -169,6 +182,8 @@ Both modes respect these environment variables:
 ### Other Configuration
 - `BLOCKS_DIR` - Blocks directory path (default: "blocks")
 - `UPLOADS_DIR` - Uploads directory path (default: "/data/uploads")
+- `STARGATE_HTTP_PORT` - HTTP server port (default: "3001")
+- `MCP_API_KEY` - API key for MCP tool authentication (optional)
 
 ## Development
 
