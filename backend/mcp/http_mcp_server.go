@@ -490,6 +490,10 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 			return nil, fmt.Errorf("task_id is required")
 		}
 
+		if res, err := h.getJSON(fmt.Sprintf("%s/api/smart_contract/tasks/%s/merkle-proof", h.baseURL, taskID)); err == nil {
+			return res, nil
+		}
+
 		proof, err := store.GetTaskProof(taskID)
 		if err != nil {
 			return nil, fmt.Errorf("Failed to get task proof: %v", err)
