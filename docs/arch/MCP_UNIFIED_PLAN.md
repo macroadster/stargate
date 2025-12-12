@@ -63,6 +63,7 @@ Tool names map to the same store used by REST. Where possible they already reuse
 - `/api/health`, `/metrics`, `/api/docs` (Swagger for general backend; MCP-specific OpenAPI planned).
 - `/api/docs/mcp/openapi.json` serves the MCP/Smart Contract surface (stub, keep updated).
 - `/api/smart_contract/discover` and `/mcp/discover` advertise base URLs, endpoints, tools, and auth expectations.
+- `/api/auth/register` and `/api/auth/login` issue/validate API keys (persisted in Postgres when `STARGATE_PG_DSN` is set, otherwise memory; seed key from `STARGATE_API_KEY`).
 
 ## Data Shapes (canonical)
 - **Contract:** `contract_id`, `title`, `total_budget_sats`, `goals_count`, `available_tasks_count`, `status`.

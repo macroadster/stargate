@@ -175,6 +175,41 @@
     },
     "/mcp/events": {
       "get": {"summary": "MCP events proxy", "responses": {"200": {"description": "OK"}}}
+    },
+    "/auth/register": {
+      "post": {
+        "summary": "Register and issue an API key",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {"email": {"type": "string"}}
+              }
+            }
+          }
+        },
+        "responses": {"200": {"description": "Issued", "content": {"application/json": {"schema": {"type": "object"}}}}}
+      }
+    },
+    "/auth/login": {
+      "post": {
+        "summary": "Validate an API key",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {"api_key": {"type": "string"}},
+                "required": ["api_key"]
+              }
+            }
+          }
+        },
+        "responses": {"200": {"description": "Valid key", "content": {"application/json": {"schema": {"type": "object"}}}}}
+      }
     }
   },
   "components": {
