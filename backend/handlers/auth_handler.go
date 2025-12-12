@@ -1,13 +1,10 @@
 package handlers
 
 import (
-	"encoding/hex"
 	"encoding/json"
 	"net/http"
-	"strconv"
 	"strings"
 
-	"github.com/ethereum/go-ethereum/crypto"
 	auth "stargate-backend/storage/auth"
 )
 
@@ -145,11 +142,8 @@ func (h *APIKeyHandler) HandleVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	verifier := func(ch auth.Challenge, sig string) bool {
-		// If Ethereum-style address, verify EIP-191 personal_sign over nonce
-		if strings.HasPrefix(strings.ToLower(ch.Wallet), "0x") {
-			return verifyEthPersonalSign(ch.Wallet, sig, ch.Nonce)
-		}
-		// Fallback: accept exact nonce match (legacy)
+		// TODO: replace with real BTC signature verification (e.g., BIP-322).
+		// For now accept exact nonce match.
 		return sig == ch.Nonce
 	}
 	if !h.challenges.Verify(body.Wallet, body.Signature, verifier) {
@@ -169,28 +163,4 @@ func (h *APIKeyHandler) HandleVerify(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// verifyEthPersonalSign checks a personal_sign signature over nonce against the given 0x wallet address.
-func verifyEthPersonalSign(wallet, signatureHex, nonce string) bool {
-	w := strings.ToLower(strings.TrimSpace(wallet))
-	sig := strings.TrimPrefix(strings.TrimSpace(signatureHex), "0x")
-	if len(sig) != 130 { // 65 bytes hex
-		return false
-	}
-	sigBytes, err := hex.DecodeString(sig)
-	if err != nil {
-		return false
-	}
-	// Adjust V if needed (ethers often uses 27/28)
-	if sigBytes[64] >= 27 {
-		sigBytes[64] -= 27
-	}
-	msg := []byte(nonce)
-	prefix := []byte("\x19Ethereum Signed Message:\n" + strconv.Itoa(len(msg)))
-	hash := crypto.Keccak256Hash(append(prefix, msg...))
-	pubKey, err := crypto.SigToPub(hash.Bytes(), sigBytes)
-	if err != nil {
-		return false
-	}
-	recovered := strings.ToLower(crypto.PubkeyToAddress(*pubKey).Hex())
-	return recovered == w
-}
+// TODO: add BTC sign/verify (BIP-322 or legacy signmessage). Currently verifier accepts nonce match only.
