@@ -407,6 +407,12 @@ func (s *Server) handleDiscover(w http.ResponseWriter, r *http.Request) {
 			"type":        "api_key",
 			"header_name": "X-API-Key",
 		},
+		"rate_limits": map[string]interface{}{
+			"enabled":       false,
+			"notes":         "rate limiting planned; not enforced by default",
+			"recommended":   "10 rps claim, 5 rps submit (see roadmap)",
+			"burst_example": 100,
+		},
 	}
 	JSON(w, http.StatusOK, resp)
 }

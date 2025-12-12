@@ -180,6 +180,12 @@ func (h *HTTPMCPServer) handleDiscover(w http.ResponseWriter, r *http.Request) {
 			"header_name": "X-API-Key",
 			"required":    fmt.Sprintf("%t", h.apiKey != ""),
 		},
+		"rate_limits": map[string]interface{}{
+			"enabled":       false,
+			"notes":         "rate limiting planned; not enforced by default",
+			"recommended":   "10 rps claim, 5 rps submit (see roadmap)",
+			"burst_example": 100,
+		},
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
