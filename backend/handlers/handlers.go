@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	scmiddleware "stargate-backend/middleware/smart_contract"
 	"stargate-backend/models"
 	"stargate-backend/services"
 	"stargate-backend/storage"
@@ -108,6 +109,7 @@ func placeholderPNG() []byte {
 // @Tags Inscriptions
 // @Produce  json
 // @Success 200 {object} models.PendingTransactionsResponse
+// @Router /api/inscriptions [get]
 // @Router /api/pending-transactions [get]
 func (h *InscriptionHandler) HandleGetInscriptions(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -426,13 +428,15 @@ func (h *BlockHandler) HandleGetBlocks(w http.ResponseWriter, r *http.Request) {
 type SmartContractHandler struct {
 	*BaseHandler
 	contractService *services.SmartContractService
+	store           scmiddleware.Store
 }
 
 // NewSmartContractHandler creates a new smart contract handler
-func NewSmartContractHandler(contractService *services.SmartContractService) *SmartContractHandler {
+func NewSmartContractHandler(contractService *services.SmartContractService, store scmiddleware.Store) *SmartContractHandler {
 	return &SmartContractHandler{
 		BaseHandler:     NewBaseHandler(),
 		contractService: contractService,
+		store:           store,
 	}
 }
 
@@ -443,15 +447,35 @@ func (h *SmartContractHandler) HandleGetContracts(w http.ResponseWriter, r *http
 		return
 	}
 
-	contracts, err := h.contractService.GetAllContracts()
+	// Use the MCP store to get contracts instead of the service
+	contracts, err := h.store.ListContracts("", nil)
 	if err != nil {
 		h.sendError(w, http.StatusInternalServerError, "Failed to get contracts")
 		return
 	}
 
+	// Convert smart_contract.Contract to models.SmartContractImage for API compatibility
+	var results []models.SmartContractImage
+	for _, contract := range contracts {
+		result := models.SmartContractImage{
+			ContractID:   contract.ContractID,
+			BlockHeight:  0,  // Not available in Contract struct
+			StegoImage:   "", // Not available in Contract struct
+			ContractType: "smart_contract",
+			Metadata: map[string]interface{}{
+				"title":             contract.Title,
+				"total_budget_sats": contract.TotalBudgetSats,
+				"goals_count":       contract.GoalsCount,
+				"available_tasks":   contract.AvailableTasksCount,
+				"status":            contract.Status,
+			},
+		}
+		results = append(results, result)
+	}
+
 	response := models.SmartContractsResponse{
-		Results: contracts,
-		Total:   len(contracts),
+		Results: results,
+		Total:   len(results),
 	}
 	h.sendSuccess(w, response)
 }

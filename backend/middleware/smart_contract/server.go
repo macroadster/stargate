@@ -349,7 +349,7 @@ func (s *Server) handleSkills(w http.ResponseWriter, r *http.Request) {
 	skillSet := make(map[string]struct{})
 	// Add default skills
 	skillSet["contract_bidding"] = struct{}{}
-	skillSet["get_pending_transactions"] = struct{}{}
+	skillSet["get_open_contracts"] = struct{}{}
 
 	for _, t := range tasks {
 		for _, skill := range t.Skills {

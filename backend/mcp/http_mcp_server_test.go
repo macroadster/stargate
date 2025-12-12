@@ -19,7 +19,7 @@ func TestHTTPMCPServer(t *testing.T) {
 	store := scstore.NewMemoryStore(72 * time.Hour)
 	ingestionSvc := &services.IngestionService{}  // nil for memory mode
 	scannerManager := &starlight.ScannerManager{} // mock scanner manager
-	server := NewHTTPMCPServer(store, "test-key", ingestionSvc, scannerManager)
+	server := NewHTTPMCPServer(store, "test-key", ingestionSvc, scannerManager, nil)
 
 	// Test list_contracts
 	t.Run("list_contracts", func(t *testing.T) {
@@ -81,7 +81,7 @@ func TestProposalCreationRequiresIngestion(t *testing.T) {
 	store := scstore.NewMemoryStore(72 * time.Hour)
 	ingestionSvc := &services.IngestionService{}  // nil for memory mode
 	scannerManager := &starlight.ScannerManager{} // mock scanner manager
-	server := NewHTTPMCPServer(store, "test-key", ingestionSvc, scannerManager)
+	server := NewHTTPMCPServer(store, "test-key", ingestionSvc, scannerManager, nil)
 
 	// Test that proposals require scan metadata for manual creation
 	t.Run("create_proposal_requires_scan_metadata", func(t *testing.T) {

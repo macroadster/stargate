@@ -84,7 +84,7 @@ func SeedData() ([]smart_contract.Contract, []smart_contract.Task) {
 			Title:          "Get Pending Transactions",
 			Description:    "Get a list of pending transactions (inscriptions/smart contracts).",
 			BudgetSats:     1_000_000,
-			Skills:         []string{"api", "get_pending_transactions"},
+			Skills:         []string{"api", "get_open_contracts"},
 			Status:         "available",
 			Difficulty:     "beginner",
 			EstimatedHours: 1,

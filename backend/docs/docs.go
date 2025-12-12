@@ -15,7 +15,7 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
-        "/api/pending-transactions": {
+        "/api/open-contracts": {
             "get": {
                 "description": "Get all pending inscriptions (smart contracts)",
                 "produces": [

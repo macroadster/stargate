@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"stargate-backend/handlers"
+	scmiddleware "stargate-backend/middleware/smart_contract"
 	"stargate-backend/services"
 	"stargate-backend/storage"
 	"time"
@@ -80,7 +81,7 @@ func NewContainer() *Container {
 	healthHandler := handlers.NewHealthHandler(healthService)
 	inscriptionHandler := handlers.NewInscriptionHandler(inscriptionService, ingestionService)
 	blockHandler := handlers.NewBlockHandler(blockService)
-	contractHandler := handlers.NewSmartContractHandler(contractService)
+	// contractHandler will be set later with store
 	searchHandler := handlers.NewSearchHandler(inscriptionService, blockService, dataStorage)
 	qrHandler := handlers.NewQRCodeHandler(qrService)
 	proxyBase := os.Getenv("STARGATE_PROXY_BASE")
@@ -101,15 +102,20 @@ func NewContainer() *Container {
 		IngestionService:     ingestionService,
 
 		// Handlers
-		HealthHandler:        healthHandler,
-		InscriptionHandler:   inscriptionHandler,
-		BlockHandler:         blockHandler,
-		SmartContractHandler: contractHandler,
-		SearchHandler:        searchHandler,
-		QRCodeHandler:        qrHandler,
-		ProxyHandler:         proxyHandler,
-		IngestionHandler:     ingestionHandler,
+		HealthHandler:      healthHandler,
+		InscriptionHandler: inscriptionHandler,
+		BlockHandler:       blockHandler,
+		// SmartContractHandler will be set later
+		SearchHandler:    searchHandler,
+		QRCodeHandler:    qrHandler,
+		ProxyHandler:     proxyHandler,
+		IngestionHandler: ingestionHandler,
 	}
+}
+
+// SetSmartContractHandler sets the smart contract handler with the MCP store
+func (c *Container) SetSmartContractHandler(store scmiddleware.Store) {
+	c.SmartContractHandler = handlers.NewSmartContractHandler(c.SmartContractService, store)
 }
 
 // initIngestionService retries connecting to Postgres a few times to avoid startup races.

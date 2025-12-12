@@ -51,7 +51,7 @@ paths:
       responses:
         '200':
           description: Created inscription payload.
-  /api/pending-transactions:
+  /api/open-contracts:
     get:
       summary: Pending inscriptions
       responses:

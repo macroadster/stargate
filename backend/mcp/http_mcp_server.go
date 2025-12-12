@@ -14,6 +14,7 @@ import (
 	"stargate-backend/core"
 	"stargate-backend/core/smart_contract"
 	scmiddleware "stargate-backend/middleware/smart_contract"
+	"stargate-backend/models"
 	"stargate-backend/services"
 	"stargate-backend/starlight"
 	scstore "stargate-backend/storage/smart_contract"
@@ -21,19 +22,25 @@ import (
 
 // HTTPMCPServer provides HTTP endpoints for MCP tools
 type HTTPMCPServer struct {
-	store          scmiddleware.Store
-	apiKey         string
-	ingestionSvc   *services.IngestionService
-	scannerManager *starlight.ScannerManager
+	store            scmiddleware.Store
+	apiKey           string
+	ingestionSvc     *services.IngestionService
+	scannerManager   *starlight.ScannerManager
+	smartContractSvc *services.SmartContractService
+	httpClient       *http.Client
+	baseURL          string
 }
 
 // NewHTTPMCPServer creates a new HTTP MCP server
-func NewHTTPMCPServer(store scmiddleware.Store, apiKey string, ingestionSvc *services.IngestionService, scannerManager *starlight.ScannerManager) *HTTPMCPServer {
+func NewHTTPMCPServer(store scmiddleware.Store, apiKey string, ingestionSvc *services.IngestionService, scannerManager *starlight.ScannerManager, smartContractSvc *services.SmartContractService) *HTTPMCPServer {
 	return &HTTPMCPServer{
-		store:          store,
-		apiKey:         apiKey,
-		ingestionSvc:   ingestionSvc,
-		scannerManager: scannerManager,
+		store:            store,
+		apiKey:           apiKey,
+		ingestionSvc:     ingestionSvc,
+		scannerManager:   scannerManager,
+		smartContractSvc: smartContractSvc,
+		httpClient:       &http.Client{Timeout: 10 * time.Second},
+		baseURL:          "http://localhost:3001", // Default backend URL
 	}
 }
 
@@ -90,6 +97,7 @@ func (h *HTTPMCPServer) handleListTools(w http.ResponseWriter, r *http.Request) 
 			"list_contracts",
 			"get_contract",
 			"get_contract_funding",
+			"get_open_contracts",
 		},
 		"tasks": []string{
 			"list_tasks",
@@ -129,7 +137,7 @@ func (h *HTTPMCPServer) handleListTools(w http.ResponseWriter, r *http.Request) 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"tools": tools,
-		"total": 22, // Total number of tools available
+		"total": 23, // Total number of tools available
 	})
 }
 
@@ -206,6 +214,40 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 			return nil, fmt.Errorf("Failed to get contract: %v", err)
 		}
 		return contract, nil
+
+	case "get_open_contracts":
+		// Make HTTP request to /api/open-contracts
+		resp, err := h.httpClient.Get(h.baseURL + "/api/open-contracts")
+		if err != nil {
+			return nil, fmt.Errorf("Failed to fetch open contracts: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("API returned status %d", resp.StatusCode)
+		}
+
+		var apiResponse map[string]interface{}
+		if err := json.NewDecoder(resp.Body).Decode(&apiResponse); err != nil {
+			return nil, fmt.Errorf("Failed to decode API response: %v", err)
+		}
+
+		if success, ok := apiResponse["success"].(bool); !ok || !success {
+			return nil, fmt.Errorf("API request failed")
+		}
+
+		data, ok := apiResponse["data"].(map[string]interface{})
+		if !ok {
+			return nil, fmt.Errorf("Invalid API response format")
+		}
+
+		results, _ := data["results"]
+		total, _ := data["total"].(float64) // JSON numbers are float64
+
+		return map[string]interface{}{
+			"contracts": results,
+			"total":     int(total),
+		}, nil
 
 	case "get_contract_funding":
 		contractID, ok := args["contract_id"].(string)
@@ -352,7 +394,7 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 		skillSet := make(map[string]struct{})
 		// Add default skills
 		skillSet["contract_bidding"] = struct{}{}
-		skillSet["get_pending_transactions"] = struct{}{}
+		skillSet["get_open_contracts"] = struct{}{}
 
 		for _, t := range tasks {
 			for _, skill := range t.Skills {
@@ -486,6 +528,29 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 
 			if err := store.CreateProposal(ctx, proposal); err != nil {
 				return nil, err
+			}
+
+			// Create SmartContractImage to witness the visible pixel hash
+			if proposal.VisiblePixelHash != "" && h.smartContractSvc != nil {
+				contractID := proposal.VisiblePixelHash // Use hash directly as contract ID
+
+				createReq := models.CreateContractRequest{
+					ContractID:   contractID,
+					BlockHeight:  0, // Will be updated when mined
+					ContractType: "steganographic",
+					Metadata: map[string]interface{}{
+						"visible_pixel_hash": proposal.VisiblePixelHash,
+						"proposal_id":        proposal.ID,
+						"ingestion_id":       rec.ID,
+						"embedded_message":   rec.Metadata["embedded_message"],
+						"stego_image_url":    "/uploads/" + rec.Filename,
+					},
+				}
+
+				if _, err := h.smartContractSvc.CreateContract(createReq); err != nil {
+					log.Printf("Warning: failed to create SmartContractImage: %v", err)
+					// Don't fail the proposal creation for this
+				}
 			}
 
 			result := map[string]interface{}{

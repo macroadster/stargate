@@ -78,7 +78,7 @@ Retrieve inscription data.
 #### POST /api/inscribe
 Create a new inscription.
 
-#### GET /api/pending-transactions
+#### GET /api/open-contracts
 Get pending transaction data.
 
 ### Blocks

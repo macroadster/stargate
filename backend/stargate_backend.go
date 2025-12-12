@@ -223,7 +223,10 @@ func runHTTPServer() {
 
 	// Initialize HTTP MCP server (always enabled)
 	scannerManager := starlight.GetScannerManager()
-	httpMCPServer := mcp.NewHTTPMCPServer(store, apiKey, ingestionSvc, scannerManager)
+	httpMCPServer := mcp.NewHTTPMCPServer(store, apiKey, ingestionSvc, scannerManager, container.SmartContractService)
+
+	// Set the smart contract handler with the store
+	container.SetSmartContractHandler(store)
 
 	// Start MCP background services if using PostgreSQL AND MCP server is not running separately
 	if os.Getenv("STARGATE_MODE") != "mcp-only" && os.Getenv("STARGATE_MODE") != "both" {
@@ -296,6 +299,7 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 	mux.HandleFunc("/api/inscriptions", container.InscriptionHandler.HandleGetInscriptions)
 	mux.HandleFunc("/api/inscribe", container.InscriptionHandler.HandleCreateInscription)
 	mux.HandleFunc("/api/pending-transactions", container.InscriptionHandler.HandleGetInscriptions)
+	mux.HandleFunc("/api/open-contracts", container.SmartContractHandler.HandleGetContracts)
 
 	// Block endpoints
 	mux.HandleFunc("/api/blocks", container.BlockHandler.HandleGetBlocks)

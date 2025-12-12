@@ -97,7 +97,7 @@ App runs on `http://localhost:3000`
 
 ### Inscription Creation
 - `POST /api/inscribe` - Create new inscription (multipart form)
-- `GET /api/pending-transactions` - View pending inscriptions
+- `GET /api/open-contracts` - View open contracts
 
 ### Search
 - `GET /api/search?q=query` - Search inscriptions and blocks

@@ -28,7 +28,7 @@ Successfully restored the missing Bitcoin transaction and inscription functional
 - ✅ `GET /api/blocks-with-contracts` - Enhanced blocks with contract data
 - ✅ `GET /api/inscriptions` - Ordinal inscriptions from Hiro API
 - ✅ `POST /api/inscribe` - Create new inscriptions
-- ✅ `GET /api/pending-transactions` - Pending inscription transactions
+- ✅ `GET /api/open-contracts` - Open contract transactions
 - ✅ `GET /api/search` - Search blocks and inscriptions
 - ✅ `GET /api/inscription/{id}/content` - Inscription content proxy
 - ✅ `GET /api/qrcode` - Generate QR codes
@@ -145,7 +145,7 @@ curl -X POST http://localhost:3001/bitcoin/v1/scan/image \
   -F "image=@image.png" -F "extract_message=true"
 ```
 
-### Create Inscription
+### Create Smart Contract
 ```bash
 curl -X POST http://localhost:3001/api/inscribe \
   -F "text=My inscription" -F "price=0.01" -F "image=@image.png"
