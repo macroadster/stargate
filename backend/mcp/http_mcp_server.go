@@ -279,10 +279,7 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 
 	switch toolName {
 	case "list_contracts":
-		status := ""
-		if s, ok := args["status"].(string); ok {
-			status = s
-		}
+		status := h.toString(args["status"])
 		var skills []string
 		if skillSlice, ok := args["skills"].([]interface{}); ok {
 			for _, skill := range skillSlice {
@@ -291,6 +288,10 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 				}
 			}
 		}
+		if res, err := h.fetchContractsViaREST(status, skills); err == nil {
+			return res, nil
+		}
+
 		contracts, err := store.ListContracts(status, skills)
 		if err != nil {
 			return nil, fmt.Errorf("Failed to list contracts: %v", err)
@@ -304,6 +305,9 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 		contractID, ok := args["contract_id"].(string)
 		if !ok {
 			return nil, fmt.Errorf("contract_id is required")
+		}
+		if res, err := h.getJSON(fmt.Sprintf("%s/api/smart_contract/contracts/%s", h.baseURL, contractID)); err == nil {
+			return res, nil
 		}
 		contract, err := store.GetContract(contractID)
 		if err != nil {
@@ -350,6 +354,9 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 		if !ok {
 			return nil, fmt.Errorf("contract_id is required")
 		}
+		if res, err := h.getJSON(fmt.Sprintf("%s/api/smart_contract/contracts/%s/funding", h.baseURL, contractID)); err == nil {
+			return res, nil
+		}
 		contract, proofs, err := store.ContractFunding(contractID)
 		if err != nil {
 			return nil, fmt.Errorf("Failed to get contract funding: %v", err)
@@ -384,6 +391,10 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 			filter.Limit = 50
 		}
 
+		if res, err := h.fetchTasksViaREST(filter); err == nil {
+			return res, nil
+		}
+
 		tasks, err := store.ListTasks(filter)
 		if err != nil {
 			return nil, fmt.Errorf("Failed to list tasks: %v", err)
@@ -406,6 +417,9 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 		taskID, ok := args["task_id"].(string)
 		if !ok {
 			return nil, fmt.Errorf("task_id is required")
+		}
+		if res, err := h.getJSON(fmt.Sprintf("%s/api/smart_contract/tasks/%s", h.baseURL, taskID)); err == nil {
+			return res, nil
 		}
 		task, err := store.GetTask(taskID)
 		if err != nil {
@@ -488,6 +502,9 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 		if !ok {
 			return nil, fmt.Errorf("task_id is required")
 		}
+		if res, err := h.getJSON(fmt.Sprintf("%s/api/smart_contract/tasks/%s/status", h.baseURL, taskID)); err == nil {
+			return res, nil
+		}
 
 		status, err := store.TaskStatus(taskID)
 		if err != nil {
@@ -497,6 +514,10 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 		return status, nil
 
 	case "list_skills":
+		if res, err := h.getJSON(fmt.Sprintf("%s/api/smart_contract/skills", h.baseURL)); err == nil {
+			return res, nil
+		}
+
 		tasks, err := store.ListTasks(smart_contract.TaskFilter{})
 		if err != nil {
 			return nil, fmt.Errorf("Failed to list tasks: %v", err)
@@ -545,6 +566,10 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 			Offset:     int(h.toInt64(args["offset"])),
 		}
 
+		if res, err := h.fetchProposalsViaREST(filter); err == nil {
+			return res, nil
+		}
+
 		proposals, err := store.ListProposals(ctx, filter)
 		if err != nil {
 			return nil, fmt.Errorf("Failed to list proposals: %v", err)
@@ -569,6 +594,9 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 		proposalID, ok := args["proposal_id"].(string)
 		if !ok {
 			return nil, fmt.Errorf("proposal_id is required")
+		}
+		if res, err := h.getJSON(fmt.Sprintf("%s/api/smart_contract/proposals/%s", h.baseURL, proposalID)); err == nil {
+			return res, nil
 		}
 
 		proposal, err := store.GetProposal(ctx, proposalID)
@@ -1208,6 +1236,92 @@ func (h *HTTPMCPServer) fetchSubmissionsViaREST(contractID, status string, taskI
 	return parsed, nil
 }
 
+// fetchContractsViaREST lists contracts via REST with optional filters.
+func (h *HTTPMCPServer) fetchContractsViaREST(status string, skills []string) (map[string]interface{}, error) {
+	params := url.Values{}
+	if status != "" {
+		params.Set("status", status)
+	}
+	if len(skills) > 0 {
+		for _, s := range skills {
+			params.Add("skills", s)
+		}
+	}
+	urlStr := h.baseURL + "/api/smart_contract/contracts"
+	if enc := params.Encode(); enc != "" {
+		urlStr += "?" + enc
+	}
+	return h.getJSON(urlStr)
+}
+
+// fetchTasksViaREST lists tasks via REST with filters matching TaskFilter.
+func (h *HTTPMCPServer) fetchTasksViaREST(filter smart_contract.TaskFilter) (map[string]interface{}, error) {
+	params := url.Values{}
+	if len(filter.Skills) > 0 {
+		for _, s := range filter.Skills {
+			params.Add("skills", s)
+		}
+	}
+	if filter.MaxDifficulty != "" {
+		params.Set("max_difficulty", filter.MaxDifficulty)
+	}
+	if filter.Status != "" {
+		params.Set("status", filter.Status)
+	}
+	if filter.Limit > 0 {
+		params.Set("limit", fmt.Sprintf("%d", filter.Limit))
+	}
+	if filter.Offset > 0 {
+		params.Set("offset", fmt.Sprintf("%d", filter.Offset))
+	}
+	if filter.MinBudgetSats > 0 {
+		params.Set("min_budget_sats", fmt.Sprintf("%d", filter.MinBudgetSats))
+	}
+	if filter.ContractID != "" {
+		params.Set("contract_id", filter.ContractID)
+	}
+	if filter.ClaimedBy != "" {
+		params.Set("claimed_by", filter.ClaimedBy)
+	}
+
+	urlStr := h.baseURL + "/api/smart_contract/tasks"
+	if enc := params.Encode(); enc != "" {
+		urlStr += "?" + enc
+	}
+	return h.getJSON(urlStr)
+}
+
+// fetchProposalsViaREST lists proposals via REST with filters.
+func (h *HTTPMCPServer) fetchProposalsViaREST(filter smart_contract.ProposalFilter) (map[string]interface{}, error) {
+	params := url.Values{}
+	if filter.Status != "" {
+		params.Set("status", filter.Status)
+	}
+	if len(filter.Skills) > 0 {
+		for _, s := range filter.Skills {
+			params.Add("skills", s)
+		}
+	}
+	if filter.MinBudget > 0 {
+		params.Set("min_budget_sats", fmt.Sprintf("%d", filter.MinBudget))
+	}
+	if filter.ContractID != "" {
+		params.Set("contract_id", filter.ContractID)
+	}
+	if filter.MaxResults > 0 {
+		params.Set("limit", fmt.Sprintf("%d", filter.MaxResults))
+	}
+	if filter.Offset > 0 {
+		params.Set("offset", fmt.Sprintf("%d", filter.Offset))
+	}
+
+	urlStr := h.baseURL + "/api/smart_contract/proposals"
+	if enc := params.Encode(); enc != "" {
+		urlStr += "?" + enc
+	}
+	return h.getJSON(urlStr)
+}
+
 // postJSON posts a JSON body to the given URL with optional API key and returns decoded JSON.
 func (h *HTTPMCPServer) postJSON(urlStr string, body map[string]interface{}) (map[string]interface{}, error) {
 	payload, err := json.Marshal(body)
@@ -1224,6 +1338,32 @@ func (h *HTTPMCPServer) postJSON(urlStr string, body map[string]interface{}) (ma
 		req.Header.Set("X-API-Key", h.apiKey)
 	}
 
+	resp, err := h.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("REST returned %d", resp.StatusCode)
+	}
+
+	var parsed map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+		return nil, err
+	}
+	return parsed, nil
+}
+
+// getJSON fetches a URL (GET) and decodes JSON response.
+func (h *HTTPMCPServer) getJSON(urlStr string) (map[string]interface{}, error) {
+	req, err := http.NewRequest(http.MethodGet, urlStr, nil)
+	if err != nil {
+		return nil, err
+	}
+	if h.apiKey != "" {
+		req.Header.Set("X-API-Key", h.apiKey)
+	}
 	resp, err := h.httpClient.Do(req)
 	if err != nil {
 		return nil, err
