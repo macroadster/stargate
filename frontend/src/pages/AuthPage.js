@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
 import { API_BASE } from '../apiBase';
 import { useAuth } from '../context/AuthContext';
+import { useNavigate } from 'react-router-dom';
 
 export default function AuthPage() {
   const { auth, signIn, savedKeys } = useAuth();
+  const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [apiKey, setApiKey] = useState(auth.apiKey || '');
   const [wallet, setWallet] = useState(auth.wallet || '');
@@ -27,6 +29,7 @@ export default function AuthPage() {
       setApiKey(issuedKey);
       signIn(issuedKey, payload.wallet || wallet, payload.email || email);
       setStatus('Registered. Key saved locally.');
+      navigate('/');
     } catch (err) {
       setStatus(err.message);
     }
@@ -85,6 +88,7 @@ export default function AuthPage() {
       signIn(keyToSave, payload.wallet || wallet, payload.email || '');
       setApiKey(keyToSave);
       setStatus('Signed in. Key saved locally.');
+      navigate('/');
     } catch (err) {
       setStatus(err.message);
     }
