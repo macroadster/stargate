@@ -12,6 +12,7 @@ import (
 type APIKey struct {
 	Key       string    `json:"key"`
 	Email     string    `json:"email,omitempty"`
+	Wallet    string    `json:"wallet,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	Source    string    `json:"source,omitempty"` // e.g. "seed", "registration"
 }
@@ -23,7 +24,7 @@ type APIKeyValidator interface {
 
 // APIKeyIssuer allows creating new API keys.
 type APIKeyIssuer interface {
-	Issue(email, source string) (APIKey, error)
+	Issue(email, wallet, source string) (APIKey, error)
 }
 
 // APIKeyStore provides in-memory API key validation/issuance.
@@ -56,12 +57,12 @@ func (s *APIKeyStore) Validate(key string) bool {
 }
 
 // Issue creates and stores a new API key.
-func (s *APIKeyStore) Issue(email, source string) (APIKey, error) {
+func (s *APIKeyStore) Issue(email, wallet, source string) (APIKey, error) {
 	key, err := generateKey()
 	if err != nil {
 		return APIKey{}, err
 	}
-	rec := APIKey{Key: key, Email: email, Source: source, CreatedAt: time.Now()}
+	rec := APIKey{Key: key, Email: email, Wallet: wallet, Source: source, CreatedAt: time.Now()}
 	s.mu.Lock()
 	s.keys[key] = rec
 	s.mu.Unlock()

@@ -32,6 +32,7 @@ func (s *PGAPIKeyStore) initSchema(ctx context.Context) error {
 CREATE TABLE IF NOT EXISTS api_keys (
   key TEXT PRIMARY KEY,
   email TEXT,
+  wallet_address TEXT,
   source TEXT,
   created_at TIMESTAMPTZ DEFAULT now()
 );
@@ -51,7 +52,7 @@ func (s *PGAPIKeyStore) Validate(key string) bool {
 }
 
 // Issue implements APIKeyIssuer.
-func (s *PGAPIKeyStore) Issue(email, source string) (APIKey, error) {
+func (s *PGAPIKeyStore) Issue(email, wallet, source string) (APIKey, error) {
 	key, err := generateKey()
 	if err != nil {
 		return APIKey{}, err
@@ -59,12 +60,13 @@ func (s *PGAPIKeyStore) Issue(email, source string) (APIKey, error) {
 	rec := APIKey{
 		Key:       key,
 		Email:     email,
+		Wallet:    wallet,
 		Source:    source,
 		CreatedAt: time.Now(),
 	}
 	_, err = s.pool.Exec(context.Background(),
-		"INSERT INTO api_keys (key, email, source, created_at) VALUES ($1,$2,$3,$4)",
-		rec.Key, rec.Email, rec.Source, rec.CreatedAt)
+		"INSERT INTO api_keys (key, email, wallet_address, source, created_at) VALUES ($1,$2,$3,$4,$5)",
+		rec.Key, rec.Email, rec.Wallet, rec.Source, rec.CreatedAt)
 	if err != nil {
 		return APIKey{}, err
 	}

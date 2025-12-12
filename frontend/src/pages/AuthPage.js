@@ -4,6 +4,7 @@ import { API_BASE } from '../apiBase';
 export default function AuthPage() {
   const [email, setEmail] = useState('');
   const [apiKey, setApiKey] = useState(localStorage.getItem('X-API-Key') || '');
+  const [wallet, setWallet] = useState('');
   const [loginKey, setLoginKey] = useState('');
   const [status, setStatus] = useState('');
 
@@ -13,7 +14,7 @@ export default function AuthPage() {
       const res = await fetch(`${API_BASE}/api/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email })
+        body: JSON.stringify({ email, wallet_address: wallet })
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.message || 'Registration failed');
@@ -31,7 +32,7 @@ export default function AuthPage() {
       const res = await fetch(`${API_BASE}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ api_key: loginKey })
+        body: JSON.stringify({ api_key: loginKey, wallet_address: wallet })
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.message || 'Invalid key');
@@ -55,6 +56,13 @@ export default function AuthPage() {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder="you@example.com"
+          />
+          <label className="block text-sm mb-2">Wallet address (optional)</label>
+          <input
+            className="w-full mb-4 px-3 py-2 rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700"
+            value={wallet}
+            onChange={(e) => setWallet(e.target.value)}
+            placeholder="bc1... or 0x..."
           />
           <button
             onClick={handleRegister}

@@ -30,7 +30,8 @@ func (h *APIKeyHandler) HandleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		Email string `json:"email"`
+		Email  string `json:"email"`
+		Wallet string `json:"wallet_address"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		h.sendError(w, http.StatusBadRequest, "invalid json")
@@ -38,7 +39,7 @@ func (h *APIKeyHandler) HandleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	email := strings.TrimSpace(body.Email)
-	rec, err := h.issuer.Issue(email, "registration")
+	rec, err := h.issuer.Issue(email, body.Wallet, "registration")
 	if err != nil {
 		h.sendError(w, http.StatusInternalServerError, "failed to issue api key")
 		return
@@ -62,6 +63,7 @@ func (h *APIKeyHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 
 	var body struct {
 		APIKey string `json:"api_key"`
+		Wallet string `json:"wallet_address"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		h.sendError(w, http.StatusBadRequest, "invalid json")
@@ -76,5 +78,6 @@ func (h *APIKeyHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	h.sendSuccess(w, map[string]interface{}{
 		"valid":   true,
 		"api_key": body.APIKey,
+		"wallet":  strings.TrimSpace(body.Wallet),
 	})
 }
