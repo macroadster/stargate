@@ -1,0 +1,34 @@
+{
+  "openapi": "3.0.1",
+  "info": {
+    "title": "Starlight MCP API",
+    "version": "1.0.0",
+    "description": "HTTP surface shared by UI and MCP tools"
+  },
+  "servers": [{"url": "/api"}],
+  "paths": {
+    "/smart_contract/contracts": {"get": {"summary": "List contracts"}},
+    "/smart_contract/contracts/{id}": {"get": {"summary": "Get contract"}},
+    "/smart_contract/contracts/{id}/funding": {"get": {"summary": "Contract funding proofs"}},
+    "/smart_contract/tasks": {"get": {"summary": "List tasks"}},
+    "/smart_contract/tasks/{task_id}": {"get": {"summary": "Get task"}},
+    "/smart_contract/tasks/{task_id}/claim": {"post": {"summary": "Claim task"}},
+    "/smart_contract/tasks/{task_id}/merkle-proof": {"get": {"summary": "Task funding proof"}},
+    "/smart_contract/tasks/{task_id}/status": {"get": {"summary": "Task status"}},
+    "/smart_contract/claims/{claim_id}/submit": {"post": {"summary": "Submit work"}},
+    "/smart_contract/proposals": {"get": {"summary": "List proposals"}, "post": {"summary": "Create proposal"}},
+    "/smart_contract/proposals/{id}": {"get": {"summary": "Get proposal"}},
+    "/smart_contract/proposals/{id}/approve": {"post": {"summary": "Approve proposal"}},
+    "/smart_contract/proposals/{id}/publish": {"post": {"summary": "Publish proposal"}},
+    "/smart_contract/submissions": {"get": {"summary": "List submissions"}},
+    "/smart_contract/submissions/{id}": {"get": {"summary": "Get submission"}},
+    "/smart_contract/submissions/{id}/review": {"post": {"summary": "Review submission"}},
+    "/smart_contract/submissions/{id}/rework": {"post": {"summary": "Submit rework"}},
+    "/smart_contract/skills": {"get": {"summary": "List skills"}},
+    "/smart_contract/events": {"get": {"summary": "List/stream events"}},
+    "/smart_contract/discover": {"get": {"summary": "Discover API and tool metadata"}},
+    "/open-contracts": {"get": {"summary": "List human wishes/open contracts"}},
+    "/mcp/discover": {"get": {"summary": "MCP tool discovery"}},
+    "/mcp/events": {"get": {"summary": "MCP events proxy"}}
+  }
+}

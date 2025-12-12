@@ -55,6 +55,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/smart_contract/tasks/", s.authWrap(s.handleTasks))
 	mux.HandleFunc("/api/smart_contract/claims/", s.authWrap(s.handleClaims))
 	mux.HandleFunc("/api/smart_contract/skills", s.authWrap(s.handleSkills))
+	mux.HandleFunc("/api/smart_contract/discover", s.authWrap(s.handleDiscover))
 	mux.HandleFunc("/api/smart_contract/proposals", s.authWrap(s.handleProposals))
 	mux.HandleFunc("/api/smart_contract/proposals/", s.authWrap(s.handleProposals))
 	mux.HandleFunc("/api/smart_contract/submissions", s.authWrap(s.handleSubmissions))
@@ -369,6 +370,45 @@ func (s *Server) handleSkills(w http.ResponseWriter, r *http.Request) {
 		"skills": skills,
 		"count":  len(skills),
 	})
+}
+
+// handleDiscover advertises API endpoints and MCP tool surface for clients.
+func (s *Server) handleDiscover(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		Error(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	base := fmt.Sprintf("http://%s", r.Host)
+	resp := map[string]interface{}{
+		"version": "1.0",
+		"base_urls": map[string]string{
+			"api": base + "/api/smart_contract",
+			"mcp": base + "/mcp",
+		},
+		"endpoints": []string{
+			"/api/smart_contract/contracts",
+			"/api/smart_contract/tasks",
+			"/api/smart_contract/claims",
+			"/api/smart_contract/submissions",
+			"/api/smart_contract/events",
+			"/api/open-contracts",
+		},
+		"tools": []string{
+			"list_contracts", "get_contract", "get_contract_funding", "get_open_contracts",
+			"list_tasks", "get_task", "claim_task", "submit_work", "get_task_proof", "get_task_status",
+			"list_skills",
+			"list_proposals", "get_proposal", "create_proposal", "approve_proposal", "publish_proposal",
+			"list_submissions", "get_submission", "review_submission", "rework_submission",
+			"list_events",
+			"scan_image", "scan_block", "extract_message", "get_scanner_info",
+		},
+		"authentication": map[string]string{
+			"type":        "api_key",
+			"header_name": "X-API-Key",
+		},
+	}
+	JSON(w, http.StatusOK, resp)
 }
 
 func splitCSV(v string) []string {

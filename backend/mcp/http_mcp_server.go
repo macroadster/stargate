@@ -5,8 +5,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -61,6 +63,8 @@ type MCPResponse struct {
 func (h *HTTPMCPServer) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/mcp/tools", h.authWrap(h.handleListTools))
 	mux.HandleFunc("/mcp/call", h.authWrap(h.handleToolCall))
+	mux.HandleFunc("/mcp/discover", h.authWrap(h.handleDiscover))
+	mux.HandleFunc("/mcp/events", h.authWrap(h.handleEventsProxy))
 	// Register catch-all last
 	mux.HandleFunc("/mcp/", h.authWrap(h.handleToolCall))
 }
@@ -139,6 +143,98 @@ func (h *HTTPMCPServer) handleListTools(w http.ResponseWriter, r *http.Request) 
 		"tools": tools,
 		"total": 23, // Total number of tools available
 	})
+}
+
+// handleDiscover advertises available tools and base routes for agents.
+func (h *HTTPMCPServer) handleDiscover(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	base := h.baseURL
+	resp := map[string]interface{}{
+		"version": "1.0",
+		"base_urls": map[string]string{
+			"api": base + "/api/smart_contract",
+			"mcp": base + "/mcp",
+		},
+		"endpoints": []string{
+			"/api/smart_contract/contracts",
+			"/api/smart_contract/tasks",
+			"/api/smart_contract/claims",
+			"/api/smart_contract/submissions",
+			"/api/smart_contract/events",
+			"/api/open-contracts",
+		},
+		"tools": []string{
+			"list_contracts", "get_contract", "get_contract_funding", "get_open_contracts",
+			"list_tasks", "get_task", "claim_task", "submit_work", "get_task_proof", "get_task_status",
+			"list_skills",
+			"list_proposals", "get_proposal", "create_proposal", "approve_proposal", "publish_proposal",
+			"list_submissions", "get_submission", "review_submission", "rework_submission",
+			"list_events",
+			"scan_image", "scan_block", "extract_message", "get_scanner_info",
+		},
+		"authentication": map[string]string{
+			"type":        "api_key",
+			"header_name": "X-API-Key",
+			"required":    fmt.Sprintf("%t", h.apiKey != ""),
+		},
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// handleEventsProxy proxies SSE/JSON event consumption to the REST endpoint for parity.
+func (h *HTTPMCPServer) handleEventsProxy(w http.ResponseWriter, r *http.Request) {
+	target := h.baseURL + "/api/smart_contract/events"
+
+	// SSE passthrough
+	if strings.Contains(r.Header.Get("Accept"), "text/event-stream") {
+		req, err := http.NewRequest(http.MethodGet, target, nil)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		for k, v := range r.Header {
+			req.Header[k] = v
+		}
+		if h.apiKey != "" {
+			req.Header.Set("X-API-Key", h.apiKey)
+		}
+		resp, err := h.httpClient.Do(req)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+
+		for k, v := range resp.Header {
+			w.Header()[k] = v
+		}
+		w.WriteHeader(resp.StatusCode)
+		_, _ = io.Copy(w, resp.Body) // stream through
+		return
+	}
+
+	// JSON passthrough
+	req, err := http.NewRequest(http.MethodGet, target, nil)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if h.apiKey != "" {
+		req.Header.Set("X-API-Key", h.apiKey)
+	}
+	resp, err := h.httpClient.Do(req)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, resp.Body)
 }
 
 func (h *HTTPMCPServer) handleToolCall(w http.ResponseWriter, r *http.Request) {
@@ -327,6 +423,14 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 			return nil, fmt.Errorf("ai_identifier is required")
 		}
 
+		if result, err := h.postJSON(fmt.Sprintf("%s/api/smart_contract/tasks/%s/claim", h.baseURL, taskID),
+			map[string]interface{}{
+				"ai_identifier":        aiIdentifier,
+				"estimated_completion": h.toString(args["estimated_completion"]),
+			}); err == nil {
+			return result, nil
+		}
+
 		claim, err := store.ClaimTask(taskID, aiIdentifier, nil)
 		if err != nil {
 			return nil, fmt.Errorf("Failed to claim task: %v", err)
@@ -350,6 +454,13 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 
 		if deliverables == nil {
 			return nil, fmt.Errorf("deliverables are required")
+		}
+
+		if result, err := h.postJSON(fmt.Sprintf("%s/api/smart_contract/claims/%s/submit", h.baseURL, claimID), map[string]interface{}{
+			"deliverables":     deliverables,
+			"completion_proof": completionProof,
+		}); err == nil {
+			return result, nil
 		}
 
 		sub, err := store.SubmitWork(claimID, deliverables, completionProof)
@@ -701,10 +812,79 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 		}, nil
 
 	case "list_submissions":
+		contractID := h.toString(args["contract_id"])
+		status := h.toString(args["status"])
+
+		var taskIDs []string
+		if tidSlice, ok := args["task_ids"].([]interface{}); ok {
+			for _, tid := range tidSlice {
+				if tidStr, ok := tid.(string); ok && tidStr != "" {
+					taskIDs = append(taskIDs, tidStr)
+				}
+			}
+		} else if tidStr := h.toString(args["task_ids"]); tidStr != "" {
+			for _, part := range strings.Split(tidStr, ",") {
+				if trimmed := strings.TrimSpace(part); trimmed != "" {
+					taskIDs = append(taskIDs, trimmed)
+				}
+			}
+		}
+
+		// First try REST endpoint to keep UI/agent parity
+		if result, err := h.fetchSubmissionsViaREST(contractID, status, taskIDs); err == nil {
+			return result, nil
+		}
+
+		// Fallback to store path
+		var submissions []smart_contract.Submission
+		var err error
+
+		switch {
+		case len(taskIDs) > 0:
+			submissions, err = store.ListSubmissions(ctx, taskIDs)
+		case contractID != "":
+			tasks, tErr := store.ListTasks(smart_contract.TaskFilter{ContractID: contractID})
+			if tErr != nil {
+				return nil, fmt.Errorf("Failed to list tasks for contract: %v", tErr)
+			}
+			taskIDs = make([]string, len(tasks))
+			for i, t := range tasks {
+				taskIDs[i] = t.TaskID
+			}
+			submissions, err = store.ListSubmissions(ctx, taskIDs)
+		default:
+			tasks, tErr := store.ListTasks(smart_contract.TaskFilter{})
+			if tErr != nil {
+				return nil, fmt.Errorf("Failed to list tasks: %v", tErr)
+			}
+			taskIDs = make([]string, len(tasks))
+			for i, t := range tasks {
+				taskIDs[i] = t.TaskID
+			}
+			submissions, err = store.ListSubmissions(ctx, taskIDs)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("Failed to list submissions: %v", err)
+		}
+
+		if status != "" {
+			filtered := make([]smart_contract.Submission, 0, len(submissions))
+			for _, sub := range submissions {
+				if strings.EqualFold(sub.Status, status) {
+					filtered = append(filtered, sub)
+				}
+			}
+			submissions = filtered
+		}
+
+		submissionMap := make(map[string]smart_contract.Submission)
+		for _, sub := range submissions {
+			submissionMap[sub.SubmissionID] = sub
+		}
+
 		return map[string]interface{}{
-			"submissions": map[string]interface{}{},
-			"total":       0,
-			"message":     "list_submissions tool found!",
+			"submissions": submissionMap,
+			"total":       len(submissions),
 		}, nil
 
 	case "get_submission":
@@ -758,6 +938,11 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 			return nil, fmt.Errorf("invalid action. must be: review, approve, or reject")
 		}
 
+		if result, err := h.postJSON(fmt.Sprintf("%s/api/smart_contract/submissions/%s/review", h.baseURL, submissionID),
+			map[string]interface{}{"action": action}); err == nil {
+			return result, nil
+		}
+
 		// Update submission status
 		var newStatus string
 		switch action {
@@ -794,6 +979,11 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 
 		if deliverables == nil && notes == "" {
 			return nil, fmt.Errorf("deliverables or notes must be provided")
+		}
+
+		if result, err := h.postJSON(fmt.Sprintf("%s/api/smart_contract/submissions/%s/rework", h.baseURL, submissionID),
+			map[string]interface{}{"deliverables": deliverables, "notes": notes}); err == nil {
+			return result, nil
 		}
 
 		// Get the original submission
@@ -973,6 +1163,82 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 			"tool_name_length": len(toolName),
 		}, nil
 	}
+}
+
+// fetchSubmissionsViaREST tries the REST endpoint first to keep parity between UI and MCP tools.
+func (h *HTTPMCPServer) fetchSubmissionsViaREST(contractID, status string, taskIDs []string) (map[string]interface{}, error) {
+	params := url.Values{}
+	if contractID != "" {
+		params.Set("contract_id", contractID)
+	}
+	if status != "" {
+		params.Set("status", status)
+	}
+	if len(taskIDs) > 0 {
+		params.Set("task_ids", strings.Join(taskIDs, ","))
+	}
+
+	urlStr := h.baseURL + "/api/smart_contract/submissions"
+	if enc := params.Encode(); enc != "" {
+		urlStr += "?" + enc
+	}
+
+	req, err := http.NewRequest(http.MethodGet, urlStr, nil)
+	if err != nil {
+		return nil, err
+	}
+	if h.apiKey != "" {
+		req.Header.Set("X-API-Key", h.apiKey)
+	}
+
+	resp, err := h.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("REST returned %d", resp.StatusCode)
+	}
+
+	var parsed map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+		return nil, err
+	}
+	return parsed, nil
+}
+
+// postJSON posts a JSON body to the given URL with optional API key and returns decoded JSON.
+func (h *HTTPMCPServer) postJSON(urlStr string, body map[string]interface{}) (map[string]interface{}, error) {
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, urlStr, strings.NewReader(string(payload)))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if h.apiKey != "" {
+		req.Header.Set("X-API-Key", h.apiKey)
+	}
+
+	resp, err := h.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("REST returned %d", resp.StatusCode)
+	}
+
+	var parsed map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+		return nil, err
+	}
+	return parsed, nil
 }
 
 func (h *HTTPMCPServer) sendError(w http.ResponseWriter, message string) {
