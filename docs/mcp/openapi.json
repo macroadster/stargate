@@ -7,28 +7,267 @@
   },
   "servers": [{"url": "/api"}],
   "paths": {
-    "/smart_contract/contracts": {"get": {"summary": "List contracts"}},
-    "/smart_contract/contracts/{id}": {"get": {"summary": "Get contract"}},
-    "/smart_contract/contracts/{id}/funding": {"get": {"summary": "Contract funding proofs"}},
-    "/smart_contract/tasks": {"get": {"summary": "List tasks"}},
-    "/smart_contract/tasks/{task_id}": {"get": {"summary": "Get task"}},
-    "/smart_contract/tasks/{task_id}/claim": {"post": {"summary": "Claim task"}},
-    "/smart_contract/tasks/{task_id}/merkle-proof": {"get": {"summary": "Task funding proof"}},
-    "/smart_contract/tasks/{task_id}/status": {"get": {"summary": "Task status"}},
-    "/smart_contract/claims/{claim_id}/submit": {"post": {"summary": "Submit work"}},
-    "/smart_contract/proposals": {"get": {"summary": "List proposals"}, "post": {"summary": "Create proposal"}},
-    "/smart_contract/proposals/{id}": {"get": {"summary": "Get proposal"}},
-    "/smart_contract/proposals/{id}/approve": {"post": {"summary": "Approve proposal"}},
-    "/smart_contract/proposals/{id}/publish": {"post": {"summary": "Publish proposal"}},
-    "/smart_contract/submissions": {"get": {"summary": "List submissions"}},
-    "/smart_contract/submissions/{id}": {"get": {"summary": "Get submission"}},
-    "/smart_contract/submissions/{id}/review": {"post": {"summary": "Review submission"}},
-    "/smart_contract/submissions/{id}/rework": {"post": {"summary": "Submit rework"}},
-    "/smart_contract/skills": {"get": {"summary": "List skills"}},
-    "/smart_contract/events": {"get": {"summary": "List/stream events"}},
-    "/smart_contract/discover": {"get": {"summary": "Discover API and tool metadata"}},
-    "/open-contracts": {"get": {"summary": "List human wishes/open contracts"}},
-    "/mcp/discover": {"get": {"summary": "MCP tool discovery"}},
-    "/mcp/events": {"get": {"summary": "MCP events proxy"}}
+    "/smart_contract/contracts": {
+      "get": {
+        "summary": "List contracts",
+        "parameters": [
+          {"name": "status", "in": "query", "schema": {"type": "string"}},
+          {"name": "skills", "in": "query", "schema": {"type": "string"}, "description": "comma-separated"}
+        ],
+        "responses": {"200": {"description": "OK", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ContractList"}}}}}
+      }
+    },
+    "/smart_contract/contracts/{id}": {
+      "get": {
+        "summary": "Get contract",
+        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "responses": {"200": {"description": "OK", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Contract"}}}}}
+      }
+    },
+    "/smart_contract/contracts/{id}/funding": {
+      "get": {
+        "summary": "Contract funding proofs",
+        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "responses": {"200": {"description": "OK"}}
+      }
+    },
+    "/smart_contract/tasks": {
+      "get": {
+        "summary": "List tasks",
+        "parameters": [
+          {"name": "skills", "in": "query", "schema": {"type": "string"}, "description": "comma-separated"},
+          {"name": "max_difficulty", "in": "query", "schema": {"type": "string"}},
+          {"name": "status", "in": "query", "schema": {"type": "string"}},
+          {"name": "limit", "in": "query", "schema": {"type": "integer"}},
+          {"name": "offset", "in": "query", "schema": {"type": "integer"}},
+          {"name": "min_budget_sats", "in": "query", "schema": {"type": "integer"}},
+          {"name": "contract_id", "in": "query", "schema": {"type": "string"}},
+          {"name": "claimed_by", "in": "query", "schema": {"type": "string"}}
+        ],
+        "responses": {"200": {"description": "OK", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/TaskList"}}}}}
+      }
+    },
+    "/smart_contract/tasks/{task_id}": {
+      "get": {
+        "summary": "Get task",
+        "parameters": [{"name": "task_id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "responses": {"200": {"description": "OK", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Task"}}}}}
+      }
+    },
+    "/smart_contract/tasks/{task_id}/claim": {
+      "post": {
+        "summary": "Claim task",
+        "parameters": [{"name": "task_id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ClaimRequest"}}}},
+        "responses": {"200": {"description": "OK"}}
+      }
+    },
+    "/smart_contract/tasks/{task_id}/merkle-proof": {
+      "get": {
+        "summary": "Task funding proof",
+        "parameters": [{"name": "task_id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "responses": {"200": {"description": "OK"}}
+      }
+    },
+    "/smart_contract/tasks/{task_id}/status": {
+      "get": {
+        "summary": "Task status",
+        "parameters": [{"name": "task_id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "responses": {"200": {"description": "OK"}}
+      }
+    },
+    "/smart_contract/claims/{claim_id}/submit": {
+      "post": {
+        "summary": "Submit work",
+        "parameters": [{"name": "claim_id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SubmissionRequest"}}}},
+        "responses": {"200": {"description": "OK"}}
+      }
+    },
+    "/smart_contract/proposals": {
+      "get": {
+        "summary": "List proposals",
+        "parameters": [
+          {"name": "status", "in": "query", "schema": {"type": "string"}},
+          {"name": "skills", "in": "query", "schema": {"type": "string"}, "description": "comma-separated"},
+          {"name": "min_budget_sats", "in": "query", "schema": {"type": "integer"}},
+          {"name": "contract_id", "in": "query", "schema": {"type": "string"}},
+          {"name": "limit", "in": "query", "schema": {"type": "integer"}},
+          {"name": "offset", "in": "query", "schema": {"type": "integer"}}
+        ],
+        "responses": {"200": {"description": "OK", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ProposalList"}}}}}
+      },
+      "post": {
+        "summary": "Create proposal",
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ProposalCreate"}}}},
+        "responses": {"201": {"description": "Created"}}
+      }
+    },
+    "/smart_contract/proposals/{id}": {
+      "get": {
+        "summary": "Get proposal",
+        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "responses": {"200": {"description": "OK"}}
+      }
+    },
+    "/smart_contract/proposals/{id}/approve": {
+      "post": {
+        "summary": "Approve proposal",
+        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "responses": {"200": {"description": "OK"}}
+      }
+    },
+    "/smart_contract/proposals/{id}/publish": {
+      "post": {
+        "summary": "Publish proposal",
+        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "responses": {"200": {"description": "OK"}}
+      }
+    },
+    "/smart_contract/submissions": {
+      "get": {
+        "summary": "List submissions",
+        "parameters": [
+          {"name": "contract_id", "in": "query", "schema": {"type": "string"}},
+          {"name": "task_ids", "in": "query", "schema": {"type": "string"}, "description": "comma-separated"},
+          {"name": "status", "in": "query", "schema": {"type": "string"}}
+        ],
+        "responses": {"200": {"description": "OK", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SubmissionList"}}}}}
+      }
+    },
+    "/smart_contract/submissions/{id}": {
+      "get": {
+        "summary": "Get submission",
+        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "responses": {"200": {"description": "OK"}}
+      }
+    },
+    "/smart_contract/submissions/{id}/review": {
+      "post": {
+        "summary": "Review submission",
+        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SubmissionReview"}}}},
+        "responses": {"200": {"description": "OK"}}
+      }
+    },
+    "/smart_contract/submissions/{id}/rework": {
+      "post": {
+        "summary": "Submit rework",
+        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SubmissionRework"}}}},
+        "responses": {"200": {"description": "OK"}}
+      }
+    },
+    "/smart_contract/skills": {
+      "get": {"summary": "List skills", "responses": {"200": {"description": "OK"}}}
+    },
+    "/smart_contract/events": {
+      "get": {"summary": "List/stream events", "responses": {"200": {"description": "OK"}}}
+    },
+    "/smart_contract/discover": {
+      "get": {"summary": "Discover API and tool metadata", "responses": {"200": {"description": "OK"}}}
+    },
+    "/open-contracts": {
+      "get": {"summary": "List human wishes/open contracts", "responses": {"200": {"description": "OK"}}}
+    },
+    "/mcp/discover": {
+      "get": {"summary": "MCP tool discovery", "responses": {"200": {"description": "OK"}}}
+    },
+    "/mcp/events": {
+      "get": {"summary": "MCP events proxy", "responses": {"200": {"description": "OK"}}}
+    }
+  },
+  "components": {
+    "schemas": {
+      "Contract": {
+        "type": "object",
+        "properties": {
+          "contract_id": {"type": "string"},
+          "title": {"type": "string"},
+          "total_budget_sats": {"type": "integer"},
+          "goals_count": {"type": "integer"},
+          "available_tasks_count": {"type": "integer"},
+          "status": {"type": "string"}
+        }
+      },
+      "ContractList": {
+        "type": "object",
+        "properties": {
+          "contracts": {"type": "array", "items": {"$ref": "#/components/schemas/Contract"}},
+          "total_count": {"type": "integer"}
+        }
+      },
+      "Task": {
+        "type": "object",
+        "properties": {
+          "task_id": {"type": "string"},
+          "contract_id": {"type": "string"},
+          "goal_id": {"type": "string"},
+          "title": {"type": "string"},
+          "description": {"type": "string"},
+          "budget_sats": {"type": "integer"},
+          "skills": {"type": "array", "items": {"type": "string"}},
+          "status": {"type": "string"},
+          "claimed_by": {"type": "string"},
+          "claim_expires_at": {"type": "string"},
+          "merkle_proof": {"type": "object"}
+        }
+      },
+      "TaskList": {
+        "type": "object",
+        "properties": {
+          "tasks": {"type": "array", "items": {"$ref": "#/components/schemas/Task"}},
+          "total_matches": {"type": "integer"}
+        }
+      },
+      "Proposal": {"type": "object"},
+      "ProposalList": {
+        "type": "object",
+        "properties": {
+          "proposals": {"type": "array", "items": {"$ref": "#/components/schemas/Proposal"}},
+          "total": {"type": "integer"}
+        }
+      },
+      "ProposalCreate": {"type": "object"},
+      "Submission": {"type": "object"},
+      "SubmissionList": {
+        "type": "object",
+        "properties": {
+          "submissions": {"type": "object"},
+          "total": {"type": "integer"}
+        }
+      },
+      "ClaimRequest": {
+        "type": "object",
+        "properties": {
+          "ai_identifier": {"type": "string"},
+          "estimated_completion": {"type": "string"}
+        },
+        "required": ["ai_identifier"]
+      },
+      "SubmissionRequest": {
+        "type": "object",
+        "properties": {
+          "deliverables": {"type": "object"},
+          "completion_proof": {"type": "object"}
+        },
+        "required": ["deliverables"]
+      },
+      "SubmissionReview": {
+        "type": "object",
+        "properties": {
+          "action": {"type": "string", "enum": ["review", "approve", "reject"]},
+          "notes": {"type": "string"}
+        },
+        "required": ["action"]
+      },
+      "SubmissionRework": {
+        "type": "object",
+        "properties": {
+          "deliverables": {"type": "object"},
+          "notes": {"type": "string"}
+        }
+      }
+    }
   }
 }
