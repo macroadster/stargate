@@ -17,9 +17,11 @@ export default function AuthPage() {
         body: JSON.stringify({ email, wallet_address: wallet })
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data?.message || 'Registration failed');
-      setApiKey(data.api_key);
-      localStorage.setItem('X-API-Key', data.api_key);
+      const payload = data?.data || data;
+      if (!res.ok) throw new Error(data?.message || payload?.message || 'Registration failed');
+      const issuedKey = payload.api_key || payload.key || '';
+      setApiKey(issuedKey);
+      localStorage.setItem('X-API-Key', issuedKey);
       setStatus('Registered. Key saved locally.');
     } catch (err) {
       setStatus(err.message);
@@ -35,9 +37,11 @@ export default function AuthPage() {
         body: JSON.stringify({ api_key: loginKey, wallet_address: wallet })
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data?.message || 'Invalid key');
-      localStorage.setItem('X-API-Key', loginKey);
-      setApiKey(loginKey);
+      const payload = data?.data || data;
+      if (!res.ok) throw new Error(data?.message || payload?.message || 'Invalid key');
+      const keyToSave = payload.api_key || loginKey;
+      localStorage.setItem('X-API-Key', keyToSave);
+      setApiKey(keyToSave);
       setStatus('Signed in. Key saved locally.');
     } catch (err) {
       setStatus(err.message);

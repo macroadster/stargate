@@ -185,7 +185,10 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "properties": {"email": {"type": "string"}}
+                "properties": {
+                  "email": {"type": "string"},
+                  "wallet_address": {"type": "string"}
+                }
               }
             }
           }
@@ -202,7 +205,10 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "properties": {"api_key": {"type": "string"}},
+                "properties": {
+                  "api_key": {"type": "string"},
+                  "wallet_address": {"type": "string"}
+                },
                 "required": ["api_key"]
               }
             }
