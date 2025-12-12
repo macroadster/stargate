@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS api_keys (
   source TEXT,
   created_at TIMESTAMPTZ DEFAULT now()
 );
+ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS wallet_address TEXT;
 `
 	_, err := s.pool.Exec(ctx, schema)
 	return err
