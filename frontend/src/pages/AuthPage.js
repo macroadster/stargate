@@ -9,6 +9,8 @@ export default function AuthPage() {
   const [wallet, setWallet] = useState(auth.wallet || '');
   const [loginKey, setLoginKey] = useState('');
   const [status, setStatus] = useState('');
+  const [challenge, setChallenge] = useState('');
+  const [signature, setSignature] = useState('');
 
   const handleRegister = async () => {
     setStatus('Registering...');
@@ -25,6 +27,44 @@ export default function AuthPage() {
       setApiKey(issuedKey);
       signIn(issuedKey, payload.wallet || wallet, payload.email || email);
       setStatus('Registered. Key saved locally.');
+    } catch (err) {
+      setStatus(err.message);
+    }
+  };
+
+  const handleChallenge = async () => {
+    setStatus('Requesting challenge...');
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/challenge`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ wallet_address: wallet })
+      });
+      const data = await res.json();
+      const payload = data?.data || data;
+      if (!res.ok) throw new Error(data?.message || payload?.message || 'Challenge failed');
+      setChallenge(payload.nonce);
+      setStatus(`Challenge issued; sign this nonce: ${payload.nonce}`);
+    } catch (err) {
+      setStatus(err.message);
+    }
+  };
+
+  const handleVerify = async () => {
+    setStatus('Verifying signature...');
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ wallet_address: wallet, signature, email })
+      });
+      const data = await res.json();
+      const payload = data?.data || data;
+      if (!res.ok) throw new Error(data?.message || payload?.message || 'Verify failed');
+      const keyToSave = payload.api_key;
+      signIn(keyToSave, payload.wallet || wallet, payload.email || email);
+      setApiKey(keyToSave);
+      setStatus('Verified and signed in.');
     } catch (err) {
       setStatus(err.message);
     }
@@ -117,6 +157,56 @@ export default function AuthPage() {
               Saved key: {apiKey}
             </div>
           )}
+        </div>
+
+        <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl p-6 shadow-lg">
+          <h2 className="text-xl font-semibold mb-2">Wallet Challenge (experimental)</h2>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">Get a nonce for your wallet and verify a signature to issue a key.</p>
+
+          <label className="block text-sm mb-2">Wallet address</label>
+          <input
+            className="w-full mb-3 px-3 py-2 rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700"
+            value={wallet}
+            onChange={(e) => setWallet(e.target.value)}
+            placeholder="bc1... or 0x..."
+          />
+
+          <div className="flex gap-2 mb-3">
+            <button
+              onClick={handleChallenge}
+              className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg py-2 font-semibold"
+            >
+              Get challenge
+            </button>
+            <button
+              onClick={() => setChallenge('')}
+              className="px-3 py-2 text-xs text-gray-500 dark:text-gray-400"
+            >
+              Clear
+            </button>
+          </div>
+
+          {challenge && (
+            <div className="mb-3 text-xs bg-gray-100 dark:bg-gray-800 border border-dashed border-gray-300 dark:border-gray-700 rounded-lg p-2 break-all">
+              Nonce to sign: {challenge}
+            </div>
+          )}
+
+          <label className="block text-sm mb-2">Signature</label>
+          <textarea
+            className="w-full mb-3 px-3 py-2 rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700"
+            rows={2}
+            value={signature}
+            onChange={(e) => setSignature(e.target.value)}
+            placeholder="paste signature of the nonce"
+          />
+
+          <button
+            onClick={handleVerify}
+            className="w-full bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg py-2 font-semibold"
+          >
+            Verify & Issue Key
+          </button>
         </div>
       </div>
 

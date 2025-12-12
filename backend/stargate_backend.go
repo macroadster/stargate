@@ -68,7 +68,7 @@ func findImagePath(height string, filename string) (string, bool) {
 }
 
 // initializeMCPComponents sets up the MCP components needed for HTTP access
-func initializeMCPComponents() (scmiddleware.Store, auth.APIKeyIssuer, auth.APIKeyValidator, *services.IngestionService) {
+func initializeMCPComponents() (scmiddleware.Store, auth.APIKeyIssuer, auth.APIKeyValidator, *services.IngestionService, *auth.ChallengeStore) {
 	// Load MCP configuration
 	storeDriver := os.Getenv("MCP_STORE_DRIVER")
 	if storeDriver == "" {
@@ -149,7 +149,9 @@ func initializeMCPComponents() (scmiddleware.Store, auth.APIKeyIssuer, auth.APIK
 		apiIssuer, apiValidator = mem, mem
 	}
 
-	return store, apiIssuer, apiValidator, ingestionSvc
+	challengeStore := auth.NewChallengeStore(10 * time.Minute)
+
+	return store, apiIssuer, apiValidator, ingestionSvc, challengeStore
 }
 
 // startMCPServices starts background services for MCP when using PostgreSQL
@@ -240,7 +242,7 @@ func runHTTPServer() {
 	container := container.NewContainer()
 
 	// Initialize MCP components (for HTTP routes)
-	store, apiKeyIssuer, apiKeyValidator, ingestionSvc := initializeMCPComponents()
+	store, apiKeyIssuer, apiKeyValidator, ingestionSvc, challengeStore := initializeMCPComponents()
 
 	// Initialize HTTP MCP server (always enabled)
 	scannerManager := starlight.GetScannerManager()
@@ -268,7 +270,7 @@ func runHTTPServer() {
 			middleware.SecurityHeaders(
 				middleware.CORS(
 					middleware.Timeout(30 * time.Second)(
-						setupRoutes(mux, container, store, apiKeyIssuer, apiKeyValidator, ingestionSvc),
+						setupRoutes(mux, container, store, apiKeyIssuer, apiKeyValidator, challengeStore, ingestionSvc),
 					),
 				)),
 		),
@@ -293,7 +295,7 @@ func runHTTPServer() {
 	log.Fatal(http.ListenAndServe(":"+httpPort, handler))
 }
 
-func setupRoutes(mux *http.ServeMux, container *container.Container, store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, apiKeyValidator auth.APIKeyValidator, ingestionSvc *services.IngestionService) http.Handler {
+func setupRoutes(mux *http.ServeMux, container *container.Container, store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, apiKeyValidator auth.APIKeyValidator, challengeStore *auth.ChallengeStore, ingestionSvc *services.IngestionService) http.Handler {
 	// Initialize MCP REST server for HTTP routes
 	mcpRestServer := scmiddleware.NewServer(store, apiKeyValidator, ingestionSvc)
 	mcpRestServer.RegisterRoutes(mux)
@@ -301,9 +303,11 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 	mux.HandleFunc("/api/health", container.HealthHandler.HandleHealth)
 
 	// Auth endpoints
-	keyHandler := handlers.NewAPIKeyHandler(apiKeyIssuer, apiKeyValidator)
+	keyHandler := handlers.NewAPIKeyHandler(apiKeyIssuer, apiKeyValidator, challengeStore)
 	mux.HandleFunc("/api/auth/register", keyHandler.HandleRegister)
 	mux.HandleFunc("/api/auth/login", keyHandler.HandleLogin)
+	mux.HandleFunc("/api/auth/challenge", keyHandler.HandleChallenge)
+	mux.HandleFunc("/api/auth/verify", keyHandler.HandleVerify)
 
 	// API Documentation - includes Swagger UI
 	mux.HandleFunc("/api/docs", func(w http.ResponseWriter, r *http.Request) {
