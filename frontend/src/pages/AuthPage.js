@@ -166,6 +166,12 @@ export default function AuthPage() {
         <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl p-6 shadow-lg">
           <h2 className="text-xl font-semibold mb-2">Wallet Challenge (experimental)</h2>
           <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">Get a nonce for your wallet and verify a signature to issue a key.</p>
+          <div className="text-xs text-gray-500 dark:text-gray-400 mb-4 space-y-1">
+            <div>1) Click “Get challenge”</div>
+            <div>2) Sign the shown nonce with your wallet’s <code className="font-mono">signmessage</code> (legacy Bitcoin message signing)</div>
+            <div>3) Paste the resulting base64 signature and click “Verify &amp; Issue Key”</div>
+            <div className="text-[11px]">Message to sign = nonce exactly as shown (no extra whitespace)</div>
+          </div>
 
           <label className="block text-sm mb-2">Wallet address</label>
           <input
