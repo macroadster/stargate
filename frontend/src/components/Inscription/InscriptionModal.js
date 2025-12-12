@@ -78,7 +78,11 @@ const InscriptionModal = ({ inscription, onClose }) => {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      return await fetch(url, { ...options, signal: controller.signal });
+      const headers = {
+        ...(options.headers || {}),
+        ...(auth.apiKey ? { 'X-API-Key': auth.apiKey } : {}),
+      };
+      return await fetch(url, { ...options, headers, signal: controller.signal });
     } finally {
       clearTimeout(timer);
     }

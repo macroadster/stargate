@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { RefreshCw, Search } from 'lucide-react';
 import { API_BASE } from '../../apiBase';
+import { useAuth } from '../../context/AuthContext';
 
 const formatDate = (ts) => (ts ? new Date(ts).toLocaleString() : '—');
 const formatCountdown = (ts) => {
@@ -14,6 +15,7 @@ const formatCountdown = (ts) => {
 };
 
 export default function DiscoverPage() {
+  const { auth } = useAuth();
   const [proposals, setProposals] = useState([]);
   const [submissions, setSubmissions] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -38,7 +40,9 @@ export default function DiscoverPage() {
       if (skills) params.set('skills', skills);
       if (minBudget) params.set('min_budget_sats', minBudget);
       if (contractId) params.set('contract_id', contractId);
-      const res = await fetch(`${API_BASE}/api/smart_contract/proposals?${params.toString()}`);
+      const res = await fetch(`${API_BASE}/api/smart_contract/proposals?${params.toString()}`, {
+        headers: auth.apiKey ? { 'X-API-Key': auth.apiKey } : undefined,
+      });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setProposals(data.proposals || []);
@@ -58,7 +62,10 @@ export default function DiscoverPage() {
     try {
       const res = await fetch(`${API_BASE}/api/smart_contract/claims/${claimId}/submit`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(auth.apiKey ? { 'X-API-Key': auth.apiKey } : {}),
+        },
         body: JSON.stringify({
           deliverables: { notes: submitNotes[taskId] || '', submitted_by: aiId },
           completion_proof: { link: submitProof[taskId] || '' },
@@ -97,7 +104,10 @@ export default function DiscoverPage() {
     try {
       const res = await fetch(`${API_BASE}/api/smart_contract/tasks/${taskId}/claim`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(auth.apiKey ? { 'X-API-Key': auth.apiKey } : {}),
+        },
         body: JSON.stringify({ ai_identifier: aiId }),
       });
       if (!res.ok) {
