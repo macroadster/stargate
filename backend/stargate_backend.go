@@ -68,7 +68,7 @@ func findImagePath(height string, filename string) (string, bool) {
 }
 
 // initializeMCPComponents sets up the MCP components needed for HTTP access
-func initializeMCPComponents() (scmiddleware.Store, *auth.APIKeyStore, *services.IngestionService) {
+func initializeMCPComponents() (scmiddleware.Store, auth.APIKeyIssuer, auth.APIKeyValidator, *services.IngestionService) {
 	// Load MCP configuration
 	storeDriver := os.Getenv("MCP_STORE_DRIVER")
 	if storeDriver == "" {
@@ -130,10 +130,26 @@ func initializeMCPComponents() (scmiddleware.Store, *auth.APIKeyStore, *services
 	}
 	log.Printf("MCP components initialized with %s store (requested: %s)", actualStoreType, storeDriver)
 
-	apiKeyStore := auth.NewAPIKeyStore()
-	apiKeyStore.Seed(seedKey, "", "seed")
+	var apiIssuer auth.APIKeyIssuer
+	var apiValidator auth.APIKeyValidator
 
-	return store, apiKeyStore, ingestionSvc
+	// Prefer Postgres-backed key store when DSN available
+	if pgDsn != "" {
+		if pgKeys, err := auth.NewPGAPIKeyStore(context.Background(), pgDsn); err == nil {
+			pgKeys.Seed(seedKey, "", "seed")
+			apiIssuer, apiValidator = pgKeys, pgKeys
+		} else {
+			log.Printf("api key pg store unavailable, falling back to memory: %v", err)
+		}
+	}
+
+	if apiIssuer == nil || apiValidator == nil {
+		mem := auth.NewAPIKeyStore()
+		mem.Seed(seedKey, "", "seed")
+		apiIssuer, apiValidator = mem, mem
+	}
+
+	return store, apiIssuer, apiValidator, ingestionSvc
 }
 
 // startMCPServices starts background services for MCP when using PostgreSQL
@@ -224,11 +240,11 @@ func runHTTPServer() {
 	container := container.NewContainer()
 
 	// Initialize MCP components (for HTTP routes)
-	store, apiKeyStore, ingestionSvc := initializeMCPComponents()
+	store, apiKeyIssuer, apiKeyValidator, ingestionSvc := initializeMCPComponents()
 
 	// Initialize HTTP MCP server (always enabled)
 	scannerManager := starlight.GetScannerManager()
-	httpMCPServer := mcp.NewHTTPMCPServer(store, apiKeyStore, ingestionSvc, scannerManager, container.SmartContractService)
+	httpMCPServer := mcp.NewHTTPMCPServer(store, apiKeyValidator, ingestionSvc, scannerManager, container.SmartContractService)
 
 	// Set the smart contract handler with the store
 	container.SetSmartContractHandler(store)
@@ -252,7 +268,7 @@ func runHTTPServer() {
 			middleware.SecurityHeaders(
 				middleware.CORS(
 					middleware.Timeout(30 * time.Second)(
-						setupRoutes(mux, container, store, apiKeyStore, ingestionSvc),
+						setupRoutes(mux, container, store, apiKeyIssuer, apiKeyValidator, ingestionSvc),
 					),
 				)),
 		),
@@ -277,15 +293,15 @@ func runHTTPServer() {
 	log.Fatal(http.ListenAndServe(":"+httpPort, handler))
 }
 
-func setupRoutes(mux *http.ServeMux, container *container.Container, store scmiddleware.Store, apiKeyStore *auth.APIKeyStore, ingestionSvc *services.IngestionService) http.Handler {
+func setupRoutes(mux *http.ServeMux, container *container.Container, store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, apiKeyValidator auth.APIKeyValidator, ingestionSvc *services.IngestionService) http.Handler {
 	// Initialize MCP REST server for HTTP routes
-	mcpRestServer := scmiddleware.NewServer(store, apiKeyStore, ingestionSvc)
+	mcpRestServer := scmiddleware.NewServer(store, apiKeyValidator, ingestionSvc)
 	mcpRestServer.RegisterRoutes(mux)
 	// Health endpoints
 	mux.HandleFunc("/api/health", container.HealthHandler.HandleHealth)
 
 	// Auth endpoints
-	keyHandler := handlers.NewAPIKeyHandler(apiKeyStore)
+	keyHandler := handlers.NewAPIKeyHandler(apiKeyIssuer, apiKeyValidator)
 	mux.HandleFunc("/api/auth/register", keyHandler.HandleRegister)
 
 	// API Documentation - includes Swagger UI

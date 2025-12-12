@@ -11,12 +11,13 @@ import (
 // APIKeyHandler issues API keys via registration.
 type APIKeyHandler struct {
 	*BaseHandler
-	store *auth.APIKeyStore
+	issuer    auth.APIKeyIssuer
+	validator auth.APIKeyValidator
 }
 
-// NewAPIKeyHandler builds an APIKeyHandler.
-func NewAPIKeyHandler(store *auth.APIKeyStore) *APIKeyHandler {
-	return &APIKeyHandler{BaseHandler: NewBaseHandler(), store: store}
+// NewAPIKeyHandler builds an APIKeyHandler with separate issuer/validator implementations.
+func NewAPIKeyHandler(issuer auth.APIKeyIssuer, validator auth.APIKeyValidator) *APIKeyHandler {
+	return &APIKeyHandler{BaseHandler: NewBaseHandler(), issuer: issuer, validator: validator}
 }
 
 // HandleRegister issues a new API key for the provided email (optional).
@@ -37,7 +38,7 @@ func (h *APIKeyHandler) HandleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	email := strings.TrimSpace(body.Email)
-	rec, err := h.store.Issue(email, "registration")
+	rec, err := h.issuer.Issue(email, "registration")
 	if err != nil {
 		h.sendError(w, http.StatusInternalServerError, "failed to issue api key")
 		return
