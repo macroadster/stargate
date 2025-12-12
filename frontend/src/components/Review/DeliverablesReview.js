@@ -3,8 +3,10 @@ import { CheckCircle, XCircle, Clock, ExternalLink, Filter, ChevronDown, Chevron
 import toast from 'react-hot-toast';
 import { API_BASE } from '../../apiBase';
 import CopyButton from '../Common/CopyButton';
+import { useAuth } from '../../context/AuthContext';
 
 const DeliverablesReview = ({ proposalItems, submissions, onRefresh }) => {
+  const { auth } = useAuth();
   // Add key to force re-render when submissions change
   const submissionsKey = JSON.stringify(submissions);
   
@@ -90,7 +92,10 @@ const DeliverablesReview = ({ proposalItems, submissions, onRefresh }) => {
       const reviewUrl = `${API_BASE}/api/smart_contract/submissions/${submissionId}/review`;
       const res = await fetch(reviewUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(auth.apiKey ? { 'X-API-Key': auth.apiKey } : {}),
+        },
         body: JSON.stringify({
           action,
           notes: reviewNotes[submissionId] || ''
