@@ -3,12 +3,15 @@ import { X } from 'lucide-react';
 import { API_BASE } from '../../apiBase';
 import { QRCodeCanvas } from 'qrcode.react';
 
+import { useAuth } from '../../context/AuthContext';
+
 const InscribeModal = ({ onClose, onSuccess }) => {
+  const { auth } = useAuth();
   const [step, setStep] = useState(1);
   const [imageFile, setImageFile] = useState(null);
   const [embedText, setEmbedText] = useState('');
   const [price, setPrice] = useState('');
-  const [address, setAddress] = useState('');
+  const [address, setAddress] = useState(auth.wallet || '');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [paymentData, setPaymentData] = useState(null);
   const buildPlaceholderImage = () => {
@@ -49,7 +52,8 @@ const InscribeModal = ({ onClose, onSuccess }) => {
       const response = await fetch(`${API_BASE}/api/inscribe`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'X-API-Key': auth.apiKey || ''
         },
         body: JSON.stringify(payload)
       });

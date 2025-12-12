@@ -48,6 +48,7 @@ func (h *APIKeyHandler) HandleRegister(w http.ResponseWriter, r *http.Request) {
 	h.sendSuccess(w, map[string]interface{}{
 		"api_key":    rec.Key,
 		"email":      rec.Email,
+		"wallet":     rec.Wallet,
 		"created_at": rec.CreatedAt,
 	})
 }

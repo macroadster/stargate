@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
 import { API_BASE } from '../apiBase';
+import { useAuth } from '../context/AuthContext';
 
 export default function AuthPage() {
+  const { auth, signIn, savedKeys } = useAuth();
   const [email, setEmail] = useState('');
-  const [apiKey, setApiKey] = useState(localStorage.getItem('X-API-Key') || '');
-  const [wallet, setWallet] = useState('');
+  const [apiKey, setApiKey] = useState(auth.apiKey || '');
+  const [wallet, setWallet] = useState(auth.wallet || '');
   const [loginKey, setLoginKey] = useState('');
   const [status, setStatus] = useState('');
 
@@ -21,7 +23,7 @@ export default function AuthPage() {
       if (!res.ok) throw new Error(data?.message || payload?.message || 'Registration failed');
       const issuedKey = payload.api_key || payload.key || '';
       setApiKey(issuedKey);
-      localStorage.setItem('X-API-Key', issuedKey);
+      signIn(issuedKey, payload.wallet || wallet, payload.email || email);
       setStatus('Registered. Key saved locally.');
     } catch (err) {
       setStatus(err.message);
@@ -40,7 +42,7 @@ export default function AuthPage() {
       const payload = data?.data || data;
       if (!res.ok) throw new Error(data?.message || payload?.message || 'Invalid key');
       const keyToSave = payload.api_key || loginKey;
-      localStorage.setItem('X-API-Key', keyToSave);
+      signIn(keyToSave, payload.wallet || wallet, payload.email || '');
       setApiKey(keyToSave);
       setStatus('Signed in. Key saved locally.');
     } catch (err) {
@@ -79,6 +81,23 @@ export default function AuthPage() {
         <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl p-6 shadow-lg">
           <h2 className="text-xl font-semibold mb-2">Sign In</h2>
           <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">Validate an existing API key and store it locally.</p>
+          {savedKeys.length > 0 && (
+            <div className="mb-4">
+              <label className="block text-sm mb-2">Saved keys</label>
+              <select
+                className="w-full mb-2 px-3 py-2 rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700"
+                onChange={(e) => setLoginKey(e.target.value)}
+                value={loginKey}
+              >
+                <option value="">Choose saved key</option>
+                {savedKeys.map((k) => (
+                  <option key={k.apiKey} value={k.apiKey}>
+                    {(k.wallet || k.email || 'Key') + ' …' + k.apiKey.slice(-6)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           <label className="block text-sm mb-2">API Key</label>
           <input
             className="w-full mb-4 px-3 py-2 rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700"

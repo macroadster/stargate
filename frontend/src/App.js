@@ -10,6 +10,7 @@ import InscribeModal from './components/Inscription/InscribeModal';
 import InscriptionModal from './components/Inscription/InscriptionModal';
 import DiscoverPage from './components/Discover/DiscoverPage';
 import AuthPage from './pages/AuthPage';
+import { AuthProvider, useAuth } from './context/AuthContext';
 
 import { useBlocks } from './hooks/useBlocks';
 import { useInscriptions } from './hooks/useInscriptions';
@@ -37,6 +38,7 @@ function MainContent() {
   const { height } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
+  const { auth, signOut } = useAuth();
   const [showInscribeModal, setShowInscribeModal] = useState(false);
   const [selectedInscription, setSelectedInscription] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -361,12 +363,26 @@ function MainContent() {
                 )}
                 {renderInlineSearch()}
               </div>
-              <button
-                onClick={() => navigate('/auth')}
-                className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold"
-              >
-                Sign In / Register
-              </button>
+              {auth?.apiKey ? (
+                <div className="flex items-center gap-2">
+                  <div className="px-3 py-1 rounded-full bg-emerald-600 text-white text-sm">
+                    {auth.wallet || auth.email || `Key …${auth.apiKey.slice(-6)}`}
+                  </div>
+                  <button
+                    onClick={signOut}
+                    className="text-xs text-gray-500 dark:text-gray-400 hover:text-black dark:hover:text-white"
+                  >
+                    Sign out
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => navigate('/auth')}
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold"
+                >
+                  Sign In / Register
+                </button>
+              )}
               <button onClick={toggleTheme} className="text-gray-600 dark:text-gray-400 hover:text-black dark:hover:text-white">
                 {isDarkMode ? <Moon className="w-5 h-5" /> : <Sun className="w-5 h-5" />}
               </button>
@@ -631,12 +647,14 @@ function MainContent() {
 
 export default function App() {
   return (
-    <Routes>
-      <Route path="/" element={<MainContent />} />
-      <Route path="/block/:height" element={<MainContent />} />
-      <Route path="/pending" element={<MainContent />} />
-      <Route path="/discover" element={<DiscoverPage />} />
-      <Route path="/auth" element={<AuthPage />} />
-    </Routes>
+    <AuthProvider>
+      <Routes>
+        <Route path="/" element={<MainContent />} />
+        <Route path="/block/:height" element={<MainContent />} />
+        <Route path="/pending" element={<MainContent />} />
+        <Route path="/discover" element={<DiscoverPage />} />
+        <Route path="/auth" element={<AuthPage />} />
+      </Routes>
+    </AuthProvider>
   );
 }
