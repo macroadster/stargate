@@ -5,6 +5,7 @@ import CopyButton from '../Common/CopyButton';
 import ConfidenceIndicator from '../Common/ConfidenceIndicator';
 import DeliverablesReview from '../Review/DeliverablesReview';
 import { API_BASE } from '../../apiBase';
+import { useAuth } from '../../context/AuthContext';
 
 // Determines whether the proposal action (Approve/Publish) should be shown.
 export const shouldShowProposalAction = (status) => {
@@ -13,6 +14,7 @@ export const shouldShowProposalAction = (status) => {
 };
 
 const InscriptionModal = ({ inscription, onClose }) => {
+  const { auth } = useAuth();
   const [activeTab, setActiveTab] = useState('overview');
   const [monoContent, setMonoContent] = useState(true);
   const [proposalItems, setProposalItems] = useState([]);
