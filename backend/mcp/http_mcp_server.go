@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"stargate-backend/auth"
 	"stargate-backend/core"
 	"stargate-backend/core/smart_contract"
 	scmiddleware "stargate-backend/middleware/smart_contract"
@@ -25,7 +26,7 @@ import (
 // HTTPMCPServer provides HTTP endpoints for MCP tools
 type HTTPMCPServer struct {
 	store            scmiddleware.Store
-	apiKey           string
+	apiKeyStore      auth.APIKeyValidator
 	ingestionSvc     *services.IngestionService
 	scannerManager   *starlight.ScannerManager
 	smartContractSvc *services.SmartContractService
@@ -34,10 +35,10 @@ type HTTPMCPServer struct {
 }
 
 // NewHTTPMCPServer creates a new HTTP MCP server
-func NewHTTPMCPServer(store scmiddleware.Store, apiKey string, ingestionSvc *services.IngestionService, scannerManager *starlight.ScannerManager, smartContractSvc *services.SmartContractService) *HTTPMCPServer {
+func NewHTTPMCPServer(store scmiddleware.Store, apiKeyStore auth.APIKeyValidator, ingestionSvc *services.IngestionService, scannerManager *starlight.ScannerManager, smartContractSvc *services.SmartContractService) *HTTPMCPServer {
 	return &HTTPMCPServer{
 		store:            store,
-		apiKey:           apiKey,
+		apiKeyStore:      apiKeyStore,
 		ingestionSvc:     ingestionSvc,
 		scannerManager:   scannerManager,
 		smartContractSvc: smartContractSvc,
@@ -73,13 +74,9 @@ func (h *HTTPMCPServer) authWrap(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("DEBUG: authWrap called for path: %s", r.URL.Path)
 		// Check API key if configured
-		if h.apiKey != "" {
+		if h.apiKeyStore != nil {
 			key := r.Header.Get("X-API-Key")
-			if key == "" {
-				http.Error(w, "Missing API key", http.StatusUnauthorized)
-				return
-			}
-			if key != h.apiKey {
+			if key == "" || !h.apiKeyStore.Validate(key) {
 				http.Error(w, "Invalid API key", http.StatusForbidden)
 				return
 			}
@@ -178,7 +175,7 @@ func (h *HTTPMCPServer) handleDiscover(w http.ResponseWriter, r *http.Request) {
 		"authentication": map[string]string{
 			"type":        "api_key",
 			"header_name": "X-API-Key",
-			"required":    fmt.Sprintf("%t", h.apiKey != ""),
+			"required":    fmt.Sprintf("%t", h.apiKeyStore != nil),
 		},
 		"rate_limits": map[string]interface{}{
 			"enabled":       false,
@@ -205,8 +202,8 @@ func (h *HTTPMCPServer) handleEventsProxy(w http.ResponseWriter, r *http.Request
 		for k, v := range r.Header {
 			req.Header[k] = v
 		}
-		if h.apiKey != "" {
-			req.Header.Set("X-API-Key", h.apiKey)
+		if h.apiKeyStore != nil {
+			req.Header.Set("X-API-Key", r.Header.Get("X-API-Key"))
 		}
 		resp, err := h.httpClient.Do(req)
 		if err != nil {
@@ -229,8 +226,8 @@ func (h *HTTPMCPServer) handleEventsProxy(w http.ResponseWriter, r *http.Request
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if h.apiKey != "" {
-		req.Header.Set("X-API-Key", h.apiKey)
+	if h.apiKeyStore != nil {
+		req.Header.Set("X-API-Key", r.Header.Get("X-API-Key"))
 	}
 	resp, err := h.httpClient.Do(req)
 	if err != nil {
@@ -1225,9 +1222,6 @@ func (h *HTTPMCPServer) fetchSubmissionsViaREST(contractID, status string, taskI
 	if err != nil {
 		return nil, err
 	}
-	if h.apiKey != "" {
-		req.Header.Set("X-API-Key", h.apiKey)
-	}
 
 	resp, err := h.httpClient.Do(req)
 	if err != nil {
@@ -1244,6 +1238,19 @@ func (h *HTTPMCPServer) fetchSubmissionsViaREST(contractID, status string, taskI
 		return nil, err
 	}
 	return parsed, nil
+}
+
+// bodyHeaderFallback attempts to pull X-API-Key from a nested headers map in body if present.
+func bodyHeaderFallback(body map[string]interface{}) string {
+	if body == nil {
+		return ""
+	}
+	if hdrs, ok := body["headers"].(map[string]interface{}); ok {
+		if key, ok2 := hdrs["X-API-Key"].(string); ok2 {
+			return key
+		}
+	}
+	return ""
 }
 
 // fetchContractsViaREST lists contracts via REST with optional filters.
@@ -1344,8 +1351,8 @@ func (h *HTTPMCPServer) postJSON(urlStr string, body map[string]interface{}) (ma
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if h.apiKey != "" {
-		req.Header.Set("X-API-Key", h.apiKey)
+	if h.apiKeyStore != nil {
+		req.Header.Set("X-API-Key", bodyHeaderFallback(body))
 	}
 
 	resp, err := h.httpClient.Do(req)
@@ -1370,9 +1377,6 @@ func (h *HTTPMCPServer) getJSON(urlStr string) (map[string]interface{}, error) {
 	req, err := http.NewRequest(http.MethodGet, urlStr, nil)
 	if err != nil {
 		return nil, err
-	}
-	if h.apiKey != "" {
-		req.Header.Set("X-API-Key", h.apiKey)
 	}
 	resp, err := h.httpClient.Do(req)
 	if err != nil {

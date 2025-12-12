@@ -12,8 +12,10 @@ import (
 	"time"
 
 	"stargate-backend/api"
+	"stargate-backend/auth"
 	"stargate-backend/bitcoin"
 	"stargate-backend/container"
+	"stargate-backend/handlers"
 	"stargate-backend/mcp"
 	"stargate-backend/middleware"
 	scmiddleware "stargate-backend/middleware/smart_contract"
@@ -66,7 +68,7 @@ func findImagePath(height string, filename string) (string, bool) {
 }
 
 // initializeMCPComponents sets up the MCP components needed for HTTP access
-func initializeMCPComponents() (scmiddleware.Store, string, *services.IngestionService) {
+func initializeMCPComponents() (scmiddleware.Store, *auth.APIKeyStore, *services.IngestionService) {
 	// Load MCP configuration
 	storeDriver := os.Getenv("MCP_STORE_DRIVER")
 	if storeDriver == "" {
@@ -74,7 +76,7 @@ func initializeMCPComponents() (scmiddleware.Store, string, *services.IngestionS
 	}
 
 	pgDsn := os.Getenv("MCP_PG_DSN")
-	apiKey := os.Getenv("MCP_API_KEY")
+	seedKey := os.Getenv("MCP_API_KEY")
 
 	// TTL configuration
 	ttlHours := 72
@@ -128,7 +130,10 @@ func initializeMCPComponents() (scmiddleware.Store, string, *services.IngestionS
 	}
 	log.Printf("MCP components initialized with %s store (requested: %s)", actualStoreType, storeDriver)
 
-	return store, apiKey, ingestionSvc
+	apiKeyStore := auth.NewAPIKeyStore()
+	apiKeyStore.Seed(seedKey, "", "seed")
+
+	return store, apiKeyStore, ingestionSvc
 }
 
 // startMCPServices starts background services for MCP when using PostgreSQL
@@ -219,11 +224,11 @@ func runHTTPServer() {
 	container := container.NewContainer()
 
 	// Initialize MCP components (for HTTP routes)
-	store, apiKey, ingestionSvc := initializeMCPComponents()
+	store, apiKeyStore, ingestionSvc := initializeMCPComponents()
 
 	// Initialize HTTP MCP server (always enabled)
 	scannerManager := starlight.GetScannerManager()
-	httpMCPServer := mcp.NewHTTPMCPServer(store, apiKey, ingestionSvc, scannerManager, container.SmartContractService)
+	httpMCPServer := mcp.NewHTTPMCPServer(store, apiKeyStore, ingestionSvc, scannerManager, container.SmartContractService)
 
 	// Set the smart contract handler with the store
 	container.SetSmartContractHandler(store)
@@ -247,7 +252,7 @@ func runHTTPServer() {
 			middleware.SecurityHeaders(
 				middleware.CORS(
 					middleware.Timeout(30 * time.Second)(
-						setupRoutes(mux, container, store, apiKey, ingestionSvc),
+						setupRoutes(mux, container, store, apiKeyStore, ingestionSvc),
 					),
 				)),
 		),
@@ -272,12 +277,16 @@ func runHTTPServer() {
 	log.Fatal(http.ListenAndServe(":"+httpPort, handler))
 }
 
-func setupRoutes(mux *http.ServeMux, container *container.Container, store scmiddleware.Store, apiKey string, ingestionSvc *services.IngestionService) http.Handler {
+func setupRoutes(mux *http.ServeMux, container *container.Container, store scmiddleware.Store, apiKeyStore *auth.APIKeyStore, ingestionSvc *services.IngestionService) http.Handler {
 	// Initialize MCP REST server for HTTP routes
-	mcpRestServer := scmiddleware.NewServer(store, apiKey, ingestionSvc)
+	mcpRestServer := scmiddleware.NewServer(store, apiKeyStore, ingestionSvc)
 	mcpRestServer.RegisterRoutes(mux)
 	// Health endpoints
 	mux.HandleFunc("/api/health", container.HealthHandler.HandleHealth)
+
+	// Auth endpoints
+	keyHandler := handlers.NewAPIKeyHandler(apiKeyStore)
+	mux.HandleFunc("/api/auth/register", keyHandler.HandleRegister)
 
 	// API Documentation - includes Swagger UI
 	mux.HandleFunc("/api/docs", func(w http.ResponseWriter, r *http.Request) {

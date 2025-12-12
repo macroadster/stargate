@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"stargate-backend/auth"
 	"stargate-backend/core/smart_contract"
 	"stargate-backend/services"
 	scstore "stargate-backend/storage/smart_contract"
@@ -19,7 +20,7 @@ import (
 // Server wires handlers for MCP endpoints.
 type Server struct {
 	store        Store
-	apiKey       string
+	apiKeys      auth.APIKeyValidator
 	ingestionSvc *services.IngestionService
 	events       []smart_contract.Event
 	eventsMu     sync.Mutex
@@ -42,8 +43,8 @@ type ProposalCreateBody struct {
 }
 
 // NewServer builds a Server with the given store.
-func NewServer(store Store, apiKey string, ingest *services.IngestionService) *Server {
-	return &Server{store: store, apiKey: apiKey, ingestionSvc: ingest}
+func NewServer(store Store, apiKeys auth.APIKeyValidator, ingest *services.IngestionService) *Server {
+	return &Server{store: store, apiKeys: apiKeys, ingestionSvc: ingest}
 }
 
 // RegisterRoutes attaches handlers to the mux.
@@ -65,13 +66,9 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 
 func (s *Server) authWrap(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if s.apiKey != "" {
+		if s.apiKeys != nil {
 			key := r.Header.Get("X-API-Key")
-			if key == "" {
-				Error(w, http.StatusUnauthorized, "missing api key")
-				return
-			}
-			if key != s.apiKey {
+			if key == "" || !s.apiKeys.Validate(key) {
 				Error(w, http.StatusForbidden, "invalid api key")
 				return
 			}
@@ -406,6 +403,7 @@ func (s *Server) handleDiscover(w http.ResponseWriter, r *http.Request) {
 		"authentication": map[string]string{
 			"type":        "api_key",
 			"header_name": "X-API-Key",
+			"required":    fmt.Sprintf("%t", s.apiKeys != nil),
 		},
 		"rate_limits": map[string]interface{}{
 			"enabled":       false,
