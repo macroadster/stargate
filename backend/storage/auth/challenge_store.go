@@ -9,12 +9,12 @@ import (
 
 // Challenge represents a pending wallet verification.
 type Challenge struct {
-	Nonce      string    `json:"nonce"`
-	Wallet     string    `json:"wallet_address"`
-	ExpiresAt  time.Time `json:"expires_at"`
-	CreatedAt  time.Time `json:"created_at"`
-	Attempts   int       `json:"attempts"`
-	MaxAttempts int      `json:"max_attempts"`
+	Nonce       string    `json:"nonce"`
+	Wallet      string    `json:"wallet_address"`
+	ExpiresAt   time.Time `json:"expires_at"`
+	CreatedAt   time.Time `json:"created_at"`
+	Attempts    int       `json:"attempts"`
+	MaxAttempts int       `json:"max_attempts"`
 }
 
 // ChallengeStore keeps in-memory challenges (sufficient for current needs; can be swapped for Postgres).
@@ -52,8 +52,7 @@ func (s *ChallengeStore) Issue(wallet string) (Challenge, error) {
 }
 
 // Verify checks signature against the outstanding nonce.
-// NOTE: For now this accepts signature == nonce (placeholder); replace with real secp256k1 verification.
-func (s *ChallengeStore) Verify(wallet, signature string) bool {
+func (s *ChallengeStore) Verify(wallet, signature string, verifier func(ch Challenge, sig string) bool) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ch, ok := s.challenges[wallet]
@@ -70,11 +69,26 @@ func (s *ChallengeStore) Verify(wallet, signature string) bool {
 		delete(s.challenges, wallet)
 		return false
 	}
-	if signature == ch.Nonce {
+	if verifier != nil && verifier(ch, signature) {
 		delete(s.challenges, wallet)
 		return true
 	}
 	return false
+}
+
+// Get returns a copy of the current challenge for a wallet.
+func (s *ChallengeStore) Get(wallet string) (Challenge, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ch, ok := s.challenges[wallet]
+	return ch, ok
+}
+
+// Delete removes a challenge (used on success or cleanup).
+func (s *ChallengeStore) Delete(wallet string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.challenges, wallet)
 }
 
 func randomNonce() (string, error) {
