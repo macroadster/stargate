@@ -11,9 +11,9 @@ import (
 	"sync"
 	"time"
 
-	"stargate-backend/auth"
 	"stargate-backend/core/smart_contract"
 	"stargate-backend/services"
+	auth "stargate-backend/storage/auth"
 	scstore "stargate-backend/storage/smart_contract"
 )
 

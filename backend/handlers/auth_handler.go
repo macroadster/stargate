@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	"stargate-backend/auth"
+	auth "stargate-backend/storage/auth"
 )
 
 // APIKeyHandler issues API keys via registration.
@@ -48,5 +48,33 @@ func (h *APIKeyHandler) HandleRegister(w http.ResponseWriter, r *http.Request) {
 		"api_key":    rec.Key,
 		"email":      rec.Email,
 		"created_at": rec.CreatedAt,
+	})
+}
+
+// HandleLogin verifies an existing API key.
+// Request: {"api_key":"..."}
+// Response: { "valid": true }
+func (h *APIKeyHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		h.sendError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	var body struct {
+		APIKey string `json:"api_key"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		h.sendError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+
+	if !h.validator.Validate(strings.TrimSpace(body.APIKey)) {
+		h.sendError(w, http.StatusForbidden, "invalid api key")
+		return
+	}
+
+	h.sendSuccess(w, map[string]interface{}{
+		"valid":   true,
+		"api_key": body.APIKey,
 	})
 }

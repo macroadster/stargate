@@ -13,13 +13,13 @@ import (
 	"strings"
 	"time"
 
-	"stargate-backend/auth"
 	"stargate-backend/core"
 	"stargate-backend/core/smart_contract"
 	scmiddleware "stargate-backend/middleware/smart_contract"
 	"stargate-backend/models"
 	"stargate-backend/services"
 	"stargate-backend/starlight"
+	auth "stargate-backend/storage/auth"
 	scstore "stargate-backend/storage/smart_contract"
 )
 

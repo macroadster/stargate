@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"stargate-backend/api"
-	"stargate-backend/auth"
 	"stargate-backend/bitcoin"
 	"stargate-backend/container"
 	"stargate-backend/handlers"
@@ -22,6 +21,7 @@ import (
 	"stargate-backend/services"
 	"stargate-backend/starlight"
 	"stargate-backend/storage"
+	auth "stargate-backend/storage/auth"
 	scstore "stargate-backend/storage/smart_contract"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -75,8 +75,8 @@ func initializeMCPComponents() (scmiddleware.Store, auth.APIKeyIssuer, auth.APIK
 		storeDriver = "memory"
 	}
 
-	pgDsn := os.Getenv("MCP_PG_DSN")
-	seedKey := os.Getenv("MCP_API_KEY")
+	pgDsn := os.Getenv("STARGATE_PG_DSN")
+	seedKey := os.Getenv("STARGATE_API_KEY")
 
 	// TTL configuration
 	ttlHours := 72
@@ -303,6 +303,7 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 	// Auth endpoints
 	keyHandler := handlers.NewAPIKeyHandler(apiKeyIssuer, apiKeyValidator)
 	mux.HandleFunc("/api/auth/register", keyHandler.HandleRegister)
+	mux.HandleFunc("/api/auth/login", keyHandler.HandleLogin)
 
 	// API Documentation - includes Swagger UI
 	mux.HandleFunc("/api/docs", func(w http.ResponseWriter, r *http.Request) {

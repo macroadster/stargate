@@ -9,6 +9,7 @@ import PendingTransactionsView from './components/Block/PendingTransactionsView'
 import InscribeModal from './components/Inscription/InscribeModal';
 import InscriptionModal from './components/Inscription/InscriptionModal';
 import DiscoverPage from './components/Discover/DiscoverPage';
+import AuthPage from './pages/AuthPage';
 
 import { useBlocks } from './hooks/useBlocks';
 import { useInscriptions } from './hooks/useInscriptions';
@@ -360,8 +361,11 @@ function MainContent() {
                 )}
                 {renderInlineSearch()}
               </div>
-              <button className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold">
-                Connect
+              <button
+                onClick={() => navigate('/auth')}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold"
+              >
+                Sign In / Register
               </button>
               <button onClick={toggleTheme} className="text-gray-600 dark:text-gray-400 hover:text-black dark:hover:text-white">
                 {isDarkMode ? <Moon className="w-5 h-5" /> : <Sun className="w-5 h-5" />}
@@ -632,6 +636,7 @@ export default function App() {
       <Route path="/block/:height" element={<MainContent />} />
       <Route path="/pending" element={<MainContent />} />
       <Route path="/discover" element={<DiscoverPage />} />
+      <Route path="/auth" element={<AuthPage />} />
     </Routes>
   );
 }
