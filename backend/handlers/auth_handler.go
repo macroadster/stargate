@@ -176,8 +176,12 @@ func (h *APIKeyHandler) HandleVerify(w http.ResponseWriter, r *http.Request) {
 
 // verifyBTCMessage verifies a legacy Bitcoin signmessage signature (base64) against a wallet address.
 func verifyBTCMessage(address, signatureB64, message string) (bool, error) {
-	// Decode address to ensure network validity (assume mainnet for now)
-	if _, err := btcutil.DecodeAddress(address, &chaincfg.MainNetParams); err != nil {
+	params := chooseParams(address)
+	if params == nil {
+		return false, fmt.Errorf("unsupported address network")
+	}
+	// Decode address to ensure network validity
+	if _, err := btcutil.DecodeAddress(address, params); err != nil {
 		return false, err
 	}
 
@@ -198,13 +202,13 @@ func verifyBTCMessage(address, signatureB64, message string) (bool, error) {
 
 	var derivedAddr string
 	if wasCompressed {
-		addr, err := btcutil.NewAddressPubKey(pubKey.SerializeCompressed(), &chaincfg.MainNetParams)
+		addr, err := btcutil.NewAddressPubKey(pubKey.SerializeCompressed(), params)
 		if err != nil {
 			return false, err
 		}
 		derivedAddr = addr.AddressPubKeyHash().EncodeAddress()
 	} else {
-		addr, err := btcutil.NewAddressPubKey(pubKey.SerializeUncompressed(), &chaincfg.MainNetParams)
+		addr, err := btcutil.NewAddressPubKey(pubKey.SerializeUncompressed(), params)
 		if err != nil {
 			return false, err
 		}
@@ -221,4 +225,16 @@ func hashBitcoinMessage(message string) []byte {
 	h1 := sha256.Sum256(buf.Bytes())
 	h2 := sha256.Sum256(h1[:])
 	return h2[:]
+}
+
+// chooseParams picks mainnet or testnet based on address prefix.
+func chooseParams(address string) *chaincfg.Params {
+	addr := strings.ToLower(strings.TrimSpace(address))
+	if strings.HasPrefix(addr, "bc1") || strings.HasPrefix(addr, "1") || strings.HasPrefix(addr, "3") {
+		return &chaincfg.MainNetParams
+	}
+	if strings.HasPrefix(addr, "tb1") || strings.HasPrefix(addr, "m") || strings.HasPrefix(addr, "n") || strings.HasPrefix(addr, "2") {
+		return &chaincfg.TestNet3Params
+	}
+	return nil
 }
