@@ -1,10 +1,18 @@
 package handlers
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 
+	"github.com/btcsuite/btcd/btcec"
+	"github.com/btcsuite/btcd/chaincfg"
+	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btcutil"
 	auth "stargate-backend/storage/auth"
 )
 
@@ -142,9 +150,12 @@ func (h *APIKeyHandler) HandleVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	verifier := func(ch auth.Challenge, sig string) bool {
-		// TODO: replace with real BTC signature verification (e.g., BIP-322).
-		// For now accept exact nonce match.
-		return sig == ch.Nonce
+		// Legacy Bitcoin signmessage verification
+		ok, err := verifyBTCMessage(ch.Wallet, sig, ch.Nonce)
+		if err != nil {
+			return false
+		}
+		return ok
 	}
 	if !h.challenges.Verify(body.Wallet, body.Signature, verifier) {
 		h.sendError(w, http.StatusForbidden, "invalid signature")
@@ -163,4 +174,51 @@ func (h *APIKeyHandler) HandleVerify(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// TODO: add BTC sign/verify (BIP-322 or legacy signmessage). Currently verifier accepts nonce match only.
+// verifyBTCMessage verifies a legacy Bitcoin signmessage signature (base64) against a wallet address.
+func verifyBTCMessage(address, signatureB64, message string) (bool, error) {
+	// Decode address to ensure network validity (assume mainnet for now)
+	if _, err := btcutil.DecodeAddress(address, &chaincfg.MainNetParams); err != nil {
+		return false, err
+	}
+
+	sigBytes, err := base64.StdEncoding.DecodeString(signatureB64)
+	if err != nil {
+		return false, err
+	}
+	if len(sigBytes) != 65 {
+		return false, fmt.Errorf("invalid signature length")
+	}
+
+	msgHash := hashBitcoinMessage(message)
+
+	pubKey, wasCompressed, err := btcec.RecoverCompact(btcec.S256(), sigBytes, msgHash)
+	if err != nil {
+		return false, err
+	}
+
+	var derivedAddr string
+	if wasCompressed {
+		addr, err := btcutil.NewAddressPubKey(pubKey.SerializeCompressed(), &chaincfg.MainNetParams)
+		if err != nil {
+			return false, err
+		}
+		derivedAddr = addr.AddressPubKeyHash().EncodeAddress()
+	} else {
+		addr, err := btcutil.NewAddressPubKey(pubKey.SerializeUncompressed(), &chaincfg.MainNetParams)
+		if err != nil {
+			return false, err
+		}
+		derivedAddr = addr.AddressPubKeyHash().EncodeAddress()
+	}
+
+	return strings.EqualFold(derivedAddr, address), nil
+}
+
+func hashBitcoinMessage(message string) []byte {
+	var buf bytes.Buffer
+	_ = wire.WriteVarString(&buf, 0, "Bitcoin Signed Message:\n")
+	_ = wire.WriteVarString(&buf, 0, message)
+	h1 := sha256.Sum256(buf.Bytes())
+	h2 := sha256.Sum256(h1[:])
+	return h2[:]
+}
