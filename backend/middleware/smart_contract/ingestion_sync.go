@@ -201,7 +201,17 @@ func parseMarkdownProposal(ingestionID, markdown string, meta map[string]interfa
 		bullets = []string{"Fulfill the wish described in the markdown"}
 	}
 
-	contractID := fmt.Sprintf("wish-%s", ingestionID)
+	// Prefer visible pixel hash (from image scan) or the ingestionID directly to avoid duplicate wish-* wrappers.
+	contractIDBase := strings.TrimSpace(ingestionID)
+	if meta != nil {
+		if v, ok := meta["visible_pixel_hash"].(string); ok && strings.TrimSpace(v) != "" {
+			contractIDBase = strings.TrimSpace(v)
+		}
+	}
+	contractID := contractIDBase
+	if contractID == "" {
+		contractID = fmt.Sprintf("wish-%s", ingestionID)
+	}
 	budget := budgetFromMeta(meta)
 	fundingAddr := scstore.FundingAddressFromMeta(meta)
 
