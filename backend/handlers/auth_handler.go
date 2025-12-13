@@ -4,13 +4,17 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"strings"
 
 	"github.com/btcsuite/btcd/btcec"
 	"github.com/btcsuite/btcd/chaincfg"
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
 	auth "stargate-backend/storage/auth"
@@ -150,8 +154,7 @@ func (h *APIKeyHandler) HandleVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	verifier := func(ch auth.Challenge, sig string) bool {
-		// Legacy Bitcoin signmessage verification
-		ok, err := verifyBTCMessage(ch.Wallet, sig, ch.Nonce)
+		ok, err := verifyBTCSignature(ch.Wallet, sig, ch.Nonce)
 		if err != nil {
 			return false
 		}
@@ -174,8 +177,16 @@ func (h *APIKeyHandler) HandleVerify(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// verifyBTCMessage verifies a legacy Bitcoin signmessage signature (base64) against a wallet address.
-func verifyBTCMessage(address, signatureB64, message string) (bool, error) {
+// verifyBTCSignature supports legacy signmessage (compact) and BIP-322 simple witness signatures.
+func verifyBTCSignature(address, signature, message string) (bool, error) {
+	if ok, err := verifyLegacySignMessage(address, signature, message); err == nil && ok {
+		return true, nil
+	}
+	return verifyBIP322Simple(address, signature, message)
+}
+
+// verifyLegacySignMessage verifies a legacy Bitcoin signmessage signature (base64 compact) against a wallet address.
+func verifyLegacySignMessage(address, signatureB64, message string) (bool, error) {
 	params := chooseParams(address)
 	if params == nil {
 		return false, fmt.Errorf("unsupported address network")
@@ -225,6 +236,109 @@ func hashBitcoinMessage(message string) []byte {
 	h1 := sha256.Sum256(buf.Bytes())
 	h2 := sha256.Sum256(h1[:])
 	return h2[:]
+}
+
+// verifyBIP322Simple implements the "simple" flow from BIP-322 for P2PKH/P2WPKH/P2SH-P2WPKH.
+// It accepts witness encoded as hex (preferred) or base64, as produced by Bitcoin Core `signmessage` with a segwit address.
+func verifyBIP322Simple(address, signature, message string) (bool, error) {
+	params := chooseParams(address)
+	if params == nil {
+		return false, fmt.Errorf("unsupported address network")
+	}
+	addr, err := btcutil.DecodeAddress(address, params)
+	if err != nil {
+		return false, err
+	}
+
+	sigBytes, err := decodeMaybeHexOrBase64(strings.TrimSpace(signature))
+	if err != nil {
+		return false, err
+	}
+
+	witness, err := parseWitness(sigBytes)
+	if err != nil {
+		return false, err
+	}
+
+	pkScript, err := txscript.PayToAddrScript(addr)
+	if err != nil {
+		return false, err
+	}
+
+	// Build toSpend (anchor) tx: one output to address with zero value.
+	toSpend := wire.NewMsgTx(0)
+	toSpend.AddTxIn(&wire.TxIn{
+		PreviousOutPoint: wire.OutPoint{
+			Hash:  chainhash.Hash{},
+			Index: math.MaxUint32,
+		},
+		Sequence: math.MaxUint32,
+	})
+	toSpend.AddTxOut(&wire.TxOut{
+		Value:    0,
+		PkScript: pkScript,
+	})
+
+	// Build toSign tx that spends toSpend and commits to message via OP_RETURN(BIP322 prefix + sha256(msg)).
+	toSign := wire.NewMsgTx(0)
+	toSign.AddTxIn(&wire.TxIn{
+		PreviousOutPoint: wire.OutPoint{
+			Hash:  toSpend.TxHash(),
+			Index: 0,
+		},
+		Sequence: math.MaxUint32,
+	})
+	toSign.TxIn[0].Witness = witness
+
+	commitment := sha256.Sum256([]byte("BIP0322-signed-message:" + message))
+	nullData, err := txscript.NewScriptBuilder().AddOp(txscript.OP_RETURN).AddData(commitment[:]).Script()
+	if err != nil {
+		return false, err
+	}
+	toSign.AddTxOut(&wire.TxOut{Value: 0, PkScript: nullData})
+
+	flags := txscript.StandardVerifyFlags
+	sigHashes := txscript.NewTxSigHashes(toSign)
+	vm, err := txscript.NewEngine(pkScript, toSign, 0, flags, nil, sigHashes, 0)
+	if err != nil {
+		return false, err
+	}
+	if err := vm.Execute(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// parseWitness decodes a BIP-0141 witness stack from raw bytes.
+func parseWitness(b []byte) (wire.TxWitness, error) {
+	r := bytes.NewReader(b)
+	count, err := wire.ReadVarInt(r, 0)
+	if err != nil {
+		return nil, err
+	}
+	if count > 20 {
+		return nil, fmt.Errorf("witness item count too large")
+	}
+	w := make(wire.TxWitness, 0, count)
+	for i := uint64(0); i < count; i++ {
+		data, err := wire.ReadVarBytes(r, 0, math.MaxInt32, "witness element")
+		if err != nil {
+			return nil, err
+		}
+		w = append(w, data)
+	}
+	if r.Len() != 0 {
+		return nil, fmt.Errorf("trailing data in witness")
+	}
+	return w, nil
+}
+
+func decodeMaybeHexOrBase64(s string) ([]byte, error) {
+	// Prefer hex (Bitcoin Core signmessagewithaddress for segwit returns hex-encoded witness).
+	if dec, err := hex.DecodeString(s); err == nil {
+		return dec, nil
+	}
+	return base64.StdEncoding.DecodeString(s)
 }
 
 // chooseParams picks mainnet or testnet based on address prefix.

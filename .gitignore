@@ -3,4 +3,7 @@ backend/uploads/*
 backend/.cache/
 backend/.gocache/
 backend/.gomodcache/
+backend/stargate-backend
+backend/stargate_backend
+backend/stargate_backend_new
 **/*.log
