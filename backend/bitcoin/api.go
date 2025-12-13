@@ -79,7 +79,7 @@ func (api *BitcoinAPI) HandleHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Add scanner manager health to response
-	response := map[string]interface{}{
+	response := map[string]any{
 		"status":          status,
 		"scanner":         scannerInfo,
 		"scanner_manager": scannerHealth,
@@ -433,7 +433,7 @@ func (api *BitcoinAPI) HandleBlockScan(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("Scanning %d transactions in block %d (total: %d)", maxTxs, blockHeight, len(transactions))
 
-	for i := 0; i < maxTxs; i++ {
+	for i := range maxTxs {
 		txID := transactions[i]
 		txStartTime := time.Now()
 
