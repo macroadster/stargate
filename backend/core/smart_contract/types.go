@@ -65,13 +65,13 @@ type Claim struct {
 
 // Submission contains a work submission reference.
 type Submission struct {
-	SubmissionID    string                 `json:"submission_id"`
-	ClaimID         string                 `json:"claim_id"`
-	TaskID          string                 `json:"task_id,omitempty"`
-	Status          string                 `json:"status"` // pending_review | accepted | rejected
-	Deliverables    map[string]interface{} `json:"deliverables,omitempty"`
-	CompletionProof map[string]interface{} `json:"completion_proof,omitempty"`
-	CreatedAt       time.Time              `json:"created_at"`
+	SubmissionID    string         `json:"submission_id"`
+	ClaimID         string         `json:"claim_id"`
+	TaskID          string         `json:"task_id,omitempty"`
+	Status          string         `json:"status"` // pending_review | accepted | rejected
+	Deliverables    map[string]any `json:"deliverables,omitempty"`
+	CompletionProof map[string]any `json:"completion_proof,omitempty"`
+	CreatedAt       time.Time      `json:"created_at"`
 }
 
 // TaskFilter captures simple query params for listing tasks.
@@ -88,15 +88,15 @@ type TaskFilter struct {
 
 // Proposal represents a human/markdown wish that must be approved before tasks are published.
 type Proposal struct {
-	ID               string                 `json:"id"`
-	Title            string                 `json:"title"`
-	DescriptionMD    string                 `json:"description_md"`
-	VisiblePixelHash string                 `json:"visible_pixel_hash,omitempty"`
-	BudgetSats       int64                  `json:"budget_sats"`
-	Status           string                 `json:"status"` // pending | approved | rejected
-	CreatedAt        time.Time              `json:"created_at"`
-	Tasks            []Task                 `json:"tasks,omitempty"` // suggested tasks (for display; published on approval)
-	Metadata         map[string]interface{} `json:"metadata,omitempty"`
+	ID               string         `json:"id"`
+	Title            string         `json:"title"`
+	DescriptionMD    string         `json:"description_md"`
+	VisiblePixelHash string         `json:"visible_pixel_hash,omitempty"`
+	BudgetSats       int64          `json:"budget_sats"`
+	Status           string         `json:"status"` // pending | approved | rejected
+	CreatedAt        time.Time      `json:"created_at"`
+	Tasks            []Task         `json:"tasks,omitempty"` // suggested tasks (for display; published on approval)
+	Metadata         map[string]any `json:"metadata,omitempty"`
 }
 
 // ProposalFilter captures list filters for proposals.
