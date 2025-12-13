@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"bytes"
+	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -10,8 +12,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
+	sc "stargate-backend/core/smart_contract"
 	scmiddleware "stargate-backend/middleware/smart_contract"
 	"stargate-backend/models"
 	"stargate-backend/services"
@@ -85,6 +90,7 @@ type InscriptionHandler struct {
 	inscriptionService *services.InscriptionService
 	ingestionService   *services.IngestionService
 	proxyBase          string
+	store              scmiddleware.Store
 }
 
 // NewInscriptionHandler creates a new inscription handler
@@ -95,6 +101,11 @@ func NewInscriptionHandler(inscriptionService *services.InscriptionService, inge
 		ingestionService:   ingestionService,
 		proxyBase:          os.Getenv("STARGATE_PROXY_BASE"),
 	}
+}
+
+// SetStore injects the MCP store so inscriptions can be mirrored into open contracts.
+func (h *InscriptionHandler) SetStore(store scmiddleware.Store) {
+	h.store = store
 }
 
 func placeholderPNG() []byte {
@@ -118,6 +129,19 @@ func (h *InscriptionHandler) HandleGetInscriptions(w http.ResponseWriter, r *htt
 	}
 
 	var inscriptions []models.InscriptionRequest
+
+	// Prefer open-contracts (MCP store) to keep UI + AI in sync.
+	if h.store != nil {
+		if contracts, err := h.store.ListContracts("", nil); err == nil {
+			for _, c := range contracts {
+				inscriptions = append(inscriptions, h.fromContract(c))
+			}
+		} else {
+			fmt.Printf("Failed to list contracts for pending view: %v\n", err)
+		}
+	}
+
+	// Also include ingestion queue (recent uploads) to surface not-yet-published items.
 	if h.ingestionService != nil {
 		if recs, err := h.ingestionService.ListRecent("", 200); err == nil {
 			for _, rec := range recs {
@@ -174,6 +198,45 @@ func (h *InscriptionHandler) fromIngestion(rec services.IngestionRecord) models.
 		Timestamp: rec.CreatedAt.Unix(),
 		ID:        rec.ID,
 		Status:    rec.Status,
+	}
+}
+
+func (h *InscriptionHandler) fromContract(c sc.Contract) models.InscriptionRequest {
+	return models.InscriptionRequest{
+		ImageData: "", // not tracked here; UI can resolve via open-contract metadata later
+		Text:      c.Title,
+		Price:     float64(c.TotalBudgetSats) / 1e8,
+		Timestamp: time.Now().Unix(),
+		ID:        c.ContractID,
+		Status:    c.Status,
+	}
+}
+
+func computeVisiblePixelHash(imageBytes []byte, text string) string {
+	sum := sha256.Sum256(append(imageBytes, []byte(text)...))
+	return fmt.Sprintf("%x", sum[:8]) // short hash for usability
+}
+
+func (h *InscriptionHandler) upsertOpenContract(visibleHash, title, priceStr string) {
+	if h.store == nil || visibleHash == "" {
+		return
+	}
+	priceSat, _ := strconv.ParseInt(priceStr, 10, 64)
+	contract := sc.Contract{
+		ContractID:          visibleHash,
+		Title:               title,
+		TotalBudgetSats:     priceSat,
+		GoalsCount:          0,
+		AvailableTasksCount: 0,
+		Status:              "pending",
+	}
+
+	// Prefer stores that expose UpsertContractWithTasks for idempotency.
+	type upserter interface {
+		UpsertContractWithTasks(ctx context.Context, contract sc.Contract, tasks []sc.Task) error
+	}
+	if u, ok := h.store.(upserter); ok {
+		_ = u.UpsertContractWithTasks(context.Background(), contract, nil)
 	}
 }
 
@@ -364,12 +427,14 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 	// Auto-create ingestion record for MCP sync so proposals are generated.
 	if h.ingestionService != nil {
 		imgB64 := base64.StdEncoding.EncodeToString(fallbackBytes)
+		visibleHash := computeVisiblePixelHash(fallbackBytes, text)
 		meta := map[string]interface{}{
-			"embedded_message": text,
-			"message":          text,
-			"price":            price,
-			"address":          address,
-			"ingestion_id":     inscription.ID,
+			"embedded_message":   text,
+			"message":            text,
+			"price":              price,
+			"address":            address,
+			"ingestion_id":       inscription.ID,
+			"visible_pixel_hash": visibleHash,
 		}
 		ingRec := services.IngestionRecord{
 			ID:            inscription.ID,
@@ -386,6 +451,9 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 		if err := h.ingestionService.Create(ingRec); err != nil {
 			fmt.Printf("Failed to create ingestion record for %s: %v\n", inscription.ID, err)
 		}
+
+		// Mirror into MCP contracts/open-contracts for AI + UI consistency.
+		h.upsertOpenContract(visibleHash, text, price)
 	}
 
 	h.sendSuccess(w, map[string]string{

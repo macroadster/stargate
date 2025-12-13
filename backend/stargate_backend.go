@@ -250,6 +250,8 @@ func runHTTPServer() {
 
 	// Set the smart contract handler with the store
 	container.SetSmartContractHandler(store)
+	// Also allow inscription handler to mirror into MCP store
+	container.InscriptionHandler.SetStore(store)
 
 	// Start MCP background services if using PostgreSQL AND MCP server is not running separately
 	if os.Getenv("STARGATE_MODE") != "mcp-only" && os.Getenv("STARGATE_MODE") != "both" {
