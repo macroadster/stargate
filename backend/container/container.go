@@ -115,7 +115,7 @@ func NewContainer() *Container {
 
 // SetSmartContractHandler sets the smart contract handler with the MCP store
 func (c *Container) SetSmartContractHandler(store scmiddleware.Store) {
-	c.SmartContractHandler = handlers.NewSmartContractHandler(c.SmartContractService, store)
+	c.SmartContractHandler = handlers.NewSmartContractHandler(c.SmartContractService, store, c.IngestionService)
 }
 
 // initIngestionService retries connecting to Postgres a few times to avoid startup races.

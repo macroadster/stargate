@@ -250,6 +250,29 @@ func computeVisiblePixelHash(imageBytes []byte, text string) string {
 	return fmt.Sprintf("%x", sum[:8]) // short hash for usability
 }
 
+// ensureIngestionImageFile writes the base64 image to uploads dir if missing and returns the path.
+func ensureIngestionImageFile(rec services.IngestionRecord) (string, error) {
+	uploadsDir := os.Getenv("UPLOADS_DIR")
+	if uploadsDir == "" {
+		uploadsDir = "/data/uploads"
+	}
+	if err := os.MkdirAll(uploadsDir, 0755); err != nil {
+		return "", err
+	}
+	target := filepath.Join(uploadsDir, rec.Filename)
+	if _, err := os.Stat(target); err == nil {
+		return target, nil
+	}
+	data, err := base64.StdEncoding.DecodeString(rec.ImageBase64)
+	if err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(target, data, 0644); err != nil {
+		return "", err
+	}
+	return target, nil
+}
+
 func (h *InscriptionHandler) upsertOpenContract(visibleHash, title, priceStr string) {
 	if h.store == nil || visibleHash == "" {
 		return
@@ -543,14 +566,16 @@ type SmartContractHandler struct {
 	*BaseHandler
 	contractService *services.SmartContractService
 	store           scmiddleware.Store
+	ingestion       *services.IngestionService
 }
 
 // NewSmartContractHandler creates a new smart contract handler
-func NewSmartContractHandler(contractService *services.SmartContractService, store scmiddleware.Store) *SmartContractHandler {
+func NewSmartContractHandler(contractService *services.SmartContractService, store scmiddleware.Store, ingestion *services.IngestionService) *SmartContractHandler {
 	return &SmartContractHandler{
 		BaseHandler:     NewBaseHandler(),
 		contractService: contractService,
 		store:           store,
+		ingestion:       ingestion,
 	}
 }
 
@@ -584,6 +609,19 @@ func (h *SmartContractHandler) HandleGetContracts(w http.ResponseWriter, r *http
 				"status":            contract.Status,
 			},
 		}
+
+		// Enrich with ingestion image (stego) if available.
+		if h.ingestion != nil {
+			if rec, err := h.ingestion.Get(contract.ContractID); err == nil {
+				if stegoPath, serr := ensureIngestionImageFile(*rec); serr == nil {
+					url := "/uploads/" + filepath.Base(stegoPath)
+					result.StegoImage = url
+					result.Metadata["stego_image_url"] = url
+					result.Metadata["ingestion_id"] = rec.ID
+				}
+			}
+		}
+
 		results = append(results, result)
 	}
 
