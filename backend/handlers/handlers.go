@@ -129,17 +129,17 @@ func (h *InscriptionHandler) HandleGetInscriptions(w http.ResponseWriter, r *htt
 	}
 
 	var inscriptions []models.InscriptionRequest
-	dedupe := make(map[string]bool)
-	includeLegacy := r.URL.Query().Get("legacy") == "true" || r.URL.Query().Get("legacy") == "1"
+	dedupe := make(map[string]int) // id -> index in inscriptions
+	includeLegacyOnly := r.URL.Query().Get("legacy") == "true" || r.URL.Query().Get("legacy") == "1"
 
 	// Prefer open-contracts (MCP store) to keep UI + AI in sync.
 	if h.store != nil {
 		if contracts, err := h.store.ListContracts("", nil); err == nil {
 			for _, c := range contracts {
 				item := h.fromContract(c)
-				if !dedupe[item.ID] {
+				if _, ok := dedupe[item.ID]; !ok {
+					dedupe[item.ID] = len(inscriptions)
 					inscriptions = append(inscriptions, item)
-					dedupe[item.ID] = true
 				}
 			}
 		} else {
@@ -147,14 +147,26 @@ func (h *InscriptionHandler) HandleGetInscriptions(w http.ResponseWriter, r *htt
 		}
 	}
 
-	// Also include ingestion queue (recent uploads) to surface not-yet-published items.
-	if includeLegacy && h.ingestionService != nil {
+	// Always include ingestion queue to attach images/text; merge into existing items when IDs match.
+	if h.ingestionService != nil {
 		if recs, err := h.ingestionService.ListRecent("", 200); err == nil {
 			for _, rec := range recs {
 				item := h.fromIngestion(rec)
-				if !dedupe[item.ID] {
+				if idx, ok := dedupe[item.ID]; ok {
+					// Enrich existing entry with image/text if missing.
+					if inscriptions[idx].ImageData == "" && item.ImageData != "" {
+						inscriptions[idx].ImageData = item.ImageData
+					}
+					if inscriptions[idx].Text == "" && item.Text != "" {
+						inscriptions[idx].Text = item.Text
+					}
+					if inscriptions[idx].Status == "" {
+						inscriptions[idx].Status = item.Status
+					}
+				} else if includeLegacyOnly {
+					// Only add new ingestion-only rows when legacy flag set
+					dedupe[item.ID] = len(inscriptions)
 					inscriptions = append(inscriptions, item)
-					dedupe[item.ID] = true
 				}
 			}
 		} else {
@@ -163,12 +175,16 @@ func (h *InscriptionHandler) HandleGetInscriptions(w http.ResponseWriter, r *htt
 	}
 
 	// Include legacy file-based pending items for compatibility
-	if includeLegacy {
+	if includeLegacyOnly {
 		if fileInscriptions, err := h.inscriptionService.GetAllInscriptions(); err == nil {
 			for _, ins := range fileInscriptions {
-				if !dedupe[ins.ID] {
+				if idx, ok := dedupe[ins.ID]; ok {
+					if inscriptions[idx].ImageData == "" && ins.ImageData != "" {
+						inscriptions[idx].ImageData = ins.ImageData
+					}
+				} else {
+					dedupe[ins.ID] = len(inscriptions)
 					inscriptions = append(inscriptions, ins)
-					dedupe[ins.ID] = true
 				}
 			}
 		} else {
