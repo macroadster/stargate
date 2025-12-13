@@ -129,12 +129,18 @@ func (h *InscriptionHandler) HandleGetInscriptions(w http.ResponseWriter, r *htt
 	}
 
 	var inscriptions []models.InscriptionRequest
+	dedupe := make(map[string]bool)
+	includeLegacy := r.URL.Query().Get("legacy") == "true" || r.URL.Query().Get("legacy") == "1"
 
 	// Prefer open-contracts (MCP store) to keep UI + AI in sync.
 	if h.store != nil {
 		if contracts, err := h.store.ListContracts("", nil); err == nil {
 			for _, c := range contracts {
-				inscriptions = append(inscriptions, h.fromContract(c))
+				item := h.fromContract(c)
+				if !dedupe[item.ID] {
+					inscriptions = append(inscriptions, item)
+					dedupe[item.ID] = true
+				}
 			}
 		} else {
 			fmt.Printf("Failed to list contracts for pending view: %v\n", err)
@@ -142,10 +148,14 @@ func (h *InscriptionHandler) HandleGetInscriptions(w http.ResponseWriter, r *htt
 	}
 
 	// Also include ingestion queue (recent uploads) to surface not-yet-published items.
-	if h.ingestionService != nil {
+	if includeLegacy && h.ingestionService != nil {
 		if recs, err := h.ingestionService.ListRecent("", 200); err == nil {
 			for _, rec := range recs {
-				inscriptions = append(inscriptions, h.fromIngestion(rec))
+				item := h.fromIngestion(rec)
+				if !dedupe[item.ID] {
+					inscriptions = append(inscriptions, item)
+					dedupe[item.ID] = true
+				}
 			}
 		} else {
 			fmt.Printf("Failed to read ingestion records: %v\n", err)
@@ -153,10 +163,17 @@ func (h *InscriptionHandler) HandleGetInscriptions(w http.ResponseWriter, r *htt
 	}
 
 	// Include legacy file-based pending items for compatibility
-	if fileInscriptions, err := h.inscriptionService.GetAllInscriptions(); err == nil {
-		inscriptions = append(inscriptions, fileInscriptions...)
-	} else {
-		fmt.Printf("Failed to get file-based inscriptions: %v\n", err)
+	if includeLegacy {
+		if fileInscriptions, err := h.inscriptionService.GetAllInscriptions(); err == nil {
+			for _, ins := range fileInscriptions {
+				if !dedupe[ins.ID] {
+					inscriptions = append(inscriptions, ins)
+					dedupe[ins.ID] = true
+				}
+			}
+		} else {
+			fmt.Printf("Failed to get file-based inscriptions: %v\n", err)
+		}
 	}
 
 	response := models.PendingTransactionsResponse{
@@ -351,18 +368,55 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 		}
 	}
 
+	// Ensure we have image bytes & filename for downstream hashing/storage
+	if len(imgBytes) == 0 {
+		imgBytes = placeholderPNG()
+		if filename == "" {
+			filename = "placeholder.png"
+		}
+	}
+	visibleHash := computeVisiblePixelHash(imgBytes, text)
+	ingestionID := visibleHash
+	if ingestionID == "" {
+		ingestionID = fmt.Sprintf("pending_%d", time.Now().UnixNano())
+	}
+
+	// Seed ingestion + MCP contract before proxy so both UIs see it even on proxy success.
+	if h.ingestionService != nil {
+		imgB64 := base64.StdEncoding.EncodeToString(imgBytes)
+		meta := map[string]interface{}{
+			"embedded_message":   text,
+			"message":            text,
+			"price":              price,
+			"address":            address,
+			"ingestion_id":       ingestionID,
+			"visible_pixel_hash": visibleHash,
+		}
+		ingRec := services.IngestionRecord{
+			ID:            ingestionID,
+			Filename:      filename,
+			Method:        method,
+			MessageLength: len(text),
+			ImageBase64:   imgB64,
+			Metadata:      meta,
+			Status:        "pending",
+		}
+		if ingRec.Filename == "" {
+			ingRec.Filename = "inscription.png"
+		}
+		if err := h.ingestionService.Create(ingRec); err != nil {
+			fmt.Printf("Failed to create ingestion record for %s: %v\n", ingestionID, err)
+		}
+	}
+	// Mirror into MCP contracts/open-contracts for AI + UI consistency.
+	h.upsertOpenContract(visibleHash, text, price)
+
 	// Proxy to starlight /inscribe to avoid direct frontend → Python exposure
 	if h.proxyBase != "" {
 		var buf bytes.Buffer
 		writer := multipart.NewWriter(&buf)
 
 		// File part (required by starlight)
-		if len(imgBytes) == 0 {
-			imgBytes = placeholderPNG()
-			if filename == "" {
-				filename = "placeholder.png"
-			}
-		}
 		part, _ := writer.CreateFormFile("image", filename)
 		part.Write(imgBytes)
 
@@ -392,6 +446,7 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 			defer resp.Body.Close()
 			body, _ := io.ReadAll(resp.Body)
 			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				// We already mirrored to MCP; just return proxy response.
 				w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
 				w.WriteHeader(resp.StatusCode)
 				w.Write(body)
@@ -426,39 +481,14 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 
 	// Auto-create ingestion record for MCP sync so proposals are generated.
 	if h.ingestionService != nil {
-		imgB64 := base64.StdEncoding.EncodeToString(fallbackBytes)
-		visibleHash := computeVisiblePixelHash(fallbackBytes, text)
-		meta := map[string]interface{}{
-			"embedded_message":   text,
-			"message":            text,
-			"price":              price,
-			"address":            address,
-			"ingestion_id":       inscription.ID,
-			"visible_pixel_hash": visibleHash,
-		}
-		ingRec := services.IngestionRecord{
-			ID:            inscription.ID,
-			Filename:      filename,
-			Method:        method,
-			MessageLength: len(text),
-			ImageBase64:   imgB64,
-			Metadata:      meta,
-			Status:        "pending",
-		}
-		if ingRec.Filename == "" {
-			ingRec.Filename = "inscription.png"
-		}
-		if err := h.ingestionService.Create(ingRec); err != nil {
-			fmt.Printf("Failed to create ingestion record for %s: %v\n", inscription.ID, err)
-		}
-
-		// Mirror into MCP contracts/open-contracts for AI + UI consistency.
-		h.upsertOpenContract(visibleHash, text, price)
+		// Already created ingestion/upsert above; skip duplicate creation here.
 	}
 
 	h.sendSuccess(w, map[string]string{
-		"status": "success",
-		"id":     inscription.ID,
+		"status":             "success",
+		"id":                 inscription.ID,
+		"ingestion_id":       ingestionID,
+		"visible_pixel_hash": visibleHash,
 	})
 }
 
