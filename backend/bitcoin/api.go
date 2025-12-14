@@ -23,7 +23,9 @@ type BitcoinAPI struct {
 
 // NewBitcoinAPI creates a new Bitcoin API instance
 func NewBitcoinAPI() *BitcoinAPI {
-	return NewBitcoinAPIWithClient(NewBitcoinNodeClient("https://blockstream.info/api"))
+	network := GetCurrentNetwork()
+	config := GetNetworkConfig(network)
+	return NewBitcoinAPIWithClient(NewBitcoinNodeClient(config.BaseURL))
 }
 
 // NewBitcoinAPIWithClient creates a new Bitcoin API instance with custom client
@@ -88,6 +90,7 @@ func (api *BitcoinAPI) HandleHealth(w http.ResponseWriter, r *http.Request) {
 			NodeURL:       api.bitcoinClient.GetNodeURL(),
 			BlockHeight:   blockHeight,
 		},
+		"network":   GetCurrentNetwork(),
 		"timestamp": time.Now().Format(time.RFC3339),
 	}
 

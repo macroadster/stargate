@@ -211,7 +211,7 @@ func startMCPServices() {
 		if env := os.Getenv("MCP_FUNDING_PROVIDER"); env != "" {
 			fundingProvider = env
 		}
-		fundingAPIBase := "https://blockstream.info/api"
+		fundingAPIBase := bitcoin.GetNetworkConfig(bitcoin.GetCurrentNetwork()).BaseURL
 		if env := os.Getenv("MCP_FUNDING_API_BASE"); env != "" {
 			fundingAPIBase = env
 		}
@@ -382,8 +382,10 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 
 	// Enhanced data API endpoints (keep existing functionality)
 	dataStorage := container.DataStorage
+	bitcoinNetwork := bitcoin.GetCurrentNetwork()
+	bitcoinClient := bitcoin.NewBitcoinNodeClientForNetwork(bitcoinNetwork)
 	blockMonitor := bitcoin.NewBlockMonitorWithStorageAndAPI(
-		bitcoin.NewBitcoinNodeClient("https://blockstream.info/api"),
+		bitcoinClient,
 		dataStorage,
 		bitcoinAPI,
 	)

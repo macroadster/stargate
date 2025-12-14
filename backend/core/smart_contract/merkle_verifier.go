@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"time"
 )
 
@@ -191,10 +192,24 @@ type BlockHeader struct {
 
 // getTransactionData fetches transaction data from blockchain API
 func (mpv *MerkleProofVerifier) getTransactionData(txID string) (*TransactionData, error) {
+	// Determine network
+	network := os.Getenv("BITCOIN_NETWORK")
+	if network == "" {
+		network = "mainnet"
+	}
+
 	// Try multiple blockchain APIs
-	apis := []string{
-		"https://blockstream.info/api/tx/" + txID,
-		"https://api.blockcypher.com/v1/btc/main/txs/" + txID,
+	var apis []string
+	if network == "testnet" {
+		apis = []string{
+			"https://blockstream.info/testnet/api/tx/" + txID,
+			"https://api.blockcypher.com/v1/btc/test3/txs/" + txID,
+		}
+	} else {
+		apis = []string{
+			"https://blockstream.info/api/tx/" + txID,
+			"https://api.blockcypher.com/v1/btc/main/txs/" + txID,
+		}
 	}
 
 	for _, apiURL := range apis {
@@ -224,9 +239,23 @@ func (mpv *MerkleProofVerifier) getTransactionData(txID string) (*TransactionDat
 
 // getBlockHeader fetches block header data from blockchain API
 func (mpv *MerkleProofVerifier) getBlockHeader(height int64) (*BlockHeader, error) {
-	apis := []string{
-		fmt.Sprintf("https://blockstream.info/api/block-height/%d", height),
-		fmt.Sprintf("https://api.blockcypher.com/v1/btc/main/blocks/%d", height),
+	// Determine network
+	network := os.Getenv("BITCOIN_NETWORK")
+	if network == "" {
+		network = "mainnet"
+	}
+
+	var apis []string
+	if network == "testnet" {
+		apis = []string{
+			fmt.Sprintf("https://blockstream.info/testnet/api/block-height/%d", height),
+			fmt.Sprintf("https://api.blockcypher.com/v1/btc/test3/blocks/%d", height),
+		}
+	} else {
+		apis = []string{
+			fmt.Sprintf("https://blockstream.info/api/block-height/%d", height),
+			fmt.Sprintf("https://api.blockcypher.com/v1/btc/main/blocks/%d", height),
+		}
 	}
 
 	for _, apiURL := range apis {

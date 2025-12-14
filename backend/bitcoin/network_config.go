@@ -11,6 +11,7 @@ type NetworkConfig struct {
 	BaseURL     string
 	ExplorerURL string
 	FaucetURL   string
+	HeightURL   string
 }
 
 // GetNetworkConfig returns configuration for the specified network
@@ -22,6 +23,7 @@ func GetNetworkConfig(network string) *NetworkConfig {
 			BaseURL:     "https://blockstream.info/testnet/api",
 			ExplorerURL: "https://blockstream.info/testnet",
 			FaucetURL:   "https://coinfaucet.eu/en/btc-testnet/",
+			HeightURL:   "https://blockstream.info/testnet/api/blocks/tip/height",
 		}
 	case "mainnet":
 		return &NetworkConfig{
@@ -29,6 +31,7 @@ func GetNetworkConfig(network string) *NetworkConfig {
 			BaseURL:     "https://blockstream.info/api",
 			ExplorerURL: "https://blockstream.info",
 			FaucetURL:   "",
+			HeightURL:   "https://blockstream.info/api/blocks/tip/height",
 		}
 	case "signet":
 		return &NetworkConfig{
@@ -36,6 +39,7 @@ func GetNetworkConfig(network string) *NetworkConfig {
 			BaseURL:     "https://mempool.space/signet/api",
 			ExplorerURL: "https://mempool.space/signet",
 			FaucetURL:   "https://signetfaucet.com/",
+			HeightURL:   "https://mempool.space/signet/api/blocks/tip/height",
 		}
 	default:
 		log.Printf("Unknown network '%s', defaulting to mainnet", network)

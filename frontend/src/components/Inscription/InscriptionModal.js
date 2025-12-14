@@ -17,6 +17,7 @@ const InscriptionModal = ({ inscription, onClose }) => {
   const { auth } = useAuth();
   const [activeTab, setActiveTab] = useState('overview');
   const [monoContent, setMonoContent] = useState(true);
+  const [network, setNetwork] = useState('mainnet');
   const [proposalItems, setProposalItems] = useState([]);
   const [isLoadingProposals, setIsLoadingProposals] = useState(false);
   const [proposalError, setProposalError] = useState('');
@@ -25,6 +26,22 @@ const InscriptionModal = ({ inscription, onClose }) => {
   const lastFetchedKeyRef = React.useRef('');
   const hasFetchedRef = React.useRef(false);
   const refreshIntervalRef = React.useRef(null);
+
+  // Fetch network info
+  useEffect(() => {
+    const fetchNetwork = async () => {
+      try {
+        const response = await fetch(`${API_BASE}/bitcoin/v1/health`);
+        if (response.ok) {
+          const data = await response.json();
+          setNetwork(data.network || 'mainnet');
+        }
+      } catch (error) {
+        console.error('Failed to fetch network info:', error);
+      }
+    };
+    fetchNetwork();
+  }, []);
   const inscriptionMessageRaw = inscription.text || inscription.metadata?.embedded_message || inscription.metadata?.extracted_message || '';
   const inscriptionPriceRaw = inscription.price ?? inscription.metadata?.price ?? null;
   const inscriptionAddressRaw = inscription.address ?? inscription.metadata?.address ?? '';
@@ -908,10 +925,10 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                             {inscription.block_height || inscription.genesis_block_height || 'Unknown'}
                           </span>
                         </div>
-                        <div className="flex items-center justify-between">
-                          <span className="text-purple-700 dark:text-purple-300 text-sm">Network</span>
-                          <span className="text-purple-900 dark:text-purple-100 font-semibold">Bitcoin Mainnet</span>
-                        </div>
+                         <div className="flex items-center justify-between">
+                           <span className="text-purple-700 dark:text-purple-300 text-sm">Network</span>
+                           <span className="text-purple-900 dark:text-purple-100 font-semibold">Bitcoin {network.charAt(0).toUpperCase() + network.slice(1)}</span>
+                         </div>
                       </div>
                     </div>
                   </div>

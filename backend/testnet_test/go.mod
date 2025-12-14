@@ -1,6 +1,6 @@
 module testnet_test
 
-go 1.22
+go 1.23.0
 
 replace stargate-backend => ../
 

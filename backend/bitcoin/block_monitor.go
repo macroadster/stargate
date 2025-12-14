@@ -144,7 +144,7 @@ type BlockInscriptionsResponse struct {
 func NewBlockMonitor(client *BitcoinNodeClient) *BlockMonitor {
 	return &BlockMonitor{
 		bitcoinClient: client,
-		rawClient:     NewRawBlockClient(),
+		rawClient:     NewRawBlockClient(client.GetNetwork()),
 		checkInterval: 5 * time.Minute, // Check every 5 minutes
 		blocksDir:     blocksDirFromEnv(),
 		maxRetries:    3,
@@ -157,7 +157,7 @@ func NewBlockMonitor(client *BitcoinNodeClient) *BlockMonitor {
 func NewBlockMonitorWithStorage(client *BitcoinNodeClient, dataStorage DataStorageInterface) *BlockMonitor {
 	return &BlockMonitor{
 		bitcoinClient: client,
-		rawClient:     NewRawBlockClient(),
+		rawClient:     NewRawBlockClient(client.GetNetwork()),
 		dataStorage:   dataStorage,
 		checkInterval: 5 * time.Minute, // Check every 5 minutes
 		blocksDir:     blocksDirFromEnv(),
@@ -171,7 +171,7 @@ func NewBlockMonitorWithStorage(client *BitcoinNodeClient, dataStorage DataStora
 func NewBlockMonitorWithAPI(client *BitcoinNodeClient, bitcoinAPI *BitcoinAPI) *BlockMonitor {
 	return &BlockMonitor{
 		bitcoinClient: client,
-		rawClient:     NewRawBlockClient(),
+		rawClient:     NewRawBlockClient(client.GetNetwork()),
 		bitcoinAPI:    bitcoinAPI,
 		checkInterval: 5 * time.Minute, // Check every 5 minutes
 		blocksDir:     blocksDirFromEnv(),
@@ -186,7 +186,7 @@ func NewBlockMonitorWithStorageAndAPI(client *BitcoinNodeClient, dataStorage Dat
 	log.Printf("Creating block monitor with bitcoinAPI set: %v", bitcoinAPI != nil)
 	return &BlockMonitor{
 		bitcoinClient: client,
-		rawClient:     NewRawBlockClient(),
+		rawClient:     NewRawBlockClient(client.GetNetwork()),
 		dataStorage:   dataStorage,
 		bitcoinAPI:    bitcoinAPI,
 		checkInterval: 5 * time.Minute, // Check every 5 minutes
@@ -441,31 +441,9 @@ func (bm *BlockMonitor) checkForNewBlocks() error {
 	return nil
 }
 
-// getCurrentHeightFromBlockchainInfo gets current height from blockchain.info
+// getCurrentHeightFromBlockchainInfo gets current height from the configured Bitcoin network
 func (bm *BlockMonitor) getCurrentHeightFromBlockchainInfo() (int64, error) {
-	client := &http.Client{Timeout: 30 * time.Second}
-
-	resp, err := client.Get("https://blockchain.info/q/getblockcount")
-	if err != nil {
-		return 0, fmt.Errorf("failed to get block count: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		return 0, fmt.Errorf("blockchain.info returned status %d", resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return 0, fmt.Errorf("failed to read response: %w", err)
-	}
-
-	height, err := strconv.ParseInt(strings.TrimSpace(string(body)), 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("failed to parse height: %w", err)
-	}
-
-	return height, nil
+	return bm.bitcoinClient.GetCurrentHeight()
 }
 
 // ProcessBlock downloads and processes a single block using raw block parser (exported for external use)

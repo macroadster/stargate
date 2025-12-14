@@ -82,17 +82,25 @@ type BitcoinNodeClient struct {
 	httpClient  *http.Client
 	baseURL     string
 	rateLimiter *RateLimiter
+	network     string
 	mu          sync.RWMutex
 }
 
 // NewBitcoinNodeClient creates a new Bitcoin node client
 func NewBitcoinNodeClient(baseURL string) *BitcoinNodeClient {
+	network := "mainnet"
+	if strings.Contains(baseURL, "testnet") {
+		network = "testnet"
+	} else if strings.Contains(baseURL, "signet") {
+		network = "signet"
+	}
 	return &BitcoinNodeClient{
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
 		baseURL:     baseURL,
 		rateLimiter: NewRateLimiter(100, time.Hour, 1*time.Second),
+		network:     network,
 	}
 }
 
@@ -264,6 +272,11 @@ func (btc *BitcoinNodeClient) TestConnection() bool {
 // GetNodeURL returns the base URL of the Bitcoin node
 func (btc *BitcoinNodeClient) GetNodeURL() string {
 	return btc.baseURL
+}
+
+// GetNetwork returns the network of the Bitcoin node
+func (btc *BitcoinNodeClient) GetNetwork() string {
+	return btc.network
 }
 
 // GetBlockHeight gets the current block height

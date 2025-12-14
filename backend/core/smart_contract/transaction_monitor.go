@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
@@ -195,10 +196,24 @@ func (tm *TransactionMonitor) checkTransactionStatus(_ context.Context, tx *Moni
 
 // getTransactionData fetches transaction data from blockchain APIs
 func (tm *TransactionMonitor) getTransactionData(txID string) (*TransactionData, error) {
+	// Determine network
+	network := os.Getenv("BITCOIN_NETWORK")
+	if network == "" {
+		network = "mainnet"
+	}
+
 	// Try multiple blockchain APIs
-	apis := []string{
-		"https://blockstream.info/api/tx/" + txID,
-		"https://api.blockcypher.com/v1/btc/main/txs/" + txID,
+	var apis []string
+	if network == "testnet" {
+		apis = []string{
+			"https://blockstream.info/testnet/api/tx/" + txID,
+			"https://api.blockcypher.com/v1/btc/test3/txs/" + txID,
+		}
+	} else {
+		apis = []string{
+			"https://blockstream.info/api/tx/" + txID,
+			"https://api.blockcypher.com/v1/btc/main/txs/" + txID,
+		}
 	}
 
 	for _, apiURL := range apis {

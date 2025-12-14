@@ -19,20 +19,25 @@ type RawBlockClient struct {
 	rateLimiter   *RateLimiter
 	connected     bool
 	totalRequests int64
+	network       string
 }
 
 // NewRawBlockClient creates a new raw block client
-func NewRawBlockClient() *RawBlockClient {
+func NewRawBlockClient(network string) *RawBlockClient {
+	if network == "" {
+		network = "mainnet"
+	}
 	return &RawBlockClient{
 		httpClient: &http.Client{
 			Timeout: 60 * time.Second, // Longer timeout for large blocks
 		},
 		rateLimiter: NewRateLimiter(30, time.Hour, 5*time.Second), // Ultra conservative: 30 requests/hour, min 5s between requests
 		connected:   false,
+		network:     network,
 	}
 }
 
-// GetRawBlockHex downloads raw block data as hex from blockchain.info
+// GetRawBlockHex downloads raw block data as hex from multiple sources
 func (rbc *RawBlockClient) GetRawBlockHex(blockHeight int64) (string, error) {
 	rbc.totalRequests++
 
@@ -41,24 +46,97 @@ func (rbc *RawBlockClient) GetRawBlockHex(blockHeight int64) (string, error) {
 		return "", fmt.Errorf("rate limit exceeded")
 	}
 
-	// Use blockchain.info API for raw block hex
-	url := fmt.Sprintf("https://blockchain.info/rawblock/%d?format=hex", blockHeight)
+	// Try multiple APIs for raw block hex
+	apis := rbc.getRawBlockAPIs(blockHeight)
 
-	log.Printf("Downloading raw block %d as hex from %s", blockHeight, url)
+	for _, apiURL := range apis {
+		log.Printf("Trying to download raw block %d from %s", blockHeight, apiURL)
+
+		resp, err := rbc.httpClient.Get(apiURL)
+		if err != nil {
+			log.Printf("Failed to fetch from %s: %v", apiURL, err)
+			continue
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode == 200 {
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				log.Printf("Failed to read response from %s: %v", apiURL, err)
+				continue
+			}
+
+			var hexData string
+			if strings.Contains(apiURL, "blockstream.info") || strings.Contains(apiURL, "mempool.space") {
+				// Blockstream returns binary data, convert to hex
+				hexData = hex.EncodeToString(body)
+			} else {
+				// blockchain.info returns hex string
+				hexData = strings.TrimSpace(string(body))
+			}
+
+			if len(hexData) > 0 {
+				log.Printf("Successfully downloaded raw block %d (%d hex chars)", blockHeight, len(hexData))
+				return hexData, nil
+			}
+		} else {
+			log.Printf("API %s returned status %d", apiURL, resp.StatusCode)
+		}
+	}
+
+	return "", fmt.Errorf("failed to fetch raw block from all APIs")
+}
+
+// getRawBlockAPIs returns a list of APIs to try for raw block data
+func (rbc *RawBlockClient) getRawBlockAPIs(blockHeight int64) []string {
+	var apis []string
+
+	// Primary: Blockstream API (supports mainnet and testnet)
+	var blockstreamBase string
+	if rbc.network == "testnet" {
+		blockstreamBase = "https://blockstream.info/testnet/api"
+	} else if rbc.network == "signet" {
+		blockstreamBase = "https://mempool.space/signet/api"
+	} else {
+		blockstreamBase = "https://blockstream.info/api"
+	}
+
+	// For blockstream, we need to get hash first, then raw
+	if hash, err := rbc.getBlockHashFromBlockstream(blockstreamBase, blockHeight); err == nil {
+		apis = append(apis, fmt.Sprintf("%s/block/%s/raw", blockstreamBase, hash))
+	}
+
+	// Fallback: blockchain.info (only for mainnet/testnet)
+	if rbc.network == "mainnet" || rbc.network == "testnet" {
+		var blockchainBase string
+		if rbc.network == "testnet" {
+			blockchainBase = "https://testnet.blockchain.info"
+		} else {
+			blockchainBase = "https://blockchain.info"
+		}
+		apis = append(apis, fmt.Sprintf("%s/rawblock/%d?format=hex", blockchainBase, blockHeight))
+	}
+
+	return apis
+}
+
+// getBlockHashFromBlockstream gets block hash from blockstream API
+func (rbc *RawBlockClient) getBlockHashFromBlockstream(baseURL string, height int64) (string, error) {
+	url := fmt.Sprintf("%s/block-height/%d", baseURL, height)
 
 	resp, err := rbc.httpClient.Get(url)
 	if err != nil {
-		return "", fmt.Errorf("failed to fetch block: %w", err)
+		return "", err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("API returned status %d", resp.StatusCode)
+		return "", fmt.Errorf("status %d", resp.StatusCode)
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", fmt.Errorf("failed to read response: %w", err)
+		return "", err
 	}
 
 	return strings.TrimSpace(string(body)), nil

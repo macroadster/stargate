@@ -2,6 +2,7 @@ import React from 'react';
 import { render, screen } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import DeliverablesReview from './DeliverablesReview';
+import { AuthProvider } from '../../context/AuthContext';
 
 // Mock API_BASE
 jest.mock('../../apiBase', () => ({
@@ -27,11 +28,13 @@ global.fetch = jest.fn();
 describe('DeliverablesReview', () => {
   test('renders no deliverables message when empty', () => {
     render(
-      <DeliverablesReview
-        proposalItems={[]}
-        submissions={{}}
-        onRefresh={jest.fn()}
-      />
+      <AuthProvider>
+        <DeliverablesReview
+          proposalItems={[]}
+          submissions={{}}
+          onRefresh={jest.fn()}
+        />
+      </AuthProvider>
     );
 
     expect(screen.getByText('No Deliverables Found')).toBeInTheDocument();
