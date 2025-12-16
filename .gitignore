@@ -7,3 +7,4 @@ backend/stargate-backend
 backend/stargate_backend
 backend/stargate_backend_new
 **/*.log
+.gocache/*
