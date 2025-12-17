@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/hex"
 	"testing"
 
 	"github.com/btcsuite/btcd/btcec/v2"
@@ -60,6 +61,39 @@ func TestChooseParamsMainnet(t *testing.T) {
 	if params.Name != chaincfg.MainNetParams.Name {
 		t.Fatalf("expected mainnet params, got %s", params.Name)
 	}
+}
+
+func TestVerifySignatureHexMessageFallback(t *testing.T) {
+	msg := "08d0ff0d35038832e4ddecdcee21baa5" // hex-looking nonce
+	priv, err := btcec.NewPrivateKey()
+	if err != nil {
+		t.Fatalf("failed to create key: %v", err)
+	}
+	pubKeyHash := btcutil.Hash160(priv.PubKey().SerializeCompressed())
+	addr, err := btcutil.NewAddressWitnessPubKeyHash(pubKeyHash, &chaincfg.TestNet4Params)
+	if err != nil {
+		t.Fatalf("failed to build address: %v", err)
+	}
+
+	msgHash := hashBitcoinMessage(string(mustDecodeHex(msg)))
+	sig := ecdsa.SignCompact(priv, msgHash, true)
+	sigB64 := base64.StdEncoding.EncodeToString(sig)
+
+	ok, err := verifyBTCSignature(addr.EncodeAddress(), sigB64, msg)
+	if err != nil {
+		t.Fatalf("verify returned error: %v", err)
+	}
+	if !ok {
+		t.Fatalf("expected verification to pass for hex-looking message")
+	}
+}
+
+func mustDecodeHex(s string) []byte {
+	b, err := hex.DecodeString(s)
+	if err != nil {
+		panic(err)
+	}
+	return b
 }
 
 func TestLegacySignatureAcceptsSegwitAddresses(t *testing.T) {
