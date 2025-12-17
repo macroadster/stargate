@@ -177,7 +177,6 @@ export default function DiscoverPage() {
     }
     const form = psbtInputs[proposal.id] || {};
     const payload = {
-      contractor_api_key: (form.contractorApiKey || '').trim() || undefined,
       contractor_wallet: (form.contractorWallet || '').trim() || undefined,
       pixel_hash: (form.pixelHash || proposal.visible_pixel_hash || '').trim() || undefined,
       budget_sats: Number(form.budgetSats || proposal.budget_sats || 0) || undefined,
@@ -401,34 +400,31 @@ export default function DiscoverPage() {
                       <div>
                         <div className="text-sm font-semibold">Generate PSBT for Sparrow</div>
                         <div className="text-xs text-gray-500">
-                          Uses your API key wallet as payer; contractor wallet/API key required. Pixel hash defaults to contract hash.
+                          Sign in with the funding API key (payer wallet). Contractor wallet only sets the payout output.
                         </div>
                       </div>
                       <button
                         onClick={() => generatePSBT(p)}
-                        disabled={psbtLoading[p.id]}
+                        disabled={psbtLoading[p.id] || !auth.apiKey || !auth.wallet}
                         className="px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-sm disabled:opacity-60"
+                        title={!auth.wallet ? 'Sign in with funding API key (wallet bound)' : ''}
                       >
                         {psbtLoading[p.id] ? 'Building…' : 'Build PSBT'}
                       </button>
                     </div>
+                    {!auth.wallet && (
+                      <div className="text-xs text-amber-600 dark:text-amber-400">
+                        Sign in with the funder API key to use its wallet UTXOs as the payer.
+                      </div>
+                    )}
                     <div className="grid md:grid-cols-2 gap-3 text-sm">
                       <div className="space-y-2">
-                        <label className="block text-xs text-gray-500">Contractor wallet (or address override)</label>
+                        <label className="block text-xs text-gray-500">Contractor wallet (payout)</label>
                         <input
                           className="w-full rounded bg-gray-100 dark:bg-gray-800 px-3 py-2"
                           placeholder="Contractor bc1/tb1..."
                           value={psbtForm.contractorWallet || ''}
                           onChange={(e) => updatePsbtInput(p.id, 'contractorWallet', e.target.value)}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <label className="block text-xs text-gray-500">Contractor API key (optional)</label>
-                        <input
-                          className="w-full rounded bg-gray-100 dark:bg-gray-800 px-3 py-2"
-                          placeholder="Uses wallet bound to this key"
-                          value={psbtForm.contractorApiKey || ''}
-                          onChange={(e) => updatePsbtInput(p.id, 'contractorApiKey', e.target.value)}
                         />
                       </div>
                       <div className="space-y-2">
