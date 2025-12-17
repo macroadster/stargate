@@ -213,11 +213,21 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		target = scstore.DefaultBudgetSats()
 	}
 
-	pixelBytes, _ := hex.DecodeString(strings.TrimSpace(body.PixelHash))
-	if len(pixelBytes) == 0 {
-		// Try using contractID as hash if hex
+	normalizePixel := func(b []byte) []byte {
+		if l := len(b); l == 20 || l == 32 {
+			return b
+		}
+		return nil
+	}
+	var pixelBytes []byte
+	if ph := strings.TrimSpace(body.PixelHash); ph != "" {
+		if b, err := hex.DecodeString(ph); err == nil {
+			pixelBytes = normalizePixel(b)
+		}
+	}
+	if pixelBytes == nil {
 		if h, err := hex.DecodeString(strings.TrimSpace(contractID)); err == nil {
-			pixelBytes = h
+			pixelBytes = normalizePixel(h)
 		}
 	}
 

@@ -84,7 +84,7 @@ func (c *MempoolClient) FetchTx(txid string) (*wire.MsgTx, error) {
 	}
 	raw, err := hex.DecodeString(string(rawHex))
 	if err != nil {
-		return nil, fmt.Errorf("decode tx hex: %w", err)
+		raw = rawHex // raw endpoint may already be bytes
 	}
 	msg := &wire.MsgTx{}
 	if err := msg.Deserialize(bytes.NewReader(raw)); err != nil {
