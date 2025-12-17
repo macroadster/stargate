@@ -329,7 +329,7 @@ func verifyBIP322Simple(address, signature, message string) (bool, error) {
 			Hash:  toSpend.TxHash(),
 			Index: 0,
 		},
-		Sequence: math.MaxUint32,
+		Sequence: 0, // BIP-322 simple uses non-final sequence on the spending input
 	})
 	toSign.TxIn[0].Witness = witness
 
