@@ -23,7 +23,7 @@ const InscriptionModal = ({ inscription, onClose }) => {
   const [proposalError, setProposalError] = useState('');
   const [approvingId, setApprovingId] = useState('');
   const [submissions, setSubmissions] = useState({});
-  const [psbtForm, setPsbtForm] = useState({ contractorWallet: '', pixelHash: '', budgetSats: '', feeRate: 1, contractId: '' });
+  const [psbtForm, setPsbtForm] = useState({ contractorWallet: '', pixelHash: '', budgetSats: '', feeRate: 1, contractId: '', taskId: '' });
   const [psbtResult, setPsbtResult] = useState(null);
   const [psbtError, setPsbtError] = useState('');
   const [psbtLoading, setPsbtLoading] = useState(false);
@@ -71,6 +71,20 @@ const InscriptionModal = ({ inscription, onClose }) => {
   }, [inscription.contract_id, inscription.id, inscription.metadata?.contract_id, inscription.metadata?.ingestion_id]);
   const contractKey = useMemo(() => contractCandidates.join('|'), [contractCandidates]);
   const primaryContractId = useMemo(() => psbtForm.contractId || contractCandidates[0] || inscription.contract_id || inscription.id, [psbtForm.contractId, contractCandidates, inscription.contract_id, inscription.id]);
+  const allTasks = useMemo(() => {
+    const collected = [];
+    proposalItems.forEach((p) => {
+      const tasks = Array.isArray(p.tasks) ? p.tasks : [];
+      tasks.forEach((t) => collected.push({ ...t, proposalId: p.id, visible_pixel_hash: p.visible_pixel_hash || t.visible_pixel_hash }));
+    });
+    return collected;
+  }, [proposalItems]);
+  const selectedTask = useMemo(() => {
+    if (psbtForm.taskId) return allTasks.find((t) => t.task_id === psbtForm.taskId) || allTasks[0];
+    // Prefer task with a funding address if available
+    const withFunding = allTasks.find((t) => t?.merkle_proof?.funding_address);
+    return withFunding || allTasks[0];
+  }, [psbtForm.taskId, allTasks]);
 
   let parsedPayload = null;
   if (typeof inscriptionMessageRaw === 'string') {
@@ -168,11 +182,13 @@ const InscriptionModal = ({ inscription, onClose }) => {
       if (items.length > 0) {
         const first = items[0];
         const preferredHash = first.visible_pixel_hash || psbtForm.pixelHash || inscription.metadata?.visible_pixel_hash || '';
+        const firstTaskWithFunding = allTasks.find((t) => t?.merkle_proof?.funding_address);
         setPsbtForm((prev) => ({
           ...prev,
           pixelHash: preferredHash,
           contractId: prev.contractId || first.id || primaryContractId,
           budgetSats: prev.budgetSats || first.budget_sats || '',
+          taskId: prev.taskId || firstTaskWithFunding?.task_id || allTasks[0]?.task_id || '',
         }));
       }
       if (items.length > 0) {
@@ -241,6 +257,19 @@ const InscriptionModal = ({ inscription, onClose }) => {
       return;
     }
     const contractId = psbtForm.contractId || primaryContractId;
+    const payoutWallet =
+      selectedTask?.merkle_proof?.funding_address ||
+      psbtForm.contractorWallet ||
+      inscription.metadata?.contractor_wallet ||
+      '';
+    if (!selectedTask) {
+      setPsbtError('Select a task to build the PSBT.');
+      return;
+    }
+    if (!payoutWallet) {
+      setPsbtError('No contractor wallet found for this task.');
+      return;
+    }
     if (!contractId) {
       setPsbtError('Missing contract id for PSBT build.');
       return;
@@ -248,9 +277,13 @@ const InscriptionModal = ({ inscription, onClose }) => {
     setPsbtLoading(true);
     try {
       const payload = {
-        contractor_wallet: psbtForm.contractorWallet?.trim() || undefined,
-        pixel_hash: psbtForm.pixelHash?.trim() || undefined,
-        budget_sats: Number(psbtForm.budgetSats || 0) || undefined,
+        contractor_wallet: payoutWallet,
+        pixel_hash:
+          selectedTask?.merkle_proof?.visible_pixel_hash ||
+          psbtForm.pixelHash?.trim() ||
+          inscription.metadata?.visible_pixel_hash ||
+          undefined,
+        budget_sats: Number(psbtForm.budgetSats || selectedTask?.budget_sats || 0) || undefined,
         fee_rate_sats_vb: Number(psbtForm.feeRate || 1) || 1,
       };
       const res = await fetch(`${API_BASE}/api/smart_contract/contracts/${contractId}/psbt`, {
@@ -643,7 +676,7 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                       <div>
                         <h4 className="text-base font-semibold text-black dark:text-white">Generate PSBT (payer = your API key wallet)</h4>
                         <p className="text-xs text-gray-500 dark:text-gray-400">
-                          Uses the funding wallet bound to your API key to source UTXOs; contractor wallet defines the payout output.
+                          Uses the funding wallet bound to your API key to source UTXOs; payout wallet and budget come from the selected task.
                         </p>
                       </div>
                       <button
@@ -662,6 +695,23 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                     )}
                     <div className="grid md:grid-cols-2 gap-3 text-sm mt-3">
                       <div className="space-y-2">
+                        <label className="block text-xs text-gray-500">Task (payout target)</label>
+                        <select
+                          className="w-full rounded bg-gray-100 dark:bg-gray-800 px-3 py-2"
+                          value={psbtForm.taskId || selectedTask?.task_id || ''}
+                          onChange={(e) => setPsbtForm((p) => ({ ...p, taskId: e.target.value }))}
+                        >
+                          {allTasks.map((t) => (
+                            <option key={t.task_id} value={t.task_id}>
+                              {t.task_id} • {t.title}
+                            </option>
+                          ))}
+                        </select>
+                        <div className="text-[11px] text-gray-500">
+                          Budget: {selectedTask?.budget_sats || 'n/a'} sats • Proposal: {selectedTask?.proposalId || 'n/a'}
+                        </div>
+                      </div>
+                      <div className="space-y-2">
                         <label className="block text-xs text-gray-500">Contract ID</label>
                         <input
                           className="w-full rounded bg-gray-100 dark:bg-gray-800 px-3 py-2 font-mono text-xs"
@@ -670,42 +720,23 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                           placeholder="contract id (ingestion/visible hash)"
                         />
                       </div>
-                      <div className="space-y-2">
-                        <label className="block text-xs text-gray-500">Contractor wallet (payout)</label>
+                      <div className="space-y-1">
+                        <label className="block text-xs text-gray-500">Fee rate (sat/vB)</label>
                         <input
                           className="w-full rounded bg-gray-100 dark:bg-gray-800 px-3 py-2"
-                          placeholder="Contractor bc1/tb1..."
-                          value={psbtForm.contractorWallet || ''}
-                          onChange={(e) => setPsbtForm((p) => ({ ...p, contractorWallet: e.target.value }))}
+                          type="number"
+                          value={psbtForm.feeRate || 1}
+                          onChange={(e) => setPsbtForm((p) => ({ ...p, feeRate: e.target.value }))}
                         />
                       </div>
-                      <div className="space-y-2">
-                        <label className="block text-xs text-gray-500">Pixel hash (P2SH/P2WSH, hex)</label>
-                        <input
-                          className="w-full rounded bg-gray-100 dark:bg-gray-800 px-3 py-2 font-mono text-xs"
-                          placeholder="20 or 32 byte hex"
-                          value={psbtForm.pixelHash || ''}
-                          onChange={(e) => setPsbtForm((p) => ({ ...p, pixelHash: e.target.value }))}
-                        />
-                      </div>
-                      <div className="grid grid-cols-2 gap-2">
-                        <div className="space-y-1">
-                          <label className="block text-xs text-gray-500">Budget (sats)</label>
-                          <input
-                            className="w-full rounded bg-gray-100 dark:bg-gray-800 px-3 py-2"
-                            type="number"
-                            value={psbtForm.budgetSats || ''}
-                            onChange={(e) => setPsbtForm((p) => ({ ...p, budgetSats: e.target.value }))}
-                          />
+                      <div className="space-y-1">
+                        <div className="text-xs text-gray-500">Payout wallet</div>
+                        <div className="px-3 py-2 rounded bg-gray-100 dark:bg-gray-800 font-mono text-xs break-all">
+                          {selectedTask?.merkle_proof?.funding_address || inscription.metadata?.contractor_wallet || 'N/A'}
                         </div>
-                        <div className="space-y-1">
-                          <label className="block text-xs text-gray-500">Fee rate (sat/vB)</label>
-                          <input
-                            className="w-full rounded bg-gray-100 dark:bg-gray-800 px-3 py-2"
-                            type="number"
-                            value={psbtForm.feeRate || 1}
-                            onChange={(e) => setPsbtForm((p) => ({ ...p, feeRate: e.target.value }))}
-                          />
+                        <div className="text-xs text-gray-500">Pixel hash</div>
+                        <div className="px-3 py-2 rounded bg-gray-100 dark:bg-gray-800 font-mono text-xs break-all">
+                          {selectedTask?.merkle_proof?.visible_pixel_hash || psbtForm.pixelHash || inscription.metadata?.visible_pixel_hash || 'N/A'}
                         </div>
                       </div>
                     </div>
