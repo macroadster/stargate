@@ -34,6 +34,7 @@ export default function DiscoverPage() {
   const [psbtResults, setPsbtResults] = useState({});
   const [psbtLoading, setPsbtLoading] = useState({});
   const [psbtErrors, setPsbtErrors] = useState({});
+  const [copiedPsbt, setCopiedPsbt] = useState('');
 
   const loadProposals = useCallback(async () => {
     setLoading(true);
@@ -204,6 +205,16 @@ export default function DiscoverPage() {
       setPsbtErrors((prev) => ({ ...prev, [proposal.id]: err.message }));
     } finally {
       setPsbtLoading((prev) => ({ ...prev, [proposal.id]: false }));
+    }
+  };
+
+  const copyToClipboard = async (text, key) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedPsbt(key);
+      setTimeout(() => setCopiedPsbt(''), 1500);
+    } catch (err) {
+      console.error('copy failed', err);
     }
   };
 
@@ -459,6 +470,7 @@ export default function DiscoverPage() {
                         psbtResult.encodedBase64 ||
                         psbtResult.EncodedBase64 ||
                         '';
+                      const psbtBase64 = psbtResult.psbt_base64 || psbtResult.encodedBase64 || psbtResult.EncodedBase64 || '';
                       return (
                       <div className="space-y-2 bg-gray-50 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700 rounded-lg p-3">
                         <div className="text-xs text-gray-600 dark:text-gray-300">
@@ -467,14 +479,36 @@ export default function DiscoverPage() {
                         <div className="text-xs text-gray-600 dark:text-gray-300 break-all">
                           Payout script: {psbtResult.payout_script}
                         </div>
+                        <div className="text-xs text-gray-600 dark:text-gray-300 break-all">
+                          Pixel hash: {psbtResult.pixel_hash || p.visible_pixel_hash || 'n/a'}
+                        </div>
                         <textarea
                           className="w-full rounded bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 font-mono text-xs p-2"
                           rows={3}
                           readOnly
                           value={psbtValue}
                         />
+                        <div className="flex gap-2 text-[11px] text-gray-600 dark:text-gray-300 flex-wrap">
+                          <button
+                            onClick={() => copyToClipboard(psbtValue, `hex-${p.id}`)}
+                            className="px-2 py-1 rounded border border-gray-300 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-700"
+                          >
+                            {copiedPsbt === `hex-${p.id}` ? 'Copied hex' : 'Copy hex'}
+                          </button>
+                          {psbtBase64 && (
+                            <button
+                              onClick={() => copyToClipboard(psbtBase64, `b64-${p.id}`)}
+                              className="px-2 py-1 rounded border border-gray-300 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-700"
+                            >
+                              {copiedPsbt === `b64-${p.id}` ? 'Copied base64' : 'Copy base64'}
+                            </button>
+                          )}
+                          <span>Payer: {auth.wallet || 'bound to your API key'}</span>
+                          <span>Contractor: {psbtResult.contractor || psbtForm.contractorWallet || 'n/a'}</span>
+                          <span>Network: {psbtResult.network_params || 'testnet4'}</span>
+                        </div>
                         <div className="text-[11px] text-gray-500">
-                          Paste into Sparrow (testnet4). Payer: {auth.wallet || 'bound to your API key'}; Contractor: {psbtResult.contractor || psbtForm.contractorWallet || 'n/a'}
+                          Paste the hex PSBT into Sparrow (testnet4). Base64 is available if needed.
                         </div>
                       </div>
                       );
