@@ -3,6 +3,7 @@ package bitcoin
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 
 	"github.com/btcsuite/btcd/btcutil"
@@ -24,6 +25,7 @@ type PSBTRequest struct {
 // PSBTResult summarizes the built PSBT.
 type PSBTResult struct {
 	EncodedBase64 string
+	EncodedHex    string
 	FeeSats       int64
 	ChangeSats    int64
 	SelectedSats  int64
@@ -128,6 +130,7 @@ func BuildFundingPSBT(client *MempoolClient, params *chaincfg.Params, req PSBTRe
 
 	return &PSBTResult{
 		EncodedBase64: base64.StdEncoding.EncodeToString(psbtBytes),
+		EncodedHex:    hex.EncodeToString(psbtBytes),
 		FeeSats:       fee,
 		ChangeSats:    change,
 		SelectedSats:  selectedValue,

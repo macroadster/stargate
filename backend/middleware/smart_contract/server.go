@@ -246,7 +246,9 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 	}
 
 	JSON(w, http.StatusOK, map[string]interface{}{
-		"psbt":           res.EncodedBase64,
+		"psbt":           res.EncodedHex, // primary: hex for wallet import
+		"psbt_hex":       res.EncodedHex,
+		"psbt_base64":    res.EncodedBase64,
 		"fee_sats":       res.FeeSats,
 		"change_sats":    res.ChangeSats,
 		"selected_sats":  res.SelectedSats,
