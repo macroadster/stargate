@@ -1,7 +1,31 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 
 const InscriptionCard = ({ inscription, onClick }) => {
   const [showTextPreview, setShowTextPreview] = useState(false);
+  const [isVisible, setIsVisible] = useState(false);
+  const containerRef = useRef(null);
+  const mediaObserverRef = useRef(null);
+
+  useEffect(() => {
+    const node = containerRef.current;
+    if (!node) return;
+
+    mediaObserverRef.current = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setIsVisible(true);
+          mediaObserverRef.current?.disconnect();
+        }
+      },
+      { rootMargin: '200px', threshold: 0.05 }
+    );
+
+    mediaObserverRef.current.observe(node);
+
+    return () => {
+      mediaObserverRef.current?.disconnect();
+    };
+  }, []);
   
   const mime = (inscription.mime_type || '').toLowerCase();
   const hasTextContent = inscription.text || inscription.metadata?.extracted_message;
@@ -13,6 +37,9 @@ const InscriptionCard = ({ inscription, onClick }) => {
   const imageSource = isActuallyImageFile ? (inscription.thumbnail || inscription.image_url) : null;
   const sandboxSrc = inscription.thumbnail || inscription.image_url;
   const sandboxDoc = (isHtmlContent || isSvgContent) ? (inscription.text || '') : '';
+  const shouldLoadMedia = isVisible;
+  const showImage = shouldLoadMedia && imageSource && isActuallyImageFile;
+  const showSandbox = shouldLoadMedia && (isHtmlContent || isSvgContent) && (sandboxSrc || sandboxDoc);
 
   const handleTextPreviewToggle = (e) => {
     e.stopPropagation();
@@ -22,6 +49,7 @@ const InscriptionCard = ({ inscription, onClick }) => {
   return (
     <div
       onClick={() => onClick(inscription)}
+      ref={containerRef}
       className="relative group cursor-pointer"
     >
       <div className="relative overflow-hidden rounded-lg border-2 border-gray-300 dark:border-gray-700 hover:border-indigo-500 transition-all duration-200 bg-white dark:bg-gray-800">
@@ -32,23 +60,26 @@ const InscriptionCard = ({ inscription, onClick }) => {
                 {textContent.length > 200 ? `${textContent.slice(0, 200)}...` : textContent}
               </div>
             </div>
-          ) : (isHtmlContent || isSvgContent) && (sandboxSrc || sandboxDoc) ? (
+          ) : showSandbox ? (
             <div className="absolute inset-0">
               <iframe
                 title={`inscription-${inscription.id}`}
                 src={sandboxSrc || undefined}
                 srcDoc={sandboxSrc ? undefined : sandboxDoc}
                 sandbox=""
+                loading="lazy"
                 referrerPolicy="no-referrer"
                 className="w-full h-full border-0"
               />
             </div>
           ) : (
             <>
-              {imageSource && isActuallyImageFile ? (
+              {showImage ? (
                 <img 
                   src={imageSource} 
                   alt={inscription.file_name || inscription.id}
+                  loading="lazy"
+                  decoding="async"
                   className="max-w-full max-h-full object-contain"
                   onError={(e) => {
                     e.target.style.display = 'none';

@@ -18,21 +18,29 @@ bd sync               # Sync with git
 
 ### Landing the Plane (session completion)
 
-Work is NOT done until `git push` succeeds.
+**When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
 
-1. File issues for any follow-up.
-2. Run quality gates (tests/linters/build) if code changed.
-3. Update issue status (close finished, update in-progress).
-4. Push to remote (required):
+**MANDATORY WORKFLOW:**
+
+1. **File issues for remaining work** - Create issues for anything that needs follow-up
+2. **Run quality gates** (if code changed) - Tests, linters, builds
+3. **Update issue status** - Close finished work, update in-progress items
+4. **PUSH TO REMOTE** - This is MANDATORY:
    ```bash
    git pull --rebase
    bd sync
    git push
-   git status  # must show up to date with origin
+   git status  # MUST show "up to date with origin"
    ```
-5. Clean up (clear stashes, prune remote branches).
-6. Verify all changes are committed and pushed.
-7. Hand off with context for the next session.
+5. **Clean up** - Clear stashes, prune remote branches
+6. **Verify** - All changes committed AND pushed
+7. **Hand off** - Provide context for next session
+
+**CRITICAL RULES:**
+- Work is NOT complete until `git push` succeeds
+- NEVER stop before pushing - that leaves work stranded locally
+- NEVER say "ready to push when you are" - YOU must push
+- If push fails, resolve and retry until it succeeds
 
 ## Stargate Development Guide
 

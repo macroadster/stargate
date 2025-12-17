@@ -125,23 +125,7 @@ export const useInscriptions = (selectedBlock) => {
             scanned_at: Date.now() / 1000
           };
         }
-        let textContent = image.content || '';
-
-        // For text inscriptions without inline content, fetch the text payload
-        if (!textContent && (image.content_type || '').startsWith('text/')) {
-          try {
-            let textUrl = `${CONTENT_BASE}/content/${image.tx_id || image.id}`;
-            if (typeof image.input_index === 'number') {
-              textUrl += `?witness=${image.input_index}`;
-            }
-            const resp = await fetch(textUrl);
-            if (resp.ok) {
-              textContent = await resp.text();
-            }
-          } catch (fetchErr) {
-            console.error('Failed to fetch text content for', image.file_name, fetchErr);
-          }
-        }
+        const textContent = image.content || '';
         
         return {
           id: image.tx_id,
