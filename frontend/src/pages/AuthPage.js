@@ -162,7 +162,7 @@ export default function AuthPage() {
         className="w-full mb-4 px-3 py-2 rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700"
         value={wallet}
         onChange={(e) => setWallet(e.target.value)}
-        placeholder="bc1... or m/n/testnet"
+        placeholder="bc1... or m/n/tb1 (testnet3/4)"
       />
       <button
         onClick={handleRegister}
@@ -177,7 +177,7 @@ export default function AuthPage() {
   const renderWallet = () => (
     <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl p-6 shadow-lg">
       <h2 className="text-xl font-semibold mb-2">Wallet Challenge</h2>
-      <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">Sign the nonce with Bitcoin signmessage (mainnet or testnet) to issue a key.</p>
+      <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">Sign the nonce with Bitcoin signmessage (mainnet or testnet3/4) to issue a key.</p>
       <div className="text-xs text-gray-500 dark:text-gray-400 mb-4 space-y-1">
         <div>1) Click “Get challenge”.</div>
         <div>2) Sign the nonce with your wallet’s <code className="font-mono">signmessage</code>.</div>
@@ -189,7 +189,7 @@ export default function AuthPage() {
         className="w-full mb-3 px-3 py-2 rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700"
         value={wallet}
         onChange={(e) => setWallet(e.target.value)}
-        placeholder="bc1... (mainnet) or tb1... (testnet)"
+        placeholder="bc1... (mainnet) or tb1... (testnet3/4)"
       />
       <div className="flex gap-2 mb-3">
         <button

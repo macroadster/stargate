@@ -11,12 +11,12 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/btcsuite/btcd/btcec"
+	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
+	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/btcsuite/btcutil"
 	auth "stargate-backend/storage/auth"
 )
 
@@ -212,7 +212,7 @@ func verifyLegacySignMessage(address, signatureB64, message string) (bool, error
 
 	msgHash := hashBitcoinMessage(message)
 
-	pubKey, wasCompressed, err := btcec.RecoverCompact(btcec.S256(), sigBytes, msgHash)
+	pubKey, wasCompressed, err := ecdsa.RecoverCompact(sigBytes, msgHash)
 	if err != nil {
 		return false, err
 	}
@@ -304,8 +304,9 @@ func verifyBIP322Simple(address, signature, message string) (bool, error) {
 	toSign.AddTxOut(&wire.TxOut{Value: 0, PkScript: nullData})
 
 	flags := txscript.StandardVerifyFlags
-	sigHashes := txscript.NewTxSigHashes(toSign)
-	vm, err := txscript.NewEngine(pkScript, toSign, 0, flags, nil, sigHashes, 0)
+	prevFetcher := txscript.NewCannedPrevOutputFetcher(pkScript, toSpend.TxOut[0].Value)
+	sigHashes := txscript.NewTxSigHashes(toSign, prevFetcher)
+	vm, err := txscript.NewEngine(pkScript, toSign, 0, flags, nil, sigHashes, toSpend.TxOut[0].Value, prevFetcher)
 	if err != nil {
 		return false, err
 	}
@@ -347,14 +348,22 @@ func decodeMaybeHexOrBase64(s string) ([]byte, error) {
 	return base64.StdEncoding.DecodeString(s)
 }
 
-// chooseParams picks mainnet or testnet based on address prefix.
+// chooseParams picks network params by decoding the address (prefers testnet4 for tb1/m/n/2).
 func chooseParams(address string) *chaincfg.Params {
-	addr := strings.ToLower(strings.TrimSpace(address))
-	if strings.HasPrefix(addr, "bc1") || strings.HasPrefix(addr, "1") || strings.HasPrefix(addr, "3") {
-		return &chaincfg.MainNetParams
+	addr := strings.TrimSpace(address)
+	if addr == "" {
+		return nil
 	}
-	if strings.HasPrefix(addr, "tb1") || strings.HasPrefix(addr, "m") || strings.HasPrefix(addr, "n") || strings.HasPrefix(addr, "2") {
-		return &chaincfg.TestNet3Params
+
+	// Try decoding against known networks, preferring testnet4 for tb1/m/n/2 addresses.
+	for _, params := range []*chaincfg.Params{
+		&chaincfg.TestNet4Params,
+		&chaincfg.TestNet3Params,
+		&chaincfg.MainNetParams,
+	} {
+		if decoded, err := btcutil.DecodeAddress(addr, params); err == nil && decoded.IsForNet(params) {
+			return params
+		}
 	}
 	return nil
 }
