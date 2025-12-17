@@ -619,6 +619,10 @@ func (h *SmartContractHandler) HandleGetContracts(w http.ResponseWriter, r *http
 					result.Metadata["stego_image_url"] = url
 					result.Metadata["ingestion_id"] = rec.ID
 				}
+				if v, ok := rec.Metadata["visible_pixel_hash"].(string); ok && strings.TrimSpace(v) != "" {
+					result.VisiblePixelHash = strings.TrimSpace(v)
+					result.Metadata["visible_pixel_hash"] = result.VisiblePixelHash
+				}
 			}
 		}
 

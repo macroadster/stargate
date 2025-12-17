@@ -13,11 +13,12 @@ type InscriptionRequest struct {
 
 // SmartContractImage represents a smart contract with steganographic image
 type SmartContractImage struct {
-	ContractID   string                 `json:"contract_id"`
-	BlockHeight  int64                  `json:"block_height"`
-	StegoImage   string                 `json:"stego_image_url"`
-	ContractType string                 `json:"contract_type"`
-	Metadata     map[string]interface{} `json:"metadata"`
+	ContractID       string                 `json:"contract_id"`
+	BlockHeight      int64                  `json:"block_height"`
+	StegoImage       string                 `json:"stego_image_url"`
+	ContractType     string                 `json:"contract_type"`
+	VisiblePixelHash string                 `json:"visible_pixel_hash,omitempty"`
+	Metadata         map[string]interface{} `json:"metadata"`
 }
 
 // ContractMetadata represents smart contract metadata
