@@ -33,8 +33,8 @@ func NewAPIKeyHandler(issuer auth.APIKeyIssuer, validator auth.APIKeyValidator, 
 	return &APIKeyHandler{BaseHandler: NewBaseHandler(), issuer: issuer, validator: validator, challenges: challenges}
 }
 
-// HandleRegister issues a new API key for the provided email (optional).
-// Request: {"email":"user@example.com"}
+// HandleRegister issues a new API key for the provided email and wallet.
+// Request: {"email":"user@example.com","wallet_address":"..."}
 // Response: {"api_key":"...","email":"user@example.com"}
 func (h *APIKeyHandler) HandleRegister(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -52,7 +52,13 @@ func (h *APIKeyHandler) HandleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	email := strings.TrimSpace(body.Email)
-	rec, err := h.issuer.Issue(email, body.Wallet, "registration")
+	wallet := strings.TrimSpace(body.Wallet)
+	if wallet == "" {
+		h.sendError(w, http.StatusBadRequest, "wallet_address required")
+		return
+	}
+
+	rec, err := h.issuer.Issue(email, wallet, "registration")
 	if err != nil {
 		h.sendError(w, http.StatusInternalServerError, "failed to issue api key")
 		return

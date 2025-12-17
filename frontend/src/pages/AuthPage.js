@@ -18,19 +18,25 @@ export default function AuthPage() {
   const setStatusBubble = (msg) => setStatus(msg || '');
 
   const handleRegister = async () => {
+    const walletAddress = wallet.trim();
+    if (!walletAddress) {
+      setStatusBubble('Wallet address required to register.');
+      return;
+    }
+    const emailValue = email.trim();
     setStatus('Registering...');
     try {
       const res = await fetch(`${API_BASE}/api/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, wallet_address: wallet })
+        body: JSON.stringify({ email: emailValue, wallet_address: walletAddress })
       });
       const data = await res.json();
       const payload = data?.data || data;
       if (!res.ok) throw new Error(data?.message || payload?.message || 'Registration failed');
       const issuedKey = payload.api_key || payload.key || '';
       setApiKey(issuedKey);
-      signIn(issuedKey, payload.wallet || wallet, payload.email || email);
+      signIn(issuedKey, payload.wallet || walletAddress, payload.email || emailValue);
       setStatus('Registered. Key saved locally.');
       navigate('/');
     } catch (err) {
@@ -151,7 +157,7 @@ export default function AuthPage() {
         onChange={(e) => setEmail(e.target.value)}
         placeholder="you@example.com"
       />
-      <label className="block text-sm mb-2">Wallet address (optional)</label>
+      <label className="block text-sm mb-2">Wallet address (required)</label>
       <input
         className="w-full mb-4 px-3 py-2 rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700"
         value={wallet}
@@ -160,7 +166,8 @@ export default function AuthPage() {
       />
       <button
         onClick={handleRegister}
-        className="w-full bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg py-2 font-semibold"
+        disabled={!wallet.trim()}
+        className={`w-full rounded-lg py-2 font-semibold text-white ${wallet.trim() ? 'bg-indigo-600 hover:bg-indigo-700' : 'bg-indigo-400 cursor-not-allowed'}`}
       >
         Register & Issue Key
       </button>
