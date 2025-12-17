@@ -232,7 +232,27 @@ func verifyLegacySignMessage(address, signatureB64, message string) (bool, error
 		derivedAddr = addr.AddressPubKeyHash().EncodeAddress()
 	}
 
-	return strings.EqualFold(derivedAddr, address), nil
+	if strings.EqualFold(derivedAddr, address) {
+		return true, nil
+	}
+
+	// Also allow the same key in segwit form (P2WPKH) or nested P2SH-P2WPKH for wallets
+	// that emit legacy signmessage over a segwit address.
+	pubKeyHash := btcutil.Hash160(pubKey.SerializeCompressed())
+	if wpkh, err := btcutil.NewAddressWitnessPubKeyHash(pubKeyHash, params); err == nil {
+		if strings.EqualFold(wpkh.EncodeAddress(), address) {
+			return true, nil
+		}
+	}
+	if witScript, err := txscript.NewScriptBuilder().AddOp(txscript.OP_0).AddData(pubKeyHash).Script(); err == nil {
+		if sh, err := btcutil.NewAddressScriptHash(witScript, params); err == nil {
+			if strings.EqualFold(sh.EncodeAddress(), address) {
+				return true, nil
+			}
+		}
+	}
+
+	return false, nil
 }
 
 func hashBitcoinMessage(message string) []byte {

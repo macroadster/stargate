@@ -2,8 +2,11 @@ package handlers
 
 import (
 	"bytes"
+	"encoding/base64"
 	"testing"
 
+	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
 )
@@ -56,5 +59,32 @@ func TestChooseParamsMainnet(t *testing.T) {
 	}
 	if params.Name != chaincfg.MainNetParams.Name {
 		t.Fatalf("expected mainnet params, got %s", params.Name)
+	}
+}
+
+func TestLegacySignatureAcceptsSegwitAddresses(t *testing.T) {
+	msg := "hello-world"
+	priv, err := btcec.NewPrivateKey()
+	if err != nil {
+		t.Fatalf("failed to create key: %v", err)
+	}
+	pubKey := priv.PubKey()
+	pubKeyHash := btcutil.Hash160(pubKey.SerializeCompressed())
+
+	addr, err := btcutil.NewAddressWitnessPubKeyHash(pubKeyHash, &chaincfg.TestNet4Params)
+	if err != nil {
+		t.Fatalf("failed to build address: %v", err)
+	}
+
+	hash := hashBitcoinMessage(msg)
+	sig := ecdsa.SignCompact(priv, hash, true)
+	sigB64 := base64.StdEncoding.EncodeToString(sig)
+
+	ok, err := verifyLegacySignMessage(addr.EncodeAddress(), sigB64, msg)
+	if err != nil {
+		t.Fatalf("verify returned error: %v", err)
+	}
+	if !ok {
+		t.Fatalf("expected signature to verify for segwit address")
 	}
 }
