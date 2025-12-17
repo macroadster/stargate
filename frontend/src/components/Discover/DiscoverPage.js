@@ -30,11 +30,6 @@ export default function DiscoverPage() {
   const [submitProof, setSubmitProof] = useState({});
   const [submitting, setSubmitting] = useState({});
   const [claiming, setClaiming] = useState({});
-  const [psbtInputs, setPsbtInputs] = useState({});
-  const [psbtResults, setPsbtResults] = useState({});
-  const [psbtLoading, setPsbtLoading] = useState({});
-  const [psbtErrors, setPsbtErrors] = useState({});
-  const [copiedPsbt, setCopiedPsbt] = useState('');
 
   const loadProposals = useCallback(async () => {
     setLoading(true);
@@ -166,57 +161,6 @@ export default function DiscoverPage() {
     return map;
   }, [submissions]);
 
-  const updatePsbtInput = (proposalId, field, value) => {
-    setPsbtInputs((prev) => ({ ...prev, [proposalId]: { ...(prev[proposalId] || {}), [field]: value } }));
-  };
-
-  const generatePSBT = async (proposal) => {
-    if (!auth.apiKey) {
-      setPsbtErrors((prev) => ({ ...prev, [proposal.id]: 'API key required. Sign in first.' }));
-      return;
-    }
-    const form = psbtInputs[proposal.id] || {};
-    const payload = {
-      contractor_wallet: (form.contractorWallet || '').trim() || undefined,
-      pixel_hash: (form.pixelHash || proposal.visible_pixel_hash || '').trim() || undefined,
-      budget_sats: Number(form.budgetSats || proposal.budget_sats || 0) || undefined,
-      fee_rate_sats_vb: Number(form.feeRate || 1) || 1,
-    };
-
-    setPsbtLoading((prev) => ({ ...prev, [proposal.id]: true }));
-    setPsbtErrors((prev) => ({ ...prev, [proposal.id]: '' }));
-    try {
-      const res = await fetch(`${API_BASE}/api/smart_contract/contracts/${proposal.id}/psbt`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-API-Key': auth.apiKey,
-        },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json();
-      const payloadData = data?.data || data;
-      if (!res.ok) {
-        throw new Error(data?.message || payloadData?.message || payloadData?.error || `HTTP ${res.status}`);
-      }
-      setPsbtResults((prev) => ({ ...prev, [proposal.id]: payloadData }));
-    } catch (err) {
-      setPsbtErrors((prev) => ({ ...prev, [proposal.id]: err.message }));
-    } finally {
-      setPsbtLoading((prev) => ({ ...prev, [proposal.id]: false }));
-    }
-  };
-
-  const copyToClipboard = async (text, key) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopiedPsbt(key);
-      setTimeout(() => setCopiedPsbt(''), 1500);
-    } catch (err) {
-      console.error('copy failed', err);
-    }
-  };
-
   return (
     <div className="min-h-screen bg-gradient-to-b from-gray-50 via-white to-gray-100 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950 text-gray-900 dark:text-gray-100">
       <div className="container mx-auto px-6 py-10 space-y-8">
@@ -281,9 +225,6 @@ export default function DiscoverPage() {
               const approved = (p.status || '').toLowerCase() === 'approved';
               const tasks = p.tasks || [];
               const claimedCount = tasks.filter((t) => (t.status || '').toLowerCase() === 'claimed').length;
-              const psbtForm = psbtInputs[p.id] || {};
-              const psbtResult = psbtResults[p.id];
-              const psbtError = psbtErrors[p.id];
               return (
                 <div key={p.id} className="border border-gray-200 dark:border-gray-800 rounded-xl bg-white dark:bg-gray-900 p-4 shadow-sm">
                   <div className="flex items-start justify-between gap-3">
@@ -393,122 +334,6 @@ export default function DiscoverPage() {
                       </div>
                     ))}
                     {tasks.length === 0 && <div className="text-sm text-gray-500">No tasks attached.</div>}
-                  </div>
-
-                  <div className="mt-4 border-t border-dashed border-gray-200 dark:border-gray-800 pt-4 space-y-3">
-                    <div className="flex items-center justify-between flex-wrap gap-2">
-                      <div>
-                        <div className="text-sm font-semibold">Generate PSBT for Sparrow</div>
-                        <div className="text-xs text-gray-500">
-                          Sign in with the funding API key (payer wallet). Contractor wallet only sets the payout output.
-                        </div>
-                      </div>
-                      <button
-                        onClick={() => generatePSBT(p)}
-                        disabled={psbtLoading[p.id] || !auth.apiKey || !auth.wallet}
-                        className="px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-sm disabled:opacity-60"
-                        title={!auth.wallet ? 'Sign in with funding API key (wallet bound)' : ''}
-                      >
-                        {psbtLoading[p.id] ? 'Building…' : 'Build PSBT'}
-                      </button>
-                    </div>
-                    {!auth.wallet && (
-                      <div className="text-xs text-amber-600 dark:text-amber-400">
-                        Sign in with the funder API key to use its wallet UTXOs as the payer.
-                      </div>
-                    )}
-                    <div className="grid md:grid-cols-2 gap-3 text-sm">
-                      <div className="space-y-2">
-                        <label className="block text-xs text-gray-500">Contractor wallet (payout)</label>
-                        <input
-                          className="w-full rounded bg-gray-100 dark:bg-gray-800 px-3 py-2"
-                          placeholder="Contractor bc1/tb1..."
-                          value={psbtForm.contractorWallet || ''}
-                          onChange={(e) => updatePsbtInput(p.id, 'contractorWallet', e.target.value)}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <label className="block text-xs text-gray-500">Pixel hash (P2SH/P2WSH, hex)</label>
-                        <input
-                          className="w-full rounded bg-gray-100 dark:bg-gray-800 px-3 py-2 font-mono text-xs"
-                          placeholder="20 or 32 byte hex"
-                          value={psbtForm.pixelHash ?? p.visible_pixel_hash ?? ''}
-                          onChange={(e) => updatePsbtInput(p.id, 'pixelHash', e.target.value)}
-                        />
-                      </div>
-                      <div className="grid grid-cols-2 gap-2">
-                        <div className="space-y-1">
-                          <label className="block text-xs text-gray-500">Budget (sats)</label>
-                          <input
-                            className="w-full rounded bg-gray-100 dark:bg-gray-800 px-3 py-2"
-                            type="number"
-                            value={psbtForm.budgetSats ?? p.budget_sats ?? ''}
-                            onChange={(e) => updatePsbtInput(p.id, 'budgetSats', e.target.value)}
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="block text-xs text-gray-500">Fee rate (sat/vB)</label>
-                          <input
-                            className="w-full rounded bg-gray-100 dark:bg-gray-800 px-3 py-2"
-                            type="number"
-                            value={psbtForm.feeRate ?? 1}
-                            onChange={(e) => updatePsbtInput(p.id, 'feeRate', e.target.value)}
-                          />
-                        </div>
-                      </div>
-                    </div>
-                    {psbtError && <div className="text-sm text-red-500">{psbtError}</div>}
-                    {psbtResult && (() => {
-                      const psbtValue =
-                        psbtResult.psbt_hex ||
-                        psbtResult.psbt ||
-                        psbtResult.psbt_base64 ||
-                        psbtResult.encodedBase64 ||
-                        psbtResult.EncodedBase64 ||
-                        '';
-                      const psbtBase64 = psbtResult.psbt_base64 || psbtResult.encodedBase64 || psbtResult.EncodedBase64 || '';
-                      return (
-                      <div className="space-y-2 bg-gray-50 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700 rounded-lg p-3">
-                        <div className="text-xs text-gray-600 dark:text-gray-300">
-                          Fee: {psbtResult.fee_sats} sats • Change: {psbtResult.change_sats} sats • Selected: {psbtResult.selected_sats} sats
-                        </div>
-                        <div className="text-xs text-gray-600 dark:text-gray-300 break-all">
-                          Payout script: {psbtResult.payout_script}
-                        </div>
-                        <div className="text-xs text-gray-600 dark:text-gray-300 break-all">
-                          Pixel hash: {psbtResult.pixel_hash || p.visible_pixel_hash || 'n/a'}
-                        </div>
-                        <textarea
-                          className="w-full rounded bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 font-mono text-xs p-2"
-                          rows={3}
-                          readOnly
-                          value={psbtValue}
-                        />
-                        <div className="flex gap-2 text-[11px] text-gray-600 dark:text-gray-300 flex-wrap">
-                          <button
-                            onClick={() => copyToClipboard(psbtValue, `hex-${p.id}`)}
-                            className="px-2 py-1 rounded border border-gray-300 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-700"
-                          >
-                            {copiedPsbt === `hex-${p.id}` ? 'Copied hex' : 'Copy hex'}
-                          </button>
-                          {psbtBase64 && (
-                            <button
-                              onClick={() => copyToClipboard(psbtBase64, `b64-${p.id}`)}
-                              className="px-2 py-1 rounded border border-gray-300 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-700"
-                            >
-                              {copiedPsbt === `b64-${p.id}` ? 'Copied base64' : 'Copy base64'}
-                            </button>
-                          )}
-                          <span>Payer: {auth.wallet || 'bound to your API key'}</span>
-                          <span>Contractor: {psbtResult.contractor || psbtForm.contractorWallet || 'n/a'}</span>
-                          <span>Network: {psbtResult.network_params || 'testnet4'}</span>
-                        </div>
-                        <div className="text-[11px] text-gray-500">
-                          Paste the hex PSBT into Sparrow (testnet4). Base64 is available if needed.
-                        </div>
-                      </div>
-                      );
-                    })()}
                   </div>
                 </div>
               );
