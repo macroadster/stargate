@@ -1,8 +1,44 @@
-# Stargate Development Guide
+# Agent Instructions (Stargate)
 
-## Build Commands
+## Beads Workflow
 
-### Frontend (React)
+- Run `bd onboard` the first time.
+- Issue lifecycle: `bd ready` → `bd update <id> --status in_progress` → work → `bd close <id>`.
+- Keep bd synced with git: prefer working inside `stargate/` so bd can read git status.
+
+### Quick Reference
+
+```bash
+bd ready              # Find available work
+bd show <id>          # View issue details
+bd update <id> --status in_progress  # Claim work
+bd close <id>         # Complete work
+bd sync               # Sync with git
+```
+
+### Landing the Plane (session completion)
+
+Work is NOT done until `git push` succeeds.
+
+1. File issues for any follow-up.
+2. Run quality gates (tests/linters/build) if code changed.
+3. Update issue status (close finished, update in-progress).
+4. Push to remote (required):
+   ```bash
+   git pull --rebase
+   bd sync
+   git push
+   git status  # must show up to date with origin
+   ```
+5. Clean up (clear stashes, prune remote branches).
+6. Verify all changes are committed and pushed.
+7. Hand off with context for the next session.
+
+## Stargate Development Guide
+
+### Build Commands
+
+#### Frontend (React)
 ```bash
 cd frontend
 npm install
@@ -12,7 +48,7 @@ npm test                          # Run Jest tests
 npm test -- --testNamePattern="SpecificTest"  # Run single test
 ```
 
-### Backend (Go)
+#### Backend (Go)
 ```bash
 cd backend
 go mod tidy        # Install dependencies
@@ -22,9 +58,9 @@ go test ./...      # Run all tests (when implemented)
 go test -run TestSpecificFunction  # Run single test
 ```
 
-## Code Style Guidelines
+### Code Style Guidelines
 
-### Frontend (React/JavaScript)
+#### Frontend (React/JavaScript)
 - **Components**: PascalCase (BlockCard, InscriptionModal)
 - **Files**: PascalCase.js for components
 - **Hooks**: camelCase with use prefix (useBlocks, useInscriptions)
@@ -34,7 +70,7 @@ go test -run TestSpecificFunction  # Run single test
 - **Error Handling**: Try-catch with user-friendly messages
 - **State Management**: React hooks (useState, useEffect, useCallback)
 
-### Backend (Go)
+#### Backend (Go)
 - **Packages**: lowercase, single word (handlers, services, models)
 - **Files**: snake_case.go (data_storage.go, block_handler.go)
 - **Structs**: PascalCase (BlockData, InscriptionService)
@@ -43,45 +79,45 @@ go test -run TestSpecificFunction  # Run single test
 - **Error Handling**: Explicit error returns, wrap errors with context
 - **Imports**: Grouped (stdlib, third-party, local packages)
 
-## Testing
+### Testing
 
-### Frontend
+#### Frontend
 - **Framework**: Jest with React Testing Library
 - **Test Files**: *.test.js alongside components
 - **Run Single**: `npm test -- --testNamePattern="TestName"`
 
-### Backend
+#### Backend
 - **Framework**: Go testing package
 - **Test Files**: *_test.go alongside source files
 - **Run Single**: `go test -run TestFunctionName`
 
-## Linting/Formatting
+### Linting/Formatting
 
-### Frontend
+#### Frontend
 - **ESLint**: Configured via package.json (react-app preset)
 - **Prettier**: Uses Create React App defaults
 - **Fix**: `npm run lint` (if configured)
 
-### Backend
+#### Backend
 - **Format**: `go fmt ./...`
 - **Lint**: `golint ./...` (if installed)
 - **Vet**: `go vet ./...`
 
-## Key Patterns
+### Key Patterns
 
-### Frontend
+#### Frontend
 - Use custom hooks for API calls and state management
 - Component composition over inheritance
 - Tailwind classes for styling (no inline styles)
 - Proper error boundaries and loading states
 
-### Backend
+#### Backend
 - Dependency injection via container pattern
 - Middleware chain for cross-cutting concerns
 - File-based storage with proper error handling
 - RESTful API design with JSON responses
 
-## Development Workflow
+### Development Workflow
 
 1. Start backend: `cd backend && go run stargate_backend.go &`
 2. Start frontend: `cd frontend && npm start`
