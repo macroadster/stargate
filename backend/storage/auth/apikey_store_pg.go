@@ -52,6 +52,22 @@ func (s *PGAPIKeyStore) Validate(key string) bool {
 	return err == nil && exists
 }
 
+// Get returns the API key record for the provided key.
+func (s *PGAPIKeyStore) Get(key string) (APIKey, bool) {
+	if key == "" {
+		return APIKey{}, false
+	}
+	var rec APIKey
+	err := s.pool.QueryRow(context.Background(),
+		"SELECT key, email, wallet_address, source, created_at FROM api_keys WHERE key=$1",
+		key,
+	).Scan(&rec.Key, &rec.Email, &rec.Wallet, &rec.Source, &rec.CreatedAt)
+	if err != nil {
+		return APIKey{}, false
+	}
+	return rec, true
+}
+
 // Issue implements APIKeyIssuer.
 func (s *PGAPIKeyStore) Issue(email, wallet, source string) (APIKey, error) {
 	key, err := generateKey()

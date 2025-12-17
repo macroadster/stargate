@@ -11,12 +11,16 @@ import (
 
 	"stargate-backend/services"
 	"stargate-backend/starlight"
+	"stargate-backend/storage/auth"
 	scstore "stargate-backend/storage/smart_contract"
 )
 
 type allowAllValidator struct{}
 
 func (a allowAllValidator) Validate(string) bool { return true }
+func (a allowAllValidator) Get(key string) (auth.APIKey, bool) {
+	return auth.APIKey{Key: key}, true
+}
 
 func TestHTTPMCPServer(t *testing.T) {
 	// Use memory store for testing

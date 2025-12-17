@@ -2,6 +2,7 @@ package smart_contract
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -11,6 +12,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/btcsuite/btcd/btcutil"
+	"github.com/btcsuite/btcd/chaincfg"
+	"stargate-backend/bitcoin"
 	"stargate-backend/core/smart_contract"
 	"stargate-backend/services"
 	auth "stargate-backend/storage/auth"
@@ -26,6 +30,7 @@ type Server struct {
 	eventsMu     sync.Mutex
 	listenersMu  sync.Mutex
 	listeners    []chan smart_contract.Event
+	mempool      *bitcoin.MempoolClient
 }
 
 // proposalCreateBody captures POST payload for creating proposals.
@@ -44,7 +49,12 @@ type ProposalCreateBody struct {
 
 // NewServer builds a Server with the given store.
 func NewServer(store Store, apiKeys auth.APIKeyValidator, ingest *services.IngestionService) *Server {
-	return &Server{store: store, apiKeys: apiKeys, ingestionSvc: ingest}
+	return &Server{
+		store:        store,
+		apiKeys:      apiKeys,
+		ingestionSvc: ingest,
+		mempool:      bitcoin.NewMempoolClient(),
+	}
 }
 
 // RegisterRoutes attaches handlers to the mux.
@@ -122,9 +132,122 @@ func (s *Server) handleContracts(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		JSON(w, http.StatusOK, contract)
+	case http.MethodPost:
+		if len(parts) > 1 && parts[1] == "psbt" {
+			contractID := parts[0]
+			s.handleContractPSBT(w, r, contractID)
+			return
+		}
+		Error(w, http.StatusNotFound, "unknown contract action")
 	default:
 		Error(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
+}
+
+// handleContractPSBT builds a PSBT to fund the contract payout using the caller's wallet UTXOs.
+func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, contractID string) {
+	if r.Header.Get("Content-Type") != "" && !strings.Contains(r.Header.Get("Content-Type"), "application/json") {
+		Error(w, http.StatusUnsupportedMediaType, "Content-Type must be application/json")
+		return
+	}
+	if s.apiKeys == nil || s.mempool == nil {
+		Error(w, http.StatusServiceUnavailable, "psbt builder unavailable")
+		return
+	}
+	payerKey := r.Header.Get("X-API-Key")
+	payerRec, ok := s.apiKeys.Get(payerKey)
+	if !ok {
+		Error(w, http.StatusForbidden, "invalid api key")
+		return
+	}
+	if strings.TrimSpace(payerRec.Wallet) == "" {
+		Error(w, http.StatusForbidden, "api key missing wallet binding")
+		return
+	}
+
+	var body struct {
+		ContractorAPIKey string `json:"contractor_api_key"`
+		ContractorWallet string `json:"contractor_wallet"`
+		BudgetSats       int64  `json:"budget_sats"`
+		PixelHash        string `json:"pixel_hash"`
+		FeeRate          int64  `json:"fee_rate_sats_vb"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		Error(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+
+	contract, err := s.store.GetContract(contractID)
+	if err != nil {
+		Error(w, http.StatusNotFound, err.Error())
+		return
+	}
+
+	params := &chaincfg.TestNet4Params
+
+	payerAddr, err := btcutil.DecodeAddress(payerRec.Wallet, params)
+	if err != nil {
+		Error(w, http.StatusBadRequest, fmt.Sprintf("invalid payer wallet: %v", err))
+		return
+	}
+
+	var contractorAddr btcutil.Address
+	if strings.TrimSpace(body.ContractorAPIKey) != "" {
+		if rec, ok := s.apiKeys.Get(body.ContractorAPIKey); ok && strings.TrimSpace(rec.Wallet) != "" {
+			contractorAddr, err = btcutil.DecodeAddress(rec.Wallet, params)
+		}
+	}
+	if contractorAddr == nil && strings.TrimSpace(body.ContractorWallet) != "" {
+		contractorAddr, err = btcutil.DecodeAddress(strings.TrimSpace(body.ContractorWallet), params)
+	}
+	if err != nil {
+		Error(w, http.StatusBadRequest, fmt.Sprintf("invalid contractor wallet: %v", err))
+		return
+	}
+
+	target := body.BudgetSats
+	if target <= 0 {
+		target = contract.TotalBudgetSats
+	}
+	if target <= 0 {
+		target = scstore.DefaultBudgetSats()
+	}
+
+	pixelBytes, _ := hex.DecodeString(strings.TrimSpace(body.PixelHash))
+	if len(pixelBytes) == 0 {
+		// Try using contractID as hash if hex
+		if h, err := hex.DecodeString(strings.TrimSpace(contractID)); err == nil {
+			pixelBytes = h
+		}
+	}
+
+	psbtReq := bitcoin.PSBTRequest{
+		PayerAddress:      payerAddr,
+		TargetValueSats:   target,
+		PixelHash:         pixelBytes,
+		ContractorAddress: contractorAddr,
+		FeeRateSatPerVB:   body.FeeRate,
+	}
+
+	res, err := bitcoin.BuildFundingPSBT(s.mempool, params, psbtReq)
+	if err != nil {
+		Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	JSON(w, http.StatusOK, map[string]interface{}{
+		"psbt":           res.EncodedBase64,
+		"fee_sats":       res.FeeSats,
+		"change_sats":    res.ChangeSats,
+		"selected_sats":  res.SelectedSats,
+		"payout_script":  hex.EncodeToString(res.PayoutScript),
+		"pixel_hash":     strings.TrimSpace(body.PixelHash),
+		"payer_address":  payerAddr.EncodeAddress(),
+		"contract_id":    contractID,
+		"budget_sats":    target,
+		"contractor":     contractorAddr.EncodeAddress(),
+		"network_params": params.Name,
+	})
 }
 
 func (s *Server) handleTasks(w http.ResponseWriter, r *http.Request) {

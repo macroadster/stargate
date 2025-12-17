@@ -20,6 +20,7 @@ type APIKey struct {
 // APIKeyValidator defines the minimal interface required by auth middleware.
 type APIKeyValidator interface {
 	Validate(key string) bool
+	Get(key string) (APIKey, bool)
 }
 
 // APIKeyIssuer allows creating new API keys.
@@ -54,6 +55,14 @@ func (s *APIKeyStore) Validate(key string) bool {
 	defer s.mu.RUnlock()
 	_, ok := s.keys[key]
 	return ok
+}
+
+// Get returns the stored record for a key, if present.
+func (s *APIKeyStore) Get(key string) (APIKey, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	rec, ok := s.keys[key]
+	return rec, ok
 }
 
 // Issue creates and stores a new API key.
