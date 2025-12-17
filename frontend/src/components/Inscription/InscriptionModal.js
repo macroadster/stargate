@@ -23,6 +23,11 @@ const InscriptionModal = ({ inscription, onClose }) => {
   const [proposalError, setProposalError] = useState('');
   const [approvingId, setApprovingId] = useState('');
   const [submissions, setSubmissions] = useState({});
+  const [psbtForm, setPsbtForm] = useState({ contractorWallet: '', pixelHash: '', budgetSats: '', feeRate: 1, contractId: '' });
+  const [psbtResult, setPsbtResult] = useState(null);
+  const [psbtError, setPsbtError] = useState('');
+  const [psbtLoading, setPsbtLoading] = useState(false);
+  const [copiedPsbt, setCopiedPsbt] = useState('');
   const lastFetchedKeyRef = React.useRef('');
   const hasFetchedRef = React.useRef(false);
   const refreshIntervalRef = React.useRef(null);
@@ -65,6 +70,7 @@ const InscriptionModal = ({ inscription, onClose }) => {
     return Array.from(expanded);
   }, [inscription.contract_id, inscription.id, inscription.metadata?.contract_id, inscription.metadata?.ingestion_id]);
   const contractKey = useMemo(() => contractCandidates.join('|'), [contractCandidates]);
+  const primaryContractId = useMemo(() => psbtForm.contractId || contractCandidates[0] || inscription.contract_id || inscription.id, [psbtForm.contractId, contractCandidates, inscription.contract_id, inscription.id]);
 
   let parsedPayload = null;
   if (typeof inscriptionMessageRaw === 'string') {
@@ -160,6 +166,16 @@ const InscriptionModal = ({ inscription, onClose }) => {
       });
       setProposalItems(items);
       if (items.length > 0) {
+        const first = items[0];
+        const preferredHash = first.visible_pixel_hash || psbtForm.pixelHash || inscription.metadata?.visible_pixel_hash || '';
+        setPsbtForm((prev) => ({
+          ...prev,
+          pixelHash: preferredHash,
+          contractId: prev.contractId || first.id || primaryContractId,
+          budgetSats: prev.budgetSats || first.budget_sats || '',
+        }));
+      }
+      if (items.length > 0) {
         hasFetchedRef.current = true;
       }
     } catch (err) {
@@ -204,6 +220,57 @@ const InscriptionModal = ({ inscription, onClose }) => {
       toast.error('Approval failed');
     } finally {
       setApprovingId('');
+    }
+  };
+
+  const copyToClipboard = async (text, key) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedPsbt(key);
+      setTimeout(() => setCopiedPsbt(''), 1500);
+    } catch (err) {
+      console.error('copy failed', err);
+    }
+  };
+
+  const generatePSBT = async () => {
+    setPsbtError('');
+    setPsbtResult(null);
+    if (!auth.apiKey || !auth.wallet) {
+      setPsbtError('Sign in with the funding API key (payer wallet) first.');
+      return;
+    }
+    const contractId = psbtForm.contractId || primaryContractId;
+    if (!contractId) {
+      setPsbtError('Missing contract id for PSBT build.');
+      return;
+    }
+    setPsbtLoading(true);
+    try {
+      const payload = {
+        contractor_wallet: psbtForm.contractorWallet?.trim() || undefined,
+        pixel_hash: psbtForm.pixelHash?.trim() || undefined,
+        budget_sats: Number(psbtForm.budgetSats || 0) || undefined,
+        fee_rate_sats_vb: Number(psbtForm.feeRate || 1) || 1,
+      };
+      const res = await fetch(`${API_BASE}/api/smart_contract/contracts/${contractId}/psbt`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Key': auth.apiKey,
+        },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      const payloadData = data?.data || data;
+      if (!res.ok) {
+        throw new Error(data?.message || payloadData?.message || payloadData?.error || `HTTP ${res.status}`);
+      }
+      setPsbtResult(payloadData);
+    } catch (err) {
+      setPsbtError(err.message);
+    } finally {
+      setPsbtLoading(false);
     }
   };
   
@@ -570,11 +637,138 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
               )}
 
               {activeTab === 'deliverables' && (
-                <DeliverablesReview
-                  proposalItems={proposalItems}
-                  submissions={submissions}
-                  onRefresh={loadProposals}
-                />
+                <div className="space-y-4">
+                  <div className="border border-gray-200 dark:border-gray-800 rounded-lg p-4 bg-white dark:bg-gray-900">
+                    <div className="flex items-start justify-between gap-3 flex-wrap">
+                      <div>
+                        <h4 className="text-base font-semibold text-black dark:text-white">Generate PSBT (payer = your API key wallet)</h4>
+                        <p className="text-xs text-gray-500 dark:text-gray-400">
+                          Uses the funding wallet bound to your API key to source UTXOs; contractor wallet defines the payout output.
+                        </p>
+                      </div>
+                      <button
+                        onClick={generatePSBT}
+                        disabled={psbtLoading || !auth.wallet}
+                        className="px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-sm disabled:opacity-60"
+                        title={!auth.wallet ? 'Sign in with funding API key first' : ''}
+                      >
+                        {psbtLoading ? 'Building…' : 'Build PSBT'}
+                      </button>
+                    </div>
+                    {!auth.wallet && (
+                      <div className="text-xs text-amber-600 dark:text-amber-400 mt-2">
+                        Sign in with the funder API key (payer wallet) to build the PSBT.
+                      </div>
+                    )}
+                    <div className="grid md:grid-cols-2 gap-3 text-sm mt-3">
+                      <div className="space-y-2">
+                        <label className="block text-xs text-gray-500">Contract ID</label>
+                        <input
+                          className="w-full rounded bg-gray-100 dark:bg-gray-800 px-3 py-2 font-mono text-xs"
+                          value={psbtForm.contractId || primaryContractId || ''}
+                          onChange={(e) => setPsbtForm((p) => ({ ...p, contractId: e.target.value }))}
+                          placeholder="contract id (ingestion/visible hash)"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="block text-xs text-gray-500">Contractor wallet (payout)</label>
+                        <input
+                          className="w-full rounded bg-gray-100 dark:bg-gray-800 px-3 py-2"
+                          placeholder="Contractor bc1/tb1..."
+                          value={psbtForm.contractorWallet || ''}
+                          onChange={(e) => setPsbtForm((p) => ({ ...p, contractorWallet: e.target.value }))}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="block text-xs text-gray-500">Pixel hash (P2SH/P2WSH, hex)</label>
+                        <input
+                          className="w-full rounded bg-gray-100 dark:bg-gray-800 px-3 py-2 font-mono text-xs"
+                          placeholder="20 or 32 byte hex"
+                          value={psbtForm.pixelHash || ''}
+                          onChange={(e) => setPsbtForm((p) => ({ ...p, pixelHash: e.target.value }))}
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="space-y-1">
+                          <label className="block text-xs text-gray-500">Budget (sats)</label>
+                          <input
+                            className="w-full rounded bg-gray-100 dark:bg-gray-800 px-3 py-2"
+                            type="number"
+                            value={psbtForm.budgetSats || ''}
+                            onChange={(e) => setPsbtForm((p) => ({ ...p, budgetSats: e.target.value }))}
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="block text-xs text-gray-500">Fee rate (sat/vB)</label>
+                          <input
+                            className="w-full rounded bg-gray-100 dark:bg-gray-800 px-3 py-2"
+                            type="number"
+                            value={psbtForm.feeRate || 1}
+                            onChange={(e) => setPsbtForm((p) => ({ ...p, feeRate: e.target.value }))}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                    {psbtError && <div className="text-sm text-red-500 mt-2">{psbtError}</div>}
+                    {psbtResult && (() => {
+                      const psbtValue =
+                        psbtResult.psbt_hex ||
+                        psbtResult.psbt ||
+                        psbtResult.psbt_base64 ||
+                        psbtResult.encodedBase64 ||
+                        psbtResult.EncodedBase64 ||
+                        '';
+                      const psbtBase64 = psbtResult.psbt_base64 || psbtResult.encodedBase64 || psbtResult.EncodedBase64 || '';
+                      return (
+                        <div className="mt-3 space-y-2 bg-gray-50 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700 rounded-lg p-3">
+                          <div className="text-xs text-gray-600 dark:text-gray-300">
+                            Fee: {psbtResult.fee_sats} sats • Change: {psbtResult.change_sats} sats • Selected: {psbtResult.selected_sats} sats
+                          </div>
+                          <div className="text-xs text-gray-600 dark:text-gray-300 break-all">
+                            Payout script: {psbtResult.payout_script}
+                          </div>
+                          <div className="text-xs text-gray-600 dark:text-gray-300 break-all">
+                            Pixel hash: {psbtResult.pixel_hash || psbtForm.pixelHash || 'n/a'}
+                          </div>
+                          <textarea
+                            className="w-full rounded bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 font-mono text-xs p-2"
+                            rows={3}
+                            readOnly
+                            value={psbtValue}
+                          />
+                          <div className="flex gap-2 text-[11px] text-gray-600 dark:text-gray-300 flex-wrap">
+                            <button
+                              onClick={() => copyToClipboard(psbtValue, 'hex')}
+                              className="px-2 py-1 rounded border border-gray-300 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-700"
+                            >
+                              {copiedPsbt === 'hex' ? 'Copied hex' : 'Copy hex'}
+                            </button>
+                            {psbtBase64 && (
+                              <button
+                                onClick={() => copyToClipboard(psbtBase64, 'b64')}
+                                className="px-2 py-1 rounded border border-gray-300 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-700"
+                              >
+                                {copiedPsbt === 'b64' ? 'Copied base64' : 'Copy base64'}
+                              </button>
+                            )}
+                            <span>Payer: {auth.wallet || 'bound to your API key'}</span>
+                            <span>Contractor: {psbtResult.contractor || psbtForm.contractorWallet || 'n/a'}</span>
+                            <span>Network: {psbtResult.network_params || 'testnet4'}</span>
+                          </div>
+                          <div className="text-[11px] text-gray-500">
+                            Paste the hex PSBT into Sparrow (testnet4). Base64 provided if needed.
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+
+                  <DeliverablesReview
+                    proposalItems={proposalItems}
+                    submissions={submissions}
+                    onRefresh={loadProposals}
+                  />
+                </div>
               )}
 
               {activeTab === 'content' && (
