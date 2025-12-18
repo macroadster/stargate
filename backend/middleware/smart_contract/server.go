@@ -222,18 +222,14 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		return nil
 	}
 	var pixelBytes []byte
-	pixelSource := ""
 	if ph := strings.TrimSpace(body.PixelHash); ph != "" {
 		if b, err := hex.DecodeString(ph); err == nil {
 			pixelBytes = normalizePixel(b)
-			if pixelBytes != nil {
-				pixelSource = "request"
-			}
 		}
 	}
 	if pixelBytes == nil && s.ingestionSvc != nil {
 		if rec, err := s.ingestionSvc.Get(contractID); err == nil {
-			pixelBytes, pixelSource = resolvePixelHashFromIngestion(rec, normalizePixel)
+			pixelBytes = resolvePixelHashFromIngestion(rec, normalizePixel)
 		}
 	}
 	if pixelBytes == nil {
@@ -267,7 +263,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		"pixel_hash":     strings.TrimSpace(body.PixelHash),
 		"payer_address":  payerAddr.EncodeAddress(),
 		"contract_id":    contractID,
-		"pixel_source":   pixelSource,
+		"pixel_source":   pixelSourceForBytes(pixelBytes),
 		"budget_sats":    target,
 		"contractor":     contractorAddr.EncodeAddress(),
 		"network_params": params.Name,
@@ -358,16 +354,16 @@ func (s *Server) handleTasks(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func resolvePixelHashFromIngestion(rec *services.IngestionRecord, normalize func([]byte) []byte) ([]byte, string) {
+func resolvePixelHashFromIngestion(rec *services.IngestionRecord, normalize func([]byte) []byte) []byte {
 	if rec == nil {
-		return nil, ""
+		return nil
 	}
 
 	for _, key := range []string{"pixel_hash", "payout_script_hash", "visible_pixel_hash"} {
 		if v, ok := rec.Metadata[key].(string); ok {
 			if b, err := hex.DecodeString(strings.TrimSpace(v)); err == nil {
 				if normalized := normalize(b); normalized != nil {
-					return normalized, key
+					return normalized
 				}
 			}
 		}
@@ -383,20 +379,31 @@ func resolvePixelHashFromIngestion(rec *services.IngestionRecord, normalize func
 		}
 	}
 	if rec.ImageBase64 == "" {
-		return nil, ""
+		return nil
 	}
 	imageBytes, err := base64.StdEncoding.DecodeString(rec.ImageBase64)
 	if err != nil {
-		return nil, ""
+		return nil
 	}
 
 	if message != "" {
 		sum := sha256.Sum256(append(imageBytes, []byte(message)...))
-		return normalize(sum[:]), "image_plus_message"
+		return normalize(sum[:])
 	}
 
 	sum := sha256.Sum256(imageBytes)
-	return normalize(sum[:]), "image_only"
+	return normalize(sum[:])
+}
+
+func pixelSourceForBytes(pixel []byte) string {
+	switch len(pixel) {
+	case 32:
+		return "witness_script_hash"
+	case 20:
+		return "script_hash"
+	default:
+		return ""
+	}
 }
 
 func (s *Server) handleClaimTask(w http.ResponseWriter, r *http.Request, taskID string) {
