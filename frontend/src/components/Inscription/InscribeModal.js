@@ -31,6 +31,57 @@ const InscribeModal = ({ onClose, onSuccess }) => {
     reader.readAsDataURL(file);
   });
 
+  const toArrayBuffer = (file) => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsArrayBuffer(file);
+  });
+
+  const toHex = (buffer, bytes = null) => {
+    const view = new Uint8Array(buffer);
+    const slice = bytes ? view.slice(0, bytes) : view;
+    return Array.from(slice).map((b) => b.toString(16).padStart(2, '0')).join('');
+  };
+
+  const computeVisiblePixelHash = async (file, message) => {
+    const buffer = await toArrayBuffer(file);
+    const msgBytes = new TextEncoder().encode(message || '');
+    const combined = new Uint8Array(buffer.byteLength + msgBytes.length);
+    combined.set(new Uint8Array(buffer), 0);
+    combined.set(msgBytes, buffer.byteLength);
+    const digest = await window.crypto.subtle.digest('SHA-256', combined);
+    return toHex(digest, 8);
+  };
+
+  const fetchStegoBytes = async (result) => {
+    if (result?.stego_image_base64) {
+      const raw = atob(result.stego_image_base64);
+      return Uint8Array.from(raw, (c) => c.charCodeAt(0));
+    }
+    if (result?.stego_image_url) {
+      const url = result.stego_image_url.startsWith('http')
+        ? result.stego_image_url
+        : `${API_BASE}${result.stego_image_url}`;
+      const resp = await fetch(url);
+      if (!resp.ok) return null;
+      const blob = await resp.blob();
+      return new Uint8Array(await blob.arrayBuffer());
+    }
+    return null;
+  };
+
+  const updateIngestionHash = async (ingestionID, stegoBytes) => {
+    if (!ingestionID || !stegoBytes) return;
+    const form = new FormData();
+    form.append('ingestion_id', ingestionID);
+    form.append('image', new Blob([stegoBytes], { type: 'image/png' }), 'stego.png');
+    await fetch(`${API_BASE}/api/ingest-hash`, {
+      method: 'POST',
+      body: form
+    });
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setIsSubmitting(true);
@@ -60,6 +111,9 @@ const InscribeModal = ({ onClose, onSuccess }) => {
 
       if (response.ok) {
         const result = await response.json();
+        const ingestionID = await computeVisiblePixelHash(uploadImage, embedText);
+        const stegoBytes = await fetchStegoBytes(result);
+        await updateIngestionHash(ingestionID, stegoBytes);
 
         // Generate payment QR code data
         const paymentAddress = "bc1qexampleaddress123456789"; // Demo address

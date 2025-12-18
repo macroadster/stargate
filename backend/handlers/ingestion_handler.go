@@ -147,7 +147,8 @@ func (h *IngestionHandler) HandleHashImage(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	imageData, err := readImagePayload(r)
+	var ingestionID string
+	imageData, err := readImagePayload(r, &ingestionID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -155,22 +156,37 @@ func (h *IngestionHandler) HandleHashImage(w http.ResponseWriter, r *http.Reques
 
 	sha := sha256.Sum256(imageData)
 	hash160 := btcutil.Hash160(imageData)
+	shaHex := hex.EncodeToString(sha[:])
+	hash160Hex := hex.EncodeToString(hash160)
+
+	if ingestionID != "" && h.service != nil {
+		meta := map[string]interface{}{
+			"pixel_hash":         shaHex,
+			"payout_script_hash": hash160Hex,
+		}
+		if err := h.service.UpdateMetadata(ingestionID, meta); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"sha256":        hex.EncodeToString(sha[:]),
-		"hash160":       hex.EncodeToString(hash160),
+		"sha256":        shaHex,
+		"hash160":       hash160Hex,
 		"byte_length":   len(imageData),
-		"pixel_hash_32": hex.EncodeToString(sha[:]),
-		"pixel_hash_20": hex.EncodeToString(hash160),
+		"pixel_hash_32": shaHex,
+		"pixel_hash_20": hash160Hex,
+		"ingestion_id":  ingestionID,
 	})
 }
 
-func readImagePayload(r *http.Request) ([]byte, error) {
+func readImagePayload(r *http.Request, ingestionID *string) ([]byte, error) {
 	contentType := r.Header.Get("Content-Type")
 	if strings.HasPrefix(contentType, "application/json") {
 		var body struct {
 			ImageBase64 string `json:"image_base64"`
+			IngestionID string `json:"ingestion_id"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			return nil, err
@@ -178,11 +194,18 @@ func readImagePayload(r *http.Request) ([]byte, error) {
 		if body.ImageBase64 == "" {
 			return nil, errors.New("image_base64 is required")
 		}
+		if ingestionID != nil {
+			*ingestionID = strings.TrimSpace(body.IngestionID)
+		}
 		return base64.StdEncoding.DecodeString(body.ImageBase64)
 	}
 
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
 		return nil, err
+	}
+
+	if ingestionID != nil {
+		*ingestionID = strings.TrimSpace(r.FormValue("ingestion_id"))
 	}
 
 	if formValue := r.FormValue("image_base64"); formValue != "" {
