@@ -2,6 +2,8 @@ package smart_contract
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -225,6 +227,11 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 			pixelBytes = normalizePixel(b)
 		}
 	}
+	if pixelBytes == nil && s.ingestionSvc != nil {
+		if rec, err := s.ingestionSvc.Get(contractID); err == nil {
+			pixelBytes = resolvePixelHashFromIngestion(rec, normalizePixel)
+		}
+	}
 	if pixelBytes == nil {
 		if h, err := hex.DecodeString(strings.TrimSpace(contractID)); err == nil {
 			pixelBytes = normalizePixel(h)
@@ -344,6 +351,47 @@ func (s *Server) handleTasks(w http.ResponseWriter, r *http.Request) {
 	default:
 		Error(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
+}
+
+func resolvePixelHashFromIngestion(rec *services.IngestionRecord, normalize func([]byte) []byte) []byte {
+	if rec == nil {
+		return nil
+	}
+
+	for _, key := range []string{"pixel_hash", "payout_script_hash", "visible_pixel_hash"} {
+		if v, ok := rec.Metadata[key].(string); ok {
+			if b, err := hex.DecodeString(strings.TrimSpace(v)); err == nil {
+				if normalized := normalize(b); normalized != nil {
+					return normalized
+				}
+			}
+		}
+	}
+
+	message := ""
+	if v, ok := rec.Metadata["embedded_message"].(string); ok {
+		message = v
+	}
+	if message == "" {
+		if v, ok := rec.Metadata["message"].(string); ok {
+			message = v
+		}
+	}
+	if rec.ImageBase64 == "" {
+		return nil
+	}
+	imageBytes, err := base64.StdEncoding.DecodeString(rec.ImageBase64)
+	if err != nil {
+		return nil
+	}
+
+	if message != "" {
+		sum := sha256.Sum256(append(imageBytes, []byte(message)...))
+		return normalize(sum[:])
+	}
+
+	sum := sha256.Sum256(imageBytes)
+	return normalize(sum[:])
 }
 
 func (s *Server) handleClaimTask(w http.ResponseWriter, r *http.Request, taskID string) {
