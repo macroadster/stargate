@@ -1435,10 +1435,11 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 	if len(candidates) == 0 {
 		return smartContracts
 	}
+	log.Printf("oracle reconcile: %d candidate hashes across %d ingestions", len(candidates), len(recs))
 
 	for _, tx := range parsedBlock.Transactions {
 		for outIdx, output := range tx.Outputs {
-			match, matchType := matchOracleOutput(output.ScriptPubKey, bm.networkParams(), candidates)
+			match, matchType, matchedHash := matchOracleOutput(output.ScriptPubKey, bm.networkParams(), candidates)
 			if match == nil {
 				continue
 			}
@@ -1448,6 +1449,7 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 				log.Printf("oracle reconcile: failed to move ingestion image for %s: %v", match.ID, err)
 				continue
 			}
+			log.Printf("oracle reconcile: matched ingestion %s via %s=%s in tx %s output %d", match.ID, matchType, matchedHash, tx.TxID, outIdx)
 
 			imageFile := filepath.Base(destPath)
 			imagePath := filepath.Join("images", imageFile)
@@ -1456,6 +1458,7 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 				"output_index":       outIdx,
 				"block_height":       blockHeight,
 				"match_type":         matchType,
+				"match_hash":         matchedHash,
 				"payout_script":      hex.EncodeToString(output.ScriptPubKey),
 				"image_file":         imageFile,
 				"image_path":         imagePath,
@@ -1534,26 +1537,26 @@ func ingestionHashCandidates(rec services.IngestionRecord) []string {
 	return out
 }
 
-func matchOracleOutput(script []byte, params *chaincfg.Params, candidates map[string]*services.IngestionRecord) (*services.IngestionRecord, string) {
+func matchOracleOutput(script []byte, params *chaincfg.Params, candidates map[string]*services.IngestionRecord) (*services.IngestionRecord, string, string) {
 	if len(script) == 0 {
-		return nil, ""
+		return nil, "", ""
 	}
 
 	for _, hash := range []string{scriptHashHex(script), scriptHash160Hex(script)} {
 		if match, ok := candidates[hash]; ok {
-			return match, "script_hash"
+			return match, "script_hash", hash
 		}
 	}
 
 	if len(candidates) > 0 {
 		for _, addrHash := range scriptAddressHashes(script, params) {
 			if match, ok := candidates[addrHash]; ok {
-				return match, "script_address"
+				return match, "script_address", addrHash
 			}
 		}
 	}
 
-	return nil, ""
+	return nil, "", ""
 }
 
 func scriptAddressHashes(script []byte, params *chaincfg.Params) []string {

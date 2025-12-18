@@ -1,12 +1,18 @@
 package handlers
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"os"
 	"stargate-backend/services"
 	"strings"
+
+	"github.com/btcsuite/btcd/btcutil"
 )
 
 type IngestionHandler struct {
@@ -124,6 +130,72 @@ func (h *IngestionHandler) HandleGetIngestion(w http.ResponseWriter, r *http.Req
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(rec)
+}
+
+// HandleHashImage returns hash metadata for an uploaded image without storing it.
+func (h *IngestionHandler) HandleHashImage(w http.ResponseWriter, r *http.Request) {
+	enableCORS(w, r)
+	if r.Method == http.MethodOptions {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !h.authorize(r) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	imageData, err := readImagePayload(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	sha := sha256.Sum256(imageData)
+	hash160 := btcutil.Hash160(imageData)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"sha256":        hex.EncodeToString(sha[:]),
+		"hash160":       hex.EncodeToString(hash160),
+		"byte_length":   len(imageData),
+		"pixel_hash_32": hex.EncodeToString(sha[:]),
+		"pixel_hash_20": hex.EncodeToString(hash160),
+	})
+}
+
+func readImagePayload(r *http.Request) ([]byte, error) {
+	contentType := r.Header.Get("Content-Type")
+	if strings.HasPrefix(contentType, "application/json") {
+		var body struct {
+			ImageBase64 string `json:"image_base64"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			return nil, err
+		}
+		if body.ImageBase64 == "" {
+			return nil, errors.New("image_base64 is required")
+		}
+		return base64.StdEncoding.DecodeString(body.ImageBase64)
+	}
+
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		return nil, err
+	}
+
+	if formValue := r.FormValue("image_base64"); formValue != "" {
+		return base64.StdEncoding.DecodeString(formValue)
+	}
+
+	file, _, err := r.FormFile("image")
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	return io.ReadAll(file)
 }
 
 // enableCORS matches other handlers.

@@ -344,6 +344,7 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 	// Ingestion endpoints
 	mux.HandleFunc("/api/ingest-inscription", container.IngestionHandler.HandleIngest)
 	mux.HandleFunc("/api/ingest-inscription/", container.IngestionHandler.HandleGetIngestion)
+	mux.HandleFunc("/api/ingest-hash", container.IngestionHandler.HandleHashImage)
 
 	// Search endpoints
 	mux.HandleFunc("/api/search", container.SearchHandler.HandleSearch)
