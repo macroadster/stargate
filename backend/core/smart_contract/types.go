@@ -15,22 +15,23 @@ type Contract struct {
 
 // Task describes a specific unit of work an AI can claim.
 type Task struct {
-	TaskID         string            `json:"task_id"`
-	ContractID     string            `json:"contract_id"`
-	GoalID         string            `json:"goal_id"`
-	Title          string            `json:"title"`
-	Description    string            `json:"description"`
-	BudgetSats     int64             `json:"budget_sats"`
-	Skills         []string          `json:"skills_required"`
-	Status         string            `json:"status"` // available | claimed | in_progress | submitted | approved | disputed
-	ClaimedBy      string            `json:"claimed_by,omitempty"`
-	ClaimedAt      *time.Time        `json:"claimed_at,omitempty"`
-	ClaimExpires   *time.Time        `json:"claim_expires_at,omitempty"`
-	ActiveClaimID  string            `json:"active_claim_id,omitempty"`
-	Difficulty     string            `json:"difficulty,omitempty"`
-	EstimatedHours int               `json:"estimated_hours,omitempty"`
-	Requirements   map[string]string `json:"requirements,omitempty"`
-	MerkleProof    *MerkleProof      `json:"merkle_proof,omitempty"`
+	TaskID           string            `json:"task_id"`
+	ContractID       string            `json:"contract_id"`
+	GoalID           string            `json:"goal_id"`
+	Title            string            `json:"title"`
+	Description      string            `json:"description"`
+	BudgetSats       int64             `json:"budget_sats"`
+	Skills           []string          `json:"skills_required"`
+	Status           string            `json:"status"` // available | claimed | in_progress | submitted | approved | disputed
+	ClaimedBy        string            `json:"claimed_by,omitempty"`
+	ContractorWallet string            `json:"contractor_wallet,omitempty"`
+	ClaimedAt        *time.Time        `json:"claimed_at,omitempty"`
+	ClaimExpires     *time.Time        `json:"claim_expires_at,omitempty"`
+	ActiveClaimID    string            `json:"active_claim_id,omitempty"`
+	Difficulty       string            `json:"difficulty,omitempty"`
+	EstimatedHours   int               `json:"estimated_hours,omitempty"`
+	Requirements     map[string]string `json:"requirements,omitempty"`
+	MerkleProof      *MerkleProof      `json:"merkle_proof,omitempty"`
 }
 
 // MerkleProof represents the payment proof for a funded task.
@@ -40,6 +41,7 @@ type MerkleProof struct {
 	BlockHeaderMerkleRoot string      `json:"block_header_merkle_root"`
 	ProofPath             []ProofNode `json:"proof_path"`
 	VisiblePixelHash      string      `json:"visible_pixel_hash,omitempty"`
+	ContractorWallet      string      `json:"contractor_wallet,omitempty"`
 	FundedAmountSats      int64       `json:"funded_amount_sats"`
 	FundingAddress        string      `json:"funding_address,omitempty"`
 	ConfirmationStatus    string      `json:"confirmation_status"` // provisional | confirmed

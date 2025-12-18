@@ -443,12 +443,13 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 		if result, err := h.postJSON(fmt.Sprintf("%s/api/smart_contract/tasks/%s/claim", h.baseURL, taskID),
 			map[string]interface{}{
 				"ai_identifier":        aiIdentifier,
+				"wallet_address":       h.toString(args["wallet_address"]),
 				"estimated_completion": h.toString(args["estimated_completion"]),
 			}); err == nil {
 			return result, nil
 		}
 
-		claim, err := store.ClaimTask(taskID, aiIdentifier, nil)
+		claim, err := store.ClaimTask(taskID, aiIdentifier, h.toString(args["wallet_address"]), nil)
 		if err != nil {
 			return nil, fmt.Errorf("Failed to claim task: %v", err)
 		}

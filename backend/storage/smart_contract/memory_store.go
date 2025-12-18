@@ -175,7 +175,7 @@ func (s *MemoryStore) GetContract(id string) (smart_contract.Contract, error) {
 }
 
 // ClaimTask reserves a task for an AI. It is idempotent if the same AI reclaims before expiry.
-func (s *MemoryStore) ClaimTask(taskID, aiID string, estimatedCompletion *time.Time) (smart_contract.Claim, error) {
+func (s *MemoryStore) ClaimTask(taskID, aiID, contractorWallet string, estimatedCompletion *time.Time) (smart_contract.Claim, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -183,11 +183,20 @@ func (s *MemoryStore) ClaimTask(taskID, aiID string, estimatedCompletion *time.T
 	if !ok {
 		return smart_contract.Claim{}, ErrTaskNotFound
 	}
+	normalizedWallet := strings.TrimSpace(contractorWallet)
 
 	// Existing claim?
 	for _, c := range s.claims {
 		if c.TaskID == taskID {
 			if c.AiIdentifier == aiID && c.Status == "active" && time.Now().Before(c.ExpiresAt) {
+				if normalizedWallet != "" && task.ContractorWallet == "" {
+					task.ContractorWallet = normalizedWallet
+					if task.MerkleProof == nil {
+						task.MerkleProof = &smart_contract.MerkleProof{}
+					}
+					task.MerkleProof.ContractorWallet = normalizedWallet
+					s.tasks[taskID] = task
+				}
 				return c, nil
 			}
 			if c.Status == "active" && time.Now().Before(c.ExpiresAt) {
@@ -211,6 +220,13 @@ func (s *MemoryStore) ClaimTask(taskID, aiID string, estimatedCompletion *time.T
 	task.ClaimedAt = &claim.CreatedAt
 	task.ClaimExpires = &expires
 	task.ActiveClaimID = claimID
+	if normalizedWallet != "" {
+		task.ContractorWallet = normalizedWallet
+		if task.MerkleProof == nil {
+			task.MerkleProof = &smart_contract.MerkleProof{}
+		}
+		task.MerkleProof.ContractorWallet = normalizedWallet
+	}
 
 	s.claims[claimID] = claim
 	s.tasks[taskID] = task
@@ -387,6 +403,18 @@ func (s *MemoryStore) UpdateTaskProof(ctx context.Context, taskID string, proof 
 	t, ok := s.tasks[taskID]
 	if !ok {
 		return ErrTaskNotFound
+	}
+	existingWallet := strings.TrimSpace(t.ContractorWallet)
+	if existingWallet == "" && t.MerkleProof != nil {
+		existingWallet = strings.TrimSpace(t.MerkleProof.ContractorWallet)
+	}
+	if proof != nil && existingWallet != "" && strings.TrimSpace(proof.ContractorWallet) == "" {
+		cp := *proof
+		cp.ContractorWallet = existingWallet
+		proof = &cp
+	}
+	if proof != nil && strings.TrimSpace(t.ContractorWallet) == "" && strings.TrimSpace(proof.ContractorWallet) != "" {
+		t.ContractorWallet = strings.TrimSpace(proof.ContractorWallet)
 	}
 	t.MerkleProof = proof
 	s.tasks[taskID] = t

@@ -353,6 +353,7 @@ func (s *Server) handleClaimTask(w http.ResponseWriter, r *http.Request, taskID 
 	}
 	var body struct {
 		AiIdentifier        string     `json:"ai_identifier"`
+		Wallet              string     `json:"wallet_address,omitempty"`
 		EstimatedCompletion *time.Time `json:"estimated_completion,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -364,12 +365,19 @@ func (s *Server) handleClaimTask(w http.ResponseWriter, r *http.Request, taskID 
 		return
 	}
 
-	claim, err := s.store.ClaimTask(taskID, body.AiIdentifier, body.EstimatedCompletion)
+	contractorWallet := strings.TrimSpace(body.Wallet)
+	if s.apiKeys != nil {
+		if rec, ok := s.apiKeys.Get(r.Header.Get("X-API-Key")); ok && strings.TrimSpace(rec.Wallet) != "" {
+			contractorWallet = strings.TrimSpace(rec.Wallet)
+		}
+	}
+
+	claim, err := s.store.ClaimTask(taskID, body.AiIdentifier, contractorWallet, body.EstimatedCompletion)
 	if err != nil {
 		if err == ErrTaskNotFound {
 			// Attempt to publish tasks lazily from proposals that reference this task id, then retry.
 			if s.tryPublishTasksForTaskID(r.Context(), taskID) == nil {
-				if retry, retryErr := s.store.ClaimTask(taskID, body.AiIdentifier, body.EstimatedCompletion); retryErr == nil {
+				if retry, retryErr := s.store.ClaimTask(taskID, body.AiIdentifier, contractorWallet, body.EstimatedCompletion); retryErr == nil {
 					claim = retry
 					err = nil
 				} else {

@@ -260,6 +260,15 @@ FROM mcp_tasks WHERE contract_id = ANY($1)
 			p.Tasks[i].ClaimedAt = lt.ClaimedAt
 			p.Tasks[i].ClaimExpires = lt.ClaimExpires
 			p.Tasks[i].ActiveClaimID = lt.ActiveClaimID
+			if lt.MerkleProof != nil {
+				p.Tasks[i].MerkleProof = lt.MerkleProof
+				if strings.TrimSpace(p.Tasks[i].ContractorWallet) == "" && strings.TrimSpace(lt.MerkleProof.ContractorWallet) != "" {
+					p.Tasks[i].ContractorWallet = strings.TrimSpace(lt.MerkleProof.ContractorWallet)
+				}
+			}
+			if strings.TrimSpace(lt.ContractorWallet) != "" {
+				p.Tasks[i].ContractorWallet = strings.TrimSpace(lt.ContractorWallet)
+			}
 			if len(lt.Skills) > 0 {
 				p.Tasks[i].Skills = lt.Skills
 			}
@@ -347,7 +356,7 @@ FROM mcp_contracts WHERE contract_id=$1
 }
 
 // ClaimTask reserves a task for an AI. It is idempotent if the same AI reclaims before expiry.
-func (s *PGStore) ClaimTask(taskID, aiID string, estimatedCompletion *time.Time) (smart_contract.Claim, error) {
+func (s *PGStore) ClaimTask(taskID, aiID, contractorWallet string, estimatedCompletion *time.Time) (smart_contract.Claim, error) {
 	ctx := context.Background()
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -355,12 +364,31 @@ func (s *PGStore) ClaimTask(taskID, aiID string, estimatedCompletion *time.Time)
 	}
 	defer tx.Rollback(ctx)
 
-	_, err = scanTask(tx.QueryRow(ctx, `
+	task, err := scanTask(tx.QueryRow(ctx, `
 SELECT task_id, contract_id, goal_id, title, description, budget_sats, skills, status, claimed_by, claimed_at, claim_expires_at, difficulty, estimated_hours, requirements, merkle_proof
 FROM mcp_tasks WHERE task_id=$1 FOR UPDATE
 `, taskID))
 	if err != nil {
 		return smart_contract.Claim{}, ErrTaskNotFound
+	}
+
+	normalizedWallet := strings.TrimSpace(contractorWallet)
+	persistWallet := func(wallet string) error {
+		wallet = strings.TrimSpace(wallet)
+		if wallet == "" {
+			return nil
+		}
+		if strings.EqualFold(strings.TrimSpace(task.ContractorWallet), wallet) {
+			return nil
+		}
+		task.ContractorWallet = wallet
+		if task.MerkleProof == nil {
+			task.MerkleProof = &smart_contract.MerkleProof{}
+		}
+		task.MerkleProof.ContractorWallet = wallet
+		proofJSON, _ := json.Marshal(task.MerkleProof)
+		_, err := tx.Exec(ctx, `UPDATE mcp_tasks SET merkle_proof=$2 WHERE task_id=$1`, taskID, string(proofJSON))
+		return err
 	}
 
 	rows, err := tx.Query(ctx, `SELECT claim_id, task_id, ai_identifier, status, expires_at, created_at FROM mcp_claims WHERE task_id=$1`, taskID)
@@ -376,6 +404,9 @@ FROM mcp_tasks WHERE task_id=$1 FOR UPDATE
 		}
 		if c.Status == "active" && now.Before(c.ExpiresAt) {
 			if c.AiIdentifier == aiID {
+				if err := persistWallet(normalizedWallet); err != nil {
+					return smart_contract.Claim{}, err
+				}
 				return c, tx.Commit(ctx)
 			}
 			return smart_contract.Claim{}, ErrTaskTaken
@@ -404,6 +435,9 @@ VALUES ($1,$2,$3,$4,$5,$6)
 UPDATE mcp_tasks SET status='claimed', claimed_by=$2, claimed_at=$3, claim_expires_at=$4 WHERE task_id=$1
 `, taskID, aiID, claim.CreatedAt, claim.ExpiresAt)
 	if err != nil {
+		return smart_contract.Claim{}, err
+	}
+	if err := persistWallet(normalizedWallet); err != nil {
 		return smart_contract.Claim{}, err
 	}
 
@@ -731,6 +765,11 @@ func (s *PGStore) UpdateTaskProof(ctx context.Context, taskID string, proof *sma
 	if proof == nil {
 		return nil
 	}
+	if existing, err := s.GetTaskProof(taskID); err == nil && existing != nil {
+		if strings.TrimSpace(existing.ContractorWallet) != "" && strings.TrimSpace(proof.ContractorWallet) == "" {
+			proof.ContractorWallet = strings.TrimSpace(existing.ContractorWallet)
+		}
+	}
 	b, err := json.Marshal(proof)
 	if err != nil {
 		return err
@@ -976,6 +1015,9 @@ func scanTask(scanner interface {
 		var proof smart_contract.MerkleProof
 		if err := json.Unmarshal(proofJSON, &proof); err == nil {
 			t.MerkleProof = &proof
+			if strings.TrimSpace(proof.ContractorWallet) != "" {
+				t.ContractorWallet = strings.TrimSpace(proof.ContractorWallet)
+			}
 		}
 	}
 	return t, nil
