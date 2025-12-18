@@ -110,6 +110,10 @@ backend/
 - **Mainnet**: Production Bitcoin network
 - **Testnet**: Development and testing (fully functional)
 - **Signet**: Alternative testnet with taproot support
+- **Pending**: starlight-tj9/zu7 will introduce auto funding-tx discovery and concurrent mainnet/testnet4 support. Notes if resuming:
+  - Persist payout scripts per task (contractor wallet or pixel-hash) when building/publishing.
+  - Monitor testnet4 blocks/tx for matching scripts; on match, record txid/vout+height into task merkle_proof/funding metadata.
+  - Refactor network selection to be per-contract/address (not global BITCOIN_NETWORK) so mainnet+testnet4 can run concurrently.
 
 ---
 
