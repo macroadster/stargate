@@ -75,7 +75,14 @@ const InscriptionModal = ({ inscription, onClose }) => {
     const collected = [];
     proposalItems.forEach((p) => {
       const tasks = Array.isArray(p.tasks) ? p.tasks : [];
-      tasks.forEach((t) => collected.push({ ...t, proposalId: p.id, visible_pixel_hash: p.visible_pixel_hash || t.visible_pixel_hash }));
+      tasks.forEach((t) =>
+        collected.push({
+          ...t,
+          proposalId: p.id,
+          visible_pixel_hash: p.visible_pixel_hash || t.visible_pixel_hash,
+          contractor_wallet: t.contractor_wallet || p.metadata?.contractor_wallet,
+        }),
+      );
     });
     return collected;
   }, [proposalItems]);
@@ -183,12 +190,14 @@ const InscriptionModal = ({ inscription, onClose }) => {
         const first = items[0];
         const preferredHash = first.visible_pixel_hash || psbtForm.pixelHash || inscription.metadata?.visible_pixel_hash || '';
         const firstTaskWithFunding = allTasks.find((t) => t?.merkle_proof?.funding_address);
+        const firstTask = firstTaskWithFunding || allTasks[0];
         setPsbtForm((prev) => ({
           ...prev,
           pixelHash: preferredHash,
           contractId: prev.contractId || first.id || primaryContractId,
-          budgetSats: prev.budgetSats || first.budget_sats || '',
-          taskId: prev.taskId || firstTaskWithFunding?.task_id || allTasks[0]?.task_id || '',
+          budgetSats: prev.budgetSats || firstTask?.budget_sats || first.budget_sats || '',
+          taskId: prev.taskId || firstTask?.task_id || '',
+          contractorWallet: prev.contractorWallet || firstTask?.contractor_wallet || inscription.metadata?.contractor_wallet || '',
         }));
       }
       if (items.length > 0) {
@@ -258,8 +267,8 @@ const InscriptionModal = ({ inscription, onClose }) => {
     }
     const contractId = psbtForm.contractId || primaryContractId;
     const payoutWallet =
-      selectedTask?.merkle_proof?.funding_address ||
       psbtForm.contractorWallet ||
+      selectedTask?.contractor_wallet ||
       inscription.metadata?.contractor_wallet ||
       '';
     if (!selectedTask) {
@@ -720,6 +729,20 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                           placeholder="contract id (ingestion/visible hash)"
                         />
                       </div>
+                      <div className="space-y-2">
+                        <label className="block text-xs text-gray-500">Contractor wallet (payout)</label>
+                        <input
+                          className="w-full rounded bg-gray-100 dark:bg-gray-800 px-3 py-2"
+                          value={
+                            psbtForm.contractorWallet ||
+                            selectedTask?.contractor_wallet ||
+                            inscription.metadata?.contractor_wallet ||
+                            ''
+                          }
+                          onChange={(e) => setPsbtForm((p) => ({ ...p, contractorWallet: e.target.value }))}
+                          placeholder="Contractor tb1..."
+                        />
+                      </div>
                       <div className="space-y-1">
                         <label className="block text-xs text-gray-500">Fee rate (sat/vB)</label>
                         <input
@@ -730,10 +753,6 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                         />
                       </div>
                       <div className="space-y-1">
-                        <div className="text-xs text-gray-500">Payout wallet</div>
-                        <div className="px-3 py-2 rounded bg-gray-100 dark:bg-gray-800 font-mono text-xs break-all">
-                          {selectedTask?.merkle_proof?.funding_address || inscription.metadata?.contractor_wallet || 'N/A'}
-                        </div>
                         <div className="text-xs text-gray-500">Pixel hash</div>
                         <div className="px-3 py-2 rounded bg-gray-100 dark:bg-gray-800 font-mono text-xs break-all">
                           {selectedTask?.merkle_proof?.visible_pixel_hash || psbtForm.pixelHash || inscription.metadata?.visible_pixel_hash || 'N/A'}
