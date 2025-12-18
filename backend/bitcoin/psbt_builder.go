@@ -20,6 +20,7 @@ type PSBTRequest struct {
 	PixelHash         []byte
 	ContractorAddress btcutil.Address
 	FeeRateSatPerVB   int64
+	UseTaproot        bool
 }
 
 // PSBTResult summarizes the built PSBT.
@@ -140,6 +141,17 @@ func BuildFundingPSBT(client *MempoolClient, params *chaincfg.Params, req PSBTRe
 
 func buildPayoutScript(params *chaincfg.Params, req PSBTRequest) ([]byte, btcutil.Address, error) {
 	if len(req.PixelHash) > 0 {
+		if req.UseTaproot {
+			if len(req.PixelHash) != 32 {
+				return nil, nil, fmt.Errorf("taproot requires 32-byte pixel hash")
+			}
+			addr, err := btcutil.NewAddressTaproot(req.PixelHash, params)
+			if err != nil {
+				return nil, nil, fmt.Errorf("pixel hash p2tr: %w", err)
+			}
+			script, _ := txscript.PayToAddrScript(addr)
+			return script, addr, nil
+		}
 		switch len(req.PixelHash) {
 		case 20:
 			addr, err := btcutil.NewAddressScriptHashFromHash(req.PixelHash, params)
