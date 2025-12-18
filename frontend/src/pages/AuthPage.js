@@ -15,6 +15,19 @@ export default function AuthPage() {
   const [signature, setSignature] = useState('');
   const [view, setView] = useState('login'); // login | register | wallet
 
+  // When a saved key is chosen, hydrate wallet/email so the binding survives re-login.
+  React.useEffect(() => {
+    const selected = savedKeys.find((k) => k.apiKey === loginKey);
+    if (selected) {
+      if (selected.wallet) {
+        setWallet(selected.wallet);
+      }
+      if (selected.email) {
+        setEmail(selected.email);
+      }
+    }
+  }, [loginKey, savedKeys]);
+
   const setStatusBubble = (msg) => setStatus(msg || '');
 
   const handleRegister = async () => {
@@ -47,16 +60,19 @@ export default function AuthPage() {
   const handleLogin = async () => {
     setStatus('Signing in...');
     try {
+      const saved = savedKeys.find((k) => k.apiKey === loginKey);
+      const walletToSend = wallet || saved?.wallet || '';
       const res = await fetch(`${API_BASE}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ api_key: loginKey, wallet_address: wallet })
+        body: JSON.stringify({ api_key: loginKey, wallet_address: walletToSend })
       });
       const data = await res.json();
       const payload = data?.data || data;
       if (!res.ok) throw new Error(data?.message || payload?.message || 'Invalid key');
       const keyToSave = payload.api_key || loginKey;
-      signIn(keyToSave, payload.wallet || wallet, payload.email || '');
+      const walletToPersist = payload.wallet || walletToSend;
+      signIn(keyToSave, walletToPersist, payload.email || saved?.email || '');
       setApiKey(keyToSave);
       setStatus('Signed in. Key saved locally.');
       navigate('/');
