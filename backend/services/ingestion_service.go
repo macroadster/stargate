@@ -104,24 +104,6 @@ WHERE id = $1
 	return err
 }
 
-// UpdateMetadata merges the provided metadata into the ingestion record.
-func (s *IngestionService) UpdateMetadata(id string, updates map[string]interface{}) error {
-	if id == "" {
-		return fmt.Errorf("missing id")
-	}
-	updatesJSON, err := toJSONB(updates)
-	if err != nil {
-		return err
-	}
-	query := fmt.Sprintf(`
-UPDATE %s
-SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb
-WHERE id = $1
-`, s.tableName)
-	_, err = s.db.Exec(query, id, string(updatesJSON))
-	return err
-}
-
 // ListRecent returns recent ingestions, optionally filtered by status.
 func (s *IngestionService) ListRecent(status string, limit int) ([]IngestionRecord, error) {
 	if limit <= 0 {
