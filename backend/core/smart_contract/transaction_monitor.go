@@ -199,17 +199,22 @@ func (tm *TransactionMonitor) getTransactionData(txID string) (*TransactionData,
 	// Determine network
 	network := os.Getenv("BITCOIN_NETWORK")
 	if network == "" {
-		network = "mainnet"
+		network = "testnet4"
 	}
 
 	// Try multiple blockchain APIs
 	var apis []string
-	if network == "testnet" {
+	switch network {
+	case "testnet4":
+		apis = []string{
+			"https://mempool.space/testnet4/api/tx/" + txID,
+		}
+	case "testnet":
 		apis = []string{
 			"https://blockstream.info/testnet/api/tx/" + txID,
 			"https://api.blockcypher.com/v1/btc/test3/txs/" + txID,
 		}
-	} else {
+	default:
 		apis = []string{
 			"https://blockstream.info/api/tx/" + txID,
 			"https://api.blockcypher.com/v1/btc/main/txs/" + txID,

@@ -17,6 +17,14 @@ type NetworkConfig struct {
 // GetNetworkConfig returns configuration for the specified network
 func GetNetworkConfig(network string) *NetworkConfig {
 	switch network {
+	case "testnet4":
+		return &NetworkConfig{
+			Name:        "Bitcoin Testnet4",
+			BaseURL:     "https://mempool.space/testnet4/api",
+			ExplorerURL: "https://mempool.space/testnet4",
+			FaucetURL:   "",
+			HeightURL:   "https://mempool.space/testnet4/api/blocks/tip/height",
+		}
 	case "testnet":
 		return &NetworkConfig{
 			Name:        "Bitcoin Testnet",
@@ -42,8 +50,8 @@ func GetNetworkConfig(network string) *NetworkConfig {
 			HeightURL:   "https://mempool.space/signet/api/blocks/tip/height",
 		}
 	default:
-		log.Printf("Unknown network '%s', defaulting to mainnet", network)
-		return GetNetworkConfig("mainnet")
+		log.Printf("Unknown network '%s', defaulting to testnet4", network)
+		return GetNetworkConfig("testnet4")
 	}
 }
 
@@ -51,7 +59,7 @@ func GetNetworkConfig(network string) *NetworkConfig {
 func GetCurrentNetwork() string {
 	network := os.Getenv("BITCOIN_NETWORK")
 	if network == "" {
-		network = "mainnet"
+		network = "testnet4"
 	}
 	return network
 }
