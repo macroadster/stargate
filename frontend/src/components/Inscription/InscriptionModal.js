@@ -23,7 +23,7 @@ const InscriptionModal = ({ inscription, onClose }) => {
   const [proposalError, setProposalError] = useState('');
   const [approvingId, setApprovingId] = useState('');
   const [submissions, setSubmissions] = useState({});
-  const [psbtForm, setPsbtForm] = useState({ contractorWallet: '', pixelHash: '', budgetSats: '', feeRate: 1, contractId: '', taskId: '' });
+  const [psbtForm, setPsbtForm] = useState({ contractorWallet: '', pixelHash: '', budgetSats: '', feeRate: '1', contractId: '', taskId: '' });
   const [psbtResult, setPsbtResult] = useState(null);
   const [psbtError, setPsbtError] = useState('');
   const [psbtLoading, setPsbtLoading] = useState(false);
@@ -285,6 +285,8 @@ const InscriptionModal = ({ inscription, onClose }) => {
     }
     setPsbtLoading(true);
     try {
+      const feeRateParsed = psbtForm.feeRate === '' ? NaN : Number(psbtForm.feeRate);
+      const feeRate = Number.isFinite(feeRateParsed) ? feeRateParsed : 1;
       const payload = {
         contractor_wallet: payoutWallet,
         pixel_hash:
@@ -293,7 +295,7 @@ const InscriptionModal = ({ inscription, onClose }) => {
           inscription.metadata?.visible_pixel_hash ||
           undefined,
         budget_sats: Number(psbtForm.budgetSats || selectedTask?.budget_sats || 0) || undefined,
-        fee_rate_sats_vb: Number(psbtForm.feeRate || 1) || 1,
+        fee_rate_sats_vb: feeRate,
       };
       const res = await fetch(`${API_BASE}/api/smart_contract/contracts/${contractId}/psbt`, {
         method: 'POST',
@@ -748,7 +750,7 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                         <input
                           className="w-full rounded bg-gray-100 dark:bg-gray-800 px-3 py-2"
                           type="number"
-                          value={psbtForm.feeRate || 1}
+                          value={psbtForm.feeRate}
                           onChange={(e) => setPsbtForm((p) => ({ ...p, feeRate: e.target.value }))}
                         />
                       </div>
