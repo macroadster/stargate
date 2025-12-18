@@ -95,6 +95,11 @@ const InscriptionModal = ({ inscription, onClose }) => {
     if (!approvedProposal) return allTasks;
     return allTasks.filter((t) => t.proposalId === approvedProposal.id);
   }, [allTasks, approvedProposal]);
+  const deliverableTasks = useMemo(() => {
+    if (!approvedProposal) return [];
+    const byProposal = psbtTasks.filter((t) => t.proposalId === approvedProposal.id);
+    return byProposal.length > 0 ? byProposal : [];
+  }, [psbtTasks, approvedProposal]);
   const selectedTask = useMemo(() => {
     const sourceTasks = psbtTasks.length > 0 ? psbtTasks : allTasks;
     if (psbtForm.taskId) return sourceTasks.find((t) => t.task_id === psbtForm.taskId) || sourceTasks[0];
@@ -746,7 +751,9 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
 
               {activeTab === 'deliverables' && (
                 <div className="space-y-4">
-                  {psbtTasks.length === 0 && allTasks.length === 0 ? (
+                  {!approvedProposal ? (
+                    <div className="text-sm text-gray-500 dark:text-gray-400">Approve a proposal to unlock deliverables.</div>
+                  ) : deliverableTasks.length === 0 ? (
                     <div className="text-sm text-gray-500 dark:text-gray-400">No deliverables available yet.</div>
                   ) : (
                   <div className="border border-gray-200 dark:border-gray-800 rounded-lg p-4 bg-white dark:bg-gray-900">
@@ -765,8 +772,8 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                             selectedTask?.contractor_wallet ||
                             inscription.metadata?.contractor_wallet ||
                             '';
-                          const noTasks = (psbtTasks.length === 0 && allTasks.length === 0);
-                          return psbtLoading || !auth.wallet || (!approvedProposal && proposalItems.length === 0) || !payoutWallet || noTasks;
+                          const noTasks = deliverableTasks.length === 0;
+                          return psbtLoading || !auth.wallet || !approvedProposal || !payoutWallet || noTasks;
                         })()}
                         className="px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-sm disabled:opacity-60"
                         title={!auth.wallet ? 'Sign in with funding API key first' : ''}
