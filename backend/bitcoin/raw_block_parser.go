@@ -91,13 +91,16 @@ func (rbc *RawBlockClient) GetRawBlockHex(blockHeight int64) (string, error) {
 func (rbc *RawBlockClient) getRawBlockAPIs(blockHeight int64) []string {
 	var apis []string
 
-	// Primary: Blockstream API (supports mainnet and testnet)
+	// Primary: Blockstream/Mempool API (supports mainnet, testnet, testnet4, signet)
 	var blockstreamBase string
-	if rbc.network == "testnet" {
+	switch rbc.network {
+	case "testnet4":
+		blockstreamBase = "https://mempool.space/testnet4/api"
+	case "testnet":
 		blockstreamBase = "https://blockstream.info/testnet/api"
-	} else if rbc.network == "signet" {
+	case "signet":
 		blockstreamBase = "https://mempool.space/signet/api"
-	} else {
+	default:
 		blockstreamBase = "https://blockstream.info/api"
 	}
 
