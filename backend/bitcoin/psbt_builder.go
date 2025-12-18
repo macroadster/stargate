@@ -38,8 +38,8 @@ func BuildFundingPSBT(client *MempoolClient, params *chaincfg.Params, req PSBTRe
 	if req.TargetValueSats <= 0 {
 		return nil, fmt.Errorf("target value must be positive")
 	}
-	if req.FeeRateSatPerVB <= 0 {
-		req.FeeRateSatPerVB = 1
+	if req.FeeRateSatPerVB < 0 {
+		req.FeeRateSatPerVB = 0
 	}
 
 	utxos, err := client.ListConfirmedUTXOs(req.PayerAddress.EncodeAddress())

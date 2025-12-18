@@ -101,6 +101,13 @@ const InscriptionModal = ({ inscription, onClose }) => {
     const withFunding = sourceTasks.find((t) => t?.merkle_proof?.funding_address);
     return withFunding || sourceTasks[0];
   }, [psbtForm.taskId, psbtTasks, allTasks]);
+  const approvedBudgetsTotal = useMemo(() => {
+    const eligibleStatuses = new Set(['approved', 'published', 'completed']);
+    const tasks = psbtTasks.length > 0 ? psbtTasks : allTasks;
+    const eligibles = tasks.filter((t) => eligibleStatuses.has((t.status || '').toLowerCase()));
+    if (eligibles.length === 0) return 0;
+    return eligibles.reduce((sum, t) => sum + (Number(t.budget_sats) || 0), 0);
+  }, [psbtTasks, allTasks]);
 
   let parsedPayload = null;
   if (typeof inscriptionMessageRaw === 'string') {
@@ -214,11 +221,16 @@ const InscriptionModal = ({ inscription, onClose }) => {
         const preferredHash = first.visible_pixel_hash || psbtForm.pixelHash || inscription.metadata?.visible_pixel_hash || '';
         const firstTaskWithFunding = preferredList.find((t) => t?.merkle_proof?.funding_address);
         const firstTask = firstTaskWithFunding || preferredList[0];
+        const eligibleStatuses = new Set(['approved', 'published', 'completed']);
+        const eligibleTasks = preferredList.filter((t) => eligibleStatuses.has((t.status || '').toLowerCase()));
+        const defaultBudget = eligibleTasks.length > 0
+          ? eligibleTasks.reduce((sum, t) => sum + (Number(t.budget_sats) || 0), 0)
+          : firstTask?.budget_sats || first.budget_sats || '';
         setPsbtForm((prev) => ({
           ...prev,
           pixelHash: preferredHash,
           contractId: prev.contractId || first.id || primaryContractId,
-          budgetSats: prev.budgetSats || firstTask?.budget_sats || first.budget_sats || '',
+          budgetSats: prev.budgetSats || defaultBudget,
           taskId: prev.taskId || firstTask?.task_id || '',
           contractorWallet: prev.contractorWallet || firstTask?.contractor_wallet || inscription.metadata?.contractor_wallet || '',
         }));
@@ -321,7 +333,11 @@ const InscriptionModal = ({ inscription, onClose }) => {
           psbtForm.pixelHash?.trim() ||
           inscription.metadata?.visible_pixel_hash ||
           undefined,
-        budget_sats: Number(psbtForm.budgetSats || selectedTask?.budget_sats || 0) || undefined,
+        budget_sats:
+          Number(psbtForm.budgetSats || 0) ||
+          approvedBudgetsTotal ||
+          Number(selectedTask?.budget_sats || 0) ||
+          undefined,
         fee_rate_sats_vb: feeRate,
       };
       const res = await fetch(`${API_BASE}/api/smart_contract/contracts/${contractId}/psbt`, {
