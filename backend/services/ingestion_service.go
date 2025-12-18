@@ -111,6 +111,26 @@ LIMIT 1
 	return &rec, nil
 }
 
+// GetByFilenameAndMessage returns a record matching filename and embedded message.
+func (s *IngestionService) GetByFilenameAndMessage(filename, message string) (*IngestionRecord, error) {
+	query := fmt.Sprintf(`
+SELECT id, filename, method, message_length, image_base64, metadata, status, created_at
+FROM %s
+WHERE filename = $1
+  AND (metadata->>'embedded_message' = $2 OR metadata->>'message' = $2)
+ORDER BY created_at DESC
+LIMIT 1
+`, s.tableName)
+
+	var rec IngestionRecord
+	var metadataRaw []byte
+	if err := s.db.QueryRow(query, filename, message).Scan(&rec.ID, &rec.Filename, &rec.Method, &rec.MessageLength, &rec.ImageBase64, &metadataRaw, &rec.Status, &rec.CreatedAt); err != nil {
+		return nil, err
+	}
+	rec.Metadata, _ = fromJSONB(metadataRaw)
+	return &rec, nil
+}
+
 // UpdateStatusWithNote sets the status and appends a validation note into metadata.validation.
 func (s *IngestionService) UpdateStatusWithNote(id, status, note string) error {
 	query := fmt.Sprintf(`
@@ -120,6 +140,29 @@ SET status = $2,
 WHERE id = $1
 `, s.tableName)
 	_, err := s.db.Exec(query, id, status, note)
+	return err
+}
+
+// UpdateFromIngest updates fields using data from the ingest callback.
+func (s *IngestionService) UpdateFromIngest(id string, rec IngestionRecord) error {
+	if id == "" {
+		return fmt.Errorf("missing id")
+	}
+	metadataJSON, err := toJSONB(rec.Metadata)
+	if err != nil {
+		return err
+	}
+	query := fmt.Sprintf(`
+UPDATE %s
+SET filename = $2,
+    method = $3,
+    message_length = $4,
+    image_base64 = $5,
+    metadata = COALESCE(metadata, '{}'::jsonb) || $6::jsonb,
+    status = $7
+WHERE id = $1
+`, s.tableName)
+	_, err = s.db.Exec(query, id, rec.Filename, rec.Method, rec.MessageLength, rec.ImageBase64, string(metadataJSON), rec.Status)
 	return err
 }
 

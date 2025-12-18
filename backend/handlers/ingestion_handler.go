@@ -76,6 +76,23 @@ func (h *IngestionHandler) HandleIngest(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	message := ""
+	if req.Metadata != nil {
+		if v, ok := req.Metadata["embedded_message"].(string); ok && strings.TrimSpace(v) != "" {
+			message = v
+		} else if v, ok := req.Metadata["message"].(string); ok && strings.TrimSpace(v) != "" {
+			message = v
+		}
+	}
+	if req.Metadata == nil {
+		req.Metadata = map[string]interface{}{}
+	}
+	imgBytes, _ := base64.StdEncoding.DecodeString(req.ImageBase64)
+	if len(imgBytes) > 0 && message != "" {
+		sum := sha256.Sum256(append(imgBytes, []byte(message)...))
+		req.Metadata["visible_pixel_hash"] = hex.EncodeToString(sum[:])
+	}
+
 	rec := services.IngestionRecord{
 		ID:            req.ID,
 		Filename:      req.Filename,
@@ -84,6 +101,42 @@ func (h *IngestionHandler) HandleIngest(w http.ResponseWriter, r *http.Request) 
 		ImageBase64:   req.ImageBase64,
 		Metadata:      req.Metadata,
 		Status:        "pending",
+	}
+
+	if rec.ID == "" {
+		if v, ok := req.Metadata["visible_pixel_hash"].(string); ok {
+			rec.ID = strings.TrimSpace(v)
+		}
+	}
+
+	if rec.ID != "" && h.service != nil {
+		if existing, err := h.service.Get(rec.ID); err == nil && existing != nil {
+			if err := h.service.UpdateFromIngest(rec.ID, rec); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"id":     rec.ID,
+				"status": rec.Status,
+			})
+			return
+		}
+	}
+
+	if h.service != nil && message != "" {
+		if existing, err := h.service.GetByFilenameAndMessage(rec.Filename, message); err == nil && existing != nil {
+			if err := h.service.UpdateFromIngest(existing.ID, rec); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"id":     existing.ID,
+				"status": rec.Status,
+			})
+			return
+		}
 	}
 
 	if err := h.service.Create(rec); err != nil {
