@@ -17,7 +17,11 @@ const InscriptionModal = ({ inscription, onClose }) => {
   const { auth } = useAuth();
   const [activeTab, setActiveTab] = useState('overview');
   const [monoContent, setMonoContent] = useState(true);
-  const [network, setNetwork] = useState('mainnet');
+  const [network, setNetwork] = useState(
+    inscription?.metadata?.network ||
+      inscription?.network ||
+      (inscription?.contract_type?.toLowerCase().includes('testnet') ? 'testnet' : 'testnet4')
+  );
   const [proposalItems, setProposalItems] = useState([]);
   const [isLoadingProposals, setIsLoadingProposals] = useState(false);
   const [proposalError, setProposalError] = useState('');
@@ -32,21 +36,28 @@ const InscriptionModal = ({ inscription, onClose }) => {
   const hasFetchedRef = React.useRef(false);
   const refreshIntervalRef = React.useRef(null);
 
-  // Fetch network info
+  // Fetch network info (fallback to inscription metadata/testnet)
   useEffect(() => {
+    const localNetwork =
+      inscription?.metadata?.network ||
+      inscription?.network ||
+      (inscription?.contract_type?.toLowerCase().includes('testnet') ? 'testnet' : 'testnet4');
+    if (localNetwork) {
+      setNetwork(localNetwork);
+    }
     const fetchNetwork = async () => {
       try {
         const response = await fetch(`${API_BASE}/bitcoin/v1/health`);
         if (response.ok) {
           const data = await response.json();
-          setNetwork(data.network || 'mainnet');
+          setNetwork(data.network || localNetwork || 'testnet4');
         }
       } catch (error) {
         console.error('Failed to fetch network info:', error);
       }
     };
     fetchNetwork();
-  }, []);
+  }, [inscription]);
   const inscriptionMessageRaw = inscription.text || inscription.metadata?.embedded_message || inscription.metadata?.extracted_message || '';
   const inscriptionPriceRaw = inscription.price ?? inscription.metadata?.price ?? null;
   const inscriptionAddressRaw = inscription.address ?? inscription.metadata?.address ?? '';
@@ -501,7 +512,7 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
             <div className="p-3 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50">
               <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">Wallet Address</div>
               <div className="text-sm text-gray-900 dark:text-gray-100 break-words">
-                {inscriptionAddress ? inscriptionAddress : 'Not provided'}
+                {auth.wallet || inscription.metadata?.funding_address || inscriptionAddress || 'Not provided'}
               </div>
             </div>
             <div className="p-3 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50">
@@ -555,9 +566,9 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                       File Information
                     </h4>
                     <div className="grid grid-cols-2 gap-4">
-                      <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
+                      <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-3 overflow-hidden">
                         <div className="text-gray-600 dark:text-gray-400 text-xs mb-1">File Name</div>
-                        <div className="text-black dark:text-white font-semibold">{inscription.file_name || 'N/A'}</div>
+                        <div className="text-black dark:text-white font-semibold break-words">{inscription.file_name || 'N/A'}</div>
                       </div>
                       <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
                         <div className="text-gray-600 dark:text-gray-400 text-xs mb-1">File Size</div>
@@ -570,6 +581,10 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                       <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
                         <div className="text-gray-600 dark:text-gray-400 text-xs mb-1">Contract Type</div>
                         <div className="text-black dark:text-white font-semibold">{inscription.contract_type || 'Standard'}</div>
+                      </div>
+                      <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
+                        <div className="text-gray-600 dark:text-gray-400 text-xs mb-1">Network</div>
+                        <div className="text-black dark:text-white font-semibold">{network}</div>
                       </div>
                     </div>
                   </div>
