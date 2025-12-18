@@ -576,6 +576,7 @@ func (bm *BlockMonitor) ProcessBlock(height int64) error {
 	// Create smart contracts and reconcile with ingested uploads when possible
 	smartContracts := bm.createSmartContractsFromScanResults(scanResults)
 	smartContracts = bm.reconcileIngestionContracts(blockDir, parsedBlock, scanResults, smartContracts, height)
+	smartContracts = bm.reconcileOracleIngestions(blockDir, parsedBlock, smartContracts, height)
 
 	// Save block summary JSON for frontend API with scan results
 	if err := bm.saveBlockSummaryWithScanResults(blockDir, parsedBlock, inscriptions, scanResults, height, smartContracts); err != nil {
@@ -1410,6 +1411,75 @@ func (bm *BlockMonitor) reconcileIngestionContracts(blockDir string, parsedBlock
 	return smartContracts
 }
 
+func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *ParsedBlock, smartContracts []SmartContractData, blockHeight int64) []SmartContractData {
+	if bm.ingestion == nil || len(parsedBlock.Transactions) == 0 {
+		return smartContracts
+	}
+
+	recs, err := bm.ingestion.ListRecent("", 500)
+	if err != nil {
+		log.Printf("oracle reconcile: failed to list ingestions: %v", err)
+		return smartContracts
+	}
+
+	candidates := make(map[string]*services.IngestionRecord, len(recs))
+	candidatesByID := make(map[string][]string, len(recs))
+	for _, rec := range recs {
+		recCopy := rec
+		candidateList := ingestionHashCandidates(recCopy)
+		for _, candidate := range candidateList {
+			candidates[candidate] = &recCopy
+			candidatesByID[recCopy.ID] = append(candidatesByID[recCopy.ID], candidate)
+		}
+	}
+	if len(candidates) == 0 {
+		return smartContracts
+	}
+
+	for _, tx := range parsedBlock.Transactions {
+		for outIdx, output := range tx.Outputs {
+			match, matchType := matchOracleOutput(output.ScriptPubKey, bm.networkParams(), candidates)
+			if match == nil {
+				continue
+			}
+
+			destPath, err := bm.moveIngestionImage(blockDir, match)
+			if err != nil {
+				log.Printf("oracle reconcile: failed to move ingestion image for %s: %v", match.ID, err)
+				continue
+			}
+
+			imageFile := filepath.Base(destPath)
+			imagePath := filepath.Join("images", imageFile)
+			contractMeta := map[string]any{
+				"tx_id":              tx.TxID,
+				"output_index":       outIdx,
+				"block_height":       blockHeight,
+				"match_type":         matchType,
+				"payout_script":      hex.EncodeToString(output.ScriptPubKey),
+				"image_file":         imageFile,
+				"image_path":         imagePath,
+				"ingestion_id":       match.ID,
+				"visible_pixel_hash": stringFromAny(match.Metadata["visible_pixel_hash"]),
+			}
+
+			smartContracts = upsertContractByID(smartContracts, SmartContractData{
+				ContractID:  match.ID,
+				BlockHeight: blockHeight,
+				ImagePath:   imagePath,
+				Confidence:  0,
+				Metadata:    contractMeta,
+			})
+
+			for _, candidate := range candidatesByID[match.ID] {
+				delete(candidates, candidate)
+			}
+		}
+	}
+
+	return smartContracts
+}
+
 func (bm *BlockMonitor) findImageForScanResult(images []ExtractedImageData, result map[string]any) *ExtractedImageData {
 	fileName := stringFromAny(result["file_name"])
 	if fileName != "" {
@@ -1428,6 +1498,80 @@ func (bm *BlockMonitor) findImageForScanResult(images []ExtractedImageData, resu
 		}
 	}
 	return nil
+}
+
+func ingestionHashCandidates(rec services.IngestionRecord) []string {
+	var out []string
+
+	appendCandidate := func(value string) {
+		value = normalizeHex(value)
+		if len(value) != 40 && len(value) != 64 {
+			return
+		}
+		out = append(out, value)
+	}
+
+	if rec.ID != "" {
+		appendCandidate(rec.ID)
+	}
+	if v := stringFromAny(rec.Metadata["visible_pixel_hash"]); v != "" {
+		appendCandidate(v)
+	}
+	if v := stringFromAny(rec.Metadata["payout_script_hash"]); v != "" {
+		appendCandidate(v)
+	}
+	if v := stringFromAny(rec.Metadata["pixel_hash"]); v != "" {
+		appendCandidate(v)
+	}
+
+	if rec.ImageBase64 != "" {
+		if data, err := base64.StdEncoding.DecodeString(rec.ImageBase64); err == nil {
+			sum := sha256.Sum256(data)
+			out = append(out, hex.EncodeToString(sum[:]))
+		}
+	}
+
+	return out
+}
+
+func matchOracleOutput(script []byte, params *chaincfg.Params, candidates map[string]*services.IngestionRecord) (*services.IngestionRecord, string) {
+	if len(script) == 0 {
+		return nil, ""
+	}
+
+	for _, hash := range []string{scriptHashHex(script), scriptHash160Hex(script)} {
+		if match, ok := candidates[hash]; ok {
+			return match, "script_hash"
+		}
+	}
+
+	if len(candidates) > 0 {
+		for _, addrHash := range scriptAddressHashes(script, params) {
+			if match, ok := candidates[addrHash]; ok {
+				return match, "script_address"
+			}
+		}
+	}
+
+	return nil, ""
+}
+
+func scriptAddressHashes(script []byte, params *chaincfg.Params) []string {
+	class, addrs, _, err := txscript.ExtractPkScriptAddrs(script, params)
+	if err != nil {
+		return nil
+	}
+	if class != txscript.ScriptHashTy && class != txscript.WitnessV0ScriptHashTy {
+		return nil
+	}
+	var out []string
+	for _, addr := range addrs {
+		hash := hex.EncodeToString(addr.ScriptAddress())
+		if hash != "" {
+			out = append(out, hash)
+		}
+	}
+	return out
 }
 
 func parseScanPayload(result map[string]any) scanPayload {
@@ -1736,6 +1880,23 @@ func updateContractEntry(contracts []SmartContractData, result map[string]any, u
 		return true
 	}
 	return false
+}
+
+func upsertContractByID(contracts []SmartContractData, updated SmartContractData) []SmartContractData {
+	for i := range contracts {
+		if contracts[i].ContractID == updated.ContractID {
+			contracts[i].BlockHeight = updated.BlockHeight
+			contracts[i].ImagePath = updated.ImagePath
+			if updated.Metadata != nil {
+				contracts[i].Metadata = updated.Metadata
+			}
+			if updated.Confidence > 0 {
+				contracts[i].Confidence = updated.Confidence
+			}
+			return contracts
+		}
+	}
+	return append(contracts, updated)
 }
 
 // GetBlockInscriptions retrieves inscriptions for a specific block height
