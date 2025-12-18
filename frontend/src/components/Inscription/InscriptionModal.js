@@ -36,28 +36,43 @@ const InscriptionModal = ({ inscription, onClose }) => {
   const hasFetchedRef = React.useRef(false);
   const refreshIntervalRef = React.useRef(null);
 
-  // Fetch network info (fallback to inscription metadata/testnet)
+  const guessNetworkFromAddress = (addr) => {
+    const a = (addr || '').trim().toLowerCase();
+    if (!a) return '';
+    if (a.startsWith('tb1') || a.startsWith('m') || a.startsWith('n') || a.startsWith('2')) return 'testnet4';
+    if (a.startsWith('bc1') || a.startsWith('1') || a.startsWith('3')) return 'mainnet';
+    return '';
+  };
+
+  // Fetch network info (prefer wallet-derived guess, fallback to metadata/testnet)
   useEffect(() => {
-    const localNetwork =
+    const walletGuess =
+      guessNetworkFromAddress(auth.wallet) ||
+      guessNetworkFromAddress(inscription?.metadata?.funding_address) ||
+      guessNetworkFromAddress(inscription?.metadata?.address) ||
+      guessNetworkFromAddress(inscription?.metadata?.contractor_wallet);
+    const metaNetwork =
       inscription?.metadata?.network ||
       inscription?.network ||
-      (inscription?.contract_type?.toLowerCase().includes('testnet') ? 'testnet' : 'testnet4');
-    if (localNetwork) {
-      setNetwork(localNetwork);
-    }
+      (inscription?.contract_type?.toLowerCase().includes('testnet') ? 'testnet4' : '');
+    const localNetwork = walletGuess || metaNetwork || 'testnet4';
+    setNetwork(localNetwork);
+
     const fetchNetwork = async () => {
       try {
         const response = await fetch(`${API_BASE}/bitcoin/v1/health`);
         if (response.ok) {
           const data = await response.json();
-          setNetwork(data.network || localNetwork || 'testnet4');
+          if (!walletGuess) {
+            setNetwork(data.network || localNetwork || 'testnet4');
+          }
         }
       } catch (error) {
         console.error('Failed to fetch network info:', error);
       }
     };
     fetchNetwork();
-  }, [inscription]);
+  }, [inscription, auth.wallet]);
   const inscriptionMessageRaw = inscription.text || inscription.metadata?.embedded_message || inscription.metadata?.extracted_message || '';
   const inscriptionPriceRaw = inscription.price ?? inscription.metadata?.price ?? null;
   const inscriptionAddressRaw = inscription.address ?? inscription.metadata?.address ?? '';
@@ -581,10 +596,6 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                       <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
                         <div className="text-gray-600 dark:text-gray-400 text-xs mb-1">Contract Type</div>
                         <div className="text-black dark:text-white font-semibold">{inscription.contract_type || 'Standard'}</div>
-                      </div>
-                      <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
-                        <div className="text-gray-600 dark:text-gray-400 text-xs mb-1">Network</div>
-                        <div className="text-black dark:text-white font-semibold">{network}</div>
                       </div>
                     </div>
                   </div>
