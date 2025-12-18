@@ -92,6 +92,25 @@ func (s *IngestionService) Get(id string) (*IngestionRecord, error) {
 	return &rec, nil
 }
 
+// GetByImageAndMessage returns a record that matches the image payload and embedded message.
+func (s *IngestionService) GetByImageAndMessage(imageBase64, message string) (*IngestionRecord, error) {
+	query := fmt.Sprintf(`
+SELECT id, filename, method, message_length, image_base64, metadata, status, created_at
+FROM %s
+WHERE image_base64 = $1
+  AND (metadata->>'embedded_message' = $2 OR metadata->>'message' = $2)
+LIMIT 1
+`, s.tableName)
+
+	var rec IngestionRecord
+	var metadataRaw []byte
+	if err := s.db.QueryRow(query, imageBase64, message).Scan(&rec.ID, &rec.Filename, &rec.Method, &rec.MessageLength, &rec.ImageBase64, &metadataRaw, &rec.Status, &rec.CreatedAt); err != nil {
+		return nil, err
+	}
+	rec.Metadata, _ = fromJSONB(metadataRaw)
+	return &rec, nil
+}
+
 // UpdateStatusWithNote sets the status and appends a validation note into metadata.validation.
 func (s *IngestionService) UpdateStatusWithNote(id, status, note string) error {
 	query := fmt.Sprintf(`
@@ -102,6 +121,59 @@ WHERE id = $1
 `, s.tableName)
 	_, err := s.db.Exec(query, id, status, note)
 	return err
+}
+
+// UpdateMetadata merges the provided metadata into the ingestion record.
+func (s *IngestionService) UpdateMetadata(id string, updates map[string]interface{}) error {
+	if id == "" {
+		return fmt.Errorf("missing id")
+	}
+	updatesJSON, err := toJSONB(updates)
+	if err != nil {
+		return err
+	}
+	query := fmt.Sprintf(`
+UPDATE %s
+SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb
+WHERE id = $1
+`, s.tableName)
+	_, err = s.db.Exec(query, id, string(updatesJSON))
+	return err
+}
+
+// UpdateID moves a record to a new id when it is safe to do so.
+func (s *IngestionService) UpdateID(oldID, newID string) error {
+	if oldID == "" || newID == "" {
+		return fmt.Errorf("missing id")
+	}
+	if oldID == newID {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	var exists bool
+	checkQuery := fmt.Sprintf(`SELECT EXISTS(SELECT 1 FROM %s WHERE id=$1)`, s.tableName)
+	if err = tx.QueryRow(checkQuery, newID).Scan(&exists); err != nil {
+		return err
+	}
+	if exists {
+		return fmt.Errorf("ingestion id %s already exists", newID)
+	}
+
+	updateQuery := fmt.Sprintf(`UPDATE %s SET id=$2 WHERE id=$1`, s.tableName)
+	if _, err = tx.Exec(updateQuery, oldID, newID); err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }
 
 // ListRecent returns recent ingestions, optionally filtered by status.

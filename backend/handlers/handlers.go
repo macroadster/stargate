@@ -247,7 +247,7 @@ func (h *InscriptionHandler) fromContract(c sc.Contract) models.InscriptionReque
 
 func computeVisiblePixelHash(imageBytes []byte, text string) string {
 	sum := sha256.Sum256(append(imageBytes, []byte(text)...))
-	return fmt.Sprintf("%x", sum[:8]) // short hash for usability
+	return fmt.Sprintf("%x", sum[:])
 }
 
 // ensureIngestionImageFile writes the base64 image to uploads dir if missing and returns the path.
@@ -423,6 +423,25 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 	// Seed ingestion + MCP contract before proxy so both UIs see it even on proxy success.
 	if h.ingestionService != nil {
 		imgB64 := base64.StdEncoding.EncodeToString(imgBytes)
+		skipCreate := false
+		if rec, err := h.ingestionService.GetByImageAndMessage(imgB64, text); err == nil && rec != nil {
+			if visibleHash != "" && rec.ID != visibleHash {
+				if err := h.ingestionService.UpdateID(rec.ID, visibleHash); err != nil {
+					fmt.Printf("Failed to update ingestion id from %s to %s: %v\n", rec.ID, visibleHash, err)
+					ingestionID = rec.ID
+				} else {
+					ingestionID = visibleHash
+				}
+			} else {
+				ingestionID = rec.ID
+			}
+			if visibleHash != "" {
+				if err := h.ingestionService.UpdateMetadata(ingestionID, map[string]interface{}{"visible_pixel_hash": visibleHash}); err != nil {
+					fmt.Printf("Failed to update ingestion metadata for %s: %v\n", ingestionID, err)
+				}
+			}
+			skipCreate = true
+		}
 		meta := map[string]interface{}{
 			"embedded_message":   text,
 			"message":            text,
@@ -431,20 +450,22 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 			"ingestion_id":       ingestionID,
 			"visible_pixel_hash": visibleHash,
 		}
-		ingRec := services.IngestionRecord{
-			ID:            ingestionID,
-			Filename:      filename,
-			Method:        method,
-			MessageLength: len(text),
-			ImageBase64:   imgB64,
-			Metadata:      meta,
-			Status:        "pending",
-		}
-		if ingRec.Filename == "" {
-			ingRec.Filename = "inscription.png"
-		}
-		if err := h.ingestionService.Create(ingRec); err != nil {
-			fmt.Printf("Failed to create ingestion record for %s: %v\n", ingestionID, err)
+		if !skipCreate {
+			ingRec := services.IngestionRecord{
+				ID:            ingestionID,
+				Filename:      filename,
+				Method:        method,
+				MessageLength: len(text),
+				ImageBase64:   imgB64,
+				Metadata:      meta,
+				Status:        "pending",
+			}
+			if ingRec.Filename == "" {
+				ingRec.Filename = "inscription.png"
+			}
+			if err := h.ingestionService.Create(ingRec); err != nil {
+				fmt.Printf("Failed to create ingestion record for %s: %v\n", ingestionID, err)
+			}
 		}
 	}
 	// Mirror into MCP contracts/open-contracts for AI + UI consistency.
