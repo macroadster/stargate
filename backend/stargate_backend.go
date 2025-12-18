@@ -389,6 +389,7 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 		dataStorage,
 		bitcoinAPI,
 	)
+	blockMonitor.SetIngestionService(container.IngestionService)
 
 	// Pre-cache historical blocks (with rate limiting)
 	go func() {

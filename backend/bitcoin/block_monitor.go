@@ -2,6 +2,9 @@ package bitcoin
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,7 +17,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/btcsuite/btcd/btcutil"
+	"github.com/btcsuite/btcd/chaincfg"
+	"github.com/btcsuite/btcd/txscript"
+
 	"stargate-backend/core"
+	"stargate-backend/services"
 )
 
 // BlockMonitor handles comprehensive Bitcoin block monitoring and data extraction
@@ -28,6 +36,7 @@ type BlockMonitor struct {
 	stopChan      chan bool
 	mu            sync.RWMutex
 	dataStorage   DataStorageInterface
+	ingestion     *services.IngestionService
 
 	// Configuration
 	checkInterval time.Duration
@@ -195,6 +204,11 @@ func NewBlockMonitorWithStorageAndAPI(client *BitcoinNodeClient, dataStorage Dat
 		retryDelay:    10 * time.Second,
 		lastChecked:   time.Now(),
 	}
+}
+
+// SetIngestionService enables ingestion-aware reconciliation (optional).
+func (bm *BlockMonitor) SetIngestionService(ingestion *services.IngestionService) {
+	bm.ingestion = ingestion
 }
 
 func blocksDirFromEnv() string {
@@ -559,8 +573,12 @@ func (bm *BlockMonitor) ProcessBlock(height int64) error {
 	// Create inscriptions data
 	inscriptions := bm.createInscriptionsFromImages(parsedBlock.Images)
 
+	// Create smart contracts and reconcile with ingested uploads when possible
+	smartContracts := bm.createSmartContractsFromScanResults(scanResults)
+	smartContracts = bm.reconcileIngestionContracts(blockDir, parsedBlock, scanResults, smartContracts, height)
+
 	// Save block summary JSON for frontend API with scan results
-	if err := bm.saveBlockSummaryWithScanResults(blockDir, parsedBlock, inscriptions, scanResults, height); err != nil {
+	if err := bm.saveBlockSummaryWithScanResults(blockDir, parsedBlock, inscriptions, scanResults, height, smartContracts); err != nil {
 		log.Printf("Failed to save block summary: %v", err)
 	}
 
@@ -575,7 +593,7 @@ func (bm *BlockMonitor) ProcessBlock(height int64) error {
 		TotalTransactions: len(parsedBlock.Transactions),
 		Inscriptions:      inscriptions,
 		Images:            parsedBlock.Images,
-		SmartContracts:    bm.createSmartContractsFromScanResults(scanResults),
+		SmartContracts:    smartContracts,
 		ProcessingTime:    processingTime.Milliseconds(),
 		Success:           true,
 	}
@@ -1134,7 +1152,7 @@ func (bm *BlockMonitor) createEmptyScanResults(count int) []map[string]any {
 }
 
 // saveBlockSummaryWithScanResults saves block summary including steganography scan results
-func (bm *BlockMonitor) saveBlockSummaryWithScanResults(blockDir string, parsedBlock *ParsedBlock, inscriptions []InscriptionData, scanResults []map[string]any, blockHeight int64) error {
+func (bm *BlockMonitor) saveBlockSummaryWithScanResults(blockDir string, parsedBlock *ParsedBlock, inscriptions []InscriptionData, scanResults []map[string]any, blockHeight int64, smartContracts []SmartContractData) error {
 	// Count stego detections
 	stegoCount := bm.countStegoImages(scanResults)
 
@@ -1144,12 +1162,6 @@ func (bm *BlockMonitor) saveBlockSummaryWithScanResults(blockDir string, parsedB
 		cleanedImages[i] = sanitizeExtractedImage(img)
 	}
 	cleanedInscriptions := sanitizeInscriptionsForDisk(inscriptions)
-
-	// Create optimized smart contracts from scan results (only for stego images)
-	smartContracts := []SmartContractData{}
-	if stegoCount > 0 {
-		smartContracts = bm.createSmartContractsFromScanResults(scanResults)
-	}
 
 	// Create optimized summary with minimal data
 	summary := BlockInscriptionsResponse{
@@ -1284,6 +1296,446 @@ func (bm *BlockMonitor) createSmartContractsFromScanResults(scanResults []map[st
 	}
 
 	return contracts
+}
+
+type scanPayload struct {
+	message          string
+	payoutAddress    string
+	payoutScript     string
+	payoutScriptHash string
+}
+
+func (bm *BlockMonitor) reconcileIngestionContracts(blockDir string, parsedBlock *ParsedBlock, scanResults []map[string]any, smartContracts []SmartContractData, blockHeight int64) []SmartContractData {
+	if bm.ingestion == nil || len(scanResults) == 0 {
+		return smartContracts
+	}
+
+	txByID := make(map[string]Transaction, len(parsedBlock.Transactions))
+	for _, tx := range parsedBlock.Transactions {
+		if tx.TxID != "" {
+			txByID[tx.TxID] = tx
+		}
+	}
+
+	for i := range smartContracts {
+		smartContracts[i].BlockHeight = blockHeight
+	}
+
+	for _, result := range scanResults {
+		isStego, _ := result["is_stego"].(bool)
+		if !isStego {
+			continue
+		}
+
+		txID := stringFromAny(result["tx_id"])
+		if txID == "" {
+			continue
+		}
+
+		tx, ok := txByID[txID]
+		if !ok {
+			continue
+		}
+
+		image := bm.findImageForScanResult(parsedBlock.Images, result)
+		if image == nil || len(image.Data) == 0 {
+			continue
+		}
+
+		payload := parseScanPayload(result)
+		if payload.message == "" {
+			continue
+		}
+
+		cleanedImage := sanitizeExtractedImage(*image)
+		visibleHash := visiblePixelHash(cleanedImage.Data, payload.message)
+		if visibleHash == "" {
+			continue
+		}
+
+		rec, err := bm.ingestion.Get(visibleHash)
+		if err != nil {
+			continue
+		}
+
+		matchedScript, ok := bm.matchPayoutScript(tx, payload)
+		if !ok {
+			continue
+		}
+
+		destPath, err := bm.moveIngestionImage(blockDir, rec)
+		if err != nil {
+			log.Printf("Failed to move ingestion image for %s: %v", visibleHash, err)
+			continue
+		}
+
+		imageFile := filepath.Base(destPath)
+		imagePath := filepath.Join("images", imageFile)
+		contractMeta := buildContractMetadata(result)
+		contractMeta["visible_pixel_hash"] = visibleHash
+		if payload.payoutAddress != "" {
+			contractMeta["payout_address"] = payload.payoutAddress
+		}
+		if payload.payoutScript != "" {
+			contractMeta["payout_script"] = payload.payoutScript
+		}
+		if payload.payoutScriptHash != "" {
+			contractMeta["payout_script_hash"] = payload.payoutScriptHash
+		}
+		if len(matchedScript) > 0 && payload.payoutScriptHash == "" {
+			contractMeta["payout_script_hash_sha256"] = scriptHashHex(matchedScript)
+			contractMeta["payout_script_hash160"] = scriptHash160Hex(matchedScript)
+		}
+		contractMeta["ingestion_id"] = rec.ID
+		contractMeta["image_file"] = imageFile
+		contractMeta["image_path"] = imagePath
+
+		if updated := updateContractEntry(smartContracts, result, SmartContractData{
+			ContractID:  visibleHash,
+			BlockHeight: blockHeight,
+			ImagePath:   imagePath,
+			Confidence:  confidenceFromAny(result["confidence"]),
+			Metadata:    contractMeta,
+		}); !updated {
+			smartContracts = append(smartContracts, SmartContractData{
+				ContractID:  visibleHash,
+				BlockHeight: blockHeight,
+				ImagePath:   imagePath,
+				Confidence:  confidenceFromAny(result["confidence"]),
+				Metadata:    contractMeta,
+			})
+		}
+	}
+
+	return smartContracts
+}
+
+func (bm *BlockMonitor) findImageForScanResult(images []ExtractedImageData, result map[string]any) *ExtractedImageData {
+	fileName := stringFromAny(result["file_name"])
+	if fileName != "" {
+		for i := range images {
+			if images[i].FileName == fileName {
+				return &images[i]
+			}
+		}
+	}
+	txID := stringFromAny(result["tx_id"])
+	if txID != "" {
+		for i := range images {
+			if images[i].TxID == txID {
+				return &images[i]
+			}
+		}
+	}
+	return nil
+}
+
+func parseScanPayload(result map[string]any) scanPayload {
+	payload := scanPayload{
+		message:          strings.TrimSpace(stringFromAny(result["extracted_message"])),
+		payoutAddress:    strings.TrimSpace(stringFromAny(result["payout_address"])),
+		payoutScript:     normalizeHex(stringFromAny(result["payout_script"])),
+		payoutScriptHash: normalizeHex(stringFromAny(result["payout_script_hash"])),
+	}
+	if payload.payoutAddress == "" {
+		payload.payoutAddress = strings.TrimSpace(stringFromAny(result["address"]))
+	}
+
+	raw := payload.message
+	if raw == "" {
+		raw = strings.TrimSpace(stringFromAny(result["embedded_message"]))
+	}
+	raw = strings.TrimSpace(raw)
+	if raw == "" || !strings.HasPrefix(raw, "{") {
+		if payload.message == "" {
+			payload.message = raw
+		}
+		return payload
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
+		if payload.message == "" {
+			payload.message = raw
+		}
+		return payload
+	}
+
+	if msg := strings.TrimSpace(stringFromAny(parsed["message"])); msg != "" {
+		payload.message = msg
+	}
+	if payload.message == "" {
+		if msg := strings.TrimSpace(stringFromAny(parsed["embedded_message"])); msg != "" {
+			payload.message = msg
+		}
+	}
+	if payload.payoutAddress == "" {
+		payload.payoutAddress = strings.TrimSpace(stringFromAny(parsed["address"]))
+	}
+	if payload.payoutAddress == "" {
+		payload.payoutAddress = strings.TrimSpace(stringFromAny(parsed["payout_address"]))
+	}
+	if payload.payoutScript == "" {
+		payload.payoutScript = normalizeHex(stringFromAny(parsed["payout_script"]))
+	}
+	if payload.payoutScriptHash == "" {
+		payload.payoutScriptHash = normalizeHex(stringFromAny(parsed["payout_script_hash"]))
+	}
+
+	return payload
+}
+
+func (bm *BlockMonitor) matchPayoutScript(tx Transaction, payload scanPayload) ([]byte, bool) {
+	if payload.payoutScript == "" && payload.payoutScriptHash == "" && payload.payoutAddress == "" {
+		return nil, false
+	}
+
+	if payload.payoutScript != "" {
+		if script, err := hex.DecodeString(payload.payoutScript); err == nil {
+			for _, output := range tx.Outputs {
+				if bytes.Equal(output.ScriptPubKey, script) {
+					return script, true
+				}
+			}
+		}
+	}
+
+	if payload.payoutAddress != "" {
+		if script := bm.scriptForAddress(payload.payoutAddress); len(script) > 0 {
+			for _, output := range tx.Outputs {
+				if bytes.Equal(output.ScriptPubKey, script) {
+					return script, true
+				}
+			}
+		}
+	}
+
+	if payload.payoutScriptHash != "" {
+		for _, output := range tx.Outputs {
+			if scriptHashHex(output.ScriptPubKey) == payload.payoutScriptHash {
+				return output.ScriptPubKey, true
+			}
+			if scriptHash160Hex(output.ScriptPubKey) == payload.payoutScriptHash {
+				return output.ScriptPubKey, true
+			}
+		}
+	}
+
+	return nil, false
+}
+
+func (bm *BlockMonitor) scriptForAddress(address string) []byte {
+	params := bm.networkParams()
+	addr, err := btcutil.DecodeAddress(address, params)
+	if err != nil {
+		return nil
+	}
+	script, err := txscript.PayToAddrScript(addr)
+	if err != nil {
+		return nil
+	}
+	return script
+}
+
+func (bm *BlockMonitor) networkParams() *chaincfg.Params {
+	switch bm.bitcoinClient.GetNetwork() {
+	case "mainnet":
+		return &chaincfg.MainNetParams
+	case "signet":
+		return &chaincfg.SigNetParams
+	case "testnet":
+		return &chaincfg.TestNet3Params
+	case "testnet4":
+		return &chaincfg.TestNet4Params
+	default:
+		return &chaincfg.TestNet4Params
+	}
+}
+
+func (bm *BlockMonitor) moveIngestionImage(blockDir string, rec *services.IngestionRecord) (string, error) {
+	uploadsDir := os.Getenv("UPLOADS_DIR")
+	if uploadsDir == "" {
+		uploadsDir = "/data/uploads"
+	}
+	filename := strings.TrimSpace(rec.Filename)
+	if filename == "" {
+		filename = "inscription.png"
+	}
+
+	destDir := filepath.Join(blockDir, "images")
+	if err := os.MkdirAll(destDir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create images dir: %w", err)
+	}
+	destPath := filepath.Join(destDir, filename)
+	if _, err := os.Stat(destPath); err == nil {
+		return destPath, nil
+	}
+
+	sourcePath := filepath.Join(uploadsDir, filename)
+	if _, err := os.Stat(sourcePath); err != nil {
+		if len(rec.ImageBase64) == 0 {
+			return "", fmt.Errorf("missing ingestion image for %s", rec.ID)
+		}
+		data, err := base64.StdEncoding.DecodeString(rec.ImageBase64)
+		if err != nil {
+			return "", fmt.Errorf("decode ingestion image: %w", err)
+		}
+		if err := os.WriteFile(destPath, data, 0644); err != nil {
+			return "", fmt.Errorf("write ingestion image: %w", err)
+		}
+		return destPath, nil
+	}
+
+	if err := os.Rename(sourcePath, destPath); err != nil {
+		if err := copyFile(sourcePath, destPath); err != nil {
+			return "", err
+		}
+		_ = os.Remove(sourcePath)
+	}
+	return destPath, nil
+}
+
+func copyFile(src, dest string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.Create(dest)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	return out.Sync()
+}
+
+func visiblePixelHash(imageBytes []byte, message string) string {
+	if len(imageBytes) == 0 || message == "" {
+		return ""
+	}
+	sum := sha256.Sum256(append(imageBytes, []byte(message)...))
+	return fmt.Sprintf("%x", sum[:8])
+}
+
+func normalizeHex(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.TrimPrefix(value, "0x")
+	return strings.ToLower(value)
+}
+
+func scriptHashHex(script []byte) string {
+	if len(script) == 0 {
+		return ""
+	}
+	sum := sha256.Sum256(script)
+	return hex.EncodeToString(sum[:])
+}
+
+func scriptHash160Hex(script []byte) string {
+	if len(script) == 0 {
+		return ""
+	}
+	return hex.EncodeToString(btcutil.Hash160(script))
+}
+
+func stringFromAny(value any) string {
+	switch v := value.(type) {
+	case string:
+		return v
+	case []byte:
+		return string(v)
+	default:
+		return ""
+	}
+}
+
+func intFromAny(value any) (int, bool) {
+	switch v := value.(type) {
+	case int:
+		return v, true
+	case int64:
+		return int(v), true
+	case float64:
+		return int(v), true
+	case json.Number:
+		if parsed, err := v.Int64(); err == nil {
+			return int(parsed), true
+		}
+	case string:
+		if parsed, err := strconv.Atoi(v); err == nil {
+			return parsed, true
+		}
+	}
+	return 0, false
+}
+
+func confidenceFromAny(value any) float64 {
+	switch v := value.(type) {
+	case float64:
+		return v
+	case float32:
+		return float64(v)
+	case json.Number:
+		if parsed, err := v.Float64(); err == nil {
+			return parsed
+		}
+	case string:
+		if parsed, err := strconv.ParseFloat(v, 64); err == nil {
+			return parsed
+		}
+	}
+	return 0.0
+}
+
+func buildContractMetadata(result map[string]any) map[string]any {
+	return map[string]any{
+		"tx_id":             result["tx_id"],
+		"image_index":       result["image_index"],
+		"stego_type":        result["stego_type"],
+		"extracted_message": result["extracted_message"],
+		"scan_confidence":   result["confidence"],
+		"scan_timestamp":    result["scanned_at"],
+		"format":            result["format"],
+		"size_bytes":        result["size_bytes"],
+	}
+}
+
+func updateContractEntry(contracts []SmartContractData, result map[string]any, updated SmartContractData) bool {
+	txID := stringFromAny(result["tx_id"])
+	imageIndex, hasIndex := intFromAny(result["image_index"])
+	for i := range contracts {
+		if contracts[i].Metadata == nil {
+			continue
+		}
+		metaTx := stringFromAny(contracts[i].Metadata["tx_id"])
+		if metaTx == "" || metaTx != txID {
+			continue
+		}
+		if hasIndex {
+			if metaIndex, ok := intFromAny(contracts[i].Metadata["image_index"]); ok && metaIndex != imageIndex {
+				continue
+			}
+		}
+		if contracts[i].Metadata == nil {
+			contracts[i].Metadata = map[string]any{}
+		}
+		if updated.Metadata != nil {
+			contracts[i].Metadata = updated.Metadata
+		}
+		contracts[i].ContractID = updated.ContractID
+		contracts[i].BlockHeight = updated.BlockHeight
+		contracts[i].ImagePath = updated.ImagePath
+		if updated.Confidence > 0 {
+			contracts[i].Confidence = updated.Confidence
+		}
+		return true
+	}
+	return false
 }
 
 // GetBlockInscriptions retrieves inscriptions for a specific block height
