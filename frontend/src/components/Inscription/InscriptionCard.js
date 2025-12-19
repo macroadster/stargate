@@ -37,6 +37,14 @@ const InscriptionCard = ({ inscription, onClick }) => {
   const imageSource = isActuallyImageFile ? (inscription.thumbnail || inscription.image_url) : null;
   const sandboxSrc = inscription.thumbnail || inscription.image_url;
   const sandboxDoc = (isHtmlContent || isSvgContent) ? (inscription.text || '') : '';
+  const headline = (() => {
+    if (textContent) {
+      const line = textContent.split('\n').map((l) => l.trim()).find((l) => l);
+      if (line) return line.replace(/^#+\s*/, '').slice(0, 80);
+    }
+    if (inscription.file_name) return inscription.file_name;
+    return inscription.id;
+  })();
   const sizeBytes = Number(inscription.size_bytes || 0);
   const confidenceScore = Number(inscription.metadata?.confidence || 0);
   const stegoProbability = Number(inscription.metadata?.stego_probability || 0);
@@ -57,8 +65,8 @@ const InscriptionCard = ({ inscription, onClick }) => {
       ref={containerRef}
       className="relative group cursor-pointer"
     >
-      <div className="relative overflow-hidden rounded-lg border-2 border-gray-300 dark:border-gray-700 hover:border-indigo-500 transition-all duration-200 bg-white dark:bg-gray-800">
-        <div className="h-32 flex items-center justify-center bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-700 dark:to-gray-800 relative">
+      <div className="relative overflow-hidden rounded-2xl border border-gray-200 dark:border-gray-800 hover:border-indigo-400 transition-all duration-200 bg-white dark:bg-gray-900 shadow-sm">
+        <div className="aspect-[4/5] max-h-52 flex items-center justify-center bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-700 dark:to-gray-800 relative">
           {showTextPreview && hasTextContent ? (
             <div className="absolute inset-0 p-2 bg-white dark:bg-gray-900 rounded-lg overflow-hidden">
               <div className="h-full overflow-y-auto text-xs font-mono text-gray-800 dark:text-gray-200 leading-tight">
@@ -100,6 +108,15 @@ const InscriptionCard = ({ inscription, onClick }) => {
           )}
         </div>
         
+        <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/5 to-transparent opacity-100">
+          <div className="absolute bottom-0 left-0 right-0 p-3 text-white">
+            <div className="text-xs uppercase tracking-wide text-white/70">
+              {inscription.genesis_block_height ? `Block #${inscription.genesis_block_height}` : 'Smart Contract'}
+            </div>
+            <div className="text-sm font-semibold leading-snug line-clamp-2">{headline}</div>
+          </div>
+        </div>
+
         <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200">
           <div className="absolute bottom-0 left-0 right-0 p-3 text-white">
             {detectionScore > 0.1 && detectionPercent > 0 && (
@@ -165,11 +182,11 @@ const InscriptionCard = ({ inscription, onClick }) => {
         )}
       </div>
       
-      <div className="mt-2">
+      <div className="mt-2 space-y-1">
         <div className="text-black dark:text-white font-mono text-xs truncate font-medium" title={inscription.id}>
           {inscription.id}
         </div>
-        <div className="flex items-center gap-2 mt-1">
+        <div className="flex items-center gap-2">
           {inscription.mime_type && (
             <span className="text-gray-500 dark:text-gray-400 text-xs">
               {inscription.mime_type.split('/')[1]?.toUpperCase() || 'UNKNOWN'}
