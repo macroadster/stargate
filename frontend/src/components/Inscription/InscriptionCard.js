@@ -63,7 +63,7 @@ const InscriptionCard = ({ inscription, onClick }) => {
     <div
       onClick={() => onClick(inscription)}
       ref={containerRef}
-      className="relative group cursor-pointer"
+      className="relative group cursor-pointer break-inside-avoid mb-6"
     >
       <div className="relative overflow-hidden rounded-2xl border border-gray-200 dark:border-gray-800 hover:border-indigo-400 transition-all duration-200 bg-white dark:bg-gray-900 shadow-sm">
         <div className="aspect-[4/5] max-h-52 flex items-center justify-center bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-700 dark:to-gray-800 relative">

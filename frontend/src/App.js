@@ -581,9 +581,9 @@ function MainContent() {
                 )}
 
                  {filteredInscriptions.length === 0 && isLoadingInscriptions && (
-                   <div className="grid grid-cols-5 gap-4">
+                   <div className="columns-1 sm:columns-2 xl:columns-3 gap-6">
                      {Array.from({ length: 5 }).map((_, i) => (
-                       <div key={i} className="h-48 rounded-lg bg-gray-200 dark:bg-gray-800 animate-pulse" />
+                       <div key={i} className="h-48 rounded-lg bg-gray-200 dark:bg-gray-800 animate-pulse break-inside-avoid mb-6" />
                      ))}
                    </div>
                  )}
@@ -596,7 +596,7 @@ function MainContent() {
 
                   {filteredInscriptions.length > 0 && (
                     <>
-                      <div className="grid grid-cols-5 gap-4">
+                      <div className="columns-1 sm:columns-2 xl:columns-3 gap-6">
                         {filteredInscriptions.map((inscription, idx) => (
                           <InscriptionCard
                             key={idx}
@@ -605,13 +605,13 @@ function MainContent() {
                           />
                         ))}
                         {hasMoreImages && (
-                          <div ref={sentinelRef} className="col-span-5 flex justify-center py-4">
+                          <div ref={sentinelRef} className="column-span-all flex justify-center py-4">
                             <div className="text-gray-500 dark:text-gray-400">Loading more...</div>
                           </div>
                         )}
                       </div>
                       {!hasMoreImages && (
-                        <div className="text-center text-gray-500 dark:text-gray-400 text-sm mt-4">
+                        <div className="column-span-all text-center text-gray-500 dark:text-gray-400 text-sm mt-4">
                           You&apos;ve reached the end of inscriptions for this block.
                         </div>
                       )}

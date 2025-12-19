@@ -76,7 +76,7 @@ const PendingTransactionsView = ({ setSelectedInscription, refreshKey }) => {
       </div>
 
       {Array.isArray(mappedInscriptions) && mappedInscriptions.length > 0 ? (
-        <div className="grid grid-cols-5 gap-4">
+        <div className="columns-1 sm:columns-2 xl:columns-3 gap-6">
           {mappedInscriptions.map((inscription, idx) => (
             <InscriptionCard
               key={idx}
