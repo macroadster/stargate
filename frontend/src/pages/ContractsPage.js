@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { API_BASE, CONTENT_BASE } from '../apiBase';
 import { useNavigate } from 'react-router-dom';
 import InscriptionModal from '../components/Inscription/InscriptionModal';
+import AppHeader from '../components/Common/AppHeader';
 
 const extractHeadline = (text) => {
   if (!text) return '';
@@ -121,27 +122,11 @@ export default function ContractsPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-50 via-white to-slate-100 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950 text-gray-900 dark:text-gray-100">
+      <AppHeader onInscribe={() => navigate('/')} />
       <div className="container mx-auto px-6 py-10">
-        <div className="flex items-center justify-between gap-4 mb-8">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => navigate('/')}
-              className="flex items-center gap-2 text-gray-900 dark:text-gray-100 hover:text-black dark:hover:text-white"
-            >
-              <span className="flex items-center justify-center w-9 h-9 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-lg text-white text-lg">
-                ✦
-              </span>
-              <span className="text-3xl font-bold">Starlight</span>
-            </button>
-            <span className="text-3xl font-bold text-gray-400 dark:text-gray-600">/</span>
-            <h1 className="text-3xl font-bold">Contracts</h1>
-          </div>
-          <button
-            onClick={() => navigate('/')}
-            className="text-sm px-4 py-2 rounded-full border border-gray-300 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800"
-          >
-            Back to Blocks
-          </button>
+        <div className="mb-8">
+          <h1 className="text-3xl font-bold">Contracts</h1>
+          <p className="text-gray-600 dark:text-gray-400">Newest contracts first, with infinite scroll.</p>
         </div>
 
         {error && (
