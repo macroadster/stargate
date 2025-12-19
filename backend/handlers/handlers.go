@@ -134,8 +134,11 @@ func (h *InscriptionHandler) HandleGetInscriptions(w http.ResponseWriter, r *htt
 
 	// Prefer open-contracts (MCP store) to keep UI + AI in sync.
 	if h.store != nil {
-		if contracts, err := h.store.ListContracts("pending", nil); err == nil {
+		if contracts, err := h.store.ListContracts("", nil); err == nil {
 			for _, c := range contracts {
+				if isPendingContractStatus(c.Status) {
+					continue
+				}
 				item := h.fromContract(c)
 				if _, ok := dedupe[item.ID]; !ok {
 					dedupe[item.ID] = len(inscriptions)
@@ -255,9 +258,18 @@ func (h *InscriptionHandler) fromContract(c sc.Contract) models.InscriptionReque
 		ImageData: imagePath,
 		Text:      c.Title,
 		Price:     float64(c.TotalBudgetSats) / 1e8,
-		Timestamp: time.Now().Unix(),
+		Timestamp: 0,
 		ID:        c.ContractID,
 		Status:    c.Status,
+	}
+}
+
+func isPendingContractStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "", "pending", "claimed", "submitted", "pending_review", "approved", "published", "active":
+		return false
+	default:
+		return true
 	}
 }
 

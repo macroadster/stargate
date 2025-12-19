@@ -478,7 +478,9 @@ function MainContent() {
                       </div>
 
                       <div className="mt-3 text-xs text-yellow-600 dark:text-yellow-400">
-                        Submitted {new Date(tx.timestamp * 1000).toLocaleString()}
+                        {tx.timestamp
+                          ? `Submitted ${new Date(tx.timestamp * 1000).toLocaleString()}`
+                          : 'Submitted —'}
                       </div>
                     </div>
                   ))}
