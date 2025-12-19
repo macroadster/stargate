@@ -229,17 +229,19 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		usePixelHash = *body.UsePixelHash
 	}
 	var ingestionRec *services.IngestionRecord
+	if s.ingestionSvc != nil {
+		if rec, err := s.ingestionSvc.Get(contractID); err == nil {
+			ingestionRec = rec
+		}
+	}
 	if usePixelHash {
 		if ph := strings.TrimSpace(body.PixelHash); ph != "" {
 			if b, err := hex.DecodeString(ph); err == nil {
 				pixelBytes = normalizePixel(b)
 			}
 		}
-		if pixelBytes == nil && s.ingestionSvc != nil {
-			if rec, err := s.ingestionSvc.Get(contractID); err == nil {
-				ingestionRec = rec
-				pixelBytes = resolvePixelHashFromIngestion(rec, normalizePixel)
-			}
+		if pixelBytes == nil && ingestionRec != nil {
+			pixelBytes = resolvePixelHashFromIngestion(ingestionRec, normalizePixel)
 		}
 	}
 	if usePixelHash && pixelBytes == nil {
