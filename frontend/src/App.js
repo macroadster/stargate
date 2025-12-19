@@ -10,6 +10,7 @@ import InscribeModal from './components/Inscription/InscribeModal';
 import InscriptionModal from './components/Inscription/InscriptionModal';
 import DiscoverPage from './components/Discover/DiscoverPage';
 import AuthPage from './pages/AuthPage';
+import ContractsPage from './pages/ContractsPage';
 import { AuthProvider, useAuth } from './context/AuthContext';
 
 import { useBlocks } from './hooks/useBlocks';
@@ -325,7 +326,7 @@ function MainContent() {
                   Blocks
                 </button>
                 <button
-                  onClick={() => navigate('/pending')}
+                  onClick={() => navigate('/contracts')}
                   className="text-gray-600 dark:text-gray-400 hover:text-black dark:hover:text-white bg-transparent border-none cursor-pointer"
                 >
                   Contracts
@@ -674,6 +675,7 @@ export default function App() {
         <Route path="/" element={<MainContent />} />
         <Route path="/block/:height" element={<MainContent />} />
         <Route path="/pending" element={<MainContent />} />
+        <Route path="/contracts" element={<ContractsPage />} />
         <Route path="/discover" element={<DiscoverPage />} />
         <Route path="/auth" element={<AuthPage />} />
       </Routes>
