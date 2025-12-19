@@ -523,20 +523,37 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                 </div>
               </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
-            <div className="p-3 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50">
-              <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">Wallet Address</div>
-              <div className="text-sm text-gray-900 dark:text-gray-100 break-words">
-                {auth.wallet || inscription.metadata?.funding_address || inscriptionAddress || 'Not provided'}
+          {(() => {
+            const walletDisplay =
+              inscription.metadata?.contractor_wallet ||
+              inscription.metadata?.payout_address ||
+              inscription.metadata?.funding_address ||
+              inscription.metadata?.payer_address ||
+              inscriptionAddress ||
+              '';
+            const budgetDisplay =
+              approvedBudgetsTotal || selectedTask?.budget_sats || inscription.metadata?.budget_sats || '';
+            const hasContractInfo = walletDisplay || budgetDisplay;
+            if (!hasContractInfo) {
+              return null;
+            }
+            return (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
+                <div className="p-3 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50">
+                  <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">Wallet Address</div>
+                  <div className="text-sm text-gray-900 dark:text-gray-100 break-words">
+                    {walletDisplay || 'Not available'}
+                  </div>
+                </div>
+                <div className="p-3 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50">
+                  <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">Budget (sats)</div>
+                  <div className="text-sm text-gray-900 dark:text-gray-100">
+                    {budgetDisplay || 'Not available'}
+                  </div>
+                </div>
               </div>
-            </div>
-            <div className="p-3 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50">
-              <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">Budget (sats)</div>
-              <div className="text-sm text-gray-900 dark:text-gray-100">
-                {approvedBudgetsTotal || selectedTask?.budget_sats || inscription.metadata?.budget_sats || 'Unknown'}
-              </div>
-            </div>
-          </div>
+            );
+          })()}
 
               {activeTab === 'overview' && (
                 <div className="space-y-6">

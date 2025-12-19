@@ -241,8 +241,18 @@ func (h *InscriptionHandler) fromIngestion(rec services.IngestionRecord) models.
 }
 
 func (h *InscriptionHandler) fromContract(c sc.Contract) models.InscriptionRequest {
+	uploadsDir := os.Getenv("UPLOADS_DIR")
+	if uploadsDir == "" {
+		uploadsDir = "/data/uploads"
+	}
+	imagePath := ""
+	if c.ContractID != "" {
+		if matches, _ := filepath.Glob(filepath.Join(uploadsDir, c.ContractID+"_*")); len(matches) > 0 {
+			imagePath = matches[0]
+		}
+	}
 	return models.InscriptionRequest{
-		ImageData: "", // not tracked here; UI can resolve via open-contract metadata later
+		ImageData: imagePath,
 		Text:      c.Title,
 		Price:     float64(c.TotalBudgetSats) / 1e8,
 		Timestamp: time.Now().Unix(),
