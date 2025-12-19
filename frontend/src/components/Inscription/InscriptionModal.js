@@ -81,6 +81,7 @@ const InscriptionModal = ({ inscription, onClose }) => {
       inscription.contract_id,
       inscription.id,
       inscription.metadata?.contract_id,
+      inscription.metadata?.visible_pixel_hash,
       inscription.metadata?.ingestion_id,
     ].filter(Boolean);
     const expanded = new Set();

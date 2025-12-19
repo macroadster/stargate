@@ -127,6 +127,7 @@ export const useInscriptions = (selectedBlock) => {
         }
         const textContent = image.content || '';
         
+        const baseMetadata = image.metadata && typeof image.metadata === 'object' ? image.metadata : {};
         return {
           id: image.tx_id,
           number: selectedBlock.height,
@@ -140,6 +141,7 @@ export const useInscriptions = (selectedBlock) => {
           size_bytes: image.size_bytes,
           image_url: `${CONTENT_BASE}/content/${image.tx_id || image.id}${typeof image.input_index === 'number' ? `?witness=${image.input_index}` : ''}`,
           metadata: {
+            ...baseMetadata,
             confidence: scanResult.confidence,
             extracted_message: scanResult.extracted_message,
             image_format: image.content_type?.split('/')[1] || 'unknown',
