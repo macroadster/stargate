@@ -1424,6 +1424,7 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 
 	candidates := make(map[string]*services.IngestionRecord, len(recs))
 	candidatesByID := make(map[string][]string, len(recs))
+	txidMatches := make(map[string]*services.IngestionRecord, len(recs))
 	for _, rec := range recs {
 		recCopy := rec
 		candidateList := ingestionHashCandidates(recCopy)
@@ -1431,13 +1432,49 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 			candidates[candidate] = &recCopy
 			candidatesByID[recCopy.ID] = append(candidatesByID[recCopy.ID], candidate)
 		}
+		if txid, ok := recCopy.Metadata["funding_txid"].(string); ok && strings.TrimSpace(txid) != "" {
+			txidMatches[strings.TrimSpace(txid)] = &recCopy
+		}
 	}
-	if len(candidates) == 0 {
+	if len(candidates) == 0 && len(txidMatches) == 0 {
 		return smartContracts
 	}
-	log.Printf("oracle reconcile: %d candidate hashes across %d ingestions", len(candidates), len(recs))
+	log.Printf("oracle reconcile: %d candidate hashes, %d funding txids across %d ingestions", len(candidates), len(txidMatches), len(recs))
 
 	for _, tx := range parsedBlock.Transactions {
+		if match, ok := txidMatches[tx.TxID]; ok && match != nil {
+			destPath, err := bm.moveIngestionImage(blockDir, match)
+			if err != nil {
+				log.Printf("oracle reconcile: failed to move ingestion image for %s: %v", match.ID, err)
+			} else {
+				log.Printf("oracle reconcile: matched ingestion %s via funding_txid=%s", match.ID, tx.TxID)
+				imageFile := filepath.Base(destPath)
+				imagePath := filepath.Join("images", imageFile)
+				contractMeta := map[string]any{
+					"tx_id":              tx.TxID,
+					"output_index":       0,
+					"block_height":       blockHeight,
+					"match_type":         "funding_txid",
+					"match_hash":         tx.TxID,
+					"image_file":         imageFile,
+					"image_path":         imagePath,
+					"ingestion_id":       match.ID,
+					"visible_pixel_hash": stringFromAny(match.Metadata["visible_pixel_hash"]),
+				}
+				smartContracts = upsertContractByID(smartContracts, SmartContractData{
+					ContractID:  match.ID,
+					BlockHeight: blockHeight,
+					ImagePath:   imagePath,
+					Confidence:  0,
+					Metadata:    contractMeta,
+				})
+				for _, candidate := range candidatesByID[match.ID] {
+					delete(candidates, candidate)
+				}
+				delete(txidMatches, tx.TxID)
+			}
+		}
+
 		for outIdx, output := range tx.Outputs {
 			match, matchType, matchedHash := matchOracleOutput(output.ScriptPubKey, bm.networkParams(), candidates)
 			if match == nil {

@@ -31,6 +31,7 @@ type PSBTResult struct {
 	ChangeSats    int64
 	SelectedSats  int64
 	PayoutScript  []byte
+	FundingTxID   string
 }
 
 // BuildFundingPSBT selects confirmed UTXOs, estimates fees at the provided feerate, and builds a PSBT.
@@ -136,6 +137,7 @@ func BuildFundingPSBT(client *MempoolClient, params *chaincfg.Params, req PSBTRe
 		ChangeSats:    change,
 		SelectedSats:  selectedValue,
 		PayoutScript:  payoutScript,
+		FundingTxID:   tx.TxHash().String(),
 	}, nil
 }
 

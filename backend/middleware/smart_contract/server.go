@@ -228,8 +228,10 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 			pixelBytes = normalizePixel(b)
 		}
 	}
+	var ingestionRec *services.IngestionRecord
 	if pixelBytes == nil && s.ingestionSvc != nil {
 		if rec, err := s.ingestionSvc.Get(contractID); err == nil {
+			ingestionRec = rec
 			pixelBytes = resolvePixelHashFromIngestion(rec, normalizePixel)
 		}
 	}
@@ -253,11 +255,19 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if ingestionRec != nil && res.FundingTxID != "" {
+		if err := s.ingestionSvc.UpdateMetadata(ingestionRec.ID, map[string]interface{}{
+			"funding_txid": res.FundingTxID,
+		}); err != nil {
+			log.Printf("psbt: failed to store funding_txid for %s: %v", ingestionRec.ID, err)
+		}
+	}
 
 	JSON(w, http.StatusOK, map[string]interface{}{
 		"psbt":           res.EncodedHex, // primary: hex for wallet import
 		"psbt_hex":       res.EncodedHex,
 		"psbt_base64":    res.EncodedBase64,
+		"funding_txid":   res.FundingTxID,
 		"fee_sats":       res.FeeSats,
 		"change_sats":    res.ChangeSats,
 		"selected_sats":  res.SelectedSats,
