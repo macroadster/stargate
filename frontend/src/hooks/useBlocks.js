@@ -46,6 +46,7 @@ export const useBlocks = () => {
   const [isUserNavigating, setIsUserNavigating] = useState(false);
   const [nextCursor, setNextCursor] = useState(null);
   const [hasMore, setHasMore] = useState(true);
+  const [showHistorical, setShowHistorical] = useState(true);
   const loadingRef = useRef(false);
   const blocksRef = useRef([]);
   const manualSelectedHeight = useRef(null);
@@ -115,26 +116,28 @@ export const useBlocks = () => {
         840000: { hash: 'halving-4', tx_count: 3100, timestamp: new Date('2024-04-20T00:00:00Z').getTime() / 1000 }
       };
 
-      pinnedMilestones.current.forEach((height) => {
-        if (!deduped.some((b) => b.height === height)) {
-          const meta = milestoneMeta[height] || {};
-          deduped.push({
-            height,
-            timestamp: meta.timestamp || (height === 0 ? 1231006505 : Date.now() - 600000 * 10),
-            hash: meta.hash || (height === 0 ? '000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f' : `milestone-${height}`),
-            inscriptionCount: 0,
-            smart_contract_count: 0,
-            witness_image_count: 0,
-            hasBRC20: false,
-            thumbnail: null,
-            tx_count: meta.tx_count || 0,
-            smart_contracts: [],
-            witness_images: [],
-            isGenesis: height === 0,
-            has_images: false
-          });
-        }
-      });
+      if (showHistorical) {
+        pinnedMilestones.current.forEach((height) => {
+          if (!deduped.some((b) => b.height === height)) {
+            const meta = milestoneMeta[height] || {};
+            deduped.push({
+              height,
+              timestamp: meta.timestamp || (height === 0 ? 1231006505 : Date.now() - 600000 * 10),
+              hash: meta.hash || (height === 0 ? '000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f' : `milestone-${height}`),
+              inscriptionCount: 0,
+              smart_contract_count: 0,
+              witness_image_count: 0,
+              hasBRC20: false,
+              thumbnail: null,
+              tx_count: meta.tx_count || 0,
+              smart_contracts: [],
+              witness_images: [],
+              isGenesis: height === 0,
+              has_images: false
+            });
+          }
+        });
+      }
 
       // Add pending/future placeholder one above the highest real block
       const realMaxHeight = deduped
@@ -186,7 +189,7 @@ export const useBlocks = () => {
     } finally {
       loadingRef.current = false;
     }
-  }, [selectedBlock]);
+  }, [selectedBlock, showHistorical]);
 
   const loadMoreBlocks = useCallback(() => {
     if (!hasMore || !nextCursor) return;
@@ -195,13 +198,29 @@ export const useBlocks = () => {
   }, [fetchBlocks, hasMore, nextCursor]);
 
   useEffect(() => {
+    const fetchNetwork = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/bitcoin/v1/health`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const network = String(data?.network || '').toLowerCase();
+        if (network && network !== 'mainnet') {
+          setShowHistorical(false);
+        }
+      } catch (error) {
+        console.error('Failed to fetch network info:', error);
+      }
+    };
+    fetchNetwork();
+  }, []);
+
+  useEffect(() => {
     fetchBlocks(null, false);
     const interval = setInterval(() => {
       fetchBlocks(null, true);
     }, 30000);
     return () => clearInterval(interval);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [fetchBlocks]);
 
   const handleBlockSelect = (block) => {
     // Clone to avoid React bailing when the same object reference recurs between polls.
