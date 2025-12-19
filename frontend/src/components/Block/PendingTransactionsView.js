@@ -26,8 +26,16 @@ const PendingTransactionsView = ({ setSelectedInscription }) => {
     return list
       .filter((tx) => (tx.status || 'pending').toLowerCase() === 'pending')
       .map((tx) => {
-      const uploadFile = tx.imageData ? tx.imageData.split('/').pop() : null;
-      const imageUrl = uploadFile ? `${API_BASE}/uploads/${uploadFile}` : null;
+      const imagePath = tx.imageData || '';
+      const uploadFile = imagePath ? imagePath.split('/').pop() : null;
+      let imageUrl = null;
+      if (imagePath.startsWith('http')) {
+        imageUrl = imagePath;
+      } else if (imagePath.startsWith('/uploads/')) {
+        imageUrl = `${API_BASE}${imagePath}`;
+      } else if (uploadFile) {
+        imageUrl = `${API_BASE}/uploads/${encodeURIComponent(uploadFile)}`;
+      }
       return {
         id: tx.id,
         contract_type: 'Pending Contract',

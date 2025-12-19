@@ -30,7 +30,7 @@ const generateBlock = (block) => {
     inscriptionCount: inscriptionCount,
     inscription_count: inscriptionCount,
     smart_contract_count: displayContractCount,
-    smart_contracts: block.smart_contracts || block.inscriptions || [],
+    smart_contracts: block.smart_contracts || [],
     witness_image_count: block.images ? block.images.length : 0,
     hasBRC20: false,
     has_images: hasImages,
