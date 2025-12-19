@@ -66,7 +66,7 @@ const InscriptionCard = ({ inscription, onClick }) => {
       className="relative group cursor-pointer break-inside-avoid mb-6"
     >
       <div className="relative overflow-hidden rounded-2xl border border-gray-200 dark:border-gray-800 hover:border-indigo-400 transition-all duration-200 bg-white dark:bg-gray-900 shadow-sm">
-        <div className="aspect-[4/5] max-h-52 flex items-center justify-center bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-700 dark:to-gray-800 relative">
+        <div className="h-56 sm:h-64 xl:h-72 flex items-center justify-center bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-700 dark:to-gray-800 relative">
           {showTextPreview && hasTextContent ? (
             <div className="absolute inset-0 p-2 bg-white dark:bg-gray-900 rounded-lg overflow-hidden">
               <div className="h-full overflow-y-auto text-xs font-mono text-gray-800 dark:text-gray-200 leading-tight">
@@ -93,7 +93,7 @@ const InscriptionCard = ({ inscription, onClick }) => {
                   alt={inscription.file_name || inscription.id}
                   loading="lazy"
                   decoding="async"
-                  className="max-w-full max-h-full object-contain"
+                  className="h-full w-full object-cover"
                   onError={(e) => {
                     e.target.style.display = 'none';
                     e.target.nextSibling.style.display = 'flex';
