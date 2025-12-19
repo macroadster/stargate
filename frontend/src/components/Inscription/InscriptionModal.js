@@ -825,14 +825,14 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                         <div className="space-y-2">
                           <label className="block text-xs text-gray-500">Contractor wallet (payout)</label>
                           <input
-                            className="w-full rounded bg-gray-100 dark:bg-gray-800 px-3 py-2"
+                            className="w-full rounded bg-gray-100 dark:bg-gray-800 px-3 py-2 text-gray-500 dark:text-gray-400 cursor-not-allowed"
                             value={
                               psbtForm.contractorWallet ||
                               selectedTask?.contractor_wallet ||
                               inscription.metadata?.contractor_wallet ||
                               ''
                             }
-                            onChange={(e) => setPsbtForm((p) => ({ ...p, contractorWallet: e.target.value }))}
+                            readOnly
                             placeholder="Contractor tb1..."
                           />
                           {!psbtForm.contractorWallet &&
@@ -846,9 +846,9 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                         <div className="space-y-2">
                           <label className="block text-xs text-gray-500">Contract ID</label>
                           <input
-                            className="w-full rounded bg-gray-100 dark:bg-gray-800 px-3 py-2 font-mono text-xs"
+                            className="w-full rounded bg-gray-100 dark:bg-gray-800 px-3 py-2 font-mono text-xs text-gray-500 dark:text-gray-400 cursor-not-allowed"
                             value={psbtForm.contractId || primaryContractId || ''}
-                            onChange={(e) => setPsbtForm((p) => ({ ...p, contractId: e.target.value }))}
+                            readOnly
                             placeholder="contract id (ingestion/visible hash)"
                           />
                         </div>
