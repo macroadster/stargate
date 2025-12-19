@@ -190,7 +190,7 @@ export default function DiscoverPage() {
           <div className="grid md:grid-cols-5 gap-3">
             <div className="flex flex-col gap-1">
               <label className="text-xs text-gray-500">Status</label>
-              <select value={status} onChange={(e) => setStatus(e.target.value)} className="rounded-lg bg-gray-100 dark:bg-gray-800 px-3 py-2 text-sm">
+              <select value={status} onChange={(e) => setStatus(e.target.value)} className="w-full h-10 rounded-lg bg-gray-100 dark:bg-gray-800 px-3 py-2 text-sm">
                 <option value="">Any</option>
                 <option value="pending">Pending</option>
                 <option value="approved">Approved</option>
@@ -198,17 +198,17 @@ export default function DiscoverPage() {
             </div>
             <div className="flex flex-col gap-1">
               <label className="text-xs text-gray-500">Skills (csv)</label>
-              <input value={skills} onChange={(e) => setSkills(e.target.value)} placeholder="planning,manual-review" className="rounded-lg bg-gray-100 dark:bg-gray-800 px-3 py-2 text-sm" />
+              <input value={skills} onChange={(e) => setSkills(e.target.value)} placeholder="planning,manual-review" className="w-full h-10 rounded-lg bg-gray-100 dark:bg-gray-800 px-3 py-2 text-sm" />
             </div>
             <div className="flex flex-col gap-1">
               <label className="text-xs text-gray-500">Min budget (sats)</label>
-              <input value={minBudget} onChange={(e) => setMinBudget(e.target.value)} placeholder="500" className="rounded-lg bg-gray-100 dark:bg-gray-800 px-3 py-2 text-sm" />
+              <input value={minBudget} onChange={(e) => setMinBudget(e.target.value)} placeholder="500" className="w-full h-10 rounded-lg bg-gray-100 dark:bg-gray-800 px-3 py-2 text-sm" />
             </div>
             <div className="flex flex-col gap-1">
               <label className="text-xs text-gray-500">Contract ID</label>
               <div className="relative">
                 <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                <input value={contractId} onChange={(e) => setContractId(e.target.value)} placeholder="wish-..." className="pl-9 rounded-lg bg-gray-100 dark:bg-gray-800 px-3 py-2 text-sm w-full" />
+                <input value={contractId} onChange={(e) => setContractId(e.target.value)} placeholder="wish-..." className="w-full h-10 pl-9 rounded-lg bg-gray-100 dark:bg-gray-800 px-3 py-2 text-sm" />
               </div>
             </div>
             <div className="flex items-end">
