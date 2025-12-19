@@ -139,6 +139,13 @@ func (h *InscriptionHandler) HandleGetInscriptions(w http.ResponseWriter, r *htt
 				if isPendingContractStatus(c.Status) {
 					continue
 				}
+				if h.ingestionService != nil && c.ContractID != "" {
+					if rec, err := h.ingestionService.Get(c.ContractID); err == nil {
+						if strings.EqualFold(strings.TrimSpace(rec.Status), "confirmed") {
+							continue
+						}
+					}
+				}
 				item := h.fromContract(c)
 				if _, ok := dedupe[item.ID]; !ok {
 					dedupe[item.ID] = len(inscriptions)
