@@ -1444,7 +1444,7 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 
 	for _, tx := range parsedBlock.Transactions {
 		if match, ok := txidMatches[tx.TxID]; ok && match != nil {
-			destPath, err := bm.moveIngestionImage(blockDir, match)
+			destPath, err := bm.moveIngestionImageWithFilename(blockDir, match, txidImageFilename(tx.TxID, match.Filename))
 			if err != nil {
 				log.Printf("oracle reconcile: failed to move ingestion image for %s: %v", match.ID, err)
 			} else {
@@ -1462,6 +1462,7 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 					"ingestion_id":       match.ID,
 					"visible_pixel_hash": stringFromAny(match.Metadata["visible_pixel_hash"]),
 				}
+				mergeIngestionMetadata(contractMeta, match.Metadata)
 				smartContracts = upsertContractByID(smartContracts, SmartContractData{
 					ContractID:  match.ID,
 					BlockHeight: blockHeight,
@@ -1469,6 +1470,7 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 					Confidence:  0,
 					Metadata:    contractMeta,
 				})
+				bm.markIngestionConfirmed(match, tx.TxID, blockHeight, imageFile, imagePath)
 				for _, candidate := range candidatesByID[match.ID] {
 					delete(candidates, candidate)
 				}
@@ -1482,7 +1484,7 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 				continue
 			}
 
-			destPath, err := bm.moveIngestionImage(blockDir, match)
+			destPath, err := bm.moveIngestionImageWithFilename(blockDir, match, txidImageFilename(tx.TxID, match.Filename))
 			if err != nil {
 				log.Printf("oracle reconcile: failed to move ingestion image for %s: %v", match.ID, err)
 				continue
@@ -1503,6 +1505,7 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 				"ingestion_id":       match.ID,
 				"visible_pixel_hash": stringFromAny(match.Metadata["visible_pixel_hash"]),
 			}
+			mergeIngestionMetadata(contractMeta, match.Metadata)
 
 			smartContracts = upsertContractByID(smartContracts, SmartContractData{
 				ContractID:  match.ID,
@@ -1511,6 +1514,7 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 				Confidence:  0,
 				Metadata:    contractMeta,
 			})
+			bm.markIngestionConfirmed(match, tx.TxID, blockHeight, imageFile, imagePath)
 
 			for _, candidate := range candidatesByID[match.ID] {
 				delete(candidates, candidate)
@@ -1738,6 +1742,10 @@ func (bm *BlockMonitor) networkParams() *chaincfg.Params {
 }
 
 func (bm *BlockMonitor) moveIngestionImage(blockDir string, rec *services.IngestionRecord) (string, error) {
+	return bm.moveIngestionImageWithFilename(blockDir, rec, "")
+}
+
+func (bm *BlockMonitor) moveIngestionImageWithFilename(blockDir string, rec *services.IngestionRecord, destFilename string) (string, error) {
 	uploadsDir := os.Getenv("UPLOADS_DIR")
 	if uploadsDir == "" {
 		uploadsDir = "/data/uploads"
@@ -1746,12 +1754,15 @@ func (bm *BlockMonitor) moveIngestionImage(blockDir string, rec *services.Ingest
 	if filename == "" {
 		filename = "inscription.png"
 	}
+	if strings.TrimSpace(destFilename) == "" {
+		destFilename = filename
+	}
 
 	destDir := filepath.Join(blockDir, "images")
 	if err := os.MkdirAll(destDir, 0755); err != nil {
 		return "", fmt.Errorf("failed to create images dir: %w", err)
 	}
-	destPath := filepath.Join(destDir, filename)
+	destPath := filepath.Join(destDir, destFilename)
 	if _, err := os.Stat(destPath); err == nil {
 		return destPath, nil
 	}
@@ -1802,6 +1813,44 @@ func (bm *BlockMonitor) moveIngestionImage(blockDir string, rec *services.Ingest
 		_ = os.Remove(sourcePath)
 	}
 	return destPath, nil
+}
+
+func txidImageFilename(txid, fallback string) string {
+	ext := filepath.Ext(fallback)
+	if ext == "" {
+		ext = ".png"
+	}
+	return fmt.Sprintf("%s%s", txid, ext)
+}
+
+func mergeIngestionMetadata(target map[string]any, meta map[string]interface{}) {
+	if len(meta) == 0 {
+		return
+	}
+	for key, value := range meta {
+		if _, exists := target[key]; exists {
+			continue
+		}
+		target[key] = value
+	}
+}
+
+func (bm *BlockMonitor) markIngestionConfirmed(rec *services.IngestionRecord, txid string, height int64, imageFile, imagePath string) {
+	if bm.ingestion == nil || rec == nil {
+		return
+	}
+	updates := map[string]interface{}{
+		"confirmed_txid":   txid,
+		"confirmed_height": height,
+		"image_file":       imageFile,
+		"image_path":       imagePath,
+	}
+	if err := bm.ingestion.UpdateMetadata(rec.ID, updates); err != nil {
+		log.Printf("oracle reconcile: failed to update ingestion metadata for %s: %v", rec.ID, err)
+	}
+	if err := bm.ingestion.UpdateStatusWithNote(rec.ID, "confirmed", fmt.Sprintf("confirmed in block %d", height)); err != nil {
+		log.Printf("oracle reconcile: failed to update ingestion status for %s: %v", rec.ID, err)
+	}
 }
 
 func copyFile(src, dest string) error {

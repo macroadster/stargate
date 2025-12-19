@@ -2,8 +2,7 @@ import React from 'react';
 
 const BlockCard = ({ block, onClick, isSelected }) => {
   const stegoCount = block.steganography_summary?.stego_count || 0;
-  // Treat smart contracts as stego detections from the scanner.
-  const smartContractCount = stegoCount;
+  const smartContractCount = block.smart_contract_count ?? stegoCount;
   const hasSmartContracts = smartContractCount > 0;
   const hasWitnessImages = (block.witness_image_count || block.witness_images || 0) > 0;
   const inscriptionCount = block.inscription_count ?? block.inscriptionCount ?? 0;

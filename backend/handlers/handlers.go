@@ -134,7 +134,7 @@ func (h *InscriptionHandler) HandleGetInscriptions(w http.ResponseWriter, r *htt
 
 	// Prefer open-contracts (MCP store) to keep UI + AI in sync.
 	if h.store != nil {
-		if contracts, err := h.store.ListContracts("", nil); err == nil {
+		if contracts, err := h.store.ListContracts("pending", nil); err == nil {
 			for _, c := range contracts {
 				item := h.fromContract(c)
 				if _, ok := dedupe[item.ID]; !ok {
@@ -149,7 +149,7 @@ func (h *InscriptionHandler) HandleGetInscriptions(w http.ResponseWriter, r *htt
 
 	// Always include ingestion queue to attach images/text; merge into existing items when IDs match.
 	if h.ingestionService != nil {
-		if recs, err := h.ingestionService.ListRecent("", 200); err == nil {
+		if recs, err := h.ingestionService.ListRecent("pending", 200); err == nil {
 			for _, rec := range recs {
 				item := h.fromIngestion(rec)
 				if idx, ok := dedupe[item.ID]; ok {

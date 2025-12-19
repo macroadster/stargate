@@ -5,13 +5,16 @@ const generateBlock = (block) => {
   const now = Date.now();
 
   // Handle both data API and mempool API formats
-  const inscriptionCount = block.inscription_count ?? (block.inscriptions ? block.inscriptions.length : (block.smart_contracts || 0));
-  const hasImages = block.has_images ?? (inscriptionCount > 0);
+  const inscriptionCount = block.inscription_count ?? (block.inscriptions ? block.inscriptions.length : 0);
+  const smartContractCount =
+    block.smart_contract_count ??
+    (block.smart_contracts ? block.smart_contracts.length : 0);
+  const hasImages = block.has_images ?? (inscriptionCount > 0 || smartContractCount > 0);
   const stegoCount = block.steganography_summary?.stego_count || 0;
   const txCount = block.tx_count ?? block.total_transactions ?? block.TotalTransactions ?? 0;
 
   // For UI purposes, treat all inscriptions as "smart contracts" to show the badge
-  const displayContractCount = Math.max(inscriptionCount, stegoCount);
+  const displayContractCount = Math.max(smartContractCount, stegoCount);
 
   const resolvedHeight = Number(block.block_height ?? block.height ?? 0);
   const resolvedTimestamp =
@@ -27,7 +30,7 @@ const generateBlock = (block) => {
     inscriptionCount: inscriptionCount,
     inscription_count: inscriptionCount,
     smart_contract_count: displayContractCount,
-    smart_contracts: block.inscriptions || [],
+    smart_contracts: block.smart_contracts || block.inscriptions || [],
     witness_image_count: block.images ? block.images.length : 0,
     hasBRC20: false,
     has_images: hasImages,

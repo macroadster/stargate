@@ -412,12 +412,12 @@ func (api *DataAPI) HandleGetBlockSummaries(w http.ResponseWriter, r *http.Reque
 			}
 			preview = append(preview, ins.FileName)
 		}
-		inscriptionCount := len(inscriptions)
+		inscriptionCount := len(block.Inscriptions)
 		contractCount := len(block.SmartContracts)
-		if contractCount == 0 {
+		if contractCount == 0 && inscriptionCount > 0 {
 			contractCount = inscriptionCount
 		}
-		hasImages := len(block.Images) > 0 || inscriptionCount > 0
+		hasImages := len(block.Images) > 0 || inscriptionCount > 0 || contractCount > 0
 		summaries = append(summaries, map[string]interface{}{
 			"block_height":          block.BlockHeight,
 			"block_hash":            block.BlockHash,

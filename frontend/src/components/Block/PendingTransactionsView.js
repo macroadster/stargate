@@ -23,7 +23,9 @@ const PendingTransactionsView = ({ setSelectedInscription }) => {
 
   const mappedInscriptions = useMemo(() => {
     const list = Array.isArray(pendingTxs) ? pendingTxs : [];
-    return list.map((tx) => {
+    return list
+      .filter((tx) => (tx.status || 'pending').toLowerCase() === 'pending')
+      .map((tx) => {
       const uploadFile = tx.imageData ? tx.imageData.split('/').pop() : null;
       const imageUrl = uploadFile ? `${API_BASE}/uploads/${uploadFile}` : null;
       return {
