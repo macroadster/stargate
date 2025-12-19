@@ -301,18 +301,24 @@ func (api *DataAPI) HandleGetRecentBlocks(w http.ResponseWriter, r *http.Request
 			txCount := api.getTransactionCount(blockData)
 			log.Printf("Block %d: %d inscriptions, %d transactions", blockData.BlockHeight, len(blockData.Inscriptions), txCount)
 
-			// Treat inscriptions as smart contracts for frontend compatibility
-			smartContracts := blockData.Inscriptions
-			log.Printf("Mapping %d inscriptions to smart contracts for block %d", len(smartContracts), blockData.BlockHeight)
+			inscriptions := blockData.Inscriptions
+			if len(inscriptions) == 0 && len(blockData.SmartContracts) > 0 {
+				inscriptions, _, _ = buildContractInscriptions(blockData.SmartContracts, blockData.BlockHeight)
+			}
+			smartContracts := blockData.SmartContracts
+			if len(smartContracts) == 0 {
+				smartContracts = nil
+			}
+			log.Printf("Mapping %d inscriptions to smart contracts for block %d", len(inscriptions), blockData.BlockHeight)
 
 			// Create enriched block data
 			enrichedBlock := map[string]interface{}{
 				"block_height":          blockData.BlockHeight,
 				"block_hash":            blockData.BlockHash,
 				"timestamp":             blockData.Timestamp,
-				"inscriptions":          blockData.Inscriptions,
+				"inscriptions":          inscriptions,
 				"images":                blockData.Images,
-				"smart_contracts":       smartContracts, // Map inscriptions to smart contracts
+				"smart_contracts":       smartContracts,
 				"scan_results":          blockData.ScanResults,
 				"processing_time_ms":    blockData.ProcessingTime,
 				"success":               blockData.Success,
@@ -723,6 +729,11 @@ func (api *DataAPI) HandleGetBlockInscriptionsPaginated(w http.ResponseWriter, r
 	}
 
 	inscriptions := block.Inscriptions
+	imageURLOverrides := map[int]string{}
+	metadataOverrides := map[int]map[string]any{}
+	if len(inscriptions) == 0 && len(block.SmartContracts) > 0 {
+		inscriptions, imageURLOverrides, metadataOverrides = buildContractInscriptions(block.SmartContracts, height)
+	}
 	if filter == "text" {
 		var filtered []bitcoin.InscriptionData
 		for _, ins := range inscriptions {
@@ -758,6 +769,16 @@ func (api *DataAPI) HandleGetBlockInscriptionsPaginated(w http.ResponseWriter, r
 		contentType := ins.ContentType
 		contentType = inferMime(contentType, nil, ins.FileName)
 
+		imageURL := fmt.Sprintf("/content/%s%s", ins.TxID, func() string {
+			if ins.InputIndex >= 0 {
+				return fmt.Sprintf("?witness=%d", ins.InputIndex)
+			}
+			return ""
+		}())
+		if override, ok := imageURLOverrides[start+i]; ok && override != "" {
+			imageURL = override
+		}
+
 		entry := map[string]interface{}{
 			"id":                   fmt.Sprintf("%s_%d", ins.TxID, ins.InputIndex),
 			"tx_id":                ins.TxID,
@@ -769,12 +790,10 @@ func (api *DataAPI) HandleGetBlockInscriptionsPaginated(w http.ResponseWriter, r
 			"genesis_block_height": height,
 			"number":               height,
 			"address":              "bc1p...",
-			"image_url": fmt.Sprintf("/content/%s%s", ins.TxID, func() string {
-				if ins.InputIndex >= 0 {
-					return fmt.Sprintf("?witness=%d", ins.InputIndex)
-				}
-				return ""
-			}()),
+			"image_url":            imageURL,
+		}
+		if meta, ok := metadataOverrides[start+i]; ok {
+			entry["metadata"] = meta
 		}
 
 		// If this looks like a text inscription, try to hydrate content from disk when missing or placeholder.
@@ -810,6 +829,57 @@ func (api *DataAPI) HandleGetBlockInscriptionsPaginated(w http.ResponseWriter, r
 		"has_more":     hasMore,
 		"next_cursor":  nextCursor,
 	})
+}
+
+func buildContractInscriptions(contracts []bitcoin.SmartContractData, height int64) ([]bitcoin.InscriptionData, map[int]string, map[int]map[string]any) {
+	var out []bitcoin.InscriptionData
+	imageURLs := map[int]string{}
+	metadata := map[int]map[string]any{}
+
+	for _, contract := range contracts {
+		meta := contract.Metadata
+		fileName := strings.TrimSpace(stringFromAny(meta["image_file"]))
+		if fileName == "" {
+			fileName = filepath.Base(strings.TrimSpace(contract.ImagePath))
+		}
+		if fileName == "" {
+			continue
+		}
+		filePath := strings.TrimSpace(contract.ImagePath)
+		if filePath == "" {
+			filePath = filepath.Join("images", fileName)
+		}
+
+		txID := strings.TrimSpace(stringFromAny(meta["tx_id"]))
+		if txID == "" {
+			txID = contract.ContractID
+		}
+		inputIndex := 0
+		if idx, ok := intFromAny(meta["input_index"]); ok {
+			inputIndex = idx
+		} else if idx, ok := intFromAny(meta["output_index"]); ok {
+			inputIndex = idx
+		}
+
+		contentType := inferMime("", nil, fileName)
+		out = append(out, bitcoin.InscriptionData{
+			TxID:        txID,
+			InputIndex:  inputIndex,
+			FileName:    fileName,
+			FilePath:    filePath,
+			ContentType: contentType,
+			SizeBytes:   0,
+			Content:     "",
+		})
+
+		idx := len(out) - 1
+		imageURLs[idx] = fmt.Sprintf("/api/block-image/%d/%s", height, fileName)
+		if meta != nil {
+			metadata[idx] = meta
+		}
+	}
+
+	return out, imageURLs, metadata
 }
 
 // HandleStegoCallback ingests scan results from the Python scanner instead of filesystem writes.
@@ -1350,6 +1420,50 @@ func inferMime(current string, content []byte, fileName string) string {
 	}
 
 	return m
+}
+
+func stringFromAny(value any) string {
+	switch v := value.(type) {
+	case string:
+		return v
+	case []byte:
+		return string(v)
+	case fmt.Stringer:
+		return v.String()
+	case float64:
+		return strconv.FormatInt(int64(v), 10)
+	case int:
+		return strconv.Itoa(v)
+	case int64:
+		return strconv.FormatInt(v, 10)
+	case json.Number:
+		return v.String()
+	default:
+		if value == nil {
+			return ""
+		}
+		return fmt.Sprint(value)
+	}
+}
+
+func intFromAny(value any) (int, bool) {
+	switch v := value.(type) {
+	case int:
+		return v, true
+	case int64:
+		return int(v), true
+	case float64:
+		return int(v), true
+	case json.Number:
+		if parsed, err := v.Int64(); err == nil {
+			return int(parsed), true
+		}
+	case string:
+		if parsed, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+			return parsed, true
+		}
+	}
+	return 0, false
 }
 
 func isAVIF(b []byte) bool {
