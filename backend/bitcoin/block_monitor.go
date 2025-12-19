@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -1755,8 +1756,32 @@ func (bm *BlockMonitor) moveIngestionImage(blockDir string, rec *services.Ingest
 		return destPath, nil
 	}
 
-	sourcePath := filepath.Join(uploadsDir, filename)
-	if _, err := os.Stat(sourcePath); err != nil {
+	sourcePath := ""
+	var candidates []string
+	if filename != "" {
+		candidates = append(candidates, filename)
+	}
+	if rec.ID != "" && filename != "" {
+		candidates = append(candidates, fmt.Sprintf("%s_%s", rec.ID, filename))
+	}
+	if rec.ID != "" && filepath.Base(filename) != filename {
+		candidates = append(candidates, fmt.Sprintf("%s_%s", rec.ID, filepath.Base(filename)))
+	}
+	for _, candidate := range candidates {
+		path := filepath.Join(uploadsDir, candidate)
+		if _, err := os.Stat(path); err == nil {
+			sourcePath = path
+			break
+		}
+	}
+	if sourcePath == "" && rec.ID != "" {
+		matches, _ := filepath.Glob(filepath.Join(uploadsDir, rec.ID+"_*"))
+		if len(matches) > 0 {
+			sort.Strings(matches)
+			sourcePath = matches[0]
+		}
+	}
+	if sourcePath == "" {
 		if len(rec.ImageBase64) == 0 {
 			return "", fmt.Errorf("missing ingestion image for %s", rec.ID)
 		}
