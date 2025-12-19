@@ -149,7 +149,7 @@ func (h *InscriptionHandler) HandleGetInscriptions(w http.ResponseWriter, r *htt
 
 	// Always include ingestion queue to attach images/text; merge into existing items when IDs match.
 	if h.ingestionService != nil {
-		if recs, err := h.ingestionService.ListRecent("pending", 200); err == nil {
+		if recs, err := h.ingestionService.ListRecent("", 200); err == nil {
 			for _, rec := range recs {
 				item := h.fromIngestion(rec)
 				if idx, ok := dedupe[item.ID]; ok {
@@ -206,7 +206,13 @@ func (h *InscriptionHandler) fromIngestion(rec services.IngestionRecord) models.
 	}
 	_ = os.MkdirAll(uploadsDir, 0755)
 
-	filename := fmt.Sprintf("%s_%s", rec.ID, rec.Filename)
+	filename := rec.Filename
+	if filename == "" {
+		filename = "inscription.png"
+	}
+	if !strings.HasPrefix(filename, rec.ID+"_") {
+		filename = fmt.Sprintf("%s_%s", rec.ID, filename)
+	}
 	targetPath := filepath.Join(uploadsDir, filename)
 	if _, err := os.Stat(targetPath); os.IsNotExist(err) {
 		if data, err := base64.StdEncoding.DecodeString(rec.ImageBase64); err == nil {
