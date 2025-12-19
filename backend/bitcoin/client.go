@@ -89,7 +89,9 @@ type BitcoinNodeClient struct {
 // NewBitcoinNodeClient creates a new Bitcoin node client
 func NewBitcoinNodeClient(baseURL string) *BitcoinNodeClient {
 	network := "mainnet"
-	if strings.Contains(baseURL, "testnet") {
+	if strings.Contains(baseURL, "testnet4") {
+		network = "testnet4"
+	} else if strings.Contains(baseURL, "testnet") {
 		network = "testnet"
 	} else if strings.Contains(baseURL, "signet") {
 		network = "signet"
