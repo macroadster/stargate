@@ -241,7 +241,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 			}
 		}
 	}
-	if pixelBytes == nil {
+	if usePixelHash && pixelBytes == nil {
 		if h, err := hex.DecodeString(strings.TrimSpace(contractID)); err == nil {
 			pixelBytes = normalizePixel(h)
 		}
