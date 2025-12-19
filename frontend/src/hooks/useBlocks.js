@@ -156,10 +156,12 @@ export const useBlocks = () => {
 
       if (realMaxHeight > 0) {
         const futureHeight = realMaxHeight + 1;
+        const existingFuture = deduped.find((b) => b.isFuture);
+        const futureTimestamp = existingFuture?.timestamp || Date.now() + 600000;
         deduped = deduped.filter((b) => !b.isFuture);
         deduped.push({
           height: futureHeight,
-          timestamp: Date.now() + 600000,
+          timestamp: futureTimestamp,
           hash: 'pending...',
           inscriptionCount: 0,
           smart_contract_count: 0,
