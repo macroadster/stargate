@@ -83,7 +83,10 @@ export const useBlocks = () => {
             .map(generateBlock)
             .filter(b => b.height)
         : [];
-      const maxHeight = recentBlocks.reduce((max, b) => Math.max(max, b.height || 0), 0);
+      const milestoneSet = new Set(pinnedMilestones.current);
+      const maxHeight = recentBlocks
+        .filter((b) => !milestoneSet.has(b.height))
+        .reduce((max, b) => Math.max(max, b.height || 0), 0);
       if (showHistorical && maxHeight > 0 && maxHeight < 200000) {
         setShowHistorical(false);
       }
@@ -143,7 +146,6 @@ export const useBlocks = () => {
         });
       }
       if (!showHistorical) {
-        const milestoneSet = new Set(pinnedMilestones.current);
         deduped = deduped.filter((b) => !milestoneSet.has(b.height));
       }
 
