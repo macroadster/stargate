@@ -157,6 +157,11 @@ const InscriptionModal = ({ inscription, onClose }) => {
   const inscriptionPrice = parsedPayload?.price ?? inscriptionPriceRaw;
   const inscriptionAddress = parsedPayload?.address ?? inscriptionAddressRaw;
   const textContent = inscriptionMessage || '';
+  const isConfirmedContract = Boolean(
+    inscription.metadata?.confirmed_txid ||
+      inscription.metadata?.confirmed_height ||
+      (inscription.status || '').toLowerCase() === 'confirmed'
+  );
   
   const isActuallyImageFile =
     inscription.mime_type?.includes('image') &&
@@ -764,7 +769,11 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
 
               {activeTab === 'deliverables' && (
                 <div className="space-y-4">
-                  {!approvedProposal ? (
+                  {isConfirmedContract ? (
+                    <div className="text-sm text-gray-500 dark:text-gray-400">
+                      This contract is confirmed on-chain; PSBT publishing is only available while pending.
+                    </div>
+                  ) : !approvedProposal ? (
                     <div className="text-sm text-gray-500 dark:text-gray-400">Approve a proposal to unlock deliverables.</div>
                   ) : deliverableTasks.length === 0 ? (
                     <div className="text-sm text-gray-500 dark:text-gray-400">No deliverables available yet.</div>
@@ -1063,7 +1072,7 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                     </div>
                   )}
 
-                  {!inscription.text && !inscription.metadata?.extracted_message && (
+                  {!textContent && !inscription.metadata?.extracted_message && (
                     <div className="text-center py-12">
                       <div className="text-6xl mb-4">📦</div>
                       <div className="text-gray-600 dark:text-gray-400 font-semibold">No Text Content Available</div>
