@@ -1,15 +1,14 @@
 import React from 'react';
 
 const ConfidenceIndicator = ({ confidence }) => {
-  if (!confidence || confidence <= 0) {
+  const confidencePercentage = Math.round((confidence || 0) * 100);
+  if (!confidence || confidence <= 0 || confidencePercentage <= 0) {
     return (
       <div className="text-black dark:text-white font-semibold">
         Analysis Required
       </div>
     );
   }
-
-  const confidencePercentage = Math.round(confidence * 100);
   
   return (
     <div className="flex items-center gap-2">

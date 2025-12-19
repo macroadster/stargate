@@ -158,6 +158,7 @@ const InscriptionModal = ({ inscription, onClose }) => {
   const inscriptionAddress = parsedPayload?.address ?? inscriptionAddressRaw;
   const textContent = inscriptionMessage || '';
   const confidenceValue = Number(inscription.metadata?.confidence || 0);
+  const confidencePercent = Math.round(confidenceValue * 100);
   const isConfirmedContract = Boolean(
     inscription.metadata?.confirmed_txid ||
       inscription.metadata?.confirmed_height ||
@@ -487,9 +488,9 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                       alt={inscription.file_name || inscription.id}
                       className="w-48 h-48 object-cover rounded-lg border-2 border-gray-300 dark:border-gray-700"
                     />
-                    {inscription.metadata?.confidence && inscription.metadata.confidence > 0 && (
+                    {confidencePercent > 0 && (
                       <div className="absolute top-2 right-2 bg-green-500 text-white text-xs px-2 py-1 rounded-md font-bold">
-                        {Math.round(inscription.metadata.confidence * 100)}%
+                        {confidencePercent}%
                       </div>
                     )}
                   </div>
@@ -608,7 +609,7 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                           <div className="bg-white dark:bg-gray-800 rounded-lg p-3">
                             <div className="text-yellow-700 dark:text-yellow-300 text-xs mb-1">Confidence Level</div>
                             <div className="text-yellow-900 dark:text-yellow-100 font-semibold">
-                              {confidenceValue > 0 ? `${Math.round(confidenceValue * 100)}%` : 'N/A'}
+                              {confidencePercent > 0 ? `${confidencePercent}%` : 'N/A'}
                             </div>
                           </div>
                           {inscription.metadata.stego_type && (
