@@ -350,7 +350,7 @@ const InscriptionModal = ({ inscription, onClose }) => {
     setPsbtLoading(true);
     try {
       const feeRateParsed = psbtForm.feeRate === '' ? NaN : Number(psbtForm.feeRate);
-      const feeRate = Number.isFinite(feeRateParsed) ? feeRateParsed : 1;
+      const feeRate = Number.isFinite(feeRateParsed) ? Math.max(1, feeRateParsed) : 1;
       const payload = {
         contractor_wallet: payoutWallet,
         pixel_hash:
@@ -843,6 +843,8 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                           <input
                             className="w-full rounded bg-gray-100 dark:bg-gray-800 px-3 py-2"
                             type="number"
+                            min="1"
+                            step="1"
                             value={psbtForm.feeRate}
                             onChange={(e) => setPsbtForm((p) => ({ ...p, feeRate: e.target.value }))}
                           />
