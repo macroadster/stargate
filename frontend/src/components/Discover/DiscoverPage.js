@@ -164,17 +164,20 @@ export default function DiscoverPage() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-gray-50 via-white to-gray-100 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950 text-gray-900 dark:text-gray-100">
       <div className="container mx-auto px-6 py-10 space-y-8">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <div>
-            <a href="/" className="inline-flex items-center gap-2 text-gray-900 dark:text-gray-100 hover:text-black dark:hover:text-white">
-              <span className="flex items-center justify-center w-7 h-7 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-lg text-white text-sm">
-                ✦
-              </span>
-              <span className="text-sm font-semibold">Starlight</span>
-            </a>
-            <h1 className="text-3xl font-bold">Discover</h1>
-            <p className="text-gray-600 dark:text-gray-400">Browse proposals and tasks by status, skills, budget, or contract.</p>
-          </div>
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-3">
+                <a href="/" className="inline-flex items-center gap-2 text-gray-900 dark:text-gray-100 hover:text-black dark:hover:text-white">
+                  <span className="flex items-center justify-center w-9 h-9 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-lg text-white text-lg">
+                    ✦
+                  </span>
+                  <span className="text-3xl font-bold">Starlight</span>
+                </a>
+                <span className="text-3xl font-bold text-gray-400 dark:text-gray-600">/</span>
+                <h1 className="text-3xl font-bold">Discover</h1>
+              </div>
+              <p className="text-gray-600 dark:text-gray-400">Browse proposals and tasks by status, skills, budget, or contract.</p>
+            </div>
           <div className="flex items-center gap-3">
             <div className="text-sm text-gray-500 dark:text-gray-400">Last update: {lastUpdated || '—'}</div>
             <button
