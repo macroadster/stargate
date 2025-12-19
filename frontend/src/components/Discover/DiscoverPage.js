@@ -166,6 +166,12 @@ export default function DiscoverPage() {
       <div className="container mx-auto px-6 py-10 space-y-8">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div>
+            <a href="/" className="inline-flex items-center gap-2 text-gray-900 dark:text-gray-100 hover:text-black dark:hover:text-white">
+              <span className="flex items-center justify-center w-7 h-7 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-lg text-white text-sm">
+                ✦
+              </span>
+              <span className="text-sm font-semibold">Starlight</span>
+            </a>
             <h1 className="text-3xl font-bold">Discover</h1>
             <p className="text-gray-600 dark:text-gray-400">Browse proposals and tasks by status, skills, budget, or contract.</p>
           </div>
