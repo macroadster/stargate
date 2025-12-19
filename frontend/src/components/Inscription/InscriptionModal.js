@@ -140,6 +140,17 @@ const InscriptionModal = ({ inscription, onClose }) => {
     if (list.length === 0) return 0;
     return list.reduce((sum, t) => sum + (Number(t.budget_sats) || 0), 0);
   }, [psbtTasks, allTasks]);
+  const payoutSummaries = useMemo(() => {
+    const tasks = deliverableTasks.length > 0 ? deliverableTasks : psbtTasks;
+    if (!tasks.length) return [];
+    const totals = new Map();
+    tasks.forEach((t) => {
+      const wallet = (t.contractor_wallet || '').trim() || 'Unknown wallet';
+      const existing = totals.get(wallet) || 0;
+      totals.set(wallet, existing + (Number(t.budget_sats) || 0));
+    });
+    return Array.from(totals.entries()).map(([wallet, total]) => ({ wallet, total }));
+  }, [deliverableTasks, psbtTasks]);
 
   let parsedPayload = null;
   if (typeof inscriptionMessageRaw === 'string') {
@@ -820,6 +831,17 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                           <div className="text-xs text-gray-500">Budget (sum of proposal tasks)</div>
                           <div className="px-3 py-2 rounded bg-gray-100 dark:bg-gray-800 font-mono text-xs">
                             {approvedBudgetsTotal || selectedTask?.budget_sats || 'n/a'} sats
+                          </div>
+                        </div>
+                        <div className="space-y-1 md:col-span-2">
+                          <div className="text-xs text-gray-500">Payout summary by contractor wallet</div>
+                          <div className="rounded bg-gray-100 dark:bg-gray-800 p-2 space-y-2">
+                            {payoutSummaries.map((item) => (
+                              <div key={item.wallet} className="flex items-center justify-between text-xs font-mono text-gray-700 dark:text-gray-300">
+                                <span className="truncate">{item.wallet}</span>
+                                <span>{item.total} sats</span>
+                              </div>
+                            ))}
                           </div>
                         </div>
                         <div className="space-y-2">
