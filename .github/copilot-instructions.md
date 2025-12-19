@@ -70,9 +70,9 @@ For example: `bd create --help` shows `--parent`, `--deps`, `--assignee`, etc.
 
 ## Important Rules
 
-- Use bd for ALL task tracking
-- Always use `--json` flag for programmatic use
-- Run `bd sync` at end of sessions
-- Run `bd <cmd> --help` to discover available flags
-- Do NOT create markdown TODO lists
-- Do NOT commit `.beads/beads.db` (JSONL only)
+- ✅ Use bd for ALL task tracking
+- ✅ Always use `--json` flag for programmatic use
+- ✅ Run `bd sync` at end of sessions
+- ✅ Run `bd <cmd> --help` to discover available flags
+- ❌ Do NOT create markdown TODO lists
+- ❌ Do NOT commit `.beads/beads.db` (JSONL only)

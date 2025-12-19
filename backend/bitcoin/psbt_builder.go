@@ -18,29 +18,35 @@ type PSBTRequest struct {
 	PayerAddress      btcutil.Address
 	TargetValueSats   int64
 	PixelHash         []byte
+	CommitmentSats    int64
 	ContractorAddress btcutil.Address
 	FeeRateSatPerVB   int64
 }
 
 // PSBTResult summarizes the built PSBT.
 type PSBTResult struct {
-	EncodedBase64 string
-	EncodedHex    string
-	FeeSats       int64
-	ChangeSats    int64
-	SelectedSats  int64
-	PayoutScript  []byte
-	FundingTxID   string
+	EncodedBase64    string
+	EncodedHex       string
+	FeeSats          int64
+	ChangeSats       int64
+	SelectedSats     int64
+	PayoutScript     []byte
+	CommitmentSats   int64
+	CommitmentScript []byte
+	FundingTxID      string
 }
 
 // BuildFundingPSBT selects confirmed UTXOs, estimates fees at the provided feerate, and builds a PSBT.
-// It prefers pixel-hash-based scripts when provided; otherwise uses contractor address.
+// When a pixel hash is provided, a small commitment output is added alongside the contractor payout.
 func BuildFundingPSBT(client *MempoolClient, params *chaincfg.Params, req PSBTRequest) (*PSBTResult, error) {
 	if req.TargetValueSats <= 0 {
 		return nil, fmt.Errorf("target value must be positive")
 	}
 	if req.FeeRateSatPerVB < 0 {
 		req.FeeRateSatPerVB = 0
+	}
+	if req.ContractorAddress == nil {
+		return nil, fmt.Errorf("contractor address required")
 	}
 
 	utxos, err := client.ListConfirmedUTXOs(req.PayerAddress.EncodeAddress())
@@ -51,10 +57,28 @@ func BuildFundingPSBT(client *MempoolClient, params *chaincfg.Params, req PSBTRe
 		return nil, fmt.Errorf("no confirmed utxos for address")
 	}
 
-	payoutScript, _, err := buildPayoutScript(params, req)
+	payoutScript, _, err := buildPayoutScript(req)
 	if err != nil {
 		return nil, err
 	}
+
+	var commitmentScript []byte
+	var commitmentSats int64
+	if len(req.PixelHash) > 0 {
+		commitmentScript, err = buildCommitmentScript(params, req.PixelHash)
+		if err != nil {
+			return nil, err
+		}
+		commitmentSats = req.CommitmentSats
+		if commitmentSats <= 0 {
+			commitmentSats = 546
+		}
+		if commitmentSats < 546 {
+			commitmentSats = 546
+		}
+	}
+
+	requiredValue := req.TargetValueSats + commitmentSats
 
 	var selected []AddressUTXO
 	var selectedValue int64
@@ -64,18 +88,21 @@ func BuildFundingPSBT(client *MempoolClient, params *chaincfg.Params, req PSBTRe
 		selectedValue += u.Value
 		inputVBytes := int64(len(selected)) * estimateInputVBytes(req.PayerAddress)
 		// Two outputs when change is expected, otherwise one.
-		outputCount := int64(1)
-		if selectedValue > req.TargetValueSats {
-			outputCount = 2
+		outputCount := int64(1) // contractor payout
+		if commitmentScript != nil {
+			outputCount++
+		}
+		if selectedValue > requiredValue {
+			outputCount++
 		}
 		estFee := estimateFee(inputVBytes, outputCount, req.FeeRateSatPerVB)
-		if selectedValue >= req.TargetValueSats+estFee {
+		if selectedValue >= requiredValue+estFee {
 			break
 		}
 	}
 
-	if selectedValue < req.TargetValueSats {
-		return nil, fmt.Errorf("insufficient funds: need %d sats, selected %d", req.TargetValueSats, selectedValue)
+	if selectedValue < requiredValue {
+		return nil, fmt.Errorf("insufficient funds: need %d sats, selected %d", requiredValue, selectedValue)
 	}
 
 	changeScript, err := txscript.PayToAddrScript(req.PayerAddress)
@@ -84,14 +111,17 @@ func BuildFundingPSBT(client *MempoolClient, params *chaincfg.Params, req PSBTRe
 	}
 
 	inputVBytes := int64(len(selected)) * estimateInputVBytes(req.PayerAddress)
-	outputCount := int64(1) // payout
+	outputCount := int64(1) // contractor payout
+	if commitmentScript != nil {
+		outputCount++
+	}
 	fee := estimateFee(inputVBytes, outputCount, req.FeeRateSatPerVB)
-	change := selectedValue - req.TargetValueSats - fee
+	change := selectedValue - requiredValue - fee
 	// Add change output if not dust.
 	if change >= 546 {
 		outputCount++
 		fee = estimateFee(inputVBytes, outputCount, req.FeeRateSatPerVB)
-		change = selectedValue - req.TargetValueSats - fee
+		change = selectedValue - requiredValue - fee
 	}
 	if change < 0 {
 		return nil, fmt.Errorf("insufficient funds after fee: %d sats short", -change)
@@ -108,6 +138,9 @@ func BuildFundingPSBT(client *MempoolClient, params *chaincfg.Params, req PSBTRe
 		})
 	}
 	tx.AddTxOut(&wire.TxOut{Value: req.TargetValueSats, PkScript: payoutScript})
+	if commitmentScript != nil {
+		tx.AddTxOut(&wire.TxOut{Value: commitmentSats, PkScript: commitmentScript})
+	}
 	if change >= 546 {
 		tx.AddTxOut(&wire.TxOut{Value: change, PkScript: changeScript})
 	}
@@ -130,45 +163,43 @@ func BuildFundingPSBT(client *MempoolClient, params *chaincfg.Params, req PSBTRe
 	}
 
 	return &PSBTResult{
-		EncodedBase64: base64.StdEncoding.EncodeToString(psbtBytes),
-		EncodedHex:    hex.EncodeToString(psbtBytes),
-		FeeSats:       fee,
-		ChangeSats:    change,
-		SelectedSats:  selectedValue,
-		PayoutScript:  payoutScript,
-		FundingTxID:   tx.TxHash().String(),
+		EncodedBase64:    base64.StdEncoding.EncodeToString(psbtBytes),
+		EncodedHex:       hex.EncodeToString(psbtBytes),
+		FeeSats:          fee,
+		ChangeSats:       change,
+		SelectedSats:     selectedValue,
+		PayoutScript:     payoutScript,
+		CommitmentSats:   commitmentSats,
+		CommitmentScript: commitmentScript,
+		FundingTxID:      tx.TxHash().String(),
 	}, nil
 }
 
-func buildPayoutScript(params *chaincfg.Params, req PSBTRequest) ([]byte, btcutil.Address, error) {
-	if len(req.PixelHash) > 0 {
-		switch len(req.PixelHash) {
-		case 20:
-			addr, err := btcutil.NewAddressScriptHashFromHash(req.PixelHash, params)
-			if err != nil {
-				return nil, nil, fmt.Errorf("pixel hash p2sh: %w", err)
-			}
-			script, _ := txscript.PayToAddrScript(addr)
-			return script, addr, nil
-		case 32:
-			addr, err := btcutil.NewAddressWitnessScriptHash(req.PixelHash, params)
-			if err != nil {
-				return nil, nil, fmt.Errorf("pixel hash p2wsh: %w", err)
-			}
-			script, _ := txscript.PayToAddrScript(addr)
-			return script, addr, nil
-		default:
-			return nil, nil, fmt.Errorf("pixel hash must be 20 or 32 bytes for script hash")
-		}
-	}
-	if req.ContractorAddress == nil {
-		return nil, nil, fmt.Errorf("contractor address required when pixel hash not provided")
-	}
+func buildPayoutScript(req PSBTRequest) ([]byte, btcutil.Address, error) {
 	script, err := txscript.PayToAddrScript(req.ContractorAddress)
 	if err != nil {
 		return nil, nil, fmt.Errorf("contractor script: %w", err)
 	}
 	return script, req.ContractorAddress, nil
+}
+
+func buildCommitmentScript(params *chaincfg.Params, pixelHash []byte) ([]byte, error) {
+	switch len(pixelHash) {
+	case 20:
+		addr, err := btcutil.NewAddressScriptHashFromHash(pixelHash, params)
+		if err != nil {
+			return nil, fmt.Errorf("pixel hash p2sh: %w", err)
+		}
+		return txscript.PayToAddrScript(addr)
+	case 32:
+		addr, err := btcutil.NewAddressWitnessScriptHash(pixelHash, params)
+		if err != nil {
+			return nil, fmt.Errorf("pixel hash p2wsh: %w", err)
+		}
+		return txscript.PayToAddrScript(addr)
+	default:
+		return nil, fmt.Errorf("pixel hash must be 20 or 32 bytes for script hash")
+	}
 }
 
 func estimateFee(inputVBytes, outputs int64, feeRate int64) int64 {

@@ -2,7 +2,6 @@
 
 ## Beads Workflow
 
-- Run `bd onboard` the first time.
 - Issue lifecycle: `bd ready` → `bd update <id> --status in_progress` → work → `bd close <id>`.
 - Keep bd synced with git: prefer working inside `stargate/` so bd can read git status.
 

@@ -172,6 +172,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		ContractorWallet string `json:"contractor_wallet"`
 		BudgetSats       int64  `json:"budget_sats"`
 		PixelHash        string `json:"pixel_hash"`
+		CommitmentSats   int64  `json:"commitment_sats"`
 		FeeRate          int64  `json:"fee_rate_sats_vb"`
 		UsePixelHash     *bool  `json:"use_pixel_hash"`
 	}
@@ -251,6 +252,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		PayerAddress:      payerAddr,
 		TargetValueSats:   target,
 		PixelHash:         pixelBytes,
+		CommitmentSats:    body.CommitmentSats,
 		ContractorAddress: contractorAddr,
 		FeeRateSatPerVB:   body.FeeRate,
 	}
@@ -269,21 +271,23 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 	}
 
 	JSON(w, http.StatusOK, map[string]interface{}{
-		"psbt":           res.EncodedHex, // primary: hex for wallet import
-		"psbt_hex":       res.EncodedHex,
-		"psbt_base64":    res.EncodedBase64,
-		"funding_txid":   res.FundingTxID,
-		"fee_sats":       res.FeeSats,
-		"change_sats":    res.ChangeSats,
-		"selected_sats":  res.SelectedSats,
-		"payout_script":  hex.EncodeToString(res.PayoutScript),
-		"pixel_hash":     strings.TrimSpace(body.PixelHash),
-		"payer_address":  payerAddr.EncodeAddress(),
-		"contract_id":    contractID,
-		"pixel_source":   pixelSourceForBytes(pixelBytes),
-		"budget_sats":    target,
-		"contractor":     contractorAddr.EncodeAddress(),
-		"network_params": params.Name,
+		"psbt":              res.EncodedHex, // primary: hex for wallet import
+		"psbt_hex":          res.EncodedHex,
+		"psbt_base64":       res.EncodedBase64,
+		"funding_txid":      res.FundingTxID,
+		"fee_sats":          res.FeeSats,
+		"change_sats":       res.ChangeSats,
+		"selected_sats":     res.SelectedSats,
+		"payout_script":     hex.EncodeToString(res.PayoutScript),
+		"commitment_script": hex.EncodeToString(res.CommitmentScript),
+		"commitment_sats":   res.CommitmentSats,
+		"pixel_hash":        strings.TrimSpace(body.PixelHash),
+		"payer_address":     payerAddr.EncodeAddress(),
+		"contract_id":       contractID,
+		"pixel_source":      pixelSourceForBytes(pixelBytes),
+		"budget_sats":       target,
+		"contractor":        contractorAddr.EncodeAddress(),
+		"network_params":    params.Name,
 	})
 }
 
