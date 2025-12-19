@@ -3,6 +3,7 @@ import { X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import CopyButton from '../Common/CopyButton';
 import ConfidenceIndicator from '../Common/ConfidenceIndicator';
+import { QRCodeCanvas } from 'qrcode.react';
 import DeliverablesReview from '../Review/DeliverablesReview';
 import { API_BASE } from '../../apiBase';
 import { useAuth } from '../../context/AuthContext';
@@ -32,6 +33,7 @@ const InscriptionModal = ({ inscription, onClose }) => {
   const [psbtError, setPsbtError] = useState('');
   const [psbtLoading, setPsbtLoading] = useState(false);
   const [copiedPsbt, setCopiedPsbt] = useState('');
+  const [showPsbtQr, setShowPsbtQr] = useState(false);
   const lastFetchedKeyRef = React.useRef('');
   const hasFetchedRef = React.useRef(false);
   const refreshIntervalRef = React.useRef(null);
@@ -73,6 +75,10 @@ const InscriptionModal = ({ inscription, onClose }) => {
     };
     fetchNetwork();
   }, [inscription, auth.wallet]);
+
+  useEffect(() => {
+    setShowPsbtQr(false);
+  }, [psbtResult]);
   const inscriptionMessageRaw = inscription.text || inscription.metadata?.embedded_message || inscription.metadata?.extracted_message || '';
   const inscriptionPriceRaw = inscription.price ?? inscription.metadata?.price ?? null;
   const inscriptionAddressRaw = inscription.address ?? inscription.metadata?.address ?? '';
@@ -828,15 +834,15 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                     ) : (
                       <div className="grid md:grid-cols-2 gap-3 text-sm mt-3">
                         <div className="space-y-1">
-                          <div className="text-xs text-gray-500">Budget (sum of proposal tasks)</div>
-                          <div className="px-3 py-2 rounded bg-gray-100 dark:bg-gray-800 font-mono text-xs">
+                          <label className="text-xs text-gray-500">Budget (sum of proposal tasks)</label>
+                          <div className="h-10 px-3 py-2 rounded bg-gray-100 dark:bg-gray-800 font-mono text-xs flex items-center">
                             {approvedBudgetsTotal || selectedTask?.budget_sats || 'n/a'} sats
                           </div>
                         </div>
                         <div className="space-y-2">
                           <label className="block text-xs text-gray-500">Fee rate (sat/vB)</label>
                           <input
-                            className="w-full rounded bg-gray-100 dark:bg-gray-800 px-3 py-2"
+                            className="w-full h-10 rounded bg-gray-100 dark:bg-gray-800 px-3 py-2"
                             type="number"
                             min="1"
                             step="1"
@@ -920,17 +926,31 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                               {copiedPsbt === 'hex' ? 'Copied hex' : 'Copy hex'}
                             </button>
                             {psbtBase64 && (
-                              <button
-                                onClick={() => copyToClipboard(psbtBase64, 'b64')}
-                                className="px-2 py-1 rounded border border-gray-300 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-700"
-                              >
-                                {copiedPsbt === 'b64' ? 'Copied base64' : 'Copy base64'}
-                              </button>
+                              <>
+                                <button
+                                  onClick={() => copyToClipboard(psbtBase64, 'b64')}
+                                  className="px-2 py-1 rounded border border-gray-300 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-700"
+                                >
+                                  {copiedPsbt === 'b64' ? 'Copied base64' : 'Copy base64'}
+                                </button>
+                                <button
+                                  onClick={() => setShowPsbtQr((prev) => !prev)}
+                                  className="px-2 py-1 rounded border border-gray-300 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-700"
+                                >
+                                  {showPsbtQr ? 'Hide QR' : 'Show QR'}
+                                </button>
+                              </>
                             )}
                             <span>Payer: {payerAddress}</span>
-                            <span>Contractor: {psbtResult.contractor || payoutWallet || 'n/a'}</span>
                             <span>Network: {psbtResult.network_params || 'testnet4'}</span>
                           </div>
+                          {showPsbtQr && psbtBase64 && (
+                            <div className="flex justify-center py-2">
+                              <div className="bg-white p-2 rounded">
+                                <QRCodeCanvas value={psbtBase64} size={180} level="M" includeMargin />
+                              </div>
+                            </div>
+                          )}
                           <div className="text-[11px] text-gray-500">
                             Paste the hex PSBT into Sparrow (testnet4). Base64 provided if needed.
                           </div>
