@@ -173,6 +173,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		BudgetSats       int64  `json:"budget_sats"`
 		PixelHash        string `json:"pixel_hash"`
 		FeeRate          int64  `json:"fee_rate_sats_vb"`
+		UsePixelHash     *bool  `json:"use_pixel_hash"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		Error(w, http.StatusBadRequest, "invalid json")
@@ -222,16 +223,22 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		return nil
 	}
 	var pixelBytes []byte
-	if ph := strings.TrimSpace(body.PixelHash); ph != "" {
-		if b, err := hex.DecodeString(ph); err == nil {
-			pixelBytes = normalizePixel(b)
-		}
+	usePixelHash := true
+	if body.UsePixelHash != nil {
+		usePixelHash = *body.UsePixelHash
 	}
 	var ingestionRec *services.IngestionRecord
-	if pixelBytes == nil && s.ingestionSvc != nil {
-		if rec, err := s.ingestionSvc.Get(contractID); err == nil {
-			ingestionRec = rec
-			pixelBytes = resolvePixelHashFromIngestion(rec, normalizePixel)
+	if usePixelHash {
+		if ph := strings.TrimSpace(body.PixelHash); ph != "" {
+			if b, err := hex.DecodeString(ph); err == nil {
+				pixelBytes = normalizePixel(b)
+			}
+		}
+		if pixelBytes == nil && s.ingestionSvc != nil {
+			if rec, err := s.ingestionSvc.Get(contractID); err == nil {
+				ingestionRec = rec
+				pixelBytes = resolvePixelHashFromIngestion(rec, normalizePixel)
+			}
 		}
 	}
 	if pixelBytes == nil {
