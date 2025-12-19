@@ -37,6 +37,9 @@ const InscriptionCard = ({ inscription, onClick }) => {
   const imageSource = isActuallyImageFile ? (inscription.thumbnail || inscription.image_url) : null;
   const sandboxSrc = inscription.thumbnail || inscription.image_url;
   const sandboxDoc = (isHtmlContent || isSvgContent) ? (inscription.text || '') : '';
+  const confidenceScore = Number(inscription.metadata?.confidence || 0);
+  const stegoProbability = Number(inscription.metadata?.stego_probability || 0);
+  const detectionScore = Math.max(confidenceScore, stegoProbability);
   const shouldLoadMedia = isVisible;
   const showImage = shouldLoadMedia && imageSource && isActuallyImageFile;
   const showSandbox = shouldLoadMedia && (isHtmlContent || isSvgContent) && (sandboxSrc || sandboxDoc);
@@ -97,17 +100,16 @@ const InscriptionCard = ({ inscription, onClick }) => {
         
         <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200">
           <div className="absolute bottom-0 left-0 right-0 p-3 text-white">
-            {((inscription.metadata?.confidence && inscription.metadata.confidence > 0.1) ||
-              (inscription.metadata?.stego_probability && inscription.metadata.stego_probability > 0.1)) && (
+            {detectionScore > 0.1 && (
               <div className="flex items-center gap-2 mt-2">
                 <div className="w-full bg-green-400 rounded-full h-1">
                   <div 
                     className="bg-green-600 h-1 rounded-full" 
-                    style={{width: `${Math.round((inscription.metadata.confidence || inscription.metadata.stego_probability || 0) * 100)}%`}}
+                    style={{width: `${Math.round(detectionScore * 100)}%`}}
                   ></div>
                 </div>
                 <span className="text-xs font-semibold">
-                  {Math.round((inscription.metadata.confidence || inscription.metadata.stego_probability || 0) * 100)}%
+                  {Math.round(detectionScore * 100)}%
                 </span>
               </div>
             )}
@@ -123,9 +125,9 @@ const InscriptionCard = ({ inscription, onClick }) => {
                     Method: <span className="font-mono font-semibold">{inscription.metadata.stego_type.toUpperCase()}</span>
                   </div>
                 )}
-                {inscription.metadata.stego_probability && (
+                {stegoProbability > 0 && (
                   <div className="text-xs text-purple-600 dark:text-purple-400">
-                    Probability: <span className="font-semibold">{Math.round(inscription.metadata.stego_probability * 100)}%</span>
+                    Probability: <span className="font-semibold">{Math.round(stegoProbability * 100)}%</span>
                   </div>
                 )}
               </div>

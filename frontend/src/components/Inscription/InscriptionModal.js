@@ -157,6 +157,7 @@ const InscriptionModal = ({ inscription, onClose }) => {
   const inscriptionPrice = parsedPayload?.price ?? inscriptionPriceRaw;
   const inscriptionAddress = parsedPayload?.address ?? inscriptionAddressRaw;
   const textContent = inscriptionMessage || '';
+  const confidenceValue = Number(inscription.metadata?.confidence || 0);
   const isConfirmedContract = Boolean(
     inscription.metadata?.confirmed_txid ||
       inscription.metadata?.confirmed_height ||
@@ -606,7 +607,9 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                           </div>
                           <div className="bg-white dark:bg-gray-800 rounded-lg p-3">
                             <div className="text-yellow-700 dark:text-yellow-300 text-xs mb-1">Confidence Level</div>
-                            <div className="text-yellow-900 dark:text-yellow-100 font-semibold">{Math.round((inscription.metadata.confidence || 0) * 100)}%</div>
+                            <div className="text-yellow-900 dark:text-yellow-100 font-semibold">
+                              {confidenceValue > 0 ? `${Math.round(confidenceValue * 100)}%` : 'N/A'}
+                            </div>
                           </div>
                           {inscription.metadata.stego_type && (
                             <div className="bg-white dark:bg-gray-800 rounded-lg p-3">
