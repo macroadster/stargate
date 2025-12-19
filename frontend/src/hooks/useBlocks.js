@@ -142,6 +142,10 @@ export const useBlocks = () => {
           }
         });
       }
+      if (!showHistorical) {
+        const milestoneSet = new Set(pinnedMilestones.current);
+        deduped = deduped.filter((b) => !milestoneSet.has(b.height));
+      }
 
       // Add pending/future placeholder one above the highest real block
       const realMaxHeight = deduped
