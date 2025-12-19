@@ -858,8 +858,23 @@ func buildContractInscriptions(contracts []bitcoin.SmartContractData, height int
 		}
 
 		txID := strings.TrimSpace(stringFromAny(meta["tx_id"]))
-		if txID == "" {
-			txID = contract.ContractID
+		if !isLikelyTxID(txID) {
+			if candidate := strings.TrimSpace(stringFromAny(meta["confirmed_txid"])); isLikelyTxID(candidate) {
+				txID = candidate
+			} else if candidate := strings.TrimSpace(stringFromAny(meta["funding_txid"])); isLikelyTxID(candidate) {
+				txID = candidate
+			} else if candidate := strings.TrimSpace(stringFromAny(meta["match_hash"])); isLikelyTxID(candidate) {
+				txID = candidate
+			} else if isLikelyTxID(contract.ContractID) {
+				txID = strings.TrimSpace(contract.ContractID)
+			}
+		}
+		if !isLikelyTxID(txID) {
+			lowerFile := strings.ToLower(fileName)
+			lowerTx := strings.ToLower(txID)
+			if strings.HasPrefix(lowerFile, "unknown_") || strings.HasSuffix(lowerFile, ".png") || strings.Contains(lowerTx, ".png") {
+				continue
+			}
 		}
 		inputIndex := 0
 		if idx, ok := intFromAny(meta["input_index"]); ok {
@@ -1668,6 +1683,15 @@ func normalizeTxID(txid string) string {
 		}
 	}
 	return txid
+}
+
+func isLikelyTxID(txid string) bool {
+	txid = strings.TrimSpace(normalizeTxID(strings.ToLower(txid)))
+	if len(txid) != 64 {
+		return false
+	}
+	_, err := hex.DecodeString(txid)
+	return err == nil
 }
 
 // stripPushdataPrefix removes a leading push opcode (OP_PUSH, OP_PUSHDATA1/2/4) from a payload when present.
