@@ -47,6 +47,7 @@ function MainContent() {
   const [copiedText, setCopiedText] = useState('');
   const sentinelRef = useRef(null);
   const [hideBrc20, setHideBrc20] = useState(true);
+  const [pendingRefreshKey, setPendingRefreshKey] = useState(0);
   // MCP proposal management handled in inscription modal.
 
   const {
@@ -204,6 +205,11 @@ function MainContent() {
     } catch (error) {
       console.error('Failed to copy:', error);
     }
+  };
+
+  const handleInscribeSuccess = () => {
+    refreshBlocks();
+    setPendingRefreshKey((prev) => prev + 1);
   };
 
 
@@ -556,7 +562,10 @@ function MainContent() {
             </div>
 
             {selectedBlock.isFuture ? (
-              <PendingTransactionsView setSelectedInscription={setSelectedInscription} />
+              <PendingTransactionsView
+                setSelectedInscription={setSelectedInscription}
+                refreshKey={pendingRefreshKey}
+              />
             ) : (
               <div className="mb-4">
                 <div className="mb-4">
@@ -616,7 +625,7 @@ function MainContent() {
         {showInscribeModal && (
           <InscribeModal
             onClose={() => setShowInscribeModal(false)}
-            onSuccess={refreshBlocks}
+            onSuccess={handleInscribeSuccess}
           />
         )}
 

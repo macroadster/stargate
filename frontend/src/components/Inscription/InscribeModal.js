@@ -1,8 +1,6 @@
 import React, { useState } from 'react';
 import { X } from 'lucide-react';
 import { API_BASE } from '../../apiBase';
-import { QRCodeCanvas } from 'qrcode.react';
-
 import { useAuth } from '../../context/AuthContext';
 
 const InscribeModal = ({ onClose, onSuccess }) => {
@@ -13,7 +11,7 @@ const InscribeModal = ({ onClose, onSuccess }) => {
   const [price, setPrice] = useState('');
   const [address, setAddress] = useState(auth.wallet || '');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [paymentData, setPaymentData] = useState(null);
+  const [inscriptionResult, setInscriptionResult] = useState(null);
   const buildPlaceholderImage = () => {
     const pngBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/Ptq4YQAAAABJRU5ErkJggg==";
     const bytes = Uint8Array.from(atob(pngBase64), c => c.charCodeAt(0));
@@ -60,16 +58,7 @@ const InscribeModal = ({ onClose, onSuccess }) => {
 
       if (response.ok) {
         const result = await response.json();
-
-        // Generate payment QR code data
-        const paymentAddress = "bc1qexampleaddress123456789"; // Demo address
-        const paymentAmount = price;
-        setPaymentData({
-          address: paymentAddress,
-          amount: paymentAmount,
-          inscriptionId: result.id
-        });
-
+        setInscriptionResult(result);
         setStep(2);
         if (onSuccess) onSuccess();
       } else {
@@ -169,49 +158,36 @@ const InscribeModal = ({ onClose, onSuccess }) => {
         ) : (
           <div className="text-center py-8">
             <div className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
-              Complete Payment
+              Inscription Submitted
             </div>
             
-            {paymentData && (
-              <div className="space-y-4">
-                <div className="flex justify-center mb-4">
-                  <QRCodeCanvas 
-                    value={`bitcoin:${paymentData.address}?amount=${paymentData.amount}`}
-                    size={200}
-                    level="M"
-                    includeMargin={true}
-                  />
-                </div>
-                
-                <div className="text-sm text-gray-600 dark:text-gray-400">
-                  <p className="mb-2">Send <span className="font-mono font-bold">{paymentData.amount} BTC</span></p>
-                  <p className="mb-2">to address:</p>
-                  <p className="font-mono text-xs bg-gray-100 dark:bg-gray-700 p-2 rounded break-all">
-                    {paymentData.address}
-                  </p>
-                </div>
-                
+            <div className="text-sm text-gray-600 dark:text-gray-400 space-y-3">
+              <p>Your smart contract is now pending.</p>
+              <p>Check Pending Transactions to track confirmations.</p>
+              {inscriptionResult?.id && (
                 <div className="text-xs text-gray-500 dark:text-gray-500">
-                  Inscription ID: {paymentData.inscriptionId}
+                  Inscription ID: {inscriptionResult.id}
                 </div>
-              </div>
-            )}
+              )}
+            </div>
             
             <div className="flex gap-3 mt-6">
               <button
-                onClick={() => setStep(1)}
+                onClick={() => {
+                  setInscriptionResult(null);
+                  setStep(1);
+                }}
                 className="flex-1 px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700"
               >
-                Back
+                Create Another
               </button>
               <button
                 onClick={() => {
-                  if (onSuccess) onSuccess();
                   onClose();
                 }}
                 className="flex-1 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700"
               >
-                Payment Sent
+                Done
               </button>
             </div>
           </div>

@@ -1,14 +1,11 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import InscriptionCard from '../Inscription/InscriptionCard';
 import { API_BASE } from '../../apiBase';
 
-const PendingTransactionsView = ({ setSelectedInscription }) => {
+const PendingTransactionsView = ({ setSelectedInscription, refreshKey }) => {
   const [pendingTxs, setPendingTxs] = useState([]);
-  useEffect(() => {
-    fetchPendingTransactions();
-  }, []);
 
-  const fetchPendingTransactions = async () => {
+  const fetchPendingTransactions = useCallback(async () => {
     try {
       const response = await fetch(`${API_BASE}/api/pending-transactions`);
       const data = await response.json();
@@ -19,7 +16,11 @@ const PendingTransactionsView = ({ setSelectedInscription }) => {
       console.error('Error fetching pending transactions:', error);
       setPendingTxs([]);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    fetchPendingTransactions();
+  }, [fetchPendingTransactions, refreshKey]);
 
   const mappedInscriptions = useMemo(() => {
     const list = Array.isArray(pendingTxs) ? pendingTxs : [];
