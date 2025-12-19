@@ -223,7 +223,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		return nil
 	}
 	var pixelBytes []byte
-	usePixelHash := true
+	usePixelHash := false
 	if body.UsePixelHash != nil {
 		usePixelHash = *body.UsePixelHash
 	}
