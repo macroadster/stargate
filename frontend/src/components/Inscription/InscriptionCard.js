@@ -37,6 +37,7 @@ const InscriptionCard = ({ inscription, onClick }) => {
   const imageSource = isActuallyImageFile ? (inscription.thumbnail || inscription.image_url) : null;
   const sandboxSrc = inscription.thumbnail || inscription.image_url;
   const sandboxDoc = (isHtmlContent || isSvgContent) ? (inscription.text || '') : '';
+  const sizeBytes = Number(inscription.size_bytes || 0);
   const confidenceScore = Number(inscription.metadata?.confidence || 0);
   const stegoProbability = Number(inscription.metadata?.stego_probability || 0);
   const detectionScore = Math.max(confidenceScore, stegoProbability);
@@ -153,11 +154,11 @@ const InscriptionCard = ({ inscription, onClick }) => {
           )}
         </div>
         
-        {inscription.size_bytes && (
+        {sizeBytes > 0 && (
           <div className="absolute bottom-2 right-2 bg-white dark:bg-gray-800 rounded-lg px-2 py-1 shadow-lg border border-gray-200 dark:border-gray-600">
             <div className="flex items-center gap-1">
               <span className="text-black dark:text-white text-xs font-bold">
-                {(inscription.size_bytes / 1024).toFixed(1)}KB
+                {(sizeBytes / 1024).toFixed(1)}KB
               </span>
             </div>
           </div>
