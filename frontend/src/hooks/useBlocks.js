@@ -157,7 +157,7 @@ export const useBlocks = () => {
       if (realMaxHeight > 0) {
         const futureHeight = realMaxHeight + 1;
         const existingFuture = deduped.find((b) => b.isFuture);
-        const futureTimestamp = existingFuture?.timestamp || Date.now() + 600000;
+        const futureTimestamp = existingFuture?.timestamp || Math.floor(Date.now() / 1000) + 600;
         deduped = deduped.filter((b) => !b.isFuture);
         deduped.push({
           height: futureHeight,
