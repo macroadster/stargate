@@ -826,12 +826,23 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                     {psbtTasks.length === 0 && allTasks.length === 0 ? (
                       <div className="text-sm text-gray-500 dark:text-gray-400 mt-3">No deliverables available yet.</div>
                     ) : (
-                      <div className="grid md:grid-cols-3 gap-3 text-sm mt-3">
+                      <div className="grid md:grid-cols-2 gap-3 text-sm mt-3">
                         <div className="space-y-1">
                           <div className="text-xs text-gray-500">Budget (sum of proposal tasks)</div>
                           <div className="px-3 py-2 rounded bg-gray-100 dark:bg-gray-800 font-mono text-xs">
                             {approvedBudgetsTotal || selectedTask?.budget_sats || 'n/a'} sats
                           </div>
+                        </div>
+                        <div className="space-y-2">
+                          <label className="block text-xs text-gray-500">Fee rate (sat/vB)</label>
+                          <input
+                            className="w-full rounded bg-gray-100 dark:bg-gray-800 px-3 py-2"
+                            type="number"
+                            min="1"
+                            step="1"
+                            value={psbtForm.feeRate}
+                            onChange={(e) => setPsbtForm((p) => ({ ...p, feeRate: e.target.value }))}
+                          />
                         </div>
                         <div className="space-y-1 md:col-span-2">
                           <div className="text-xs text-gray-500">Payout summary by contractor wallet</div>
@@ -844,46 +855,11 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                             ))}
                           </div>
                         </div>
-                        <div className="space-y-2">
-                          <label className="block text-xs text-gray-500">Contractor wallet (payout)</label>
-                          <input
-                            className="w-full rounded bg-gray-100 dark:bg-gray-800 px-3 py-2 text-gray-500 dark:text-gray-400 cursor-not-allowed"
-                            value={
-                              psbtForm.contractorWallet ||
-                              selectedTask?.contractor_wallet ||
-                              inscription.metadata?.contractor_wallet ||
-                              ''
-                            }
-                            readOnly
-                            placeholder="Contractor tb1..."
-                          />
-                          {!psbtForm.contractorWallet &&
-                            !selectedTask?.contractor_wallet &&
-                            !inscription.metadata?.contractor_wallet && (
-                              <div className="text-[11px] text-amber-600 dark:text-amber-400">
-                                Add contractor payout wallet before building.
-                              </div>
-                            )}
-                        </div>
-                        <div className="space-y-2">
+                        <div className="space-y-2 md:col-span-2">
                           <label className="block text-xs text-gray-500">Contract ID</label>
-                          <input
-                            className="w-full rounded bg-gray-100 dark:bg-gray-800 px-3 py-2 font-mono text-xs text-gray-500 dark:text-gray-400 cursor-not-allowed"
-                            value={psbtForm.contractId || primaryContractId || ''}
-                            readOnly
-                            placeholder="contract id (ingestion/visible hash)"
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <label className="block text-xs text-gray-500">Fee rate (sat/vB)</label>
-                          <input
-                            className="w-full rounded bg-gray-100 dark:bg-gray-800 px-3 py-2"
-                            type="number"
-                            min="1"
-                            step="1"
-                            value={psbtForm.feeRate}
-                            onChange={(e) => setPsbtForm((p) => ({ ...p, feeRate: e.target.value }))}
-                          />
+                          <div className="w-full rounded bg-gray-100 dark:bg-gray-800 px-3 py-2 font-mono text-xs text-gray-500 dark:text-gray-400">
+                            {psbtForm.contractId || primaryContractId || 'n/a'}
+                          </div>
                         </div>
                       </div>
                     )}
