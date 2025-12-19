@@ -173,7 +173,6 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		BudgetSats       int64  `json:"budget_sats"`
 		PixelHash        string `json:"pixel_hash"`
 		FeeRate          int64  `json:"fee_rate_sats_vb"`
-		UseTaproot       bool   `json:"use_taproot"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		Error(w, http.StatusBadRequest, "invalid json")
@@ -247,7 +246,6 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		PixelHash:         pixelBytes,
 		ContractorAddress: contractorAddr,
 		FeeRateSatPerVB:   body.FeeRate,
-		UseTaproot:        body.UseTaproot,
 	}
 
 	res, err := bitcoin.BuildFundingPSBT(s.mempool, params, psbtReq)
