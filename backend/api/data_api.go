@@ -1256,8 +1256,12 @@ func (api *DataAPI) handleContentManifest(w http.ResponseWriter, r *http.Request
 func (api *DataAPI) findInscriptionsByTx(txid string) (int64, []bitcoin.InscriptionData, error) {
 	if height, ok := api.lookupTxHeight(txid); ok {
 		if block, err := api.loadBlock(height); err == nil {
+			inscriptions := block.Inscriptions
+			if len(inscriptions) == 0 && len(block.SmartContracts) > 0 {
+				inscriptions, _, _ = buildContractInscriptions(block.SmartContracts, block.BlockHeight)
+			}
 			var hits []bitcoin.InscriptionData
-			for _, ins := range block.Inscriptions {
+			for _, ins := range inscriptions {
 				if normalizeTxID(ins.TxID) == txid {
 					hits = append(hits, ins)
 				}
@@ -1274,8 +1278,12 @@ func (api *DataAPI) findInscriptionsByTx(txid string) (int64, []bitcoin.Inscript
 		if err != nil {
 			continue
 		}
+		inscriptions := block.Inscriptions
+		if len(inscriptions) == 0 && len(block.SmartContracts) > 0 {
+			inscriptions, _, _ = buildContractInscriptions(block.SmartContracts, block.BlockHeight)
+		}
 		var hits []bitcoin.InscriptionData
-		for _, ins := range block.Inscriptions {
+		for _, ins := range inscriptions {
 			if normalizeTxID(ins.TxID) == txid {
 				hits = append(hits, ins)
 			}
@@ -1720,7 +1728,11 @@ func (api *DataAPI) buildTxIndex() {
 		if err != nil {
 			continue
 		}
-		for _, ins := range block.Inscriptions {
+		inscriptions := block.Inscriptions
+		if len(inscriptions) == 0 && len(block.SmartContracts) > 0 {
+			inscriptions, _, _ = buildContractInscriptions(block.SmartContracts, block.BlockHeight)
+		}
+		for _, ins := range inscriptions {
 			if ins.TxID != "" {
 				newIndex[normalizeTxID(ins.TxID)] = h
 			}
