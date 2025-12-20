@@ -5,7 +5,7 @@ import { API_BASE } from '../../apiBase';
 import CopyButton from '../Common/CopyButton';
 import { useAuth } from '../../context/AuthContext';
 
-const DeliverablesReview = ({ proposalItems, submissions, onRefresh }) => {
+const DeliverablesReview = ({ proposalItems, submissions, onRefresh, isContractLocked = false }) => {
   const { auth } = useAuth();
   // Add key to force re-render when submissions change
   const submissionsKey = JSON.stringify(submissions);
@@ -526,7 +526,7 @@ const DeliverablesReview = ({ proposalItems, submissions, onRefresh }) => {
                         <div className="flex gap-2 flex-wrap">
                           <button
                             onClick={() => reviewDeliverable(deliverable.submissionKey, 'review')}
-                            disabled={reviewingId === deliverable.submissionKey}
+                            disabled={reviewingId === deliverable.submissionKey || isContractLocked}
                             className="px-3 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded text-sm disabled:opacity-60 flex items-center gap-2"
                           >
                             <Eye className="w-4 h-4" />
@@ -534,7 +534,7 @@ const DeliverablesReview = ({ proposalItems, submissions, onRefresh }) => {
                           </button>
                           <button
                             onClick={() => reviewDeliverable(deliverable.submissionKey, 'approve')}
-                            disabled={reviewingId === deliverable.submissionKey}
+                            disabled={reviewingId === deliverable.submissionKey || isContractLocked}
                             className="px-3 py-2 bg-green-600 hover:bg-green-500 text-white rounded text-sm disabled:opacity-60 flex items-center gap-2"
                           >
                             <CheckCircle className="w-4 h-4" />
@@ -542,7 +542,7 @@ const DeliverablesReview = ({ proposalItems, submissions, onRefresh }) => {
                           </button>
                           <button
                             onClick={() => reviewDeliverable(deliverable.submissionKey, 'reject')}
-                            disabled={reviewingId === deliverable.submissionKey}
+                            disabled={reviewingId === deliverable.submissionKey || isContractLocked}
                             className="px-3 py-2 bg-red-600 hover:bg-red-500 text-white rounded text-sm disabled:opacity-60 flex items-center gap-2"
                           >
                             <XCircle className="w-4 h-4" />

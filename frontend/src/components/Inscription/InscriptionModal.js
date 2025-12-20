@@ -602,17 +602,10 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                   <div>
                     <h4 className="text-lg font-semibold text-black dark:text-white mb-3 flex items-center gap-2">
                       <span className="w-2 h-2 bg-purple-500 rounded-full"></span>
-                      Inscription Identity
+                      Identity
                     </h4>
                     <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4 space-y-3">
                       <div className="space-y-2">
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="flex items-start gap-2">
-                            <span className="text-gray-600 dark:text-gray-400 text-sm whitespace-nowrap">Inscription ID:</span>
-                            <span className="text-black dark:text-white font-mono text-xs break-all leading-tight">{inscription.id}</span>
-                          </div>
-                          <CopyButton text={inscription.id} />
-                        </div>
                         <div className="flex items-start justify-between gap-3">
                           <div className="flex items-start gap-2">
                             <span className="text-gray-600 dark:text-gray-400 text-sm whitespace-nowrap">Transaction ID:</span>
@@ -1040,6 +1033,7 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                     proposalItems={proposalItems}
                     submissions={submissions}
                     onRefresh={loadProposals}
+                    isContractLocked={isContractLocked}
                   />
                 </div>
               )}
