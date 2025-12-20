@@ -972,7 +972,7 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                       const donationMatch =
                         donationAddress &&
                         auth.wallet &&
-                        donationAddress.trim() === auth.wallet.trim();
+                        donationAddress.trim().toLowerCase() === auth.wallet.trim().toLowerCase();
                       if (!commitmentReady) return null;
                       return (
                         <div className="mt-3 rounded-lg border border-amber-200 dark:border-amber-900 bg-amber-50/60 dark:bg-amber-900/20 p-3 space-y-2">
