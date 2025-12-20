@@ -974,30 +974,29 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                         auth.wallet &&
                         donationAddress.trim().toLowerCase() === auth.wallet.trim().toLowerCase();
                       if (!commitmentReady) return null;
+                      const donationConfigured = Boolean(donationAddress && donationAddress.trim());
+                      if (!donationConfigured) {
+                        return (
+                          <div className="mt-3 rounded-lg border border-amber-200 dark:border-amber-900 bg-amber-50/60 dark:bg-amber-900/20 p-3">
+                            <div className="text-xs text-amber-700 dark:text-amber-300">
+                              Commitment sweep is available, but the donation wallet is not configured.
+                            </div>
+                          </div>
+                        );
+                      }
+                      if (!donationMatch) return null;
                       return (
                         <div className="mt-3 rounded-lg border border-amber-200 dark:border-amber-900 bg-amber-50/60 dark:bg-amber-900/20 p-3 space-y-2">
                           <div className="text-xs text-amber-700 dark:text-amber-300">
                             Commitment sweep is available for the donation wallet.
                           </div>
-                          <div className="text-xs text-gray-600 dark:text-gray-300">
-                            Donation address: {donationAddress || 'Not configured'}
-                          </div>
-                          <div className="text-xs text-gray-600 dark:text-gray-300">
-                            Signed-in wallet: {auth.wallet || 'Not signed in'}
-                          </div>
-                          {!donationMatch ? (
-                            <div className="text-xs text-amber-600 dark:text-amber-400">
-                              Sign in with the donation wallet to enable sweeping.
-                            </div>
-                          ) : (
-                            <button
-                              onClick={sweepCommitment}
-                              disabled={sweepLoading}
-                              className="px-3 py-1.5 rounded bg-amber-600 hover:bg-amber-500 text-white text-sm disabled:opacity-60"
-                            >
-                              {sweepLoading ? 'Sweeping…' : 'Sweep Commitment'}
-                            </button>
-                          )}
+                          <button
+                            onClick={sweepCommitment}
+                            disabled={sweepLoading}
+                            className="px-3 py-1.5 rounded bg-amber-600 hover:bg-amber-500 text-white text-sm disabled:opacity-60"
+                          >
+                            {sweepLoading ? 'Sweeping…' : 'Sweep Commitment'}
+                          </button>
                           {sweepError && <div className="text-xs text-red-500">{sweepError}</div>}
                           {sweepResult?.tx_hex && (
                             <div className="space-y-2">
