@@ -96,15 +96,19 @@ func refreshProofs(ctx context.Context, store *scstore.PGStore, provider Funding
 		return err
 	}
 	for _, t := range tasks {
-		if t.MerkleProof == nil || t.MerkleProof.ConfirmationStatus != "provisional" {
+		if t.MerkleProof == nil {
 			continue
 		}
-		proof, err := provider.FetchProof(ctx, t)
-		if err != nil {
-			continue
-		}
-		if err := store.UpdateTaskProof(ctx, t.TaskID, proof); err != nil {
-			log.Printf("failed to update proof for %s: %v", t.TaskID, err)
+		proof := t.MerkleProof
+		if proof.ConfirmationStatus == "provisional" {
+			fetched, err := provider.FetchProof(ctx, t)
+			if err != nil {
+				continue
+			}
+			proof = fetched
+			if err := store.UpdateTaskProof(ctx, t.TaskID, proof); err != nil {
+				log.Printf("failed to update proof for %s: %v", t.TaskID, err)
+			}
 		}
 		if err := sweepCommitmentIfReady(ctx, store, mempool, t, proof); err != nil {
 			log.Printf("commitment sweep error for %s: %v", t.TaskID, err)
