@@ -922,6 +922,11 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                           <div className="text-xs text-gray-600 dark:text-gray-300">
                             Fee: {psbtResult.fee_sats} sats • Change: {psbtResult.change_sats} sats • Selected: {psbtResult.selected_sats} sats
                           </div>
+                          {psbtResult.commitment_sats ? (
+                            <div className="text-xs text-gray-600 dark:text-gray-300">
+                              Commitment: {psbtResult.commitment_sats} sats
+                            </div>
+                          ) : null}
                           <div className="text-xs text-gray-600 dark:text-gray-300 break-all">
                             Payout script: {psbtResult.payout_script}
                           </div>

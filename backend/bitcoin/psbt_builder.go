@@ -82,7 +82,7 @@ func BuildFundingPSBT(client *MempoolClient, params *chaincfg.Params, req PSBTRe
 		}
 		commitmentSats = req.CommitmentSats
 		if commitmentSats <= 0 {
-			commitmentSats = 546
+			commitmentSats = 1000
 		}
 		if commitmentSats < 546 {
 			commitmentSats = 546
