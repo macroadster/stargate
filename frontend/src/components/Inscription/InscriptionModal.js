@@ -366,7 +366,7 @@ const InscriptionModal = ({ inscription, onClose }) => {
     }
     const payouts = payoutSummaries
       .filter((p) => p.wallet && p.wallet !== 'Unknown wallet')
-      .map((p) => ({ address: p.wallet, amount_sats: Math.round(p.total) }));
+      .map((p) => ({ address: p.wallet, amount_sats: Math.trunc(p.total) }));
     if (!payoutWallet && payouts.length === 0) {
       setPsbtError('No contractor wallet found for this task.');
       return;

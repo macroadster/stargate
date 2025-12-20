@@ -206,20 +206,6 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		return
 	}
 
-	var contractorAddr btcutil.Address
-	if strings.TrimSpace(body.ContractorAPIKey) != "" {
-		if rec, ok := s.apiKeys.Get(body.ContractorAPIKey); ok && strings.TrimSpace(rec.Wallet) != "" {
-			contractorAddr, err = btcutil.DecodeAddress(rec.Wallet, params)
-		}
-	}
-	if contractorAddr == nil && strings.TrimSpace(body.ContractorWallet) != "" {
-		contractorAddr, err = btcutil.DecodeAddress(strings.TrimSpace(body.ContractorWallet), params)
-	}
-	if err != nil {
-		Error(w, http.StatusBadRequest, fmt.Sprintf("invalid contractor wallet: %v", err))
-		return
-	}
-
 	target := body.BudgetSats
 	if target <= 0 {
 		target = contract.TotalBudgetSats
@@ -287,6 +273,39 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 			})
 		}
 	}
+	payoutTotal := int64(0)
+	for _, payout := range payouts {
+		payoutTotal += payout.ValueSats
+	}
+	if payoutTotal > 0 {
+		if target <= 0 {
+			target = payoutTotal
+		}
+		if target != payoutTotal {
+			Error(w, http.StatusBadRequest, "payout total must match budget_sats")
+			return
+		}
+	}
+
+	var contractorAddr btcutil.Address
+	if payoutTotal == 0 {
+		if strings.TrimSpace(body.ContractorAPIKey) != "" {
+			if rec, ok := s.apiKeys.Get(body.ContractorAPIKey); ok && strings.TrimSpace(rec.Wallet) != "" {
+				contractorAddr, err = btcutil.DecodeAddress(rec.Wallet, params)
+			}
+		}
+		if contractorAddr == nil && strings.TrimSpace(body.ContractorWallet) != "" {
+			contractorAddr, err = btcutil.DecodeAddress(strings.TrimSpace(body.ContractorWallet), params)
+		}
+		if err != nil {
+			Error(w, http.StatusBadRequest, fmt.Sprintf("invalid contractor wallet: %v", err))
+			return
+		}
+		if contractorAddr == nil {
+			Error(w, http.StatusBadRequest, "contractor wallet required when payouts are empty")
+			return
+		}
+	}
 
 	psbtReq := bitcoin.PSBTRequest{
 		PayerAddress:      payerAddr,
@@ -338,9 +357,16 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		"contract_id":        contractID,
 		"pixel_source":       pixelSourceForBytes(pixelBytes),
 		"budget_sats":        target,
-		"contractor":         contractorAddr.EncodeAddress(),
+		"contractor":         contractorAddressFor(contractorAddr),
 		"network_params":     params.Name,
 	})
+}
+
+func contractorAddressFor(addr btcutil.Address) string {
+	if addr == nil {
+		return ""
+	}
+	return addr.EncodeAddress()
 }
 
 func (s *Server) handleTasks(w http.ResponseWriter, r *http.Request) {
