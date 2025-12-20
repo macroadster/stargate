@@ -3,7 +3,7 @@ import { X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import CopyButton from '../Common/CopyButton';
 import ConfidenceIndicator from '../Common/ConfidenceIndicator';
-import { QRCodeCanvas } from 'qrcode.react';
+import SafeQrCodeCanvas from '../Common/SafeQrCodeCanvas';
 import DeliverablesReview from '../Review/DeliverablesReview';
 import { API_BASE } from '../../apiBase';
 import { useAuth } from '../../context/AuthContext';
@@ -13,6 +13,9 @@ export const shouldShowProposalAction = (status) => {
   const s = (status || '').toLowerCase();
   return !(s === 'rejected' || s === 'published');
 };
+
+// QR version 40-L max byte capacity (base64 uses byte mode).
+const QR_BYTE_LIMIT = 2953;
 
 const InscriptionModal = ({ inscription, onClose }) => {
   const { auth } = useAuth();
@@ -961,6 +964,12 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                         psbtResult.EncodedBase64 ||
                         '';
                       const psbtBase64 = psbtResult.psbt_base64 || psbtResult.encodedBase64 || psbtResult.EncodedBase64 || '';
+                      const psbtBase64Bytes = psbtBase64
+                        ? typeof TextEncoder === 'undefined'
+                          ? psbtBase64.length
+                          : new TextEncoder().encode(psbtBase64).length
+                        : 0;
+                      const psbtQrTooLarge = psbtBase64Bytes > QR_BYTE_LIMIT;
                       const payoutWallet =
                         psbtForm.contractorWallet ||
                         selectedTask?.contractor_wallet ||
@@ -1017,7 +1026,13 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                           {showPsbtQr && psbtBase64 && (
                             <div className="flex justify-center py-2">
                               <div className="bg-white p-2 rounded">
-                                <QRCodeCanvas value={psbtBase64} size={180} level="M" includeMargin />
+                                {psbtQrTooLarge ? (
+                                  <div className="text-xs text-amber-600 text-center">
+                                    PSBT is too large for a single QR. Copy the base64 instead.
+                                  </div>
+                                ) : (
+                                  <SafeQrCodeCanvas value={psbtBase64} size={180} level="L" includeMargin />
+                                )}
                               </div>
                             </div>
                           )}
