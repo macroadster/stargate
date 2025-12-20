@@ -980,6 +980,10 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                           <div className="text-xs text-gray-600 dark:text-gray-300 break-all">
                             Payout script: {psbtResult.payout_script}
                           </div>
+                          <div className="flex gap-2 text-[11px] text-gray-600 dark:text-gray-300 flex-wrap">
+                            <span>Payer: {payerAddress}</span>
+                            <span>Network: {psbtResult.network_params || 'testnet4'}</span>
+                          </div>
                           <textarea
                             className="w-full rounded bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 font-mono text-xs p-2"
                             rows={3}
@@ -1009,8 +1013,6 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                                 </button>
                               </>
                             )}
-                            <span>Payer: {payerAddress}</span>
-                            <span>Network: {psbtResult.network_params || 'testnet4'}</span>
                           </div>
                           {showPsbtQr && psbtBase64 && (
                             <div className="flex justify-center py-2">
@@ -1019,9 +1021,6 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                               </div>
                             </div>
                           )}
-                          <div className="text-[11px] text-gray-500">
-                            Paste the hex PSBT into Sparrow (testnet4). Base64 provided if needed.
-                          </div>
                         </div>
                       );
                     })()}
