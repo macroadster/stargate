@@ -31,7 +31,15 @@ const InscriptionModal = ({ inscription, onClose }) => {
   const [proposalError, setProposalError] = useState('');
   const [approvingId, setApprovingId] = useState('');
   const [submissions, setSubmissions] = useState({});
-  const [psbtForm, setPsbtForm] = useState({ contractorWallet: '', pixelHash: '', budgetSats: '', feeRate: '1', contractId: '', taskId: '' });
+  const [psbtForm, setPsbtForm] = useState({
+    contractorWallet: '',
+    pixelHash: '',
+    budgetSats: '',
+    feeRate: '1',
+    contractId: '',
+    taskId: '',
+    includeDonation: true,
+  });
   const [psbtResult, setPsbtResult] = useState(null);
   const [psbtError, setPsbtError] = useState('');
   const [psbtLoading, setPsbtLoading] = useState(false);
@@ -418,12 +426,13 @@ const InscriptionModal = ({ inscription, onClose }) => {
       const feeRate = Number.isFinite(feeRateParsed) ? Math.max(1, feeRateParsed) : 1;
       const payload = {
         contractor_wallet: payoutWallet,
-        pixel_hash:
-          selectedTask?.merkle_proof?.visible_pixel_hash ||
-          psbtForm.pixelHash?.trim() ||
-          inscription.metadata?.visible_pixel_hash ||
-          undefined,
-        use_pixel_hash: true,
+        pixel_hash: psbtForm.includeDonation
+          ? selectedTask?.merkle_proof?.visible_pixel_hash ||
+            psbtForm.pixelHash?.trim() ||
+            inscription.metadata?.visible_pixel_hash ||
+            undefined
+          : undefined,
+        use_pixel_hash: psbtForm.includeDonation,
         task_id: selectedTask?.task_id,
         payouts: payouts.length > 0 ? payouts : undefined,
         budget_sats:
@@ -913,9 +922,21 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                             onChange={(e) => setPsbtForm((p) => ({ ...p, feeRate: e.target.value }))}
                           />
                         </div>
+                        <div className="space-y-1">
+                          <label className="block text-xs text-gray-500">Donation (commitment)</label>
+                          <label className="flex items-start gap-3 text-xs text-gray-600 dark:text-gray-300 bg-gray-50 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700 rounded-md px-3 py-2">
+                            <input
+                              type="checkbox"
+                              className="mt-0.5 h-4 w-4 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500 dark:border-gray-600"
+                              checked={psbtForm.includeDonation}
+                              onChange={(e) => setPsbtForm((p) => ({ ...p, includeDonation: e.target.checked }))}
+                            />
+                            <span>Donate to Starlight Project to keep lights on</span>
+                          </label>
+                        </div>
                         <div className="space-y-1 md:col-span-2">
                           <div className="text-xs text-gray-500">Payout summary by contractor wallet</div>
-                          <div className="rounded bg-gray-100 dark:bg-gray-800 p-2 space-y-2">
+                          <div className="rounded bg-gray-100 dark:bg-gray-800 p-3 space-y-2 min-h-[96px]">
                             {payoutSummaries.map((item) => (
                               <div key={item.wallet} className="flex items-center justify-between text-xs font-mono text-gray-700 dark:text-gray-300">
                                 <span className="truncate">{item.wallet}</span>
@@ -926,7 +947,7 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                         </div>
                         <div className="space-y-2 md:col-span-2">
                           <label className="block text-xs text-gray-500">Contract ID</label>
-                          <div className="w-full rounded bg-gray-100 dark:bg-gray-800 px-3 py-2 font-mono text-xs text-gray-500 dark:text-gray-400">
+                          <div className="w-full rounded bg-gray-100 dark:bg-gray-800 px-3 py-3 min-h-[48px] font-mono text-xs text-gray-500 dark:text-gray-400 flex items-center">
                             {psbtForm.contractId || primaryContractId || 'n/a'}
                           </div>
                         </div>
@@ -990,14 +1011,21 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                           <div className="text-xs text-gray-600 dark:text-gray-300 break-all">
                             Payout script: {psbtResult.payout_script}
                           </div>
-                          <div className="text-xs text-gray-600 dark:text-gray-300">
-                            <div>Selected: {psbtResult.selected_sats} sats</div>
-                            <div>Price: {budgetSats} sats</div>
-                            {psbtResult.commitment_sats ? (
-                              <div>Donation: {psbtResult.commitment_sats} sats</div>
+                          <div className="text-xs text-gray-600 dark:text-gray-300 grid grid-cols-[1fr_auto] gap-x-4 gap-y-1 font-mono">
+                            <div>Selected</div>
+                            <div className="text-right tabular-nums">{psbtResult.selected_sats} sats</div>
+                            <div>Price</div>
+                            <div className="text-right tabular-nums">{budgetSats} sats</div>
+                            {psbtResult.commitment_sats && psbtForm.includeDonation ? (
+                              <>
+                                <div>Donation</div>
+                                <div className="text-right tabular-nums">{psbtResult.commitment_sats} sats</div>
+                              </>
                             ) : null}
-                            <div>Fee: {psbtResult.fee_sats} sats</div>
-                            <div>Change: {psbtResult.change_sats} sats</div>
+                            <div>Fee</div>
+                            <div className="text-right tabular-nums">{psbtResult.fee_sats} sats</div>
+                            <div>Change</div>
+                            <div className="text-right tabular-nums">{psbtResult.change_sats} sats</div>
                           </div>
                           <textarea
                             className="w-full rounded bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 font-mono text-xs p-2"
