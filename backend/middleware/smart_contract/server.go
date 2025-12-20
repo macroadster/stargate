@@ -944,6 +944,30 @@ func int64FromQuery(r *http.Request, key string, def int64) int64 {
 	return v
 }
 
+func includeConfirmed(r *http.Request) bool {
+	raw := strings.TrimSpace(r.URL.Query().Get("include_confirmed"))
+	if raw == "" {
+		return false
+	}
+	return strings.EqualFold(raw, "true") || strings.EqualFold(raw, "yes") || raw == "1"
+}
+
+func proposalMetaConfirmed(meta map[string]interface{}) bool {
+	if meta == nil {
+		return false
+	}
+	if txid, ok := meta["confirmed_txid"].(string); ok && strings.TrimSpace(txid) != "" {
+		return true
+	}
+	if status, ok := meta["confirmation_status"].(string); ok && strings.EqualFold(strings.TrimSpace(status), "confirmed") {
+		return true
+	}
+	if height, ok := meta["confirmed_height"].(float64); ok && height > 0 {
+		return true
+	}
+	return false
+}
+
 // recordEvent appends an event to the in-memory log with a small bounded buffer.
 func (s *Server) recordEvent(evt smart_contract.Event) {
 	const maxEvents = 200
@@ -1314,6 +1338,31 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				Error(w, http.StatusInternalServerError, err.Error())
 				return
+			}
+			if !includeConfirmed(r) {
+				ingestionStatus := make(map[string]string)
+				filtered := make([]smart_contract.Proposal, 0, len(proposals))
+				for _, p := range proposals {
+					if proposalMetaConfirmed(p.Metadata) {
+						continue
+					}
+					if s.ingestionSvc != nil {
+						if ingestionID, ok := p.Metadata["ingestion_id"].(string); ok && strings.TrimSpace(ingestionID) != "" {
+							status, cached := ingestionStatus[ingestionID]
+							if !cached {
+								if rec, err := s.ingestionSvc.Get(ingestionID); err == nil && rec != nil {
+									status = rec.Status
+								}
+								ingestionStatus[ingestionID] = status
+							}
+							if strings.EqualFold(status, "confirmed") {
+								continue
+							}
+						}
+					}
+					filtered = append(filtered, p)
+				}
+				proposals = filtered
 			}
 			// hydrate submissions alongside tasks
 			var taskIDs []string
