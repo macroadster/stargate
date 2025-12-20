@@ -1475,7 +1475,7 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 					Metadata:    contractMeta,
 				})
 				bm.markIngestionConfirmed(match, tx.TxID, blockHeight, imageFile, imagePath)
-				bm.sweepContractCommitments(match.ID)
+				bm.confirmAndSweepContractTasks(match.ID, tx.TxID, blockHeight)
 				for _, candidate := range candidatesByID[match.ID] {
 					delete(candidates, candidate)
 				}
@@ -1520,7 +1520,7 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 				Metadata:    contractMeta,
 			})
 			bm.markIngestionConfirmed(match, tx.TxID, blockHeight, imageFile, imagePath)
-			bm.sweepContractCommitments(match.ID)
+			bm.confirmAndSweepContractTasks(match.ID, tx.TxID, blockHeight)
 
 			for _, candidate := range candidatesByID[match.ID] {
 				delete(candidates, candidate)
@@ -1537,8 +1537,8 @@ func (bm *BlockMonitor) SetSweepDependencies(store SweepTaskStore, mempool *Memp
 	bm.sweepMempool = mempool
 }
 
-func (bm *BlockMonitor) sweepContractCommitments(contractID string) {
-	if bm.sweepStore == nil || bm.sweepMempool == nil || strings.TrimSpace(contractID) == "" {
+func (bm *BlockMonitor) confirmAndSweepContractTasks(contractID, txid string, blockHeight int64) {
+	if bm.sweepStore == nil || bm.sweepMempool == nil || strings.TrimSpace(contractID) == "" || strings.TrimSpace(txid) == "" {
 		return
 	}
 	tasks, err := bm.sweepStore.ListTasks(smart_contract.TaskFilter{ContractID: contractID})
@@ -1547,10 +1547,23 @@ func (bm *BlockMonitor) sweepContractCommitments(contractID string) {
 		return
 	}
 	for _, task := range tasks {
-		if task.MerkleProof == nil {
+		proof := task.MerkleProof
+		if proof == nil {
 			continue
 		}
-		if err := SweepCommitmentIfReady(context.Background(), bm.sweepStore, bm.sweepMempool, task, task.MerkleProof); err != nil {
+		if strings.TrimSpace(proof.TxID) != strings.TrimSpace(txid) {
+			continue
+		}
+		if proof.ConfirmationStatus != "confirmed" {
+			now := time.Now()
+			proof.ConfirmationStatus = "confirmed"
+			proof.ConfirmedAt = &now
+			proof.BlockHeight = blockHeight
+			if err := bm.sweepStore.UpdateTaskProof(context.Background(), task.TaskID, proof); err != nil {
+				log.Printf("oracle reconcile: failed to confirm proof for %s: %v", task.TaskID, err)
+			}
+		}
+		if err := SweepCommitmentIfReady(context.Background(), bm.sweepStore, bm.sweepMempool, task, proof); err != nil {
 			log.Printf("oracle reconcile: sweep error for %s: %v", task.TaskID, err)
 		}
 	}
