@@ -421,10 +421,19 @@ export default function DiscoverPage() {
 
 function ActivityFeed() {
   const [events, setEvents] = useState([]);
+  const [authBlocked, setAuthBlocked] = useState(false);
+  const { auth } = useAuth();
 
   const loadEvents = async () => {
+    if (!auth.apiKey || authBlocked) return;
     try {
-      const res = await fetch(`${API_BASE}/api/smart_contract/events?limit=20`);
+      const res = await fetch(`${API_BASE}/api/smart_contract/events?limit=20`, {
+        headers: { 'X-API-Key': auth.apiKey },
+      });
+      if (res.status === 401 || res.status === 403) {
+        setAuthBlocked(true);
+        return;
+      }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setEvents(data.events || []);
@@ -434,33 +443,18 @@ function ActivityFeed() {
   };
 
   useEffect(() => {
-    loadEvents();
-    let es;
-    try {
-      es = new EventSource(`${API_BASE}/api/smart_contract/events`, { withCredentials: false });
-      es.onmessage = (evt) => {
-        try {
-          const parsed = JSON.parse(evt.data);
-          setEvents((prev) => {
-            const next = [parsed, ...prev];
-            return next.slice(0, 50);
-          });
-        } catch (e) {
-          console.error('sse parse', e);
-        }
-      };
-    } catch (err) {
-      console.error('sse failed, falling back to poll', err);
-      const id = setInterval(loadEvents, 15000);
-      return () => clearInterval(id);
+    if (!auth.apiKey || authBlocked) {
+      setEvents([]);
+      return undefined;
     }
-    return () => {
-      if (es) es.close();
-    };
-  }, []);
+    loadEvents();
+    const id = setInterval(loadEvents, 15000);
+    return () => clearInterval(id);
+  }, [auth.apiKey, authBlocked]);
 
   if (events.length === 0) {
-    return <div className="text-sm text-gray-500">No recent events.</div>;
+    const message = auth.apiKey && !authBlocked ? 'No recent events.' : 'Activity feed unavailable.';
+    return <div className="text-sm text-gray-500">{message}</div>;
   }
 
   return (
