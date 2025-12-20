@@ -2,6 +2,7 @@ package bitcoin
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -23,6 +24,7 @@ import (
 	"github.com/btcsuite/btcd/txscript"
 
 	"stargate-backend/core"
+	"stargate-backend/core/smart_contract"
 	"stargate-backend/services"
 )
 
@@ -38,6 +40,8 @@ type BlockMonitor struct {
 	mu            sync.RWMutex
 	dataStorage   DataStorageInterface
 	ingestion     *services.IngestionService
+	sweepStore    SweepTaskStore
+	sweepMempool  *MempoolClient
 
 	// Configuration
 	checkInterval time.Duration
@@ -1471,6 +1475,7 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 					Metadata:    contractMeta,
 				})
 				bm.markIngestionConfirmed(match, tx.TxID, blockHeight, imageFile, imagePath)
+				bm.sweepContractCommitments(match.ID)
 				for _, candidate := range candidatesByID[match.ID] {
 					delete(candidates, candidate)
 				}
@@ -1515,6 +1520,7 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 				Metadata:    contractMeta,
 			})
 			bm.markIngestionConfirmed(match, tx.TxID, blockHeight, imageFile, imagePath)
+			bm.sweepContractCommitments(match.ID)
 
 			for _, candidate := range candidatesByID[match.ID] {
 				delete(candidates, candidate)
@@ -1523,6 +1529,31 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 	}
 
 	return smartContracts
+}
+
+// SetSweepDependencies wires commitment sweep support for oracle reconcile.
+func (bm *BlockMonitor) SetSweepDependencies(store SweepTaskStore, mempool *MempoolClient) {
+	bm.sweepStore = store
+	bm.sweepMempool = mempool
+}
+
+func (bm *BlockMonitor) sweepContractCommitments(contractID string) {
+	if bm.sweepStore == nil || bm.sweepMempool == nil || strings.TrimSpace(contractID) == "" {
+		return
+	}
+	tasks, err := bm.sweepStore.ListTasks(smart_contract.TaskFilter{ContractID: contractID})
+	if err != nil {
+		log.Printf("oracle reconcile: failed to list tasks for %s: %v", contractID, err)
+		return
+	}
+	for _, task := range tasks {
+		if task.MerkleProof == nil {
+			continue
+		}
+		if err := SweepCommitmentIfReady(context.Background(), bm.sweepStore, bm.sweepMempool, task, task.MerkleProof); err != nil {
+			log.Printf("oracle reconcile: sweep error for %s: %v", task.TaskID, err)
+		}
+	}
 }
 
 func (bm *BlockMonitor) findImageForScanResult(images []ExtractedImageData, result map[string]any) *ExtractedImageData {

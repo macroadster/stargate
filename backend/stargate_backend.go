@@ -391,6 +391,9 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 		bitcoinAPI,
 	)
 	blockMonitor.SetIngestionService(container.IngestionService)
+	if sweepStore, ok := store.(bitcoin.SweepTaskStore); ok {
+		blockMonitor.SetSweepDependencies(sweepStore, bitcoin.NewMempoolClient())
+	}
 
 	// Pre-cache historical blocks (with rate limiting)
 	go func() {
