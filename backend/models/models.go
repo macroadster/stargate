@@ -47,6 +47,7 @@ type Block struct {
 type SearchResult struct {
 	Inscriptions []InscriptionRequest `json:"inscriptions"`
 	Blocks       []interface{}        `json:"blocks"`
+	Contracts    []SmartContractImage `json:"contracts,omitempty"`
 }
 
 // HealthResponse represents health check response

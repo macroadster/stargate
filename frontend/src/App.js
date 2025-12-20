@@ -16,7 +16,7 @@ import { AuthProvider } from './context/AuthContext';
 
 import { useBlocks } from './hooks/useBlocks';
 import { useInscriptions } from './hooks/useInscriptions';
-import { API_BASE } from './apiBase';
+import { API_BASE, CONTENT_BASE } from './apiBase';
 
 const formatTimeAgo = (timestamp) => {
   const now = Date.now();
@@ -196,6 +196,25 @@ function MainContent() {
     setSearchResults(null);
   };
 
+  const selectContract = (contract) => {
+    const rawUrl = contract.stego_image_url || contract.stegoImageUrl || '';
+    const imageUrl = rawUrl && !rawUrl.startsWith('http') ? `${CONTENT_BASE}${rawUrl}` : rawUrl;
+    const metadata = contract.metadata || {};
+    const inscription = {
+      id: contract.contract_id || contract.contractId || contract.id,
+      contract_type: contract.contract_type || 'Smart Contract',
+      metadata,
+      image_url: imageUrl,
+      mime_type: metadata.content_type || 'image/png',
+      text: metadata.embedded_message || metadata.message || '',
+      genesis_block_height: contract.block_height || 0,
+      block_height: contract.block_height || 0,
+      status: metadata.confirmation_status || 'open',
+    };
+    setSelectedInscription(inscription);
+    clearSearch();
+  };
+
   // Top-level proposals panel removed; handled in inscription modal.
 
   const copyToClipboard = async (text) => {
@@ -220,8 +239,12 @@ function MainContent() {
 
     const inscriptionResults = searchResults?.inscriptions || [];
     const blockResults = searchResults?.blocks || [];
+    const contractResults = searchResults?.contracts || [];
     
-    const hasResults = (inscriptionResults && inscriptionResults.length > 0) || (blockResults && blockResults.length > 0);
+    const hasResults =
+      (inscriptionResults && inscriptionResults.length > 0) ||
+      (blockResults && blockResults.length > 0) ||
+      (contractResults && contractResults.length > 0);
     if (!hasResults) return null;
 
     const onSelectBlock = (block) => {
@@ -254,7 +277,7 @@ function MainContent() {
       <div className="absolute mt-2 w-96 max-h-96 overflow-y-auto bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50">
         {inscriptionResults.length > 0 && (
           <div className="p-3 border-b border-gray-200 dark:border-gray-800">
-            <div className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-2">Inscriptions</div>
+            <div className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-2">Transactions</div>
             <div className="space-y-2">
               {inscriptionResults.slice(0, 5).map((tx, idx) => (
                 <button
@@ -268,6 +291,33 @@ function MainContent() {
                   </div>
                   <div className="text-yellow-900 dark:text-yellow-100 font-mono text-xs break-all">{tx.id}</div>
                   {tx.text && <div className="text-yellow-700 dark:text-yellow-300 text-xs truncate mt-1">{tx.text}</div>}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        {contractResults.length > 0 && (
+          <div className="p-3 border-b border-gray-200 dark:border-gray-800">
+            <div className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-2">Open Contracts</div>
+            <div className="space-y-2">
+              {contractResults.slice(0, 5).map((contract, idx) => (
+                <button
+                  key={`ctr-${idx}`}
+                  onClick={() => selectContract(contract)}
+                  className="w-full text-left p-2 rounded bg-emerald-50 dark:bg-emerald-900/40 hover:bg-emerald-100 dark:hover:bg-emerald-800 transition-colors"
+                >
+                  <div className="flex items-center justify-between text-xs mb-1">
+                    <span className="px-2 py-0.5 rounded bg-emerald-600 text-white text-[11px]">Contract</span>
+                    <span className="text-emerald-800 dark:text-emerald-200">Open</span>
+                  </div>
+                  <div className="text-emerald-900 dark:text-emerald-100 font-mono text-xs break-all">
+                    {contract.contract_id || contract.contractId || contract.id}
+                  </div>
+                  {(contract.metadata?.embedded_message || contract.metadata?.message) && (
+                    <div className="text-emerald-700 dark:text-emerald-300 text-xs truncate mt-1">
+                      {contract.metadata?.embedded_message || contract.metadata?.message}
+                    </div>
+                  )}
                 </button>
               ))}
             </div>
@@ -359,7 +409,7 @@ function MainContent() {
             {searchResults.inscriptions && searchResults.inscriptions.length > 0 && (
               <div className="mb-8">
                 <h3 className="text-black dark:text-white text-lg font-semibold border-b-2 border-yellow-500 pb-2 inline-block mb-4">
-                  Inscriptions
+                  Transactions
                 </h3>
                 <div className="space-y-3">
                   {searchResults.inscriptions.map((tx, idx) => (
@@ -421,6 +471,58 @@ function MainContent() {
               </div>
             )}
 
+            {searchResults.contracts && searchResults.contracts.length > 0 && (
+              <div className="mb-8">
+                <h3 className="text-black dark:text-white text-lg font-semibold border-b-2 border-emerald-500 pb-2 inline-block mb-4">
+                  Open Contracts
+                </h3>
+                <div className="space-y-3">
+                  {searchResults.contracts.map((contract, idx) => (
+                    <div
+                      key={`contract-${idx}`}
+                      className="bg-emerald-50 dark:bg-emerald-900 border border-emerald-200 dark:border-emerald-700 rounded-lg p-4 cursor-pointer hover:bg-emerald-100 dark:hover:bg-emerald-800 transition-colors"
+                      onClick={() => selectContract(contract)}
+                    >
+                      <div className="flex justify-between items-start mb-3">
+                        <div className="flex items-center gap-3">
+                          <div className="px-3 py-1 rounded text-xs font-semibold bg-emerald-600 text-white">
+                            Contract
+                          </div>
+                          <div className="text-emerald-800 dark:text-emerald-200 font-mono text-sm">
+                            {contract.contract_id || contract.contractId || contract.id}
+                          </div>
+                        </div>
+                        <div className="px-2 py-1 rounded text-xs font-semibold bg-emerald-100 dark:bg-emerald-800 text-emerald-800 dark:text-emerald-200">
+                          open
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4 text-sm">
+                        <div>
+                          <div className="text-emerald-700 dark:text-emerald-300 mb-1">Block</div>
+                          <div className="text-emerald-900 dark:text-emerald-100">
+                            {contract.block_height || '—'}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-emerald-700 dark:text-emerald-300 mb-1">Pixel Hash</div>
+                          <div className="text-emerald-900 dark:text-emerald-100 font-mono truncate">
+                            {contract.visible_pixel_hash || contract.metadata?.visible_pixel_hash || '—'}
+                          </div>
+                        </div>
+                      </div>
+
+                      {(contract.metadata?.embedded_message || contract.metadata?.message) && (
+                        <div className="mt-3 text-xs text-emerald-700 dark:text-emerald-300 truncate">
+                          {contract.metadata?.embedded_message || contract.metadata?.message}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {searchResults.blocks && searchResults.blocks.length > 0 && (
               <div className="mb-8">
                 <h3 className="text-black dark:text-white text-lg font-semibold border-b-2 border-indigo-500 pb-2 inline-block mb-4">
@@ -460,6 +562,7 @@ function MainContent() {
             )}
 
             {(!searchResults.inscriptions || searchResults.inscriptions.length === 0) &&
+             (!searchResults.contracts || searchResults.contracts.length === 0) &&
              (!searchResults.blocks || searchResults.blocks.length === 0) && (
               <div className="text-center py-8 text-gray-500 dark:text-gray-400">
                 No results found for "{searchQuery}"

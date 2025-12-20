@@ -790,12 +790,69 @@ func (h *SearchHandler) searchData(query string) models.SearchResult {
 	q := strings.ToLower(strings.TrimSpace(query))
 	var blocks []interface{}
 	var inscriptions []models.InscriptionRequest
+	var contracts []models.SmartContractImage
+	seenInscriptions := make(map[string]bool)
+	seenContracts := make(map[string]bool)
+
+	addInscription := func(id, text string, ts int64) {
+		if id == "" || seenInscriptions[id] {
+			return
+		}
+		seenInscriptions[id] = true
+		inscriptions = append(inscriptions, models.InscriptionRequest{
+			ID:        id,
+			Status:    "confirmed",
+			Text:      text,
+			Price:     0,
+			Timestamp: ts,
+		})
+	}
+
+	matchesQuery := func(values ...string) bool {
+		if q == "" {
+			return true
+		}
+		for _, v := range values {
+			if v == "" {
+				continue
+			}
+			if strings.Contains(strings.ToLower(v), q) {
+				return true
+			}
+		}
+		return false
+	}
+
+	metaString := func(meta map[string]any, key string) string {
+		if meta == nil {
+			return ""
+		}
+		if v, ok := meta[key]; ok && v != nil {
+			return strings.TrimSpace(fmt.Sprintf("%v", v))
+		}
+		return ""
+	}
+
+	addContract := func(id string, height int64, imageURL string, contractType string, visibleHash string, meta map[string]any) {
+		if id == "" || seenContracts[id] {
+			return
+		}
+		seenContracts[id] = true
+		contracts = append(contracts, models.SmartContractImage{
+			ContractID:       id,
+			BlockHeight:      height,
+			StegoImage:       imageURL,
+			ContractType:     contractType,
+			VisiblePixelHash: visibleHash,
+			Metadata:         meta,
+		})
+	}
 
 	if h.dataStorage != nil {
-		if recent, err := h.dataStorage.GetRecentBlocks(50); err == nil {
+		if recent, err := h.dataStorage.GetRecentBlocks(200); err == nil {
 			for _, b := range recent {
 				if cache, ok := b.(*storage.BlockDataCache); ok {
-					if q == "" || strings.Contains(strings.ToLower(cache.BlockHash), q) || strings.Contains(strings.ToLower(fmt.Sprintf("%d", cache.BlockHeight)), q) {
+					if matchesQuery(cache.BlockHash, fmt.Sprintf("%d", cache.BlockHeight)) {
 						blocks = append(blocks, map[string]interface{}{
 							"id":        cache.BlockHash,
 							"height":    cache.BlockHeight,
@@ -803,15 +860,71 @@ func (h *SearchHandler) searchData(query string) models.SearchResult {
 							"tx_count":  cache.TxCount,
 						})
 					}
+					for _, ins := range cache.Inscriptions {
+						if matchesQuery(ins.TxID, ins.FileName, ins.FilePath, ins.Content, ins.ContentType) {
+							addInscription(ins.TxID, ins.Content, cache.Timestamp)
+						}
+					}
 					for _, img := range cache.Images {
-						if q == "" || strings.Contains(strings.ToLower(img.TxID), q) || strings.Contains(strings.ToLower(img.FileName), q) {
-							inscriptions = append(inscriptions, models.InscriptionRequest{
-								ID:        img.TxID,
-								Status:    "confirmed",
-								Text:      "",
-								Price:     0,
-								Timestamp: cache.Timestamp,
-							})
+						if matchesQuery(img.TxID, img.FileName, img.FilePath, img.ContentType) {
+							addInscription(img.TxID, "", cache.Timestamp)
+						}
+					}
+					for _, sc := range cache.SmartContracts {
+						meta := sc.Metadata
+						text := metaString(meta, "embedded_message")
+						if text == "" {
+							text = metaString(meta, "message")
+						}
+						status := strings.ToLower(metaString(meta, "confirmation_status"))
+						if status == "confirmed" {
+							continue
+						}
+						id := metaString(meta, "confirmed_txid")
+						if id == "" {
+							id = metaString(meta, "tx_id")
+						}
+						if id == "" {
+							id = metaString(meta, "funding_txid")
+						}
+						if id == "" {
+							id = metaString(meta, "visible_pixel_hash")
+						}
+						if id == "" {
+							id = metaString(meta, "contract_id")
+						}
+						if id == "" {
+							id = sc.ContractID
+						}
+						imageFile := metaString(meta, "image_file")
+						if imageFile == "" {
+							imageFile = filepath.Base(metaString(meta, "image_path"))
+						}
+						if imageFile == "" {
+							imageFile = filepath.Base(strings.TrimSpace(sc.ImagePath))
+						}
+						imageURL := ""
+						if imageFile != "" {
+							imageURL = fmt.Sprintf("/api/block-image/%d/%s", cache.BlockHeight, imageFile)
+						}
+						visibleHash := metaString(meta, "visible_pixel_hash")
+						if visibleHash == "" {
+							visibleHash = metaString(meta, "pixel_hash")
+						}
+						if matchesQuery(
+							sc.ContractID,
+							metaString(meta, "contract_id"),
+							metaString(meta, "ingestion_id"),
+							metaString(meta, "visible_pixel_hash"),
+							metaString(meta, "confirmed_txid"),
+							metaString(meta, "tx_id"),
+							metaString(meta, "funding_txid"),
+							metaString(meta, "image_file"),
+							metaString(meta, "image_path"),
+							text,
+						) {
+							addInscription(id, text, cache.Timestamp)
+							addContract(id, cache.BlockHeight, imageURL, "Smart Contract", visibleHash, meta)
 						}
 					}
 				}
@@ -844,6 +957,7 @@ func (h *SearchHandler) searchData(query string) models.SearchResult {
 	return models.SearchResult{
 		Inscriptions: inscriptions,
 		Blocks:       blocks,
+		Contracts:    contracts,
 	}
 }
 
