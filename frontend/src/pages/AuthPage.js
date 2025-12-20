@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { QRCodeCanvas } from 'qrcode.react';
 import { API_BASE } from '../apiBase';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
@@ -102,7 +103,7 @@ export default function AuthPage() {
         <div className="mb-4">
           <label className="block text-sm mb-2">Saved keys</label>
           <select
-            className="w-full mb-2 px-3 py-2 rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700"
+            className="w-full h-10 mb-2 px-3 rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700"
             onChange={(e) => setLoginKey(e.target.value)}
             value={loginKey}
           >
@@ -170,7 +171,12 @@ export default function AuthPage() {
       </div>
       {challenge && (
         <div className="mb-3 text-xs bg-gray-100 dark:bg-gray-800 border border-dashed border-gray-300 dark:border-gray-700 rounded-lg p-2 break-all">
-          Nonce to sign: {challenge}
+          <div>Nonce to sign: {challenge}</div>
+          <div className="mt-2 flex justify-center">
+            <div className="bg-white p-2 rounded">
+              <QRCodeCanvas value={challenge} size={140} level="M" includeMargin />
+            </div>
+          </div>
         </div>
       )}
       <label className="block text-sm mb-2">Signature (base64)</label>
