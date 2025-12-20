@@ -3,6 +3,7 @@ package bitcoin
 import (
 	"context"
 	"encoding/hex"
+	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -87,6 +88,7 @@ func SweepCommitmentIfReady(ctx context.Context, store SweepStore, mempool *Memp
 	now := time.Now()
 	proof.SweepAttemptedAt = &now
 	proof.SweepError = ""
+	log.Printf("commitment sweep broadcast tx=%s task=%s contract=%s output=%d", txid, task.TaskID, task.ContractID, proof.CommitmentVout)
 	return store.UpdateTaskProof(ctx, task.TaskID, proof)
 }
 
