@@ -49,6 +49,7 @@ export const useBlocks = () => {
   const [showHistorical, setShowHistorical] = useState(true);
   const loadingRef = useRef(false);
   const blocksRef = useRef([]);
+  const selectedBlockRef = useRef(null);
   const manualSelectedHeight = useRef(null);
   const pinnedMilestones = useRef([
     0, // genesis
@@ -185,10 +186,10 @@ export const useBlocks = () => {
       // Keep a user-selected block pinned even as new data loads.
       if (manualSelectedHeight.current) {
         const match = deduped.find((b) => b.height === manualSelectedHeight.current);
-        if (match) {
+        if (match && selectedBlockRef.current?.height !== match.height) {
           setSelectedBlock({ ...match });
         }
-      } else if (!selectedBlock && deduped.length && !isPolling) {
+      } else if (!selectedBlockRef.current && deduped.length && !isPolling) {
         setIsUserNavigating(false);
         setSelectedBlock(deduped[0]);
       }
@@ -201,7 +202,7 @@ export const useBlocks = () => {
     } finally {
       loadingRef.current = false;
     }
-  }, [selectedBlock, showHistorical]);
+  }, [showHistorical]);
 
   const loadMoreBlocks = useCallback(() => {
     if (!hasMore || !nextCursor) return;
@@ -227,12 +228,38 @@ export const useBlocks = () => {
   }, []);
 
   useEffect(() => {
+    let intervalId = null;
+    const poll = () => fetchBlocks(null, true);
     fetchBlocks(null, false);
-    const interval = setInterval(() => {
-      fetchBlocks(null, true);
-    }, 30000);
-    return () => clearInterval(interval);
+    const startPolling = () => {
+      if (intervalId) return;
+      intervalId = setInterval(poll, 120000);
+    };
+    const stopPolling = () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+        intervalId = null;
+      }
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        poll();
+        startPolling();
+      } else {
+        stopPolling();
+      }
+    };
+    handleVisibility();
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      stopPolling();
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
   }, [fetchBlocks]);
+
+  useEffect(() => {
+    selectedBlockRef.current = selectedBlock;
+  }, [selectedBlock]);
 
   const handleBlockSelect = (block) => {
     // Clone to avoid React bailing when the same object reference recurs between polls.

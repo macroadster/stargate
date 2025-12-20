@@ -32,10 +32,8 @@ const InscriptionModal = ({ inscription, onClose }) => {
   const [psbtResult, setPsbtResult] = useState(null);
   const [psbtError, setPsbtError] = useState('');
   const [psbtLoading, setPsbtLoading] = useState(false);
-  const [sweepResult, setSweepResult] = useState(null);
-  const [sweepError, setSweepError] = useState('');
-  const [sweepLoading, setSweepLoading] = useState(false);
-  const [donationAddress, setDonationAddress] = useState('');
+  const [contractDetails, setContractDetails] = useState(null);
+  const [authBlocked, setAuthBlocked] = useState(false);
   const [copiedPsbt, setCopiedPsbt] = useState('');
   const [showPsbtQr, setShowPsbtQr] = useState(false);
   const lastFetchedKeyRef = React.useRef('');
@@ -181,14 +179,22 @@ const InscriptionModal = ({ inscription, onClose }) => {
   const confidenceValue = Number(inscription.metadata?.confidence || 0);
   const confidencePercent = Math.round(confidenceValue * 100);
   const confirmationStatus = (inscription.metadata?.confirmation_status || inscription.confirmation_status || '').toLowerCase();
+  const metadataStatus = (inscription.metadata?.status || '').toLowerCase();
+  const scanStatus = (inscription.scan_result?.confirmation_status || inscription.scan_result?.status || '').toLowerCase();
+  const isConfirmedStatus = (value) => (value || '').toLowerCase() === 'confirmed';
   const isConfirmedContract = Boolean(
     inscription.metadata?.confirmed_txid ||
       inscription.metadata?.confirmed_height ||
       inscription.confirmed_txid ||
       inscription.confirmed_height ||
-      confirmationStatus === 'confirmed' ||
-      (inscription.status || '').toLowerCase() === 'confirmed'
+      inscription.metadata?.confirmed === true ||
+      inscription.confirmed === true ||
+      isConfirmedStatus(confirmationStatus) ||
+      isConfirmedStatus(metadataStatus) ||
+      isConfirmedStatus(scanStatus) ||
+      isConfirmedStatus(inscription.status)
   );
+  const contractStatus = (contractDetails?.status || '').toLowerCase();
   const isFundingConfirmed = useMemo(() => {
     const tasks = allTasks.length > 0 ? allTasks : psbtTasks;
     return tasks.some(
@@ -197,7 +203,7 @@ const InscriptionModal = ({ inscription, onClose }) => {
         'confirmed'
     );
   }, [allTasks, psbtTasks]);
-  const isContractLocked = isConfirmedContract || isFundingConfirmed;
+  const isContractLocked = isConfirmedContract || isFundingConfirmed || isConfirmedStatus(contractStatus);
   
   const isActuallyImageFile =
     inscription.mime_type?.includes('image') &&
@@ -224,28 +230,47 @@ const InscriptionModal = ({ inscription, onClose }) => {
   };
 
   useEffect(() => {
-    const fetchConfig = async () => {
+    const fetchContract = async () => {
+      if (!auth.apiKey || authBlocked || !primaryContractId) {
+        setContractDetails(null);
+        return;
+      }
       try {
-        const res = await fetchWithTimeout(`${API_BASE}/api/smart_contract/config`, {}, 6000);
+        const res = await fetchWithTimeout(
+          `${API_BASE}/api/smart_contract/contracts/${primaryContractId}`,
+          { headers: { 'X-API-KEY': auth.apiKey } },
+          6000
+        );
+        if (res.status === 401 || res.status === 403) {
+          setAuthBlocked(true);
+          setContractDetails(null);
+          return;
+        }
         if (!res.ok) return;
         const data = await res.json();
-        if (data?.donation_address) {
-          setDonationAddress(data.donation_address);
+        if (data && typeof data === 'object') {
+          setContractDetails(data);
         }
       } catch (error) {
-        console.error('Failed to fetch smart contract config:', error);
+        console.error('Failed to fetch contract status:', error);
       }
     };
-    fetchConfig();
-  }, [auth.apiKey]);
+    fetchContract();
+  }, [auth.apiKey, authBlocked, primaryContractId]);
 
   const loadProposals = React.useCallback(async () => {
-    if (!contractCandidates.length) return;
+    if (!auth.apiKey || authBlocked || !contractCandidates.length) return;
     lastFetchedKeyRef.current = contractKey;
     setIsLoadingProposals(true);
     setProposalError('');
     try {
       const res = await fetchWithTimeout(`${API_BASE}/api/smart_contract/proposals`, {}, 6000);
+      if (res.status === 401 || res.status === 403) {
+        setAuthBlocked(true);
+        setProposalItems([]);
+        setSubmissions({});
+        return;
+      }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       let items = (data?.proposals || []).filter((p) => {
@@ -333,9 +358,14 @@ const InscriptionModal = ({ inscription, onClose }) => {
     } finally {
       setIsLoadingProposals(false);
     }
-  }, [contractCandidates, contractKey]);
+  }, [auth.apiKey, authBlocked, contractCandidates, contractKey]);
 
   useEffect(() => {
+    if (!auth.apiKey || authBlocked) {
+      setProposalItems([]);
+      setSubmissions({});
+      return undefined;
+    }
     loadProposals();
     // Poll every 30s for live status updates.
     refreshIntervalRef.current = setInterval(() => {
@@ -483,49 +513,6 @@ const InscriptionModal = ({ inscription, onClose }) => {
     }
   };
 
-  const sweepCommitment = async () => {
-    setSweepError('');
-    setSweepResult(null);
-    if (!auth.apiKey) {
-      setSweepError('Sign in with the donation API key first.');
-      return;
-    }
-    if (!selectedTask?.task_id) {
-      setSweepError('Select a task with commitment data first.');
-      return;
-    }
-    const contractId = psbtForm.contractId || primaryContractId;
-    if (!contractId) {
-      setSweepError('Missing contract id for commitment sweep.');
-      return;
-    }
-    setSweepLoading(true);
-    try {
-      const feeRateParsed = psbtForm.feeRate === '' ? NaN : Number(psbtForm.feeRate);
-      const feeRate = Number.isFinite(feeRateParsed) ? Math.max(1, feeRateParsed) : 1;
-      const res = await fetch(`${API_BASE}/api/smart_contract/contracts/${contractId}/commitment-psbt`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-API-Key': auth.apiKey,
-        },
-        body: JSON.stringify({
-          task_id: selectedTask.task_id,
-          fee_rate_sats_vb: feeRate,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data?.message || data?.error || `HTTP ${res.status}`);
-      }
-      setSweepResult(data);
-    } catch (err) {
-      setSweepError(err.message);
-    } finally {
-      setSweepLoading(false);
-    }
-  };
-  
   const markdownContent = `# Steganographic Smart Contract Analysis
 
 ## Contract Identity
@@ -876,6 +863,10 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                     <div className="text-sm text-gray-500 dark:text-gray-400">
                       This contract is confirmed on-chain; PSBT publishing is only available while pending.
                     </div>
+                  ) : !auth.apiKey || authBlocked ? (
+                    <div className="text-sm text-gray-500 dark:text-gray-400">
+                      Sign in with the funding API key to view payout tools.
+                    </div>
                   ) : !approvedProposal ? (
                     <div className="text-sm text-gray-500 dark:text-gray-400">Approve a proposal to unlock deliverables.</div>
                   ) : deliverableTasks.length === 0 ? (
@@ -978,71 +969,6 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                       return null;
                     })()}
                     {psbtError && <div className="text-sm text-red-500 mt-2">{psbtError}</div>}
-                    {(() => {
-                      const commitmentReady =
-                        selectedTask?.merkle_proof?.commitment_vout ||
-                        selectedTask?.merkle_proof?.commitment_redeem_script;
-                      const donationMatch =
-                        donationAddress &&
-                        auth.wallet &&
-                        donationAddress.trim().toLowerCase() === auth.wallet.trim().toLowerCase();
-                      if (!commitmentReady) return null;
-                      const donationConfigured = Boolean(donationAddress && donationAddress.trim());
-                      if (!donationConfigured) {
-                        return (
-                          <div className="mt-3 rounded-lg border border-amber-200 dark:border-amber-900 bg-amber-50/60 dark:bg-amber-900/20 p-3">
-                            <div className="text-xs text-amber-700 dark:text-amber-300">
-                              Commitment sweep is available, but the donation wallet is not configured.
-                            </div>
-                          </div>
-                        );
-                      }
-                      if (!donationMatch) return null;
-                      return (
-                        <div className="mt-3 rounded-lg border border-amber-200 dark:border-amber-900 bg-amber-50/60 dark:bg-amber-900/20 p-3 space-y-2">
-                          <div className="text-xs text-amber-700 dark:text-amber-300">
-                            Commitment sweep is available for the donation wallet.
-                          </div>
-                          {selectedTask?.merkle_proof?.sweep_status && (
-                            <div className="text-xs text-gray-600 dark:text-gray-300">
-                              Sweep status: {selectedTask.merkle_proof.sweep_status}
-                              {selectedTask.merkle_proof.sweep_tx_id ? ` • ${selectedTask.merkle_proof.sweep_tx_id}` : ''}
-                            </div>
-                          )}
-                          <button
-                            onClick={sweepCommitment}
-                            disabled={sweepLoading}
-                            className="px-3 py-1.5 rounded bg-amber-600 hover:bg-amber-500 text-white text-sm disabled:opacity-60"
-                          >
-                            {sweepLoading ? 'Sweeping…' : 'Sweep Commitment'}
-                          </button>
-                          {sweepError && <div className="text-xs text-red-500">{sweepError}</div>}
-                          {sweepResult?.tx_hex && (
-                            <div className="space-y-2">
-                              <div className="text-xs text-gray-600 dark:text-gray-300">
-                                Sweep fee: {sweepResult.fee_sats} sats • Output: {sweepResult.output_sats} sats
-                              </div>
-                              <textarea
-                                readOnly
-                                className="w-full h-24 text-xs font-mono bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded p-2"
-                                value={sweepResult.tx_hex}
-                              />
-                              <div className="flex items-center gap-2">
-                                <button
-                                  onClick={() => copyToClipboard(sweepResult.tx_hex, 'sweep')}
-                                  className="text-xs px-2 py-1 rounded bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200"
-                                >
-                                  Copy sweep tx
-                                </button>
-                                {copiedPsbt === 'sweep' && (
-                                  <span className="text-xs text-emerald-600 dark:text-emerald-400">Copied!</span>
-                                )}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })()}
                     {psbtResult && (() => {
                       const psbtValue =
                         psbtResult.psbt_hex ||
