@@ -270,7 +270,7 @@ func estimateFee(inputVBytes, outputs int64, feeRate int64) int64 {
 	vsize := int64(10) + inputVBytes + outputs*34
 	fee := vsize * feeRate
 	if feeRate > 0 {
-		fee += 2 * feeRate
+		fee += 3 * feeRate
 	}
 	return fee
 }
