@@ -180,15 +180,21 @@ const InscriptionModal = ({ inscription, onClose }) => {
   const textContent = inscriptionMessage || '';
   const confidenceValue = Number(inscription.metadata?.confidence || 0);
   const confidencePercent = Math.round(confidenceValue * 100);
+  const confirmationStatus = (inscription.metadata?.confirmation_status || inscription.confirmation_status || '').toLowerCase();
   const isConfirmedContract = Boolean(
     inscription.metadata?.confirmed_txid ||
       inscription.metadata?.confirmed_height ||
+      inscription.confirmed_txid ||
+      inscription.confirmed_height ||
+      confirmationStatus === 'confirmed' ||
       (inscription.status || '').toLowerCase() === 'confirmed'
   );
   const isFundingConfirmed = useMemo(() => {
     const tasks = allTasks.length > 0 ? allTasks : psbtTasks;
     return tasks.some(
-      (task) => (task?.merkle_proof?.confirmation_status || '').toLowerCase() === 'confirmed'
+      (task) =>
+        (task?.merkle_proof?.confirmation_status || task?.confirmation_status || '').toLowerCase() ===
+        'confirmed'
     );
   }, [allTasks, psbtTasks]);
   const isContractLocked = isConfirmedContract || isFundingConfirmed;
