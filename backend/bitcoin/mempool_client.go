@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/btcsuite/btcd/wire"
@@ -103,4 +104,22 @@ func (c *MempoolClient) FetchTxOutput(txid string, vout uint32) (*wire.MsgTx, *w
 		return nil, nil, fmt.Errorf("tx %s missing vout %d", txid, vout)
 	}
 	return msg, msg.TxOut[vout], nil
+}
+
+// BroadcastTx broadcasts a raw transaction hex via mempool.space API.
+func (c *MempoolClient) BroadcastTx(rawHex string) (string, error) {
+	if strings.TrimSpace(rawHex) == "" {
+		return "", fmt.Errorf("raw tx hex required")
+	}
+	url := fmt.Sprintf("%s/tx", c.baseURL)
+	resp, err := c.http.Post(url, "text/plain", strings.NewReader(strings.TrimSpace(rawHex)))
+	if err != nil {
+		return "", fmt.Errorf("broadcast tx: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("broadcast tx: status %d: %s", resp.StatusCode, string(body))
+	}
+	return strings.TrimSpace(string(body)), nil
 }

@@ -49,6 +49,10 @@ type MerkleProof struct {
 	CommitmentAddress      string      `json:"commitment_address,omitempty"`
 	CommitmentVout         uint32      `json:"commitment_vout,omitempty"`
 	CommitmentSats         int64       `json:"commitment_sats,omitempty"`
+	SweepTxID              string      `json:"sweep_tx_id,omitempty"`
+	SweepStatus            string      `json:"sweep_status,omitempty"`
+	SweepError             string      `json:"sweep_error,omitempty"`
+	SweepAttemptedAt       *time.Time  `json:"sweep_attempted_at,omitempty"`
 	ConfirmationStatus     string      `json:"confirmation_status"` // provisional | confirmed
 	SeenAt                 time.Time   `json:"seen_at"`
 	ConfirmedAt            *time.Time  `json:"confirmed_at,omitempty"`
