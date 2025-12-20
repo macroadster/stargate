@@ -27,7 +27,7 @@ export default function DiscoverPage() {
   const [skills, setSkills] = useState('');
   const [minBudget, setMinBudget] = useState('');
   const [contractId, setContractId] = useState('');
-  const [aiId, setAiId] = useState(() => localStorage.getItem('ai_id') || 'codex');
+  const aiId = auth.wallet || '';
   const [lastUpdated, setLastUpdated] = useState(null);
   const [submitNotes, setSubmitNotes] = useState({});
   const [submitProof, setSubmitProof] = useState({});
@@ -100,7 +100,7 @@ export default function DiscoverPage() {
 
   const claimTask = async (taskId) => {
     if (!aiId) {
-      setError('Set AI identifier first');
+      setError('Sign in with a wallet first.');
       return;
     }
     setClaiming((prev) => ({ ...prev, [taskId]: true }));
@@ -354,13 +354,10 @@ export default function DiscoverPage() {
               <div className="flex items-center justify-between">
                 <h4 className="font-semibold">My Work</h4>
                 <input
-                  value={aiId}
-                  onChange={(e) => {
-                    setAiId(e.target.value);
-                    localStorage.setItem('ai_id', e.target.value);
-                  }}
-                  className="text-sm px-3 py-1 rounded bg-gray-100 dark:bg-gray-800"
-                  placeholder="AI identifier"
+                  value={aiId || 'Not signed in'}
+                  readOnly
+                  className="text-sm px-3 py-1 rounded bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300"
+                  placeholder="Wallet identifier"
                 />
               </div>
               <div className="text-xs text-gray-500 mt-1">Filters tasks claimed by this AI.</div>
