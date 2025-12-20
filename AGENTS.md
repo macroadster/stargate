@@ -207,6 +207,29 @@ go test ./...      # Run all tests (when implemented)
 go test -run TestSpecificFunction  # Run single test
 ```
 
+### Kubernetes Smoke Testing (starlight-stack)
+
+Stargate is already deployed via the starlight-stack Helm chart. For quick
+cluster validation after code changes:
+
+```bash
+cd frontend
+docker build -t stargate-frontend:local .
+```
+
+```bash
+cd backend
+docker build -t stargate-backend:local .
+```
+
+Then trigger a rolling restart for the updated workload(s) in the cluster
+(deployment names in default namespace):
+
+```bash
+kubectl rollout restart deployment/stargate-frontend -n default
+kubectl rollout restart deployment/stargate-backend -n default
+```
+
 ### Code Style Guidelines
 
 #### Frontend (React/JavaScript)

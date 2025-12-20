@@ -364,7 +364,10 @@ const InscriptionModal = ({ inscription, onClose }) => {
       setPsbtError('Select a task to build the PSBT.');
       return;
     }
-    if (!payoutWallet) {
+    const payouts = payoutSummaries
+      .filter((p) => p.wallet && p.wallet !== 'Unknown wallet')
+      .map((p) => ({ address: p.wallet, amount_sats: Math.round(p.total) }));
+    if (!payoutWallet && payouts.length === 0) {
       setPsbtError('No contractor wallet found for this task.');
       return;
     }
@@ -383,6 +386,9 @@ const InscriptionModal = ({ inscription, onClose }) => {
           psbtForm.pixelHash?.trim() ||
           inscription.metadata?.visible_pixel_hash ||
           undefined,
+        use_pixel_hash: true,
+        task_id: selectedTask?.task_id,
+        payouts: payouts.length > 0 ? payouts : undefined,
         budget_sats:
           Number(psbtForm.budgetSats || 0) ||
           approvedBudgetsTotal ||

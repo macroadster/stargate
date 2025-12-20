@@ -36,17 +36,22 @@ type Task struct {
 
 // MerkleProof represents the payment proof for a funded task.
 type MerkleProof struct {
-	TxID                  string      `json:"tx_id"`
-	BlockHeight           int64       `json:"block_height"`
-	BlockHeaderMerkleRoot string      `json:"block_header_merkle_root"`
-	ProofPath             []ProofNode `json:"proof_path"`
-	VisiblePixelHash      string      `json:"visible_pixel_hash,omitempty"`
-	ContractorWallet      string      `json:"contractor_wallet,omitempty"`
-	FundedAmountSats      int64       `json:"funded_amount_sats"`
-	FundingAddress        string      `json:"funding_address,omitempty"`
-	ConfirmationStatus    string      `json:"confirmation_status"` // provisional | confirmed
-	SeenAt                time.Time   `json:"seen_at"`
-	ConfirmedAt           *time.Time  `json:"confirmed_at,omitempty"`
+	TxID                   string      `json:"tx_id"`
+	BlockHeight            int64       `json:"block_height"`
+	BlockHeaderMerkleRoot  string      `json:"block_header_merkle_root"`
+	ProofPath              []ProofNode `json:"proof_path"`
+	VisiblePixelHash       string      `json:"visible_pixel_hash,omitempty"`
+	ContractorWallet       string      `json:"contractor_wallet,omitempty"`
+	FundedAmountSats       int64       `json:"funded_amount_sats"`
+	FundingAddress         string      `json:"funding_address,omitempty"`
+	CommitmentRedeemScript string      `json:"commitment_redeem_script,omitempty"`
+	CommitmentRedeemHash   string      `json:"commitment_redeem_hash,omitempty"`
+	CommitmentAddress      string      `json:"commitment_address,omitempty"`
+	CommitmentVout         uint32      `json:"commitment_vout,omitempty"`
+	CommitmentSats         int64       `json:"commitment_sats,omitempty"`
+	ConfirmationStatus     string      `json:"confirmation_status"` // provisional | confirmed
+	SeenAt                 time.Time   `json:"seen_at"`
+	ConfirmedAt            *time.Time  `json:"confirmed_at,omitempty"`
 }
 
 // ProofNode represents a single step in a Merkle proof path.

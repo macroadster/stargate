@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -140,6 +141,11 @@ func (s *Server) handleContracts(w http.ResponseWriter, r *http.Request) {
 			s.handleContractPSBT(w, r, contractID)
 			return
 		}
+		if len(parts) > 1 && parts[1] == "commitment-psbt" {
+			contractID := parts[0]
+			s.handleCommitmentPSBT(w, r, contractID)
+			return
+		}
 		Error(w, http.StatusNotFound, "unknown contract action")
 	default:
 		Error(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -175,6 +181,11 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		CommitmentSats   int64  `json:"commitment_sats"`
 		FeeRate          int64  `json:"fee_rate_sats_vb"`
 		UsePixelHash     *bool  `json:"use_pixel_hash"`
+		TaskID           string `json:"task_id"`
+		Payouts          []struct {
+			Address    string `json:"address"`
+			AmountSats int64  `json:"amount_sats"`
+		} `json:"payouts"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		Error(w, http.StatusBadRequest, "invalid json")
@@ -224,7 +235,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		return nil
 	}
 	var pixelBytes []byte
-	usePixelHash := false
+	usePixelHash := true
 	if body.UsePixelHash != nil {
 		usePixelHash = *body.UsePixelHash
 	}
@@ -249,6 +260,33 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 			pixelBytes = normalizePixel(h)
 		}
 	}
+	if usePixelHash && pixelBytes == nil {
+		Error(w, http.StatusBadRequest, "missing 32-byte pixel hash for commitment output")
+		return
+	}
+
+	var payouts []bitcoin.PayoutOutput
+	if len(body.Payouts) > 0 {
+		for _, payout := range body.Payouts {
+			if strings.TrimSpace(payout.Address) == "" {
+				Error(w, http.StatusBadRequest, "payout address required")
+				return
+			}
+			addr, err := btcutil.DecodeAddress(strings.TrimSpace(payout.Address), params)
+			if err != nil {
+				Error(w, http.StatusBadRequest, fmt.Sprintf("invalid payout address: %v", err))
+				return
+			}
+			if payout.AmountSats <= 0 {
+				Error(w, http.StatusBadRequest, "payout amount must be positive")
+				return
+			}
+			payouts = append(payouts, bitcoin.PayoutOutput{
+				Address:   addr,
+				ValueSats: payout.AmountSats,
+			})
+		}
+	}
 
 	psbtReq := bitcoin.PSBTRequest{
 		PayerAddress:      payerAddr,
@@ -256,6 +294,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		PixelHash:         pixelBytes,
 		CommitmentSats:    body.CommitmentSats,
 		ContractorAddress: contractorAddr,
+		Payouts:           payouts,
 		FeeRateSatPerVB:   body.FeeRate,
 	}
 
@@ -271,25 +310,36 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 			log.Printf("psbt: failed to store funding_txid for %s: %v", ingestionRec.ID, err)
 		}
 	}
+	if taskID := strings.TrimSpace(body.TaskID); taskID != "" {
+		if err := s.updateTaskCommitmentProof(r.Context(), taskID, res, pixelBytes); err != nil {
+			log.Printf("psbt: failed to update task proof for %s: %v", taskID, err)
+		}
+	}
 
 	JSON(w, http.StatusOK, map[string]interface{}{
-		"psbt":              res.EncodedHex, // primary: hex for wallet import
-		"psbt_hex":          res.EncodedHex,
-		"psbt_base64":       res.EncodedBase64,
-		"funding_txid":      res.FundingTxID,
-		"fee_sats":          res.FeeSats,
-		"change_sats":       res.ChangeSats,
-		"selected_sats":     res.SelectedSats,
-		"payout_script":     hex.EncodeToString(res.PayoutScript),
-		"commitment_script": hex.EncodeToString(res.CommitmentScript),
-		"commitment_sats":   res.CommitmentSats,
-		"pixel_hash":        strings.TrimSpace(body.PixelHash),
-		"payer_address":     payerAddr.EncodeAddress(),
-		"contract_id":       contractID,
-		"pixel_source":      pixelSourceForBytes(pixelBytes),
-		"budget_sats":       target,
-		"contractor":        contractorAddr.EncodeAddress(),
-		"network_params":    params.Name,
+		"psbt":               res.EncodedHex, // primary: hex for wallet import
+		"psbt_hex":           res.EncodedHex,
+		"psbt_base64":        res.EncodedBase64,
+		"funding_txid":       res.FundingTxID,
+		"fee_sats":           res.FeeSats,
+		"change_sats":        res.ChangeSats,
+		"selected_sats":      res.SelectedSats,
+		"payout_script":      hex.EncodeToString(res.PayoutScript),
+		"payout_scripts":     hexSlice(res.PayoutScripts),
+		"payout_amounts":     res.PayoutAmounts,
+		"commitment_script":  hex.EncodeToString(res.CommitmentScript),
+		"commitment_sats":    res.CommitmentSats,
+		"commitment_vout":    res.CommitmentVout,
+		"redeem_script":      hex.EncodeToString(res.RedeemScript),
+		"redeem_script_hash": hex.EncodeToString(res.RedeemScriptHash),
+		"commitment_address": res.CommitmentAddr,
+		"pixel_hash":         strings.TrimSpace(body.PixelHash),
+		"payer_address":      payerAddr.EncodeAddress(),
+		"contract_id":        contractID,
+		"pixel_source":       pixelSourceForBytes(pixelBytes),
+		"budget_sats":        target,
+		"contractor":         contractorAddr.EncodeAddress(),
+		"network_params":     params.Name,
 	})
 }
 
@@ -426,6 +476,184 @@ func pixelSourceForBytes(pixel []byte) string {
 		return "script_hash"
 	default:
 		return ""
+	}
+}
+
+func hexSlice(payloads [][]byte) []string {
+	if len(payloads) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(payloads))
+	for _, payload := range payloads {
+		out = append(out, hex.EncodeToString(payload))
+	}
+	return out
+}
+
+func (s *Server) updateTaskCommitmentProof(ctx context.Context, taskID string, res *bitcoin.PSBTResult, pixelBytes []byte) error {
+	task, err := s.store.GetTask(taskID)
+	if err != nil {
+		return err
+	}
+	proof := task.MerkleProof
+	if proof == nil {
+		proof = &smart_contract.MerkleProof{}
+	}
+	if len(pixelBytes) == 32 {
+		proof.VisiblePixelHash = hex.EncodeToString(pixelBytes)
+	}
+	if res.FundingTxID != "" {
+		proof.TxID = res.FundingTxID
+	}
+	if proof.ConfirmationStatus == "" {
+		proof.ConfirmationStatus = "provisional"
+	}
+	if proof.SeenAt.IsZero() {
+		proof.SeenAt = time.Now()
+	}
+	if len(res.RedeemScript) > 0 {
+		proof.CommitmentRedeemScript = hex.EncodeToString(res.RedeemScript)
+	}
+	if len(res.RedeemScriptHash) > 0 {
+		proof.CommitmentRedeemHash = hex.EncodeToString(res.RedeemScriptHash)
+	}
+	if res.CommitmentAddr != "" {
+		proof.CommitmentAddress = res.CommitmentAddr
+	}
+	if res.CommitmentVout > 0 {
+		proof.CommitmentVout = res.CommitmentVout
+	}
+	if res.CommitmentSats > 0 {
+		proof.CommitmentSats = res.CommitmentSats
+	}
+	return s.store.UpdateTaskProof(ctx, taskID, proof)
+}
+
+func (s *Server) handleCommitmentPSBT(w http.ResponseWriter, r *http.Request, contractID string) {
+	if r.Header.Get("Content-Type") != "" && !strings.Contains(r.Header.Get("Content-Type"), "application/json") {
+		Error(w, http.StatusUnsupportedMediaType, "Content-Type must be application/json")
+		return
+	}
+	if s.mempool == nil {
+		Error(w, http.StatusServiceUnavailable, "commitment builder unavailable")
+		return
+	}
+
+	var body struct {
+		TaskID             string `json:"task_id"`
+		DestinationAddress string `json:"destination_address"`
+		FeeRate            int64  `json:"fee_rate_sats_vb"`
+		Preimage           string `json:"preimage"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		Error(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+
+	task, err := s.resolveCommitmentTask(contractID, strings.TrimSpace(body.TaskID))
+	if err != nil {
+		Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if task.MerkleProof == nil {
+		Error(w, http.StatusBadRequest, "task missing merkle_proof commitment data")
+		return
+	}
+	proof := task.MerkleProof
+
+	redeemScriptHex := strings.TrimSpace(proof.CommitmentRedeemScript)
+	if redeemScriptHex == "" {
+		Error(w, http.StatusBadRequest, "missing commitment redeem script")
+		return
+	}
+	redeemScript, err := hex.DecodeString(redeemScriptHex)
+	if err != nil {
+		Error(w, http.StatusBadRequest, "invalid commitment redeem script")
+		return
+	}
+
+	preimageHex := strings.TrimSpace(body.Preimage)
+	if preimageHex == "" {
+		preimageHex = strings.TrimSpace(proof.VisiblePixelHash)
+	}
+	preimage, err := hex.DecodeString(preimageHex)
+	if err != nil {
+		Error(w, http.StatusBadRequest, "invalid preimage hex")
+		return
+	}
+
+	destAddress := strings.TrimSpace(body.DestinationAddress)
+	if destAddress == "" {
+		destAddress = strings.TrimSpace(os.Getenv("STARLIGHT_DONATION_ADDRESS"))
+	}
+	if destAddress == "" {
+		Error(w, http.StatusBadRequest, "missing destination address")
+		return
+	}
+	params := networkParamsFromEnv()
+	destAddr, err := btcutil.DecodeAddress(destAddress, params)
+	if err != nil {
+		Error(w, http.StatusBadRequest, fmt.Sprintf("invalid destination address: %v", err))
+		return
+	}
+
+	if proof.TxID == "" {
+		Error(w, http.StatusBadRequest, "missing funding txid for commitment output")
+		return
+	}
+	if proof.CommitmentVout == 0 {
+		Error(w, http.StatusBadRequest, "missing commitment vout")
+		return
+	}
+
+	res, err := bitcoin.BuildCommitmentSweepTx(s.mempool, params, proof.TxID, proof.CommitmentVout, redeemScript, preimage, destAddr, body.FeeRate)
+	if err != nil {
+		Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	JSON(w, http.StatusOK, map[string]interface{}{
+		"tx_hex":          res.RawTxHex,
+		"fee_sats":        res.FeeSats,
+		"input_sats":      res.InputSats,
+		"output_sats":     res.OutputSats,
+		"destination":     destAddr.EncodeAddress(),
+		"contract_id":     contractID,
+		"task_id":         task.TaskID,
+		"funding_txid":    proof.TxID,
+		"commitment_vout": proof.CommitmentVout,
+	})
+}
+
+func (s *Server) resolveCommitmentTask(contractID, taskID string) (smart_contract.Task, error) {
+	if taskID != "" {
+		return s.store.GetTask(taskID)
+	}
+	tasks, err := s.store.ListTasks(smart_contract.TaskFilter{ContractID: contractID})
+	if err != nil {
+		return smart_contract.Task{}, err
+	}
+	for _, t := range tasks {
+		if t.MerkleProof == nil {
+			continue
+		}
+		if t.MerkleProof.CommitmentRedeemScript != "" && t.MerkleProof.CommitmentVout > 0 {
+			return t, nil
+		}
+	}
+	return smart_contract.Task{}, fmt.Errorf("no task with commitment metadata")
+}
+
+func networkParamsFromEnv() *chaincfg.Params {
+	switch bitcoin.GetCurrentNetwork() {
+	case "mainnet":
+		return &chaincfg.MainNetParams
+	case "signet":
+		return &chaincfg.SigNetParams
+	case "testnet":
+		return &chaincfg.TestNet3Params
+	default:
+		return &chaincfg.TestNet4Params
 	}
 }
 
