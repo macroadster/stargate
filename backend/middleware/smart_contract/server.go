@@ -75,6 +75,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/smart_contract/submissions", s.authWrap(s.handleSubmissions))
 	mux.HandleFunc("/api/smart_contract/submissions/", s.authWrap(s.handleSubmissions))
 	mux.HandleFunc("/api/smart_contract/events", s.authWrap(s.handleEvents))
+	mux.HandleFunc("/api/smart_contract/config", s.authWrap(s.handleConfig))
 }
 
 func (s *Server) authWrap(next http.HandlerFunc) http.HandlerFunc {
@@ -92,6 +93,16 @@ func (s *Server) authWrap(next http.HandlerFunc) http.HandlerFunc {
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		Error(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	JSON(w, http.StatusOK, map[string]string{
+		"donation_address": strings.TrimSpace(os.Getenv("STARLIGHT_DONATION_ADDRESS")),
+	})
 }
 
 func (s *Server) handleContracts(w http.ResponseWriter, r *http.Request) {

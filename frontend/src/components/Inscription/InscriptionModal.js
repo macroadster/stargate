@@ -32,6 +32,10 @@ const InscriptionModal = ({ inscription, onClose }) => {
   const [psbtResult, setPsbtResult] = useState(null);
   const [psbtError, setPsbtError] = useState('');
   const [psbtLoading, setPsbtLoading] = useState(false);
+  const [sweepResult, setSweepResult] = useState(null);
+  const [sweepError, setSweepError] = useState('');
+  const [sweepLoading, setSweepLoading] = useState(false);
+  const [donationAddress, setDonationAddress] = useState('');
   const [copiedPsbt, setCopiedPsbt] = useState('');
   const [showPsbtQr, setShowPsbtQr] = useState(false);
   const lastFetchedKeyRef = React.useRef('');
@@ -205,6 +209,22 @@ const InscriptionModal = ({ inscription, onClose }) => {
       clearTimeout(timer);
     }
   };
+
+  useEffect(() => {
+    const fetchConfig = async () => {
+      try {
+        const res = await fetchWithTimeout(`${API_BASE}/api/smart_contract/config`, {}, 6000);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data?.donation_address) {
+          setDonationAddress(data.donation_address);
+        }
+      } catch (error) {
+        console.error('Failed to fetch smart contract config:', error);
+      }
+    };
+    fetchConfig();
+  }, [auth.apiKey]);
 
   const loadProposals = React.useCallback(async () => {
     if (!contractCandidates.length) return;
@@ -447,6 +467,49 @@ const InscriptionModal = ({ inscription, onClose }) => {
       await generatePSBT();
     } catch (err) {
       setPsbtError(err.message);
+    }
+  };
+
+  const sweepCommitment = async () => {
+    setSweepError('');
+    setSweepResult(null);
+    if (!auth.apiKey) {
+      setSweepError('Sign in with the donation API key first.');
+      return;
+    }
+    if (!selectedTask?.task_id) {
+      setSweepError('Select a task with commitment data first.');
+      return;
+    }
+    const contractId = psbtForm.contractId || primaryContractId;
+    if (!contractId) {
+      setSweepError('Missing contract id for commitment sweep.');
+      return;
+    }
+    setSweepLoading(true);
+    try {
+      const feeRateParsed = psbtForm.feeRate === '' ? NaN : Number(psbtForm.feeRate);
+      const feeRate = Number.isFinite(feeRateParsed) ? Math.max(1, feeRateParsed) : 1;
+      const res = await fetch(`${API_BASE}/api/smart_contract/contracts/${contractId}/commitment-psbt`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Key': auth.apiKey,
+        },
+        body: JSON.stringify({
+          task_id: selectedTask.task_id,
+          fee_rate_sats_vb: feeRate,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.message || data?.error || `HTTP ${res.status}`);
+      }
+      setSweepResult(data);
+    } catch (err) {
+      setSweepError(err.message);
+    } finally {
+      setSweepLoading(false);
     }
   };
   
@@ -902,6 +965,60 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                       return null;
                     })()}
                     {psbtError && <div className="text-sm text-red-500 mt-2">{psbtError}</div>}
+                    {(() => {
+                      const commitmentReady =
+                        selectedTask?.merkle_proof?.commitment_vout ||
+                        selectedTask?.merkle_proof?.commitment_redeem_script;
+                      const donationMatch =
+                        donationAddress &&
+                        auth.wallet &&
+                        donationAddress.trim() === auth.wallet.trim();
+                      if (!commitmentReady) return null;
+                      return (
+                        <div className="mt-3 rounded-lg border border-amber-200 dark:border-amber-900 bg-amber-50/60 dark:bg-amber-900/20 p-3 space-y-2">
+                          <div className="text-xs text-amber-700 dark:text-amber-300">
+                            Commitment sweep is available for the donation wallet.
+                          </div>
+                          {!donationMatch ? (
+                            <div className="text-xs text-amber-600 dark:text-amber-400">
+                              Sign in with the donation wallet to enable sweeping.
+                            </div>
+                          ) : (
+                            <button
+                              onClick={sweepCommitment}
+                              disabled={sweepLoading}
+                              className="px-3 py-1.5 rounded bg-amber-600 hover:bg-amber-500 text-white text-sm disabled:opacity-60"
+                            >
+                              {sweepLoading ? 'Sweeping…' : 'Sweep Commitment'}
+                            </button>
+                          )}
+                          {sweepError && <div className="text-xs text-red-500">{sweepError}</div>}
+                          {sweepResult?.tx_hex && (
+                            <div className="space-y-2">
+                              <div className="text-xs text-gray-600 dark:text-gray-300">
+                                Sweep fee: {sweepResult.fee_sats} sats • Output: {sweepResult.output_sats} sats
+                              </div>
+                              <textarea
+                                readOnly
+                                className="w-full h-24 text-xs font-mono bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded p-2"
+                                value={sweepResult.tx_hex}
+                              />
+                              <div className="flex items-center gap-2">
+                                <button
+                                  onClick={() => copyToClipboard(sweepResult.tx_hex, 'sweep')}
+                                  className="text-xs px-2 py-1 rounded bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200"
+                                >
+                                  Copy sweep tx
+                                </button>
+                                {copiedPsbt === 'sweep' && (
+                                  <span className="text-xs text-emerald-600 dark:text-emerald-400">Copied!</span>
+                                )}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
                     {psbtResult && (() => {
                       const psbtValue =
                         psbtResult.psbt_hex ||
