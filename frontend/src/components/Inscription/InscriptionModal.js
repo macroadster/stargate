@@ -979,6 +979,12 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                           <div className="text-xs text-amber-700 dark:text-amber-300">
                             Commitment sweep is available for the donation wallet.
                           </div>
+                          <div className="text-xs text-gray-600 dark:text-gray-300">
+                            Donation address: {donationAddress || 'Not configured'}
+                          </div>
+                          <div className="text-xs text-gray-600 dark:text-gray-300">
+                            Signed-in wallet: {auth.wallet || 'Not signed in'}
+                          </div>
                           {!donationMatch ? (
                             <div className="text-xs text-amber-600 dark:text-amber-400">
                               Sign in with the donation wallet to enable sweeping.
