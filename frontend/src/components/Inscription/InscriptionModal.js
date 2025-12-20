@@ -990,6 +990,12 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                           <div className="text-xs text-amber-700 dark:text-amber-300">
                             Commitment sweep is available for the donation wallet.
                           </div>
+                          {selectedTask?.merkle_proof?.sweep_status && (
+                            <div className="text-xs text-gray-600 dark:text-gray-300">
+                              Sweep status: {selectedTask.merkle_proof.sweep_status}
+                              {selectedTask.merkle_proof.sweep_tx_id ? ` • ${selectedTask.merkle_proof.sweep_tx_id}` : ''}
+                            </div>
+                          )}
                           <button
                             onClick={sweepCommitment}
                             disabled={sweepLoading}
