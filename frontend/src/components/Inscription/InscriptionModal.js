@@ -975,23 +975,29 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                         selectedTask?.contractor_wallet ||
                         inscription.metadata?.contractor_wallet ||
                         '';
+                      const budgetSats =
+                        psbtResult.budget_sats ||
+                        psbtResult.budget ||
+                        Number(psbtForm.budgetSats || 0) ||
+                        0;
                       const payerAddress = psbtResult.payer_address || auth.wallet || 'Not signed in';
                       return (
                         <div className="mt-3 space-y-2 bg-gray-50 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700 rounded-lg p-3">
-                          <div className="text-xs text-gray-600 dark:text-gray-300">
-                            Fee: {psbtResult.fee_sats} sats • Change: {psbtResult.change_sats} sats • Selected: {psbtResult.selected_sats} sats
-                          </div>
-                          {psbtResult.commitment_sats ? (
-                            <div className="text-xs text-gray-600 dark:text-gray-300">
-                              Commitment: {psbtResult.commitment_sats} sats
-                            </div>
-                          ) : null}
-                          <div className="text-xs text-gray-600 dark:text-gray-300 break-all">
-                            Payout script: {psbtResult.payout_script}
-                          </div>
                           <div className="flex gap-2 text-[11px] text-gray-600 dark:text-gray-300 flex-wrap">
                             <span>Payer: {payerAddress}</span>
                             <span>Network: {psbtResult.network_params || 'testnet4'}</span>
+                          </div>
+                          <div className="text-xs text-gray-600 dark:text-gray-300 break-all">
+                            Payout script: {psbtResult.payout_script}
+                          </div>
+                          <div className="text-xs text-gray-600 dark:text-gray-300">
+                            <div>Selected: {psbtResult.selected_sats} sats</div>
+                            <div>Price: {budgetSats} sats</div>
+                            {psbtResult.commitment_sats ? (
+                              <div>Donation: {psbtResult.commitment_sats} sats</div>
+                            ) : null}
+                            <div>Fee: {psbtResult.fee_sats} sats</div>
+                            <div>Change: {psbtResult.change_sats} sats</div>
                           </div>
                           <textarea
                             className="w-full rounded bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 font-mono text-xs p-2"
