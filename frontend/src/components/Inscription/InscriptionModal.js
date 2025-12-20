@@ -32,7 +32,6 @@ const InscriptionModal = ({ inscription, onClose }) => {
   const [psbtResult, setPsbtResult] = useState(null);
   const [psbtError, setPsbtError] = useState('');
   const [psbtLoading, setPsbtLoading] = useState(false);
-  const [contractDetails, setContractDetails] = useState(null);
   const [authBlocked, setAuthBlocked] = useState(false);
   const [copiedPsbt, setCopiedPsbt] = useState('');
   const [showPsbtQr, setShowPsbtQr] = useState(false);
@@ -194,7 +193,6 @@ const InscriptionModal = ({ inscription, onClose }) => {
       isConfirmedStatus(scanStatus) ||
       isConfirmedStatus(inscription.status)
   );
-  const contractStatus = (contractDetails?.status || '').toLowerCase();
   const isFundingConfirmed = useMemo(() => {
     const tasks = allTasks.length > 0 ? allTasks : psbtTasks;
     return tasks.some(
@@ -203,7 +201,8 @@ const InscriptionModal = ({ inscription, onClose }) => {
         'confirmed'
     );
   }, [allTasks, psbtTasks]);
-  const isContractLocked = isConfirmedContract || isFundingConfirmed || isConfirmedStatus(contractStatus);
+  const hasFundingTxId = Boolean(inscription.metadata?.funding_txid);
+  const isContractLocked = isConfirmedContract || isFundingConfirmed || hasFundingTxId;
   
   const isActuallyImageFile =
     inscription.mime_type?.includes('image') &&
@@ -228,35 +227,6 @@ const InscriptionModal = ({ inscription, onClose }) => {
       clearTimeout(timer);
     }
   };
-
-  useEffect(() => {
-    const fetchContract = async () => {
-      if (!auth.apiKey || authBlocked || !primaryContractId) {
-        setContractDetails(null);
-        return;
-      }
-      try {
-        const res = await fetchWithTimeout(
-          `${API_BASE}/api/smart_contract/contracts/${primaryContractId}`,
-          { headers: { 'X-API-KEY': auth.apiKey } },
-          6000
-        );
-        if (res.status === 401 || res.status === 403) {
-          setAuthBlocked(true);
-          setContractDetails(null);
-          return;
-        }
-        if (!res.ok) return;
-        const data = await res.json();
-        if (data && typeof data === 'object') {
-          setContractDetails(data);
-        }
-      } catch (error) {
-        console.error('Failed to fetch contract status:', error);
-      }
-    };
-    fetchContract();
-  }, [auth.apiKey, authBlocked, primaryContractId]);
 
   const loadProposals = React.useCallback(async () => {
     if (!auth.apiKey || authBlocked || !contractCandidates.length) return;
@@ -859,13 +829,9 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
 
               {activeTab === 'deliverables' && (
                 <div className="space-y-4">
-                  {isContractLocked ? (
+                  {isContractLocked ? null : !auth.apiKey || authBlocked ? (
                     <div className="text-sm text-gray-500 dark:text-gray-400">
-                      This contract is confirmed on-chain; PSBT publishing is only available while pending.
-                    </div>
-                  ) : !auth.apiKey || authBlocked ? (
-                    <div className="text-sm text-gray-500 dark:text-gray-400">
-                      Sign in with the funding API key to view payout tools.
+                      Payout tools are unavailable for this session.
                     </div>
                   ) : !approvedProposal ? (
                     <div className="text-sm text-gray-500 dark:text-gray-400">Approve a proposal to unlock deliverables.</div>
