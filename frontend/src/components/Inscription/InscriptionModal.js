@@ -203,6 +203,7 @@ const InscriptionModal = ({ inscription, onClose }) => {
   }, [allTasks, psbtTasks]);
   const hasFundingTxId = Boolean(inscription.metadata?.funding_txid);
   const isContractLocked = isConfirmedContract || isFundingConfirmed || hasFundingTxId;
+  const normalizeAddress = (value) => (value || '').trim().toLowerCase();
   
   const isActuallyImageFile =
     inscription.mime_type?.includes('image') &&
@@ -463,6 +464,14 @@ const InscriptionModal = ({ inscription, onClose }) => {
       selectedTask?.contractor_wallet ||
       inscription.metadata?.contractor_wallet ||
       '';
+    const fundingWallet =
+      selectedTask?.merkle_proof?.funding_address ||
+      inscription.metadata?.funding_address ||
+      '';
+    if (fundingWallet && auth.wallet && normalizeAddress(fundingWallet) !== normalizeAddress(auth.wallet)) {
+      setPsbtError('Funding wallet does not match signed-in wallet.');
+      return;
+    }
     if (!payoutWallet) {
       setPsbtError('Add the contractor payout wallet first.');
       return;
@@ -854,15 +863,33 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                             selectedTask?.contractor_wallet ||
                             inscription.metadata?.contractor_wallet ||
                             '';
+                          const fundingWallet =
+                            selectedTask?.merkle_proof?.funding_address ||
+                            inscription.metadata?.funding_address ||
+                            '';
+                          const fundingMismatch =
+                            fundingWallet &&
+                            auth.wallet &&
+                            normalizeAddress(fundingWallet) !== normalizeAddress(auth.wallet);
                           const payoutList = payoutSummaries
                             .filter((p) => p.wallet && p.wallet !== 'Unknown wallet')
                             .map((p) => p.wallet);
                           const noTasks = deliverableTasks.length === 0;
                           const missingPayout = payoutList.length === 0 && !payoutWallet;
-                          return psbtLoading || !auth.wallet || !approvedProposal || missingPayout || noTasks;
+                          return psbtLoading || !auth.wallet || !approvedProposal || missingPayout || noTasks || fundingMismatch;
                         })()}
                         className="px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-sm disabled:opacity-60"
-                        title={!auth.wallet ? 'Sign in with funding API key first' : ''}
+                        title={(() => {
+                          if (!auth.wallet) return 'Sign in with funding API key first';
+                          const fundingWallet =
+                            selectedTask?.merkle_proof?.funding_address ||
+                            inscription.metadata?.funding_address ||
+                            '';
+                          if (fundingWallet && normalizeAddress(fundingWallet) !== normalizeAddress(auth.wallet)) {
+                            return 'Funding wallet does not match signed-in wallet';
+                          }
+                          return '';
+                        })()}
                       >
                         {psbtLoading ? 'Building…' : 'Publish & Build'}
                       </button>
