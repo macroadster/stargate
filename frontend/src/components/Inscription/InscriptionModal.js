@@ -851,9 +851,6 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                     <div className="flex items-start justify-between gap-3 flex-wrap">
                       <div>
                         <h4 className="text-base font-semibold text-black dark:text-white">Publish & Build PSBT</h4>
-                        <p className="text-xs text-gray-500 dark:text-gray-400">
-                          Publishes the proposal (if pending) and builds a payout PSBT using the funder wallet bound to your API key.
-                        </p>
                       </div>
                       <button
                         onClick={publishAndBuild}
