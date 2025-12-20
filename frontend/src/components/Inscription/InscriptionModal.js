@@ -185,6 +185,13 @@ const InscriptionModal = ({ inscription, onClose }) => {
       inscription.metadata?.confirmed_height ||
       (inscription.status || '').toLowerCase() === 'confirmed'
   );
+  const isFundingConfirmed = useMemo(() => {
+    const tasks = allTasks.length > 0 ? allTasks : psbtTasks;
+    return tasks.some(
+      (task) => (task?.merkle_proof?.confirmation_status || '').toLowerCase() === 'confirmed'
+    );
+  }, [allTasks, psbtTasks]);
+  const isContractLocked = isConfirmedContract || isFundingConfirmed;
   
   const isActuallyImageFile =
     inscription.mime_type?.includes('image') &&
@@ -859,7 +866,7 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
 
               {activeTab === 'deliverables' && (
                 <div className="space-y-4">
-                  {isConfirmedContract ? (
+                  {isContractLocked ? (
                     <div className="text-sm text-gray-500 dark:text-gray-400">
                       This contract is confirmed on-chain; PSBT publishing is only available while pending.
                     </div>
