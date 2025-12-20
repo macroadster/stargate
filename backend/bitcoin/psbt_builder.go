@@ -53,14 +53,8 @@ type PSBTResult struct {
 // BuildFundingPSBT selects confirmed UTXOs, estimates fees at the provided feerate, and builds a PSBT.
 // When a pixel hash is provided, a small commitment output is added alongside the contractor payout.
 func BuildFundingPSBT(client *MempoolClient, params *chaincfg.Params, req PSBTRequest) (*PSBTResult, error) {
-	if req.TargetValueSats <= 0 {
-		return nil, fmt.Errorf("target value must be positive")
-	}
 	if req.FeeRateSatPerVB < 0 {
 		req.FeeRateSatPerVB = 0
-	}
-	if req.ContractorAddress == nil {
-		return nil, fmt.Errorf("contractor address required")
 	}
 
 	utxos, err := client.ListConfirmedUTXOs(req.PayerAddress.EncodeAddress())
@@ -96,6 +90,9 @@ func BuildFundingPSBT(client *MempoolClient, params *chaincfg.Params, req PSBTRe
 	}
 
 	requiredValue := sumAmounts(payoutAmounts) + commitmentSats
+	if len(payoutScripts) == 0 && commitmentScript == nil {
+		return nil, fmt.Errorf("no payout or commitment outputs requested")
+	}
 
 	var selected []AddressUTXO
 	var selectedValue int64
@@ -224,6 +221,9 @@ func buildPayoutScripts(req PSBTRequest) ([][]byte, []int64, error) {
 		return scripts, amounts, nil
 	}
 	if req.ContractorAddress == nil {
+		if req.TargetValueSats <= 0 {
+			return nil, nil, nil
+		}
 		return nil, nil, fmt.Errorf("contractor address required")
 	}
 	if req.TargetValueSats <= 0 {

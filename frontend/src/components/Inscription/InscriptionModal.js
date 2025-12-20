@@ -113,7 +113,7 @@ const InscriptionModal = ({ inscription, onClose }) => {
           ...t,
           proposalId: p.id,
           visible_pixel_hash: p.visible_pixel_hash || t.visible_pixel_hash,
-          contractor_wallet: t.contractor_wallet || p.metadata?.contractor_wallet,
+          contractor_wallet: t.contractor_wallet || t.merkle_proof?.contractor_wallet || p.metadata?.contractor_wallet,
         }),
       );
     });
@@ -151,7 +151,7 @@ const InscriptionModal = ({ inscription, onClose }) => {
     if (!tasks.length) return [];
     const totals = new Map();
     tasks.forEach((t) => {
-      const wallet = (t.contractor_wallet || '').trim() || 'Unknown wallet';
+      const wallet = (t.contractor_wallet || t.merkle_proof?.contractor_wallet || '').trim() || 'Unknown wallet';
       const existing = totals.get(wallet) || 0;
       totals.set(wallet, existing + (Number(t.budget_sats) || 0));
     });
@@ -821,8 +821,12 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                             selectedTask?.contractor_wallet ||
                             inscription.metadata?.contractor_wallet ||
                             '';
+                          const payoutList = payoutSummaries
+                            .filter((p) => p.wallet && p.wallet !== 'Unknown wallet')
+                            .map((p) => p.wallet);
                           const noTasks = deliverableTasks.length === 0;
-                          return psbtLoading || !auth.wallet || !approvedProposal || !payoutWallet || noTasks;
+                          const missingPayout = payoutList.length === 0 && !payoutWallet;
+                          return psbtLoading || !auth.wallet || !approvedProposal || missingPayout || noTasks;
                         })()}
                         className="px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-sm disabled:opacity-60"
                         title={!auth.wallet ? 'Sign in with funding API key first' : ''}
@@ -881,11 +885,14 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                         selectedTask?.contractor_wallet ||
                         inscription.metadata?.contractor_wallet ||
                         '';
+                      const payoutList = payoutSummaries
+                        .filter((p) => p.wallet && p.wallet !== 'Unknown wallet')
+                        .map((p) => p.wallet);
                       const payerAddress = psbtResult?.payer_address || auth.wallet || '';
-                      if (!payoutWallet) {
+                      if (!payoutWallet && payoutList.length === 0) {
                         return <div className="text-xs text-amber-600 dark:text-amber-400 mt-2">Payout wallet missing.</div>;
                       }
-                      if (payerAddress && payoutWallet === payerAddress) {
+                      if (payerAddress && payoutList.length === 0 && payoutWallet === payerAddress) {
                         return (
                           <div className="text-xs text-amber-600 dark:text-amber-400 mt-2">
                             Payout matches payer wallet—confirm contractor address.

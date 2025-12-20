@@ -281,8 +281,8 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		if target <= 0 {
 			target = payoutTotal
 		}
-		if target != payoutTotal {
-			Error(w, http.StatusBadRequest, "payout total must match budget_sats")
+		if payoutTotal > target {
+			Error(w, http.StatusBadRequest, "payout total exceeds budget_sats")
 			return
 		}
 	}
