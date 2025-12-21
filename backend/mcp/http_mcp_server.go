@@ -71,6 +71,7 @@ func (h *HTTPMCPServer) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/mcp/discover", h.authWrap(h.handleDiscover))
 	mux.HandleFunc("/mcp/docs", h.authWrap(h.handleDocs))
 	mux.HandleFunc("/mcp/openapi.json", h.authWrap(h.handleOpenAPI))
+	mux.HandleFunc("/mcp/health", h.handleHealth)
 	mux.HandleFunc("/mcp/events", h.authWrap(h.handleEventsProxy))
 	// Register catch-all last
 	mux.HandleFunc("/mcp/", h.authWrap(h.handleToolCall))
@@ -342,6 +343,7 @@ func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
         <li><span class="endpoint">GET /mcp/discover</span> - Discover available endpoints and tools</li>
         <li><span class="endpoint">GET /mcp/docs</span> - This documentation page</li>
         <li><span class="endpoint">GET /mcp/openapi.json</span> - OpenAPI specification</li>
+        <li><span class="endpoint">GET /mcp/health</span> - Health check</li>
         <li><span class="endpoint">GET /mcp/events</span> - Stream events</li>
     </ul>
     
@@ -541,10 +543,52 @@ func (h *HTTPMCPServer) handleOpenAPI(w http.ResponseWriter, r *http.Request) {
 					},
 				},
 			},
+			"/health": map[string]interface{}{
+				"get": map[string]interface{}{
+					"summary": "Health Check",
+					"responses": map[string]interface{}{
+						"200": map[string]interface{}{
+							"description": "Service is healthy",
+							"content": map[string]interface{}{
+								"application/json": map[string]interface{}{
+									"schema": map[string]interface{}{
+										"type": "object",
+										"properties": map[string]interface{}{
+											"status": map[string]interface{}{
+												"type": "string",
+											},
+											"timestamp": map[string]interface{}{
+												"type": "string",
+											},
+											"version": map[string]interface{}{
+												"type": "string",
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
 		},
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(spec)
+}
+
+// handleHealth provides a health check endpoint
+func (h *HTTPMCPServer) handleHealth(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":    "healthy",
+		"timestamp": time.Now().Format(time.RFC3339),
+		"version":   "1.0.0",
+	})
 }
 
 // handleEventsProxy proxies SSE/JSON event consumption to the REST endpoint for parity.
