@@ -377,6 +377,9 @@ FROM mcp_tasks WHERE task_id=$1 FOR UPDATE
 	if err != nil {
 		return smart_contract.Claim{}, ErrTaskNotFound
 	}
+	if strings.EqualFold(task.Status, "approved") || strings.EqualFold(task.Status, "completed") || strings.EqualFold(task.Status, "published") {
+		return smart_contract.Claim{}, ErrTaskUnavailable
+	}
 
 	normalizedWallet := strings.TrimSpace(contractorWallet)
 	persistWallet := func(wallet string) error {

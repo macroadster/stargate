@@ -1133,7 +1133,7 @@ func (s *Server) handleClaimTask(w http.ResponseWriter, r *http.Request, taskID 
 				return
 			}
 		}
-		if err == ErrTaskTaken {
+		if err == ErrTaskTaken || err == ErrTaskUnavailable {
 			Error(w, http.StatusConflict, err.Error())
 			return
 		}

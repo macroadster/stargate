@@ -183,6 +183,9 @@ func (s *MemoryStore) ClaimTask(taskID, aiID, contractorWallet string, estimated
 	if !ok {
 		return smart_contract.Claim{}, ErrTaskNotFound
 	}
+	if strings.EqualFold(task.Status, "approved") || strings.EqualFold(task.Status, "completed") || strings.EqualFold(task.Status, "published") {
+		return smart_contract.Claim{}, ErrTaskUnavailable
+	}
 	normalizedWallet := strings.TrimSpace(contractorWallet)
 
 	// Existing claim?
