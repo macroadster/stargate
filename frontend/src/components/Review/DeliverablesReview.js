@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import ReactMarkdown from 'react-markdown';
 import { CheckCircle, XCircle, Clock, ExternalLink, Filter, ChevronDown, ChevronUp, Eye, FileText, Code } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { API_BASE } from '../../apiBase';
@@ -257,6 +258,44 @@ const DeliverablesReview = ({ proposalItems, submissions, onRefresh, isContractL
     );
   };
 
+  const renderMarkdown = (content) => {
+    const hasMarkdown = /(^|\n)(#{1,6}\s|[-*]\s|\d+\.\s|```)/.test(content);
+
+    if (!hasMarkdown) {
+      return (
+        <pre className="text-sm text-gray-800 dark:text-gray-100 whitespace-pre-wrap">
+          {content}
+        </pre>
+      );
+    }
+
+    return (
+      <div className="text-sm text-gray-800 dark:text-gray-100 space-y-3">
+        <ReactMarkdown
+          components={{
+            h1: ({ ...props }) => <h1 className="text-xl font-semibold" {...props} />,
+            h2: ({ ...props }) => <h2 className="text-lg font-semibold" {...props} />,
+            h3: ({ ...props }) => <h3 className="text-base font-semibold" {...props} />,
+            p: ({ ...props }) => <p className="leading-relaxed" {...props} />,
+            ul: ({ ...props }) => <ul className="list-disc pl-5 space-y-1" {...props} />,
+            ol: ({ ...props }) => <ol className="list-decimal pl-5 space-y-1" {...props} />,
+            code: ({ inline, ...props }) => (
+              inline
+                ? <code className="px-1 py-0.5 rounded bg-gray-200/70 dark:bg-gray-700/70 font-mono text-xs" {...props} />
+                : <code className="font-mono text-xs" {...props} />
+            ),
+            pre: ({ ...props }) => (
+              <pre className="bg-gray-900 text-gray-100 rounded p-3 overflow-x-auto text-xs" {...props} />
+            ),
+            a: ({ ...props }) => <a className="text-blue-600 dark:text-blue-300 underline" {...props} />,
+          }}
+        >
+          {content}
+        </ReactMarkdown>
+      </div>
+    );
+  };
+
   if (allDeliverables.length === 0) {
     return (
       <div className="text-center py-8">
@@ -349,6 +388,14 @@ const DeliverablesReview = ({ proposalItems, submissions, onRefresh, isContractL
                   <div>
                     <h6 className="text-sm font-semibold text-black dark:text-white mb-2">Deliverable Details</h6>
                     <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-3 space-y-2">
+                      {deliverable.submission?.submitted_at && (
+                        <div className="flex items-start justify-between gap-2">
+                          <span className="text-sm text-gray-600 dark:text-gray-400">Submitted At:</span>
+                          <span className="text-sm text-black dark:text-white">
+                            {new Date(deliverable.submission.submitted_at).toLocaleString()}
+                          </span>
+                        </div>
+                      )}
                       <div className="flex items-start justify-between gap-2">
                         <span className="text-sm text-gray-600 dark:text-gray-400">Task ID:</span>
                         <div className="flex items-center gap-2">
@@ -356,11 +403,24 @@ const DeliverablesReview = ({ proposalItems, submissions, onRefresh, isContractL
                           <CopyButton text={deliverable.task_id} />
                         </div>
                       </div>
+                      {(deliverable.submission?.claim_id || deliverable.active_claim_id) && (
+                        <div className="flex items-start justify-between gap-2">
+                          <span className="text-sm text-gray-600 dark:text-gray-400">Claim ID:</span>
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-mono text-black dark:text-white">
+                              {deliverable.submission?.claim_id || deliverable.active_claim_id}
+                            </span>
+                            <CopyButton text={deliverable.submission?.claim_id || deliverable.active_claim_id} />
+                          </div>
+                        </div>
+                      )}
                       <div className="flex items-start justify-between gap-2">
                         <span className="text-sm text-gray-600 dark:text-gray-400">Submission ID:</span>
                         <div className="flex items-center gap-2">
-                          <span className="text-sm font-mono text-black dark:text-white">{deliverable.submission?.id || deliverable.active_claim_id}</span>
-                          <CopyButton text={deliverable.submission?.id || deliverable.active_claim_id} />
+                          <span className="text-sm font-mono text-black dark:text-white">
+                            {deliverable.submission?.submission_id || deliverable.submission?.id || deliverable.active_claim_id}
+                          </span>
+                          <CopyButton text={deliverable.submission?.submission_id || deliverable.submission?.id || deliverable.active_claim_id} />
                         </div>
                       </div>
                       {deliverable.skills_required && deliverable.skills_required.length > 0 && (
@@ -377,10 +437,17 @@ const DeliverablesReview = ({ proposalItems, submissions, onRefresh, isContractL
                   {deliverable.submission?.deliverables?.notes && (
                     <div>
                       <h6 className="text-sm font-semibold text-black dark:text-white mb-2">Submission Notes</h6>
-                      <div className="bg-blue-50 dark:bg-blue-900/40 border border-blue-200 dark:border-blue-700 rounded-lg p-3">
-                        <p className="text-sm text-blue-900 dark:text-blue-100 whitespace-pre-wrap">
-                          {deliverable.submission.deliverables.notes}
-                        </p>
+                      <div className="bg-blue-50 dark:bg-blue-900/40 border border-blue-200 dark:border-blue-700 rounded-lg p-3 max-h-[60vh] overflow-y-auto">
+                        {renderMarkdown(deliverable.submission.deliverables.notes)}
+                      </div>
+                    </div>
+                  )}
+
+                  {deliverable.submission?.deliverables?.document && (
+                    <div>
+                      <h6 className="text-sm font-semibold text-black dark:text-white mb-2">Submission Document</h6>
+                      <div className="bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-700 rounded-lg p-3 max-h-[60vh] overflow-y-auto">
+                        {renderMarkdown(deliverable.submission.deliverables.document)}
                       </div>
                     </div>
                   )}

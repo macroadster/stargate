@@ -15,6 +15,12 @@ jest.mock('react-hot-toast', () => ({
   error: jest.fn()
 }));
 
+jest.mock('react-markdown', () => {
+  return function MockMarkdown({ children }) {
+    return <div>{children}</div>;
+  };
+});
+
 // Mock CopyButton
 jest.mock('../Common/CopyButton', () => {
   return function MockCopyButton({ text }) {
