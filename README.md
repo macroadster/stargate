@@ -1,24 +1,33 @@
-# Stargate - Bitcoin Ordinals Explorer
+# Stargate — Bitcoin-Native Work, Funding, and Proofs
 
-A modern, full-stack web application for exploring Bitcoin Ordinals inscriptions, blocks, and smart contracts. Built with React frontend and Go backend.
+Stargate is a Bitcoin-native workflow for turning ideas into funded work and verifiable outcomes. It combines on-chain commitments, PSBT funding flows, and oracle reconciliation so AI and humans can propose tasks, raise funds, and prove results—while Bitcoin remains the settlement layer.
+
+Rather than competing with Bitcoin, Stargate uses it as a durable, neutral ledger. The goal is to shift low-value inscriptions toward useful, structured data: proposals, task budgets, funding proofs, and completion evidence that can be audited today and learned from in the future.
+
+## Why it matters
+
+- **Settlement, not replacement**: Bitcoin stays the base protocol; Stargate builds higher-level coordination on top.
+- **Economic incentives over spam**: a free, utility-first path for creators to anchor meaningful data instead of low-value noise.
+- **Long-lived knowledge**: smart-contract snapshots become training data for better AI alignment and human decision-making over time.
 
 ## 🌟 Features
 
 ### Frontend (React)
+- **Smart Contract Viewer**: Detailed modal views for proposals, tasks, and funding proofs
+- **Task Discovery**: Portal for AI and humans to claim, submit, and verify work
+- **Funding & PSBTs**: Build payout or raise-fund PSBTs with multi-payer support
+- **Inscription Viewer**: Grid view of inscriptions with metadata
 - **Block Explorer**: Horizontal scrolling block viewer with real-time updates
-- **Inscription Gallery**: Grid view of Ordinal inscriptions with metadata
-- **Smart Contract Viewer**: Detailed modal views for inscriptions with tabs (Overview, Documentation, Transactions)
-- **Inscription Creator**: Step-by-step workflow to create new inscriptions with QR payment
-- **Advanced Search**: Search inscriptions by text/ID and blocks by height/hash
+- **Search**: Find contracts, inscriptions, or blocks by ID/height/hash
 - **Dark/Light Mode**: Automatic theme detection with manual toggle
 - **Responsive Design**: Mobile-friendly interface with Tailwind CSS
 
 ### Backend (Go)
 - **REST API**: Fast HTTP server with CORS support
+- **Funding Builder**: PSBT construction for payouts and raise-fund workflows
+- **Oracle Reconcile**: Match on-chain funding/commitment outputs to contracts
+- **Commitment Sweeps**: Build and broadcast P2WSH sweep transactions
 - **Inscription Storage**: Persistent storage of inscription requests and images
-- **Blockchain Integration**: Proxy API calls to Hiro Ordinals and Mempool.space
-- **Search Engine**: Full-text search across inscriptions and blocks
-- **File Management**: Secure image upload and storage
 
 ## 🛠 Tech Stack
 
@@ -75,16 +84,16 @@ App runs on `http://localhost:3000`
 2. Click "View Details" on any inscription
 3. Explore tabs: Overview, Documentation, Transactions
 
-### Creating Inscriptions
-1. Click "Inscribe" in the header
-2. Upload an image and add text
-3. Follow the payment workflow with QR code
-4. View your pending inscription in the future block
+### Funding Work
+1. Open a smart contract and review tasks
+2. Build a payout or raise-fund PSBT
+3. Sign in your wallet and broadcast
+4. Watch confirmations and commitment sweeps
 
 ### Search Functionality
 - Search for inscription text or IDs
 - Find blocks by height (e.g., `870000`) or hash
-- Special searches: "block" shows recent blocks
+- Find contracts by ID
 
 ## 🔌 API Endpoints
 
@@ -118,15 +127,6 @@ starlight/
 │   └── uploads/             # Stored inscription images
 └── README.md
 ```
-
-## 🎨 UI/UX Features
-
-- **Horizontal Block Scroller**: Innovative block browsing
-- **Modal-Based Details**: Rich inscription information
-- **Payment Integration**: QR codes for Bitcoin payments
-- **Theme Support**: Seamless dark/light mode
-- **Copy to Clipboard**: Easy ID sharing
-- **Drag & Drop**: Intuitive file uploads
 
 ## 🔒 Security
 
