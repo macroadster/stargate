@@ -618,7 +618,7 @@ func (s *PGStore) TaskStatus(taskID string) (map[string]interface{}, error) {
 	err = s.pool.QueryRow(ctx, `
 SELECT claim_id, task_id, ai_identifier, status, expires_at, created_at
 FROM mcp_claims
-WHERE task_id=$1
+WHERE task_id=$1 AND status IN ('active','submitted','pending_review')
 ORDER BY created_at DESC
 LIMIT 1
 `, taskID).Scan(&claim.ClaimID, &claim.TaskID, &claim.AiIdentifier, &claim.Status, &claim.ExpiresAt, &claim.CreatedAt)
@@ -633,6 +633,17 @@ LIMIT 1
 		"claim_expires_at":  task.ClaimExpires,
 		"claimed_at":        task.ClaimedAt,
 		"time_remaining_hr": nil,
+	}
+	var submissionAttempts int
+	if err := s.pool.QueryRow(ctx, `
+SELECT COUNT(*)
+FROM mcp_submissions s
+JOIN mcp_claims c ON c.claim_id = s.claim_id
+WHERE c.task_id=$1
+`, taskID).Scan(&submissionAttempts); err == nil {
+		resp["submission_attempts"] = submissionAttempts
+	} else {
+		resp["submission_attempts"] = 0
 	}
 	if claim.ClaimID != "" {
 		final := strings.EqualFold(task.Status, "published") || strings.EqualFold(task.Status, "approved") || strings.EqualFold(task.Status, "completed")

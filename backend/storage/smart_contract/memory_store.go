@@ -328,11 +328,15 @@ func (s *MemoryStore) TaskStatus(taskID string) (map[string]interface{}, error) 
 
 	var claim *smart_contract.Claim
 	for _, c := range s.claims {
-		if c.TaskID == taskID {
-			// pick active/most recent
+		if c.TaskID != taskID {
+			continue
+		}
+		if c.Status != "active" && c.Status != "submitted" && c.Status != "pending_review" {
+			continue
+		}
+		if claim == nil || c.CreatedAt.After(claim.CreatedAt) {
 			cc := c
 			claim = &cc
-			break
 		}
 	}
 
@@ -344,6 +348,14 @@ func (s *MemoryStore) TaskStatus(taskID string) (map[string]interface{}, error) 
 		"claimed_at":        task.ClaimedAt,
 		"time_remaining_hr": nil,
 	}
+	submissionAttempts := 0
+	for _, sub := range s.submissions {
+		if c, ok := s.claims[sub.ClaimID]; ok && c.TaskID == taskID {
+			submissionAttempts++
+		}
+	}
+	resp["submission_attempts"] = submissionAttempts
+
 	if claim != nil {
 		final := strings.EqualFold(task.Status, "published") || strings.EqualFold(task.Status, "approved") || strings.EqualFold(task.Status, "completed")
 		remaining := time.Until(claim.ExpiresAt).Hours()
@@ -615,6 +627,7 @@ func (s *MemoryStore) UpdateSubmissionStatus(ctx context.Context, submissionID, 
 				task.ClaimedBy = ""
 				task.ClaimedAt = nil
 				task.ClaimExpires = nil
+				task.ActiveClaimID = ""
 				s.tasks[claim.TaskID] = task
 			}
 		}
