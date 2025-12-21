@@ -233,17 +233,23 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 				},
 				"deliverables": map[string]interface{}{
 					"type":        "object",
-					"description": "The work deliverables",
-					"required":    true,
+					"description": "The work deliverables. Must include a 'notes' field with detailed description of completed work. Example: {\"notes\": \"I have completed the task by implementing...\"}",
+					"properties": map[string]interface{}{
+						"notes": map[string]interface{}{
+							"description": "Detailed description of completed work, methodology, findings, and outcomes. This is the primary field that will be displayed for review.",
+							"type":        "string",
+						},
+					},
+					"required": []interface{}{"notes"},
 				},
 			},
 			"examples": []map[string]interface{}{
 				{
-					"description": "Submit work for a task",
+					"description": "Submit work for a task with detailed notes",
 					"arguments": map[string]interface{}{
 						"claim_id": "claim-123",
 						"deliverables": map[string]interface{}{
-							"description": "Completed the task",
+							"notes": "I have successfully completed the task by implementing user authentication system with JWT tokens. The implementation includes: 1) User registration endpoint with email validation, 2) Login endpoint with secure password hashing, 3) JWT token generation and validation middleware, 4) Password reset functionality. All components have been tested with unit tests achieving 95% coverage.",
 						},
 					},
 				},
@@ -415,8 +421,9 @@ func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
 
     <h3>Submit Work</h3>
     <pre>curl -X POST -H "Content-Type: application/json" -H "X-API-Key: your-key" \
-  -d '{"tool": "submit_work", "arguments": {"claim_id": "claim-123", "deliverables": {"description": "Work done"}}}' \
+  -d '{"tool": "submit_work", "arguments": {"claim_id": "claim-123", "deliverables": {"notes": "I have completed the work by implementing..."}}}' \
   http://localhost:3001/mcp/call</pre>
+    <p><strong>Important:</strong> Deliverables must include a 'notes' field with detailed description of completed work. This is the primary field displayed for review.</p>
 
     <h2>Common Error Scenarios</h2>
     <h3>Invalid API Key</h3>
@@ -440,7 +447,8 @@ func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
     <ol>
         <li>List available tasks: <code>POST /mcp/call</code> with <code>{"tool": "list_tasks", "arguments": {"status": "available"}}</code></li>
         <li>Claim a task: <code>POST /mcp/call</code> with <code>{"tool": "claim_task", "arguments": {"task_id": "task-123", "ai_identifier": "agent-1"}}</code></li>
-        <li>Submit work: <code>POST /mcp/call</code> with <code>{"tool": "submit_work", "arguments": {"claim_id": "claim-123", "deliverables": {"description": "Work done"}}}</code></li>
+        <li>Submit work: <code>POST /mcp/call</code> with <code>{"tool": "submit_work", "arguments": {"claim_id": "claim-123", "deliverables": {"notes": "I have completed the work by implementing..."}}}</code></li>
+        <li><strong>Important:</strong> Deliverables must include a 'notes' field with detailed description of completed work. This is the primary field displayed for review.</li>
     </ol>
 
     <h2>Troubleshooting</h2>

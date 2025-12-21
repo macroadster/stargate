@@ -400,6 +400,45 @@ const InscriptionModal = ({ inscription, onClose }) => {
     }
   }, [auth.apiKey, authBlocked, contractCandidates, contractKey]);
 
+  const loadSubmissions = React.useCallback(async () => {
+    if (!auth.apiKey || authBlocked || !contractCandidates.length) return;
+    try {
+      const submissionsPromises = contractCandidates.map(async (contractId) => {
+        const res = await fetchWithTimeout(`${API_BASE}/api/smart_contract/submissions?contract_id=${contractId}`, {}, 6000);
+        if (!res.ok) {
+          console.error(`Failed to load submissions for contract ${contractId}:`, res.status);
+          return { contractId, submissions: [] };
+        }
+        const data = await res.json();
+        return { contractId, submissions: data?.submissions || [] };
+      });
+
+      const results = await Promise.all(submissionsPromises);
+      
+      const allSubmissions = {};
+      results.forEach((result) => {
+        const { contractId, submissions } = result;
+        if (Array.isArray(submissions)) {
+          submissions.forEach((submission) => {
+            if (submission.submission_id) {
+              allSubmissions[submission.submission_id] = submission;
+            }
+            if (submission.task_id) {
+              allSubmissions[submission.task_id] = submission;
+            }
+            if (submission.claim_id) {
+              allSubmissions[submission.claim_id] = submission;
+            }
+          });
+        }
+      });
+
+      setSubmissions(allSubmissions);
+    } catch (err) {
+      console.error('Failed to load submissions:', err);
+    }
+  }, [auth, contractCandidates]);
+
   useEffect(() => {
     if (!auth.apiKey || authBlocked) {
       setProposalItems([]);
@@ -407,9 +446,11 @@ const InscriptionModal = ({ inscription, onClose }) => {
       return undefined;
     }
     loadProposals();
+    loadSubmissions();
     // Poll every 30s for live status updates.
     refreshIntervalRef.current = setInterval(() => {
       loadProposals();
+      loadSubmissions();
     }, 30000);
     return () => {
       if (refreshIntervalRef.current) {
