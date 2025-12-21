@@ -1580,8 +1580,17 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 			return nil, fmt.Errorf("invalid action. must be: review, approve, or reject")
 		}
 
+		reviewPayload := map[string]interface{}{
+			"action": action,
+		}
+		if notes := h.toString(args["notes"]); notes != "" {
+			reviewPayload["notes"] = notes
+		}
+		if rejectionType := h.toString(args["rejection_type"]); rejectionType != "" {
+			reviewPayload["rejection_type"] = rejectionType
+		}
 		if result, err := h.postJSON(fmt.Sprintf("%s/api/smart_contract/submissions/%s/review", h.baseURL, submissionID),
-			map[string]interface{}{"action": action}); err == nil {
+			reviewPayload); err == nil {
 			return result, nil
 		}
 
@@ -1596,7 +1605,13 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 			newStatus = "rejected"
 		}
 
-		err := store.UpdateSubmissionStatus(ctx, submissionID, newStatus)
+		reviewNotes := ""
+		rejectionType := ""
+		if action == "reject" {
+			reviewNotes = h.toString(args["notes"])
+			rejectionType = h.toString(args["rejection_type"])
+		}
+		err := store.UpdateSubmissionStatus(ctx, submissionID, newStatus, reviewNotes, rejectionType)
 		if err != nil {
 			if strings.Contains(err.Error(), "not found") {
 				return nil, fmt.Errorf("submission not found")
@@ -1671,7 +1686,7 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 		}
 
 		// Reset status to pending_review
-		err = store.UpdateSubmissionStatus(ctx, submissionID, "pending_review")
+		err = store.UpdateSubmissionStatus(ctx, submissionID, "pending_review", "", "")
 		if err != nil {
 			return nil, fmt.Errorf("Failed to update submission: %v", err)
 		}

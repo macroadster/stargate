@@ -588,7 +588,7 @@ func (s *MemoryStore) PublishProposal(ctx context.Context, id string) error {
 }
 
 // UpdateSubmissionStatus updates the status of a submission and related entities.
-func (s *MemoryStore) UpdateSubmissionStatus(ctx context.Context, submissionID, status string) error {
+func (s *MemoryStore) UpdateSubmissionStatus(ctx context.Context, submissionID, status, reviewerNotes, rejectionType string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -598,6 +598,18 @@ func (s *MemoryStore) UpdateSubmissionStatus(ctx context.Context, submissionID, 
 	}
 
 	sub.Status = status
+	if status == "rejected" {
+		note := strings.TrimSpace(reviewerNotes)
+		rejType := strings.TrimSpace(rejectionType)
+		sub.RejectionReason = note
+		sub.RejectionType = rejType
+		now := time.Now()
+		sub.RejectedAt = &now
+	} else {
+		sub.RejectionReason = ""
+		sub.RejectionType = ""
+		sub.RejectedAt = nil
+	}
 	s.submissions[submissionID] = sub
 
 	switch status {

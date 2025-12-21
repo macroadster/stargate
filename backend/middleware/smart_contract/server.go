@@ -1861,8 +1861,9 @@ func BuildProposalFromIngestion(body ProposalCreateBody, rec *services.Ingestion
 
 // submissionReviewBody captures POST payload for reviewing submissions.
 type submissionReviewBody struct {
-	Action string `json:"action"` // review | approve | reject
-	Notes  string `json:"notes"`
+	Action        string `json:"action"` // review | approve | reject
+	Notes         string `json:"notes"`
+	RejectionType string `json:"rejection_type"`
 }
 
 // submissionReworkBody captures POST payload for reworking submissions.
@@ -2025,7 +2026,13 @@ func (s *Server) handleSubmissions(w http.ResponseWriter, r *http.Request) {
 			}
 
 			ctx := r.Context()
-			err := s.store.UpdateSubmissionStatus(ctx, submissionID, newStatus)
+			rejectionType := ""
+			reviewNotes := ""
+			if body.Action == "reject" {
+				reviewNotes = body.Notes
+				rejectionType = body.RejectionType
+			}
+			err := s.store.UpdateSubmissionStatus(ctx, submissionID, newStatus, reviewNotes, rejectionType)
 			if err != nil {
 				if strings.Contains(err.Error(), "not found") {
 					Error(w, http.StatusNotFound, "submission not found")
@@ -2114,7 +2121,7 @@ func (s *Server) handleSubmissions(w http.ResponseWriter, r *http.Request) {
 
 			// Reset status to pending_review
 			ctx := r.Context()
-			err = s.store.UpdateSubmissionStatus(ctx, submissionID, "pending_review")
+			err = s.store.UpdateSubmissionStatus(ctx, submissionID, "pending_review", "", "")
 			if err != nil {
 				Error(w, http.StatusInternalServerError, err.Error())
 				return

@@ -82,6 +82,9 @@ type Submission struct {
 	Status          string         `json:"status"` // pending_review | accepted | rejected
 	Deliverables    map[string]any `json:"deliverables,omitempty"`
 	CompletionProof map[string]any `json:"completion_proof,omitempty"`
+	RejectionReason string         `json:"rejection_reason,omitempty"`
+	RejectionType   string         `json:"rejection_type,omitempty"`
+	RejectedAt      *time.Time     `json:"rejected_at,omitempty"`
 	CreatedAt       time.Time      `json:"created_at"`
 }
 

@@ -443,6 +443,29 @@ const DeliverablesReview = ({ proposalItems, submissions, onRefresh, isContractL
                     </div>
                   )}
 
+                  {(deliverable.submission?.rejection_reason || deliverable.submission?.rejection_type) && (
+                    <div>
+                      <h6 className="text-sm font-semibold text-black dark:text-white mb-2">Rejection Feedback</h6>
+                      <div className="bg-red-50 dark:bg-red-900/40 border border-red-200 dark:border-red-700 rounded-lg p-3 space-y-2">
+                        {deliverable.submission?.rejection_type && (
+                          <div className="text-xs font-semibold uppercase tracking-wide text-red-700 dark:text-red-200">
+                            {deliverable.submission.rejection_type}
+                          </div>
+                        )}
+                        {deliverable.submission?.rejection_reason && (
+                          <div className="text-sm text-red-900 dark:text-red-100 whitespace-pre-wrap">
+                            {deliverable.submission.rejection_reason}
+                          </div>
+                        )}
+                        {deliverable.submission?.rejected_at && (
+                          <div className="text-xs text-red-700 dark:text-red-200">
+                            Rejected at {new Date(deliverable.submission.rejected_at).toLocaleString()}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
                   {deliverable.submission?.deliverables?.document && (
                     <div>
                       <h6 className="text-sm font-semibold text-black dark:text-white mb-2">Submission Document</h6>

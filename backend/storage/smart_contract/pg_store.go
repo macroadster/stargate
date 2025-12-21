@@ -103,6 +103,9 @@ CREATE TABLE IF NOT EXISTS mcp_submissions (
   status TEXT,
   deliverables JSONB,
   completion_proof JSONB,
+  rejection_reason TEXT,
+  rejection_type TEXT,
+  rejected_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ
 );
 
@@ -118,6 +121,9 @@ CREATE TABLE IF NOT EXISTS mcp_proposals (
 );
 CREATE INDEX IF NOT EXISTS idx_mcp_proposals_status ON mcp_proposals(status);
 CREATE INDEX IF NOT EXISTS idx_mcp_tasks_contract_status ON mcp_tasks(contract_id, status);
+ALTER TABLE mcp_submissions ADD COLUMN IF NOT EXISTS rejection_reason TEXT;
+ALTER TABLE mcp_submissions ADD COLUMN IF NOT EXISTS rejection_type TEXT;
+ALTER TABLE mcp_submissions ADD COLUMN IF NOT EXISTS rejected_at TIMESTAMPTZ;
 `
 	_, err := s.pool.Exec(ctx, schema)
 	return err
@@ -578,7 +584,7 @@ func (s *PGStore) ListSubmissions(ctx context.Context, taskIDs []string) ([]smar
 		return nil, nil
 	}
 	rows, err := s.pool.Query(ctx, `
-SELECT s.submission_id, s.claim_id, c.task_id, s.status, s.deliverables, s.completion_proof, s.created_at
+SELECT s.submission_id, s.claim_id, c.task_id, s.status, s.deliverables, s.completion_proof, s.rejection_reason, s.rejection_type, s.rejected_at, s.created_at
 FROM mcp_submissions s
 JOIN mcp_claims c ON c.claim_id = s.claim_id
 WHERE c.task_id = ANY($1::text[])
@@ -592,8 +598,13 @@ ORDER BY s.created_at DESC
 	for rows.Next() {
 		var sub smart_contract.Submission
 		var delivJSON, proofJSON []byte
-		if err := rows.Scan(&sub.SubmissionID, &sub.ClaimID, &sub.TaskID, &sub.Status, &delivJSON, &proofJSON, &sub.CreatedAt); err != nil {
+		var rejectedAt sql.NullTime
+		if err := rows.Scan(&sub.SubmissionID, &sub.ClaimID, &sub.TaskID, &sub.Status, &delivJSON, &proofJSON, &sub.RejectionReason, &sub.RejectionType, &rejectedAt, &sub.CreatedAt); err != nil {
 			return nil, err
+		}
+		if rejectedAt.Valid {
+			t := rejectedAt.Time
+			sub.RejectedAt = &t
 		}
 		if len(delivJSON) > 0 {
 			_ = json.Unmarshal(delivJSON, &sub.Deliverables)
@@ -1103,7 +1114,7 @@ ORDER BY created_at DESC
 }
 
 // UpdateSubmissionStatus updates the status of a submission and related entities.
-func (s *PGStore) UpdateSubmissionStatus(ctx context.Context, submissionID, status string) error {
+func (s *PGStore) UpdateSubmissionStatus(ctx context.Context, submissionID, status, reviewerNotes, rejectionType string) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -1121,7 +1132,21 @@ func (s *PGStore) UpdateSubmissionStatus(ctx context.Context, submissionID, stat
 	}
 
 	// Update submission status
-	if _, err := tx.Exec(ctx, `UPDATE mcp_submissions SET status=$2 WHERE submission_id=$1`, submissionID, status); err != nil {
+	rejectionReason := strings.TrimSpace(reviewerNotes)
+	rejectionType = strings.TrimSpace(rejectionType)
+	var rejectedAt *time.Time
+	if status == "rejected" {
+		now := time.Now()
+		rejectedAt = &now
+	} else {
+		rejectionReason = ""
+		rejectionType = ""
+	}
+	if _, err := tx.Exec(ctx, `
+UPDATE mcp_submissions
+SET status=$2, rejection_reason=$3, rejection_type=$4, rejected_at=$5
+WHERE submission_id=$1
+`, submissionID, status, rejectionReason, rejectionType, rejectedAt); err != nil {
 		return err
 	}
 
