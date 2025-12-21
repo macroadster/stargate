@@ -736,7 +736,10 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 		for _, t := range tasks {
 			taskIDs = append(taskIDs, t.TaskID)
 		}
-		subs, _ := store.ListSubmissions(ctx, taskIDs)
+		subs, err := store.ListSubmissions(ctx, taskIDs)
+		if err != nil || subs == nil {
+			subs = []smart_contract.Submission{}
+		}
 
 		return map[string]interface{}{
 			"tasks":         tasks,
