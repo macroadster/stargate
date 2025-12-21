@@ -263,6 +263,8 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 	var raiseFundPayerOrder []string
 	var raiseFundPayersByWallet map[string]bitcoin.PayerTarget
 	var raiseFundPayerTotals map[string]int64
+	var raiseFundTaskIDs []string
+	var raiseFundTasksByWallet map[string][]string
 	if isRaiseFund(fundingMode) {
 		if s.store == nil {
 			Error(w, http.StatusBadRequest, "task store unavailable for raise_fund")
@@ -289,6 +291,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		payerTotals := make(map[string]int64)
 		raiseFundPayoutsByPayer = make(map[string][]bitcoin.PayoutOutput)
 		raiseFundPayersByWallet = make(map[string]bitcoin.PayerTarget)
+		raiseFundTasksByWallet = make(map[string][]string)
 		var payerOrder []string
 		var payoutTotal int64
 		for _, task := range tasks {
@@ -297,6 +300,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 				return
 			}
 			payoutTotal += task.BudgetSats
+			raiseFundTaskIDs = append(raiseFundTaskIDs, task.TaskID)
 			payout := bitcoin.PayoutOutput{
 				Address:   fundAddr,
 				ValueSats: task.BudgetSats,
@@ -315,6 +319,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 			}
 			payerTotals[taskWallet] += task.BudgetSats
 			raiseFundPayoutsByPayer[taskWallet] = append(raiseFundPayoutsByPayer[taskWallet], payout)
+			raiseFundTasksByWallet[taskWallet] = append(raiseFundTasksByWallet[taskWallet], task.TaskID)
 		}
 		for _, wallet := range payerOrder {
 			addr, err := btcutil.DecodeAddress(wallet, params)
@@ -467,6 +472,13 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 			if splitRes.FundingTxID != "" {
 				fundingTxIDs = append(fundingTxIDs, splitRes.FundingTxID)
 			}
+			if len(raiseFundTasksByWallet[wallet]) > 0 {
+				for _, taskID := range raiseFundTasksByWallet[wallet] {
+					if err := s.updateTaskCommitmentProof(r.Context(), taskID, splitRes, pixelBytes); err != nil {
+						log.Printf("psbt: failed to update task proof for %s: %v", taskID, err)
+					}
+				}
+			}
 			psbtEntries = append(psbtEntries, map[string]interface{}{
 				"psbt":               splitRes.EncodedHex,
 				"psbt_hex":           splitRes.EncodedHex,
@@ -559,6 +571,12 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 	if taskID := strings.TrimSpace(body.TaskID); taskID != "" {
 		if err := s.updateTaskCommitmentProof(r.Context(), taskID, res, pixelBytes); err != nil {
 			log.Printf("psbt: failed to update task proof for %s: %v", taskID, err)
+		}
+	} else if isRaiseFund(fundingMode) && len(raiseFundTaskIDs) > 0 {
+		for _, taskID := range raiseFundTaskIDs {
+			if err := s.updateTaskCommitmentProof(r.Context(), taskID, res, pixelBytes); err != nil {
+				log.Printf("psbt: failed to update task proof for %s: %v", taskID, err)
+			}
 		}
 	}
 
