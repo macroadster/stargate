@@ -32,6 +32,8 @@ const InscriptionModal = ({ inscription, onClose }) => {
   const [approvingId, setApprovingId] = useState('');
   const [submissions, setSubmissions] = useState({});
   const [submissionsList, setSubmissionsList] = useState([]);
+  const [dashboardFilter, setDashboardFilter] = useState('all');
+  const [dashboardSort, setDashboardSort] = useState('status');
   const [psbtForm, setPsbtForm] = useState({
     contractorWallet: '',
     fundraiserWallet: '',
@@ -477,6 +479,29 @@ const InscriptionModal = ({ inscription, onClose }) => {
       }
     };
   }, [contractKey, contractCandidates, loadProposals]);
+
+  const getSubmissionTimestamp = (submission) => {
+    const raw = submission?.submitted_at || submission?.created_at;
+    if (!raw) return 0;
+    const parsed = Date.parse(raw);
+    return Number.isNaN(parsed) ? 0 : parsed;
+  };
+
+  const getLatestSubmissionByTask = (taskId) => {
+    if (!taskId || submissionsList.length === 0) return null;
+    let latest = null;
+    submissionsList.forEach((submission) => {
+      if (submission?.task_id !== taskId) return;
+      if (!latest) {
+        latest = submission;
+        return;
+      }
+      if (getSubmissionTimestamp(submission) > getSubmissionTimestamp(latest)) {
+        latest = submission;
+      }
+    });
+    return latest;
+  };
 
   useEffect(() => {
     if (psbtForm.fundraiserWallet) {
@@ -1325,6 +1350,173 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                   </div>
 
                   )}
+
+                  {(() => {
+                    if (deliverableTasks.length === 0) return null;
+                    const rows = deliverableTasks.map((task) => {
+                      const submission = getLatestSubmissionByTask(task.task_id);
+                      const submissionStatus = (submission?.status || '').toLowerCase();
+                      let displayStatus = (task.status || 'pending').toLowerCase();
+                      if (submissionStatus) {
+                        displayStatus = submissionStatus;
+                      }
+                      return {
+                        task,
+                        submission,
+                        displayStatus,
+                      };
+                    });
+                    const counts = rows.reduce((acc, row) => {
+                      acc.total += 1;
+                      acc[row.displayStatus] = (acc[row.displayStatus] || 0) + 1;
+                      return acc;
+                    }, { total: 0 });
+                    const approvedCount = counts.approved || 0;
+                    const pendingReviewCount = counts.pending_review || 0;
+                    const progress = counts.total > 0 ? Math.round((approvedCount / counts.total) * 100) : 0;
+
+                    const filtered = rows.filter((row) => {
+                      if (dashboardFilter === 'all') return true;
+                      return row.displayStatus === dashboardFilter;
+                    });
+                    const sorted = [...filtered].sort((a, b) => {
+                      if (dashboardSort === 'title') {
+                        return (a.task.title || '').localeCompare(b.task.title || '');
+                      }
+                      if (dashboardSort === 'budget') {
+                        return (b.task.budget_sats || 0) - (a.task.budget_sats || 0);
+                      }
+                      return (a.displayStatus || '').localeCompare(b.displayStatus || '');
+                    });
+
+                    const exportStatusReport = () => {
+                      const payload = rows.map((row) => ({
+                        task_id: row.task.task_id,
+                        title: row.task.title,
+                        status: row.displayStatus,
+                        budget_sats: row.task.budget_sats,
+                        submission_id: row.submission?.submission_id,
+                        submitted_at: row.submission?.submitted_at || row.submission?.created_at,
+                        rejection_reason: row.submission?.rejection_reason,
+                        rejection_type: row.submission?.rejection_type,
+                      }));
+                      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+                      const url = URL.createObjectURL(blob);
+                      const link = document.createElement('a');
+                      link.href = url;
+                      link.download = `task-status-${new Date().toISOString().slice(0, 10)}.json`;
+                      document.body.appendChild(link);
+                      link.click();
+                      link.remove();
+                      URL.revokeObjectURL(url);
+                    };
+
+                    return (
+                      <div className="border border-gray-200 dark:border-gray-800 rounded-lg p-4 bg-white dark:bg-gray-900 space-y-4">
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <div>
+                            <h4 className="text-base font-semibold text-black dark:text-white">Task Status Dashboard</h4>
+                            <p className="text-xs text-gray-500 dark:text-gray-400">Snapshot of task progress and review queue.</p>
+                          </div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <select
+                              value={dashboardFilter}
+                              onChange={(e) => setDashboardFilter(e.target.value)}
+                              className="text-xs rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-2 py-1"
+                            >
+                              <option value="all">All statuses</option>
+                              <option value="available">Available</option>
+                              <option value="claimed">Claimed</option>
+                              <option value="submitted">Submitted</option>
+                              <option value="pending_review">Pending review</option>
+                              <option value="reviewed">Reviewed</option>
+                              <option value="approved">Approved</option>
+                              <option value="rejected">Rejected</option>
+                            </select>
+                            <select
+                              value={dashboardSort}
+                              onChange={(e) => setDashboardSort(e.target.value)}
+                              className="text-xs rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-2 py-1"
+                            >
+                              <option value="status">Sort by status</option>
+                              <option value="title">Sort by title</option>
+                              <option value="budget">Sort by budget</option>
+                            </select>
+                            <button
+                              type="button"
+                              onClick={exportStatusReport}
+                              className="px-3 py-1.5 text-xs rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
+                            >
+                              Export JSON
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+                          <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-3">
+                            <div className="text-gray-500 dark:text-gray-400">Total tasks</div>
+                            <div className="text-lg font-semibold text-black dark:text-white">{counts.total || 0}</div>
+                          </div>
+                          <div className="bg-emerald-50 dark:bg-emerald-900/40 rounded-lg p-3">
+                            <div className="text-emerald-700 dark:text-emerald-200">Approved</div>
+                            <div className="text-lg font-semibold text-emerald-800 dark:text-emerald-100">{counts.approved || 0}</div>
+                          </div>
+                          <div className="bg-amber-50 dark:bg-amber-900/40 rounded-lg p-3">
+                            <div className="text-amber-700 dark:text-amber-200">Pending review</div>
+                            <div className="text-lg font-semibold text-amber-800 dark:text-amber-100">{pendingReviewCount}</div>
+                          </div>
+                          <div className="bg-blue-50 dark:bg-blue-900/40 rounded-lg p-3">
+                            <div className="text-blue-700 dark:text-blue-200">Claimed</div>
+                            <div className="text-lg font-semibold text-blue-800 dark:text-blue-100">{counts.claimed || 0}</div>
+                          </div>
+                        </div>
+
+                        <div>
+                          <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400 mb-2">
+                            <span>Progress</span>
+                            <span>{progress}% complete</span>
+                          </div>
+                          <div className="w-full h-2 rounded-full bg-gray-200 dark:bg-gray-800 overflow-hidden">
+                            <div
+                              className="h-full bg-emerald-500"
+                              style={{ width: `${progress}%` }}
+                            />
+                          </div>
+                        </div>
+
+                        {pendingReviewCount > 0 && (
+                          <div className="text-xs text-amber-800 dark:text-amber-200 bg-amber-50 dark:bg-amber-900/40 border border-amber-200 dark:border-amber-700 rounded p-2">
+                            {pendingReviewCount} submission{pendingReviewCount === 1 ? '' : 's'} waiting for review.
+                          </div>
+                        )}
+
+                        <div className="border border-gray-200 dark:border-gray-800 rounded-lg overflow-hidden">
+                          <div className="grid grid-cols-4 gap-2 bg-gray-50 dark:bg-gray-900 text-xs text-gray-500 dark:text-gray-400 px-3 py-2">
+                            <span>Task</span>
+                            <span>Status</span>
+                            <span>Budget</span>
+                            <span>Last submission</span>
+                          </div>
+                          <div className="divide-y divide-gray-200 dark:divide-gray-800 text-xs">
+                            {sorted.map((row) => (
+                              <div key={row.task.task_id} className="grid grid-cols-4 gap-2 px-3 py-2">
+                                <span className="text-gray-800 dark:text-gray-200 font-semibold truncate">{row.task.title}</span>
+                                <span className="text-gray-600 dark:text-gray-300">{row.displayStatus}</span>
+                                <span className="text-gray-600 dark:text-gray-300">{row.task.budget_sats || 0} sats</span>
+                                <span className="text-gray-500 dark:text-gray-400">
+                                  {row.submission?.submitted_at
+                                    ? new Date(row.submission.submitted_at).toLocaleDateString()
+                                    : row.submission?.created_at
+                                      ? new Date(row.submission.created_at).toLocaleDateString()
+                                      : '—'}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
 
                   <DeliverablesReview
                     proposalItems={proposalItems}
