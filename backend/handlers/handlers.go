@@ -349,6 +349,7 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 		method      string
 		price       string
 		address     string
+		fundingMode string
 		filename    string
 		imgBytes    []byte
 		imageErr    error
@@ -362,6 +363,7 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 			Method      string `json:"method"`
 			Price       string `json:"price"`
 			Address     string `json:"address"`
+			FundingMode string `json:"funding_mode"`
 			ImageBase64 string `json:"image_base64"`
 			Filename    string `json:"filename"`
 		}
@@ -376,6 +378,7 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 		method = payload.Method
 		price = payload.Price
 		address = payload.Address
+		fundingMode = payload.FundingMode
 		filename = payload.Filename
 		if method == "" {
 			method = "alpha"
@@ -405,6 +408,7 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 		}
 		price = r.FormValue("price")
 		address = r.FormValue("address")
+		fundingMode = r.FormValue("funding_mode")
 
 		// Get file (optional)
 		file, header, err := r.FormFile("image")
@@ -458,47 +462,29 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 	// Seed ingestion + MCP contract before proxy so both UIs see it even on proxy success.
 	if h.ingestionService != nil {
 		imgB64 := base64.StdEncoding.EncodeToString(imgBytes)
-		skipCreate := false
-		if rec, err := h.ingestionService.GetByImageAndMessage(imgB64, text); err == nil && rec != nil {
-			if visibleHash != "" && rec.ID != visibleHash {
-				if err := h.ingestionService.UpdateID(rec.ID, visibleHash); err != nil {
-					fmt.Printf("Failed to update ingestion id from %s to %s: %v\n", rec.ID, visibleHash, err)
-					ingestionID = rec.ID
-				} else {
-					ingestionID = visibleHash
-				}
-			} else {
-				ingestionID = rec.ID
-			}
-			if visibleHash != "" {
-				if err := h.ingestionService.UpdateMetadata(ingestionID, map[string]interface{}{"visible_pixel_hash": visibleHash}); err != nil {
-					fmt.Printf("Failed to update ingestion metadata for %s: %v\n", ingestionID, err)
-				}
-			}
-			skipCreate = true
-		}
 		meta := map[string]interface{}{
 			"embedded_message":   text,
 			"message":            text,
 			"price":              price,
 			"address":            address,
+			"funding_mode":       fundingMode,
 			"ingestion_id":       ingestionID,
 			"visible_pixel_hash": visibleHash,
 		}
-		if !skipCreate {
-			ingRec := services.IngestionRecord{
-				ID:            ingestionID,
-				Filename:      filename,
-				Method:        method,
-				MessageLength: len(text),
-				ImageBase64:   imgB64,
-				Metadata:      meta,
-				Status:        "pending",
-			}
-			if ingRec.Filename == "" {
-				ingRec.Filename = "inscription.png"
-			}
-			if err := h.ingestionService.Create(ingRec); err != nil {
+		ingRec := services.IngestionRecord{
+			ID:            ingestionID,
+			Filename:      filename,
+			Method:        method,
+			MessageLength: len(text),
+			ImageBase64:   imgB64,
+			Metadata:      meta,
+			Status:        "pending",
+		}
+		if ingRec.Filename == "" {
+			ingRec.Filename = "inscription.png"
+		}
+		if err := h.ingestionService.Create(ingRec); err != nil {
+			if updateErr := h.ingestionService.UpdateMetadata(ingestionID, meta); updateErr != nil {
 				fmt.Printf("Failed to create ingestion record for %s: %v\n", ingestionID, err)
 			}
 		}
@@ -517,9 +503,10 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 
 		// Text & method (embed message, price, address as JSON string)
 		embedPayload := map[string]string{
-			"message": text,
-			"price":   price,
-			"address": address,
+			"message":      text,
+			"price":        price,
+			"address":      address,
+			"funding_mode": fundingMode,
 		}
 		if msgJSON, err := json.Marshal(embedPayload); err == nil {
 			writer.WriteField("message", string(msgJSON))

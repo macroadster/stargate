@@ -227,7 +227,11 @@ export default function DiscoverPage() {
           <div className="lg:col-span-2 space-y-4">
             {proposals.map((p) => {
               const approved = (p.status || '').toLowerCase() === 'approved';
+              const fundingMode = String(p.metadata?.funding_mode || '').toLowerCase();
+              const isRaiseFund = fundingMode === 'raise_fund' || fundingMode === 'fundraiser' || fundingMode === 'fundraise';
+              const fundDepositAddress = p.metadata?.funding_address || p.metadata?.address || '';
               const tasks = p.tasks || [];
+              const totalBudget = tasks.reduce((sum, t) => sum + (Number(t.budget_sats) || 0), 0);
               const claimedCount = tasks.filter((t) => (t.status || '').toLowerCase() === 'claimed').length;
               return (
                 <div key={p.id} className="border border-gray-200 dark:border-gray-800 rounded-xl bg-white dark:bg-gray-900 p-4 shadow-sm">
@@ -238,7 +242,14 @@ export default function DiscoverPage() {
                         <span className={`px-2 py-0.5 rounded text-[11px] border ${approved ? 'border-green-500 text-green-600' : 'border-amber-500 text-amber-600'}`}>
                           {p.status || 'pending'}
                         </span>
-                        <span className="text-xs text-gray-500">Budget: {p.budget_sats} sats</span>
+                        <span className="text-xs text-gray-500">
+                          {isRaiseFund ? `Funding target: ${totalBudget || p.budget_sats} sats` : `Budget: ${p.budget_sats} sats`}
+                        </span>
+                        {isRaiseFund && fundDepositAddress && (
+                          <span className="text-xs text-gray-500 font-mono truncate max-w-[240px]">
+                            Fund deposit: {fundDepositAddress}
+                          </span>
+                        )}
                         {claimedCount > 0 && <span className="text-xs text-blue-600 dark:text-blue-300">{claimedCount} claimed</span>}
                       </div>
                       <h3 className="text-lg font-semibold mt-2">{p.title}</h3>
@@ -251,10 +262,13 @@ export default function DiscoverPage() {
                       <div key={t.task_id} className="flex items-center justify-between gap-3 rounded-lg border border-gray-200 dark:border-gray-800 px-3 py-2">
                         <div className="flex-1">
                           <div className="font-semibold text-sm">{t.title}</div>
-                          <div className="text-xs text-gray-500">Budget {t.budget_sats} sats • Goal {t.goal_id || 'n/a'}</div>
+                          <div className="text-xs text-gray-500">Task budget {t.budget_sats} sats • Goal {t.goal_id || 'n/a'}</div>
                           <div className="text-xs text-gray-500">
                             Status: {(t.status || 'pending')} {t.claimed_by ? `• claimed by ${t.claimed_by}` : ''} {t.claim_expires_at ? `• expires in ${formatCountdown(t.claim_expires_at)}` : ''}
                           </div>
+                          {isRaiseFund && (t.contractor_wallet || t.merkle_proof?.contractor_wallet) && (
+                            <div className="text-[11px] text-gray-500">Contributor wallet: {t.contractor_wallet || t.merkle_proof?.contractor_wallet}</div>
+                          )}
                           {(t.skills_required || []).length > 0 && (
                             <div className="text-[11px] text-gray-500">Skills: {(t.skills_required || []).join(', ')}</div>
                           )}

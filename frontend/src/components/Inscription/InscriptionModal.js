@@ -40,7 +40,6 @@ const InscriptionModal = ({ inscription, onClose }) => {
     contractId: '',
     taskId: '',
     includeDonation: true,
-    useFundraiserPayout: false,
   });
   const [psbtResult, setPsbtResult] = useState(null);
   const [psbtError, setPsbtError] = useState('');
@@ -94,7 +93,6 @@ const InscriptionModal = ({ inscription, onClose }) => {
     setShowPsbtQr(false);
   }, [psbtResult]);
   const inscriptionMessageRaw = inscription.text || inscription.metadata?.embedded_message || inscription.metadata?.extracted_message || '';
-  const inscriptionPriceRaw = inscription.price ?? inscription.metadata?.price ?? null;
   const inscriptionAddressRaw = inscription.address ?? inscription.metadata?.address ?? '';
   const contractCandidates = useMemo(() => {
     const rawIds = [
@@ -179,8 +177,14 @@ const InscriptionModal = ({ inscription, onClose }) => {
   }
 
   const inscriptionMessage = parsedPayload?.message || inscriptionMessageRaw;
-  const inscriptionPrice = parsedPayload?.price ?? inscriptionPriceRaw;
   const inscriptionAddress = parsedPayload?.address ?? inscriptionAddressRaw;
+  const fundingMode = (
+    inscription.metadata?.funding_mode ||
+    parsedPayload?.funding_mode ||
+    approvedProposal?.metadata?.funding_mode ||
+    ''
+  ).toLowerCase();
+  const isRaiseFund = fundingMode === 'raise_fund' || fundingMode === 'fundraiser' || fundingMode === 'fundraise';
   const selectedTask = useMemo(() => {
     const sourceTasks = psbtTasks.length > 0 ? psbtTasks : allTasks;
     if (psbtForm.taskId) return sourceTasks.find((t) => t.task_id === psbtForm.taskId) || sourceTasks[0];
@@ -190,7 +194,7 @@ const InscriptionModal = ({ inscription, onClose }) => {
   const fundDepositAddress = useMemo(() => {
     const addr = (value) => (value || '').trim();
     const isPlaceholder = (value) => value.includes('...') || value.toLowerCase().includes('pending');
-    const candidates = psbtForm.useFundraiserPayout
+    const candidates = isRaiseFund
       ? [
           inscription.metadata?.funding_address,
           inscription.metadata?.payer_address,
@@ -205,11 +209,32 @@ const InscriptionModal = ({ inscription, onClose }) => {
     const picked = cleaned.find((value) => value && !isPlaceholder(value));
     return picked || '';
   }, [
-    psbtForm.useFundraiserPayout,
+    isRaiseFund,
     inscription.metadata?.funding_address,
     inscription.metadata?.payer_address,
     selectedTask?.merkle_proof?.funding_address,
     inscriptionAddress,
+  ]);
+  const resolvedContractorWallet = useMemo(
+    () =>
+      psbtForm.contractorWallet ||
+      selectedTask?.contractor_wallet ||
+      inscription.metadata?.contractor_wallet ||
+      '',
+    [psbtForm.contractorWallet, selectedTask?.contractor_wallet, inscription.metadata?.contractor_wallet],
+  );
+  const resolvedFundraiserWallet = useMemo(() => {
+    const explicit =
+      psbtForm.fundraiserWallet ||
+      inscription.metadata?.fundraiser_wallet ||
+      inscription.metadata?.payout_address ||
+      '';
+    return explicit || fundDepositAddress || '';
+  }, [
+    psbtForm.fundraiserWallet,
+    inscription.metadata?.fundraiser_wallet,
+    inscription.metadata?.payout_address,
+    fundDepositAddress,
   ]);
   const textContent = inscriptionMessage || '';
   const confidenceValue = Number(inscription.metadata?.confidence || 0);
@@ -357,6 +382,7 @@ const InscriptionModal = ({ inscription, onClose }) => {
             prev.fundraiserWallet ||
             inscription.metadata?.fundraiser_wallet ||
             inscription.metadata?.payout_address ||
+            firstTask?.contractor_wallet ||
             fundDepositAddress ||
             '',
         }));
@@ -393,7 +419,10 @@ const InscriptionModal = ({ inscription, onClose }) => {
   }, [contractKey, contractCandidates, loadProposals]);
 
   useEffect(() => {
-    if (!psbtForm.fundraiserWallet && fundDepositAddress) {
+    if (psbtForm.fundraiserWallet) {
+      return;
+    }
+    if (fundDepositAddress) {
       setPsbtForm((prev) => ({ ...prev, fundraiserWallet: fundDepositAddress }));
     }
   }, [psbtForm.fundraiserWallet, fundDepositAddress]);
@@ -438,38 +467,31 @@ const InscriptionModal = ({ inscription, onClose }) => {
       return;
     }
     const contractId = psbtForm.contractId || primaryContractId;
-    const payoutWallet =
-      psbtForm.contractorWallet ||
-      selectedTask?.contractor_wallet ||
-      inscription.metadata?.contractor_wallet ||
-      '';
-    const fundraiserWallet =
-      psbtForm.fundraiserWallet ||
-      inscription.metadata?.fundraiser_wallet ||
-      inscription.metadata?.payout_address ||
-      fundDepositAddress ||
-      '';
-    if (!selectedTask) {
+    const payoutWallet = resolvedContractorWallet;
+    const fundraiserWallet = resolvedFundraiserWallet;
+    const fundingTasks = deliverableTasks.length > 0 ? deliverableTasks : psbtTasks;
+    if (!isRaiseFund && !selectedTask) {
       setPsbtError('Select a task to build the PSBT.');
       return;
     }
-    const targetBudget =
-      Number(psbtForm.budgetSats || 0) ||
-      approvedBudgetsTotal ||
-      Number(selectedTask?.budget_sats || 0) ||
-      0;
-    const payouts = psbtForm.useFundraiserPayout
-      ? fundraiserWallet
-        ? [{ address: fundraiserWallet, amount_sats: Math.trunc(targetBudget) }]
-        : []
+    if (isRaiseFund && fundingTasks.length === 0) {
+      setPsbtError('No tasks available to fund.');
+      return;
+    }
+    const raiseFundTarget = fundingTasks.reduce((sum, t) => sum + (Number(t.budget_sats) || 0), 0);
+    const targetBudget = isRaiseFund
+      ? raiseFundTarget
+      : Number(psbtForm.budgetSats || 0) || approvedBudgetsTotal || Number(selectedTask?.budget_sats || 0) || 0;
+    const payouts = isRaiseFund
+      ? []
       : payoutSummaries
           .filter((p) => p.wallet && p.wallet !== 'Unknown wallet')
           .map((p) => ({ address: p.wallet, amount_sats: Math.trunc(p.total) }));
-    if (psbtForm.useFundraiserPayout && !fundraiserWallet) {
+    if (isRaiseFund && !fundraiserWallet) {
       setPsbtError('Add the fundraiser payout address first.');
       return;
     }
-    if (!psbtForm.useFundraiserPayout && !payoutWallet && payouts.length === 0) {
+    if (!isRaiseFund && !payoutWallet && payouts.length === 0) {
       setPsbtError('No contractor wallet found for this task.');
       return;
     }
@@ -482,7 +504,7 @@ const InscriptionModal = ({ inscription, onClose }) => {
       const feeRateParsed = psbtForm.feeRate === '' ? NaN : Number(psbtForm.feeRate);
       const feeRate = Number.isFinite(feeRateParsed) ? Math.max(1, feeRateParsed) : 1;
       const payload = {
-        contractor_wallet: payoutWallet,
+        contractor_wallet: isRaiseFund ? undefined : payoutWallet,
         pixel_hash: psbtForm.includeDonation
           ? selectedTask?.merkle_proof?.visible_pixel_hash ||
             psbtForm.pixelHash?.trim() ||
@@ -490,12 +512,11 @@ const InscriptionModal = ({ inscription, onClose }) => {
             undefined
           : undefined,
         use_pixel_hash: psbtForm.includeDonation,
-        task_id: selectedTask?.task_id,
+        task_id: isRaiseFund ? undefined : selectedTask?.task_id,
         payouts: payouts.length > 0 ? payouts : undefined,
-        budget_sats:
-          targetBudget ||
-          undefined,
+        budget_sats: targetBudget || undefined,
         fee_rate_sats_vb: feeRate,
+        split_psbt: isRaiseFund ? true : undefined,
       };
       const res = await fetch(`${API_BASE}/api/smart_contract/contracts/${contractId}/psbt`, {
         method: 'POST',
@@ -526,17 +547,8 @@ const InscriptionModal = ({ inscription, onClose }) => {
       setPsbtError('No proposal available to publish.');
       return;
     }
-    const payoutWallet =
-      psbtForm.contractorWallet ||
-      selectedTask?.contractor_wallet ||
-      inscription.metadata?.contractor_wallet ||
-      '';
-    const fundraiserWallet =
-      psbtForm.fundraiserWallet ||
-      inscription.metadata?.fundraiser_wallet ||
-      inscription.metadata?.payout_address ||
-      fundDepositAddress ||
-      '';
+    const payoutWallet = resolvedContractorWallet;
+    const fundraiserWallet = resolvedFundraiserWallet;
     const fundingWallet =
       selectedTask?.merkle_proof?.funding_address ||
       inscription.metadata?.funding_address ||
@@ -545,11 +557,11 @@ const InscriptionModal = ({ inscription, onClose }) => {
       setPsbtError('Funding wallet does not match signed-in wallet.');
       return;
     }
-    if (psbtForm.useFundraiserPayout && !fundraiserWallet) {
+    if (isRaiseFund && !fundraiserWallet) {
       setPsbtError('Add the fundraiser payout address first.');
       return;
     }
-    if (!psbtForm.useFundraiserPayout && !payoutWallet) {
+    if (!isRaiseFund && !payoutWallet) {
       setPsbtError('Add the contractor payout wallet first.');
       return;
     }
@@ -925,17 +937,8 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                       <button
                         onClick={publishAndBuild}
                         disabled={(() => {
-                          const payoutWallet =
-                            psbtForm.contractorWallet ||
-                            selectedTask?.contractor_wallet ||
-                            inscription.metadata?.contractor_wallet ||
-                            '';
-                          const fundraiserWallet =
-                            psbtForm.fundraiserWallet ||
-                            inscription.metadata?.fundraiser_wallet ||
-                            inscription.metadata?.payout_address ||
-                            fundDepositAddress ||
-                            '';
+                          const payoutWallet = resolvedContractorWallet;
+                          const fundraiserWallet = resolvedFundraiserWallet;
                           const fundingWallet =
                             selectedTask?.merkle_proof?.funding_address ||
                             inscription.metadata?.funding_address ||
@@ -948,7 +951,7 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                             .filter((p) => p.wallet && p.wallet !== 'Unknown wallet')
                             .map((p) => p.wallet);
                           const noTasks = deliverableTasks.length === 0;
-                          const missingPayout = psbtForm.useFundraiserPayout
+                          const missingPayout = isRaiseFund
                             ? !fundraiserWallet
                             : payoutList.length === 0 && !payoutWallet;
                           return psbtLoading || !auth.wallet || !approvedProposal || missingPayout || noTasks || fundingMismatch;
@@ -979,32 +982,25 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                     ) : (
                       <div className="grid md:grid-cols-2 gap-3 text-sm mt-3">
                         <div className="space-y-1">
-                          <label className="text-xs text-gray-500">Budget (sum of proposal tasks)</label>
+                          <label className="text-xs text-gray-500">
+                            {isRaiseFund ? 'Funding target (sum of task budgets)' : 'Budget (sum of proposal tasks)'}
+                          </label>
                           <div className="h-10 px-3 py-2 rounded bg-gray-100 dark:bg-gray-800 font-mono text-xs flex items-center">
                             {approvedBudgetsTotal || selectedTask?.budget_sats || 'n/a'} sats
                           </div>
                         </div>
                         <div className="space-y-2">
                           <label className="block text-xs text-gray-500">
-                            {psbtForm.useFundraiserPayout ? 'Fund Deposit Address' : 'Payer Address'}
+                            {isRaiseFund ? 'Fund deposit address' : 'Payer address'}
                           </label>
                           <input
                             className="w-full h-10 rounded bg-gray-100 dark:bg-gray-800 px-3 py-2 font-mono text-xs text-gray-600 dark:text-gray-300"
-                            placeholder={psbtForm.useFundraiserPayout ? 'Contract creator address' : 'Funding address'}
-                            value={psbtForm.fundraiserWallet || fundDepositAddress || ''}
+                            placeholder={isRaiseFund ? 'Contract creator address' : 'Funding address'}
+                            value={isRaiseFund ? resolvedFundraiserWallet || '' : fundDepositAddress || ''}
                             readOnly
                           />
                         </div>
                         <div className="md:col-span-2 grid sm:grid-cols-2 gap-2">
-                          <label className="flex items-start gap-3 text-xs text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-800 rounded-md px-3 py-2">
-                            <input
-                              type="checkbox"
-                              className="mt-0.5 h-4 w-4 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500 dark:border-gray-600"
-                              checked={psbtForm.useFundraiserPayout}
-                              onChange={(e) => setPsbtForm((p) => ({ ...p, useFundraiserPayout: e.target.checked }))}
-                            />
-                            <span>Raise Fund</span>
-                          </label>
                           <label className="flex items-start gap-3 text-xs text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-800 rounded-md px-3 py-2">
                             <input
                               type="checkbox"
@@ -1028,7 +1024,9 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                         </div>
                         <div className="space-y-1 md:col-span-2">
                           <div className="text-xs text-gray-500">
-                            {psbtForm.useFundraiserPayout ? 'Donation summaries (contractor wallets)' : 'Payout summary by contractor wallet'}
+                            {isRaiseFund
+                              ? 'Contributor summary by contractor wallet'
+                              : 'Payout summary by contractor wallet'}
                           </div>
                           <div className="rounded bg-gray-100 dark:bg-gray-800 p-3 space-y-2 min-h-[96px]">
                             {payoutSummaries.map((item) => (
@@ -1048,28 +1046,19 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                       </div>
                     )}
                     {(() => {
-                      const payoutWallet =
-                        psbtForm.contractorWallet ||
-                        selectedTask?.contractor_wallet ||
-                        inscription.metadata?.contractor_wallet ||
-                        '';
-                      const fundraiserWallet =
-                        psbtForm.fundraiserWallet ||
-                        inscription.metadata?.fundraiser_wallet ||
-                        inscription.metadata?.payout_address ||
-                        fundDepositAddress ||
-                        '';
+                      const payoutWallet = resolvedContractorWallet;
+                      const fundraiserWallet = resolvedFundraiserWallet;
                       const payoutList = payoutSummaries
                         .filter((p) => p.wallet && p.wallet !== 'Unknown wallet')
                         .map((p) => p.wallet);
                       const payerAddress = psbtResult?.payer_address || auth.wallet || '';
-                      if (psbtForm.useFundraiserPayout && !fundraiserWallet) {
+                      if (isRaiseFund && !fundraiserWallet) {
                         return <div className="text-xs text-amber-600 dark:text-amber-400 mt-2">Fundraiser address missing.</div>;
                       }
-                      if (!psbtForm.useFundraiserPayout && !payoutWallet && payoutList.length === 0) {
+                      if (!isRaiseFund && !payoutWallet && payoutList.length === 0) {
                         return <div className="text-xs text-amber-600 dark:text-amber-400 mt-2">Payout wallet missing.</div>;
                       }
-                      if (!psbtForm.useFundraiserPayout && payerAddress && payoutList.length === 0 && payoutWallet === payerAddress) {
+                      if (!isRaiseFund && payerAddress && payoutList.length === 0 && payoutWallet === payerAddress) {
                         return (
                           <div className="text-xs text-amber-600 dark:text-amber-400 mt-2">
                             Payout matches payer wallet—confirm contractor address.
@@ -1080,6 +1069,72 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                     })()}
                     {psbtError && <div className="text-sm text-red-500 mt-2">{psbtError}</div>}
                     {psbtResult && (() => {
+                      const splitPsbts = Array.isArray(psbtResult.psbts) ? psbtResult.psbts : [];
+                      if (splitPsbts.length > 0) {
+                        return (
+                          <div className="mt-3 space-y-3 bg-gray-50 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700 rounded-lg p-3">
+                            <div className="text-xs text-gray-600 dark:text-gray-300">
+                              Split PSBTs: {splitPsbts.length} contributors
+                            </div>
+                            {splitPsbts.map((entry, index) => {
+                              const psbtValue =
+                                entry.psbt_hex ||
+                                entry.psbt ||
+                                entry.psbt_base64 ||
+                                entry.encodedBase64 ||
+                                entry.EncodedBase64 ||
+                                '';
+                              const psbtBase64 = entry.psbt_base64 || entry.encodedBase64 || entry.EncodedBase64 || '';
+                              const payerAddress = entry.payer_address || 'Unknown';
+                              return (
+                                <div key={`${payerAddress}-${index}`} className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-3 space-y-2">
+                                  <div className="text-[11px] text-gray-600 dark:text-gray-300 font-mono break-all">
+                                    Contributor: {payerAddress}
+                                  </div>
+                                  <div className="text-xs text-gray-600 dark:text-gray-300 grid grid-cols-[1fr_auto] gap-x-4 gap-y-1 font-mono">
+                                    <div>Inputs selected</div>
+                                    <div className="text-right tabular-nums">{entry.selected_sats} sats</div>
+                                    <div>Funding target</div>
+                                    <div className="text-right tabular-nums">{entry.budget_sats} sats</div>
+                                    {entry.commitment_sats && psbtForm.includeDonation ? (
+                                      <>
+                                        <div>Donation</div>
+                                        <div className="text-right tabular-nums">{entry.commitment_sats} sats</div>
+                                      </>
+                                    ) : null}
+                                    <div>Fee</div>
+                                    <div className="text-right tabular-nums">{entry.fee_sats} sats</div>
+                                    <div>Change</div>
+                                    <div className="text-right tabular-nums">{entry.change_sats} sats</div>
+                                  </div>
+                                  <textarea
+                                    className="w-full rounded bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 font-mono text-xs p-2"
+                                    rows={3}
+                                    readOnly
+                                    value={psbtValue}
+                                  />
+                                  <div className="flex gap-2 text-[11px] text-gray-600 dark:text-gray-300 flex-wrap">
+                                    <button
+                                      onClick={() => copyToClipboard(psbtValue, `hex-${index}`)}
+                                      className="px-2 py-1 rounded border border-gray-300 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-700"
+                                    >
+                                      {copiedPsbt === `hex-${index}` ? 'Copied hex' : 'Copy hex'}
+                                    </button>
+                                    {psbtBase64 && (
+                                      <button
+                                        onClick={() => copyToClipboard(psbtBase64, `b64-${index}`)}
+                                        className="px-2 py-1 rounded border border-gray-300 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-700"
+                                      >
+                                        {copiedPsbt === `b64-${index}` ? 'Copied base64' : 'Copy base64'}
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        );
+                      }
                       const psbtValue =
                         psbtResult.psbt_hex ||
                         psbtResult.psbt ||
@@ -1094,30 +1149,39 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                           : new TextEncoder().encode(psbtBase64).length
                         : 0;
                       const psbtQrTooLarge = psbtBase64Bytes > QR_BYTE_LIMIT;
-                      const payoutWallet =
-                        psbtForm.contractorWallet ||
-                        selectedTask?.contractor_wallet ||
-                        inscription.metadata?.contractor_wallet ||
-                        '';
-                      const budgetSats =
-                        psbtResult.budget_sats ||
-                        psbtResult.budget ||
-                        Number(psbtForm.budgetSats || 0) ||
-                        0;
+                      const effectiveRaiseFund = isRaiseFund || psbtResult?.funding_mode === 'raise_fund';
+                      const budgetSats = effectiveRaiseFund
+                        ? (psbtResult.budget_sats || approvedBudgetsTotal || 0)
+                        : (psbtResult.budget_sats || psbtResult.budget || Number(psbtForm.budgetSats || 0) || 0);
                       const payerAddress = psbtResult.payer_address || auth.wallet || 'Not signed in';
+                      const payerAddresses = Array.isArray(psbtResult.payer_addresses)
+                        ? psbtResult.payer_addresses
+                        : [];
+                      const changeAddresses = Array.isArray(psbtResult.change_addresses)
+                        ? psbtResult.change_addresses
+                        : [];
+                      const changeAmounts = Array.isArray(psbtResult.change_amounts)
+                        ? psbtResult.change_amounts
+                        : [];
+                      const payoutAmounts = Array.isArray(psbtResult.payout_amounts)
+                        ? psbtResult.payout_amounts
+                        : [];
+                      const payerDisplay = effectiveRaiseFund
+                        ? (payerAddresses.length > 0 ? payerAddresses.join(', ') : payerAddress)
+                        : payerAddress;
                       return (
                         <div className="mt-3 space-y-2 bg-gray-50 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700 rounded-lg p-3">
                           <div className="flex gap-2 text-[11px] text-gray-600 dark:text-gray-300 flex-wrap">
-                            <span>Payer: {payerAddress}</span>
+                            <span>{effectiveRaiseFund ? 'Contributors' : 'Payer'}: {payerDisplay}</span>
                             <span>Network: {psbtResult.network_params || 'testnet4'}</span>
                           </div>
                           <div className="text-xs text-gray-600 dark:text-gray-300 break-all">
-                            Payout script: {psbtResult.payout_script}
+                            {effectiveRaiseFund ? 'Fund deposit script' : 'Payout script'}: {psbtResult.payout_script}
                           </div>
                           <div className="text-xs text-gray-600 dark:text-gray-300 grid grid-cols-[1fr_auto] gap-x-4 gap-y-1 font-mono">
-                            <div>Selected</div>
+                            <div>{effectiveRaiseFund ? 'Inputs selected' : 'Selected'}</div>
                             <div className="text-right tabular-nums">{psbtResult.selected_sats} sats</div>
-                            <div>Price</div>
+                            <div>{effectiveRaiseFund ? 'Funding target' : 'Price'}</div>
                             <div className="text-right tabular-nums">{budgetSats} sats</div>
                             {psbtResult.commitment_sats && psbtForm.includeDonation ? (
                               <>
@@ -1130,6 +1194,28 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                             <div>Change</div>
                             <div className="text-right tabular-nums">{psbtResult.change_sats} sats</div>
                           </div>
+                          {effectiveRaiseFund && payoutAmounts.length > 1 && (
+                            <div className="rounded bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 p-2 text-[11px] text-gray-600 dark:text-gray-300 space-y-1">
+                              <div className="font-semibold text-gray-700 dark:text-gray-200">Funding outputs (per task)</div>
+                              {payoutAmounts.map((amount, index) => (
+                                <div key={`${amount}-${index}`} className="flex items-center justify-between font-mono">
+                                  <span>Output {index + 1}</span>
+                                  <span>{amount} sats</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          {effectiveRaiseFund && changeAddresses.length > 0 && (
+                            <div className="rounded bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 p-2 text-[11px] text-gray-600 dark:text-gray-300 space-y-1">
+                              <div className="font-semibold text-gray-700 dark:text-gray-200">Change outputs (by contributor)</div>
+                              {changeAddresses.map((addr, index) => (
+                                <div key={`${addr}-${index}`} className="flex items-center justify-between gap-2 font-mono">
+                                  <span className="truncate">{addr}</span>
+                                  <span>{changeAmounts[index] ?? 0} sats</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
                           <textarea
                             className="w-full rounded bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 font-mono text-xs p-2"
                             rows={3}

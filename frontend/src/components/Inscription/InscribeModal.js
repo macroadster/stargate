@@ -10,6 +10,7 @@ const InscribeModal = ({ onClose, onSuccess }) => {
   const [embedText, setEmbedText] = useState('');
   const [price, setPrice] = useState('');
   const [address, setAddress] = useState(auth.wallet || '');
+  const [fundingMode, setFundingMode] = useState('payout');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [inscriptionResult, setInscriptionResult] = useState(null);
   const buildPlaceholderImage = () => {
@@ -39,6 +40,7 @@ const InscribeModal = ({ onClose, onSuccess }) => {
         message: embedText,
         price,
         address,
+        funding_mode: fundingMode,
         method: 'alpha',
       };
 
@@ -136,6 +138,29 @@ const InscribeModal = ({ onClose, onSuccess }) => {
                 className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:bg-gray-700 dark:text-white"
                 placeholder="bc1..."
               />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                Funding Mode
+              </label>
+              <div className="relative">
+                <select
+                  value={fundingMode}
+                  onChange={(e) => setFundingMode(e.target.value)}
+                  className="w-full appearance-none px-3 pr-10 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:bg-gray-700 dark:text-white"
+                >
+                  <option value="payout">Payout to contractors</option>
+                  <option value="raise_fund">Raise fund from investor (collect from contractors)</option>
+                </select>
+                <svg
+                  className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500 dark:text-gray-300"
+                  viewBox="0 0 20 20"
+                  fill="currentColor"
+                >
+                  <path d="M5.25 7.5l4.5 4.5 4.5-4.5h-9z" />
+                </svg>
+              </div>
             </div>
 
             <div className="flex gap-3">

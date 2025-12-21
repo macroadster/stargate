@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"sort"
 
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
@@ -17,12 +18,15 @@ import (
 // PSBTRequest captures the inputs needed to craft a payout PSBT.
 type PSBTRequest struct {
 	PayerAddress      btcutil.Address
+	PayerAddresses    []btcutil.Address
 	TargetValueSats   int64
 	PixelHash         []byte
 	CommitmentSats    int64
 	ContractorAddress btcutil.Address
 	Payouts           []PayoutOutput
 	FeeRateSatPerVB   int64
+	ChangeAddress     btcutil.Address
+	UseAllPayers      bool
 }
 
 // PayoutOutput defines a payout destination and amount.
@@ -37,6 +41,8 @@ type PSBTResult struct {
 	EncodedHex       string
 	FeeSats          int64
 	ChangeSats       int64
+	ChangeAddresses  []string
+	ChangeAmounts    []int64
 	SelectedSats     int64
 	PayoutScript     []byte
 	PayoutScripts    [][]byte
@@ -50,6 +56,25 @@ type PSBTResult struct {
 	FundingTxID      string
 }
 
+// PayerTarget defines a funding contribution for a specific payer address.
+type PayerTarget struct {
+	Address    btcutil.Address
+	TargetSats int64
+}
+
+type payerSelection struct {
+	address       btcutil.Address
+	target        int64
+	selected      int64
+	feeShare      int64
+	change        int64
+	utxos         []AddressUTXO
+	candidates    []AddressUTXO
+	nextIndex     int
+	changeScript  []byte
+	changeAllowed bool
+}
+
 // BuildFundingPSBT selects confirmed UTXOs, estimates fees at the provided feerate, and builds a PSBT.
 // When a pixel hash is provided, a small commitment output is added alongside the contractor payout.
 func BuildFundingPSBT(client *MempoolClient, params *chaincfg.Params, req PSBTRequest) (*PSBTResult, error) {
@@ -57,12 +82,60 @@ func BuildFundingPSBT(client *MempoolClient, params *chaincfg.Params, req PSBTRe
 		req.FeeRateSatPerVB = 0
 	}
 
-	utxos, err := client.ListConfirmedUTXOs(req.PayerAddress.EncodeAddress())
-	if err != nil {
-		return nil, err
+	payerAddrs := req.PayerAddresses
+	if len(payerAddrs) == 0 {
+		if req.PayerAddress == nil {
+			return nil, fmt.Errorf("payer address required")
+		}
+		payerAddrs = []btcutil.Address{req.PayerAddress}
 	}
-	if len(utxos) == 0 {
+	changeAddr := req.ChangeAddress
+	if changeAddr == nil {
+		changeAddr = payerAddrs[0]
+	}
+
+	type payerUTXO struct {
+		address btcutil.Address
+		utxo    AddressUTXO
+	}
+	var candidates []payerUTXO
+	for _, addr := range payerAddrs {
+		if addr == nil {
+			return nil, fmt.Errorf("payer address required")
+		}
+		utxos, err := client.ListConfirmedUTXOs(addr.EncodeAddress())
+		if err != nil {
+			return nil, err
+		}
+		for _, u := range utxos {
+			candidates = append(candidates, payerUTXO{address: addr, utxo: u})
+		}
+	}
+	if len(candidates) == 0 {
 		return nil, fmt.Errorf("no confirmed utxos for address")
+	}
+
+	if req.UseAllPayers && len(payerAddrs) > 1 {
+		seeded := make([]payerUTXO, 0, len(payerAddrs))
+		remaining := make([]payerUTXO, 0, len(candidates))
+		for _, addr := range payerAddrs {
+			found := false
+			for i := 0; i < len(candidates); i++ {
+				if candidates[i].address.EncodeAddress() != addr.EncodeAddress() {
+					continue
+				}
+				seeded = append(seeded, candidates[i])
+				candidates[i] = candidates[len(candidates)-1]
+				candidates = candidates[:len(candidates)-1]
+				found = true
+				break
+			}
+			if !found {
+				return nil, fmt.Errorf("no confirmed utxos for payer address %s", addr.EncodeAddress())
+			}
+		}
+		remaining = append(remaining, candidates...)
+		candidates = append(seeded, remaining...)
 	}
 
 	payoutScripts, payoutAmounts, err := buildPayoutScripts(req)
@@ -94,22 +167,23 @@ func BuildFundingPSBT(client *MempoolClient, params *chaincfg.Params, req PSBTRe
 		return nil, fmt.Errorf("no payout or commitment outputs requested")
 	}
 
-	var selected []AddressUTXO
+	var selected []payerUTXO
 	var selectedValue int64
+	var estimatedInputVBytes int64
 	// Greedy selection: accumulate until budget+fee is covered.
-	for _, u := range utxos {
+	for _, u := range candidates {
 		selected = append(selected, u)
-		selectedValue += u.Value
-		inputVBytes := int64(len(selected)) * estimateInputVBytes(req.PayerAddress)
+		selectedValue += u.utxo.Value
+		estimatedInputVBytes += estimateInputVBytes(u.address)
 		// Two outputs when change is expected, otherwise one.
 		outputCount := int64(len(payoutScripts))
 		if commitmentScript != nil {
 			outputCount++
 		}
-		if selectedValue > requiredValue {
+		if changeAddr != nil && selectedValue > requiredValue {
 			outputCount++
 		}
-		estFee := estimateFee(inputVBytes, outputCount, req.FeeRateSatPerVB)
+		estFee := estimateFee(estimatedInputVBytes, outputCount, req.FeeRateSatPerVB)
 		if selectedValue >= requiredValue+estFee {
 			break
 		}
@@ -122,9 +196,9 @@ func BuildFundingPSBT(client *MempoolClient, params *chaincfg.Params, req PSBTRe
 	var meta []inputMeta
 	var actualInputVBytes int64
 	for _, u := range selected {
-		prevMsg, prevOut, err := client.FetchTxOutput(u.TxID, u.Vout)
+		prevMsg, prevOut, err := client.FetchTxOutput(u.utxo.TxID, u.utxo.Vout)
 		if err != nil {
-			return nil, fmt.Errorf("fetch prev output %s:%d: %w", u.TxID, u.Vout, err)
+			return nil, fmt.Errorf("fetch prev output %s:%d: %w", u.utxo.TxID, u.utxo.Vout, err)
 		}
 		actualInputVBytes += estimateInputVBytesFromPkScript(prevOut.PkScript)
 		meta = append(meta, inputMeta{
@@ -133,9 +207,13 @@ func BuildFundingPSBT(client *MempoolClient, params *chaincfg.Params, req PSBTRe
 		})
 	}
 
-	changeScript, err := txscript.PayToAddrScript(req.PayerAddress)
-	if err != nil {
-		return nil, fmt.Errorf("build change script: %w", err)
+	var changeScript []byte
+	if changeAddr != nil {
+		var err error
+		changeScript, err = txscript.PayToAddrScript(changeAddr)
+		if err != nil {
+			return nil, fmt.Errorf("build change script: %w", err)
+		}
 	}
 
 	outputCount := int64(len(payoutScripts))
@@ -145,7 +223,7 @@ func BuildFundingPSBT(client *MempoolClient, params *chaincfg.Params, req PSBTRe
 	fee := estimateFee(actualInputVBytes, outputCount, req.FeeRateSatPerVB)
 	change := selectedValue - requiredValue - fee
 	// Add change output if not dust.
-	if change >= 546 {
+	if changeScript != nil && change >= 546 {
 		outputCount++
 		fee = estimateFee(actualInputVBytes, outputCount, req.FeeRateSatPerVB)
 		change = selectedValue - requiredValue - fee
@@ -157,12 +235,12 @@ func BuildFundingPSBT(client *MempoolClient, params *chaincfg.Params, req PSBTRe
 	tx := wire.NewMsgTx(2)
 	var commitmentVout uint32
 	for _, u := range selected {
-		hash, err := chainhashFromStr(u.TxID)
+		hash, err := chainhashFromStr(u.utxo.TxID)
 		if err != nil {
 			return nil, err
 		}
 		tx.AddTxIn(&wire.TxIn{
-			PreviousOutPoint: wire.OutPoint{Hash: hash, Index: u.Vout},
+			PreviousOutPoint: wire.OutPoint{Hash: hash, Index: u.utxo.Vout},
 		})
 	}
 	for i, script := range payoutScripts {
@@ -172,8 +250,12 @@ func BuildFundingPSBT(client *MempoolClient, params *chaincfg.Params, req PSBTRe
 		commitmentVout = uint32(len(tx.TxOut))
 		tx.AddTxOut(&wire.TxOut{Value: commitmentSats, PkScript: commitmentScript})
 	}
-	if change >= 546 {
+	var changeAddresses []string
+	var changeAmounts []int64
+	if changeScript != nil && change >= 546 {
 		tx.AddTxOut(&wire.TxOut{Value: change, PkScript: changeScript})
+		changeAddresses = append(changeAddresses, changeAddr.EncodeAddress())
+		changeAmounts = append(changeAmounts, change)
 	}
 
 	psbtBytes, err := encodePSBT(tx, meta)
@@ -186,8 +268,268 @@ func BuildFundingPSBT(client *MempoolClient, params *chaincfg.Params, req PSBTRe
 		EncodedHex:       hex.EncodeToString(psbtBytes),
 		FeeSats:          fee,
 		ChangeSats:       change,
+		ChangeAddresses:  changeAddresses,
+		ChangeAmounts:    changeAmounts,
 		SelectedSats:     selectedValue,
-		PayoutScript:     payoutScripts[0],
+		PayoutScript:     firstScript(payoutScripts),
+		PayoutScripts:    payoutScripts,
+		PayoutAmounts:    payoutAmounts,
+		CommitmentSats:   commitmentSats,
+		CommitmentScript: commitmentScript,
+		CommitmentVout:   commitmentVout,
+		RedeemScript:     redeemScript,
+		RedeemScriptHash: redeemScriptHash,
+		CommitmentAddr:   commitmentAddr,
+		FundingTxID:      tx.TxHash().String(),
+	}, nil
+}
+
+// BuildRaiseFundPSBT builds a multi-payer PSBT with per-payer change outputs.
+func BuildRaiseFundPSBT(client *MempoolClient, params *chaincfg.Params, payers []PayerTarget, payouts []PayoutOutput, pixelHash []byte, commitmentSats int64, feeRate int64) (*PSBTResult, error) {
+	if feeRate < 0 {
+		feeRate = 0
+	}
+	if len(payers) == 0 {
+		return nil, fmt.Errorf("payer targets required")
+	}
+	if len(payouts) == 0 && len(pixelHash) == 0 {
+		return nil, fmt.Errorf("no payout or commitment outputs requested")
+	}
+
+	payoutScripts, payoutAmounts, err := buildPayoutScripts(PSBTRequest{Payouts: payouts})
+	if err != nil {
+		return nil, err
+	}
+
+	selections := make([]payerSelection, 0, len(payers))
+	for _, payer := range payers {
+		if payer.Address == nil {
+			return nil, fmt.Errorf("payer address required")
+		}
+		if payer.TargetSats <= 0 {
+			return nil, fmt.Errorf("payer target must be positive")
+		}
+		utxos, err := client.ListConfirmedUTXOs(payer.Address.EncodeAddress())
+		if err != nil {
+			return nil, err
+		}
+		if len(utxos) == 0 {
+			return nil, fmt.Errorf("no confirmed utxos for payer address %s", payer.Address.EncodeAddress())
+		}
+		sort.Slice(utxos, func(i, j int) bool { return utxos[i].Value < utxos[j].Value })
+		changeScript, err := txscript.PayToAddrScript(payer.Address)
+		if err != nil {
+			return nil, fmt.Errorf("build change script: %w", err)
+		}
+		selections = append(selections, payerSelection{
+			address:      payer.Address,
+			target:       payer.TargetSats,
+			candidates:   utxos,
+			changeScript: changeScript,
+		})
+	}
+
+	var commitmentScript []byte
+	var redeemScript []byte
+	var redeemScriptHash []byte
+	var commitmentAddr string
+	if len(pixelHash) > 0 {
+		commitmentScript, redeemScript, redeemScriptHash, commitmentAddr, err = buildCommitmentScript(params, pixelHash)
+		if err != nil {
+			return nil, err
+		}
+		if commitmentSats <= 0 {
+			commitmentSats = 1000
+		}
+		if commitmentSats < 546 {
+			commitmentSats = 546
+		}
+	}
+
+	addNextUTXO := func(sel *payerSelection) error {
+		if sel.nextIndex >= len(sel.candidates) {
+			return fmt.Errorf("insufficient funds for payer %s", sel.address.EncodeAddress())
+		}
+		utxo := sel.candidates[sel.nextIndex]
+		sel.nextIndex++
+		sel.utxos = append(sel.utxos, utxo)
+		sel.selected += utxo.Value
+		return nil
+	}
+
+	for i := range selections {
+		for selections[i].selected < selections[i].target {
+			if err := addNextUTXO(&selections[i]); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	var meta []inputMeta
+	var actualInputVBytes int64
+	for attempt := 0; attempt < 5; attempt++ {
+		var totalSelected int64
+		var estimatedInputVBytes int64
+		for i := range selections {
+			totalSelected += selections[i].selected
+			estimatedInputVBytes += estimateInputVBytes(selections[i].address) * int64(len(selections[i].utxos))
+		}
+
+		for {
+			outputCount := int64(len(payoutScripts))
+			if commitmentScript != nil {
+				outputCount++
+			}
+			outputCount += int64(len(selections))
+			fee := estimateFee(estimatedInputVBytes, outputCount, feeRate)
+			var allocated int64
+			for i := range selections {
+				selections[i].feeShare = fee * selections[i].selected / totalSelected
+				allocated += selections[i].feeShare
+			}
+			if diff := fee - allocated; diff != 0 {
+				selections[len(selections)-1].feeShare += diff
+			}
+
+			expanded := false
+			for i := range selections {
+				needed := selections[i].target + selections[i].feeShare
+				for selections[i].selected < needed {
+					if err := addNextUTXO(&selections[i]); err != nil {
+						return nil, err
+					}
+					estimatedInputVBytes += estimateInputVBytes(selections[i].address)
+					totalSelected += selections[i].utxos[len(selections[i].utxos)-1].Value
+					expanded = true
+				}
+			}
+			if !expanded {
+				break
+			}
+		}
+
+		meta = nil
+		actualInputVBytes = 0
+		for _, sel := range selections {
+			for _, u := range sel.utxos {
+				prevMsg, prevOut, err := client.FetchTxOutput(u.TxID, u.Vout)
+				if err != nil {
+					return nil, fmt.Errorf("fetch prev output %s:%d: %w", u.TxID, u.Vout, err)
+				}
+				actualInputVBytes += estimateInputVBytesFromPkScript(prevOut.PkScript)
+				meta = append(meta, inputMeta{
+					nonWitness: prevMsg,
+					witness:    prevOut,
+				})
+			}
+		}
+
+		changeableCount := len(selections)
+		needsMore := false
+		for {
+			outputCount := int64(len(payoutScripts))
+			if commitmentScript != nil {
+				outputCount++
+			}
+			outputCount += int64(changeableCount)
+			fee := estimateFee(actualInputVBytes, outputCount, feeRate)
+			var allocated int64
+			for i := range selections {
+				selections[i].feeShare = fee * selections[i].selected / totalSelected
+				allocated += selections[i].feeShare
+			}
+			if diff := fee - allocated; diff != 0 {
+				selections[len(selections)-1].feeShare += diff
+			}
+
+			newChangeable := 0
+			for i := range selections {
+				selections[i].change = selections[i].selected - selections[i].target - selections[i].feeShare
+				if selections[i].change < 0 {
+					if err := addNextUTXO(&selections[i]); err != nil {
+						return nil, err
+					}
+					needsMore = true
+					break
+				}
+				selections[i].changeAllowed = selections[i].change >= 546
+				if selections[i].changeAllowed {
+					newChangeable++
+				}
+			}
+			if needsMore {
+				break
+			}
+			if newChangeable == changeableCount {
+				break
+			}
+			changeableCount = newChangeable
+		}
+		if !needsMore {
+			break
+		}
+		if attempt == 4 {
+			return nil, fmt.Errorf("unable to satisfy funding targets with available utxos")
+		}
+	}
+
+	var totalSelected int64
+	for _, sel := range selections {
+		totalSelected += sel.selected
+	}
+
+	tx := wire.NewMsgTx(2)
+	var commitmentVout uint32
+	for _, sel := range selections {
+		for _, u := range sel.utxos {
+			hash, err := chainhashFromStr(u.TxID)
+			if err != nil {
+				return nil, err
+			}
+			tx.AddTxIn(&wire.TxIn{
+				PreviousOutPoint: wire.OutPoint{Hash: hash, Index: u.Vout},
+			})
+		}
+	}
+	for i, script := range payoutScripts {
+		tx.AddTxOut(&wire.TxOut{Value: payoutAmounts[i], PkScript: script})
+	}
+	if commitmentScript != nil {
+		commitmentVout = uint32(len(tx.TxOut))
+		tx.AddTxOut(&wire.TxOut{Value: commitmentSats, PkScript: commitmentScript})
+	}
+	var totalChange int64
+	var changeAddresses []string
+	var changeAmounts []int64
+	for _, sel := range selections {
+		if sel.changeAllowed {
+			tx.AddTxOut(&wire.TxOut{Value: sel.change, PkScript: sel.changeScript})
+			totalChange += sel.change
+			changeAddresses = append(changeAddresses, sel.address.EncodeAddress())
+			changeAmounts = append(changeAmounts, sel.change)
+		}
+	}
+
+	psbtBytes, err := encodePSBT(tx, meta)
+	if err != nil {
+		return nil, fmt.Errorf("serialize psbt: %w", err)
+	}
+
+	outputTotal := sumAmounts(payoutAmounts) + commitmentSats + totalChange
+	actualFee := totalSelected - outputTotal
+	if actualFee < 0 {
+		actualFee = 0
+	}
+
+	return &PSBTResult{
+		EncodedBase64:    base64.StdEncoding.EncodeToString(psbtBytes),
+		EncodedHex:       hex.EncodeToString(psbtBytes),
+		FeeSats:          actualFee,
+		ChangeSats:       totalChange,
+		ChangeAddresses:  changeAddresses,
+		ChangeAmounts:    changeAmounts,
+		SelectedSats:     totalSelected,
+		PayoutScript:     firstScript(payoutScripts),
 		PayoutScripts:    payoutScripts,
 		PayoutAmounts:    payoutAmounts,
 		CommitmentSats:   commitmentSats,
@@ -279,6 +621,21 @@ func sumAmounts(amounts []int64) int64 {
 	var total int64
 	for _, v := range amounts {
 		total += v
+	}
+	return total
+}
+
+func firstScript(scripts [][]byte) []byte {
+	if len(scripts) == 0 {
+		return nil
+	}
+	return scripts[0]
+}
+
+func sumFeeShares(selections []payerSelection) int64 {
+	var total int64
+	for _, sel := range selections {
+		total += sel.feeShare
 	}
 	return total
 }
