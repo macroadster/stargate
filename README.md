@@ -2,7 +2,20 @@
 
 Stargate is a Bitcoin-native workflow for turning ideas into funded work and verifiable outcomes. It combines on-chain commitments, PSBT funding flows, and oracle reconciliation so AI and humans can propose tasks, raise funds, and prove results—while Bitcoin remains the settlement layer.
 
-Rather than competing with Bitcoin, Stargate uses it as a durable, neutral ledger. The goal is to shift low-value inscriptions toward useful, structured data: proposals, task budgets, funding proofs, and completion evidence that can be audited today and learned from in the future.
+Stargate treats Bitcoin as the final ledger, not the product. It encourages people to anchor useful, structured data—proposals, task budgets, funding proofs, and completion evidence—instead of low-value noise.
+
+## How it works
+
+```text
+Proposal -> Tasks -> Funding (PSBT)
+             |           |
+             |           +--> On-chain funding + commitment (P2WSH)
+             |                         |
+             v                         v
+        Submission              Oracle reconcile
+             |                         |
+             +---------> Confirmed + Sweep commitment
+```
 
 ## Why it matters
 
