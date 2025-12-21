@@ -819,6 +819,42 @@ func (h *SearchHandler) searchData(query string) models.SearchResult {
 		}
 		return ""
 	}
+	metaFundingTxIDs := func(meta map[string]any) []string {
+		var txids []string
+		add := func(value string) {
+			value = strings.TrimSpace(value)
+			if value == "" {
+				return
+			}
+			for _, existing := range txids {
+				if existing == value {
+					return
+				}
+			}
+			txids = append(txids, value)
+		}
+		if meta == nil {
+			return txids
+		}
+		add(metaString(meta, "funding_txid"))
+		switch v := meta["funding_txids"].(type) {
+		case []string:
+			for _, txid := range v {
+				add(txid)
+			}
+		case []any:
+			for _, item := range v {
+				if txid, ok := item.(string); ok {
+					add(txid)
+				}
+			}
+		case string:
+			for _, part := range strings.Split(v, ",") {
+				add(part)
+			}
+		}
+		return txids
+	}
 
 	addContract := func(id string, height int64, imageURL string, contractType string, visibleHash string, meta map[string]any) {
 		if id == "" || seenContracts[id] {
@@ -873,6 +909,11 @@ func (h *SearchHandler) searchData(query string) models.SearchResult {
 						}
 						if id == "" {
 							id = metaString(meta, "funding_txid")
+							if id == "" {
+								if txids := metaFundingTxIDs(meta); len(txids) > 0 {
+									id = txids[0]
+								}
+							}
 						}
 						if id == "" {
 							id = metaString(meta, "visible_pixel_hash")
@@ -906,6 +947,7 @@ func (h *SearchHandler) searchData(query string) models.SearchResult {
 							metaString(meta, "confirmed_txid"),
 							metaString(meta, "tx_id"),
 							metaString(meta, "funding_txid"),
+							strings.Join(metaFundingTxIDs(meta), " "),
 							metaString(meta, "image_file"),
 							metaString(meta, "image_path"),
 							text,

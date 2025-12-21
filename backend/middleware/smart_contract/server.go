@@ -446,6 +446,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 	splitRaiseFund := isRaiseFund(fundingMode) && body.SplitPSBT
 	if splitRaiseFund {
 		var psbtEntries []map[string]interface{}
+		var fundingTxIDs []string
 		for _, wallet := range raiseFundPayerOrder {
 			target := raiseFundPayerTotals[wallet]
 			payerTarget := raiseFundPayersByWallet[wallet]
@@ -462,6 +463,9 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 			if err != nil {
 				Error(w, http.StatusBadRequest, err.Error())
 				return
+			}
+			if splitRes.FundingTxID != "" {
+				fundingTxIDs = append(fundingTxIDs, splitRes.FundingTxID)
 			}
 			psbtEntries = append(psbtEntries, map[string]interface{}{
 				"psbt":               splitRes.EncodedHex,
@@ -494,6 +498,15 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 				"network_params":     params.Name,
 			})
 		}
+		if ingestionRec != nil && len(fundingTxIDs) > 0 {
+			metadata := map[string]interface{}{
+				"funding_txids": fundingTxIDs,
+				"funding_txid":  fundingTxIDs[0],
+			}
+			if err := s.ingestionSvc.UpdateMetadata(ingestionRec.ID, metadata); err != nil {
+				log.Printf("psbt: failed to store funding_txids for %s: %v", ingestionRec.ID, err)
+			}
+		}
 		JSON(w, http.StatusOK, map[string]interface{}{
 			"psbts":           psbtEntries,
 			"funding_mode":    fundingMode,
@@ -502,6 +515,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 			"payer_addresses": addressSlice(raiseFundPayerAddrs),
 			"network_params":  params.Name,
 			"split_psbt":      true,
+			"funding_txids":   fundingTxIDs,
 		})
 		return
 	}

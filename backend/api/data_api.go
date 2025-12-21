@@ -842,6 +842,27 @@ func buildContractInscriptions(contracts []bitcoin.SmartContractData, height int
 	var out []bitcoin.InscriptionData
 	imageURLs := map[int]string{}
 	metadata := map[int]map[string]any{}
+	firstFundingTxID := func(meta map[string]any) string {
+		if meta == nil {
+			return ""
+		}
+		if v := strings.TrimSpace(stringFromAny(meta["funding_txid"])); v != "" {
+			return v
+		}
+		switch values := meta["funding_txids"].(type) {
+		case []string:
+			if len(values) > 0 {
+				return strings.TrimSpace(values[0])
+			}
+		case []any:
+			for _, item := range values {
+				if txid, ok := item.(string); ok && strings.TrimSpace(txid) != "" {
+					return strings.TrimSpace(txid)
+				}
+			}
+		}
+		return ""
+	}
 
 	for _, contract := range contracts {
 		meta := contract.Metadata
@@ -862,6 +883,8 @@ func buildContractInscriptions(contracts []bitcoin.SmartContractData, height int
 			if candidate := strings.TrimSpace(stringFromAny(meta["confirmed_txid"])); isLikelyTxID(candidate) {
 				txID = candidate
 			} else if candidate := strings.TrimSpace(stringFromAny(meta["funding_txid"])); isLikelyTxID(candidate) {
+				txID = candidate
+			} else if candidate := firstFundingTxID(meta); isLikelyTxID(candidate) {
 				txID = candidate
 			} else if candidate := strings.TrimSpace(stringFromAny(meta["match_hash"])); isLikelyTxID(candidate) {
 				txID = candidate

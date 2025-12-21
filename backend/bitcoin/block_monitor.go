@@ -1437,8 +1437,8 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 			candidates[candidate] = &recCopy
 			candidatesByID[recCopy.ID] = append(candidatesByID[recCopy.ID], candidate)
 		}
-		if txid, ok := recCopy.Metadata["funding_txid"].(string); ok && strings.TrimSpace(txid) != "" {
-			txidMatches[strings.TrimSpace(txid)] = &recCopy
+		for _, txid := range fundingTxIDsFromMeta(recCopy.Metadata) {
+			txidMatches[txid] = &recCopy
 		}
 	}
 	if len(candidates) == 0 && len(txidMatches) == 0 {
@@ -1529,6 +1529,45 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 	}
 
 	return smartContracts
+}
+
+func fundingTxIDsFromMeta(meta map[string]any) []string {
+	var txids []string
+	add := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		for _, existing := range txids {
+			if existing == value {
+				return
+			}
+		}
+		txids = append(txids, value)
+	}
+	if meta == nil {
+		return txids
+	}
+	if txid, ok := meta["funding_txid"].(string); ok {
+		add(txid)
+	}
+	switch v := meta["funding_txids"].(type) {
+	case []string:
+		for _, txid := range v {
+			add(txid)
+		}
+	case []any:
+		for _, item := range v {
+			if txid, ok := item.(string); ok {
+				add(txid)
+			}
+		}
+	case string:
+		for _, part := range strings.Split(v, ",") {
+			add(part)
+		}
+	}
+	return txids
 }
 
 // SetSweepDependencies wires commitment sweep support for oracle reconcile.
