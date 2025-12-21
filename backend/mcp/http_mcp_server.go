@@ -32,6 +32,7 @@ type HTTPMCPServer struct {
 	smartContractSvc *services.SmartContractService
 	httpClient       *http.Client
 	baseURL          string
+	rateLimiter      map[string][]time.Time // API key -> request timestamps
 }
 
 // NewHTTPMCPServer creates a new HTTP MCP server
@@ -44,6 +45,7 @@ func NewHTTPMCPServer(store scmiddleware.Store, apiKeyStore auth.APIKeyValidator
 		smartContractSvc: smartContractSvc,
 		httpClient:       &http.Client{Timeout: 10 * time.Second},
 		baseURL:          "http://localhost:3001", // Default backend URL
+		rateLimiter:      make(map[string][]time.Time),
 	}
 }
 
@@ -77,9 +79,28 @@ func (h *HTTPMCPServer) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/mcp/", h.authWrap(h.handleToolCall))
 }
 
+// checkRateLimit checks if the API key has exceeded rate limit (100 requests per minute)
+func (h *HTTPMCPServer) checkRateLimit(key string) bool {
+	now := time.Now()
+	window := now.Add(-time.Minute)
+	times := h.rateLimiter[key]
+	valid := make([]time.Time, 0, len(times))
+	for _, t := range times {
+		if t.After(window) {
+			valid = append(valid, t)
+		}
+	}
+	h.rateLimiter[key] = valid
+	if len(valid) >= 100 {
+		return false
+	}
+	h.rateLimiter[key] = append(h.rateLimiter[key], now)
+	return true
+}
+
 func (h *HTTPMCPServer) authWrap(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("DEBUG: authWrap called for path: %s", r.URL.Path)
+		log.Printf("AUDIT: %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
 		// Check API key if configured
 		if h.apiKeyStore != nil {
 			key := r.Header.Get("X-API-Key")
@@ -90,12 +111,24 @@ func (h *HTTPMCPServer) authWrap(next http.HandlerFunc) http.HandlerFunc {
 					key = strings.TrimPrefix(auth, "Bearer ")
 				}
 			}
-			if key == "" || !h.apiKeyStore.Validate(key) {
+			if key == "" {
+				log.Printf("AUDIT: Missing API key for %s %s", r.Method, r.URL.Path)
+				http.Error(w, "API key required", http.StatusUnauthorized)
+				return
+			}
+			if !h.apiKeyStore.Validate(key) {
+				log.Printf("AUDIT: Invalid API key for %s %s", r.Method, r.URL.Path)
 				http.Error(w, "Invalid API key", http.StatusForbidden)
 				return
 			}
+			// Check rate limit
+			if !h.checkRateLimit(key) {
+				log.Printf("AUDIT: Rate limit exceeded for key %s on %s %s", key, r.Method, r.URL.Path)
+				http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
+				return
+			}
+			log.Printf("AUDIT: Authenticated request for key %s on %s %s", key, r.Method, r.URL.Path)
 		}
-		log.Printf("DEBUG: authWrap passed, calling next handler")
 		next(w, r)
 	}
 }
