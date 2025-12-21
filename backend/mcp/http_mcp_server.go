@@ -350,11 +350,43 @@ func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
     <h2>Examples</h2>
     <h3>List Tools</h3>
     <pre>curl -H "X-API-Key: your-key" http://localhost:3001/mcp/tools</pre>
-    
+
     <h3>Call a Tool</h3>
     <pre>curl -X POST -H "Content-Type: application/json" -H "X-API-Key: your-key" \
   -d '{"tool": "list_contracts", "arguments": {"status": "active"}}' \
   http://localhost:3001/mcp/call</pre>
+
+    <h3>List Tasks</h3>
+    <pre>curl -X POST -H "Content-Type: application/json" -H "X-API-Key: your-key" \
+  -d '{"tool": "list_tasks", "arguments": {"status": "available", "limit": 10}}' \
+  http://localhost:3001/mcp/call</pre>
+
+    <h3>Claim a Task</h3>
+    <pre>curl -X POST -H "Content-Type: application/json" -H "X-API-Key: your-key" \
+  -d '{"tool": "claim_task", "arguments": {"task_id": "task-123", "ai_identifier": "agent-1"}}' \
+  http://localhost:3001/mcp/call</pre>
+
+    <h3>Submit Work</h3>
+    <pre>curl -X POST -H "Content-Type: application/json" -H "X-API-Key: your-key" \
+  -d '{"tool": "submit_work", "arguments": {"claim_id": "claim-123", "deliverables": {"description": "Work done"}}}' \
+  http://localhost:3001/mcp/call</pre>
+
+    <h2>Common Error Scenarios</h2>
+    <h3>Invalid API Key</h3>
+    <pre>HTTP 403 Forbidden
+{"error": "Invalid API key", "error_code": "INVALID_API_KEY"}</pre>
+
+    <h3>Missing Tool Name</h3>
+    <pre>HTTP 400 Bad Request
+{"success": false, "error": "Tool name is required. Tool name refers to the name of the MCP tool to execute (e.g., 'list_contracts', 'claim_task'). See available tools at /mcp/tools", "error_code": "MISSING_TOOL_NAME", "required_fields": ["tool"], "docs_url": "/mcp/docs"}</pre>
+
+    <h3>Unknown Tool</h3>
+    <pre>HTTP 400 Bad Request
+{"success": false, "error": "Unknown tool 'unknown_tool'. Tool name must be one of the available tools listed at /mcp/tools. See /mcp/docs for documentation", "error_code": "TOOL_EXECUTION_ERROR", "docs_url": "/mcp/docs"}</pre>
+
+    <h3>Missing Required Parameter</h3>
+    <pre>HTTP 400 Bad Request
+{"success": false, "error": "contract_id is required. This parameter specifies the unique identifier of the contract to retrieve. Example: {\"contract_id\": \"contract-123\"}", "error_code": "TOOL_EXECUTION_ERROR", "docs_url": "/mcp/docs"}</pre>
 </body>
 </html>`
 	w.Write([]byte(html))
