@@ -55,9 +55,12 @@ type MCPRequest struct {
 
 // MCPResponse represents response from an MCP tool call
 type MCPResponse struct {
-	Success bool        `json:"success"`
-	Result  interface{} `json:"result,omitempty"`
-	Error   string      `json:"error,omitempty"`
+	Success        bool        `json:"success"`
+	Result         interface{} `json:"result,omitempty"`
+	Error          string      `json:"error,omitempty"`
+	ErrorCode      string      `json:"error_code,omitempty"`
+	RequiredFields []string    `json:"required_fields,omitempty"`
+	DocsURL        string      `json:"docs_url,omitempty"`
 }
 
 // RegisterRoutes registers HTTP MCP endpoints
@@ -558,13 +561,24 @@ func (h *HTTPMCPServer) handleToolCall(w http.ResponseWriter, r *http.Request) {
 
 	var req MCPRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.sendError(w, "Invalid JSON: "+err.Error())
+		h.sendErrorResponse(w, MCPResponse{
+			Success:   false,
+			Error:     "Invalid JSON: " + err.Error(),
+			ErrorCode: "INVALID_JSON",
+			DocsURL:   "/mcp/docs",
+		})
 		return
 	}
 
 	log.Printf("DEBUG: Tool requested: '%s'", req.Tool)
 	if req.Tool == "" {
-		h.sendError(w, "Tool name is required")
+		h.sendErrorResponse(w, MCPResponse{
+			Success:        false,
+			Error:          "Tool name is required. Tool name refers to the name of the MCP tool to execute (e.g., 'list_contracts', 'claim_task'). See available tools at /mcp/tools",
+			ErrorCode:      "MISSING_TOOL_NAME",
+			RequiredFields: []string{"tool"},
+			DocsURL:        "/mcp/docs",
+		})
 		return
 	}
 
@@ -572,7 +586,12 @@ func (h *HTTPMCPServer) handleToolCall(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
 	result, err := h.callToolDirect(ctx, req.Tool, req.Arguments)
 	if err != nil {
-		h.sendError(w, err.Error())
+		h.sendErrorResponse(w, MCPResponse{
+			Success:   false,
+			Error:     err.Error(),
+			ErrorCode: "TOOL_EXECUTION_ERROR",
+			DocsURL:   "/mcp/docs",
+		})
 		return
 	}
 
@@ -616,7 +635,7 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 	case "get_contract":
 		contractID, ok := args["contract_id"].(string)
 		if !ok {
-			return nil, fmt.Errorf("contract_id is required")
+			return nil, fmt.Errorf("contract_id is required. This parameter specifies the unique identifier of the contract to retrieve. Example: {\"contract_id\": \"contract-123\"}")
 		}
 		if res, err := h.getJSON(fmt.Sprintf("%s/api/smart_contract/contracts/%s", h.baseURL, contractID)); err == nil {
 			return res, nil
@@ -728,7 +747,7 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 	case "get_task":
 		taskID, ok := args["task_id"].(string)
 		if !ok {
-			return nil, fmt.Errorf("task_id is required")
+			return nil, fmt.Errorf("task_id is required. This parameter specifies the unique identifier of the task to retrieve. Example: {\"task_id\": \"task-123\"}")
 		}
 		if res, err := h.getJSON(fmt.Sprintf("%s/api/smart_contract/tasks/%s", h.baseURL, taskID)); err == nil {
 			return res, nil
@@ -742,11 +761,11 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 	case "claim_task":
 		taskID, ok := args["task_id"].(string)
 		if !ok {
-			return nil, fmt.Errorf("task_id is required")
+			return nil, fmt.Errorf("task_id is required. This parameter specifies the unique identifier of the task to claim. Example: {\"task_id\": \"task-123\"}")
 		}
 		aiIdentifier, ok := args["ai_identifier"].(string)
 		if !ok {
-			return nil, fmt.Errorf("ai_identifier is required")
+			return nil, fmt.Errorf("ai_identifier is required. This parameter specifies the identifier of the AI agent claiming the task. Example: {\"ai_identifier\": \"agent-1\"}")
 		}
 
 		if result, err := h.postJSON(fmt.Sprintf("%s/api/smart_contract/tasks/%s/claim", h.baseURL, taskID),
@@ -773,14 +792,14 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 	case "submit_work":
 		claimID, ok := args["claim_id"].(string)
 		if !ok {
-			return nil, fmt.Errorf("claim_id is required")
+			return nil, fmt.Errorf("claim_id is required. This parameter specifies the claim ID returned from claiming the task. Example: {\"claim_id\": \"claim-123\"}")
 		}
 
 		deliverables := h.toMap(args["deliverables"])
 		completionProof := h.toMap(args["completion_proof"])
 
 		if deliverables == nil {
-			return nil, fmt.Errorf("deliverables are required")
+			return nil, fmt.Errorf("deliverables are required. This parameter contains the work deliverables as an object. Example: {\"deliverables\": {\"description\": \"Completed task\"}}")
 		}
 
 		if result, err := h.postJSON(fmt.Sprintf("%s/api/smart_contract/claims/%s/submit", h.baseURL, claimID), map[string]interface{}{
@@ -1502,11 +1521,7 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 		}, nil
 
 	default:
-		return map[string]interface{}{
-			"message":          fmt.Sprintf("DEBUG: tool '%s' not found - function reached", toolName),
-			"tool_name":        toolName,
-			"tool_name_length": len(toolName),
-		}, nil
+		return nil, fmt.Errorf("Unknown tool '%s'. Tool name must be one of the available tools listed at /mcp/tools. See /mcp/docs for documentation", toolName)
 	}
 }
 
@@ -1705,13 +1720,10 @@ func (h *HTTPMCPServer) getJSON(urlStr string) (map[string]interface{}, error) {
 	return parsed, nil
 }
 
-func (h *HTTPMCPServer) sendError(w http.ResponseWriter, message string) {
+func (h *HTTPMCPServer) sendErrorResponse(w http.ResponseWriter, resp MCPResponse) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusBadRequest)
-	json.NewEncoder(w).Encode(MCPResponse{
-		Success: false,
-		Error:   message,
-	})
+	json.NewEncoder(w).Encode(resp)
 }
 
 // Helper functions
