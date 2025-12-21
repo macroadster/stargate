@@ -368,7 +368,17 @@ func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
 <body>
     <h1>MCP API Documentation</h1>
     <p>The MCP (Model Context Protocol) API provides endpoints for interacting with smart contract tools.</p>
-    
+
+    <h2>Getting Started</h2>
+    <p>1. Obtain an API key from the system administrator.</p>
+    <p>2. Use the API key in requests via <code>X-API-Key</code> header or <code>Authorization: Bearer &lt;key&gt;</code>.</p>
+    <p>3. Start with <code>GET /mcp/tools</code> to discover available tools.</p>
+    <p>4. Use <code>POST /mcp/call</code> to execute tools.</p>
+
+    <h2>Authentication</h2>
+    <p>All endpoints require an API key via the <code>X-API-Key</code> header or <code>Authorization: Bearer &lt;key&gt;</code> header.</p>
+    <p>Rate limit: 100 requests per minute per API key.</p>
+
     <h2>Endpoints</h2>
     <ul>
         <li><span class="endpoint">GET /mcp/tools</span> - List available tools with schemas and examples</li>
@@ -423,6 +433,29 @@ func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
     <h3>Missing Required Parameter</h3>
     <pre>HTTP 400 Bad Request
 {"success": false, "error": "contract_id is required. This parameter specifies the unique identifier of the contract to retrieve. Example: {\"contract_id\": \"contract-123\"}", "error_code": "TOOL_EXECUTION_ERROR", "docs_url": "/mcp/docs"}</pre>
+
+    <h2>Common Workflows</h2>
+    <h3>Claim and Submit Work</h3>
+    <ol>
+        <li>List available tasks: <code>POST /mcp/call</code> with <code>{"tool": "list_tasks", "arguments": {"status": "available"}}</code></li>
+        <li>Claim a task: <code>POST /mcp/call</code> with <code>{"tool": "claim_task", "arguments": {"task_id": "task-123", "ai_identifier": "agent-1"}}</code></li>
+        <li>Submit work: <code>POST /mcp/call</code> with <code>{"tool": "submit_work", "arguments": {"claim_id": "claim-123", "deliverables": {"description": "Work done"}}}</code></li>
+    </ol>
+
+    <h2>Troubleshooting</h2>
+    <ul>
+        <li><strong>Invalid API key</strong>: Ensure your API key is correct and not expired.</li>
+        <li><strong>Rate limit exceeded</strong>: Wait before making more requests.</li>
+        <li><strong>Tool not found</strong>: Check tool name spelling and available tools at /mcp/tools.</li>
+        <li><strong>Missing parameters</strong>: Refer to tool schemas for required fields.</li>
+    </ul>
+
+    <h2>FAQ</h2>
+    <ul>
+        <li><strong>Q: How do I get an API key?</strong> A: Contact the system administrator.</li>
+        <li><strong>Q: What tools are available?</strong> A: See /mcp/tools for the list with schemas.</li>
+        <li><strong>Q: How to handle errors?</strong> A: Check error_code and docs_url in responses.</li>
+    </ul>
 </body>
 </html>`
 	w.Write([]byte(html))
