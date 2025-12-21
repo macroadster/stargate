@@ -31,6 +31,7 @@ const InscriptionModal = ({ inscription, onClose }) => {
   const [proposalError, setProposalError] = useState('');
   const [approvingId, setApprovingId] = useState('');
   const [submissions, setSubmissions] = useState({});
+  const [submissionsList, setSubmissionsList] = useState([]);
   const [psbtForm, setPsbtForm] = useState({
     contractorWallet: '',
     fundraiserWallet: '',
@@ -317,7 +318,10 @@ const InscriptionModal = ({ inscription, onClose }) => {
       });
       // Create comprehensive submission mapping with all IDs
       const submissionsByKey = {};
-      (data?.submissions || []).forEach((s) => {
+      const submissionList = Array.isArray(data?.submissions)
+        ? data.submissions
+        : Object.values(data?.submissions || {});
+      submissionList.forEach((s) => {
         // Map by submission_id (primary key for API calls)
         if (s.submission_id) {
           submissionsByKey[s.submission_id] = s;
@@ -339,6 +343,9 @@ const InscriptionModal = ({ inscription, onClose }) => {
         }
       });
       setSubmissions(submissionsByKey);
+      if (submissionList.length > 0) {
+        setSubmissionsList(submissionList);
+      }
       // Sort approved first, then pending/others, preserving matches
       items = items.sort((a, b) => {
         const sa = (a.status || '').toLowerCase();
@@ -416,10 +423,12 @@ const InscriptionModal = ({ inscription, onClose }) => {
       const results = await Promise.all(submissionsPromises);
       
       const allSubmissions = {};
+      const allSubmissionsList = [];
       results.forEach((result) => {
         const { contractId, submissions } = result;
         if (Array.isArray(submissions)) {
           submissions.forEach((submission) => {
+            allSubmissionsList.push(submission);
             if (submission.submission_id) {
               allSubmissions[submission.submission_id] = submission;
             }
@@ -434,6 +443,16 @@ const InscriptionModal = ({ inscription, onClose }) => {
       });
 
       setSubmissions(allSubmissions);
+      if (allSubmissionsList.length > 0) {
+        const uniqueById = {};
+        allSubmissionsList.forEach((submission) => {
+          const key = submission.submission_id || `${submission.task_id}:${submission.created_at || ''}`;
+          if (!uniqueById[key]) {
+            uniqueById[key] = submission;
+          }
+        });
+        setSubmissionsList(Object.values(uniqueById));
+      }
     } catch (err) {
       console.error('Failed to load submissions:', err);
     }
@@ -1310,6 +1329,7 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                   <DeliverablesReview
                     proposalItems={proposalItems}
                     submissions={submissions}
+                    submissionsList={submissionsList}
                     onRefresh={loadProposals}
                     isContractLocked={isContractLocked}
                   />

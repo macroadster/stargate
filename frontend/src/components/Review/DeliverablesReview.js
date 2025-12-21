@@ -1,15 +1,15 @@
 import React, { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { CheckCircle, XCircle, Clock, ExternalLink, Filter, ChevronDown, ChevronUp, Eye, FileText, Code } from 'lucide-react';
+import { CheckCircle, XCircle, Clock, ExternalLink, Filter, ChevronDown, ChevronUp, Eye, FileText, Code, Columns, List } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { API_BASE } from '../../apiBase';
 import CopyButton from '../Common/CopyButton';
 import { useAuth } from '../../context/AuthContext';
 
-const DeliverablesReview = ({ proposalItems, submissions, onRefresh, isContractLocked = false }) => {
+const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRefresh, isContractLocked = false }) => {
   const { auth } = useAuth();
   // Add key to force re-render when submissions change
-  const submissionsKey = JSON.stringify(submissions);
+  const submissionsKey = JSON.stringify(submissionsList || submissions);
   
   // Reset state when submissions prop changes
   React.useEffect(() => {
@@ -18,6 +18,7 @@ const DeliverablesReview = ({ proposalItems, submissions, onRefresh, isContractL
     setProofContent({});
     setLoadingProof({});
     setReviewingId('');
+    setExpandedSubmissions({});
   }, [submissionsKey]);
   const [filterStatus, setFilterStatus] = useState('all');
   const [expandedTasks, setExpandedTasks] = useState({});
@@ -25,13 +26,24 @@ const DeliverablesReview = ({ proposalItems, submissions, onRefresh, isContractL
   const [reviewNotes, setReviewNotes] = useState({});
   const [proofContent, setProofContent] = useState({});
   const [loadingProof, setLoadingProof] = useState({});
+  const [viewMode, setViewMode] = useState('list');
+  const [sortBy, setSortBy] = useState('newest');
+  const [expandedSubmissions, setExpandedSubmissions] = useState({});
 
 
   // Handle both array and object formats for submissions
-  const submissionsObj = (submissions && typeof submissions === 'object') ? submissions : {};
+  const submissionsObj = (submissions && !Array.isArray(submissions) && typeof submissions === 'object') ? submissions : {};
   let submissionsArray;
   try {
-    submissionsArray = Array.isArray(submissions) ? submissions : (submissionsObj ? Object.keys(submissionsObj).map(key => submissionsObj[key]) : []);
+    if (Array.isArray(submissionsList)) {
+      submissionsArray = submissionsList;
+    } else if (Array.isArray(submissions)) {
+      submissionsArray = submissions;
+    } else if (submissionsObj) {
+      submissionsArray = Object.keys(submissionsObj).map(key => submissionsObj[key]);
+    } else {
+      submissionsArray = [];
+    }
   } catch (e) {
     console.error('Error processing submissions:', e, submissions);
     submissionsArray = [];
@@ -79,6 +91,31 @@ const DeliverablesReview = ({ proposalItems, submissions, onRefresh, isContractL
     if (filterStatus === 'all') return true;
     return (deliverable.submission?.status || '').toLowerCase() === filterStatus;
   });
+
+  const submissionsByTask = submissionsArray.reduce((acc, submission) => {
+    const taskId = submission?.task_id;
+    if (!taskId) return acc;
+    if (!acc[taskId]) acc[taskId] = [];
+    acc[taskId].push(submission);
+    return acc;
+  }, {});
+
+  const comparisonGroups = proposalItems.flatMap((proposal) => {
+    const tasks = Array.isArray(proposal.tasks) && proposal.tasks.length > 0
+      ? proposal.tasks
+      : (Array.isArray(proposal.metadata?.suggested_tasks) ? proposal.metadata.suggested_tasks : []);
+
+    return tasks.map((task) => {
+      const groupSubmissions = submissionsByTask[task.task_id] || [];
+      return {
+        ...task,
+        proposal,
+        proposalId: proposal.id,
+        proposalTitle: proposal.title,
+        submissions: groupSubmissions,
+      };
+    });
+  }).filter((group) => group.submissions.length > 0);
 
   const toggleTaskExpansion = (taskId) => {
     setExpandedTasks(prev => ({
@@ -259,12 +296,13 @@ const DeliverablesReview = ({ proposalItems, submissions, onRefresh, isContractL
   };
 
   const renderMarkdown = (content) => {
-    const hasMarkdown = /(^|\n)(#{1,6}\s|[-*]\s|\d+\.\s|```)/.test(content);
+    const safeContent = content || '';
+    const hasMarkdown = /(^|\n)(#{1,6}\s|[-*]\s|\d+\.\s|```)/.test(safeContent);
 
     if (!hasMarkdown) {
       return (
         <pre className="text-sm text-gray-800 dark:text-gray-100 whitespace-pre-wrap">
-          {content}
+          {safeContent}
         </pre>
       );
     }
@@ -290,13 +328,81 @@ const DeliverablesReview = ({ proposalItems, submissions, onRefresh, isContractL
             a: ({ ...props }) => <a className="text-blue-600 dark:text-blue-300 underline" {...props} />,
           }}
         >
-          {content}
+          {safeContent}
         </ReactMarkdown>
       </div>
     );
   };
 
-  if (allDeliverables.length === 0) {
+  const getSubmissionTimestamp = (submission) => {
+    const raw = submission?.submitted_at || submission?.created_at;
+    if (!raw) return 0;
+    const parsed = Date.parse(raw);
+    return Number.isNaN(parsed) ? 0 : parsed;
+  };
+
+  const countWords = (value) => {
+    if (!value || typeof value !== 'string') return 0;
+    return value.trim().split(/\s+/).filter(Boolean).length;
+  };
+
+  const getSubmissionNotes = (submission) => (
+    submission?.deliverables?.notes
+      || submission?.deliverables?.document
+      || submission?.deliverables?.rework_notes
+      || ''
+  );
+
+  const getNotesPreview = (value, limit = 320) => {
+    if (!value) return '';
+    if (value.length <= limit) return value;
+    return `${value.slice(0, limit)}…`;
+  };
+
+  const sortSubmissions = (submissions) => {
+    return [...submissions].sort((a, b) => {
+      if (sortBy === 'most_words' || sortBy === 'fewest_words') {
+        const aWords = countWords(getSubmissionNotes(a));
+        const bWords = countWords(getSubmissionNotes(b));
+        return sortBy === 'most_words' ? bWords - aWords : aWords - bWords;
+      }
+      const aTime = getSubmissionTimestamp(a);
+      const bTime = getSubmissionTimestamp(b);
+      return sortBy === 'oldest' ? aTime - bTime : bTime - aTime;
+    });
+  };
+
+  const exportComparison = () => {
+    const payload = comparisonGroups
+      .map((group) => {
+        const filteredSubmissions = group.submissions.filter((submission) => {
+          if (filterStatus === 'all') return true;
+          return (submission.status || '').toLowerCase() === filterStatus;
+        });
+        if (filteredSubmissions.length === 0) return null;
+        const sorted = sortSubmissions(filteredSubmissions);
+        return {
+          task_id: group.task_id,
+          title: group.title,
+          proposal_id: group.proposalId,
+          proposal_title: group.proposalTitle,
+          submissions: sorted,
+        };
+      })
+      .filter(Boolean);
+
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `submission-comparison-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  if (allDeliverables.length === 0 && comparisonGroups.length === 0) {
     return (
       <div className="text-center py-8">
         <div className="text-4xl mb-4">📋</div>
@@ -318,8 +424,33 @@ const DeliverablesReview = ({ proposalItems, submissions, onRefresh, isContractL
           </p>
         </div>
         
-        <div className="flex items-center gap-2">
-
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setViewMode('list')}
+              className={`px-3 py-1.5 text-xs rounded border flex items-center gap-1 ${
+                viewMode === 'list'
+                  ? 'bg-gray-900 text-white border-gray-900'
+                  : 'bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200'
+              }`}
+            >
+              <List className="w-3 h-3" />
+              List
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('compare')}
+              className={`px-3 py-1.5 text-xs rounded border flex items-center gap-1 ${
+                viewMode === 'compare'
+                  ? 'bg-gray-900 text-white border-gray-900'
+                  : 'bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200'
+              }`}
+            >
+              <Columns className="w-3 h-3" />
+              Compare
+            </button>
+          </div>
           <Filter className="w-4 h-4 text-gray-500" />
           <select
             value={filterStatus}
@@ -332,59 +463,214 @@ const DeliverablesReview = ({ proposalItems, submissions, onRefresh, isContractL
             <option value="approved">Approved</option>
             <option value="rejected">Rejected</option>
           </select>
+          {viewMode === 'compare' && (
+            <>
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value)}
+                className="text-sm rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-2 py-1"
+              >
+                <option value="newest">Newest first</option>
+                <option value="oldest">Oldest first</option>
+                <option value="most_words">Most words</option>
+                <option value="fewest_words">Fewest words</option>
+              </select>
+              <button
+                type="button"
+                onClick={exportComparison}
+                className="px-3 py-1.5 text-xs rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
+              >
+                Export JSON
+              </button>
+            </>
+          )}
         </div>
       </div>
 
       <div className="text-sm text-gray-600 dark:text-gray-400">
-        Showing {filteredDeliverables.length} of {allDeliverables.length} deliverables
+        {viewMode === 'list'
+          ? `Showing ${filteredDeliverables.length} of ${allDeliverables.length} deliverables`
+          : `Showing ${comparisonGroups.length} tasks with submissions`}
       </div>
 
-      <div className="space-y-3">
-        {filteredDeliverables.map((deliverable) => (
-          <div key={deliverable.task_id} className="border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 overflow-hidden">
-            <div className="p-4">
-              <div className="flex items-start justify-between gap-4">
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-2">
-                    {getStatusIcon(deliverable.submission?.status)}
-                    <span className={`text-xs px-2 py-0.5 rounded border ${getStatusColor(deliverable.submission?.status)}`}>
-                      {deliverable.submission?.status || 'pending'}
-                    </span>
-                    <span className="text-xs text-gray-500 dark:text-gray-400">
-                      Proposal: {deliverable.proposalId}
-                    </span>
-                  </div>
-                  
-                  <h5 className="font-semibold text-black dark:text-white mb-1">
-                    {deliverable.title}
-                  </h5>
-                  <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
-                    {deliverable.proposalTitle}
-                  </p>
-                  
-                  <div className="flex items-center gap-4 text-xs text-gray-500 dark:text-gray-400">
-                    <span>Budget: {deliverable.budget_sats} sats</span>
-                    <span>Submitted by: {deliverable.submission?.deliverables?.submitted_by || 'Unknown'}</span>
-                    {deliverable.submission?.submitted_at && (
-                      <span>Submitted: {new Date(deliverable.submission.submitted_at).toLocaleDateString()}</span>
-                    )}
+      {viewMode === 'compare' ? (
+        <div className="space-y-4">
+          {comparisonGroups.map((group) => {
+            const filteredSubmissions = group.submissions.filter((submission) => {
+              if (filterStatus === 'all') return true;
+              return (submission.status || '').toLowerCase() === filterStatus;
+            });
+            if (filteredSubmissions.length === 0) return null;
+
+            const sortedSubmissions = sortSubmissions(filteredSubmissions);
+
+            return (
+              <div key={group.task_id} className="border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 overflow-hidden">
+                <div className="p-4 border-b border-gray-200 dark:border-gray-700">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-xs text-gray-500 dark:text-gray-400">Task {group.task_id}</div>
+                      <h5 className="text-base font-semibold text-black dark:text-white">{group.title}</h5>
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">{group.proposalTitle}</p>
+                    </div>
+                    <span className="text-xs text-gray-500 dark:text-gray-400">Proposal: {group.proposalId}</span>
                   </div>
                 </div>
+                <div className="overflow-x-auto">
+                  <div className="flex gap-4 p-4 min-w-full">
+                    {sortedSubmissions.map((submission, index) => {
+                      const submissionId = submission.submission_id || submission.id || `${group.task_id}-${index}`;
+                      const notes = getSubmissionNotes(submission);
+                      const wordCount = countWords(notes);
+                      const preview = getNotesPreview(notes);
+                      const isExpanded = !!expandedSubmissions[submissionId];
+                      const status = submission.status || 'pending';
+                      return (
+                        <div key={submissionId} className="min-w-[320px] max-w-[420px] flex-shrink-0 border border-gray-200 dark:border-gray-700 rounded-lg p-3 bg-gray-50 dark:bg-gray-900">
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <div className="flex items-center gap-2">
+                                {getStatusIcon(status)}
+                                <span className={`text-xs px-2 py-0.5 rounded border ${getStatusColor(status)}`}>
+                                  {status}
+                                </span>
+                                <span className="text-[11px] text-gray-500 dark:text-gray-400">Attempt {index + 1}</span>
+                              </div>
+                              <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                                {submission.submitted_at ? new Date(submission.submitted_at).toLocaleString() : 'Unknown time'}
+                              </div>
+                            </div>
+                            <div className="text-xs text-gray-500 dark:text-gray-400 text-right">
+                              {submission.submission_id || submission.id}
+                            </div>
+                          </div>
 
-                <button
-                  onClick={() => toggleTaskExpansion(deliverable.task_id)}
-                  className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
-                >
-                  {expandedTasks[deliverable.task_id] ? (
-                    <ChevronUp className="w-5 h-5" />
-                  ) : (
-                    <ChevronDown className="w-5 h-5" />
-                  )}
-                </button>
+                          <div className="grid grid-cols-2 gap-2 text-xs text-gray-600 dark:text-gray-300 mt-3">
+                            <div>Words: {wordCount}</div>
+                            <div>Proof: {submission.completion_proof?.link ? 'Yes' : 'No'}</div>
+                            <div className="col-span-2">Submitted by: {submission?.deliverables?.submitted_by || 'Unknown'}</div>
+                          </div>
+
+                          {submission?.rejection_reason && (
+                            <div className="mt-3 bg-red-50 dark:bg-red-900/40 border border-red-200 dark:border-red-700 rounded p-2 text-xs text-red-700 dark:text-red-200 whitespace-pre-wrap">
+                              {submission.rejection_reason}
+                            </div>
+                          )}
+
+                          <div className="mt-3">
+                            <div className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">Notes</div>
+                            <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded p-2 max-h-64 overflow-y-auto">
+                              {isExpanded ? renderMarkdown(notes || 'No notes provided.') : (
+                                <pre className="text-xs text-gray-700 dark:text-gray-300 whitespace-pre-wrap">
+                                  {preview || 'No notes provided.'}
+                                </pre>
+                              )}
+                            </div>
+                            {notes && notes.length > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => setExpandedSubmissions(prev => ({ ...prev, [submissionId]: !prev[submissionId] }))}
+                                className="mt-2 text-xs text-blue-600 dark:text-blue-400 hover:underline"
+                              >
+                                {isExpanded ? 'Show preview' : 'Show full notes'}
+                              </button>
+                            )}
+                          </div>
+
+                          <div className="mt-3 space-y-2">
+                            <textarea
+                              className="w-full rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-xs px-2 py-1"
+                              placeholder="Review notes (optional)"
+                              rows={2}
+                              value={reviewNotes[submissionId] || ''}
+                              onChange={(e) => setReviewNotes(prev => ({
+                                ...prev,
+                                [submissionId]: e.target.value
+                              }))}
+                            />
+                            <div className="flex gap-2 flex-wrap">
+                              <button
+                                onClick={() => reviewDeliverable(submissionId, 'review')}
+                                disabled={reviewingId === submissionId || isContractLocked}
+                                className="px-2 py-1 bg-purple-600 hover:bg-purple-500 text-white rounded text-xs disabled:opacity-60 flex items-center gap-1"
+                              >
+                                <Eye className="w-3 h-3" />
+                                {reviewingId === submissionId ? 'Processing…' : 'Review'}
+                              </button>
+                              <button
+                                onClick={() => reviewDeliverable(submissionId, 'approve')}
+                                disabled={reviewingId === submissionId || isContractLocked}
+                                className="px-2 py-1 bg-green-600 hover:bg-green-500 text-white rounded text-xs disabled:opacity-60 flex items-center gap-1"
+                              >
+                                <CheckCircle className="w-3 h-3" />
+                                {reviewingId === submissionId ? 'Processing…' : 'Approve'}
+                              </button>
+                              <button
+                                onClick={() => reviewDeliverable(submissionId, 'reject')}
+                                disabled={reviewingId === submissionId || isContractLocked}
+                                className="px-2 py-1 bg-red-600 hover:bg-red-500 text-white rounded text-xs disabled:opacity-60 flex items-center gap-1"
+                              >
+                                <XCircle className="w-3 h-3" />
+                                {reviewingId === submissionId ? 'Processing…' : 'Reject'}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
               </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {filteredDeliverables.map((deliverable) => (
+            <div key={deliverable.task_id} className="border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 overflow-hidden">
+              <div className="p-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-2">
+                      {getStatusIcon(deliverable.submission?.status)}
+                      <span className={`text-xs px-2 py-0.5 rounded border ${getStatusColor(deliverable.submission?.status)}`}>
+                        {deliverable.submission?.status || 'pending'}
+                      </span>
+                      <span className="text-xs text-gray-500 dark:text-gray-400">
+                        Proposal: {deliverable.proposalId}
+                      </span>
+                    </div>
+                    
+                    <h5 className="font-semibold text-black dark:text-white mb-1">
+                      {deliverable.title}
+                    </h5>
+                    <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
+                      {deliverable.proposalTitle}
+                    </p>
+                    
+                    <div className="flex items-center gap-4 text-xs text-gray-500 dark:text-gray-400">
+                      <span>Budget: {deliverable.budget_sats} sats</span>
+                      <span>Submitted by: {deliverable.submission?.deliverables?.submitted_by || 'Unknown'}</span>
+                      {deliverable.submission?.submitted_at && (
+                        <span>Submitted: {new Date(deliverable.submission.submitted_at).toLocaleDateString()}</span>
+                      )}
+                    </div>
+                  </div>
 
-              {expandedTasks[deliverable.task_id] && (
-                <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700 space-y-4">
+                  <button
+                    onClick={() => toggleTaskExpansion(deliverable.task_id)}
+                    className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                  >
+                    {expandedTasks[deliverable.task_id] ? (
+                      <ChevronUp className="w-5 h-5" />
+                    ) : (
+                      <ChevronDown className="w-5 h-5" />
+                    )}
+                  </button>
+                </div>
+
+                {expandedTasks[deliverable.task_id] && (
+                  <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700 space-y-4">
                   <div>
                     <h6 className="text-sm font-semibold text-black dark:text-white mb-2">Deliverable Details</h6>
                     <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-3 space-y-2">
