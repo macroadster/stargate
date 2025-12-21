@@ -65,6 +65,8 @@ func (h *HTTPMCPServer) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/mcp/tools", h.authWrap(h.handleListTools))
 	mux.HandleFunc("/mcp/call", h.authWrap(h.handleToolCall))
 	mux.HandleFunc("/mcp/discover", h.authWrap(h.handleDiscover))
+	mux.HandleFunc("/mcp/docs", h.authWrap(h.handleDocs))
+	mux.HandleFunc("/mcp/openapi.json", h.authWrap(h.handleOpenAPI))
 	mux.HandleFunc("/mcp/events", h.authWrap(h.handleEventsProxy))
 	// Register catch-all last
 	mux.HandleFunc("/mcp/", h.authWrap(h.handleToolCall))
@@ -86,59 +88,170 @@ func (h *HTTPMCPServer) authWrap(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// getToolSchemas returns detailed schemas for all available tools
+func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
+	return map[string]interface{}{
+		"list_contracts": map[string]interface{}{
+			"description": "List available smart contracts with optional filtering",
+			"parameters": map[string]interface{}{
+				"status": map[string]interface{}{
+					"type":        "string",
+					"description": "Filter contracts by status",
+					"enum":        []string{"active", "pending", "completed"},
+				},
+				"skills": map[string]interface{}{
+					"type":        "array",
+					"items":       map[string]interface{}{"type": "string"},
+					"description": "Filter contracts by required skills",
+				},
+			},
+			"examples": []map[string]interface{}{
+				{
+					"description": "List all active contracts",
+					"arguments":   map[string]interface{}{"status": "active"},
+				},
+			},
+		},
+		"get_contract": map[string]interface{}{
+			"description": "Get details of a specific contract",
+			"parameters": map[string]interface{}{
+				"contract_id": map[string]interface{}{
+					"type":        "string",
+					"description": "The ID of the contract to retrieve",
+					"required":    true,
+				},
+			},
+			"examples": []map[string]interface{}{
+				{
+					"description": "Get contract details",
+					"arguments":   map[string]interface{}{"contract_id": "contract-123"},
+				},
+			},
+		},
+		"list_tasks": map[string]interface{}{
+			"description": "List available tasks with filtering options",
+			"parameters": map[string]interface{}{
+				"skills": map[string]interface{}{
+					"type":        "array",
+					"items":       map[string]interface{}{"type": "string"},
+					"description": "Filter by required skills",
+				},
+				"status": map[string]interface{}{
+					"type":        "string",
+					"description": "Filter by task status",
+					"enum":        []string{"available", "claimed", "completed"},
+				},
+				"limit": map[string]interface{}{
+					"type":        "integer",
+					"description": "Maximum number of tasks to return",
+				},
+			},
+			"examples": []map[string]interface{}{
+				{
+					"description": "List available tasks",
+					"arguments":   map[string]interface{}{"status": "available"},
+				},
+			},
+		},
+		"claim_task": map[string]interface{}{
+			"description": "Claim a task for work by an AI agent",
+			"parameters": map[string]interface{}{
+				"task_id": map[string]interface{}{
+					"type":        "string",
+					"description": "The ID of the task to claim",
+					"required":    true,
+				},
+				"ai_identifier": map[string]interface{}{
+					"type":        "string",
+					"description": "Identifier of the AI agent claiming the task",
+					"required":    true,
+				},
+			},
+			"examples": []map[string]interface{}{
+				{
+					"description": "Claim a task",
+					"arguments": map[string]interface{}{
+						"task_id":       "task-123",
+						"ai_identifier": "agent-1",
+					},
+				},
+			},
+		},
+		"submit_work": map[string]interface{}{
+			"description": "Submit completed work for a claimed task",
+			"parameters": map[string]interface{}{
+				"claim_id": map[string]interface{}{
+					"type":        "string",
+					"description": "The claim ID from claiming the task",
+					"required":    true,
+				},
+				"deliverables": map[string]interface{}{
+					"type":        "object",
+					"description": "The work deliverables",
+					"required":    true,
+				},
+			},
+			"examples": []map[string]interface{}{
+				{
+					"description": "Submit work for a task",
+					"arguments": map[string]interface{}{
+						"claim_id": "claim-123",
+						"deliverables": map[string]interface{}{
+							"description": "Completed the task",
+						},
+					},
+				},
+			},
+		},
+		// Add more tools as needed...
+		"list_proposals": map[string]interface{}{
+			"description": "List proposals with filtering",
+			"parameters": map[string]interface{}{
+				"status": map[string]interface{}{
+					"type":        "string",
+					"description": "Filter by proposal status",
+				},
+			},
+			"examples": []map[string]interface{}{
+				{
+					"description": "List pending proposals",
+					"arguments":   map[string]interface{}{"status": "pending"},
+				},
+			},
+		},
+		"scan_image": map[string]interface{}{
+			"description": "Scan an image for steganographic content",
+			"parameters": map[string]interface{}{
+				"image_data": map[string]interface{}{
+					"type":        "string",
+					"description": "Base64 encoded image data",
+					"required":    true,
+				},
+			},
+			"examples": []map[string]interface{}{
+				{
+					"description": "Scan an image",
+					"arguments": map[string]interface{}{
+						"image_data": "base64...",
+					},
+				},
+			},
+		},
+	}
+}
+
 func (h *HTTPMCPServer) handleListTools(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// Create a simple list of available tools
-	tools := map[string]interface{}{
-		"contracts": []string{
-			"list_contracts",
-			"get_contract",
-			"get_contract_funding",
-			"get_open_contracts",
-		},
-		"tasks": []string{
-			"list_tasks",
-			"get_task",
-			"claim_task",
-			"submit_work",
-			"get_task_proof",
-			"get_task_status",
-		},
-		"skills": []string{
-			"list_skills",
-		},
-		"proposals": []string{
-			"list_proposals",
-			"get_proposal",
-			"create_proposal",
-			"approve_proposal",
-			"publish_proposal",
-		},
-		"submissions": []string{
-			"list_submissions",
-			"get_submission",
-			"review_submission",
-			"rework_submission",
-		},
-		"events": []string{
-			"list_events",
-		},
-		"scanning": []string{
-			"scan_image",
-			"scan_block",
-			"extract_message",
-			"get_scanner_info",
-		},
-	}
+	tools := h.getToolSchemas()
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"tools": tools,
-		"total": 23, // Total number of tools available
+		"total": len(tools),
 	})
 }
 
@@ -186,6 +299,202 @@ func (h *HTTPMCPServer) handleDiscover(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// handleDocs provides human-readable API documentation
+func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html")
+	html := `<!DOCTYPE html>
+<html>
+<head>
+    <title>MCP API Documentation</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        h1 { color: #333; }
+        ul { line-height: 1.6; }
+        .endpoint { font-weight: bold; }
+        pre { background: #f4f4f4; padding: 10px; border-radius: 4px; }
+    </style>
+</head>
+<body>
+    <h1>MCP API Documentation</h1>
+    <p>The MCP (Model Context Protocol) API provides endpoints for interacting with smart contract tools.</p>
+    
+    <h2>Endpoints</h2>
+    <ul>
+        <li><span class="endpoint">GET /mcp/tools</span> - List available tools with schemas and examples</li>
+        <li><span class="endpoint">POST /mcp/call</span> - Call a specific tool</li>
+        <li><span class="endpoint">GET /mcp/discover</span> - Discover available endpoints and tools</li>
+        <li><span class="endpoint">GET /mcp/docs</span> - This documentation page</li>
+        <li><span class="endpoint">GET /mcp/openapi.json</span> - OpenAPI specification</li>
+        <li><span class="endpoint">GET /mcp/events</span> - Stream events</li>
+    </ul>
+    
+    <h2>Authentication</h2>
+    <p>All endpoints require an API key via the <code>X-API-Key</code> header.</p>
+    
+    <h2>Examples</h2>
+    <h3>List Tools</h3>
+    <pre>curl -H "X-API-Key: your-key" http://localhost:3001/mcp/tools</pre>
+    
+    <h3>Call a Tool</h3>
+    <pre>curl -X POST -H "Content-Type: application/json" -H "X-API-Key: your-key" \
+  -d '{"tool": "list_contracts", "arguments": {"status": "active"}}' \
+  http://localhost:3001/mcp/call</pre>
+</body>
+</html>`
+	w.Write([]byte(html))
+}
+
+// handleOpenAPI provides OpenAPI specification
+func (h *HTTPMCPServer) handleOpenAPI(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	spec := map[string]interface{}{
+		"openapi": "3.0.0",
+		"info": map[string]interface{}{
+			"title":       "MCP API",
+			"description": "Model Context Protocol API for smart contract tools",
+			"version":     "1.0.0",
+		},
+		"servers": []map[string]interface{}{
+			{
+				"url":         h.baseURL + "/mcp",
+				"description": "MCP Server",
+			},
+		},
+		"security": []map[string]interface{}{
+			{
+				"ApiKeyAuth": []string{},
+			},
+		},
+		"components": map[string]interface{}{
+			"securitySchemes": map[string]interface{}{
+				"ApiKeyAuth": map[string]interface{}{
+					"type": "apiKey",
+					"in":   "header",
+					"name": "X-API-Key",
+				},
+			},
+		},
+		"paths": map[string]interface{}{
+			"/tools": map[string]interface{}{
+				"get": map[string]interface{}{
+					"summary":     "List available tools",
+					"description": "Returns a list of available MCP tools with their schemas and examples",
+					"responses": map[string]interface{}{
+						"200": map[string]interface{}{
+							"description": "Success",
+							"content": map[string]interface{}{
+								"application/json": map[string]interface{}{
+									"schema": map[string]interface{}{
+										"type": "object",
+										"properties": map[string]interface{}{
+											"tools": map[string]interface{}{
+												"type": "object",
+												"additionalProperties": map[string]interface{}{
+													"type": "object",
+												},
+											},
+											"total": map[string]interface{}{
+												"type": "integer",
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			"/call": map[string]interface{}{
+				"post": map[string]interface{}{
+					"summary":     "Call a tool",
+					"description": "Execute a specific MCP tool",
+					"requestBody": map[string]interface{}{
+						"required": true,
+						"content": map[string]interface{}{
+							"application/json": map[string]interface{}{
+								"schema": map[string]interface{}{
+									"type": "object",
+									"properties": map[string]interface{}{
+										"tool": map[string]interface{}{
+											"type": "string",
+										},
+										"arguments": map[string]interface{}{
+											"type": "object",
+										},
+									},
+									"required": []string{"tool"},
+								},
+							},
+						},
+					},
+					"responses": map[string]interface{}{
+						"200": map[string]interface{}{
+							"description": "Success",
+							"content": map[string]interface{}{
+								"application/json": map[string]interface{}{
+									"schema": map[string]interface{}{
+										"type": "object",
+										"properties": map[string]interface{}{
+											"success": map[string]interface{}{
+												"type": "boolean",
+											},
+											"result": map[string]interface{}{
+												"type": "object",
+											},
+											"error": map[string]interface{}{
+												"type": "string",
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			"/discover": map[string]interface{}{
+				"get": map[string]interface{}{
+					"summary": "Discover API endpoints",
+					"responses": map[string]interface{}{
+						"200": map[string]interface{}{
+							"description": "Success",
+						},
+					},
+				},
+			},
+			"/docs": map[string]interface{}{
+				"get": map[string]interface{}{
+					"summary": "API Documentation",
+					"responses": map[string]interface{}{
+						"200": map[string]interface{}{
+							"description": "HTML documentation",
+						},
+					},
+				},
+			},
+			"/openapi.json": map[string]interface{}{
+				"get": map[string]interface{}{
+					"summary": "OpenAPI Specification",
+					"responses": map[string]interface{}{
+						"200": map[string]interface{}{
+							"description": "OpenAPI JSON spec",
+						},
+					},
+				},
+			},
+		},
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(spec)
 }
 
 // handleEventsProxy proxies SSE/JSON event consumption to the REST endpoint for parity.
