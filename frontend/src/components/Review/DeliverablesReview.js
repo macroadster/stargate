@@ -1180,7 +1180,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
           </div>
         ))}
       </div>
-
+      )}
 
     </div>
   );
