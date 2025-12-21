@@ -1427,24 +1427,29 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 		return smartContracts
 	}
 
-	candidates := make(map[string]*services.IngestionRecord, len(recs))
+	primaryCandidates := make(map[string]*services.IngestionRecord, len(recs))
+	fallbackCandidates := make(map[string]*services.IngestionRecord, len(recs))
 	candidatesByID := make(map[string][]string, len(recs))
 	txidMatches := make(map[string]*services.IngestionRecord, len(recs))
 	for _, rec := range recs {
 		recCopy := rec
-		candidateList := ingestionHashCandidates(recCopy)
-		for _, candidate := range candidateList {
-			candidates[candidate] = &recCopy
+		primaryList, fallbackList := ingestionCandidateBuckets(recCopy)
+		for _, candidate := range primaryList {
+			primaryCandidates[candidate] = &recCopy
+			candidatesByID[recCopy.ID] = append(candidatesByID[recCopy.ID], candidate)
+		}
+		for _, candidate := range fallbackList {
+			fallbackCandidates[candidate] = &recCopy
 			candidatesByID[recCopy.ID] = append(candidatesByID[recCopy.ID], candidate)
 		}
 		for _, txid := range fundingTxIDsFromMeta(recCopy.Metadata) {
 			txidMatches[txid] = &recCopy
 		}
 	}
-	if len(candidates) == 0 && len(txidMatches) == 0 {
+	if len(primaryCandidates) == 0 && len(fallbackCandidates) == 0 && len(txidMatches) == 0 {
 		return smartContracts
 	}
-	log.Printf("oracle reconcile: %d candidate hashes, %d funding txids across %d ingestions", len(candidates), len(txidMatches), len(recs))
+	log.Printf("oracle reconcile: %d primary hashes, %d fallback hashes, %d funding txids across %d ingestions", len(primaryCandidates), len(fallbackCandidates), len(txidMatches), len(recs))
 
 	for _, tx := range parsedBlock.Transactions {
 		if match, ok := txidMatches[tx.TxID]; ok && match != nil {
@@ -1478,14 +1483,18 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 				bm.updateTaskFundingProofsFromTx(match.ID, tx, blockHeight)
 				bm.confirmAndSweepContractTasks(match.ID, tx.TxID, blockHeight)
 				for _, candidate := range candidatesByID[match.ID] {
-					delete(candidates, candidate)
+					delete(primaryCandidates, candidate)
+					delete(fallbackCandidates, candidate)
 				}
 				delete(txidMatches, tx.TxID)
 			}
 		}
 
 		for outIdx, output := range tx.Outputs {
-			match, matchType, matchedHash := matchOracleOutput(output.ScriptPubKey, bm.networkParams(), candidates)
+			match, matchType, matchedHash := matchOracleOutput(output.ScriptPubKey, bm.networkParams(), primaryCandidates)
+			if match == nil {
+				match, matchType, matchedHash = matchOracleOutput(output.ScriptPubKey, bm.networkParams(), fallbackCandidates)
+			}
 			if match == nil {
 				continue
 			}
@@ -1525,7 +1534,8 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 			bm.confirmAndSweepContractTasks(match.ID, tx.TxID, blockHeight)
 
 			for _, candidate := range candidatesByID[match.ID] {
-				delete(candidates, candidate)
+				delete(primaryCandidates, candidate)
+				delete(fallbackCandidates, candidate)
 			}
 		}
 	}
@@ -1725,69 +1735,77 @@ func (bm *BlockMonitor) findImageForScanResult(images []ExtractedImageData, resu
 	return nil
 }
 
-func ingestionHashCandidates(rec services.IngestionRecord) []string {
-	var out []string
+func ingestionCandidateBuckets(rec services.IngestionRecord) ([]string, []string) {
+	var primary []string
+	var fallback []string
 
-	appendCandidate := func(value string) {
+	appendPrimary := func(value string) {
 		value = normalizeHex(value)
 		if len(value) != 40 && len(value) != 64 {
 			return
 		}
-		out = append(out, value)
+		primary = append(primary, value)
+	}
+	appendFallback := func(value string) {
+		value = normalizeHex(value)
+		if len(value) != 40 && len(value) != 64 {
+			return
+		}
+		fallback = append(fallback, value)
 	}
 
 	if rec.ID != "" {
-		appendCandidate(rec.ID)
+		appendFallback(rec.ID)
 	}
 	if v := stringFromAny(rec.Metadata["visible_pixel_hash"]); v != "" {
-		appendCandidate(v)
+		appendPrimary(v)
+	}
+	if v := stringFromAny(rec.Metadata["pixel_hash"]); v != "" {
+		appendPrimary(v)
 	}
 	if v := stringFromAny(rec.Metadata["payout_script_hash"]); v != "" {
-		appendCandidate(v)
+		appendFallback(v)
 	}
 	switch hashes := rec.Metadata["payout_script_hashes"].(type) {
 	case []string:
 		for _, hash := range hashes {
-			appendCandidate(hash)
+			appendFallback(hash)
 		}
 	case []any:
 		for _, hash := range hashes {
-			appendCandidate(fmt.Sprintf("%v", hash))
+			appendFallback(fmt.Sprintf("%v", hash))
 		}
 	case string:
 		for _, hash := range strings.Split(hashes, ",") {
-			appendCandidate(hash)
+			appendFallback(hash)
 		}
 	}
 	if v := stringFromAny(rec.Metadata["payout_script_hash160"]); v != "" {
-		appendCandidate(v)
+		appendFallback(v)
 	}
 	switch hashes := rec.Metadata["payout_script_hash160s"].(type) {
 	case []string:
 		for _, hash := range hashes {
-			appendCandidate(hash)
+			appendFallback(hash)
 		}
 	case []any:
 		for _, hash := range hashes {
-			appendCandidate(fmt.Sprintf("%v", hash))
+			appendFallback(fmt.Sprintf("%v", hash))
 		}
 	case string:
 		for _, hash := range strings.Split(hashes, ",") {
-			appendCandidate(hash)
+			appendFallback(hash)
 		}
-	}
-	if v := stringFromAny(rec.Metadata["pixel_hash"]); v != "" {
-		appendCandidate(v)
 	}
 
 	if rec.ImageBase64 != "" {
 		if data, err := base64.StdEncoding.DecodeString(rec.ImageBase64); err == nil {
 			sum := sha256.Sum256(data)
-			out = append(out, hex.EncodeToString(sum[:]))
+			appendFallback(hex.EncodeToString(sum[:]))
 		}
 	}
 
-	return out
+	return primary, fallback
 }
 
 func matchOracleOutput(script []byte, params *chaincfg.Params, candidates map[string]*services.IngestionRecord) (*services.IngestionRecord, string, string) {
