@@ -757,6 +757,8 @@ ON CONFLICT (contract_id) DO UPDATE SET
 		var proofJSON []byte
 		if t.MerkleProof != nil {
 			proofJSON, _ = json.Marshal(t.MerkleProof)
+		} else {
+			proofJSON = []byte("null")
 		}
 		_, err := tx.Exec(ctx, `
 INSERT INTO mcp_tasks (task_id, contract_id, goal_id, title, description, budget_sats, skills, status, claimed_by, claimed_at, claim_expires_at, difficulty, estimated_hours, requirements, merkle_proof)
