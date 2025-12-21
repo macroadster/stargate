@@ -657,17 +657,62 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
                     </div>
                   </div>
 
-                  <button
-                    onClick={() => toggleTaskExpansion(deliverable.task_id)}
-                    className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
-                  >
-                    {expandedTasks[deliverable.task_id] ? (
-                      <ChevronUp className="w-5 h-5" />
-                    ) : (
-                      <ChevronDown className="w-5 h-5" />
-                    )}
-                  </button>
+                  <div className="flex items-center gap-2">
+                    {(() => {
+                      const status = (deliverable.submission?.status || '').toLowerCase();
+                      const finalStatuses = ['approved', 'rejected', 'reviewed'];
+                      const showQuickActions = !finalStatuses.includes(status);
+                      if (!showQuickActions) return null;
+                      return (
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => reviewDeliverable(deliverable.submissionKey, 'approve')}
+                            disabled={reviewingId === deliverable.submissionKey || isContractLocked}
+                            className="px-2 py-1 bg-green-600 hover:bg-green-500 text-white rounded text-xs disabled:opacity-60"
+                          >
+                            Approve
+                          </button>
+                          <button
+                            onClick={() => reviewDeliverable(deliverable.submissionKey, 'reject')}
+                            disabled={reviewingId === deliverable.submissionKey || isContractLocked}
+                            className="px-2 py-1 bg-red-600 hover:bg-red-500 text-white rounded text-xs disabled:opacity-60"
+                          >
+                            Reject
+                          </button>
+                        </div>
+                      );
+                    })()}
+                    <button
+                      onClick={() => toggleTaskExpansion(deliverable.task_id)}
+                      className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                    >
+                      {expandedTasks[deliverable.task_id] ? (
+                        <ChevronUp className="w-5 h-5" />
+                      ) : (
+                        <ChevronDown className="w-5 h-5" />
+                      )}
+                    </button>
+                  </div>
                 </div>
+
+                {(() => {
+                  const notes = getSubmissionNotes(deliverable.submission || {});
+                  const preview = getNotesPreview(notes, 200);
+                  const wordCount = countWords(notes);
+                  const status = (deliverable.submission?.status || '').toLowerCase();
+                  const statusText = status || 'pending';
+                  return (
+                    <div className="mt-3 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg p-3">
+                      <div className="flex items-center justify-between text-xs text-gray-600 dark:text-gray-400 mb-2">
+                        <span>Words: {wordCount}</span>
+                        <span>Status: {statusText}</span>
+                      </div>
+                      <pre className="text-xs text-gray-700 dark:text-gray-300 whitespace-pre-wrap">
+                        {preview || 'No notes provided.'}
+                      </pre>
+                    </div>
+                  );
+                })()}
 
                 {expandedTasks[deliverable.task_id] && (
                   <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700 space-y-4">
