@@ -61,6 +61,7 @@ type MCPResponse struct {
 	ErrorCode      string      `json:"error_code,omitempty"`
 	RequiredFields []string    `json:"required_fields,omitempty"`
 	DocsURL        string      `json:"docs_url,omitempty"`
+	RequestID      string      `json:"request_id,omitempty"`
 }
 
 // RegisterRoutes registers HTTP MCP endpoints
@@ -605,6 +606,9 @@ func (h *HTTPMCPServer) handleToolCall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Generate request ID for tracking
+	requestID := strconv.FormatInt(time.Now().UnixNano(), 16)
+
 	var req MCPRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.sendErrorResponse(w, MCPResponse{
@@ -612,6 +616,7 @@ func (h *HTTPMCPServer) handleToolCall(w http.ResponseWriter, r *http.Request) {
 			Error:     "Invalid JSON: " + err.Error(),
 			ErrorCode: "INVALID_JSON",
 			DocsURL:   "/mcp/docs",
+			RequestID: requestID,
 		})
 		return
 	}
@@ -624,6 +629,7 @@ func (h *HTTPMCPServer) handleToolCall(w http.ResponseWriter, r *http.Request) {
 			ErrorCode:      "MISSING_TOOL_NAME",
 			RequiredFields: []string{"tool"},
 			DocsURL:        "/mcp/docs",
+			RequestID:      requestID,
 		})
 		return
 	}
@@ -637,14 +643,16 @@ func (h *HTTPMCPServer) handleToolCall(w http.ResponseWriter, r *http.Request) {
 			Error:     err.Error(),
 			ErrorCode: "TOOL_EXECUTION_ERROR",
 			DocsURL:   "/mcp/docs",
+			RequestID: requestID,
 		})
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(MCPResponse{
-		Success: true,
-		Result:  result,
+		Success:   true,
+		Result:    result,
+		RequestID: requestID,
 	})
 }
 
