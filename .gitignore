@@ -10,3 +10,6 @@ backend/stargate_backend_new
 .gocache/*
 .beads/*
 !.beads/issues.jsonl
+
+# bv (beads viewer) local config and caches
+.bv/

@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -76,8 +77,9 @@ func (h *HTTPMCPServer) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/mcp/openapi.json", h.authWrap(h.handleOpenAPI))
 	mux.HandleFunc("/mcp/health", h.handleHealth)
 	mux.HandleFunc("/mcp/events", h.authWrap(h.handleEventsProxy))
+	mux.HandleFunc("/mcp", h.authWrap(h.handleIndex))
 	// Register catch-all last
-	mux.HandleFunc("/mcp/", h.authWrap(h.handleToolCall))
+	mux.HandleFunc("/mcp/", h.authWrap(h.handleIndex))
 }
 
 // checkRateLimit checks if the API key has exceeded rate limit (100 requests per minute)
@@ -132,6 +134,31 @@ func (h *HTTPMCPServer) authWrap(next http.HandlerFunc) http.HandlerFunc {
 		}
 		next(w, r)
 	}
+}
+
+func (h *HTTPMCPServer) externalBaseURL(r *http.Request) string {
+	if r == nil {
+		return h.baseURL
+	}
+	scheme := r.Header.Get("X-Forwarded-Proto")
+	if scheme == "" {
+		if r.TLS != nil {
+			scheme = "https"
+		} else {
+			scheme = "http"
+		}
+	}
+	host := r.Header.Get("X-Forwarded-Host")
+	if host == "" {
+		host = r.Host
+	}
+	if strings.Contains(host, ",") {
+		host = strings.TrimSpace(strings.Split(host, ",")[0])
+	}
+	if host == "" {
+		return h.baseURL
+	}
+	return scheme + "://" + host
 }
 
 // getToolSchemas returns detailed schemas for all available tools
@@ -307,13 +334,57 @@ func (h *HTTPMCPServer) handleListTools(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+func (h *HTTPMCPServer) handleIndex(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if r.URL.Path != "/mcp" && r.URL.Path != "/mcp/" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"error":   "Unknown MCP endpoint",
+			"message": "See available MCP endpoints at /mcp/docs or /mcp/discover.",
+		})
+		return
+	}
+
+	base := h.externalBaseURL(r)
+	resp := map[string]interface{}{
+		"message": "MCP HTTP server is running. Use /mcp/tools or /mcp/discover to list tools.",
+		"links": map[string]string{
+			"tools":        base + "/mcp/tools",
+			"discover":     base + "/mcp/discover",
+			"docs":         base + "/mcp/docs",
+			"openapi":      base + "/mcp/openapi.json",
+			"health":       base + "/mcp/health",
+			"events":       base + "/mcp/events",
+			"tool_call":    base + "/mcp/call",
+			"mcp_base_url": base + "/mcp",
+		},
+		"quick_start": []string{
+			"GET /mcp/tools to fetch available tools.",
+			"POST /mcp/call with {\"tool\": \"list_contracts\"} to execute a tool.",
+			"GET /mcp/docs for full examples.",
+		},
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
 // handleDiscover advertises available tools and base routes for agents.
 func (h *HTTPMCPServer) handleDiscover(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	base := h.baseURL
+	base := h.externalBaseURL(r)
+	tools := h.getToolSchemas()
+	toolNames := make([]string, 0, len(tools))
+	for name := range tools {
+		toolNames = append(toolNames, name)
+	}
+	sort.Strings(toolNames)
 	resp := map[string]interface{}{
 		"version": "1.0",
 		"base_urls": map[string]string{
@@ -328,15 +399,9 @@ func (h *HTTPMCPServer) handleDiscover(w http.ResponseWriter, r *http.Request) {
 			"/api/smart_contract/events",
 			"/api/open-contracts",
 		},
-		"tools": []string{
-			"list_contracts", "get_contract", "get_contract_funding", "get_open_contracts",
-			"list_tasks", "get_task", "claim_task", "submit_work", "get_task_proof", "get_task_status",
-			"list_skills",
-			"list_proposals", "get_proposal", "create_proposal", "approve_proposal", "publish_proposal",
-			"list_submissions", "get_submission", "review_submission", "rework_submission",
-			"list_events",
-			"scan_image", "scan_block", "extract_message", "get_scanner_info",
-		},
+		"tools":      tools,
+		"tool_names": toolNames,
+		"total":      len(tools),
 		"authentication": map[string]string{
 			"type":        "api_key",
 			"header_name": "X-API-Key",
@@ -375,6 +440,18 @@ func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
 <body>
     <h1>MCP API Documentation</h1>
     <p>The MCP (Model Context Protocol) API provides endpoints for interacting with smart contract tools.</p>
+
+    <h2>Quick Start</h2>
+    <ol>
+        <li>Check server metadata: <code>GET /mcp/</code></li>
+        <li>List tools: <code>GET /mcp/tools</code></li>
+        <li>Call a tool: <code>POST /mcp/call</code> with JSON body</li>
+    </ol>
+    <pre>curl -H "X-API-Key: your-key" http://localhost:3001/mcp/</pre>
+    <pre>curl -H "X-API-Key: your-key" http://localhost:3001/mcp/tools</pre>
+    <pre>curl -X POST -H "Content-Type: application/json" -H "X-API-Key: your-key" \
+  -d '{"tool": "list_contracts"}' \
+  http://localhost:3001/mcp/call</pre>
 
     <h2>Getting Started</h2>
     <p>1. Obtain an API key from the system administrator.</p>
@@ -476,6 +553,7 @@ func (h *HTTPMCPServer) handleOpenAPI(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	base := h.externalBaseURL(r)
 	spec := map[string]interface{}{
 		"openapi": "3.0.0",
 		"info": map[string]interface{}{
@@ -485,7 +563,7 @@ func (h *HTTPMCPServer) handleOpenAPI(w http.ResponseWriter, r *http.Request) {
 		},
 		"servers": []map[string]interface{}{
 			{
-				"url":         h.baseURL + "/mcp",
+				"url":         base + "/mcp",
 				"description": "MCP Server",
 			},
 		},
