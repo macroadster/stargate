@@ -81,6 +81,13 @@ func (h *HTTPMCPServer) authWrap(next http.HandlerFunc) http.HandlerFunc {
 		// Check API key if configured
 		if h.apiKeyStore != nil {
 			key := r.Header.Get("X-API-Key")
+			if key == "" {
+				// Check Authorization: Bearer <key>
+				auth := r.Header.Get("Authorization")
+				if strings.HasPrefix(auth, "Bearer ") {
+					key = strings.TrimPrefix(auth, "Bearer ")
+				}
+			}
 			if key == "" || !h.apiKeyStore.Validate(key) {
 				http.Error(w, "Invalid API key", http.StatusForbidden)
 				return
@@ -338,7 +345,7 @@ func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
     </ul>
     
     <h2>Authentication</h2>
-    <p>All endpoints require an API key via the <code>X-API-Key</code> header.</p>
+    <p>All endpoints require an API key via the <code>X-API-Key</code> header or <code>Authorization: Bearer &lt;key&gt;</code> header.</p>
     
     <h2>Examples</h2>
     <h3>List Tools</h3>
@@ -376,6 +383,9 @@ func (h *HTTPMCPServer) handleOpenAPI(w http.ResponseWriter, r *http.Request) {
 			{
 				"ApiKeyAuth": []string{},
 			},
+			{
+				"BearerAuth": []string{},
+			},
 		},
 		"components": map[string]interface{}{
 			"securitySchemes": map[string]interface{}{
@@ -383,6 +393,10 @@ func (h *HTTPMCPServer) handleOpenAPI(w http.ResponseWriter, r *http.Request) {
 					"type": "apiKey",
 					"in":   "header",
 					"name": "X-API-Key",
+				},
+				"BearerAuth": map[string]interface{}{
+					"type":   "http",
+					"scheme": "bearer",
 				},
 			},
 		},
