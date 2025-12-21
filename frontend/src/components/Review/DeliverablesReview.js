@@ -20,6 +20,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
     setReviewingId('');
     setExpandedSubmissions({});
     setExpandedDiffs({});
+    setSelectedSubmissions({});
   }, [submissionsKey]);
   const [filterStatus, setFilterStatus] = useState('all');
   const [expandedTasks, setExpandedTasks] = useState({});
@@ -31,6 +32,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
   const [sortBy, setSortBy] = useState('newest');
   const [expandedSubmissions, setExpandedSubmissions] = useState({});
   const [expandedDiffs, setExpandedDiffs] = useState({});
+  const [selectedSubmissions, setSelectedSubmissions] = useState({});
 
 
   // Handle both array and object formats for submissions
@@ -93,6 +95,10 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
     if (filterStatus === 'all') return true;
     return (deliverable.submission?.status || '').toLowerCase() === filterStatus;
   });
+  const selectableDeliverables = filteredDeliverables.filter((deliverable) => deliverable.submissionKey);
+  const selectedCount = Object.values(selectedSubmissions).filter(Boolean).length;
+  const allSelected = selectableDeliverables.length > 0
+    && selectableDeliverables.every((deliverable) => selectedSubmissions[deliverable.submissionKey]);
 
   const submissionsByTask = submissionsArray.reduce((acc, submission) => {
     const taskId = submission?.task_id;
@@ -126,33 +132,89 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
     }));
   };
 
+  const performReviewRequest = async (submissionId, action) => {
+    const reviewUrl = `${API_BASE}/api/smart_contract/submissions/${submissionId}/review`;
+    const res = await fetch(reviewUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(auth.apiKey ? { 'X-API-Key': auth.apiKey } : {}),
+      },
+      body: JSON.stringify({
+        action,
+        notes: reviewNotes[submissionId] || ''
+      }),
+    });
+
+    if (!res.ok) {
+      const msg = await res.text();
+      throw new Error(msg || `HTTP ${res.status}`);
+    }
+  };
+
   const reviewDeliverable = async (submissionId, action) => {
     setReviewingId(submissionId);
     try {
-      const reviewUrl = `${API_BASE}/api/smart_contract/submissions/${submissionId}/review`;
-      const res = await fetch(reviewUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(auth.apiKey ? { 'X-API-Key': auth.apiKey } : {}),
-        },
-        body: JSON.stringify({
-          action,
-          notes: reviewNotes[submissionId] || ''
-        }),
-      });
-      
-      if (!res.ok) {
-        const msg = await res.text();
-        throw new Error(msg || `HTTP ${res.status}`);
-      }
-      
+      await performReviewRequest(submissionId, action);
       toast.success(`Deliverable ${action}d successfully`);
       setReviewNotes(prev => ({ ...prev, [submissionId]: '' }));
       if (onRefresh) onRefresh();
     } catch (err) {
       console.error('Review failed', err);
       toast.error(`Review failed: ${err.message}`);
+    } finally {
+      setReviewingId('');
+    }
+  };
+
+  const toggleSelectSubmission = (submissionId) => {
+    setSelectedSubmissions((prev) => ({
+      ...prev,
+      [submissionId]: !prev[submissionId],
+    }));
+  };
+
+  const toggleSelectAll = (checked, deliverables) => {
+    if (!checked) {
+      setSelectedSubmissions({});
+      return;
+    }
+    const next = {};
+    deliverables.forEach((deliverable) => {
+      if (deliverable.submissionKey) {
+        next[deliverable.submissionKey] = true;
+      }
+    });
+    setSelectedSubmissions(next);
+  };
+
+  const bulkReview = async (action, deliverables) => {
+    const targetIds = deliverables
+      .map((deliverable) => deliverable.submissionKey)
+      .filter((id) => id && selectedSubmissions[id]);
+
+    if (targetIds.length === 0) {
+      toast.error('Select at least one submission to review.');
+      return;
+    }
+
+    setReviewingId('bulk');
+    try {
+      for (const submissionId of targetIds) {
+        await performReviewRequest(submissionId, action);
+      }
+      setReviewNotes((prev) => {
+        const next = { ...prev };
+        targetIds.forEach((id) => {
+          delete next[id];
+        });
+        return next;
+      });
+      setSelectedSubmissions({});
+      if (onRefresh) onRefresh();
+      toast.success(`Bulk ${action} completed`);
+    } catch (err) {
+      toast.error(`Bulk ${action} failed: ${err.message}`);
     } finally {
       setReviewingId('');
     }
@@ -503,6 +565,39 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
           : `Showing ${comparisonGroups.length} tasks with submissions`}
       </div>
 
+      {viewMode === 'list' && (
+        <div className="flex items-center justify-between gap-3 flex-wrap text-xs text-gray-600 dark:text-gray-400">
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={allSelected}
+              onChange={(e) => toggleSelectAll(e.target.checked, selectableDeliverables)}
+              className="h-4 w-4 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500 dark:border-gray-600"
+            />
+            Select all
+          </label>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span>{selectedCount} selected</span>
+            <button
+              type="button"
+              onClick={() => bulkReview('approve', filteredDeliverables)}
+              disabled={selectedCount === 0 || reviewingId === 'bulk' || isContractLocked}
+              className="px-3 py-1.5 text-xs rounded bg-green-600 hover:bg-green-500 text-white disabled:opacity-60"
+            >
+              Bulk approve
+            </button>
+            <button
+              type="button"
+              onClick={() => bulkReview('reject', filteredDeliverables)}
+              disabled={selectedCount === 0 || reviewingId === 'bulk' || isContractLocked}
+              className="px-3 py-1.5 text-xs rounded bg-red-600 hover:bg-red-500 text-white disabled:opacity-60"
+            >
+              Bulk reject
+            </button>
+          </div>
+        </div>
+      )}
+
       {viewMode === 'compare' ? (
         <div className="space-y-4">
           {comparisonGroups.map((group) => {
@@ -642,6 +737,16 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex-1">
                     <div className="flex items-center gap-2 mb-2">
+                      <input
+                        type="checkbox"
+                        checked={!!selectedSubmissions[deliverable.submissionKey]}
+                        onChange={() => {
+                          if (!deliverable.submissionKey) return;
+                          toggleSelectSubmission(deliverable.submissionKey);
+                        }}
+                        disabled={!deliverable.submissionKey}
+                        className="h-4 w-4 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500 dark:border-gray-600"
+                      />
                       {getStatusIcon(deliverable.submission?.status)}
                       <span className={`text-xs px-2 py-0.5 rounded border ${getStatusColor(deliverable.submission?.status)}`}>
                         {deliverable.submission?.status || 'pending'}
