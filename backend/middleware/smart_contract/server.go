@@ -17,6 +17,7 @@ import (
 
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
+	"golang.org/x/crypto/ripemd160"
 	"stargate-backend/bitcoin"
 	"stargate-backend/core/smart_contract"
 	"stargate-backend/services"
@@ -452,6 +453,9 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 	if splitRaiseFund {
 		var psbtEntries []map[string]interface{}
 		var fundingTxIDs []string
+		var payoutScripts [][]byte
+		var payoutScriptHashes []string
+		var payoutScriptHash160s []string
 		for _, wallet := range raiseFundPayerOrder {
 			target := raiseFundPayerTotals[wallet]
 			payerTarget := raiseFundPayersByWallet[wallet]
@@ -471,6 +475,12 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 			}
 			if splitRes.FundingTxID != "" {
 				fundingTxIDs = append(fundingTxIDs, splitRes.FundingTxID)
+			}
+			if len(splitRes.PayoutScripts) > 0 {
+				payoutScripts = append(payoutScripts, splitRes.PayoutScripts...)
+				shaHashes, hash160s := buildScriptHashes(splitRes.PayoutScripts)
+				payoutScriptHashes = append(payoutScriptHashes, shaHashes...)
+				payoutScriptHash160s = append(payoutScriptHash160s, hash160s...)
 			}
 			if len(raiseFundTasksByWallet[wallet]) > 0 {
 				for _, taskID := range raiseFundTasksByWallet[wallet] {
@@ -512,8 +522,11 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		}
 		if ingestionRec != nil && len(fundingTxIDs) > 0 {
 			metadata := map[string]interface{}{
-				"funding_txids": fundingTxIDs,
-				"funding_txid":  fundingTxIDs[0],
+				"funding_txids":          fundingTxIDs,
+				"funding_txid":           fundingTxIDs[0],
+				"payout_scripts":         hexSlice(payoutScripts),
+				"payout_script_hashes":   payoutScriptHashes,
+				"payout_script_hash160s": payoutScriptHash160s,
 			}
 			if err := s.ingestionSvc.UpdateMetadata(ingestionRec.ID, metadata); err != nil {
 				log.Printf("psbt: failed to store funding_txids for %s: %v", ingestionRec.ID, err)
@@ -562,8 +575,12 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		return
 	}
 	if ingestionRec != nil && res.FundingTxID != "" {
+		scriptHashes, scriptHash160s := buildScriptHashes(res.PayoutScripts)
 		if err := s.ingestionSvc.UpdateMetadata(ingestionRec.ID, map[string]interface{}{
-			"funding_txid": res.FundingTxID,
+			"funding_txid":           res.FundingTxID,
+			"payout_scripts":         hexSlice(res.PayoutScripts),
+			"payout_script_hashes":   scriptHashes,
+			"payout_script_hash160s": scriptHash160s,
 		}); err != nil {
 			log.Printf("psbt: failed to store funding_txid for %s: %v", ingestionRec.ID, err)
 		}
@@ -870,6 +887,37 @@ func hexSlice(payloads [][]byte) []string {
 		out = append(out, hex.EncodeToString(payload))
 	}
 	return out
+}
+
+func hash160Hex(data []byte) string {
+	if len(data) == 0 {
+		return ""
+	}
+	sha := sha256.Sum256(data)
+	hasher := ripemd160.New()
+	_, _ = hasher.Write(sha[:])
+	return hex.EncodeToString(hasher.Sum(nil))
+}
+
+func hash256Hex(data []byte) string {
+	if len(data) == 0 {
+		return ""
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+func buildScriptHashes(scripts [][]byte) ([]string, []string) {
+	if len(scripts) == 0 {
+		return nil, nil
+	}
+	shaHashes := make([]string, 0, len(scripts))
+	hash160s := make([]string, 0, len(scripts))
+	for _, script := range scripts {
+		shaHashes = append(shaHashes, hash256Hex(script))
+		hash160s = append(hash160s, hash160Hex(script))
+	}
+	return shaHashes, hash160s
 }
 
 func (s *Server) updateTaskCommitmentProof(ctx context.Context, taskID string, res *bitcoin.PSBTResult, pixelBytes []byte) error {

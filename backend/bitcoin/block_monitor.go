@@ -1475,6 +1475,7 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 					Metadata:    contractMeta,
 				})
 				bm.markIngestionConfirmed(match, tx.TxID, blockHeight, imageFile, imagePath)
+				bm.updateTaskFundingProofsFromTx(match.ID, tx, blockHeight)
 				bm.confirmAndSweepContractTasks(match.ID, tx.TxID, blockHeight)
 				for _, candidate := range candidatesByID[match.ID] {
 					delete(candidates, candidate)
@@ -1520,6 +1521,7 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 				Metadata:    contractMeta,
 			})
 			bm.markIngestionConfirmed(match, tx.TxID, blockHeight, imageFile, imagePath)
+			bm.updateTaskFundingProofsFromTx(match.ID, tx, blockHeight)
 			bm.confirmAndSweepContractTasks(match.ID, tx.TxID, blockHeight)
 
 			for _, candidate := range candidatesByID[match.ID] {
@@ -1608,6 +1610,101 @@ func (bm *BlockMonitor) confirmAndSweepContractTasks(contractID, txid string, bl
 	}
 }
 
+func (bm *BlockMonitor) updateTaskFundingProofsFromTx(contractID string, tx Transaction, blockHeight int64) {
+	if bm.sweepStore == nil || strings.TrimSpace(contractID) == "" {
+		return
+	}
+	tasks, err := bm.sweepStore.ListTasks(smart_contract.TaskFilter{ContractID: contractID})
+	if err != nil {
+		log.Printf("oracle reconcile: failed to list tasks for funding update %s: %v", contractID, err)
+		return
+	}
+	taskByWallet := make(map[string][]smart_contract.Task)
+	for _, task := range tasks {
+		wallet := strings.TrimSpace(task.ContractorWallet)
+		if wallet == "" && task.MerkleProof != nil {
+			wallet = strings.TrimSpace(task.MerkleProof.ContractorWallet)
+		}
+		if wallet == "" {
+			continue
+		}
+		taskByWallet[wallet] = append(taskByWallet[wallet], task)
+	}
+	if len(taskByWallet) == 0 {
+		return
+	}
+	now := time.Now()
+	for _, output := range tx.Outputs {
+		for _, addr := range outputAddresses(output.ScriptPubKey, bm.networkParams()) {
+			candidates := taskByWallet[addr]
+			if len(candidates) == 0 {
+				continue
+			}
+			bestIdx := -1
+			for i, task := range candidates {
+				proof := task.MerkleProof
+				if proof != nil && strings.TrimSpace(proof.TxID) != "" && strings.TrimSpace(proof.TxID) != strings.TrimSpace(tx.TxID) {
+					continue
+				}
+				if task.BudgetSats > 0 && task.BudgetSats == output.Value {
+					bestIdx = i
+					break
+				}
+				if bestIdx == -1 {
+					bestIdx = i
+				}
+			}
+			if bestIdx < 0 {
+				continue
+			}
+			task := candidates[bestIdx]
+			taskByWallet[addr] = append(candidates[:bestIdx], candidates[bestIdx+1:]...)
+
+			proof := task.MerkleProof
+			if proof == nil {
+				proof = &smart_contract.MerkleProof{}
+			}
+			proof.TxID = tx.TxID
+			proof.BlockHeight = blockHeight
+			proof.FundingAddress = addr
+			proof.FundedAmountSats = output.Value
+			if proof.ConfirmationStatus == "" || proof.ConfirmationStatus == "provisional" {
+				proof.ConfirmationStatus = "confirmed"
+			}
+			if proof.ConfirmedAt == nil {
+				proof.ConfirmedAt = &now
+			}
+			if proof.SeenAt.IsZero() {
+				proof.SeenAt = now
+			}
+			if proof.ContractorWallet == "" {
+				proof.ContractorWallet = addr
+			}
+			if err := bm.sweepStore.UpdateTaskProof(context.Background(), task.TaskID, proof); err != nil {
+				log.Printf("oracle reconcile: failed to update funding proof for %s: %v", task.TaskID, err)
+				continue
+			}
+			if err := SweepCommitmentIfReady(context.Background(), bm.sweepStore, bm.sweepMempool, task, proof); err != nil {
+				log.Printf("oracle reconcile: sweep error for %s: %v", task.TaskID, err)
+			}
+		}
+	}
+}
+
+func outputAddresses(script []byte, params *chaincfg.Params) []string {
+	class, addrs, _, err := txscript.ExtractPkScriptAddrs(script, params)
+	if err != nil || class == txscript.NonStandardTy {
+		return nil
+	}
+	out := make([]string, 0, len(addrs))
+	for _, addr := range addrs {
+		if addr != nil {
+			out = append(out, addr.EncodeAddress())
+		}
+	}
+	return out
+}
+
 func (bm *BlockMonitor) findImageForScanResult(images []ExtractedImageData, result map[string]any) *ExtractedImageData {
 	fileName := stringFromAny(result["file_name"])
 	if fileName != "" {
@@ -1647,6 +1744,37 @@ func ingestionHashCandidates(rec services.IngestionRecord) []string {
 	}
 	if v := stringFromAny(rec.Metadata["payout_script_hash"]); v != "" {
 		appendCandidate(v)
+	}
+	switch hashes := rec.Metadata["payout_script_hashes"].(type) {
+	case []string:
+		for _, hash := range hashes {
+			appendCandidate(hash)
+		}
+	case []any:
+		for _, hash := range hashes {
+			appendCandidate(fmt.Sprintf("%v", hash))
+		}
+	case string:
+		for _, hash := range strings.Split(hashes, ",") {
+			appendCandidate(hash)
+		}
+	}
+	if v := stringFromAny(rec.Metadata["payout_script_hash160"]); v != "" {
+		appendCandidate(v)
+	}
+	switch hashes := rec.Metadata["payout_script_hash160s"].(type) {
+	case []string:
+		for _, hash := range hashes {
+			appendCandidate(hash)
+		}
+	case []any:
+		for _, hash := range hashes {
+			appendCandidate(fmt.Sprintf("%v", hash))
+		}
+	case string:
+		for _, hash := range strings.Split(hashes, ",") {
+			appendCandidate(hash)
+		}
 	}
 	if v := stringFromAny(rec.Metadata["pixel_hash"]); v != "" {
 		appendCandidate(v)
