@@ -19,6 +19,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
     setLoadingProof({});
     setReviewingId('');
     setExpandedSubmissions({});
+    setExpandedDiffs({});
   }, [submissionsKey]);
   const [filterStatus, setFilterStatus] = useState('all');
   const [expandedTasks, setExpandedTasks] = useState({});
@@ -29,6 +30,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
   const [viewMode, setViewMode] = useState('list');
   const [sortBy, setSortBy] = useState('newest');
   const [expandedSubmissions, setExpandedSubmissions] = useState({});
+  const [expandedDiffs, setExpandedDiffs] = useState({});
 
 
   // Handle both array and object formats for submissions
@@ -358,6 +360,14 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
     if (value.length <= limit) return value;
     return `${value.slice(0, limit)}…`;
   };
+
+  const getSubmissionId = (submission, fallback) => (
+    submission?.submission_id || submission?.id || fallback
+  );
+
+  const formatTimestamp = (value) => (
+    value ? new Date(value).toLocaleString() : 'Unknown time'
+  );
 
   const sortSubmissions = (submissions) => {
     return [...submissions].sort((a, b) => {
@@ -805,6 +815,92 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
                       </div>
                     </div>
                   )}
+
+                  {(() => {
+                    const timeline = [...(submissionsByTask[deliverable.task_id] || [])]
+                      .sort((a, b) => getSubmissionTimestamp(a) - getSubmissionTimestamp(b));
+                    if (timeline.length === 0) return null;
+                    return (
+                      <div>
+                        <h6 className="text-sm font-semibold text-black dark:text-white mb-2">Submission Timeline</h6>
+                        <div className="space-y-3">
+                          {timeline.map((submission, index) => {
+                            const submissionId = getSubmissionId(submission, `${deliverable.task_id}-${index}`);
+                            const status = submission.status || 'pending';
+                            const notes = getSubmissionNotes(submission);
+                            const words = countWords(notes);
+                            const prevNotes = index > 0 ? getSubmissionNotes(timeline[index - 1]) : '';
+                            const prevWords = countWords(prevNotes);
+                            const diffKey = `${deliverable.task_id}-${submissionId}`;
+                            const showDiff = !!expandedDiffs[diffKey];
+                            return (
+                              <div key={submissionId} className="border border-gray-200 dark:border-gray-700 rounded-lg p-3 bg-gray-50 dark:bg-gray-900">
+                                <div className="flex items-start justify-between gap-2">
+                                  <div>
+                                    <div className="flex items-center gap-2">
+                                      {getStatusIcon(status)}
+                                      <span className={`text-xs px-2 py-0.5 rounded border ${getStatusColor(status)}`}>
+                                        {status}
+                                      </span>
+                                      <span className="text-[11px] text-gray-500 dark:text-gray-400">Attempt {index + 1}</span>
+                                    </div>
+                                    <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                                      {formatTimestamp(submission.submitted_at || submission.created_at)}
+                                    </div>
+                                  </div>
+                                  <div className="text-xs text-gray-500 dark:text-gray-400 text-right">
+                                    {submissionId}
+                                  </div>
+                                </div>
+
+                                <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-gray-600 dark:text-gray-300">
+                                  <div>Words: {words}</div>
+                                  <div>Claim: {submission.claim_id || '—'}</div>
+                                </div>
+
+                                {submission.rejection_reason && (
+                                  <div className="mt-2 text-xs text-red-700 dark:text-red-200 bg-red-50 dark:bg-red-900/40 border border-red-200 dark:border-red-700 rounded p-2 whitespace-pre-wrap">
+                                    {submission.rejection_reason}
+                                  </div>
+                                )}
+
+                                {index > 0 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setExpandedDiffs(prev => ({ ...prev, [diffKey]: !prev[diffKey] }))}
+                                    className="mt-2 text-xs text-blue-600 dark:text-blue-400 hover:underline"
+                                  >
+                                    {showDiff ? 'Hide comparison' : 'Compare with previous'}
+                                  </button>
+                                )}
+
+                                {showDiff && (
+                                  <div className="mt-2 grid md:grid-cols-2 gap-3">
+                                    <div>
+                                      <div className="text-[11px] text-gray-500 dark:text-gray-400 mb-1">
+                                        Previous ({prevWords} words)
+                                      </div>
+                                      <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded p-2 max-h-48 overflow-y-auto">
+                                        {renderMarkdown(prevNotes || 'No notes provided.')}
+                                      </div>
+                                    </div>
+                                    <div>
+                                      <div className="text-[11px] text-gray-500 dark:text-gray-400 mb-1">
+                                        Current ({words} words)
+                                      </div>
+                                      <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded p-2 max-h-48 overflow-y-auto">
+                                        {renderMarkdown(notes || 'No notes provided.')}
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })()}
 
                   {/* Debug section - can be removed in production */}
                   {process.env.NODE_ENV === 'development' && (
