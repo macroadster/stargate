@@ -741,10 +741,20 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 			subs = []smart_contract.Submission{}
 		}
 
+		pagination := map[string]interface{}{
+			"limit":    filter.Limit,
+			"offset":   filter.Offset,
+			"has_more": len(tasks) >= filter.Limit && filter.Limit > 0,
+		}
+		if filter.Limit > 0 {
+			pagination["page"] = (filter.Offset / filter.Limit) + 1
+		}
+
 		return map[string]interface{}{
 			"tasks":         tasks,
 			"total_matches": len(tasks),
 			"submissions":   subs,
+			"pagination":    pagination,
 		}, nil
 
 	case "get_task":
@@ -923,10 +933,20 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 		}
 		subs, _ := store.ListSubmissions(ctx, taskIDs)
 
+		pagination := map[string]interface{}{
+			"limit":    filter.MaxResults,
+			"offset":   filter.Offset,
+			"has_more": len(proposals) >= filter.MaxResults && filter.MaxResults > 0,
+		}
+		if filter.MaxResults > 0 {
+			pagination["page"] = (filter.Offset / filter.MaxResults) + 1
+		}
+
 		return map[string]interface{}{
 			"proposals":   proposals,
 			"total":       len(proposals),
 			"submissions": subs,
+			"pagination":  pagination,
 		}, nil
 
 	case "get_proposal":
