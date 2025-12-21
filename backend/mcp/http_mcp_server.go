@@ -64,6 +64,7 @@ type MCPResponse struct {
 	RequiredFields []string    `json:"required_fields,omitempty"`
 	DocsURL        string      `json:"docs_url,omitempty"`
 	RequestID      string      `json:"request_id,omitempty"`
+	Version        string      `json:"version,omitempty"`
 }
 
 // RegisterRoutes registers HTTP MCP endpoints
@@ -727,6 +728,7 @@ func (h *HTTPMCPServer) handleToolCall(w http.ResponseWriter, r *http.Request) {
 			ErrorCode: "INVALID_JSON",
 			DocsURL:   "/mcp/docs",
 			RequestID: requestID,
+			Version:   "1.0.0",
 		})
 		return
 	}
@@ -740,6 +742,7 @@ func (h *HTTPMCPServer) handleToolCall(w http.ResponseWriter, r *http.Request) {
 			RequiredFields: []string{"tool"},
 			DocsURL:        "/mcp/docs",
 			RequestID:      requestID,
+			Version:        "1.0.0",
 		})
 		return
 	}
@@ -754,6 +757,7 @@ func (h *HTTPMCPServer) handleToolCall(w http.ResponseWriter, r *http.Request) {
 			ErrorCode: "TOOL_EXECUTION_ERROR",
 			DocsURL:   "/mcp/docs",
 			RequestID: requestID,
+			Version:   "1.0.0",
 		})
 		return
 	}
@@ -763,6 +767,7 @@ func (h *HTTPMCPServer) handleToolCall(w http.ResponseWriter, r *http.Request) {
 		Success:   true,
 		Result:    result,
 		RequestID: requestID,
+		Version:   "1.0.0",
 	})
 }
 
