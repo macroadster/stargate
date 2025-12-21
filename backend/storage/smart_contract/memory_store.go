@@ -588,7 +588,8 @@ func (s *MemoryStore) UpdateSubmissionStatus(ctx context.Context, submissionID, 
 	sub.Status = status
 	s.submissions[submissionID] = sub
 
-	if status == "accepted" {
+	switch status {
+	case "accepted", "approved":
 		claim, ok := s.claims[sub.ClaimID]
 		if !ok {
 			return nil // should not happen
@@ -602,6 +603,21 @@ func (s *MemoryStore) UpdateSubmissionStatus(ctx context.Context, submissionID, 
 		}
 		task.Status = "approved"
 		s.tasks[claim.TaskID] = task
+	case "rejected":
+		claim, ok := s.claims[sub.ClaimID]
+		if ok {
+			claim.Status = "rejected"
+			s.claims[sub.ClaimID] = claim
+
+			task, ok := s.tasks[claim.TaskID]
+			if ok {
+				task.Status = "available"
+				task.ClaimedBy = ""
+				task.ClaimedAt = nil
+				task.ClaimExpires = nil
+				s.tasks[claim.TaskID] = task
+			}
+		}
 	}
 
 	return nil

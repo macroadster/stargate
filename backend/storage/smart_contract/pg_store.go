@@ -1115,7 +1115,7 @@ func (s *PGStore) UpdateSubmissionStatus(ctx context.Context, submissionID, stat
 	}
 
 	// On approval, update task and claim
-	if status == "accepted" {
+	if status == "accepted" || status == "approved" {
 		var taskID string
 		err = tx.QueryRow(ctx, `SELECT task_id FROM mcp_claims WHERE claim_id=$1`, claimID).Scan(&taskID)
 		if err != nil {
@@ -1126,6 +1126,26 @@ func (s *PGStore) UpdateSubmissionStatus(ctx context.Context, submissionID, stat
 			return err
 		}
 		if _, err := tx.Exec(ctx, `UPDATE mcp_claims SET status='complete' WHERE claim_id=$1`, claimID); err != nil {
+			return err
+		}
+	}
+
+	// On rejection, release claim and reset task status
+	if status == "rejected" {
+		var taskID string
+		err = tx.QueryRow(ctx, `SELECT task_id FROM mcp_claims WHERE claim_id=$1`, claimID).Scan(&taskID)
+		if err != nil {
+			return err
+		}
+
+		if _, err := tx.Exec(ctx, `
+UPDATE mcp_tasks
+SET status='available', claimed_by=NULL, claimed_at=NULL, claim_expires_at=NULL
+WHERE task_id=$1
+`, taskID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE mcp_claims SET status='rejected' WHERE claim_id=$1`, claimID); err != nil {
 			return err
 		}
 	}
