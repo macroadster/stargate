@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useLayoutEffect, useState, useEffect, useMemo } from 'react';
 import { X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import CopyButton from '../Common/CopyButton';
@@ -53,6 +53,8 @@ const InscriptionModal = ({ inscription, onClose }) => {
   const lastFetchedKeyRef = React.useRef('');
   const hasFetchedRef = React.useRef(false);
   const refreshIntervalRef = React.useRef(null);
+  const scrollContainerRef = React.useRef(null);
+  const deliverablesScrollRef = React.useRef(0);
 
   const guessNetworkFromAddress = (addr) => {
     const a = (addr || '').trim().toLowerCase();
@@ -480,6 +482,16 @@ const InscriptionModal = ({ inscription, onClose }) => {
     };
   }, [contractKey, contractCandidates, loadProposals]);
 
+  useLayoutEffect(() => {
+    if (activeTab !== 'deliverables') return undefined;
+    const node = scrollContainerRef.current;
+    if (!node) return undefined;
+    node.scrollTop = deliverablesScrollRef.current;
+    return () => {
+      deliverablesScrollRef.current = node.scrollTop;
+    };
+  }, [activeTab, proposalItems, submissionsList]);
+
   const getSubmissionTimestamp = (submission) => {
     const raw = submission?.submitted_at || submission?.created_at;
     if (!raw) return 0;
@@ -717,7 +729,11 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
           </div>
         </div>
 
-        <div className="p-4 flex-1 overflow-y-auto overflow-x-hidden" data-deliverables-scroll>
+        <div
+          className="p-4 flex-1 overflow-y-auto overflow-x-hidden"
+          data-deliverables-scroll
+          ref={scrollContainerRef}
+        >
             <div className="flex flex-col lg:flex-row gap-6 mb-6">
               <div className="flex-shrink-0">
                 {modalImageSource ? (
