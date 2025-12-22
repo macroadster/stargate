@@ -700,9 +700,9 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
 
                           <div className="mt-3">
                             <div className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">Notes</div>
-                            <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded p-2 max-h-64 overflow-y-auto">
+                            <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded p-2 max-h-64 overflow-y-auto overflow-x-auto max-w-full">
                               {isExpanded ? renderMarkdown(notes || 'No notes provided.') : (
-                                <pre className="text-xs text-gray-700 dark:text-gray-300 whitespace-pre-wrap">
+                                <pre className="text-xs text-gray-700 dark:text-gray-300 whitespace-pre-wrap overflow-x-auto max-w-full">
                                   {preview || 'No notes provided.'}
                                 </pre>
                               )}
@@ -858,7 +858,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
                         <span>Words: {wordCount}</span>
                         <span>Status: {statusText}</span>
                       </div>
-                      <pre className="text-xs text-gray-700 dark:text-gray-300 whitespace-pre-wrap">
+                      <pre className="text-xs text-gray-700 dark:text-gray-300 whitespace-pre-wrap overflow-x-auto max-w-full">
                         {preview || 'No notes provided.'}
                       </pre>
                     </div>
@@ -919,7 +919,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
                   {deliverable.submission?.deliverables?.notes && (
                     <div>
                       <h6 className="text-sm font-semibold text-black dark:text-white mb-2">Submission Notes</h6>
-                      <div className="bg-blue-50 dark:bg-blue-900/40 border border-blue-200 dark:border-blue-700 rounded-lg p-3 max-h-[60vh] overflow-y-auto">
+                      <div className="bg-blue-50 dark:bg-blue-900/40 border border-blue-200 dark:border-blue-700 rounded-lg p-3 max-h-[60vh] overflow-y-auto overflow-x-auto max-w-full">
                         {renderMarkdown(deliverable.submission.deliverables.notes)}
                       </div>
                     </div>

@@ -32,6 +32,8 @@ const InscriptionModal = ({ inscription, onClose }) => {
   const [approvingId, setApprovingId] = useState('');
   const [submissions, setSubmissions] = useState({});
   const [submissionsList, setSubmissionsList] = useState([]);
+  const submissionsKeyRef = React.useRef('');
+  const proposalsKeyRef = React.useRef('');
   const [dashboardFilter, setDashboardFilter] = useState('all');
   const [dashboardSort, setDashboardSort] = useState('status');
   const [psbtForm, setPsbtForm] = useState({
@@ -325,6 +327,12 @@ const InscriptionModal = ({ inscription, onClose }) => {
       const submissionList = Array.isArray(data?.submissions)
         ? data.submissions
         : Object.values(data?.submissions || {});
+      const submissionTime = (submission) => {
+        const raw = submission?.submitted_at || submission?.created_at;
+        const parsed = Date.parse(raw || '');
+        return Number.isNaN(parsed) ? 0 : parsed;
+      };
+      submissionList.sort((a, b) => submissionTime(b) - submissionTime(a));
       submissionList.forEach((s) => {
         // Map by submission_id (primary key for API calls)
         if (s.submission_id) {
@@ -333,22 +341,26 @@ const InscriptionModal = ({ inscription, onClose }) => {
         // Also map by task_id and claim_id for lookup, but prioritize newest by created_at
         if (s.task_id) {
           const existing = submissionsByKey[s.task_id];
-          if (!existing || new Date(s.created_at) > new Date(existing.created_at)) {
-              submissionsByKey[s.task_id] = s;
+          if (!existing || submissionTime(s) > submissionTime(existing)) {
+            submissionsByKey[s.task_id] = s;
           }
-          submissionsByKey[s.task_id] = s;
         }
         if (s.claim_id) {
           const existing = submissionsByKey[s.claim_id];
-          if (!existing || new Date(s.created_at) > new Date(existing.created_at)) {
+          if (!existing || submissionTime(s) > submissionTime(existing)) {
             submissionsByKey[s.claim_id] = s;
           }
-          submissionsByKey[s.claim_id] = s;
         }
       });
-      setSubmissions(submissionsByKey);
-      if (submissionList.length > 0) {
-        setSubmissionsList(submissionList);
+      const nextSubmissionsKey = submissionList
+        .map((s) => `${s.submission_id || ''}:${s.status || ''}:${s.task_id || ''}:${s.claim_id || ''}:${s.created_at || ''}:${s.rejected_at || ''}`)
+        .join('|');
+      if (nextSubmissionsKey !== submissionsKeyRef.current) {
+        submissionsKeyRef.current = nextSubmissionsKey;
+        setSubmissions(submissionsByKey);
+        if (submissionList.length > 0) {
+          setSubmissionsList(submissionList);
+        }
       }
       // Sort approved first, then pending/others, preserving matches
       items = items.sort((a, b) => {
@@ -371,7 +383,17 @@ const InscriptionModal = ({ inscription, onClose }) => {
           }),
         );
       });
-      setProposalItems(items);
+      const nextProposalsKey = items
+        .map((p) => {
+          const tasks = Array.isArray(p.tasks) ? p.tasks : (Array.isArray(p.metadata?.suggested_tasks) ? p.metadata.suggested_tasks : []);
+          const taskKey = tasks.map((t) => `${t.task_id || ''}:${t.status || ''}:${t.active_claim_id || ''}:${t.claimed_by || ''}`).join(',');
+          return `${p.id || ''}:${p.status || ''}:${taskKey}`;
+        })
+        .join('|');
+      if (nextProposalsKey !== proposalsKeyRef.current) {
+        proposalsKeyRef.current = nextProposalsKey;
+        setProposalItems(items);
+      }
       if (items.length > 0) {
         const approved = items.find((p) => ['approved', 'published'].includes((p.status || '').toLowerCase()));
         const preferredList = approved ? derivedTasks.filter((t) => t.proposalId === approved.id) : derivedTasks;
@@ -446,7 +468,6 @@ const InscriptionModal = ({ inscription, onClose }) => {
         }
       });
 
-      setSubmissions(allSubmissions);
       if (allSubmissionsList.length > 0) {
         const uniqueById = {};
         allSubmissionsList.forEach((submission) => {
@@ -455,7 +476,15 @@ const InscriptionModal = ({ inscription, onClose }) => {
             uniqueById[key] = submission;
           }
         });
-        setSubmissionsList(Object.values(uniqueById));
+        const list = Object.values(uniqueById).sort((a, b) => getSubmissionTimestamp(b) - getSubmissionTimestamp(a));
+        const nextSubmissionsKey = list
+          .map((s) => `${s.submission_id || ''}:${s.status || ''}:${s.task_id || ''}:${s.claim_id || ''}:${s.created_at || ''}:${s.rejected_at || ''}`)
+          .join('|');
+        if (nextSubmissionsKey !== submissionsKeyRef.current) {
+          submissionsKeyRef.current = nextSubmissionsKey;
+          setSubmissions(allSubmissions);
+          setSubmissionsList(list);
+        }
       }
     } catch (err) {
       console.error('Failed to load submissions:', err);
