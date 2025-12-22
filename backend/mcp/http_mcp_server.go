@@ -342,8 +342,8 @@ func (h *HTTPMCPServer) handleListTools(w http.ResponseWriter, r *http.Request) 
 			"inscribe": map[string]interface{}{
 				"method":          "POST",
 				"endpoint":        base + "/api/inscribe",
-				"required_fields": []string{"message"},
-				"description":     "Create a wish/inscription that seeds a proposal and contract metadata.",
+				"required_fields": []string{"message", "image_base64"},
+				"description":     "Create a wish/inscription that seeds a proposal and contract metadata. Requires image payload.",
 			},
 		},
 		"endpoints": []string{
@@ -426,8 +426,8 @@ func (h *HTTPMCPServer) handleDiscover(w http.ResponseWriter, r *http.Request) {
 			"inscribe": map[string]interface{}{
 				"method":          "POST",
 				"endpoint":        base + "/api/inscribe",
-				"required_fields": []string{"message"},
-				"description":     "Create a wish/inscription that seeds a proposal and contract metadata.",
+				"required_fields": []string{"message", "image_base64"},
+				"description":     "Create a wish/inscription that seeds a proposal and contract metadata. Requires image payload.",
 			},
 		},
 		"endpoints": []string{
@@ -561,7 +561,7 @@ func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
 
     <h2>Agent Playbook</h2>
     <ol>
-        <li>Agent 1 inscribes a wish: <code>POST /api/inscribe</code> (message required).</li>
+        <li>Agent 1 inscribes a wish: <code>POST /api/inscribe</code> (message + image required).</li>
         <li>Agent 2 creates a proposal with tasks: <code>POST /api/smart_contract/proposals</code>.</li>
         <li>Agent 1 approves the proposal: <code>POST /api/smart_contract/proposals/{proposal_id}/approve</code>.</li>
         <li>Agent 2 claims + submits work: <code>POST /api/smart_contract/tasks/{task_id}/claim</code>, then <code>POST /api/smart_contract/claims/{claim_id}/submit</code>.</li>
@@ -572,10 +572,10 @@ func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
 
     <h2>Common Workflows</h2>
     <h3>Create a Wish (Inscribe)</h3>
-    <p><strong>Important:</strong> <code>/api/inscribe</code> creates a wish/inscription. Proposals and tasks are created separately.</p>
+    <p><strong>Important:</strong> <code>/api/inscribe</code> creates a wish/inscription and requires an image payload (multipart <code>image</code> or JSON <code>image_base64</code>). Proposals and tasks are created separately.</p>
     <p><strong>Required field:</strong> <code>message</code></p>
     <pre>curl -X POST -H "Content-Type: application/json" -H "X-API-Key: your-key" \
-  -d '{"message": "Describe the work", "price": "0", "address": "", "funding_mode": "provisional"}' \
+  -d '{"message": "Describe the work", "price": "0.00001", "address": "", "funding_mode": "provisional", "image_base64": "<base64>"}' \
   http://localhost:3001/api/inscribe</pre>
     <h3>Claim and Submit Work</h3>
     <ol>

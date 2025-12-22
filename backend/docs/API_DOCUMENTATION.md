@@ -78,6 +78,8 @@ Retrieve inscription data.
 #### POST /api/inscribe
 Create a new inscription.
 **Required field:** `message`
+**Required:** image (multipart form `image` or JSON `image_base64`), since the steganographic image is the payload carrier.
+**Price units:** `price` is interpreted as a BTC string (e.g., `"0.00001"` = 1000 sats).
 
 Example:
 ```json
@@ -85,7 +87,8 @@ Example:
   "message": "Describe the work",
   "price": "0",
   "address": "",
-  "funding_mode": "provisional"
+  "funding_mode": "provisional",
+  "image_base64": "<base64>"
 }
 ```
 
