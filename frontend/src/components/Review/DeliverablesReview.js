@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useLayoutEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { CheckCircle, XCircle, Clock, ExternalLink, Filter, ChevronDown, ChevronUp, Eye, FileText, Code, Columns, List } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -19,6 +19,8 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
   const [expandedSubmissions, setExpandedSubmissions] = useState({});
   const [expandedDiffs, setExpandedDiffs] = useState({});
   const [selectedSubmissions, setSelectedSubmissions] = useState({});
+  const rootRef = useRef(null);
+  const scrollTopRef = useRef(0);
 
 
   const submissionsKey = JSON.stringify(submissionsList || submissions);
@@ -390,7 +392,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
     }
 
     return (
-      <div className="text-sm text-gray-800 dark:text-gray-100 space-y-3">
+      <div className="text-sm text-gray-800 dark:text-gray-100 space-y-3 min-w-0">
         <ReactMarkdown
           components={{
             h1: ({ ...props }) => <h1 className="text-xl font-semibold" {...props} />,
@@ -401,11 +403,11 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
             ol: ({ ...props }) => <ol className="list-decimal pl-5 space-y-1" {...props} />,
             code: ({ inline, ...props }) => (
               inline
-                ? <code className="px-1 py-0.5 rounded bg-gray-200/70 dark:bg-gray-700/70 font-mono text-xs" {...props} />
-                : <code className="font-mono text-xs" {...props} />
+                ? <code className="px-1 py-0.5 rounded bg-gray-200/70 dark:bg-gray-700/70 font-mono text-xs break-words" {...props} />
+                : <code className="block font-mono text-xs whitespace-pre" {...props} />
             ),
             pre: ({ ...props }) => (
-              <pre className="bg-gray-900 text-gray-100 rounded p-3 overflow-x-auto text-xs" {...props} />
+              <pre className="bg-gray-900 text-gray-100 rounded p-3 overflow-x-auto text-xs max-w-full" {...props} />
             ),
             a: ({ ...props }) => <a className="text-blue-600 dark:text-blue-300 underline" {...props} />,
           }}
@@ -415,6 +417,22 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
       </div>
     );
   };
+
+  useLayoutEffect(() => {
+    const node = rootRef.current;
+    if (!node) return undefined;
+    const scrollEl = node.closest('[data-deliverables-scroll]');
+    if (scrollEl) {
+      scrollEl.scrollTop = scrollTopRef.current;
+    }
+    return () => {
+      if (!node) return;
+      const currentScrollEl = node.closest('[data-deliverables-scroll]');
+      if (currentScrollEl) {
+        scrollTopRef.current = currentScrollEl.scrollTop;
+      }
+    };
+  }, [submissionsKey]);
 
   const getSubmissionTimestamp = (submission) => {
     const raw = submission?.submitted_at || submission?.created_at;
@@ -617,7 +635,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
       )}
 
       {viewMode === 'compare' ? (
-        <div className="space-y-4">
+        <div className="space-y-4" ref={rootRef}>
           {comparisonGroups.map((group) => {
             const filteredSubmissions = group.submissions.filter((submission) => {
               if (filterStatus === 'all') return true;
@@ -748,7 +766,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
           })}
         </div>
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-3" ref={rootRef}>
           {filteredDeliverables.map((deliverable) => (
             <div key={deliverable.task_id} className="border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 overflow-hidden">
               <div className="p-4">

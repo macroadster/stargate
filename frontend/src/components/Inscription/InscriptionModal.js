@@ -717,7 +717,7 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
           </div>
         </div>
 
-        <div className="p-4 flex-1 overflow-y-auto overflow-x-hidden">
+        <div className="p-4 flex-1 overflow-y-auto overflow-x-hidden" data-deliverables-scroll>
             <div className="flex flex-col lg:flex-row gap-6 mb-6">
               <div className="flex-shrink-0">
                 {modalImageSource ? (
