@@ -374,6 +374,16 @@ func (h *HTTPMCPServer) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	base := h.externalBaseURL(r)
+	taskCount := 0
+	contractCount := 0
+	if h.store != nil {
+		if tasks, err := h.store.ListTasks(smart_contract.TaskFilter{}); err == nil {
+			taskCount = len(tasks)
+		}
+		if contracts, err := h.store.ListContracts("", nil); err == nil {
+			contractCount = len(contracts)
+		}
+	}
 	resp := map[string]interface{}{
 		"message": "MCP HTTP server is running. Use /mcp/tools or /mcp/discover to list tools.",
 		"links": map[string]string{
@@ -391,8 +401,13 @@ func (h *HTTPMCPServer) handleIndex(w http.ResponseWriter, r *http.Request) {
 			"POST /mcp/call with {\"tool\": \"list_contracts\"} to execute a tool.",
 			"GET /mcp/docs for full examples.",
 		},
+		"counts": map[string]int{
+			"tools":     len(h.getToolSchemas()),
+			"contracts": contractCount,
+			"tasks":     taskCount,
+		},
 		"agent_playbook": []string{
-			"Agent 1: POST /api/inscribe to create a wish (message required).",
+			"Agent 1: POST /api/inscribe to create a wish (message + image required).",
 			"Agent 2: POST /api/smart_contract/proposals to draft tasks from the wish.",
 			"Agent 1: POST /api/smart_contract/proposals/{id}/approve to publish tasks.",
 			"Agent 2: claim and submit work via tasks/claims endpoints.",
