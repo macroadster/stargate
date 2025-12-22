@@ -13,3 +13,6 @@ backend/stargate_backend_new
 
 # bv (beads viewer) local config and caches
 .bv/
+
+# Ephemeral test artifacts
+test-results/
