@@ -601,9 +601,17 @@ ORDER BY s.created_at DESC
 	for rows.Next() {
 		var sub smart_contract.Submission
 		var delivJSON, proofJSON []byte
+		var rejectionReason sql.NullString
+		var rejectionType sql.NullString
 		var rejectedAt sql.NullTime
-		if err := rows.Scan(&sub.SubmissionID, &sub.ClaimID, &sub.TaskID, &sub.Status, &delivJSON, &proofJSON, &sub.RejectionReason, &sub.RejectionType, &rejectedAt, &sub.CreatedAt); err != nil {
+		if err := rows.Scan(&sub.SubmissionID, &sub.ClaimID, &sub.TaskID, &sub.Status, &delivJSON, &proofJSON, &rejectionReason, &rejectionType, &rejectedAt, &sub.CreatedAt); err != nil {
 			return nil, err
+		}
+		if rejectionReason.Valid {
+			sub.RejectionReason = rejectionReason.String
+		}
+		if rejectionType.Valid {
+			sub.RejectionType = rejectionType.String
 		}
 		if rejectedAt.Valid {
 			t := rejectedAt.Time
