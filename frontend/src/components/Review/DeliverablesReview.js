@@ -8,20 +8,6 @@ import { useAuth } from '../../context/AuthContext';
 
 const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRefresh, isContractLocked = false }) => {
   const { auth } = useAuth();
-  // Add key to force re-render when submissions change
-  const submissionsKey = JSON.stringify(submissionsList || submissions);
-  
-  // Reset state when submissions prop changes
-  React.useEffect(() => {
-    setReviewNotes({});
-    setExpandedTasks({});
-    setProofContent({});
-    setLoadingProof({});
-    setReviewingId('');
-    setExpandedSubmissions({});
-    setExpandedDiffs({});
-    setSelectedSubmissions({});
-  }, [submissionsKey]);
   const [filterStatus, setFilterStatus] = useState('all');
   const [expandedTasks, setExpandedTasks] = useState({});
   const [reviewingId, setReviewingId] = useState('');
@@ -34,6 +20,8 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
   const [expandedDiffs, setExpandedDiffs] = useState({});
   const [selectedSubmissions, setSelectedSubmissions] = useState({});
 
+
+  const submissionsKey = JSON.stringify(submissionsList || submissions);
 
   // Handle both array and object formats for submissions
   const submissionsObj = (submissions && !Array.isArray(submissions) && typeof submissions === 'object') ? submissions : {};
@@ -90,6 +78,36 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
       return result;
     });
   }).filter(item => item.submission);
+
+  const submissionIds = submissionsArray
+    .map((submission) => submission?.submission_id)
+    .filter(Boolean);
+  const submissionIdsKey = submissionIds.join('|');
+  const deliverablesKey = allDeliverables
+    .map((deliverable) => deliverable.task_id)
+    .filter(Boolean)
+    .sort()
+    .join('|');
+
+  const filterByKeys = (entries, allowed) => Object.keys(entries).reduce((acc, key) => {
+    if (allowed.has(key)) {
+      acc[key] = entries[key];
+    }
+    return acc;
+  }, {});
+
+  React.useEffect(() => {
+    const allowedSubmissionIds = new Set(submissionIds);
+    const allowedTaskIds = new Set(allDeliverables.map((deliverable) => deliverable.task_id).filter(Boolean));
+
+    setReviewNotes((prev) => filterByKeys(prev, allowedSubmissionIds));
+    setExpandedSubmissions((prev) => filterByKeys(prev, allowedSubmissionIds));
+    setExpandedDiffs((prev) => filterByKeys(prev, allowedSubmissionIds));
+    setSelectedSubmissions((prev) => filterByKeys(prev, allowedSubmissionIds));
+    setProofContent((prev) => filterByKeys(prev, allowedSubmissionIds));
+    setLoadingProof((prev) => filterByKeys(prev, allowedSubmissionIds));
+    setExpandedTasks((prev) => filterByKeys(prev, allowedTaskIds));
+  }, [submissionIdsKey, deliverablesKey]);
 
   const filteredDeliverables = allDeliverables.filter(deliverable => {
     if (filterStatus === 'all') return true;
