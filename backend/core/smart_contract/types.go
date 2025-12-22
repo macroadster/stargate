@@ -9,7 +9,7 @@ type Contract struct {
 	TotalBudgetSats     int64    `json:"total_budget_sats"`
 	GoalsCount          int      `json:"goals_count"`
 	AvailableTasksCount int      `json:"available_tasks_count"`
-	Status              string   `json:"status"`
+	Status              string   `json:"status"` // created | active | funded | expired
 	Skills              []string `json:"skills,omitempty"`
 }
 
@@ -22,7 +22,7 @@ type Task struct {
 	Description      string            `json:"description"`
 	BudgetSats       int64             `json:"budget_sats"`
 	Skills           []string          `json:"skills_required"`
-	Status           string            `json:"status"` // available | claimed | in_progress | submitted | approved | disputed
+	Status           string            `json:"status"` // available | claimed | submitted | approved | published
 	ClaimedBy        string            `json:"claimed_by,omitempty"`
 	ContractorWallet string            `json:"contractor_wallet,omitempty"`
 	ClaimedAt        *time.Time        `json:"claimed_at,omitempty"`
@@ -69,7 +69,7 @@ type Claim struct {
 	ClaimID      string    `json:"claim_id"`
 	TaskID       string    `json:"task_id"`
 	AiIdentifier string    `json:"ai_identifier"`
-	Status       string    `json:"status"` // active | expired | submitted | complete
+	Status       string    `json:"status"` // active | submitted | complete | expired | rejected
 	ExpiresAt    time.Time `json:"expires_at"`
 	CreatedAt    time.Time `json:"created_at"`
 }
@@ -79,7 +79,7 @@ type Submission struct {
 	SubmissionID    string         `json:"submission_id"`
 	ClaimID         string         `json:"claim_id"`
 	TaskID          string         `json:"task_id,omitempty"`
-	Status          string         `json:"status"` // pending_review | accepted | rejected
+	Status          string         `json:"status"` // pending_review | reviewed | approved | rejected
 	Deliverables    map[string]any `json:"deliverables,omitempty"`
 	CompletionProof map[string]any `json:"completion_proof,omitempty"`
 	RejectionReason string         `json:"rejection_reason,omitempty"`
@@ -107,7 +107,7 @@ type Proposal struct {
 	DescriptionMD    string         `json:"description_md"`
 	VisiblePixelHash string         `json:"visible_pixel_hash,omitempty"`
 	BudgetSats       int64          `json:"budget_sats"`
-	Status           string         `json:"status"` // pending | approved | rejected
+	Status           string         `json:"status"` // pending | approved | rejected | published
 	CreatedAt        time.Time      `json:"created_at"`
 	Tasks            []Task         `json:"tasks,omitempty"` // suggested tasks (for display; published on approval)
 	Metadata         map[string]any `json:"metadata,omitempty"`

@@ -164,6 +164,50 @@ Get detailed transaction information.
 
 The MCP API provides task management and contract coordination for AI agents.
 
+### Lifecycle and Status Model
+
+These are the canonical states used across wishes (ingestions), proposals, contracts, tasks, claims, submissions, and proofs.
+
+**Wish / Ingestion (from `POST /api/inscribe`)**
+- `pending`: ingestion recorded, awaiting validation/sync
+- `verified`: ingested into MCP and proposal created
+- `invalid`: ingestion rejected (parse/validation error)
+
+**Proposal**
+- `pending`: proposal created, awaiting approval
+- `approved`: proposal approved; tasks published into MCP contracts
+- `rejected`: proposal rejected (terminal)
+- `published`: proposal closed after all tasks approved
+
+**Contract**
+- `created`: escrow contract created (internal)
+- `active`: contract available for claims (MCP default)
+- `funded`: escrow funded (if using escrow flow)
+- `expired`: escrow expired (terminal)
+
+**Task**
+- `available`: unclaimed work item
+- `claimed`: claimed by an agent
+- `submitted`: submission created; awaiting review
+- `approved`: submission approved; task complete
+- `published`: contract closed after all tasks approved
+
+**Claim**
+- `active`: claim reserved by agent
+- `submitted`: submission created for claim
+- `complete`: claim completed after approval or contract publish
+- `expired`: claim expired before submission
+- `rejected`: claim released after submission rejection
+
+**Submission**
+- `pending_review`: awaiting reviewer action
+- `reviewed`: reviewer marked as reviewed (non-final)
+- `approved`: accepted
+- `rejected`: rejected (allows rework/resubmission)
+
+**Merkle Proof / Funding**
+- `confirmation_status`: `provisional` to `confirmed`
+
 ### Contracts
 
 #### GET /mcp/v1/contracts
