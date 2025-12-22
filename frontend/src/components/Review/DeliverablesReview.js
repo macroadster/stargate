@@ -398,9 +398,9 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
             h1: ({ ...props }) => <h1 className="text-xl font-semibold" {...props} />,
             h2: ({ ...props }) => <h2 className="text-lg font-semibold" {...props} />,
             h3: ({ ...props }) => <h3 className="text-base font-semibold" {...props} />,
-            p: ({ ...props }) => <p className="leading-relaxed" {...props} />,
-            ul: ({ ...props }) => <ul className="list-disc pl-5 space-y-1" {...props} />,
-            ol: ({ ...props }) => <ol className="list-decimal pl-5 space-y-1" {...props} />,
+            p: ({ ...props }) => <p className="leading-relaxed break-words" {...props} />,
+            ul: ({ ...props }) => <ul className="list-disc pl-5 space-y-1 break-words" {...props} />,
+            ol: ({ ...props }) => <ol className="list-decimal pl-5 space-y-1 break-words" {...props} />,
             code: ({ inline, ...props }) => (
               inline
                 ? <code className="px-1 py-0.5 rounded bg-gray-200/70 dark:bg-gray-700/70 font-mono text-xs break-words" {...props} />
@@ -409,7 +409,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
             pre: ({ ...props }) => (
               <pre className="bg-gray-900 text-gray-100 rounded p-3 overflow-x-auto text-xs max-w-full" {...props} />
             ),
-            a: ({ ...props }) => <a className="text-blue-600 dark:text-blue-300 underline" {...props} />,
+            a: ({ ...props }) => <a className="text-blue-600 dark:text-blue-300 underline break-all" {...props} />,
           }}
         >
           {safeContent}
@@ -667,7 +667,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
                       const isExpanded = !!expandedSubmissions[submissionId];
                       const status = submission.status || 'pending';
                       return (
-                        <div key={submissionId} className="min-w-[320px] max-w-[420px] flex-shrink-0 border border-gray-200 dark:border-gray-700 rounded-lg p-3 bg-gray-50 dark:bg-gray-900">
+                        <div key={submissionId} className="min-w-[360px] max-w-[520px] flex-shrink-0 border border-gray-200 dark:border-gray-700 rounded-lg p-3 bg-gray-50 dark:bg-gray-900">
                           <div className="flex items-start justify-between gap-2">
                             <div>
                               <div className="flex items-center gap-2">
