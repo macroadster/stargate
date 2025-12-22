@@ -122,6 +122,8 @@ The MCP server exposes 18 tools:
 - `approve_proposal` - Approve proposal and publish tasks
 - `publish_proposal` - Publish proposal without approval
 
+Note: Contract creation should use `POST /api/inscribe`. Proposals are for review/approval; they are not the primary contract creation path.
+
 **Submissions:**
 - `list_submissions` - List submissions
 - `get_submission` - Get specific submission

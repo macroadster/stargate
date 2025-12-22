@@ -392,6 +392,7 @@ func (h *HTTPMCPServer) handleDiscover(w http.ResponseWriter, r *http.Request) {
 			"mcp": base + "/mcp",
 		},
 		"endpoints": []string{
+			"/api/inscribe",
 			"/api/smart_contract/contracts",
 			"/api/smart_contract/tasks",
 			"/api/smart_contract/claims",
@@ -520,6 +521,11 @@ func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
 {"success": false, "error": "contract_id is required. This parameter specifies the unique identifier of the contract to retrieve. Example: {\"contract_id\": \"contract-123\"}", "error_code": "TOOL_EXECUTION_ERROR", "docs_url": "/mcp/docs"}</pre>
 
     <h2>Common Workflows</h2>
+    <h3>Create a Contract (Inscribe)</h3>
+    <p><strong>Important:</strong> Use the inscribe endpoint to create contracts. The proposal tools are for review/approval, not primary contract creation.</p>
+    <pre>curl -X POST -H "Content-Type: application/json" -H "X-API-Key: your-key" \
+  -d '{"title": "My Contract", "description": "Describe the work", "tasks": [{"title": "Task 1", "description": "Do the work", "budget_sats": 1000}], "budget_sats": 1000}' \
+  http://localhost:3001/api/inscribe</pre>
     <h3>Claim and Submit Work</h3>
     <ol>
         <li>List available tasks: <code>POST /mcp/call</code> with <code>{"tool": "list_tasks", "arguments": {"status": "available"}}</code></li>
