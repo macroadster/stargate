@@ -179,7 +179,9 @@ func (s *PGStore) Close() {
 func (s *PGStore) ListContracts(status string, skills []string) ([]smart_contract.Contract, error) {
 	ctx := context.Background()
 	rows, err := s.pool.Query(ctx, `
-SELECT contract_id, title, total_budget_sats, goals_count, available_tasks_count, status, skills
+SELECT contract_id, title, total_budget_sats, goals_count,
+       COALESCE((SELECT COUNT(*) FROM mcp_tasks t WHERE t.contract_id = mcp_contracts.contract_id AND t.status = 'available'), 0) AS available_tasks_count,
+       status, skills
 FROM mcp_contracts
 WHERE ($1 = '' OR status = $1)
 `, status)
@@ -349,7 +351,9 @@ func (s *PGStore) GetContract(id string) (smart_contract.Contract, error) {
 	ctx := context.Background()
 	var c smart_contract.Contract
 	err := s.pool.QueryRow(ctx, `
-SELECT contract_id, title, total_budget_sats, goals_count, available_tasks_count, status, skills
+SELECT contract_id, title, total_budget_sats, goals_count,
+       COALESCE((SELECT COUNT(*) FROM mcp_tasks t WHERE t.contract_id = mcp_contracts.contract_id AND t.status = 'available'), 0) AS available_tasks_count,
+       status, skills
 FROM mcp_contracts WHERE contract_id=$1
 `, id).Scan(&c.ContractID, &c.Title, &c.TotalBudgetSats, &c.GoalsCount, &c.AvailableTasksCount, &c.Status, &c.Skills)
 	if err != nil {

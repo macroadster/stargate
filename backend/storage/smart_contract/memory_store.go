@@ -77,6 +77,12 @@ func (s *MemoryStore) ListContracts(status string, skills []string) ([]smart_con
 	for id := range s.contracts {
 		fmt.Printf("DEBUG: ListContracts - Contract ID: %s\n", id)
 	}
+	availableCounts := make(map[string]int)
+	for _, t := range s.tasks {
+		if strings.EqualFold(t.Status, "available") {
+			availableCounts[t.ContractID]++
+		}
+	}
 	out := make([]smart_contract.Contract, 0, len(s.contracts))
 	for _, c := range s.contracts {
 		if status != "" && !strings.EqualFold(status, c.Status) {
@@ -85,6 +91,7 @@ func (s *MemoryStore) ListContracts(status string, skills []string) ([]smart_con
 		if len(skills) > 0 && !containsSkill(c.Skills, skills) {
 			continue
 		}
+		c.AvailableTasksCount = availableCounts[c.ContractID]
 		out = append(out, c)
 	}
 	return out, nil
