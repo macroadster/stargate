@@ -298,10 +298,13 @@ const InscriptionModal = ({ inscription, onClose }) => {
     }
   };
 
-  const loadProposals = React.useCallback(async () => {
+  const loadProposals = React.useCallback(async (options = {}) => {
+    const { showLoading = false } = options;
     if (!auth.apiKey || authBlocked || !contractCandidates.length) return;
     lastFetchedKeyRef.current = contractKey;
-    setIsLoadingProposals(true);
+    if (showLoading) {
+      setIsLoadingProposals(true);
+    }
     setProposalError('');
     try {
       const res = await fetchWithTimeout(`${API_BASE}/api/smart_contract/proposals`, {}, 6000);
@@ -429,7 +432,9 @@ const InscriptionModal = ({ inscription, onClose }) => {
       setProposalError(`Unable to load proposals for this contract (${reason}).`);
       setProposalItems([]);
     } finally {
-      setIsLoadingProposals(false);
+      if (showLoading) {
+        setIsLoadingProposals(false);
+      }
     }
   }, [auth.apiKey, authBlocked, contractCandidates, contractKey]);
 
@@ -497,7 +502,7 @@ const InscriptionModal = ({ inscription, onClose }) => {
       setSubmissions({});
       return undefined;
     }
-    loadProposals();
+    loadProposals({ showLoading: true });
     loadSubmissions();
     // Poll every 30s for live status updates.
     refreshIntervalRef.current = setInterval(() => {
@@ -564,7 +569,7 @@ const InscriptionModal = ({ inscription, onClose }) => {
         const body = await res.text();
         throw new Error(body || `HTTP ${res.status}`);
       }
-      await loadProposals();
+      await loadProposals({ showLoading: true });
       toast.success(isPublish ? 'Proposal published' : 'Proposal approved & published');
     } catch (err) {
       console.error('Failed to approve proposal', err);
@@ -699,7 +704,7 @@ const InscriptionModal = ({ inscription, onClose }) => {
     try {
       if (!['approved', 'published'].includes(status)) {
         await approveProposal(proposal.id, status === 'approved');
-        await loadProposals();
+        await loadProposals({ showLoading: true });
       }
       await generatePSBT();
     } catch (err) {
@@ -916,7 +921,7 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                       <p className="text-sm text-gray-500 dark:text-gray-400">Tasks and budgets attached to this smart contract.</p>
                     </div>
                     <button
-                      onClick={loadProposals}
+                      onClick={() => loadProposals({ showLoading: true })}
                       disabled={isLoadingProposals}
                       className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-full border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-60"
                     >
@@ -984,13 +989,15 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                               <div className="text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">Tasks (with status)</div>
                               <ul className="text-sm text-gray-700 dark:text-gray-200 list-disc pl-4 space-y-1">
                                 {tasks.map((t) => {
-                                  const status = (t.status || 'pending').toLowerCase();
+                                  const submission = getLatestSubmissionByTask(t.task_id)
+                                    || submissions[t.task_id]
+                                    || (t.active_claim_id ? submissions[t.active_claim_id] : null);
+                                  const status = (submission?.status || t.status || 'pending').toLowerCase();
                                   const statusClasses = status === 'approved'
                                     ? 'bg-emerald-100 dark:bg-emerald-900/40 border-emerald-400 text-emerald-700 dark:text-emerald-200'
                                     : status === 'available'
                                       ? 'bg-blue-100 dark:bg-blue-900/40 border-blue-400 text-blue-700 dark:text-blue-200'
                                       : 'bg-amber-100 dark:bg-amber-900/40 border-amber-400 text-amber-800 dark:text-amber-200';
-                                  const submission = submissions[t.task_id] || (t.active_claim_id ? submissions[t.active_claim_id] : null);
                                   return (
                                     <li key={t.task_id || t.title} className="flex items-center gap-2 flex-wrap">
                                       <span className="font-semibold">{t.title}</span>
@@ -1567,7 +1574,7 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                     proposalItems={proposalItems}
                     submissions={submissions}
                     submissionsList={submissionsList}
-                    onRefresh={loadProposals}
+                    onRefresh={() => loadProposals({ showLoading: true })}
                     isContractLocked={isContractLocked}
                   />
                 </div>

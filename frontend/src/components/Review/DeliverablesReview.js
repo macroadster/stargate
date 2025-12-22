@@ -392,7 +392,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
     }
 
     return (
-      <div className="text-sm text-gray-800 dark:text-gray-100 space-y-3 min-w-0">
+      <div className="text-sm text-gray-800 dark:text-gray-100 space-y-3 min-w-0 overflow-x-auto max-w-full">
         <ReactMarkdown
           components={{
             h1: ({ ...props }) => <h1 className="text-xl font-semibold" {...props} />,
@@ -951,7 +951,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
                   {deliverable.submission?.deliverables?.document && (
                     <div>
                       <h6 className="text-sm font-semibold text-black dark:text-white mb-2">Submission Document</h6>
-                      <div className="bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-700 rounded-lg p-3 max-h-[60vh] overflow-y-auto">
+                      <div className="bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-700 rounded-lg p-3 max-h-[60vh] overflow-y-auto overflow-x-auto max-w-full">
                         {renderMarkdown(deliverable.submission.deliverables.document)}
                       </div>
                     </div>
@@ -1021,7 +1021,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
                                       <div className="text-[11px] text-gray-500 dark:text-gray-400 mb-1">
                                         Previous ({prevWords} words)
                                       </div>
-                                      <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded p-2 max-h-48 overflow-y-auto">
+                                      <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded p-2 max-h-48 overflow-y-auto overflow-x-auto max-w-full">
                                         {renderMarkdown(prevNotes || 'No notes provided.')}
                                       </div>
                                     </div>
@@ -1029,7 +1029,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
                                       <div className="text-[11px] text-gray-500 dark:text-gray-400 mb-1">
                                         Current ({words} words)
                                       </div>
-                                      <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded p-2 max-h-48 overflow-y-auto">
+                                      <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded p-2 max-h-48 overflow-y-auto overflow-x-auto max-w-full">
                                         {renderMarkdown(notes || 'No notes provided.')}
                                       </div>
                                     </div>
