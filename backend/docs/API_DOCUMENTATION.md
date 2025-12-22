@@ -77,6 +77,17 @@ Retrieve inscription data.
 
 #### POST /api/inscribe
 Create a new inscription.
+**Required field:** `message`
+
+Example:
+```json
+{
+  "message": "Describe the work",
+  "price": "0",
+  "address": "",
+  "funding_mode": "provisional"
+}
+```
 
 #### GET /api/open-contracts
 Get pending transaction data.

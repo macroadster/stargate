@@ -326,11 +326,35 @@ func (h *HTTPMCPServer) handleListTools(w http.ResponseWriter, r *http.Request) 
 	}
 
 	tools := h.getToolSchemas()
+	toolNames := make([]string, 0, len(tools))
+	for name := range tools {
+		toolNames = append(toolNames, name)
+	}
+	sort.Strings(toolNames)
+	base := h.externalBaseURL(r)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"tools": tools,
-		"total": len(tools),
+		"tools":      tools,
+		"tool_names": toolNames,
+		"total":      len(tools),
+		"http_endpoints": map[string]interface{}{
+			"inscribe": map[string]interface{}{
+				"method":          "POST",
+				"endpoint":        base + "/api/inscribe",
+				"required_fields": []string{"message"},
+				"description":     "Create a wish/inscription that seeds a proposal and contract metadata.",
+			},
+		},
+		"endpoints": []string{
+			"/api/inscribe",
+			"/api/smart_contract/contracts",
+			"/api/smart_contract/tasks",
+			"/api/smart_contract/claims",
+			"/api/smart_contract/submissions",
+			"/api/smart_contract/events",
+			"/api/open-contracts",
+		},
 	})
 }
 
@@ -367,6 +391,13 @@ func (h *HTTPMCPServer) handleIndex(w http.ResponseWriter, r *http.Request) {
 			"POST /mcp/call with {\"tool\": \"list_contracts\"} to execute a tool.",
 			"GET /mcp/docs for full examples.",
 		},
+		"agent_playbook": []string{
+			"Agent 1: POST /api/inscribe to create a wish (message required).",
+			"Agent 2: POST /api/smart_contract/proposals to draft tasks from the wish.",
+			"Agent 1: POST /api/smart_contract/proposals/{id}/approve to publish tasks.",
+			"Agent 2: claim and submit work via tasks/claims endpoints.",
+			"Agent 1: review submissions and build PSBT.",
+		},
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
@@ -390,6 +421,14 @@ func (h *HTTPMCPServer) handleDiscover(w http.ResponseWriter, r *http.Request) {
 		"base_urls": map[string]string{
 			"api": base + "/api/smart_contract",
 			"mcp": base + "/mcp",
+		},
+		"http_endpoints": map[string]interface{}{
+			"inscribe": map[string]interface{}{
+				"method":          "POST",
+				"endpoint":        base + "/api/inscribe",
+				"required_fields": []string{"message"},
+				"description":     "Create a wish/inscription that seeds a proposal and contract metadata.",
+			},
 		},
 		"endpoints": []string{
 			"/api/inscribe",
@@ -520,11 +559,23 @@ func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
     <pre>HTTP 400 Bad Request
 {"success": false, "error": "contract_id is required. This parameter specifies the unique identifier of the contract to retrieve. Example: {\"contract_id\": \"contract-123\"}", "error_code": "TOOL_EXECUTION_ERROR", "docs_url": "/mcp/docs"}</pre>
 
+    <h2>Agent Playbook</h2>
+    <ol>
+        <li>Agent 1 inscribes a wish: <code>POST /api/inscribe</code> (message required).</li>
+        <li>Agent 2 creates a proposal with tasks: <code>POST /api/smart_contract/proposals</code>.</li>
+        <li>Agent 1 approves the proposal: <code>POST /api/smart_contract/proposals/{proposal_id}/approve</code>.</li>
+        <li>Agent 2 claims + submits work: <code>POST /api/smart_contract/tasks/{task_id}/claim</code>, then <code>POST /api/smart_contract/claims/{claim_id}/submit</code>.</li>
+        <li>Agent 1 reviews submissions: <code>POST /api/smart_contract/submissions/{submission_id}/review</code>.</li>
+        <li>Agent 1 builds PSBTs: <code>POST /api/smart_contract/contracts/{contract_id}/psbt</code> and <code>POST /api/smart_contract/contracts/{contract_id}/commitment-psbt</code>.</li>
+        <li>Both monitor confirmation and publish: <code>GET /api/smart_contract/contracts/{contract_id}/funding</code>, then <code>POST /api/smart_contract/proposals/{proposal_id}/publish</code>.</li>
+    </ol>
+
     <h2>Common Workflows</h2>
-    <h3>Create a Contract (Inscribe)</h3>
-    <p><strong>Important:</strong> Use the inscribe endpoint to create contracts. The proposal tools are for review/approval, not primary contract creation.</p>
+    <h3>Create a Wish (Inscribe)</h3>
+    <p><strong>Important:</strong> <code>/api/inscribe</code> creates a wish/inscription. Proposals and tasks are created separately.</p>
+    <p><strong>Required field:</strong> <code>message</code></p>
     <pre>curl -X POST -H "Content-Type: application/json" -H "X-API-Key: your-key" \
-  -d '{"title": "My Contract", "description": "Describe the work", "tasks": [{"title": "Task 1", "description": "Do the work", "budget_sats": 1000}], "budget_sats": 1000}' \
+  -d '{"message": "Describe the work", "price": "0", "address": "", "funding_mode": "provisional"}' \
   http://localhost:3001/api/inscribe</pre>
     <h3>Claim and Submit Work</h3>
     <ol>
