@@ -24,9 +24,9 @@
     "build": "vite build",
     "preview": "vite preview",
     "lint": "eslint \"src/**/*.{js,jsx}\"",
-    "test": "vitest",
+    "test": "NODE_NO_WARNINGS=1 vitest",
     "test:e2e": "npx playwright test frontend/tests/selection.spec.js",
-    "test:watch": "vitest --watch"
+    "test:watch": "NODE_NO_WARNINGS=1 vitest --watch"
   },
   "eslintConfig": {
     "extends": [
