@@ -1044,7 +1044,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
                   })()}
 
                   {/* Debug section - can be removed in production */}
-                  {process.env.NODE_ENV === 'development' && (
+                  {import.meta.env.DEV && (
                     <div>
                       <h6 className="text-sm font-semibold text-black dark:text-white mb-2">Debug: Submission Data</h6>
                       <div className="bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg p-3 space-y-2">

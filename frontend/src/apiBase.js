@@ -1,6 +1,6 @@
 const deriveApiBase = () => {
-  if (process.env.REACT_APP_API_BASE) {
-    return process.env.REACT_APP_API_BASE.replace(/\/$/, '');
+  if (import.meta.env.VITE_API_BASE) {
+    return import.meta.env.VITE_API_BASE.replace(/\/$/, '');
   }
   const { origin } = window.location;
   // Same-origin by default; local dev uses port swap.
