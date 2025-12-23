@@ -26,22 +26,27 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
   const submissionsKey = JSON.stringify(submissionsList || submissions);
 
   // Handle both array and object formats for submissions
-  const submissionsObj = (submissions && !Array.isArray(submissions) && typeof submissions === 'object') ? submissions : {};
-  let submissionsArray;
-  try {
-    if (Array.isArray(submissionsList)) {
-      submissionsArray = submissionsList;
-    } else if (Array.isArray(submissions)) {
-      submissionsArray = submissions;
-    } else if (submissionsObj) {
-      submissionsArray = Object.keys(submissionsObj).map(key => submissionsObj[key]);
-    } else {
-      submissionsArray = [];
+  const submissionsObj = React.useMemo(
+    () => ((submissions && !Array.isArray(submissions) && typeof submissions === 'object') ? submissions : {}),
+    [submissions],
+  );
+  const submissionsArray = React.useMemo(() => {
+    try {
+      if (Array.isArray(submissionsList)) {
+        return submissionsList;
+      }
+      if (Array.isArray(submissions)) {
+        return submissions;
+      }
+      if (submissionsObj) {
+        return Object.keys(submissionsObj).map((key) => submissionsObj[key]);
+      }
+      return [];
+    } catch (e) {
+      console.error('Error processing submissions:', e, submissions);
+      return [];
     }
-  } catch (e) {
-    console.error('Error processing submissions:', e, submissions);
-    submissionsArray = [];
-  }
+  }, [submissionsList, submissions, submissionsObj]);
   const submissionsMap = {};
   
   // Create submission map by submission_id for API calls
@@ -59,37 +64,46 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
     }
   });
 
-  const allDeliverables = proposalItems.flatMap(proposal => {
-    const tasks = Array.isArray(proposal.tasks) && proposal.tasks.length > 0
-      ? proposal.tasks
-      : (Array.isArray(proposal.metadata?.suggested_tasks) ? proposal.metadata.suggested_tasks : []);
-    
-    return tasks.map(task => {
-      // Find submission by task_id or claim_id
-      const submission = submissionsObj[task.task_id] || submissionsObj[task.active_claim_id] || null;
+  const allDeliverables = React.useMemo(
+    () =>
+      proposalItems
+        .flatMap((proposal) => {
+          const tasks = Array.isArray(proposal.tasks) && proposal.tasks.length > 0
+            ? proposal.tasks
+            : (Array.isArray(proposal.metadata?.suggested_tasks) ? proposal.metadata.suggested_tasks : []);
 
-      const result = {
-        ...task,
-        proposal,
-        submission,
-        submissionKey: submission?.submission_id, // Use actual submission_id for API calls
-        proposalId: proposal.id,
-        proposalTitle: proposal.title
-      };
+          return tasks.map((task) => {
+            // Find submission by task_id or claim_id
+            const submission = submissionsObj[task.task_id] || submissionsObj[task.active_claim_id] || null;
 
-      return result;
-    });
-  }).filter(item => item.submission);
+            return {
+              ...task,
+              proposal,
+              submission,
+              submissionKey: submission?.submission_id, // Use actual submission_id for API calls
+              proposalId: proposal.id,
+              proposalTitle: proposal.title,
+            };
+          });
+        })
+        .filter((item) => item.submission),
+    [proposalItems, submissionsObj],
+  );
 
-  const submissionIds = submissionsArray
-    .map((submission) => submission?.submission_id)
-    .filter(Boolean);
-  const submissionIdsKey = submissionIds.join('|');
-  const deliverablesKey = allDeliverables
-    .map((deliverable) => deliverable.task_id)
-    .filter(Boolean)
-    .sort()
-    .join('|');
+  const submissionIds = React.useMemo(
+    () => submissionsArray.map((submission) => submission?.submission_id).filter(Boolean),
+    [submissionsArray],
+  );
+  const submissionIdsKey = React.useMemo(() => submissionIds.join('|'), [submissionIds]);
+  const deliverablesKey = React.useMemo(
+    () =>
+      allDeliverables
+        .map((deliverable) => deliverable.task_id)
+        .filter(Boolean)
+        .sort()
+        .join('|'),
+    [allDeliverables],
+  );
 
   const filterByKeys = (entries, allowed) => Object.keys(entries).reduce((acc, key) => {
     if (allowed.has(key)) {
