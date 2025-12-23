@@ -1,4 +1,4 @@
-import { shouldShowProposalAction } from './InscriptionModal';
+import { shouldShowProposalAction } from './inscriptionUtils';
 
 describe('shouldShowProposalAction', () => {
   it('hides for rejected proposals', () => {

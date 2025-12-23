@@ -109,7 +109,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
     setProofContent((prev) => filterByKeys(prev, allowedSubmissionIds));
     setLoadingProof((prev) => filterByKeys(prev, allowedSubmissionIds));
     setExpandedTasks((prev) => filterByKeys(prev, allowedTaskIds));
-  }, [submissionIdsKey, deliverablesKey]);
+  }, [submissionIdsKey, deliverablesKey, submissionIds, allDeliverables]);
 
   const filteredDeliverables = allDeliverables.filter(deliverable => {
     if (filterStatus === 'all') return true;

@@ -9,21 +9,20 @@ const SubmissionReview = ({ submissionId, onApprove, onReject, onClose }) => {
   const [actionLoading, setActionLoading] = useState(false);
 
   useEffect(() => {
+    const fetchSubmission = async () => {
+      try {
+        const response = await fetch(`${API_BASE}/api/smart_contract/submissions/${submissionId}`);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const data = await response.json();
+        setSubmission(data);
+      } catch (error) {
+        console.error('Failed to fetch submission:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
     fetchSubmission();
-  }, [submissionId, fetchSubmission]);
-
-  const fetchSubmission = async () => {
-    try {
-      const response = await fetch(`${API_BASE}/api/smart_contract/submissions/${submissionId}`);
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const data = await response.json();
-      setSubmission(data);
-    } catch (error) {
-      console.error('Failed to fetch submission:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+  }, [submissionId]);
 
   const handleApprove = async () => {
     setActionLoading(true);

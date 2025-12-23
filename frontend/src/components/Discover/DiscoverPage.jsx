@@ -57,7 +57,7 @@ export default function DiscoverPage() {
     } finally {
       setLoading(false);
     }
-  }, [contractId, minBudget, skills, status]);
+  }, [auth.apiKey, contractId, minBudget, skills, status]);
 
   const submitWork = async (claimId, taskId) => {
     if (!claimId) return;
@@ -435,7 +435,7 @@ function ActivityFeed() {
   const [authBlocked, setAuthBlocked] = useState(false);
   const { auth } = useAuth();
 
-  const loadEvents = async () => {
+  const loadEvents = useCallback(async () => {
     if (!auth.apiKey || authBlocked) return;
     try {
       const res = await fetch(`${API_BASE}/api/smart_contract/events?limit=20`, {
@@ -451,7 +451,7 @@ function ActivityFeed() {
     } catch (err) {
       console.error('events load failed', err);
     }
-  };
+  }, [auth.apiKey, authBlocked]);
 
   useEffect(() => {
     if (!auth.apiKey || authBlocked) {
@@ -461,7 +461,7 @@ function ActivityFeed() {
     loadEvents();
     const id = setInterval(loadEvents, 15000);
     return () => clearInterval(id);
-  }, [auth.apiKey, authBlocked]);
+  }, [auth.apiKey, authBlocked, loadEvents]);
 
   if (events.length === 0) {
     const message = auth.apiKey && !authBlocked ? 'No recent events.' : 'Activity feed unavailable.';

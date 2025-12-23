@@ -196,7 +196,7 @@ export const useBlocks = () => {
     } catch (error) {
       console.error('Error fetching blocks:', error);
       setBlocks([]);
-      if (!selectedBlock && !isPolling) {
+      if (!selectedBlockRef.current && !isPolling) {
         setSelectedBlock(null);
       }
     } finally {

@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { API_BASE, CONTENT_BASE } from '../apiBase';
 
 const generateInscriptions = (inscriptions) => {
-  return inscriptions.map((insc, i) => ({
+  return inscriptions.map((insc) => ({
     id: insc.id,
     type: insc.mime_type?.split('/')[1]?.toUpperCase() || 'UNKNOWN',
     thumbnail: insc.mime_type?.startsWith('image/') ? insc.image_url : null,

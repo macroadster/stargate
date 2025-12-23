@@ -14,7 +14,7 @@ const BlockCard = ({ block, onClick, isSelected }) => {
     if (block.isFuture) return 'from-yellow-200 to-yellow-300 dark:from-yellow-600 dark:to-yellow-800';
     
     // Check for historical significance first
-    const historical = getHistoricalSignificance(block.height, block.timestamp);
+    const historical = getHistoricalSignificance(block.height);
     if (historical) {
       return historical.color;
     }
@@ -26,7 +26,7 @@ const BlockCard = ({ block, onClick, isSelected }) => {
     return 'from-red-200 to-red-300 dark:from-red-600 dark:to-red-800';
   };
 
-  const getHistoricalSignificance = (height, timestamp) => {
+  const getHistoricalSignificance = (height) => {
     // Famous historical blocks
     const historicalBlocks = {
       0: { 
@@ -91,7 +91,7 @@ const BlockCard = ({ block, onClick, isSelected }) => {
   const getBadgeText = () => {
     if (block.isFuture) return 'Pending Block';
     
-    const historical = getHistoricalSignificance(block.height, block.timestamp);
+    const historical = getHistoricalSignificance(block.height);
     if (historical) {
       return historical.title;
     }
@@ -143,7 +143,7 @@ const BlockCard = ({ block, onClick, isSelected }) => {
       } bg-gradient-to-br ${getBackgroundClass()}`}>
         <div className="h-32 flex items-center justify-center bg-black bg-opacity-20 relative">
           {(() => {
-            const historical = getHistoricalSignificance(block.height, block.timestamp);
+            const historical = getHistoricalSignificance(block.height);
             if (historical) {
               return (
                 <div className="text-center">
@@ -197,7 +197,7 @@ const BlockCard = ({ block, onClick, isSelected }) => {
             )}
           </div>
         {(() => {
-          const historical = getHistoricalSignificance(block.height, block.timestamp);
+          const historical = getHistoricalSignificance(block.height);
           if (historical) {
             return (
               <div className="text-xs text-gray-600 dark:text-gray-400 italic">
@@ -215,7 +215,7 @@ const BlockCard = ({ block, onClick, isSelected }) => {
           </div>
         )}
         {(() => {
-          const historical = getHistoricalSignificance(block.height, block.timestamp);
+          const historical = getHistoricalSignificance(block.height);
           if (historical) {
             return (
               <div className="absolute top-2 right-2 bg-orange-600 text-white text-xs px-2 py-1 rounded-md font-bold">

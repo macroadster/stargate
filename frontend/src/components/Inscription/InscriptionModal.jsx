@@ -8,12 +8,6 @@ import DeliverablesReview from '../Review/DeliverablesReview';
 import { API_BASE } from '../../apiBase';
 import { useAuth } from '../../context/AuthContext';
 
-// Determines whether the proposal action (Approve/Publish) should be shown.
-export const shouldShowProposalAction = (status) => {
-  const s = (status || '').toLowerCase();
-  return !(s === 'rejected' || s === 'published');
-};
-
 // QR version 40-L max byte capacity (base64 uses byte mode).
 const QR_BYTE_LIMIT = 2953;
 
@@ -120,7 +114,13 @@ const InscriptionModal = ({ inscription, onClose }) => {
       }
     });
     return Array.from(expanded);
-  }, [inscription.contract_id, inscription.id, inscription.metadata?.contract_id, inscription.metadata?.ingestion_id]);
+  }, [
+    inscription.contract_id,
+    inscription.id,
+    inscription.metadata?.contract_id,
+    inscription.metadata?.visible_pixel_hash,
+    inscription.metadata?.ingestion_id,
+  ]);
   const contractKey = useMemo(() => contractCandidates.join('|'), [contractCandidates]);
   const primaryContractId = useMemo(() => psbtForm.contractId || contractCandidates[0] || inscription.contract_id || inscription.id, [psbtForm.contractId, contractCandidates, inscription.contract_id, inscription.id]);
   const allTasks = useMemo(() => {
@@ -284,7 +284,7 @@ const InscriptionModal = ({ inscription, onClose }) => {
   const isSvgContent = mime === 'image/svg+xml' || (mime.includes('svg') && mime.includes('xml'));
   const sandboxSrc = inscription.image_url || inscription.thumbnail;
   const inlineDoc = (isHtmlContent || isSvgContent) ? (inscription.text || '') : '';
-  const fetchWithTimeout = async (url, options = {}, timeoutMs = 6000) => {
+  const fetchWithTimeout = React.useCallback(async (url, options = {}, timeoutMs = 6000) => {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
@@ -296,7 +296,7 @@ const InscriptionModal = ({ inscription, onClose }) => {
     } finally {
       clearTimeout(timer);
     }
-  };
+  }, [auth.apiKey]);
 
   const loadProposals = React.useCallback(async (options = {}) => {
     const { showLoading = false } = options;
@@ -436,7 +436,20 @@ const InscriptionModal = ({ inscription, onClose }) => {
         setIsLoadingProposals(false);
       }
     }
-  }, [auth.apiKey, authBlocked, contractCandidates, contractKey]);
+  }, [
+    auth.apiKey,
+    authBlocked,
+    contractCandidates,
+    contractKey,
+    fetchWithTimeout,
+    fundDepositAddress,
+    inscription.metadata?.contractor_wallet,
+    inscription.metadata?.fundraiser_wallet,
+    inscription.metadata?.payout_address,
+    inscription.metadata?.visible_pixel_hash,
+    primaryContractId,
+    psbtForm.pixelHash,
+  ]);
 
   const loadSubmissions = React.useCallback(async () => {
     if (!auth.apiKey || authBlocked || !contractCandidates.length) return;
@@ -456,7 +469,7 @@ const InscriptionModal = ({ inscription, onClose }) => {
       const allSubmissions = {};
       const allSubmissionsList = [];
       results.forEach((result) => {
-        const { contractId, submissions } = result;
+        const { submissions } = result;
         if (Array.isArray(submissions)) {
           submissions.forEach((submission) => {
             allSubmissionsList.push(submission);
@@ -494,7 +507,7 @@ const InscriptionModal = ({ inscription, onClose }) => {
     } catch (err) {
       console.error('Failed to load submissions:', err);
     }
-  }, [auth, contractCandidates]);
+  }, [auth.apiKey, authBlocked, contractCandidates, fetchWithTimeout]);
 
   useEffect(() => {
     if (!auth.apiKey || authBlocked) {
@@ -514,7 +527,7 @@ const InscriptionModal = ({ inscription, onClose }) => {
         clearInterval(refreshIntervalRef.current);
       }
     };
-  }, [contractKey, contractCandidates, loadProposals]);
+  }, [auth.apiKey, authBlocked, contractKey, contractCandidates, loadProposals, loadSubmissions]);
 
   useLayoutEffect(() => {
     if (activeTab !== 'deliverables') return undefined;
@@ -946,7 +959,9 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                           try {
                             const o = JSON.parse(p.title);
                             if (o?.message) return o.message;
-                          } catch (_) {}
+                          } catch {
+                            // Ignore invalid JSON payloads.
+                          }
                         }
                         return p.title;
                       })();
@@ -955,7 +970,9 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                           try {
                             const o = JSON.parse(p.description_md);
                             if (o?.message) return o.message;
-                          } catch (_) {}
+                          } catch {
+                            // Ignore invalid JSON payloads.
+                          }
                         }
                         return p.description_md;
                       })();
