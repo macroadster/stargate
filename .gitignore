@@ -16,3 +16,4 @@ backend/stargate_backend_new
 
 # Ephemeral test artifacts
 test-results/
+*.swp
