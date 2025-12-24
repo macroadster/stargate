@@ -143,7 +143,7 @@ export default function ContractsPage() {
               className="group text-left"
             >
               <div className="relative overflow-hidden rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 shadow-sm">
-                <div className="relative aspect-[3/4] bg-gray-100 dark:bg-gray-800">
+                <div className={`relative ${contract.image_url ? 'aspect-[3/4]' : 'min-h-[320px]'} bg-gray-100 dark:bg-gray-800`}>
                   {contract.image_url ? (
                     <img
                       src={contract.image_url}
@@ -152,7 +152,12 @@ export default function ContractsPage() {
                       loading="lazy"
                     />
                   ) : (
-                    <div className="h-full w-full flex items-center justify-center text-5xl">🧩</div>
+                    <div className="h-full w-full flex flex-col items-center justify-center p-6 text-center">
+                      <div className="text-5xl mb-4">🧩</div>
+                      <div className="text-sm font-medium text-gray-700 dark:text-gray-300 line-clamp-3">
+                        {contract.headline}
+                      </div>
+                    </div>
                   )}
                   <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent opacity-90" />
                   <div className="absolute bottom-0 left-0 right-0 p-4 text-white">

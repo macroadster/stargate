@@ -6,6 +6,22 @@ const InscriptionCard = ({ inscription, onClick }) => {
   const containerRef = useRef(null);
   const mediaObserverRef = useRef(null);
 
+  // Calculate dynamic height for text-only contracts
+  const calculateTextHeight = (text, isPreview = false) => {
+    if (!text) return 320;
+    
+    const avgCharsPerLine = 60;
+    const lineHeight = 24;
+    const padding = 48;
+    const maxPreviewLines = isPreview ? 8 : 12;
+    
+    const lines = Math.ceil(text.length / avgCharsPerLine);
+    const limitedLines = Math.min(lines, maxPreviewLines);
+    const calculatedHeight = limitedLines * lineHeight + padding;
+    
+    return Math.max(calculatedHeight, 320);
+  };
+
   useEffect(() => {
     const node = containerRef.current;
     if (!node) return;
@@ -66,11 +82,13 @@ const InscriptionCard = ({ inscription, onClick }) => {
       className="relative group cursor-pointer break-inside-avoid mb-6"
     >
       <div className="relative overflow-hidden rounded-2xl border border-gray-200 dark:border-gray-800 hover:border-indigo-400 transition-all duration-200 bg-white dark:bg-gray-900 shadow-sm">
-        <div className="max-h-[460px] flex items-start justify-center bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-700 dark:to-gray-800 relative overflow-hidden">
+        <div className={`${hasTextContent && !imageSource ? '' : 'max-h-[460px]'} flex items-start justify-center bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-700 dark:to-gray-800 relative overflow-hidden`}
+             style={hasTextContent && !imageSource ? { minHeight: `${calculateTextHeight(textContent, false)}px` } : {}}>
           {showTextPreview && hasTextContent ? (
-            <div className="absolute inset-0 p-2 bg-white dark:bg-gray-900 rounded-lg overflow-hidden">
-              <div className="h-full overflow-y-auto text-xs font-mono text-gray-800 dark:text-gray-200 leading-tight">
-                {textContent.length > 200 ? `${textContent.slice(0, 200)}...` : textContent}
+            <div className="absolute inset-0 p-3 bg-white dark:bg-gray-900 rounded-lg overflow-hidden">
+              <div className="h-full overflow-y-auto text-sm font-mono text-gray-800 dark:text-gray-200 leading-relaxed"
+                   style={{ maxHeight: `${calculateTextHeight(textContent, true) - 24}px` }}>
+                {textContent.length > 500 ? `${textContent.slice(0, 500)}...` : textContent}
               </div>
             </div>
           ) : showSandbox ? (
@@ -100,8 +118,22 @@ const InscriptionCard = ({ inscription, onClick }) => {
                   }}
                 />
               ) : null}
-              <div className="text-lg font-bold text-center px-2 text-gray-800 dark:text-gray-200" style={{display: imageSource && isActuallyImageFile ? 'none' : 'flex'}}>
-                {hasTextContent ? textContent.slice(0, 20) + (textContent.length > 20 ? '...' : '') : 
+              <div className={`text-${hasTextContent && !imageSource ? 'base' : 'lg'} font-bold text-center px-3 text-gray-800 dark:text-gray-200 ${hasTextContent && !imageSource ? 'py-4' : ''}`} 
+                 style={{display: imageSource && isActuallyImageFile ? 'none' : 'flex', wordBreak: 'break-word'}}>
+                {hasTextContent ? (
+                  !imageSource ? (
+                    <div className="space-y-2">
+                      <div className="text-sm font-normal text-gray-600 dark:text-gray-400 leading-relaxed max-h-[200px] overflow-hidden">
+                        {textContent.length > 200 ? `${textContent.slice(0, 200)}...` : textContent}
+                      </div>
+                      {textContent.length > 200 && (
+                        <div className="text-xs text-blue-600 dark:text-blue-400">
+                          Click to view full text
+                        </div>
+                      )}
+                    </div>
+                  ) : textContent.slice(0, 80) + (textContent.length > 80 ? '...' : '')
+                ) : 
                  inscription.contract_type === 'Steganographic Contract' ? '🎨' : '📦'}
               </div>
             </>
