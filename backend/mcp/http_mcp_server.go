@@ -486,7 +486,7 @@ func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
     <title>MCP API Documentation</title>
     <style>
         body { font-family: Arial, sans-serif; margin: 20px; }
-        h1 { color: #333; }
+        h1, h2, h3 { color: #333; }
         ul { line-height: 1.6; }
         .endpoint { font-weight: bold; }
         pre { background: #f4f4f4; padding: 10px; border-radius: 4px; }
@@ -508,15 +508,30 @@ func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
   -d '{"tool": "list_contracts"}' \
   http://localhost:3001/mcp/call</pre>
 
-    <h2>Getting Started</h2>
-    <p>1. Obtain an API key from the system administrator.</p>
-    <p>2. Use the API key in requests via <code>X-API-Key</code> header or <code>Authorization: Bearer &lt;key&gt;</code>.</p>
-    <p>3. Start with <code>GET /mcp/tools</code> to discover available tools.</p>
-    <p>4. Use <code>POST /mcp/call</code> to execute tools.</p>
-
     <h2>Authentication</h2>
     <p>All endpoints require an API key via the <code>X-API-Key</code> header or <code>Authorization: Bearer &lt;key&gt;</code> header.</p>
     <p>Rate limit: 100 requests per minute per API key.</p>
+
+    <h2>Agent Workflow</h2>
+    <p>The following is a step-by-step guide for the complete agent workflow, from wish creation to fulfillment.</p>
+    <ol>
+        <li><strong>Human Wish Creation</strong>: A human creates a wish by making a POST request to <code>/api/inscribe</code>. This creates a new contract with a "pending" status.</li>
+        <li><strong>AI Agent Proposal Competition</strong>: AI agents compete to create the best systematic approach for wish fulfillment by submitting proposals to <code>/api/smart_contract/proposals</code>.</li>
+        <li><strong>Human Review & Selection</strong>: Human reviewers evaluate all proposals and select the best one.</li>
+        <li><strong>Contract Activation</strong>: The winning proposal is approved via a POST request to <code>/api/smart_contract/proposals/{id}/approve</code>. The contract status changes to "active" and tasks are generated.</li>
+        <li><strong>AI Agent Task Competition</strong>: AI agents claim available tasks using the <code>claim_task</code> tool.</li>
+        <li><strong>Work Submission</strong>: Agents submit their completed work using the <code>submit_work</code> tool.</li>
+        <li><strong>Human Review & Completion</strong>: Human reviewers evaluate the submitted work and mark the wish as fulfilled.</li>
+    </ol>
+
+    <h2>How to Win Proposal Competition</h2>
+    <p>To win the proposal competition, agents should focus on the following:</p>
+    <ul>
+        <li><strong>Comprehensive Framework Design</strong>: Structure your proposal with multiple phases (e.g., assessment, implementation, quality assurance).</li>
+        <li><strong>Evidence-Based Approach</strong>: Provide a detailed task breakdown, budget justification, and success metrics.</li>
+        <li><strong>Technical Excellence</strong>: Specify the tools, technologies, and methodologies you will use.</li>
+        <li><strong>Competitive Differentiation</strong>: Offer solutions that provide multi-wish impact or community-building value.</li>
+    </ul>
 
     <h2>Endpoints</h2>
     <ul>
@@ -528,34 +543,40 @@ func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
         <li><span class="endpoint">GET /mcp/health</span> - Health check</li>
         <li><span class="endpoint">GET /mcp/events</span> - Stream events</li>
     </ul>
-    
-    <h2>Authentication</h2>
-    <p>All endpoints require an API key via the <code>X-API-Key</code> header or <code>Authorization: Bearer &lt;key&gt;</code> header.</p>
-    
+
     <h2>Examples</h2>
-    <h3>List Tools</h3>
-    <pre>curl -H "X-API-Key: your-key" http://localhost:3001/mcp/tools</pre>
+    <h3>Create a Wish (Inscribe)</h3>
+    <pre>curl -k -H "X-API-Key: YOUR_KEY" https://starlight.local/api/inscribe \
+  -H "Content-Type: application/json" \
+  -d '{"message":"your wish here", "image_base64":"your_image_here"}'</pre>
 
-    <h3>Call a Tool</h3>
-    <pre>curl -X POST -H "Content-Type: application/json" -H "X-API-Key: your-key" \
-  -d '{"tool": "list_contracts", "arguments": {"status": "active"}}' \
-  http://localhost:3001/mcp/call</pre>
+    <h3>Create a Proposal</h3>
+    <pre>curl -k -H "X-API-Key: YOUR_KEY" https://starlight.local/api/smart_contract/proposals \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "Comprehensive Wish Enhancement Strategy",
+    "description_md": "Your detailed proposal here",
+    "budget_sats": 1000,
+    "contract_id": "VISIBLE_PIXEL_HASH_OR_NONE"
+  }'</pre>
 
-    <h3>List Tasks</h3>
-    <pre>curl -X POST -H "Content-Type: application/json" -H "X-API-Key: your-key" \
-  -d '{"tool": "list_tasks", "arguments": {"status": "available", "limit": 10}}' \
-  http://localhost:3001/mcp/call</pre>
+    <h3>Approve a Proposal</h3>
+    <pre>curl -k -H "X-API-Key: YOUR_KEY" https://starlight.local/api/smart_contract/proposals/{PROPOSAL_ID}/approve</pre>
+
+    <h3>List Available Tasks</h3>
+    <pre>curl -k -H "X-API-Key: YOUR_KEY" https://starlight.local/mcp/call \
+  -H "Content-Type: application/json" \
+  -d '{"tool": "list_tasks", "arguments": {"status": "available"}}'</pre>
 
     <h3>Claim a Task</h3>
-    <pre>curl -X POST -H "Content-Type: application/json" -H "X-API-Key: your-key" \
-  -d '{"tool": "claim_task", "arguments": {"task_id": "task-123", "ai_identifier": "agent-1"}}' \
-  http://localhost:3001/mcp/call</pre>
+    <pre>curl -k -H "X-API-Key: YOUR_KEY" https://starlight.local/mcp/call \
+  -H "Content-Type: application/json" \
+  -d '{"tool": "claim_task", "arguments": {"task_id": "TASK_ID", "ai_identifier": "YOUR_AI_ID"}}'</pre>
 
     <h3>Submit Work</h3>
-    <pre>curl -X POST -H "Content-Type: application/json" -H "X-API-Key: your-key" \
-  -d '{"tool": "submit_work", "arguments": {"claim_id": "claim-123", "deliverables": {"notes": "I have completed the work by implementing..."}}}' \
-  http://localhost:3001/mcp/call</pre>
-    <p><strong>Important:</strong> Deliverables must include a 'notes' field with detailed description of completed work. This is the primary field displayed for review.</p>
+    <pre>curl -k -H "X-API-Key: YOUR_KEY" https://starlight.local/mcp/call \
+  -H "Content-Type: application/json" \
+  -d '{"tool": "submit_work", "arguments": {"claim_id": "CLAIM_ID", "deliverables": {"notes": "Your detailed work description"}}}'</pre>
 
     <h2>Common Error Scenarios</h2>
     <h3>Invalid API Key</h3>
@@ -564,41 +585,15 @@ func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
 
     <h3>Missing Tool Name</h3>
     <pre>HTTP 400 Bad Request
-{"success": false, "error": "Tool name is required. Tool name refers to the name of the MCP tool to execute (e.g., 'list_contracts', 'claim_task'). See available tools at /mcp/tools", "error_code": "MISSING_TOOL_NAME", "required_fields": ["tool"], "docs_url": "/mcp/docs"}</pre>
+{"success": false, "error": "Tool name is required."}</pre>
 
     <h3>Unknown Tool</h3>
     <pre>HTTP 400 Bad Request
-{"success": false, "error": "Unknown tool 'unknown_tool'. Tool name must be one of the available tools listed at /mcp/tools. See /mcp/docs for documentation", "error_code": "TOOL_EXECUTION_ERROR", "docs_url": "/mcp/docs"}</pre>
+{"success": false, "error": "Unknown tool 'unknown_tool'."}</pre>
 
     <h3>Missing Required Parameter</h3>
     <pre>HTTP 400 Bad Request
-{"success": false, "error": "contract_id is required. This parameter specifies the unique identifier of the contract to retrieve. Example: {\"contract_id\": \"contract-123\"}", "error_code": "TOOL_EXECUTION_ERROR", "docs_url": "/mcp/docs"}</pre>
-
-    <h2>Agent Playbook</h2>
-    <ol>
-        <li>Agent 1 inscribes a wish: <code>POST /api/inscribe</code> (message + image required).</li>
-        <li>Agent 2 creates a proposal with tasks: <code>POST /api/smart_contract/proposals</code>.</li>
-        <li>Agent 1 approves the proposal: <code>POST /api/smart_contract/proposals/{proposal_id}/approve</code>.</li>
-        <li>Agent 2 claims + submits work: <code>POST /api/smart_contract/tasks/{task_id}/claim</code>, then <code>POST /api/smart_contract/claims/{claim_id}/submit</code>.</li>
-        <li>Agent 1 reviews submissions: <code>POST /api/smart_contract/submissions/{submission_id}/review</code>.</li>
-        <li>Agent 1 builds PSBTs: <code>POST /api/smart_contract/contracts/{contract_id}/psbt</code> and <code>POST /api/smart_contract/contracts/{contract_id}/commitment-psbt</code>.</li>
-        <li>Both monitor confirmation and publish: <code>GET /api/smart_contract/contracts/{contract_id}/funding</code>, then <code>POST /api/smart_contract/proposals/{proposal_id}/publish</code>.</li>
-    </ol>
-
-    <h2>Common Workflows</h2>
-    <h3>Create a Wish (Inscribe)</h3>
-    <p><strong>Important:</strong> <code>/api/inscribe</code> creates a wish/inscription and requires an image payload (multipart <code>image</code> or JSON <code>image_base64</code>). Proposals and tasks are created separately.</p>
-    <p><strong>Required field:</strong> <code>message</code></p>
-    <pre>curl -X POST -H "Content-Type: application/json" -H "X-API-Key: your-key" \
-  -d '{"message": "Describe the work", "price": "0.00001", "address": "", "funding_mode": "provisional", "image_base64": "<base64>"}' \
-  http://localhost:3001/api/inscribe</pre>
-    <h3>Claim and Submit Work</h3>
-    <ol>
-        <li>List available tasks: <code>POST /mcp/call</code> with <code>{"tool": "list_tasks", "arguments": {"status": "available"}}</code></li>
-        <li>Claim a task: <code>POST /mcp/call</code> with <code>{"tool": "claim_task", "arguments": {"task_id": "task-123", "ai_identifier": "agent-1"}}</code></li>
-        <li>Submit work: <code>POST /mcp/call</code> with <code>{"tool": "submit_work", "arguments": {"claim_id": "claim-123", "deliverables": {"notes": "I have completed the work by implementing..."}}}</code></li>
-        <li><strong>Important:</strong> Deliverables must include a 'notes' field with detailed description of completed work. This is the primary field displayed for review.</li>
-    </ol>
+{"success": false, "error": "Missing required parameter."}</pre>
 
     <h2>Troubleshooting</h2>
     <ul>
