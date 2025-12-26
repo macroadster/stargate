@@ -16,14 +16,16 @@ func TestApproveProposalPreventsDoubleApproval(t *testing.T) {
 		ID:     "p-a",
 		Status: "pending",
 		Metadata: map[string]interface{}{
-			"contract_id": "contract-123",
+			"contract_id":        "contract-123",
+			"visible_pixel_hash": "abc123def456",
 		},
 	}
 	pendingB := smart_contract.Proposal{
 		ID:     "p-b",
 		Status: "pending",
 		Metadata: map[string]interface{}{
-			"contract_id": "contract-123",
+			"contract_id":        "contract-123",
+			"visible_pixel_hash": "abc123def456",
 		},
 	}
 	if err := store.CreateProposal(ctx, pendingA); err != nil {
@@ -111,7 +113,8 @@ func TestPublishRequiresApprovedAndFinalizes(t *testing.T) {
 		ID:     "p-publish",
 		Status: "pending",
 		Metadata: map[string]interface{}{
-			"contract_id": contractID,
+			"contract_id":        contractID,
+			"visible_pixel_hash": "publish123hash",
 		},
 	}
 	if err := store.CreateProposal(ctx, prop); err != nil {
@@ -120,7 +123,7 @@ func TestPublishRequiresApprovedAndFinalizes(t *testing.T) {
 
 	store.tasks[taskID] = smart_contract.Task{
 		TaskID:     taskID,
-		ContractID: contractID,
+		ContractID: "publish123hash", // Use the same contract ID as the proposal's visible_pixel_hash
 		Status:     "submitted",
 	}
 

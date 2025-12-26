@@ -381,7 +381,7 @@ FROM mcp_tasks WHERE task_id=$1 FOR UPDATE
 	if err != nil {
 		return smart_contract.Claim{}, ErrTaskNotFound
 	}
-	if strings.EqualFold(task.Status, "approved") || strings.EqualFold(task.Status, "completed") || strings.EqualFold(task.Status, "published") {
+	if strings.EqualFold(task.Status, "approved") || strings.EqualFold(task.Status, "completed") || strings.EqualFold(task.Status, "published") || strings.EqualFold(task.Status, "claimed") || strings.EqualFold(task.Status, "submitted") {
 		return smart_contract.Claim{}, ErrTaskUnavailable
 	}
 
@@ -819,6 +819,28 @@ func (s *PGStore) UpdateTaskProof(ctx context.Context, taskID string, proof *sma
 
 // Proposal operations
 func (s *PGStore) CreateProposal(ctx context.Context, p smart_contract.Proposal) error {
+	// Validate status field
+	if p.Status == "" {
+		p.Status = "pending" // Default to pending
+	} else if !isValidProposalStatus(p.Status) {
+		return fmt.Errorf("invalid proposal status: %s (must be one of: pending, approved, rejected, published)", p.Status)
+	}
+
+	// Validate visible_pixel_hash or image_scan_data requirement
+	hasScanMetadata := false
+	if p.Metadata != nil {
+		if vph, ok := p.Metadata["visible_pixel_hash"].(string); ok && strings.TrimSpace(vph) != "" {
+			hasScanMetadata = true
+		}
+		if !hasScanMetadata && p.Metadata["image_scan_data"] != nil {
+			hasScanMetadata = true
+		}
+	}
+
+	if !hasScanMetadata {
+		return fmt.Errorf("proposals must include image scan metadata (visible_pixel_hash or image_scan_data in metadata)")
+	}
+
 	metaMap := p.Metadata
 	if metaMap == nil {
 		metaMap = map[string]interface{}{}

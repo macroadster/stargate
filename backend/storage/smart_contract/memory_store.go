@@ -190,7 +190,7 @@ func (s *MemoryStore) ClaimTask(taskID, aiID, contractorWallet string, estimated
 	if !ok {
 		return smart_contract.Claim{}, ErrTaskNotFound
 	}
-	if strings.EqualFold(task.Status, "approved") || strings.EqualFold(task.Status, "completed") || strings.EqualFold(task.Status, "published") {
+	if strings.EqualFold(task.Status, "approved") || strings.EqualFold(task.Status, "completed") || strings.EqualFold(task.Status, "published") || strings.EqualFold(task.Status, "claimed") || strings.EqualFold(task.Status, "submitted") {
 		return smart_contract.Claim{}, ErrTaskUnavailable
 	}
 	normalizedWallet := strings.TrimSpace(contractorWallet)
@@ -443,13 +443,46 @@ func (s *MemoryStore) UpdateTaskProof(ctx context.Context, taskID string, proof 
 	return nil
 }
 
-// CreateProposal stores a new proposal.
+// CreateProposal stores a new proposal with validation.
 func (s *MemoryStore) CreateProposal(ctx context.Context, p smart_contract.Proposal) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// Validate status field
+	if p.Status == "" {
+		p.Status = "pending" // Default to pending
+	} else if !isValidProposalStatus(p.Status) {
+		return fmt.Errorf("invalid proposal status: %s (must be one of: pending, approved, rejected, published)", p.Status)
+	}
+
+	// Validate visible_pixel_hash or image_scan_data requirement
+	hasScanMetadata := false
+	if p.Metadata != nil {
+		if vph, ok := p.Metadata["visible_pixel_hash"].(string); ok && strings.TrimSpace(vph) != "" {
+			hasScanMetadata = true
+		}
+		if !hasScanMetadata && p.Metadata["image_scan_data"] != nil {
+			hasScanMetadata = true
+		}
+	}
+
+	if !hasScanMetadata {
+		return fmt.Errorf("proposals must include image scan metadata (visible_pixel_hash or image_scan_data in metadata)")
+	}
+
 	s.proposals[p.ID] = p
 	return nil
+}
+
+// isValidProposalStatus checks if a status is valid for proposals
+func isValidProposalStatus(status string) bool {
+	validStatuses := []string{"pending", "approved", "rejected", "published"}
+	for _, valid := range validStatuses {
+		if strings.EqualFold(status, valid) {
+			return true
+		}
+	}
+	return false
 }
 
 // createMissingTasks creates tasks for contracts that have available_tasks_count > 0 but no actual tasks
