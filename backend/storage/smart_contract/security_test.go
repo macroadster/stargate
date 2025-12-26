@@ -191,6 +191,15 @@ func TestPrivilegeEscalationPrevention(t *testing.T) {
 		Metadata: map[string]interface{}{
 			"visible_pixel_hash": "e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6", // Valid hex hash
 		},
+		Tasks: []smart_contract.Task{
+			{
+				TaskID:     "privilege-test-task-1",
+				ContractID: "e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6",
+				Title:      "Privilege task",
+				BudgetSats: 1000,
+				Status:     "available",
+			},
+		},
 	}
 
 	if err := store.CreateProposal(ctx, proposal); err != nil {
@@ -511,6 +520,15 @@ func TestAuditTrailVerification(t *testing.T) {
 		Metadata: map[string]interface{}{
 			"visible_pixel_hash": "f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7", // Valid hex hash
 		},
+		Tasks: []smart_contract.Task{
+			{
+				TaskID:     "audit-test-task-1",
+				ContractID: "f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7",
+				Title:      "Audit task",
+				BudgetSats: 1000,
+				Status:     "available",
+			},
+		},
 	}
 
 	// Track state changes
@@ -561,6 +579,15 @@ func TestConcurrentStateManipulation(t *testing.T) {
 		Status: "pending",
 		Metadata: map[string]interface{}{
 			"visible_pixel_hash": "deadbeefdeadbeefdeadbeef",
+		},
+		Tasks: []smart_contract.Task{
+			{
+				TaskID:     "concurrent-test-task-1",
+				ContractID: "deadbeefdeadbeefdeadbeef",
+				Title:      "Concurrent task",
+				BudgetSats: 1000,
+				Status:     "available",
+			},
 		},
 	}
 
@@ -736,4 +763,3 @@ func TestCryptoValidation(t *testing.T) {
 		})
 	}
 }
-

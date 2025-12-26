@@ -992,6 +992,15 @@ WHERE id<>$1 AND status='pending' AND (
 	if err != nil {
 		return fmt.Errorf("proposal validation failed: %v", err)
 	}
+	if len(proposal.Tasks) == 0 {
+		var taskCount int
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM mcp_tasks WHERE contract_id=$1`, contractID).Scan(&taskCount); err != nil {
+			return err
+		}
+		if taskCount == 0 {
+			return fmt.Errorf("approved proposals must contain at least one task")
+		}
+	}
 
 	if _, err := tx.Exec(ctx, `UPDATE mcp_proposals SET status='approved' WHERE id=$1`, id); err != nil {
 		return err

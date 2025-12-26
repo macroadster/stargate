@@ -258,6 +258,15 @@ func TestProposalWorkflowTransitions(t *testing.T) {
 				Metadata: map[string]interface{}{
 					"visible_pixel_hash": uniqueHash, 
 				},
+				Tasks: []smart_contract.Task{
+					{
+						TaskID:     "workflow-" + tt.name + "-task-1",
+						ContractID: uniqueHash,
+						Title:      "Workflow task",
+						BudgetSats: 1000,
+						Status:     "available",
+					},
+				},
 			}
 
 			if err := store.CreateProposal(ctx, proposal); err != nil {

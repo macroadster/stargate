@@ -570,8 +570,21 @@ func (s *MemoryStore) ApproveProposal(ctx context.Context, id string) error {
 		return fmt.Errorf("proposal %s must be pending to approve, current status: %s", id, p.Status)
 	}
 
-	// Reject if another proposal is already approved/published for the same contract.
 	contractID := contractIDFromMeta(p.Metadata, id)
+	hasTasks := len(p.Tasks) > 0
+	if !hasTasks {
+		for _, task := range s.tasks {
+			if task.ContractID == contractID {
+				hasTasks = true
+				break
+			}
+		}
+	}
+	if !hasTasks {
+		return fmt.Errorf("approved proposals must contain at least one task")
+	}
+
+	// Reject if another proposal is already approved/published for the same contract.
 	for pid, other := range s.proposals {
 		if pid == id {
 			continue

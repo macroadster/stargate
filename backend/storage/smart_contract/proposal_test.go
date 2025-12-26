@@ -19,6 +19,15 @@ func TestApproveProposalPreventsDoubleApproval(t *testing.T) {
 	            "contract_id":        "contract-123",
 	            "visible_pixel_hash": "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b", // Valid 64-char hex
 	        },
+	        Tasks: []smart_contract.Task{
+	        	{
+	        		TaskID:     "p-a-task-1",
+	        		ContractID: "contract-123",
+	        		Title:      "Task A",
+	        		BudgetSats: 1000,
+	        		Status:     "available",
+	        	},
+	        },
 	    }
 	pendingB := smart_contract.Proposal{
 		ID:     "p-b",
@@ -26,6 +35,15 @@ func TestApproveProposalPreventsDoubleApproval(t *testing.T) {
 		Metadata: map[string]interface{}{
 			"contract_id":        "contract-123",
 			"visible_pixel_hash": "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b", // Same as pendingA
+		},
+		Tasks: []smart_contract.Task{
+			{
+				TaskID:     "p-b-task-1",
+				ContractID: "contract-123",
+				Title:      "Task B",
+				BudgetSats: 1000,
+				Status:     "available",
+			},
 		},
 	}
 	if err := store.CreateProposal(ctx, pendingA); err != nil {
@@ -65,6 +83,15 @@ func TestPixelHashDeterminesContractIdentity(t *testing.T) {
 		Metadata: map[string]interface{}{
 			"visible_pixel_hash": pixelHash,
 		},
+		Tasks: []smart_contract.Task{
+			{
+				TaskID:     "proposal-a-task-1",
+				ContractID: pixelHash,
+				Title:      "Task A",
+				BudgetSats: 1000,
+				Status:     "available",
+			},
+		},
 	}
 	if err := store.CreateProposal(ctx, proposalA); err != nil {
 		t.Fatalf("create proposal A: %v", err)
@@ -76,6 +103,15 @@ func TestPixelHashDeterminesContractIdentity(t *testing.T) {
 		Status: "pending",
 		Metadata: map[string]interface{}{
 			"visible_pixel_hash": pixelHash,
+		},
+		Tasks: []smart_contract.Task{
+			{
+				TaskID:     "proposal-b-task-1",
+				ContractID: pixelHash,
+				Title:      "Task B",
+				BudgetSats: 1000,
+				Status:     "available",
+			},
 		},
 	}
 	if err := store.CreateProposal(ctx, proposalB); err != nil {
