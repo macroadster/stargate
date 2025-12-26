@@ -542,6 +542,59 @@ func (s *MemoryStore) GetProposal(ctx context.Context, id string) (smart_contrac
 	return p, nil
 }
 
+// UpdateProposal updates a pending proposal.
+func (s *MemoryStore) UpdateProposal(ctx context.Context, p smart_contract.Proposal) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	existing, ok := s.proposals[p.ID]
+	if !ok {
+		return fmt.Errorf("proposal %s not found", p.ID)
+	}
+	if !strings.EqualFold(existing.Status, "pending") {
+		return fmt.Errorf("proposal %s must be pending to update, current status: %s", p.ID, existing.Status)
+	}
+
+	if p.Title == "" {
+		p.Title = existing.Title
+	}
+	if p.DescriptionMD == "" {
+		p.DescriptionMD = existing.DescriptionMD
+	}
+	if p.VisiblePixelHash == "" {
+		p.VisiblePixelHash = existing.VisiblePixelHash
+	}
+	if p.BudgetSats == 0 {
+		p.BudgetSats = existing.BudgetSats
+	}
+	if p.Metadata == nil {
+		p.Metadata = existing.Metadata
+	}
+	if p.Tasks == nil {
+		p.Tasks = existing.Tasks
+	}
+	if p.CreatedAt.IsZero() {
+		p.CreatedAt = existing.CreatedAt
+	}
+
+	p.Status = existing.Status
+	if p.Metadata == nil {
+		p.Metadata = map[string]interface{}{}
+	}
+	if strings.TrimSpace(p.VisiblePixelHash) != "" {
+		if vph, ok := p.Metadata["visible_pixel_hash"].(string); !ok || strings.TrimSpace(vph) == "" {
+			p.Metadata["visible_pixel_hash"] = p.VisiblePixelHash
+		}
+	}
+
+	if err := ValidateProposalInput(p); err != nil {
+		return fmt.Errorf("proposal validation failed: %v", err)
+	}
+
+	s.proposals[p.ID] = p
+	return nil
+}
+
 // ApproveProposal approves a proposal and auto-rejects others for the same contract.
 func (s *MemoryStore) ApproveProposal(ctx context.Context, id string) error {
 	s.mu.Lock()

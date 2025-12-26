@@ -183,3 +183,79 @@ func TestPublishRequiresApprovedAndFinalizes(t *testing.T) {
 		t.Fatalf("expected task published, got %s", task.Status)
 	}
 }
+
+func TestUpdateProposalPending(t *testing.T) {
+	store := NewMemoryStore(time.Hour)
+	ctx := context.Background()
+
+	proposal := smart_contract.Proposal{
+		ID:     "proposal-update",
+		Status: "pending",
+		Title:  "Original Title",
+		Metadata: map[string]interface{}{
+			"visible_pixel_hash": "b0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1",
+		},
+		Tasks: []smart_contract.Task{
+			{
+				TaskID:     "proposal-update-task-1",
+				ContractID: "proposal-update",
+				Title:      "Task",
+				BudgetSats: 1000,
+				Status:     "available",
+			},
+		},
+	}
+	if err := store.CreateProposal(ctx, proposal); err != nil {
+		t.Fatalf("create proposal: %v", err)
+	}
+
+	update := smart_contract.Proposal{
+		ID:    proposal.ID,
+		Title: "Revised Proposal",
+	}
+	if err := store.UpdateProposal(ctx, update); err != nil {
+		t.Fatalf("update proposal: %v", err)
+	}
+
+	got, _ := store.GetProposal(ctx, proposal.ID)
+	if got.Title != "Revised Proposal" {
+		t.Fatalf("expected title updated, got %s", got.Title)
+	}
+}
+
+func TestUpdateProposalRejectedWhenApproved(t *testing.T) {
+	store := NewMemoryStore(time.Hour)
+	ctx := context.Background()
+
+	proposal := smart_contract.Proposal{
+		ID:     "proposal-update-approved",
+		Status: "pending",
+		Title:  "Original Title",
+		Metadata: map[string]interface{}{
+			"visible_pixel_hash": "c0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1",
+		},
+		Tasks: []smart_contract.Task{
+			{
+				TaskID:     "proposal-update-approved-task-1",
+				ContractID: "proposal-update-approved",
+				Title:      "Task",
+				BudgetSats: 1000,
+				Status:     "available",
+			},
+		},
+	}
+	if err := store.CreateProposal(ctx, proposal); err != nil {
+		t.Fatalf("create proposal: %v", err)
+	}
+	if err := store.ApproveProposal(ctx, proposal.ID); err != nil {
+		t.Fatalf("approve proposal: %v", err)
+	}
+
+	update := smart_contract.Proposal{
+		ID:    proposal.ID,
+		Title: "Revised Proposal",
+	}
+	if err := store.UpdateProposal(ctx, update); err == nil {
+		t.Fatalf("expected update to fail after approval")
+	}
+}

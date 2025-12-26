@@ -914,6 +914,93 @@ FROM mcp_proposals WHERE id=$1
 	return p, nil
 }
 
+// UpdateProposal updates a pending proposal.
+func (s *PGStore) UpdateProposal(ctx context.Context, p smart_contract.Proposal) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var status string
+	var metaJSON []byte
+	var current smart_contract.Proposal
+	if err := tx.QueryRow(ctx, `
+SELECT title, description_md, visible_pixel_hash, budget_sats, status, metadata, created_at
+FROM mcp_proposals WHERE id=$1 FOR UPDATE
+`, p.ID).Scan(&current.Title, &current.DescriptionMD, &current.VisiblePixelHash, &current.BudgetSats, &status, &metaJSON, &current.CreatedAt); err != nil {
+		if strings.Contains(err.Error(), "no rows") {
+			return fmt.Errorf("proposal %s not found", p.ID)
+		}
+		return err
+	}
+	current.ID = p.ID
+	current.Status = status
+	_ = json.Unmarshal(metaJSON, &current.Metadata)
+	populateProposalTasks(&current)
+
+	if !strings.EqualFold(current.Status, "pending") {
+		return fmt.Errorf("proposal %s must be pending to update, current status: %s", p.ID, current.Status)
+	}
+
+	if p.Title == "" {
+		p.Title = current.Title
+	}
+	if p.DescriptionMD == "" {
+		p.DescriptionMD = current.DescriptionMD
+	}
+	if p.VisiblePixelHash == "" {
+		p.VisiblePixelHash = current.VisiblePixelHash
+	}
+	if p.BudgetSats == 0 {
+		p.BudgetSats = current.BudgetSats
+	}
+	if p.Metadata == nil {
+		p.Metadata = current.Metadata
+	}
+	if p.Tasks == nil {
+		p.Tasks = current.Tasks
+	}
+	if p.CreatedAt.IsZero() {
+		p.CreatedAt = current.CreatedAt
+	}
+
+	p.Status = current.Status
+	if p.Metadata == nil {
+		p.Metadata = map[string]interface{}{}
+	}
+	if strings.TrimSpace(p.VisiblePixelHash) != "" {
+		if vph, ok := p.Metadata["visible_pixel_hash"].(string); !ok || strings.TrimSpace(vph) == "" {
+			p.Metadata["visible_pixel_hash"] = p.VisiblePixelHash
+		}
+	}
+
+	if err := ValidateProposalInput(p); err != nil {
+		return fmt.Errorf("proposal validation failed: %v", err)
+	}
+
+	metaMap := p.Metadata
+	if metaMap == nil {
+		metaMap = map[string]interface{}{}
+	}
+	if len(p.Tasks) > 0 {
+		metaMap["suggested_tasks"] = p.Tasks
+	} else {
+		delete(metaMap, "suggested_tasks")
+	}
+	metaOut, _ := json.Marshal(metaMap)
+
+	if _, err := tx.Exec(ctx, `
+UPDATE mcp_proposals
+SET title=$2, description_md=$3, visible_pixel_hash=$4, budget_sats=$5, metadata=$6
+WHERE id=$1
+`, p.ID, p.Title, p.DescriptionMD, p.VisiblePixelHash, p.BudgetSats, string(metaOut)); err != nil {
+		return err
+	}
+
+	return tx.Commit(ctx)
+}
+
 func (s *PGStore) ApproveProposal(ctx context.Context, id string) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {

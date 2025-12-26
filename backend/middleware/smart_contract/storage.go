@@ -36,6 +36,7 @@ type Store interface {
 	CreateProposal(ctx context.Context, p smart_contract.Proposal) error
 	ListProposals(ctx context.Context, filter smart_contract.ProposalFilter) ([]smart_contract.Proposal, error)
 	GetProposal(ctx context.Context, id string) (smart_contract.Proposal, error)
+	UpdateProposal(ctx context.Context, p smart_contract.Proposal) error
 	ApproveProposal(ctx context.Context, id string) error
 	PublishProposal(ctx context.Context, id string) error
 	ListSubmissions(ctx context.Context, taskIDs []string) ([]smart_contract.Submission, error)

@@ -52,6 +52,17 @@ type ProposalCreateBody struct {
 	Tasks            []smart_contract.Task  `json:"tasks"`
 }
 
+// ProposalUpdateBody captures PATCH/PUT payload for updating proposals.
+type ProposalUpdateBody struct {
+	Title            *string                 `json:"title"`
+	DescriptionMD    *string                 `json:"description_md"`
+	VisiblePixelHash *string                 `json:"visible_pixel_hash"`
+	BudgetSats       *int64                  `json:"budget_sats"`
+	ContractID       *string                 `json:"contract_id"`
+	Metadata         *map[string]interface{} `json:"metadata"`
+	Tasks            *[]smart_contract.Task  `json:"tasks"`
+}
+
 // NewServer builds a Server with the given store.
 func NewServer(store Store, apiKeys auth.APIKeyValidator, ingest *services.IngestionService) *Server {
 	return &Server{
@@ -1191,6 +1202,21 @@ func (s *Server) resolveCommitmentTask(contractID, taskID string) (smart_contrac
 	return smart_contract.Task{}, fmt.Errorf("no task with commitment metadata")
 }
 
+func contractIDFromMeta(meta map[string]interface{}, fallback string) string {
+	if meta != nil {
+		if v, ok := meta["visible_pixel_hash"].(string); ok && strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+		if v, ok := meta["contract_id"].(string); ok && strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+		if v, ok := meta["ingestion_id"].(string); ok && strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return fallback
+}
+
 func networkParamsFromEnv() *chaincfg.Params {
 	switch bitcoin.GetCurrentNetwork() {
 	case "mainnet":
@@ -1843,6 +1869,115 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 			"status":      p.Status,
 			"tasks":       len(p.Tasks),
 			"budget_sats": p.BudgetSats,
+		})
+		return
+	case http.MethodPut, http.MethodPatch:
+		parts := strings.Split(path, "/")
+		if len(parts) < 1 || parts[0] == "" {
+			Error(w, http.StatusBadRequest, "proposal id required")
+			return
+		}
+		if ct := r.Header.Get("Content-Type"); ct != "" && !strings.Contains(ct, "application/json") {
+			Error(w, http.StatusUnsupportedMediaType, "Content-Type must be application/json")
+			return
+		}
+		var body ProposalUpdateBody
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			Error(w, http.StatusBadRequest, "invalid json")
+			return
+		}
+		id := parts[0]
+		existing, err := s.store.GetProposal(r.Context(), id)
+		if err != nil {
+			Error(w, http.StatusNotFound, err.Error())
+			return
+		}
+		if !strings.EqualFold(existing.Status, "pending") {
+			Error(w, http.StatusBadRequest, fmt.Sprintf("proposal %s must be pending to update, current status: %s", id, existing.Status))
+			return
+		}
+		updated := existing
+		changed := false
+
+		if body.Title != nil {
+			if strings.TrimSpace(*body.Title) == "" {
+				Error(w, http.StatusBadRequest, "title cannot be empty")
+				return
+			}
+			updated.Title = *body.Title
+			changed = true
+		}
+		if body.DescriptionMD != nil {
+			updated.DescriptionMD = *body.DescriptionMD
+			changed = true
+		}
+		if body.VisiblePixelHash != nil {
+			if strings.TrimSpace(*body.VisiblePixelHash) == "" {
+				Error(w, http.StatusBadRequest, "visible_pixel_hash cannot be empty")
+				return
+			}
+			updated.VisiblePixelHash = strings.TrimSpace(*body.VisiblePixelHash)
+			changed = true
+		}
+		if body.BudgetSats != nil {
+			updated.BudgetSats = *body.BudgetSats
+			changed = true
+		}
+		if body.Metadata != nil {
+			updated.Metadata = copyMeta(*body.Metadata)
+			changed = true
+		}
+
+		if updated.Metadata == nil {
+			updated.Metadata = map[string]interface{}{}
+		}
+		if body.ContractID != nil && strings.TrimSpace(*body.ContractID) != "" {
+			updated.Metadata["contract_id"] = strings.TrimSpace(*body.ContractID)
+			changed = true
+		}
+		if strings.TrimSpace(updated.VisiblePixelHash) != "" {
+			if vph, ok := updated.Metadata["visible_pixel_hash"].(string); !ok || strings.TrimSpace(vph) == "" {
+				updated.Metadata["visible_pixel_hash"] = updated.VisiblePixelHash
+			}
+		}
+
+		if body.Tasks != nil {
+			updated.Tasks = *body.Tasks
+			contractID := contractIDFromMeta(updated.Metadata, updated.ID)
+			for i := range updated.Tasks {
+				if updated.Tasks[i].TaskID == "" {
+					updated.Tasks[i].TaskID = updated.ID + "-task-" + strconv.Itoa(i+1)
+				}
+				if updated.Tasks[i].ContractID == "" && contractID != "" {
+					updated.Tasks[i].ContractID = contractID
+				}
+				if updated.Tasks[i].Status == "" {
+					updated.Tasks[i].Status = "available"
+				}
+			}
+			changed = true
+		}
+
+		if !changed {
+			Error(w, http.StatusBadRequest, "no updates provided")
+			return
+		}
+
+		if err := s.store.UpdateProposal(r.Context(), updated); err != nil {
+			Error(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		s.recordEvent(smart_contract.Event{
+			Type:      "update",
+			EntityID:  updated.ID,
+			Actor:     "editor",
+			Message:   "proposal updated",
+			CreatedAt: time.Now(),
+		})
+		JSON(w, http.StatusOK, map[string]interface{}{
+			"proposal_id": updated.ID,
+			"status":      updated.Status,
+			"message":     "Proposal updated.",
 		})
 		return
 	case http.MethodGet:
