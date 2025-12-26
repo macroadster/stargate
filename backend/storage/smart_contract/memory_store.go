@@ -448,6 +448,15 @@ func (s *MemoryStore) CreateProposal(ctx context.Context, p smart_contract.Propo
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if p.Metadata == nil {
+		p.Metadata = map[string]interface{}{}
+	}
+	if strings.TrimSpace(p.VisiblePixelHash) != "" {
+		if vph, ok := p.Metadata["visible_pixel_hash"].(string); !ok || strings.TrimSpace(vph) == "" {
+			p.Metadata["visible_pixel_hash"] = p.VisiblePixelHash
+		}
+	}
+
 	// Comprehensive security validation
 	if err := ValidateProposalInput(p); err != nil {
 		return fmt.Errorf("proposal validation failed: %v", err)
@@ -541,6 +550,15 @@ func (s *MemoryStore) ApproveProposal(ctx context.Context, id string) error {
 	p, ok := s.proposals[id]
 	if !ok {
 		return fmt.Errorf("proposal %s not found", id)
+	}
+
+	// HACK: temporarily set status to approved to trigger validation
+	originalStatus := p.Status
+	p.Status = "approved"
+	err := ValidateProposalInput(p)
+	p.Status = originalStatus // revert status
+	if err != nil {
+		return err
 	}
 
 	// Check if proposal is already in final state

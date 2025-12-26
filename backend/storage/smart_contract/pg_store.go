@@ -805,6 +805,15 @@ func (s *PGStore) UpdateTaskProof(ctx context.Context, taskID string, proof *sma
 
 // Proposal operations
 func (s *PGStore) CreateProposal(ctx context.Context, p smart_contract.Proposal) error {
+	if p.Metadata == nil {
+		p.Metadata = map[string]interface{}{}
+	}
+	if strings.TrimSpace(p.VisiblePixelHash) != "" {
+		if vph, ok := p.Metadata["visible_pixel_hash"].(string); !ok || strings.TrimSpace(vph) == "" {
+			p.Metadata["visible_pixel_hash"] = p.VisiblePixelHash
+		}
+	}
+
 	// Comprehensive security validation - this sanitizes inputs in-place
 	if err := ValidateProposalInput(p); err != nil {
 		return fmt.Errorf("proposal validation failed: %v", err)
@@ -815,21 +824,6 @@ func (s *PGStore) CreateProposal(ctx context.Context, p smart_contract.Proposal)
 		p.Status = "pending" // Default to pending
 	} else if !isValidProposalStatus(p.Status) {
 		return fmt.Errorf("invalid proposal status: %s (must be one of: pending, approved, rejected, published)", p.Status)
-	}
-
-	// Validate visible_pixel_hash or image_scan_data requirement
-	hasScanMetadata := false
-	if p.Metadata != nil {
-		if vph, ok := p.Metadata["visible_pixel_hash"].(string); ok && strings.TrimSpace(vph) != "" {
-			hasScanMetadata = true
-		}
-		if !hasScanMetadata && p.Metadata["image_scan_data"] != nil {
-			hasScanMetadata = true
-		}
-	}
-
-	if !hasScanMetadata {
-		return fmt.Errorf("proposals must include image scan metadata (visible_pixel_hash or image_scan_data in metadata)")
 	}
 
 	metaMap := p.Metadata
@@ -930,7 +924,8 @@ func (s *PGStore) ApproveProposal(ctx context.Context, id string) error {
 	// Load and lock the proposal row
 	var metaJSON []byte
 	var currentStatus string
-	if err := tx.QueryRow(ctx, `SELECT metadata, status FROM mcp_proposals WHERE id=$1 FOR UPDATE`, id).Scan(&metaJSON, &currentStatus); err != nil {
+	var visiblePixelHash string
+	if err := tx.QueryRow(ctx, `SELECT metadata, status, visible_pixel_hash FROM mcp_proposals WHERE id=$1 FOR UPDATE`, id).Scan(&metaJSON, &currentStatus, &visiblePixelHash); err != nil {
 		return err
 	}
 
@@ -946,6 +941,14 @@ func (s *PGStore) ApproveProposal(ctx context.Context, id string) error {
 	var meta map[string]interface{}
 	if err := json.Unmarshal(metaJSON, &meta); err != nil {
 		return err
+	}
+	if strings.TrimSpace(visiblePixelHash) != "" {
+		if meta == nil {
+			meta = map[string]interface{}{}
+		}
+		if vph, ok := meta["visible_pixel_hash"].(string); !ok || strings.TrimSpace(vph) == "" {
+			meta["visible_pixel_hash"] = visiblePixelHash
+		}
 	}
 	contractID := contractIDFromMeta(meta, id)
 
@@ -981,7 +984,12 @@ WHERE id<>$1 AND status='pending' AND (
 		return err
 	}
 
-	if err := ValidateProposalInput(proposal); err != nil {
+	// HACK: temporarily set status to approved to trigger validation
+	originalStatus := proposal.Status
+	proposal.Status = "approved"
+	err = ValidateProposalInput(proposal)
+	proposal.Status = originalStatus // revert status
+	if err != nil {
 		return fmt.Errorf("proposal validation failed: %v", err)
 	}
 

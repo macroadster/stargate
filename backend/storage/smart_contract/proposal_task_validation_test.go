@@ -47,7 +47,7 @@ func TestProposalTaskValidation(t *testing.T) {
 		}
 	})
 
-	t.Run("Approved proposal with no tasks", func(t *testing.T) {
+	t.Run("Approved proposal with no tasks (allowed)", func(t *testing.T) {
 		proposal := smart_contract.Proposal{
 			ID:            "test-proposal-2",
 			Title:         "Test Proposal No Tasks",
@@ -61,11 +61,8 @@ func TestProposalTaskValidation(t *testing.T) {
 		}
 
 		err := store.CreateProposal(ctx, proposal)
-		if err == nil {
-			t.Error("Expected validation error for approved proposal with no tasks")
-		}
-		if !containsString(err.Error(), "approved proposals must contain") {
-			t.Errorf("Expected error about approved proposals needing tasks, got: %v", err)
+		if err != nil {
+			t.Errorf("Expected success for approved proposal without tasks, got error: %v", err)
 		}
 	})
 

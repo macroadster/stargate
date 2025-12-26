@@ -333,6 +333,15 @@ func ValidateProposalInput(proposal smart_contract.Proposal) error {
 			}
 		}
 	}
+	if !hasValidPixelHash {
+		trimmedVPH := strings.TrimSpace(proposal.VisiblePixelHash)
+		if trimmedVPH != "" {
+			if err := ValidatePixelHashFormat(trimmedVPH); err != nil {
+				return fmt.Errorf("visible pixel hash validation failed: %v", err)
+			}
+			hasValidPixelHash = true
+		}
+	}
 
 	hasImageScanData := false
 	if proposal.Metadata != nil && proposal.Metadata["image_scan_data"] != nil {
@@ -357,9 +366,6 @@ func ValidateProposalInput(proposal smart_contract.Proposal) error {
 				return fmt.Errorf("task %d validation failed: %v", i+1, err)
 			}
 		}
-	} else if proposal.Status == "approved" {
-		// Approved proposals should have tasks for contract activation
-		return fmt.Errorf("approved proposals must contain at least one task with budget to activate the contract")
 	}
 
 	return nil

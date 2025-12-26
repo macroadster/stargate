@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -1074,10 +1075,18 @@ func (s *Server) handlePaymentDetails(w http.ResponseWriter, r *http.Request, co
 	}
 
 	// Authenticate the caller
+	if s.apiKeys == nil {
+		Error(w, http.StatusServiceUnavailable, "api key validation unavailable")
+		return
+	}
 	payerKey := r.Header.Get("X-API-Key")
 	payerRec, ok := s.apiKeys.Get(payerKey)
 	if !ok {
 		Error(w, http.StatusForbidden, "invalid api key")
+		return
+	}
+	if strings.TrimSpace(payerRec.Wallet) == "" {
+		Error(w, http.StatusForbidden, "api key missing wallet binding - please associate a Bitcoin wallet address with your API key")
 		return
 	}
 
@@ -1097,39 +1106,55 @@ func (s *Server) handlePaymentDetails(w http.ResponseWriter, r *http.Request, co
 
 	// Calculate total payout amount
 	var totalPayoutSats int64
+	var approvedTasks int
+	var missingWallets int
 	payouts := make(map[string]int64)
 
 	for _, task := range tasks {
 		if task.Status == "approved" {
+			approvedTasks++
 			totalPayoutSats += task.BudgetSats
 			// Use the contractor's claimed wallet or the wallet from the task
 			wallet := strings.TrimSpace(task.ContractorWallet)
 			if wallet == "" && task.MerkleProof != nil {
 				wallet = strings.TrimSpace(task.MerkleProof.ContractorWallet)
 			}
-			if wallet != "" {
-				payouts[wallet] += task.BudgetSats
+			if wallet == "" {
+				missingWallets++
+				continue
 			}
+			payouts[wallet] += task.BudgetSats
 		}
 	}
 
-	if totalPayoutSats == 0 {
+	if approvedTasks == 0 {
 		Error(w, http.StatusBadRequest, "no approved tasks with payouts found")
+		return
+	}
+	if missingWallets > 0 {
+		Error(w, http.StatusBadRequest, fmt.Sprintf("approved tasks missing contractor wallet (%d missing)", missingWallets))
 		return
 	}
 
 	// Convert payouts map to response format
 	payoutAddresses := make([]string, 0, len(payouts))
-	payoutAmounts := make([]int64, 0, len(payouts))
-	for wallet, amount := range payouts {
+	for wallet := range payouts {
 		payoutAddresses = append(payoutAddresses, wallet)
-		payoutAmounts = append(payoutAmounts, amount)
+	}
+	sort.Strings(payoutAddresses)
+	payoutAmounts := make([]int64, 0, len(payoutAddresses))
+	for _, wallet := range payoutAddresses {
+		payoutAmounts = append(payoutAmounts, payouts[wallet])
 	}
 
 	// Get proposal metadata for additional context
 	var proposal smart_contract.Proposal
 	if proposals, err := s.store.ListProposals(ctx, smart_contract.ProposalFilter{ContractID: contractID}); err == nil && len(proposals) > 0 {
 		proposal = proposals[0]
+	}
+	contractStatus := proposal.Status
+	if contract, err := s.store.GetContract(contractID); err == nil {
+		contractStatus = contract.Status
 	}
 
 	// Return comprehensive payment details
@@ -1138,9 +1163,9 @@ func (s *Server) handlePaymentDetails(w http.ResponseWriter, r *http.Request, co
 		"total_payout_sats": totalPayoutSats,
 		"payout_addresses":  payoutAddresses,
 		"payout_amounts":    payoutAmounts,
-		"approved_tasks":    len(tasks),
-		"payer_wallet":      payerRec.Wallet,
-		"contract_status":   proposal.Status,
+		"approved_tasks":    approvedTasks,
+		"payer_wallet":      strings.TrimSpace(payerRec.Wallet),
+		"contract_status":   contractStatus,
 		"proposal_metadata": proposal.Metadata,
 		"currency":          "sats",
 		"network":           "testnet", // TODO: Get from config
@@ -1775,6 +1800,9 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 		if body.ContractID != "" {
 			body.Metadata["contract_id"] = body.ContractID
 		}
+		if strings.TrimSpace(body.VisiblePixelHash) != "" {
+			body.Metadata["visible_pixel_hash"] = body.VisiblePixelHash
+		}
 		for i := range body.Tasks {
 			if body.Tasks[i].TaskID == "" {
 				body.Tasks[i].TaskID = body.ID + "-task-" + strconv.Itoa(i+1)
@@ -1923,6 +1951,11 @@ func BuildProposalFromIngestion(body ProposalCreateBody, rec *services.Ingestion
 	if visible == "" && rec.ImageBase64 != "" {
 		if h, err := hashBase64(rec.ImageBase64); err == nil {
 			visible = h
+		}
+	}
+	if strings.TrimSpace(visible) != "" {
+		if vph, ok := meta["visible_pixel_hash"].(string); !ok || strings.TrimSpace(vph) == "" {
+			meta["visible_pixel_hash"] = visible
 		}
 	}
 	status := body.Status
