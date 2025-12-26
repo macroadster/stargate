@@ -961,7 +961,8 @@ func (h *HTTPMCPServer) handleToolCall(w http.ResponseWriter, r *http.Request) {
 
 	// Call the appropriate tool handler directly
 	ctx := context.Background()
-	result, err := h.callToolDirect(ctx, req.Tool, req.Arguments)
+	apiKey := strings.TrimSpace(r.Header.Get("X-API-Key"))
+	result, err := h.callToolDirect(ctx, req.Tool, req.Arguments, apiKey)
 	if err != nil {
 		h.sendErrorResponse(w, MCPResponse{
 			Success:   false,
@@ -983,7 +984,7 @@ func (h *HTTPMCPServer) handleToolCall(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, args map[string]interface{}) (interface{}, error) {
+func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, args map[string]interface{}, apiKey string) (interface{}, error) {
 	store := h.store
 
 	// Debug: log the tool name
@@ -1167,11 +1168,17 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 				"ai_identifier":        aiIdentifier,
 				"wallet_address":       h.toString(args["wallet_address"]),
 				"estimated_completion": h.toString(args["estimated_completion"]),
-			}); err == nil {
+			}, apiKey); err == nil {
 			return result, nil
 		}
 
-		claim, err := store.ClaimTask(taskID, aiIdentifier, h.toString(args["wallet_address"]), nil)
+		claimWallet := strings.TrimSpace(h.toString(args["wallet_address"]))
+		if claimWallet == "" && apiKey != "" && h.apiKeyStore != nil {
+			if rec, ok := h.apiKeyStore.Get(apiKey); ok {
+				claimWallet = strings.TrimSpace(rec.Wallet)
+			}
+		}
+		claim, err := store.ClaimTask(taskID, aiIdentifier, claimWallet, nil)
 		if err != nil {
 			return nil, fmt.Errorf("Failed to claim task: %v", err)
 		}
@@ -1199,7 +1206,7 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 		if result, err := h.postJSON(fmt.Sprintf("%s/api/smart_contract/claims/%s/submit", h.baseURL, claimID), map[string]interface{}{
 			"deliverables":     deliverables,
 			"completion_proof": completionProof,
-		}); err == nil {
+		}, apiKey); err == nil {
 			return result, nil
 		}
 
@@ -1713,7 +1720,7 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 			reviewPayload["rejection_type"] = rejectionType
 		}
 		if result, err := h.postJSON(fmt.Sprintf("%s/api/smart_contract/submissions/%s/review", h.baseURL, submissionID),
-			reviewPayload); err == nil {
+			reviewPayload, apiKey); err == nil {
 			return result, nil
 		}
 
@@ -1762,7 +1769,7 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 		}
 
 		if result, err := h.postJSON(fmt.Sprintf("%s/api/smart_contract/submissions/%s/rework", h.baseURL, submissionID),
-			map[string]interface{}{"deliverables": deliverables, "notes": notes}); err == nil {
+			map[string]interface{}{"deliverables": deliverables, "notes": notes}, apiKey); err == nil {
 			return result, nil
 		}
 
@@ -2081,7 +2088,7 @@ func (h *HTTPMCPServer) fetchProposalsViaREST(filter smart_contract.ProposalFilt
 }
 
 // postJSON posts a JSON body to the given URL with optional API key and returns decoded JSON.
-func (h *HTTPMCPServer) postJSON(urlStr string, body map[string]interface{}) (map[string]interface{}, error) {
+func (h *HTTPMCPServer) postJSON(urlStr string, body map[string]interface{}, apiKey string) (map[string]interface{}, error) {
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
@@ -2092,7 +2099,9 @@ func (h *HTTPMCPServer) postJSON(urlStr string, body map[string]interface{}) (ma
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if h.apiKeyStore != nil {
+	if apiKey != "" {
+		req.Header.Set("X-API-Key", apiKey)
+	} else if h.apiKeyStore != nil {
 		req.Header.Set("X-API-Key", bodyHeaderFallback(body))
 	}
 
