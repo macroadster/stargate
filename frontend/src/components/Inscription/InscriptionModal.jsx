@@ -208,6 +208,8 @@ const InscriptionModal = ({ inscription, onClose }) => {
     const candidates = isRaiseFund
       ? [
           inscription.metadata?.funding_address,
+          inscription.metadata?.payout_address,
+          inscription.metadata?.fundraiser_wallet,
           inscription.metadata?.payer_address,
           selectedTask?.merkle_proof?.funding_address,
           inscriptionAddress,
