@@ -141,6 +141,11 @@ func (s *Server) handleContracts(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		if len(parts) > 1 && parts[1] == "payment-details" {
+			s.handlePaymentDetails(w, r, contractID)
+			return
+		}
+
 		contract, err := s.store.GetContract(contractID)
 		if err != nil {
 			Error(w, http.StatusNotFound, err.Error())
