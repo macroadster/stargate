@@ -453,26 +453,16 @@ func (s *MemoryStore) CreateProposal(ctx context.Context, p smart_contract.Propo
 		return fmt.Errorf("proposal validation failed: %v", err)
 	}
 
+	// Comprehensive security validation
+	if err := ValidateProposalInput(p); err != nil {
+		return fmt.Errorf("proposal validation failed: %v", err)
+	}
+
 	// Validate status field
 	if p.Status == "" {
 		p.Status = "pending" // Default to pending
 	} else if !isValidProposalStatus(p.Status) {
 		return fmt.Errorf("invalid proposal status: %s (must be one of: pending, approved, rejected, published)", p.Status)
-	}
-
-	// Validate visible_pixel_hash or image_scan_data requirement
-	hasScanMetadata := false
-	if p.Metadata != nil {
-		if vph, ok := p.Metadata["visible_pixel_hash"].(string); ok && strings.TrimSpace(vph) != "" {
-			hasScanMetadata = true
-		}
-		if !hasScanMetadata && p.Metadata["image_scan_data"] != nil {
-			hasScanMetadata = true
-		}
-	}
-
-	if !hasScanMetadata {
-		return fmt.Errorf("proposals must include image scan metadata (visible_pixel_hash or image_scan_data in metadata)")
 	}
 
 	s.proposals[p.ID] = p

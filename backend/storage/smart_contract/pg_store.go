@@ -19,8 +19,6 @@ type PGStore struct {
 	claimTTL time.Duration
 }
 
-
-
 // NewPGStore connects, initializes schema, and optionally seeds fixtures.
 func NewPGStore(ctx context.Context, dsn string, claimTTL time.Duration, seed bool) (*PGStore, error) {
 	pool, err := pgxpool.New(ctx, dsn)
@@ -974,6 +972,76 @@ WHERE id<>$1 AND status='pending' AND (
   metadata->>'visible_pixel_hash' = $2 OR
   id = $2
 )`, id, contractID)
+
+	// Load complete proposal for validation
+	proposal := smart_contract.Proposal{
+		ID:               id,
+		Status:           currentStatus,
+		Metadata:         meta,
+		Title:            "",
+		DescriptionMD:    "",
+		VisiblePixelHash: "",
+		BudgetSats:       0,
+		Tasks:            []smart_contract.Task{},
+	}
+
+	// Load remaining fields from database
+	if err := tx.QueryRow(ctx, `
+SELECT title, description_md, visible_pixel_hash, budget_sats 
+FROM mcp_proposals WHERE id=$1`, id).Scan(
+		&proposal.Title,
+		&proposal.DescriptionMD,
+		&proposal.VisiblePixelHash,
+		&proposal.BudgetSats); err != nil {
+		return err
+	}
+
+	// Load tasks if any
+	rows, err := tx.Query(ctx, `
+SELECT task_id, contract_id, goal_id, title, description, budget_sats, 
+       SkillsRequired, difficulty, status, claimed_by, claimed_at, claim_expires_at, 
+       merkle_proof, created_at 
+FROM mcp_tasks WHERE contract_id=$1`,
+		contractIDFromMeta(meta, id))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var task smart_contract.Task
+		var skillsJSON []byte
+		var proofJSON []byte
+		if err := rows.Scan(
+			&task.TaskID, &task.ContractID, &task.GoalID, &task.Title, &task.Description,
+			&task.BudgetSats, &skillsJSON, &task.Difficulty, &task.Status,
+			&task.ClaimedBy, &task.ClaimedAt, &task.ClaimExpiresAt, &proofJSON, &task.CreatedAt,
+		); err != nil {
+			return err
+		}
+
+		// Unmarshal JSON fields
+		if skillsJSON != nil {
+			if err := json.Unmarshal(skillsJSON, &task.SkillsRequired); err != nil {
+				return err
+			}
+		}
+
+		if proofJSON != nil {
+			if err := json.Unmarshal(proofJSON, &task.MerkleProof); err != nil {
+				return err
+			}
+		}
+
+		proposal.Tasks = append(proposal.Tasks, task)
+	}
+
+	if err := ValidateProposalInput(proposal); err != nil {
+		return fmt.Errorf("proposal validation failed: %v", err)
+	}
+	if err := ValidateProposalInput(proposal); err != nil {
+		return fmt.Errorf("proposal validation failed: %v", err)
+	}
 
 	if _, err := tx.Exec(ctx, `UPDATE mcp_proposals SET status='approved' WHERE id=$1`, id); err != nil {
 		return err
