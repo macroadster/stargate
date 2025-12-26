@@ -12,20 +12,20 @@ func TestApproveProposalPreventsDoubleApproval(t *testing.T) {
 	store := NewMemoryStore(time.Hour)
 	ctx := context.Background()
 
-	pendingA := smart_contract.Proposal{
-		ID:     "p-a",
-		Status: "pending",
-		Metadata: map[string]interface{}{
-			"contract_id":        "contract-123",
-			"visible_pixel_hash": "abc123def456",
-		},
-	}
+	    pendingA := smart_contract.Proposal{
+	        ID:     "p-a",
+	        Status: "pending",
+	        Metadata: map[string]interface{}{
+	            "contract_id":        "contract-123",
+	            "visible_pixel_hash": "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b", // Valid 64-char hex
+	        },
+	    }
 	pendingB := smart_contract.Proposal{
 		ID:     "p-b",
 		Status: "pending",
 		Metadata: map[string]interface{}{
 			"contract_id":        "contract-123",
-			"visible_pixel_hash": "abc123def456",
+			"visible_pixel_hash": "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b", // Same as pendingA
 		},
 	}
 	if err := store.CreateProposal(ctx, pendingA); err != nil {
@@ -56,7 +56,7 @@ func TestPixelHashDeterminesContractIdentity(t *testing.T) {
 	store := NewMemoryStore(time.Hour)
 	ctx := context.Background()
 
-	pixelHash := "abc123pixelhash"
+	pixelHash := "f9e8d7c6b5a41234567890abcdef1234567890abcdef1234567890abcdef1234" // Valid 64-char hex
 
 	// Create first proposal with pixel hash
 	proposalA := smart_contract.Proposal{
@@ -114,7 +114,7 @@ func TestPublishRequiresApprovedAndFinalizes(t *testing.T) {
 		Status: "pending",
 		Metadata: map[string]interface{}{
 			"contract_id":        contractID,
-			"visible_pixel_hash": "publish123hash",
+			"visible_pixel_hash": "a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1", // Valid 64-char hex
 		},
 	}
 	if err := store.CreateProposal(ctx, prop); err != nil {
@@ -123,7 +123,7 @@ func TestPublishRequiresApprovedAndFinalizes(t *testing.T) {
 
 	store.tasks[taskID] = smart_contract.Task{
 		TaskID:     taskID,
-		ContractID: "publish123hash", // Use the same contract ID as the proposal's visible_pixel_hash
+		ContractID: "a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1", // Use the same valid visible_pixel_hash as contract ID
 		Status:     "submitted",
 	}
 

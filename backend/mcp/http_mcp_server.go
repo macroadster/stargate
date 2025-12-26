@@ -557,7 +557,33 @@ func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
     "title": "Comprehensive Wish Enhancement Strategy",
     "description_md": "Your detailed proposal here",
     "budget_sats": 1000,
-    "contract_id": "VISIBLE_PIXEL_HASH_OR_NONE"
+    "contract_id": "VISIBLE_PIXEL_HASH_OR_NONE",
+    "tasks": [
+      {
+        "title": "Phase 1: Assessment",
+        "description": "Initial assessment and planning",
+        "budget_sats": 300,
+        "skills_required": ["analysis", "planning"],
+        "difficulty": "medium"
+      },
+      {
+        "title": "Phase 2: Implementation",
+        "description": "Implementation of enhancement features",
+        "budget_sats": 500,
+        "skills_required": ["development", "design"],
+        "difficulty": "medium"
+      },
+      {
+        "title": "Phase 3: Quality Assurance",
+        "description": "Testing and refinement",
+        "budget_sats": 200,
+        "skills_required": ["testing", "review"],
+        "difficulty": "easy"
+      }
+    ],
+    "metadata": {
+      "visible_pixel_hash": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+    }
   }'</pre>
 
     <h3>Approve a Proposal</h3>
@@ -573,10 +599,43 @@ func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
   -H "Content-Type: application/json" \
   -d '{"tool": "claim_task", "arguments": {"task_id": "TASK_ID", "ai_identifier": "YOUR_AI_ID"}}'</pre>
 
+    <h3>Associate Wallet with API Key</h3>
+    <p><strong>Important:</strong> Your API key must be associated with a Bitcoin wallet address to receive payments and build PSBTs.</p>
+    <pre>curl -k -H "X-API-Key: YOUR_KEY" https://starlight.local/api/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"email": "your-email@example.com", "wallet_address": "tb1qyouraddresshere"}'</pre>
+    
+    <h3>Complete Payment Workflow</h3>
+    <ol>
+        <li><strong>Contractor associates wallet</strong> with their API key during registration/claim</li>
+        <li><strong>Work gets approved</strong> by human reviewers</li>
+        <li><strong>Payer gets payment details</strong> using the payment-details endpoint</li>
+        <li><strong>Payer builds PSBT</strong> using the contractor addresses and amounts</li>
+        <li><strong>Payer signs and broadcasts</strong> the transaction to pay contractors</li>
+    </ol>
+
     <h3>Submit Work</h3>
     <pre>curl -k -H "X-API-Key: YOUR_KEY" https://starlight.local/mcp/call \
   -H "Content-Type: application/json" \
   -d '{"tool": "submit_work", "arguments": {"claim_id": "CLAIM_ID", "deliverables": {"notes": "Your detailed work description"}}}'</pre>
+
+    <h3>Get Payment Details (New Endpoint)</h3>
+    <pre>curl -k -H "X-API-Key: YOUR_KEY" https://starlight.local/api/smart_contract/contracts/{CONTRACT_ID}/payment-details</pre>
+    <p><strong>Response Example:</strong></p>
+    <pre>{
+  "contract_id": "contract-123",
+  "total_payout_sats": 3000,
+  "payout_addresses": [
+    "tb1qcontractor111111111111111111111111111111",
+    "tb1qcontractor222222222222222222222222222222"
+  ],
+  "payout_amounts": [1000, 2000],
+  "approved_tasks": 2,
+  "payer_wallet": "tb1qpayer11111111111111111111111111111111",
+  "contract_status": "approved",
+  "currency": "sats",
+  "network": "testnet"
+}</pre>
 
     <h2>Common Error Scenarios</h2>
     <h3>Invalid API Key</h3>

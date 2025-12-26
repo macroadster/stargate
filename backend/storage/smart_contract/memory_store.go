@@ -448,6 +448,11 @@ func (s *MemoryStore) CreateProposal(ctx context.Context, p smart_contract.Propo
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// Comprehensive security validation
+	if err := ValidateProposalInput(p); err != nil {
+		return fmt.Errorf("proposal validation failed: %v", err)
+	}
+
 	// Validate status field
 	if p.Status == "" {
 		p.Status = "pending" // Default to pending
@@ -472,17 +477,6 @@ func (s *MemoryStore) CreateProposal(ctx context.Context, p smart_contract.Propo
 
 	s.proposals[p.ID] = p
 	return nil
-}
-
-// isValidProposalStatus checks if a status is valid for proposals
-func isValidProposalStatus(status string) bool {
-	validStatuses := []string{"pending", "approved", "rejected", "published"}
-	for _, valid := range validStatuses {
-		if strings.EqualFold(status, valid) {
-			return true
-		}
-	}
-	return false
 }
 
 // createMissingTasks creates tasks for contracts that have available_tasks_count > 0 but no actual tasks
@@ -554,13 +548,25 @@ func (s *MemoryStore) GetProposal(ctx context.Context, id string) (smart_contrac
 	return p, nil
 }
 
+// ApproveProposal approves a proposal and auto-rejects others for the same contract.
 func (s *MemoryStore) ApproveProposal(ctx context.Context, id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	p, ok := s.proposals[id]
 	if !ok {
 		return fmt.Errorf("proposal %s not found", id)
 	}
+
+	// Check if proposal is already in final state
+	if strings.EqualFold(p.Status, "approved") || strings.EqualFold(p.Status, "published") {
+		return fmt.Errorf("proposal %s is already %s", id, p.Status)
+	}
+
+	if !strings.EqualFold(p.Status, "pending") {
+		return fmt.Errorf("proposal %s must be pending to approve, current status: %s", id, p.Status)
+	}
+
 	// Reject if another proposal is already approved/published for the same contract.
 	contractID := contractIDFromMeta(p.Metadata, id)
 	for pid, other := range s.proposals {
@@ -572,6 +578,7 @@ func (s *MemoryStore) ApproveProposal(ctx context.Context, id string) error {
 			return fmt.Errorf("another proposal is already approved/published for contract %s", contractID)
 		}
 	}
+
 	// Auto-reject other pending proposals for this contract.
 	for pid, other := range s.proposals {
 		if pid == id {
@@ -583,14 +590,19 @@ func (s *MemoryStore) ApproveProposal(ctx context.Context, id string) error {
 			s.proposals[pid] = other
 		}
 	}
+
+	// Update proposal status atomically
 	p.Status = "approved"
+	s.proposals[id] = p
+
+	// Update related tasks
 	for i, t := range s.tasks {
 		if t.ContractID == contractID {
 			t.Status = "approved"
 			s.tasks[i] = t
 		}
 	}
-	s.proposals[id] = p
+
 	return nil
 }
 

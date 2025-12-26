@@ -19,26 +19,7 @@ type PGStore struct {
 	claimTTL time.Duration
 }
 
-func contractIDFromMeta(meta map[string]interface{}, id string) string {
-	// Use visible_pixel_hash as the canonical contract identifier
-	// since it uniquely identifies the steganography content
-	if hash, ok := meta["visible_pixel_hash"].(string); ok && strings.TrimSpace(hash) != "" {
-		return hash
-	}
 
-	// Fallback to explicit contract_id if provided
-	if cid, ok := meta["contract_id"].(string); ok && strings.TrimSpace(cid) != "" {
-		return cid
-	}
-
-	// Fallback to ingestion_id for proposals created from ingestion
-	if cid, ok := meta["ingestion_id"].(string); ok && strings.TrimSpace(cid) != "" {
-		return cid
-	}
-
-	// Final fallback to proposal ID
-	return id
-}
 
 // NewPGStore connects, initializes schema, and optionally seeds fixtures.
 func NewPGStore(ctx context.Context, dsn string, claimTTL time.Duration, seed bool) (*PGStore, error) {
@@ -386,6 +367,11 @@ FROM mcp_tasks WHERE task_id=$1 FOR UPDATE
 	}
 
 	normalizedWallet := strings.TrimSpace(contractorWallet)
+	if normalizedWallet != "" {
+		if err := ValidateBitcoinAddress(normalizedWallet); err != nil {
+			return smart_contract.Claim{}, fmt.Errorf("contractor wallet validation failed: %v", err)
+		}
+	}
 	persistWallet := func(wallet string) error {
 		wallet = strings.TrimSpace(wallet)
 		if wallet == "" {
@@ -819,6 +805,11 @@ func (s *PGStore) UpdateTaskProof(ctx context.Context, taskID string, proof *sma
 
 // Proposal operations
 func (s *PGStore) CreateProposal(ctx context.Context, p smart_contract.Proposal) error {
+	// Comprehensive security validation - this sanitizes inputs in-place
+	if err := ValidateProposalInput(p); err != nil {
+		return fmt.Errorf("proposal validation failed: %v", err)
+	}
+
 	// Validate status field
 	if p.Status == "" {
 		p.Status = "pending" // Default to pending
@@ -936,13 +927,26 @@ func (s *PGStore) ApproveProposal(ctx context.Context, id string) error {
 	}
 	defer tx.Rollback(ctx)
 
+	// Load and lock the proposal row
 	var metaJSON []byte
-	if err := tx.QueryRow(ctx, `SELECT metadata FROM mcp_proposals WHERE id=$1`, id).Scan(&metaJSON); err != nil {
+	var currentStatus string
+	if err := tx.QueryRow(ctx, `SELECT metadata, status FROM mcp_proposals WHERE id=$1 FOR UPDATE`, id).Scan(&metaJSON, &currentStatus); err != nil {
 		return err
 	}
 
+	// Check if proposal is already in final state
+	if strings.EqualFold(currentStatus, "approved") || strings.EqualFold(currentStatus, "published") {
+		return fmt.Errorf("proposal %s is already %s", id, currentStatus)
+	}
+
+	if !strings.EqualFold(currentStatus, "pending") {
+		return fmt.Errorf("proposal %s must be pending to approve, current status: %s", id, currentStatus)
+	}
+
 	var meta map[string]interface{}
-	_ = json.Unmarshal(metaJSON, &meta)
+	if err := json.Unmarshal(metaJSON, &meta); err != nil {
+		return err
+	}
 	contractID := contractIDFromMeta(meta, id)
 
 	// Block double-approval/publish for the same contract.

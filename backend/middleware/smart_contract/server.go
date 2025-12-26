@@ -158,6 +158,11 @@ func (s *Server) handleContracts(w http.ResponseWriter, r *http.Request) {
 			s.handleCommitmentPSBT(w, r, contractID)
 			return
 		}
+		if len(parts) > 1 && parts[1] == "payment-details" {
+			contractID := parts[0]
+			s.handlePaymentDetails(w, r, contractID)
+			return
+		}
 		Error(w, http.StatusNotFound, "unknown contract action")
 	default:
 		Error(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -181,7 +186,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		return
 	}
 	if strings.TrimSpace(payerRec.Wallet) == "" {
-		Error(w, http.StatusForbidden, "api key missing wallet binding")
+		Error(w, http.StatusForbidden, "api key missing wallet binding - please associate a Bitcoin wallet address with your API key")
 		return
 	}
 
@@ -1052,6 +1057,88 @@ func (s *Server) handleCommitmentPSBT(w http.ResponseWriter, r *http.Request, co
 		"task_id":         task.TaskID,
 		"funding_txid":    proof.TxID,
 		"commitment_vout": proof.CommitmentVout,
+	})
+}
+
+// handlePaymentDetails returns all necessary information for building a PSBT,
+// including recipient addresses, total amounts, and contract details.
+func (s *Server) handlePaymentDetails(w http.ResponseWriter, r *http.Request, contractID string) {
+	if r.Method != http.MethodGet {
+		Error(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	// Authenticate the caller
+	payerKey := r.Header.Get("X-API-Key")
+	payerRec, ok := s.apiKeys.Get(payerKey)
+	if !ok {
+		Error(w, http.StatusForbidden, "invalid api key")
+		return
+	}
+
+	ctx := r.Context()
+
+	// Get contract tasks to calculate payment details
+	tasks, err := s.store.ListTasks(smart_contract.TaskFilter{ContractID: contractID})
+	if err != nil {
+		Error(w, http.StatusInternalServerError, fmt.Sprintf("failed to load tasks: %v", err))
+		return
+	}
+
+	if len(tasks) == 0 {
+		Error(w, http.StatusNotFound, "no tasks found for contract")
+		return
+	}
+
+	// Calculate total payout amount
+	var totalPayoutSats int64
+	payouts := make(map[string]int64)
+
+	for _, task := range tasks {
+		if task.Status == "approved" {
+			totalPayoutSats += task.BudgetSats
+			// Use the contractor's claimed wallet or the wallet from the task
+			wallet := strings.TrimSpace(task.ContractorWallet)
+			if wallet == "" && task.MerkleProof != nil {
+				wallet = strings.TrimSpace(task.MerkleProof.ContractorWallet)
+			}
+			if wallet != "" {
+				payouts[wallet] += task.BudgetSats
+			}
+		}
+	}
+
+	if totalPayoutSats == 0 {
+		Error(w, http.StatusBadRequest, "no approved tasks with payouts found")
+		return
+	}
+
+	// Convert payouts map to response format
+	payoutAddresses := make([]string, 0, len(payouts))
+	payoutAmounts := make([]int64, 0, len(payouts))
+	for wallet, amount := range payouts {
+		payoutAddresses = append(payoutAddresses, wallet)
+		payoutAmounts = append(payoutAmounts, amount)
+	}
+
+	// Get proposal metadata for additional context
+	var proposal smart_contract.Proposal
+	if proposals, err := s.store.ListProposals(ctx, smart_contract.ProposalFilter{ContractID: contractID}); err == nil && len(proposals) > 0 {
+		proposal = proposals[0]
+	}
+
+	// Return comprehensive payment details
+	JSON(w, http.StatusOK, map[string]interface{}{
+		"contract_id":       contractID,
+		"total_payout_sats": totalPayoutSats,
+		"payout_addresses":  payoutAddresses,
+		"payout_amounts":    payoutAmounts,
+		"approved_tasks":    len(tasks),
+		"payer_wallet":      payerRec.Wallet,
+		"contract_status":   proposal.Status,
+		"proposal_metadata": proposal.Metadata,
+		"currency":          "sats",
+		"network":           "testnet", // TODO: Get from config
 	})
 }
 
