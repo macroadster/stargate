@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -84,6 +85,29 @@ func (s *PGAPIKeyStore) Issue(email, wallet, source string) (APIKey, error) {
 	_, err = s.pool.Exec(context.Background(),
 		"INSERT INTO api_keys (key, email, wallet_address, source, created_at) VALUES ($1,$2,$3,$4,$5)",
 		rec.Key, rec.Email, rec.Wallet, rec.Source, rec.CreatedAt)
+	if err != nil {
+		return APIKey{}, err
+	}
+	return rec, nil
+}
+
+// UpdateWallet binds a wallet address to an existing API key.
+func (s *PGAPIKeyStore) UpdateWallet(key, wallet string) (APIKey, error) {
+	normalizedKey := strings.TrimSpace(key)
+	normalizedWallet := strings.TrimSpace(wallet)
+	if normalizedKey == "" {
+		return APIKey{}, fmt.Errorf("api key required")
+	}
+	if normalizedWallet == "" {
+		return APIKey{}, fmt.Errorf("wallet_address required")
+	}
+	var rec APIKey
+	err := s.pool.QueryRow(context.Background(), `
+UPDATE api_keys
+SET wallet_address=$2
+WHERE key=$1
+RETURNING key, email, wallet_address, source, created_at
+`, normalizedKey, normalizedWallet).Scan(&rec.Key, &rec.Email, &rec.Wallet, &rec.Source, &rec.CreatedAt)
 	if err != nil {
 		return APIKey{}, err
 	}

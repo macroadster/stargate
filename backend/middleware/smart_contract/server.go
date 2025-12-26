@@ -1225,7 +1225,16 @@ func (s *Server) handleClaimTask(w http.ResponseWriter, r *http.Request, taskID 
 
 	contractorWallet := strings.TrimSpace(body.Wallet)
 	if s.apiKeys != nil {
-		if rec, ok := s.apiKeys.Get(r.Header.Get("X-API-Key")); ok && strings.TrimSpace(rec.Wallet) != "" {
+		key := r.Header.Get("X-API-Key")
+		if contractorWallet != "" {
+			if updater, ok := s.apiKeys.(auth.APIKeyWalletUpdater); ok {
+				if _, err := updater.UpdateWallet(key, contractorWallet); err != nil {
+					Error(w, http.StatusBadRequest, "failed to bind wallet to api key")
+					return
+				}
+			}
+		}
+		if rec, ok := s.apiKeys.Get(key); ok && strings.TrimSpace(rec.Wallet) != "" {
 			contractorWallet = strings.TrimSpace(rec.Wallet)
 		}
 	}

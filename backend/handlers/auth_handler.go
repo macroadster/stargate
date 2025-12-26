@@ -95,10 +95,20 @@ func (h *APIKeyHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	wallet := strings.TrimSpace(body.Wallet)
+	if wallet != "" {
+		if updater, ok := h.validator.(auth.APIKeyWalletUpdater); ok {
+			if _, err := updater.UpdateWallet(body.APIKey, wallet); err != nil {
+				h.sendError(w, http.StatusInternalServerError, "failed to bind wallet to api key")
+				return
+			}
+		}
+	}
+
 	h.sendSuccess(w, map[string]interface{}{
 		"valid":   true,
 		"api_key": body.APIKey,
-		"wallet":  strings.TrimSpace(body.Wallet),
+		"wallet":  wallet,
 	})
 }
 

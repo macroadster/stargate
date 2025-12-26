@@ -3,6 +3,7 @@ package auth
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -21,6 +22,11 @@ type APIKey struct {
 type APIKeyValidator interface {
 	Validate(key string) bool
 	Get(key string) (APIKey, bool)
+}
+
+// APIKeyWalletUpdater allows updating a wallet binding for an existing API key.
+type APIKeyWalletUpdater interface {
+	UpdateWallet(key, wallet string) (APIKey, error)
 }
 
 // APIKeyIssuer allows creating new API keys.
@@ -75,6 +81,27 @@ func (s *APIKeyStore) Issue(email, wallet, source string) (APIKey, error) {
 	s.mu.Lock()
 	s.keys[key] = rec
 	s.mu.Unlock()
+	return rec, nil
+}
+
+// UpdateWallet binds a wallet address to an existing API key.
+func (s *APIKeyStore) UpdateWallet(key, wallet string) (APIKey, error) {
+	normalizedKey := strings.TrimSpace(key)
+	normalizedWallet := strings.TrimSpace(wallet)
+	if normalizedKey == "" {
+		return APIKey{}, fmt.Errorf("api key required")
+	}
+	if normalizedWallet == "" {
+		return APIKey{}, fmt.Errorf("wallet_address required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec, ok := s.keys[normalizedKey]
+	if !ok {
+		return APIKey{}, fmt.Errorf("api key not found")
+	}
+	rec.Wallet = normalizedWallet
+	s.keys[normalizedKey] = rec
 	return rec, nil
 }
 
