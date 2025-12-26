@@ -191,7 +191,24 @@ const InscriptionModal = ({ inscription, onClose }) => {
     approvedProposal?.metadata?.funding_mode ||
     ''
   ).toLowerCase();
-  const isRaiseFund = fundingMode === 'raise_fund' || fundingMode === 'fundraiser' || fundingMode === 'fundraise';
+  const looksLikeRaiseFund = (value) => {
+    const normalized = (value || '').toLowerCase();
+    return (
+      normalized.includes('fund raising') ||
+      normalized.includes('fundraising') ||
+      normalized.includes('raise fund') ||
+      normalized.includes('fundraise')
+    );
+  };
+  const inferredRaiseFund =
+    looksLikeRaiseFund(inscriptionMessage) ||
+    looksLikeRaiseFund(approvedProposal?.title) ||
+    looksLikeRaiseFund(approvedProposal?.description_md);
+  const isRaiseFund =
+    fundingMode === 'raise_fund' ||
+    fundingMode === 'fundraiser' ||
+    fundingMode === 'fundraise' ||
+    inferredRaiseFund;
   const selectedTask = useMemo(() => {
     const sourceTasks = psbtTasks.length > 0 ? psbtTasks : allTasks;
     if (psbtForm.taskId) return sourceTasks.find((t) => t.task_id === psbtForm.taskId) || sourceTasks[0];

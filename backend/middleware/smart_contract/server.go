@@ -660,10 +660,13 @@ func contractorAddressFor(addr btcutil.Address) string {
 
 func (s *Server) resolveFundingMode(ctx context.Context, contractID string) (string, string) {
 	var meta map[string]interface{}
+	var proposal *smart_contract.Proposal
 	if s.store != nil {
-		if proposal, err := s.store.GetProposal(ctx, contractID); err == nil {
-			meta = proposal.Metadata
+		if stored, err := s.store.GetProposal(ctx, contractID); err == nil {
+			proposal = &stored
+			meta = stored.Metadata
 		} else if proposals, err := s.store.ListProposals(ctx, smart_contract.ProposalFilter{ContractID: contractID}); err == nil && len(proposals) > 0 {
+			proposal = &proposals[0]
 			meta = proposals[0].Metadata
 		}
 	}
@@ -673,6 +676,11 @@ func (s *Server) resolveFundingMode(ctx context.Context, contractID string) (str
 		}
 	}
 	mode := strings.ToLower(strings.TrimSpace(toString(meta["funding_mode"])))
+	if mode == "" && proposal != nil {
+		if looksLikeRaiseFund(proposal.Title) || looksLikeRaiseFund(proposal.DescriptionMD) {
+			mode = "raise_fund"
+		}
+	}
 	return mode, fundingAddressFromMeta(meta)
 }
 
@@ -683,6 +691,14 @@ func isRaiseFund(mode string) bool {
 	default:
 		return false
 	}
+}
+
+func looksLikeRaiseFund(value string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	return strings.Contains(normalized, "fund raising") ||
+		strings.Contains(normalized, "fundraising") ||
+		strings.Contains(normalized, "raise fund") ||
+		strings.Contains(normalized, "fundraise")
 }
 
 func fundingAddressFromMeta(meta map[string]interface{}) string {
