@@ -1428,6 +1428,11 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 			if err != nil {
 				return nil, err
 			}
+			metaContractID := strings.TrimSpace(h.toString(proposal.Metadata["contract_id"]))
+			metaVisiblePixelHash := strings.TrimSpace(h.toString(proposal.Metadata["visible_pixel_hash"]))
+			if metaContractID == "" || metaVisiblePixelHash == "" {
+				return nil, fmt.Errorf("contract_id and visible_pixel_hash are required for proposal creation so the UI can display it; set both to the same 64-char hash if needed")
+			}
 
 			if err := store.CreateProposal(ctx, proposal); err != nil {
 				return nil, err
@@ -1466,6 +1471,11 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 		}
 
 		// Manual creation with tasks
+		metaContractID := strings.TrimSpace(h.toString(metadata["contract_id"]))
+		metaVisiblePixelHash := strings.TrimSpace(h.toString(metadata["visible_pixel_hash"]))
+		if metaContractID == "" || metaVisiblePixelHash == "" {
+			return nil, fmt.Errorf("contract_id and visible_pixel_hash are required for proposal creation so the UI can display it; set both to the same 64-char hash if needed")
+		}
 		var tasks []smart_contract.Task
 		if taskSlice, ok := args["tasks"].([]interface{}); ok {
 			for i, taskInterface := range taskSlice {

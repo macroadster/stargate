@@ -1803,6 +1803,12 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 				Error(w, http.StatusBadRequest, err.Error())
 				return
 			}
+			metaContractID, _ := proposal.Metadata["contract_id"].(string)
+			metaVisiblePixelHash, _ := proposal.Metadata["visible_pixel_hash"].(string)
+			if strings.TrimSpace(metaContractID) == "" || strings.TrimSpace(metaVisiblePixelHash) == "" {
+				Error(w, http.StatusBadRequest, "contract_id and visible_pixel_hash are required for proposal creation so the UI can display it; set both to the same 64-char hash if needed")
+				return
+			}
 			if err := s.store.CreateProposal(r.Context(), proposal); err != nil {
 				Error(w, http.StatusBadRequest, err.Error())
 				return
@@ -1837,6 +1843,22 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 		}
 		if strings.TrimSpace(body.VisiblePixelHash) != "" {
 			body.Metadata["visible_pixel_hash"] = body.VisiblePixelHash
+		}
+		contractID := strings.TrimSpace(body.ContractID)
+		if contractID == "" {
+			if v, ok := body.Metadata["contract_id"].(string); ok {
+				contractID = strings.TrimSpace(v)
+			}
+		}
+		visiblePixelHash := strings.TrimSpace(body.VisiblePixelHash)
+		if visiblePixelHash == "" {
+			if v, ok := body.Metadata["visible_pixel_hash"].(string); ok {
+				visiblePixelHash = strings.TrimSpace(v)
+			}
+		}
+		if contractID == "" || visiblePixelHash == "" {
+			Error(w, http.StatusBadRequest, "contract_id and visible_pixel_hash are required for proposal creation so the UI can display it; set both to the same 64-char hash if needed")
+			return
 		}
 		for i := range body.Tasks {
 			if body.Tasks[i].TaskID == "" {
