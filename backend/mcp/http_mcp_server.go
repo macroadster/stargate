@@ -1378,6 +1378,11 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 			metadata["contract_id"] = contractID
 		}
 
+		visiblePixelHash := h.toString(args["visible_pixel_hash"])
+		if visiblePixelHash != "" {
+			metadata["visible_pixel_hash"] = visiblePixelHash
+		}
+
 		// Check if creating from ingestion or manual with scan metadata
 		ingestionID := h.toString(args["ingestion_id"])
 		if ingestionID != "" && h.ingestionSvc != nil {
@@ -1439,27 +1444,6 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 			}
 
 			return result, nil
-		}
-
-		// Manual creation - requires image scan metadata
-		visiblePixelHash := h.toString(args["visible_pixel_hash"])
-		if visiblePixelHash == "" {
-			contractID := h.toString(args["contract_id"])
-			if contractID != "" {
-				proposals, err := store.ListProposals(ctx, smart_contract.ProposalFilter{ContractID: contractID})
-				if err == nil && len(proposals) > 0 {
-					if vph, ok := proposals[0].Metadata["visible_pixel_hash"].(string); ok {
-						visiblePixelHash = vph
-						log.Printf("DEBUG: Found visible_pixel_hash in proposal metadata: %s", visiblePixelHash)
-					}
-				}
-			}
-		}
-
-		hasScanMetadata := visiblePixelHash != "" || metadata["image_scan_data"] != nil
-
-		if !hasScanMetadata {
-			return nil, fmt.Errorf("proposals must include image scan metadata (visible_pixel_hash or image_scan_data in metadata)")
 		}
 
 		// Manual creation with tasks

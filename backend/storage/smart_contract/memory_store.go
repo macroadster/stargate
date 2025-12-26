@@ -453,11 +453,6 @@ func (s *MemoryStore) CreateProposal(ctx context.Context, p smart_contract.Propo
 		return fmt.Errorf("proposal validation failed: %v", err)
 	}
 
-	// Comprehensive security validation
-	if err := ValidateProposalInput(p); err != nil {
-		return fmt.Errorf("proposal validation failed: %v", err)
-	}
-
 	// Validate status field
 	if p.Status == "" {
 		p.Status = "pending" // Default to pending

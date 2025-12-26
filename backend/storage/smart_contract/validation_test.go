@@ -38,6 +38,12 @@ func TestStatusFieldValidation(t *testing.T) {
 				Metadata: map[string]interface{}{
 					"visible_pixel_hash": "b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3", // Valid 64-char hex
 				},
+				Tasks: []smart_contract.Task{
+					{
+						TaskID:     "task-1",
+						BudgetSats: 100,
+					},
+				},
 			},
 			expectError: false,
 			description: "Should accept valid approved status",

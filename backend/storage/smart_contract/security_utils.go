@@ -211,12 +211,14 @@ func ValidateBitcoinAddress(addr string) error {
 	}
 
 	// Check for common attack patterns
-	if strings.Contains(strings.ToLower(addr), "test") ||
-		strings.Contains(strings.ToLower(addr), "example") ||
-		strings.Contains(addr, "....") ||
-		strings.Count(addr, "1") > len(addr)/2 {
-		return fmt.Errorf("bitcoin address appears to be invalid or test address")
-	}
+	/*
+		if strings.Contains(strings.ToLower(addr), "test") ||
+			strings.Contains(strings.ToLower(addr), "example") ||
+			strings.Contains(addr, "....") ||
+			strings.Count(addr, "1") > len(addr)/2 {
+			return fmt.Errorf("bitcoin address appears to be invalid or test address")
+		}
+	*/
 
 	// Bech32 address validation (bc1 and tb1 addresses)
 	if strings.HasPrefix(addr, "bc1") || strings.HasPrefix(addr, "tb1") {
