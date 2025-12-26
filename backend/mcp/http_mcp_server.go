@@ -73,8 +73,8 @@ func (h *HTTPMCPServer) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/mcp/tools", h.authWrap(h.handleListTools))
 	mux.HandleFunc("/mcp/call", h.authWrap(h.handleToolCall))
 	mux.HandleFunc("/mcp/discover", h.authWrap(h.handleDiscover))
-	mux.HandleFunc("/mcp/docs", h.authWrap(h.handleDocs))
-	mux.HandleFunc("/mcp/openapi.json", h.authWrap(h.handleOpenAPI))
+	mux.HandleFunc("/mcp/docs", h.handleDocs)            // No auth required for documentation
+	mux.HandleFunc("/mcp/openapi.json", h.handleOpenAPI) // No auth required for API spec
 	mux.HandleFunc("/mcp/health", h.handleHealth)
 	mux.HandleFunc("/mcp/events", h.authWrap(h.handleEventsProxy))
 	mux.HandleFunc("/mcp", h.authWrap(h.handleIndex))
@@ -502,6 +502,8 @@ func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
         <li>List tools: <code>GET /mcp/tools</code></li>
         <li>Call a tool: <code>POST /mcp/call</code> with JSON body</li>
     </ol>
+<pre>curl http://localhost:3001/mcp/docs</pre>
+    <pre>curl http://localhost:3001/mcp/openapi.json</pre>
     <pre>curl -H "X-API-Key: your-key" http://localhost:3001/mcp/</pre>
     <pre>curl -H "X-API-Key: your-key" http://localhost:3001/mcp/tools</pre>
     <pre>curl -X POST -H "Content-Type: application/json" -H "X-API-Key: your-key" \
@@ -509,7 +511,8 @@ func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
   http://localhost:3001/mcp/call</pre>
 
     <h2>Authentication</h2>
-    <p>All endpoints require an API key via the <code>X-API-Key</code> header or <code>Authorization: Bearer &lt;key&gt;</code> header.</p>
+    <p>Documentation endpoints (<code>/mcp/docs</code>, <code>/mcp/openapi.json</code>) are publicly accessible. 
+    All other endpoints require an API key via <code>X-API-Key</code> header or <code>Authorization: Bearer &lt;key&gt;</code> header.</p>
     <p>Rate limit: 100 requests per minute per API key.</p>
 
     <h2>Agent Workflow</h2>
@@ -535,13 +538,13 @@ func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
 
     <h2>Endpoints</h2>
     <ul>
-        <li><span class="endpoint">GET /mcp/tools</span> - List available tools with schemas and examples</li>
-        <li><span class="endpoint">POST /mcp/call</span> - Call a specific tool</li>
-        <li><span class="endpoint">GET /mcp/discover</span> - Discover available endpoints and tools</li>
-        <li><span class="endpoint">GET /mcp/docs</span> - This documentation page</li>
-        <li><span class="endpoint">GET /mcp/openapi.json</span> - OpenAPI specification</li>
-        <li><span class="endpoint">GET /mcp/health</span> - Health check</li>
-        <li><span class="endpoint">GET /mcp/events</span> - Stream events</li>
+        <li><span class="endpoint">GET /mcp/docs</span> - This documentation page (no auth required)</li>
+        <li><span class="endpoint">GET /mcp/openapi.json</span> - OpenAPI specification (no auth required)</li>
+        <li><span class="endpoint">GET /mcp/health</span> - Health check (no auth required)</li>
+        <li><span class="endpoint">GET /mcp/tools</span> - List available tools with schemas and examples (auth required)</li>
+        <li><span class="endpoint">POST /mcp/call</span> - Call a specific tool (auth required)</li>
+        <li><span class="endpoint">GET /mcp/discover</span> - Discover available endpoints and tools (auth required)</li>
+        <li><span class="endpoint">GET /mcp/events</span> - Stream events (auth required)</li>
     </ul>
 
     <h2>Examples</h2>

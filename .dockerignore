@@ -1,0 +1,82 @@
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Documentation
+README.md
+CHANGELOG.md
+LICENSE
+*.md
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+
+# Node modules (in any subdirectory)
+**/node_modules/
+
+# Go vendor (in any subdirectory)
+**/vendor/
+
+# Go build cache (in any subdirectory)
+**/.gocache/
+**/.cache/
+**/.gomodcache/
+**/go-build/
+
+# Build artifacts
+**/build/
+**/dist/
+**/target/
+**/bin/
+**/out/
+
+# Environment files
+.env*
+!.env.example
+
+# Docker files
+Dockerfile*
+.dockerignore*
+docker-compose*.yml
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
+
+# Testing
+coverage/
+*.lcov
+**/*.test
+**/test-results/
+
+# Cache
+.cache/
+.parcel-cache/
+**/.cache/
+
+# Local development
+local/
+dev/
+*.local
+
+# Backup files
+*.bak
+*.backup

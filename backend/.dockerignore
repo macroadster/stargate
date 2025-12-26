@@ -1,0 +1,85 @@
+# Build output
+/stargate
+/stargate-backend
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Testing
+*.test
+*.out
+coverage/
+
+# Dependencies
+vendor/
+
+# Go workspace cache
+go.work
+
+# Go build cache (not needed in image)
+.gocache/
+.cache/
+.gomodcache/
+go-build/
+
+# Development files
+.env
+.env.local
+*.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# Docker
+Dockerfile*
+.dockerignore*
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+
+# Documentation (excluding API docs and API files)
+docs/
+!docs/API_DOCUMENTATION.md
+!docs/openapi.yaml
+!docs/swagger.json
+!docs/swagger.yaml
+
+# Test data and testnet
+testnet_test/
+inscriptions.json
+
+# Large data directories not needed for build
+blocks/
+uploads/
+
+# Scripts and tools not needed for build
+scripts/
+
+# Frontend (not needed in backend build)
+frontend/
+
+# Root level files not needed in backend
+*.md
+!README.md
+AGENTS.md
+Makefile
+history/
