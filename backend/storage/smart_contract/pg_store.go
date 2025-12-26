@@ -813,6 +813,17 @@ func (s *PGStore) CreateProposal(ctx context.Context, p smart_contract.Proposal)
 			p.Metadata["visible_pixel_hash"] = p.VisiblePixelHash
 		}
 	}
+	if metaContract, ok := p.Metadata["contract_id"].(string); ok {
+		metaContract = strings.TrimSpace(metaContract)
+		if metaContract != "" {
+			if metaHash, ok2 := p.Metadata["visible_pixel_hash"].(string); ok2 {
+				metaHash = strings.TrimSpace(metaHash)
+				if metaHash != "" && metaHash != metaContract {
+					return fmt.Errorf("visible_pixel_hash must match contract_id when both are set")
+				}
+			}
+		}
+	}
 
 	// Comprehensive security validation - this sanitizes inputs in-place
 	if err := ValidateProposalInput(p); err != nil {

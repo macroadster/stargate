@@ -16,13 +16,13 @@ func TestApproveProposalPreventsDoubleApproval(t *testing.T) {
 	        ID:     "p-a",
 	        Status: "pending",
 	        Metadata: map[string]interface{}{
-	            "contract_id":        "contract-123",
+	            "contract_id":        "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b",
 	            "visible_pixel_hash": "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b", // Valid 64-char hex
 	        },
 	        Tasks: []smart_contract.Task{
 	        	{
 	        		TaskID:     "p-a-task-1",
-	        		ContractID: "contract-123",
+	        		ContractID: "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b",
 	        		Title:      "Task A",
 	        		BudgetSats: 1000,
 	        		Status:     "available",
@@ -33,13 +33,13 @@ func TestApproveProposalPreventsDoubleApproval(t *testing.T) {
 		ID:     "p-b",
 		Status: "pending",
 		Metadata: map[string]interface{}{
-			"contract_id":        "contract-123",
+			"contract_id":        "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b",
 			"visible_pixel_hash": "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b", // Same as pendingA
 		},
 		Tasks: []smart_contract.Task{
 			{
 				TaskID:     "p-b-task-1",
-				ContractID: "contract-123",
+				ContractID: "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b",
 				Title:      "Task B",
 				BudgetSats: 1000,
 				Status:     "available",
@@ -142,14 +142,13 @@ func TestPixelHashDeterminesContractIdentity(t *testing.T) {
 func TestPublishRequiresApprovedAndFinalizes(t *testing.T) {
 	store := NewMemoryStore(time.Hour)
 	ctx := context.Background()
-	contractID := "contract-publish"
 	taskID := "task-1"
 
 	prop := smart_contract.Proposal{
 		ID:     "p-publish",
 		Status: "pending",
 		Metadata: map[string]interface{}{
-			"contract_id":        contractID,
+			"contract_id":        "a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1",
 			"visible_pixel_hash": "a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1", // Valid 64-char hex
 		},
 	}

@@ -1940,6 +1940,18 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 				updated.Metadata["visible_pixel_hash"] = updated.VisiblePixelHash
 			}
 		}
+		if metaContract, ok := updated.Metadata["contract_id"].(string); ok {
+			metaContract = strings.TrimSpace(metaContract)
+			if metaContract != "" {
+				if metaHash, ok2 := updated.Metadata["visible_pixel_hash"].(string); ok2 {
+					metaHash = strings.TrimSpace(metaHash)
+					if metaHash != "" && metaHash != metaContract {
+						Error(w, http.StatusBadRequest, "visible_pixel_hash must match contract_id when both are set")
+						return
+					}
+				}
+			}
+		}
 
 		if body.Tasks != nil {
 			updated.Tasks = *body.Tasks
