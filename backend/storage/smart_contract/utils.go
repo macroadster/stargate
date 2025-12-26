@@ -30,7 +30,7 @@ func FundingAddressFromMeta(meta map[string]interface{}) string {
 	if v := os.Getenv("MCP_DEFAULT_FUNDING_ADDRESS"); strings.TrimSpace(v) != "" {
 		return v
 	}
-	return "bc1p-simulated-funding-address"
+	return ""
 }
 
 // budgetFromMeta extracts budget from metadata.

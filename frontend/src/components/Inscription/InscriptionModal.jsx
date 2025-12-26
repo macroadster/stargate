@@ -198,9 +198,13 @@ const InscriptionModal = ({ inscription, onClose }) => {
     const withFunding = sourceTasks.find((t) => t?.merkle_proof?.funding_address);
     return withFunding || sourceTasks[0];
   }, [psbtForm.taskId, psbtTasks, allTasks]);
+  const isPlaceholderAddress = React.useCallback((value) => {
+    const cleaned = (value || '').trim().toLowerCase();
+    if (!cleaned) return true;
+    return cleaned.includes('...') || cleaned.includes('pending') || cleaned === 'bc1p-simulated-funding-address';
+  }, []);
   const fundDepositAddress = useMemo(() => {
     const addr = (value) => (value || '').trim();
-    const isPlaceholder = (value) => value.includes('...') || value.toLowerCase().includes('pending');
     const candidates = isRaiseFund
       ? [
           inscription.metadata?.funding_address,
@@ -211,9 +215,9 @@ const InscriptionModal = ({ inscription, onClose }) => {
       : [
           inscription.metadata?.funding_address,
           selectedTask?.merkle_proof?.funding_address,
-        ];
+    ];
     const cleaned = candidates.map(addr);
-    const picked = cleaned.find((value) => value && !isPlaceholder(value));
+    const picked = cleaned.find((value) => value && !isPlaceholderAddress(value));
     return picked || '';
   }, [
     isRaiseFund,
@@ -221,6 +225,7 @@ const InscriptionModal = ({ inscription, onClose }) => {
     inscription.metadata?.payer_address,
     selectedTask?.merkle_proof?.funding_address,
     inscriptionAddress,
+    isPlaceholderAddress,
   ]);
   const resolvedContractorWallet = useMemo(
     () =>
@@ -697,7 +702,12 @@ const InscriptionModal = ({ inscription, onClose }) => {
       selectedTask?.merkle_proof?.funding_address ||
       inscription.metadata?.funding_address ||
       '';
-    if (fundingWallet && auth.wallet && normalizeAddress(fundingWallet) !== normalizeAddress(auth.wallet)) {
+    if (
+      fundingWallet &&
+      auth.wallet &&
+      !isPlaceholderAddress(fundingWallet) &&
+      normalizeAddress(fundingWallet) !== normalizeAddress(auth.wallet)
+    ) {
       setPsbtError('Funding wallet does not match signed-in wallet.');
       return;
     }
@@ -1100,6 +1110,7 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                           const fundingMismatch =
                             fundingWallet &&
                             auth.wallet &&
+                            !isPlaceholderAddress(fundingWallet) &&
                             normalizeAddress(fundingWallet) !== normalizeAddress(auth.wallet);
                           const payoutList = payoutSummaries
                             .filter((p) => p.wallet && p.wallet !== 'Unknown wallet')
@@ -1117,7 +1128,11 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                             selectedTask?.merkle_proof?.funding_address ||
                             inscription.metadata?.funding_address ||
                             '';
-                          if (fundingWallet && normalizeAddress(fundingWallet) !== normalizeAddress(auth.wallet)) {
+                          if (
+                            fundingWallet &&
+                            !isPlaceholderAddress(fundingWallet) &&
+                            normalizeAddress(fundingWallet) !== normalizeAddress(auth.wallet)
+                          ) {
                             return 'Funding wallet does not match signed-in wallet';
                           }
                           return '';
