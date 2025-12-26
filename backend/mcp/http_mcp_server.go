@@ -586,6 +586,15 @@ func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
     }
   }'</pre>
 
+    <h3>Update a Pending Proposal</h3>
+    <p>Only pending proposals can be updated. Use PATCH (or PUT) with the fields you want to change.</p>
+    <pre>curl -k -X PATCH -H "X-API-Key: YOUR_KEY" https://starlight.local/api/smart_contract/proposals/{PROPOSAL_ID} \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "Revised Proposal Title",
+    "description_md": "Updated details before approval"
+  }'</pre>
+
     <h3>Approve a Proposal</h3>
     <pre>curl -k -H "X-API-Key: YOUR_KEY" https://starlight.local/api/smart_contract/proposals/{PROPOSAL_ID}/approve</pre>
 
