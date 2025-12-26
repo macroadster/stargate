@@ -487,7 +487,7 @@ func (s *PGStore) SubmitWork(claimID string, deliverables map[string]interface{}
 			log.Printf("Failed to query existing submissions: %v", err)
 			return smart_contract.Submission{}, err
 		}
-		defer rows.Close()
+	}
 
 		canResubmit := false
 		existingStatuses := make([]string, 0)
@@ -924,6 +924,89 @@ func (s *PGStore) ApproveProposal(ctx context.Context, id string) error {
 		return err
 	}
 	defer tx.Rollback(ctx)
+	
+	// Load and lock the proposal row
+	var metaJSON []byte
+	var currentStatus string
+	if err := tx.QueryRow(ctx, `SELECT metadata, status FROM mcp_proposals WHERE id=$1 FOR UPDATE`, id).Scan(&metaJSON, &currentStatus); err != nil {
+		return err
+	}
+	
+	// Check if proposal is already in final state
+	if strings.EqualFold(currentStatus, "approved") || strings.EqualFold(currentStatus, "published") {
+		return fmt.Errorf("proposal %s is already %s", id, currentStatus)
+	}
+	
+	if !strings.EqualFold(currentStatus, "pending") {
+		return fmt.Errorf("proposal %s must be pending to approve, current status: %s", id, currentStatus)
+	}
+	
+	var meta map[string]interface{}
+	if err := json.Unmarshal(metaJSON, &meta); err != nil {
+		return err
+	}
+	contractID := contractIDFromMeta(meta, id)
+	
+	// Block double-approval/publish for the same contract.
+	var conflict int
+	if err := tx.QueryRow(ctx, `
+SELECT count(*) FROM mcp_proposals
+WHERE id<>$1 AND status IN ('approved','published')
+AND (
+  metadata->>'contract_id' = $2 OR
+  metadata->>'ingestion_id' = $2 OR
+  metadata->>'visible_pixel_hash' = $2 OR
+  id = $2
+)`, id, contractID).Scan(&conflict); err != nil {
+		return err
+	}
+	if conflict > 0 {
+		return fmt.Errorf("another proposal is already approved/published for contract %s", contractID)
+	}
+	// Auto-reject any other pending proposals for this contract.
+	_, _ = tx.Exec(ctx, `
+UPDATE mcp_proposals SET status='rejected'
+WHERE id<>$1 AND status='pending' AND (
+  metadata->>'contract_id' = $2 OR
+  metadata->>'ingestion_id' = $2 OR
+  metadata->>'visible_pixel_hash' = $2 OR
+  id = $2
+)`, id, contractID)
+	
+	// Validate proposal before approval
+	proposal := smart_contract.Proposal{
+		ID:               id,
+		Status:           currentStatus,
+		Metadata:         meta,
+		Title:            "",
+		DescriptionMD:    "",
+		VisiblePixelHash: "",
+		BudgetSats:       0,
+		Tasks:            []smart_contract.Task{},
+	}
+	
+	// Load remaining fields from database
+	if err := tx.QueryRow(ctx, `
+SELECT title, description_md, visible_pixel_hash, budget_sats 
+FROM mcp_proposals WHERE id=$1`, id).Scan(
+		&proposal.Title, 
+		&proposal.DescriptionMD, 
+		&proposal.VisiblePixelHash, 
+		&proposal.BudgetSats); err != nil {
+		return err
+	}
+	
+	if err := ValidateProposalInput(proposal); err != nil {
+		return fmt.Errorf("proposal validation failed: %v", err)
+	}
+	
+	if _, err := tx.Exec(ctx, `UPDATE mcp_proposals SET status='approved' WHERE id=$1`, id); err != nil {
+		return err
+	}
+	
+	return tx.Commit(ctx)
+}
+	defer tx.Rollback(ctx)
 
 	// Load and lock the proposal row
 	var metaJSON []byte
@@ -999,7 +1082,7 @@ FROM mcp_proposals WHERE id=$1`, id).Scan(
 	// Load tasks if any
 	rows, err := tx.Query(ctx, `
 SELECT task_id, contract_id, goal_id, title, description, budget_sats, 
-       SkillsRequired, difficulty, status, claimed_by, claimed_at, claim_expires_at, 
+       skills_required, difficulty, status, claimed_by, claimed_at, claim_expires_at, 
        merkle_proof, created_at 
 FROM mcp_tasks WHERE contract_id=$1`,
 		contractIDFromMeta(meta, id))
@@ -1035,10 +1118,12 @@ FROM mcp_tasks WHERE contract_id=$1`,
 
 		proposal.Tasks = append(proposal.Tasks, task)
 	}
-
-	if err := ValidateProposalInput(proposal); err != nil {
-		return fmt.Errorf("proposal validation failed: %v", err)
-	}
+	
+	return tx.Commit(ctx)
+}
+	
+	return tx.Commit(ctx)
+}
 	if err := ValidateProposalInput(proposal); err != nil {
 		return fmt.Errorf("proposal validation failed: %v", err)
 	}
