@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"stargate-backend/core/smart_contract"
 	"stargate-backend/services"
 	"stargate-backend/starlight"
 	"stargate-backend/storage/auth"
@@ -20,6 +22,15 @@ type allowAllValidator struct{}
 func (a allowAllValidator) Validate(string) bool { return true }
 func (a allowAllValidator) Get(key string) (auth.APIKey, bool) {
 	return auth.APIKey{Key: key}, true
+}
+
+type walletValidator struct {
+	wallet string
+}
+
+func (w walletValidator) Validate(key string) bool { return strings.TrimSpace(key) != "" }
+func (w walletValidator) Get(key string) (auth.APIKey, bool) {
+	return auth.APIKey{Key: key, Wallet: w.wallet}, true
 }
 
 func TestHTTPMCPServer(t *testing.T) {
@@ -82,6 +93,65 @@ func TestHTTPMCPServer(t *testing.T) {
 			t.Fatalf("expected success, got error: %s", resp.Error)
 		}
 	})
+}
+
+func TestClaimTaskUsesAPIKeyWallet(t *testing.T) {
+	store := scstore.NewMemoryStore(72 * time.Hour)
+	ingestionSvc := &services.IngestionService{}
+	scannerManager := &starlight.ScannerManager{}
+	apiKey := "test-api-key"
+	wallet := "tb1qwallettest000000000000000000000000000000000"
+	server := NewHTTPMCPServer(store, walletValidator{wallet: wallet}, ingestionSvc, scannerManager, nil)
+
+	contract := smart_contract.Contract{
+		ContractID:          "contract-claim-wallet",
+		Title:               "Wallet Binding Contract",
+		TotalBudgetSats:     1000,
+		GoalsCount:          1,
+		AvailableTasksCount: 1,
+		Status:              "active",
+	}
+	task := smart_contract.Task{
+		TaskID:      "contract-claim-wallet-task-1",
+		ContractID:  "contract-claim-wallet",
+		Title:       "Wallet Binding Task",
+		Description: "Test task for wallet binding",
+		BudgetSats:  1000,
+		Status:      "available",
+	}
+	if err := store.UpsertContractWithTasks(context.Background(), contract, []smart_contract.Task{task}); err != nil {
+		t.Fatalf("failed to seed tasks: %v", err)
+	}
+
+	req := MCPRequest{
+		Tool: "claim_task",
+		Arguments: map[string]interface{}{
+			"task_id":      task.TaskID,
+			"ai_identifier": "agent-claim-wallet",
+		},
+	}
+	body, _ := json.Marshal(req)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/mcp/call", bytes.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("X-API-Key", apiKey)
+
+	server.handleToolCall(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	updated, err := store.GetTask(task.TaskID)
+	if err != nil {
+		t.Fatalf("failed to get task: %v", err)
+	}
+	if updated.ContractorWallet != wallet {
+		t.Fatalf("expected contractor wallet %s, got %s", wallet, updated.ContractorWallet)
+	}
+	if updated.MerkleProof == nil || updated.MerkleProof.ContractorWallet != wallet {
+		t.Fatalf("expected merkle proof wallet %s, got %#v", wallet, updated.MerkleProof)
+	}
 }
 
 func TestProposalCreationRequiresIngestion(t *testing.T) {
