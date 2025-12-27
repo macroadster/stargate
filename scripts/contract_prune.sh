@@ -10,6 +10,7 @@ CONTRACT_ID="34f1777c3188b0fe397d8ce6a35c88f0de7bcdff4f35dd6b345fb5fc9bf8d0aa"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 DRY_RUN=false
 FORCE=false
+PRUNE_ALL=false
 
 # Colors for output
 RED='\033[0;31m'
@@ -50,6 +51,10 @@ parse_args() {
                 CONTRACT_ID="$2"
                 shift 2
                 ;;
+            --all)
+                PRUNE_ALL=true
+                shift
+                ;;
             --help|-h)
                 cat << EOF
 Stargate Contract Pruning Script
@@ -60,11 +65,13 @@ Options:
     --dry-run          Show what would be deleted without actually deleting
     --force            Skip confirmation prompts
     --contract-id ID    Specify contract ID to prune (default: $CONTRACT_ID)
+    --all              Prune all contracts and related data
     --help, -h         Show this help message
 
 Example:
     $0 --dry-run
     $0 --contract-id abc123 --force
+    $0 --all --force
 EOF
                 exit 0
                 ;;
@@ -86,6 +93,7 @@ get_db_dsn() {
         echo "$DATABASE_URL"
     else
         error "No database connection string found. Set MCP_PG_DSN, STARGATE_PG_DSN, or DATABASE_URL"
+        exit 1
     fi
 }
 
@@ -121,6 +129,19 @@ test_connection() {
 
 # Check if contract exists
 check_contract_exists() {
+    if [[ "$PRUNE_ALL" = true ]]; then
+        info "Checking for any contracts in database"
+        local count=$(psql -t -c "SELECT COUNT(*) FROM mcp_contracts;" | tr -d ' ')
+        local proposal_count=$(psql -t -c "SELECT COUNT(*) FROM mcp_proposals;" | tr -d ' ')
+        info "Contracts: $count"
+        info "Proposals: $proposal_count"
+        if [[ "$count" -eq 0 && "$proposal_count" -eq 0 ]]; then
+            warn "No contracts or proposals found in database"
+            return 1
+        fi
+        return 0
+    fi
+
     info "Checking if contract exists: $CONTRACT_ID"
     
     local count=$(psql -t -c "SELECT COUNT(*) FROM mcp_contracts WHERE contract_id = '$CONTRACT_ID';" | tr -d ' ')
@@ -139,6 +160,23 @@ check_contract_exists() {
 
 # Show what will be deleted
 show_affected_data() {
+    if [[ "$PRUNE_ALL" = true ]]; then
+        info "Analyzing affected data for all contracts"
+        local contracts=$(psql -t -c "SELECT COUNT(*) FROM mcp_contracts;" | tr -d ' ')
+        local tasks=$(psql -t -c "SELECT COUNT(*) FROM mcp_tasks;" | tr -d ' ')
+        local claims=$(psql -t -c "SELECT COUNT(*) FROM mcp_claims;" | tr -d ' ')
+        local submissions=$(psql -t -c "SELECT COUNT(*) FROM mcp_submissions;" | tr -d ' ')
+        local proposals=$(psql -t -c "SELECT COUNT(*) FROM mcp_proposals;" | tr -d ' ')
+        echo "=== AFFECTED RECORDS ==="
+        echo -e "${YELLOW}Contracts:${NC} $contracts"
+        echo -e "${YELLOW}Tasks:${NC} $tasks"
+        echo -e "${YELLOW}Claims:${NC} $claims"
+        echo -e "${YELLOW}Submissions:${NC} $submissions"
+        echo -e "${YELLOW}Proposals:${NC} $proposals"
+        echo
+        return
+    fi
+
     info "Analyzing affected data for contract: $CONTRACT_ID"
     
     # Count affected records in each table
@@ -189,11 +227,11 @@ SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;
 -- Show record counts before deletion
 \\echo '=== RECORD COUNTS BEFORE DELETION ==='
 
-SELECT 'CONTRACTS: ' || COUNT(*) as count FROM mcp_contracts WHERE contract_id = '$CONTRACT_ID';
-SELECT 'TASKS: ' || COUNT(*) as count FROM mcp_tasks WHERE contract_id = '$CONTRACT_ID';
-SELECT 'CLAIMS: ' || COUNT(c.claim_id) as count FROM mcp_claims c JOIN mcp_tasks t ON c.task_id = t.task_id WHERE t.contract_id = '$CONTRACT_ID';
-SELECT 'SUBMISSIONS: ' || COUNT(s.submission_id) as count FROM mcp_submissions s JOIN mcp_claims c ON s.claim_id = c.claim_id JOIN mcp_tasks t ON c.task_id = t.task_id WHERE t.contract_id = '$CONTRACT_ID';
-SELECT 'PROPOSALS: ' || COUNT(*) as count FROM mcp_proposals WHERE visible_pixel_hash = '$CONTRACT_ID' OR id = '$CONTRACT_ID';
+SELECT 'CONTRACTS: ' || COUNT(*) as count FROM mcp_contracts $( [[ "$PRUNE_ALL" = true ]] && echo ";" || echo "WHERE contract_id = '$CONTRACT_ID';" );
+SELECT 'TASKS: ' || COUNT(*) as count FROM mcp_tasks $( [[ "$PRUNE_ALL" = true ]] && echo ";" || echo "WHERE contract_id = '$CONTRACT_ID';" );
+SELECT 'CLAIMS: ' || COUNT(c.claim_id) as count FROM mcp_claims c $( [[ "$PRUNE_ALL" = true ]] && echo ";" || echo "JOIN mcp_tasks t ON c.task_id = t.task_id WHERE t.contract_id = '$CONTRACT_ID';" );
+SELECT 'SUBMISSIONS: ' || COUNT(s.submission_id) as count FROM mcp_submissions s $( [[ "$PRUNE_ALL" = true ]] && echo ";" || echo "JOIN mcp_claims c ON s.claim_id = c.claim_id JOIN mcp_tasks t ON c.task_id = t.task_id WHERE t.contract_id = '$CONTRACT_ID';" );
+SELECT 'PROPOSALS: ' || COUNT(*) as count FROM mcp_proposals $( [[ "$PRUNE_ALL" = true ]] && echo ";" || echo "WHERE visible_pixel_hash = '$CONTRACT_ID' OR id = '$CONTRACT_ID';" );
 
 EOF
 
@@ -205,32 +243,23 @@ EOF
 
 -- Show contract records
 \\echo 'Contracts to be deleted:'
-SELECT contract_id, title, total_budget_sats, status FROM mcp_contracts WHERE contract_id = '$CONTRACT_ID';
+$( [[ "$PRUNE_ALL" = true ]] && echo "SELECT contract_id, title, total_budget_sats, status FROM mcp_contracts;" || echo "SELECT contract_id, title, total_budget_sats, status FROM mcp_contracts WHERE contract_id = '$CONTRACT_ID';" )
 
 -- Show task records
 \\echo 'Tasks to be deleted:'
-SELECT task_id, title, budget_sats, status FROM mcp_tasks WHERE contract_id = '$CONTRACT_ID';
+$( [[ "$PRUNE_ALL" = true ]] && echo "SELECT task_id, title, budget_sats, status FROM mcp_tasks;" || echo "SELECT task_id, title, budget_sats, status FROM mcp_tasks WHERE contract_id = '$CONTRACT_ID';" )
 
 -- Show claim records
 \\echo 'Claims to be deleted:'
-SELECT c.claim_id, c.task_id, c.status, c.created_at 
-FROM mcp_claims c 
-JOIN mcp_tasks t ON c.task_id = t.task_id 
-WHERE t.contract_id = '$CONTRACT_ID';
+$( [[ "$PRUNE_ALL" = true ]] && echo "SELECT claim_id, task_id, status, created_at FROM mcp_claims;" || echo "SELECT c.claim_id, c.task_id, c.status, c.created_at FROM mcp_claims c JOIN mcp_tasks t ON c.task_id = t.task_id WHERE t.contract_id = '$CONTRACT_ID';" )
 
 -- Show submission records
 \\echo 'Submissions to be deleted:'
-SELECT s.submission_id, s.claim_id, s.status, s.created_at 
-FROM mcp_submissions s 
-JOIN mcp_claims c ON s.claim_id = c.claim_id 
-JOIN mcp_tasks t ON c.task_id = t.task_id 
-WHERE t.contract_id = '$CONTRACT_ID';
+$( [[ "$PRUNE_ALL" = true ]] && echo "SELECT submission_id, claim_id, status, created_at FROM mcp_submissions;" || echo "SELECT s.submission_id, s.claim_id, s.status, s.created_at FROM mcp_submissions s JOIN mcp_claims c ON s.claim_id = c.claim_id JOIN mcp_tasks t ON c.task_id = t.task_id WHERE t.contract_id = '$CONTRACT_ID';" )
 
 -- Show proposal records
 \\echo 'Proposals to be deleted:'
-SELECT id, title, budget_sats, status, created_at 
-FROM mcp_proposals 
-WHERE visible_pixel_hash = '$CONTRACT_ID' OR id = '$CONTRACT_ID';
+$( [[ "$PRUNE_ALL" = true ]] && echo "SELECT id, title, budget_sats, status, created_at FROM mcp_proposals;" || echo "SELECT id, title, budget_sats, status, created_at FROM mcp_proposals WHERE visible_pixel_hash = '$CONTRACT_ID' OR id = '$CONTRACT_ID';" )
 
 ROLLBACK;
 \\echo 'DRY RUN COMPLETED - No changes made';
@@ -246,42 +275,32 @@ EOF
 
 -- Step 1: Delete submissions (via claims -> tasks -> contract)
 \\echo 'Deleting submissions...'
-DELETE FROM mcp_submissions 
-WHERE claim_id IN (
-    SELECT c.claim_id 
-    FROM mcp_claims c 
-    JOIN mcp_tasks t ON c.task_id = t.task_id 
-    WHERE t.contract_id = '$CONTRACT_ID'
-);
+$( [[ "$PRUNE_ALL" = true ]] && echo "DELETE FROM mcp_submissions;" || echo "DELETE FROM mcp_submissions WHERE claim_id IN (SELECT c.claim_id FROM mcp_claims c JOIN mcp_tasks t ON c.task_id = t.task_id WHERE t.contract_id = '$CONTRACT_ID');" )
 
 -- Step 2: Delete claims (via tasks -> contract)
 \\echo 'Deleting claims...'
-DELETE FROM mcp_claims 
-WHERE task_id IN (
-    SELECT task_id FROM mcp_tasks WHERE contract_id = '$CONTRACT_ID'
-);
+$( [[ "$PRUNE_ALL" = true ]] && echo "DELETE FROM mcp_claims;" || echo "DELETE FROM mcp_claims WHERE task_id IN (SELECT task_id FROM mcp_tasks WHERE contract_id = '$CONTRACT_ID');" )
 
 -- Step 3: Delete tasks
 \\echo 'Deleting tasks...'
-DELETE FROM mcp_tasks WHERE contract_id = '$CONTRACT_ID';
+$( [[ "$PRUNE_ALL" = true ]] && echo "DELETE FROM mcp_tasks;" || echo "DELETE FROM mcp_tasks WHERE contract_id = '$CONTRACT_ID';" )
 
 -- Step 4: Delete contracts
 \\echo 'Deleting contracts...'
-DELETE FROM mcp_contracts WHERE contract_id = '$CONTRACT_ID';
+$( [[ "$PRUNE_ALL" = true ]] && echo "DELETE FROM mcp_contracts;" || echo "DELETE FROM mcp_contracts WHERE contract_id = '$CONTRACT_ID';" )
 
 -- Step 5: Delete proposals (may reference contract by hash or ID)
 \\echo 'Deleting proposals...'
-DELETE FROM mcp_proposals 
-WHERE visible_pixel_hash = '$CONTRACT_ID' OR id = '$CONTRACT_ID';
+$( [[ "$PRUNE_ALL" = true ]] && echo "DELETE FROM mcp_proposals;" || echo "DELETE FROM mcp_proposals WHERE visible_pixel_hash = '$CONTRACT_ID' OR id = '$CONTRACT_ID';" )
 
 -- Show record counts after deletion
 \\echo '=== RECORD COUNTS AFTER DELETION ==='
 
-SELECT 'CONTRACTS: ' || COUNT(*) as count FROM mcp_contracts WHERE contract_id = '$CONTRACT_ID';
-SELECT 'TASKS: ' || COUNT(*) as count FROM mcp_tasks WHERE contract_id = '$CONTRACT_ID';
-SELECT 'CLAIMS: ' || COUNT(c.claim_id) as count FROM mcp_claims c JOIN mcp_tasks t ON c.task_id = t.task_id WHERE t.contract_id = '$CONTRACT_ID';
-SELECT 'SUBMISSIONS: ' || COUNT(s.submission_id) as count FROM mcp_submissions s JOIN mcp_claims c ON s.claim_id = c.claim_id JOIN mcp_tasks t ON c.task_id = t.task_id WHERE t.contract_id = '$CONTRACT_ID';
-SELECT 'PROPOSALS: ' || COUNT(*) as count FROM mcp_proposals WHERE visible_pixel_hash = '$CONTRACT_ID' OR id = '$CONTRACT_ID';
+SELECT 'CONTRACTS: ' || COUNT(*) as count FROM mcp_contracts $( [[ "$PRUNE_ALL" = true ]] && echo ";" || echo "WHERE contract_id = '$CONTRACT_ID';" );
+SELECT 'TASKS: ' || COUNT(*) as count FROM mcp_tasks $( [[ "$PRUNE_ALL" = true ]] && echo ";" || echo "WHERE contract_id = '$CONTRACT_ID';" );
+SELECT 'CLAIMS: ' || COUNT(c.claim_id) as count FROM mcp_claims c $( [[ "$PRUNE_ALL" = true ]] && echo ";" || echo "JOIN mcp_tasks t ON c.task_id = t.task_id WHERE t.contract_id = '$CONTRACT_ID';" );
+SELECT 'SUBMISSIONS: ' || COUNT(s.submission_id) as count FROM mcp_submissions s $( [[ "$PRUNE_ALL" = true ]] && echo ";" || echo "JOIN mcp_claims c ON s.claim_id = c.claim_id JOIN mcp_tasks t ON c.task_id = t.task_id WHERE t.contract_id = '$CONTRACT_ID';" );
+SELECT 'PROPOSALS: ' || COUNT(*) as count FROM mcp_proposals $( [[ "$PRUNE_ALL" = true ]] && echo ";" || echo "WHERE visible_pixel_hash = '$CONTRACT_ID' OR id = '$CONTRACT_ID';" );
 
 COMMIT;
 \\echo 'PRUNING COMPLETED SUCCESSFULLY';
@@ -306,16 +325,17 @@ execute_pruning() {
     fi
     
     # Execute the SQL
-    if psql -f "$sql_file"; then
-        if [[ "$DRY_RUN" = false ]]; then
-            log "Contract pruning completed successfully"
-            log "Contract $CONTRACT_ID and all related data have been removed"
-        else
-            info "Dry run completed successfully"
-            info "No changes were made to the database"
-        fi
-    else
+    if ! psql -f "$sql_file"; then
         error "Failed to execute pruning script"
+        exit 1
+    fi
+
+    if [[ "$DRY_RUN" = false ]]; then
+        log "Contract pruning completed successfully"
+        log "Contract $CONTRACT_ID and all related data have been removed"
+    else
+        info "Dry run completed successfully"
+        info "No changes were made to the database"
     fi
     
     # Clean up temp file
@@ -341,15 +361,28 @@ confirm_action() {
     fi
     
     echo
-    echo -e "${RED}WARNING: This will permanently delete contract $CONTRACT_ID and all related data!${NC}"
-    echo -e "${RED}This includes contracts, tasks, claims, submissions, and proposals.${NC}"
+    if [[ "$PRUNE_ALL" = true ]]; then
+        echo -e "${RED}WARNING: This will permanently delete ALL contracts and related data!${NC}"
+        echo -e "${RED}This includes all contracts, tasks, claims, submissions, and proposals.${NC}"
+    else
+        echo -e "${RED}WARNING: This will permanently delete contract $CONTRACT_ID and all related data!${NC}"
+        echo -e "${RED}This includes contracts, tasks, claims, submissions, and proposals.${NC}"
+    fi
     echo
     echo -e "${YELLOW}Make sure you have a recent backup before proceeding!${NC}"
     echo
-    read -p "Type the contract ID to confirm deletion: " -r
-    if [[ "$REPLY" != "$CONTRACT_ID" ]]; then
-        error "Contract ID mismatch. Operation cancelled for safety."
-        exit 1
+    if [[ "$PRUNE_ALL" = true ]]; then
+        read -p "Type DELETE ALL to confirm deletion: " -r
+        if [[ "$REPLY" != "DELETE ALL" ]]; then
+            error "Confirmation mismatch. Operation cancelled for safety."
+            exit 1
+        fi
+    else
+        read -p "Type the contract ID to confirm deletion: " -r
+        if [[ "$REPLY" != "$CONTRACT_ID" ]]; then
+            error "Contract ID mismatch. Operation cancelled for safety."
+            exit 1
+        fi
     fi
     
     echo
@@ -362,12 +395,17 @@ confirm_action() {
 
 # Main execution
 main() {
-    log "Starting Stargate contract pruning"
-    log "Contract ID: $CONTRACT_ID"
-    log "Mode: $([ "$DRY_RUN" = true ] && echo "DRY RUN" || echo "EXECUTE")"
-    
     # Parse arguments
     parse_args "$@"
+
+    log "Starting Stargate contract pruning"
+    if [[ "$PRUNE_ALL" = true ]]; then
+        log "Contract ID: <all>"
+    else
+        log "Contract ID: $CONTRACT_ID"
+    fi
+    log "Mode: $([ "$DRY_RUN" = true ] && echo "DRY RUN" || echo "EXECUTE")"
+    log "Prune all: $PRUNE_ALL"
     
     # Get database connection
     local dsn
