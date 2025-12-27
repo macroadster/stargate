@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+
+	"stargate-backend/models"
 )
 
 // JSON writes a JSON response with status code.
@@ -20,5 +22,5 @@ func JSON(w http.ResponseWriter, status int, payload interface{}) {
 
 // Error writes a JSON error response.
 func Error(w http.ResponseWriter, status int, msg string) {
-	JSON(w, status, map[string]string{"error": msg})
+	JSON(w, status, models.NewErrorResponse(msg, status))
 }

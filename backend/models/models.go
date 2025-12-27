@@ -1,5 +1,7 @@
 package models
 
+import "time"
+
 // InscriptionRequest represents an inscription creation request
 type InscriptionRequest struct {
 	ImageData string  `json:"imageData"`
@@ -59,9 +61,11 @@ type HealthResponse struct {
 
 // ErrorResponse represents API error response
 type ErrorResponse struct {
-	Error   string `json:"error"`
-	Message string `json:"message,omitempty"`
-	Code    int    `json:"code,omitempty"`
+	Error     string `json:"error"`
+	Message   string `json:"message,omitempty"`
+	Code      int    `json:"code,omitempty"`
+	Hint      string `json:"hint,omitempty"`
+	Timestamp string `json:"timestamp,omitempty"`
 }
 
 // SuccessResponse represents API success response
@@ -140,10 +144,21 @@ func NewErrorResponse(error string, code int) *APIResponse {
 	return &APIResponse{
 		Success: false,
 		Error: &ErrorResponse{
-			Error: error,
-			Code:  code,
+			Error:     error,
+			Message:   error,
+			Code:      code,
+			Timestamp: time.Now().UTC().Format(time.RFC3339),
 		},
 	}
+}
+
+// NewErrorResponseWithHint creates an error response with a hint.
+func NewErrorResponseWithHint(error string, code int, hint string) *APIResponse {
+	resp := NewErrorResponse(error, code)
+	if resp != nil && resp.Error != nil {
+		resp.Error.Hint = hint
+	}
+	return resp
 }
 
 // NewSuccessResponseWithMeta creates a success response with metadata

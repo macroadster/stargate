@@ -1,4 +1,5 @@
 backend/blocks/*
+blocks/
 backend/uploads/*
 backend/.cache/
 backend/.gocache/
