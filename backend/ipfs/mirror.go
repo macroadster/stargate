@@ -40,6 +40,7 @@ type MirrorConfig struct {
 type Mirror struct {
 	cfg            MirrorConfig
 	client         *http.Client
+	streamClient   *http.Client
 	peerID         string
 	lastPublished  string
 	lastPublishAt  time.Time
@@ -151,9 +152,10 @@ func StartMirror(ctx context.Context, cfg MirrorConfig) (*Mirror, error) {
 	}
 
 	m := &Mirror{
-		cfg:        cfg,
-		client:     &http.Client{Timeout: cfg.HTTPTimeout},
-		knownFiles: make(map[string]fileState),
+		cfg:          cfg,
+		client:       &http.Client{Timeout: cfg.HTTPTimeout},
+		streamClient: &http.Client{},
+		knownFiles:   make(map[string]fileState),
 	}
 
 	peerID, err := m.fetchPeerID(ctx)
@@ -348,7 +350,11 @@ func (m *Mirror) subscribeOnce(ctx context.Context) error {
 		return err
 	}
 
-	resp, err := m.client.Do(req)
+	client := m.streamClient
+	if client == nil {
+		client = m.client
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
