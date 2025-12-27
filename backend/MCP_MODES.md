@@ -186,6 +186,15 @@ Both modes respect these environment variables:
 - `UPLOADS_DIR` - Uploads directory path (default: "/data/uploads")
 - `STARGATE_HTTP_PORT` - HTTP server port (default: "3001")
 - `MCP_API_KEY` - API key for MCP tool authentication (optional)
+- `IPFS_MIRROR_ENABLED` - Enable IPFS mirroring for uploads (default: false)
+- `IPFS_MIRROR_UPLOAD_ENABLED` - Publish local uploads to IPFS (default: true)
+- `IPFS_MIRROR_DOWNLOAD_ENABLED` - Fetch uploads announced by peers (default: true)
+- `IPFS_API_URL` - IPFS HTTP API base URL (default: "http://127.0.0.1:5001")
+- `IPFS_MIRROR_TOPIC` - PubSub topic for sync announcements (default: "stargate-uploads")
+- `IPFS_MIRROR_POLL_INTERVAL_SEC` - Scan interval for local uploads (default: 10)
+- `IPFS_MIRROR_PUBLISH_INTERVAL_SEC` - Publish interval for manifests (default: 30)
+- `IPFS_MIRROR_MAX_FILES` - Max files to include in manifests (default: 2000)
+- `IPFS_HTTP_TIMEOUT_SEC` - IPFS HTTP request timeout (default: 30)
 
 ## Development
 

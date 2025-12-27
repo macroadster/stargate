@@ -15,6 +15,7 @@ import (
 	"stargate-backend/bitcoin"
 	"stargate-backend/container"
 	"stargate-backend/handlers"
+	"stargate-backend/ipfs"
 	"stargate-backend/mcp"
 	"stargate-backend/middleware"
 	scmiddleware "stargate-backend/middleware/smart_contract"
@@ -240,6 +241,13 @@ func runHTTPServer() {
 
 	// Initialize dependency container
 	container := container.NewContainer()
+
+	ipfsCfg := ipfs.LoadMirrorConfig()
+	if ipfsCfg.Enabled {
+		if _, err := ipfs.StartMirror(context.Background(), ipfsCfg); err != nil {
+			log.Printf("IPFS mirror disabled: %v", err)
+		}
+	}
 
 	// Initialize MCP components (for HTTP routes)
 	store, apiKeyIssuer, apiKeyValidator, ingestionSvc, challengeStore := initializeMCPComponents()
