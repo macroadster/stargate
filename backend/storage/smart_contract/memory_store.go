@@ -69,8 +69,50 @@ func proposalHasSkills(p smart_contract.Proposal, skills []string) bool {
 	return false
 }
 
+func proposalMatchesContract(p smart_contract.Proposal, contractID string) bool {
+	if strings.EqualFold(p.ID, contractID) {
+		return true
+	}
+	if p.Metadata == nil {
+		return false
+	}
+	if v, ok := p.Metadata["contract_id"].(string); ok {
+		return strings.EqualFold(strings.TrimSpace(v), contractID)
+	}
+	return false
+}
+
+func metaString(meta map[string]interface{}, key string) string {
+	if meta == nil {
+		return ""
+	}
+	if v, ok := meta[key].(string); ok {
+		return strings.TrimSpace(v)
+	}
+	return ""
+}
+
+func matchesContractMeta(contractID string, proposals map[string]smart_contract.Proposal, filter smart_contract.ContractFilter) bool {
+	if strings.TrimSpace(filter.Creator) == "" && strings.TrimSpace(filter.AiIdentifier) == "" {
+		return true
+	}
+	for _, p := range proposals {
+		if !proposalMatchesContract(p, contractID) {
+			continue
+		}
+		if filter.Creator != "" && !strings.EqualFold(metaString(p.Metadata, "creator"), filter.Creator) {
+			continue
+		}
+		if filter.AiIdentifier != "" && !strings.EqualFold(metaString(p.Metadata, "ai_identifier"), filter.AiIdentifier) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
 // ListContracts returns all contracts filtered by status and skill.
-func (s *MemoryStore) ListContracts(status string, skills []string) ([]smart_contract.Contract, error) {
+func (s *MemoryStore) ListContracts(filter smart_contract.ContractFilter) ([]smart_contract.Contract, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	fmt.Printf("DEBUG: ListContracts called on %p, contracts: %d\n", s, len(s.contracts))
@@ -85,10 +127,13 @@ func (s *MemoryStore) ListContracts(status string, skills []string) ([]smart_con
 	}
 	out := make([]smart_contract.Contract, 0, len(s.contracts))
 	for _, c := range s.contracts {
-		if status != "" && !strings.EqualFold(status, c.Status) {
+		if filter.Status != "" && !strings.EqualFold(filter.Status, c.Status) {
 			continue
 		}
-		if len(skills) > 0 && !containsSkill(c.Skills, skills) {
+		if len(filter.Skills) > 0 && !containsSkill(c.Skills, filter.Skills) {
+			continue
+		}
+		if !matchesContractMeta(c.ContractID, s.proposals, filter) {
 			continue
 		}
 		c.AvailableTasksCount = availableCounts[c.ContractID]

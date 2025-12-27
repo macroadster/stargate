@@ -172,6 +172,14 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 					"description": "Filter contracts by status",
 					"enum":        []string{"active", "pending", "completed"},
 				},
+				"creator": map[string]interface{}{
+					"type":        "string",
+					"description": "Filter contracts by creator metadata",
+				},
+				"ai_identifier": map[string]interface{}{
+					"type":        "string",
+					"description": "Filter contracts by AI identifier metadata",
+				},
 				"skills": map[string]interface{}{
 					"type":        "array",
 					"items":       map[string]interface{}{"type": "string"},
@@ -204,6 +212,10 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 		"list_tasks": map[string]interface{}{
 			"description": "List available tasks with filtering options",
 			"parameters": map[string]interface{}{
+				"contract_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Filter tasks by contract ID",
+				},
 				"skills": map[string]interface{}{
 					"type":        "array",
 					"items":       map[string]interface{}{"type": "string"},
@@ -380,7 +392,7 @@ func (h *HTTPMCPServer) handleIndex(w http.ResponseWriter, r *http.Request) {
 		if tasks, err := h.store.ListTasks(smart_contract.TaskFilter{}); err == nil {
 			taskCount = len(tasks)
 		}
-		if contracts, err := h.store.ListContracts("", nil); err == nil {
+		if contracts, err := h.store.ListContracts(smart_contract.ContractFilter{}); err == nil {
 			contractCount = len(contracts)
 		}
 	}
@@ -1005,6 +1017,8 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 	switch toolName {
 	case "list_contracts":
 		status := h.toString(args["status"])
+		creator := h.toString(args["creator"])
+		aiIdentifier := h.toString(args["ai_identifier"])
 		var skills []string
 		if skillSlice, ok := args["skills"].([]interface{}); ok {
 			for _, skill := range skillSlice {
@@ -1013,11 +1027,17 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 				}
 			}
 		}
-		if res, err := h.fetchContractsViaREST(status, skills); err == nil {
+		filter := smart_contract.ContractFilter{
+			Status:       status,
+			Skills:       skills,
+			Creator:      creator,
+			AiIdentifier: aiIdentifier,
+		}
+		if res, err := h.fetchContractsViaREST(filter); err == nil {
 			return res, nil
 		}
 
-		contracts, err := store.ListContracts(status, skills)
+		contracts, err := store.ListContracts(filter)
 		if err != nil {
 			return nil, fmt.Errorf("Failed to list contracts: %v", err)
 		}
@@ -2024,13 +2044,19 @@ func bodyHeaderFallback(body map[string]interface{}) string {
 }
 
 // fetchContractsViaREST lists contracts via REST with optional filters.
-func (h *HTTPMCPServer) fetchContractsViaREST(status string, skills []string) (map[string]interface{}, error) {
+func (h *HTTPMCPServer) fetchContractsViaREST(filter smart_contract.ContractFilter) (map[string]interface{}, error) {
 	params := url.Values{}
-	if status != "" {
-		params.Set("status", status)
+	if filter.Status != "" {
+		params.Set("status", filter.Status)
 	}
-	if len(skills) > 0 {
-		for _, s := range skills {
+	if filter.Creator != "" {
+		params.Set("creator", filter.Creator)
+	}
+	if filter.AiIdentifier != "" {
+		params.Set("ai_identifier", filter.AiIdentifier)
+	}
+	if len(filter.Skills) > 0 {
+		for _, s := range filter.Skills {
 			params.Add("skills", s)
 		}
 	}

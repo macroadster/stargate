@@ -134,7 +134,7 @@ func (h *InscriptionHandler) HandleGetInscriptions(w http.ResponseWriter, r *htt
 
 	// Prefer open-contracts (MCP store) to keep UI + AI in sync.
 	if h.store != nil {
-		if contracts, err := h.store.ListContracts("", nil); err == nil {
+		if contracts, err := h.store.ListContracts(sc.ContractFilter{}); err == nil {
 			for _, c := range contracts {
 				if isPendingContractStatus(c.Status) {
 					continue
@@ -630,7 +630,7 @@ func (h *SmartContractHandler) HandleGetContracts(w http.ResponseWriter, r *http
 	}
 
 	// Use the MCP store to get contracts instead of the service
-	contracts, err := h.store.ListContracts("", nil)
+	contracts, err := h.store.ListContracts(sc.ContractFilter{})
 	if err != nil {
 		h.sendError(w, http.StatusInternalServerError, "Failed to get contracts")
 		return

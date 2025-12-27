@@ -21,7 +21,7 @@ func (e Err) Error() string { return string(e) }
 
 // Store abstracts MCP persistence.
 type Store interface {
-	ListContracts(status string, skills []string) ([]smart_contract.Contract, error)
+	ListContracts(filter smart_contract.ContractFilter) ([]smart_contract.Contract, error)
 	ListTasks(filter smart_contract.TaskFilter) ([]smart_contract.Task, error)
 	GetTask(id string) (smart_contract.Task, error)
 	GetContract(id string) (smart_contract.Contract, error)

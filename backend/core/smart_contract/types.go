@@ -88,6 +88,14 @@ type Submission struct {
 	CreatedAt       time.Time      `json:"created_at"`
 }
 
+// ContractFilter captures list filters for contracts.
+type ContractFilter struct {
+	Status       string
+	Skills       []string
+	Creator      string
+	AiIdentifier string
+}
+
 // TaskFilter captures simple query params for listing tasks.
 type TaskFilter struct {
 	Skills        []string

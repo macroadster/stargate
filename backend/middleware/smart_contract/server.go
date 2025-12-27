@@ -127,7 +127,13 @@ func (s *Server) handleContracts(w http.ResponseWriter, r *http.Request) {
 		if path == "" || path == "/" {
 			status := r.URL.Query().Get("status")
 			skills := splitCSV(r.URL.Query().Get("skills"))
-			contracts, err := s.store.ListContracts(status, skills)
+			filter := smart_contract.ContractFilter{
+				Status:       status,
+				Skills:       skills,
+				Creator:      r.URL.Query().Get("creator"),
+				AiIdentifier: r.URL.Query().Get("ai_identifier"),
+			}
+			contracts, err := s.store.ListContracts(filter)
 			if err != nil {
 				Error(w, http.StatusInternalServerError, err.Error())
 				return
