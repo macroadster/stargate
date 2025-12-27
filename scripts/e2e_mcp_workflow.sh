@@ -10,7 +10,6 @@ STARGATE_BASE=${STARGATE_BASE:-https://starlight.local}
 AI_ID=${AI_ID:-codex-e2e}
 FUNDER_API_KEY=${FUNDER_API_KEY:-}
 CONTRACTOR_API_KEY=${CONTRACTOR_API_KEY:-}
-FUNDER_WALLET_ADDRESS=${FUNDER_WALLET_ADDRESS:-}
 FUNDRAISER_PAYOUT_ADDRESS=${FUNDRAISER_PAYOUT_ADDRESS:-}
 PAYOUT_CONTRACT_ID=${PAYOUT_CONTRACT_ID:-}
 RAISE_FUND_CONTRACT_ID=${RAISE_FUND_CONTRACT_ID:-}
@@ -90,12 +89,11 @@ echo "AI id: $AI_ID"
 PAYOUT_CONTRACT_ID=${PAYOUT_CONTRACT_ID:-$(random_hash)}
 RAISE_FUND_CONTRACT_ID=${RAISE_FUND_CONTRACT_ID:-$(random_hash)}
 
-if [[ -z "$FUNDRAISER_PAYOUT_ADDRESS" ]]; then
-  if [[ -n "$FUNDER_WALLET_ADDRESS" ]]; then
-    FUNDRAISER_PAYOUT_ADDRESS="$FUNDER_WALLET_ADDRESS"
-  else
-    fail "Set FUNDRAISER_PAYOUT_ADDRESS or FUNDER_WALLET_ADDRESS for raise-fund flow"
-  fi
+if [[ -n "$FUNDRAISER_PAYOUT_ADDRESS" ]]; then
+  echo "Using explicit fundraiser payout address: $FUNDRAISER_PAYOUT_ADDRESS"
+else
+  echo "No fundraiser payout address provided; approver wallet should populate it."
+fi
 fi
 
 echo "Payout contract: ${PAYOUT_CONTRACT_ID}"
@@ -145,18 +143,14 @@ echo "$psbt_payout" | jq '.'
 echo "$psbt_payout" | jq -e '.payout_scripts | length > 0' >/dev/null || fail "payout PSBT missing payout scripts"
 
 echo "== Raise-fund flow =="
-create_raise_resp=$(call_mcp "${FUNDER_API_KEY}" "create_proposal" "$(jq -n --arg cid "${RAISE_FUND_CONTRACT_ID}" --arg pay "${FUNDRAISER_PAYOUT_ADDRESS}" '{
+raise_metadata=$(jq -n --arg pay "${FUNDRAISER_PAYOUT_ADDRESS}" 'if $pay != "" then {funding_mode: "raise_fund", payout_address: $pay, funding_address: $pay, embedded_message: "* Build starship\n* Launch"} else {funding_mode: "raise_fund", embedded_message: "* Build starship\n* Launch"} end')
+create_raise_resp=$(call_mcp "${FUNDER_API_KEY}" "create_proposal" "$(jq -n --arg cid "${RAISE_FUND_CONTRACT_ID}" --argjson meta "${raise_metadata}" '{
   title: "Fund raising for space program",
   description_md: "Fund raising for space program",
   contract_id: $cid,
   visible_pixel_hash: $cid,
   budget_sats: 10,
-  metadata: {
-    funding_mode: "raise_fund",
-    payout_address: $pay,
-    funding_address: $pay,
-    embedded_message: "* Build starship\n* Launch"
-  }
+  metadata: $meta
 }')")
 echo "$create_raise_resp" | jq '.'
 ensure_success "$create_raise_resp" "create raise-fund proposal"

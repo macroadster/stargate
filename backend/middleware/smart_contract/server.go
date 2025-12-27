@@ -1753,6 +1753,43 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 		parts := strings.Split(path, "/")
 		if len(parts) == 2 && parts[1] == "approve" {
 			id := parts[0]
+			proposal, err := s.store.GetProposal(r.Context(), id)
+			if err != nil {
+				Error(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			meta := proposal.Metadata
+			if meta == nil {
+				meta = map[string]interface{}{}
+			}
+			fundingMode := strings.ToLower(strings.TrimSpace(toString(meta["funding_mode"])))
+			if fundingMode == "" && (looksLikeRaiseFund(proposal.Title) || looksLikeRaiseFund(proposal.DescriptionMD)) {
+				fundingMode = "raise_fund"
+				meta["funding_mode"] = fundingMode
+			}
+			if isRaiseFund(fundingMode) {
+				payoutAddr := strings.TrimSpace(toString(meta["payout_address"]))
+				fundingAddr := strings.TrimSpace(toString(meta["funding_address"]))
+				if payoutAddr == "" || fundingAddr == "" {
+					if s.apiKeys == nil {
+						Error(w, http.StatusBadRequest, "missing payout address; API key wallet binding required for fundraiser")
+						return
+					}
+					apiKey := strings.TrimSpace(r.Header.Get("X-API-Key"))
+					rec, ok := s.apiKeys.Get(apiKey)
+					if !ok || strings.TrimSpace(rec.Wallet) == "" {
+						Error(w, http.StatusBadRequest, "missing payout address; API key wallet binding required for fundraiser")
+						return
+					}
+					meta["payout_address"] = rec.Wallet
+					meta["funding_address"] = rec.Wallet
+				}
+			}
+			proposal.Metadata = meta
+			if err := s.store.UpdateProposal(r.Context(), proposal); err != nil {
+				Error(w, http.StatusBadRequest, err.Error())
+				return
+			}
 			if err := s.store.ApproveProposal(r.Context(), id); err != nil {
 				Error(w, http.StatusBadRequest, err.Error())
 				return
