@@ -48,18 +48,41 @@ call_mcp() {
     -d "$(jq -n --arg tool "${tool}" --argjson args "${args_json}" '{tool: $tool, arguments: $args}')"
 }
 
-resolve_contract_ref() {
+resolve_meta_contract_id() {
   local proposal_id=$1
   local resp
   local meta_contract
   resp=$(curl -sk -H "X-API-Key: ${FUNDER_API_KEY}" \
     "${STARGATE_BASE}/api/smart_contract/proposals/${proposal_id}")
   meta_contract=$(echo "$resp" | jq -r '.metadata.contract_id // empty')
-  if [[ -n "$meta_contract" ]]; then
-    echo "$meta_contract"
-    return
+  echo "$meta_contract"
+}
+
+fetch_tasks_for_contracts() {
+  local primary=$1
+  local secondary=$2
+  local resp
+  LAST_TASKS_CONTRACT_ID=""
+
+  if [[ -n "$primary" ]]; then
+    resp=$(fetch_tasks_with_retry "$primary")
+    if [[ "$(echo "$resp" | jq -r '.success // empty')" == "true" ]] && [[ "$(echo "$resp" | jq '.result.tasks | length')" -gt 0 ]]; then
+      LAST_TASKS_CONTRACT_ID="$primary"
+      echo "$resp"
+      return
+    fi
   fi
-  echo "$proposal_id"
+
+  if [[ -n "$secondary" && "$secondary" != "$primary" ]]; then
+    resp=$(fetch_tasks_with_retry "$secondary")
+    if [[ "$(echo "$resp" | jq -r '.success // empty')" == "true" ]] && [[ "$(echo "$resp" | jq '.result.tasks | length')" -gt 0 ]]; then
+      LAST_TASKS_CONTRACT_ID="$secondary"
+      echo "$resp"
+      return
+    fi
+  fi
+
+  echo "$resp"
 }
 
 ensure_success() {
@@ -128,10 +151,11 @@ payout_proposal_id=$(echo "$create_payout_resp" | jq -r '.result.proposal_id // 
 
 approve_proposal "$payout_proposal_id" | jq '.'
 
-payout_contract_ref=$(resolve_contract_ref "$payout_proposal_id")
+payout_meta_contract=$(resolve_meta_contract_id "$payout_proposal_id")
+payout_tasks=$(fetch_tasks_for_contracts "$payout_meta_contract" "$payout_proposal_id")
+payout_contract_ref=${LAST_TASKS_CONTRACT_ID:-$payout_proposal_id}
 echo "Payout contract ref: ${payout_contract_ref}"
 
-payout_tasks=$(fetch_tasks_with_retry "${payout_contract_ref}")
 ensure_success "$payout_tasks" "list payout tasks"
 echo "$payout_tasks" | jq '.result.tasks'
 
@@ -174,10 +198,11 @@ raise_proposal_id=$(echo "$create_raise_resp" | jq -r '.result.proposal_id // em
 
 approve_proposal "$raise_proposal_id" | jq '.'
 
-raise_contract_ref=$(resolve_contract_ref "$raise_proposal_id")
+raise_meta_contract=$(resolve_meta_contract_id "$raise_proposal_id")
+raise_tasks=$(fetch_tasks_for_contracts "$raise_meta_contract" "$raise_proposal_id")
+raise_contract_ref=${LAST_TASKS_CONTRACT_ID:-$raise_proposal_id}
 echo "Raise-fund contract ref: ${raise_contract_ref}"
 
-raise_tasks=$(fetch_tasks_with_retry "${raise_contract_ref}")
 ensure_success "$raise_tasks" "list raise-fund tasks"
 echo "$raise_tasks" | jq '.result.tasks'
 raise_meta=$(curl -sk -H "X-API-Key: ${FUNDER_API_KEY}" "${STARGATE_BASE}/api/smart_contract/proposals/${raise_proposal_id}")
