@@ -305,7 +305,8 @@ func (m *Mirror) publishManifest(ctx context.Context) (string, error) {
 		return "", err
 	}
 
-	if err := m.pubsubPublish(ctx, payload); err != nil {
+	encoded := []byte(multibaseEncodeBytes(payload))
+	if err := m.pubsubPublish(ctx, encoded); err != nil {
 		return "", err
 	}
 
@@ -481,13 +482,14 @@ func (m *Mirror) extractManifestCID(encoded string) (string, error) {
 		return cid, nil
 	}
 
-	if decoded, err := base64.StdEncoding.DecodeString(string(raw)); err == nil {
+	decoded := decodeMultibasePayload(raw)
+	if len(decoded) > 0 {
 		if cid := parseAnnouncementPayload(decoded); cid != "" {
 			return cid, nil
 		}
 	}
 
-	return strings.TrimSpace(string(raw)), nil
+	return "", nil
 }
 
 func parseAnnouncementPayload(payload []byte) string {
@@ -511,6 +513,18 @@ func multibaseEncodeString(value string) string {
 func multibaseEncodeBytes(value []byte) string {
 	encoded := base64.RawURLEncoding.EncodeToString(value)
 	return "u" + encoded
+}
+
+func decodeMultibasePayload(raw []byte) []byte {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || raw[0] != 'u' {
+		return nil
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(string(raw[1:]))
+	if err != nil {
+		return nil
+	}
+	return decoded
 }
 
 func (m *Mirror) fetchPeerID(ctx context.Context) (string, error) {
