@@ -22,13 +22,6 @@ const (
 
 // Dangerous patterns to sanitize
 var (
-	sqlInjectionPatterns = []*regexp.Regexp{
-		regexp.MustCompile(`(?i)(union|select|insert|update|delete|drop|create|alter|exec|script)`),
-		regexp.MustCompile(`(?i)(or|and)\s+\d+\s*=\s*\d+`),
-		regexp.MustCompile(`(?i)(--|#|/\*|\*/)`),
-		regexp.MustCompile(`(?i)(waitfor|delay|benchmark|sleep)`),
-	}
-
 	xssPatterns = []*regexp.Regexp{
 		regexp.MustCompile(`(?i)<script[^>]*>.*?</script>`),
 		regexp.MustCompile(`(?i)<iframe[^>]*>.*?</iframe>`),
@@ -65,14 +58,6 @@ func SanitizeInput(input string) (string, bool) {
 	if controlCharPattern.MatchString(result) {
 		foundDangerous = true
 		result = controlCharPattern.ReplaceAllString(result, "")
-	}
-
-	// Check and remove SQL injection patterns
-	for _, pattern := range sqlInjectionPatterns {
-		if pattern.MatchString(result) {
-			foundDangerous = true
-			result = pattern.ReplaceAllString(result, "")
-		}
 	}
 
 	// Check and remove XSS patterns

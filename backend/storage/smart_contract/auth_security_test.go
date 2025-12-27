@@ -112,8 +112,8 @@ func TestInputSanitization(t *testing.T) {
 		{
 			name:        "SQL Injection Pattern",
 			input:       "'; DROP TABLE users; --",
-			expectError: true, // Now expects an error
-			description: "Should reject SQL injection patterns",
+			expectError: false,
+			description: "Should allow SQL-like text (queries are parameterized)",
 		},
 		{
 			name:        "Path Traversal",
