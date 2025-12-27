@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"stargate-backend/api"
@@ -243,14 +244,10 @@ func runHTTPServer() {
 	// Initialize dependency container
 	container := container.NewContainer()
 
-	var mirror *ipfs.Mirror
+	var mirror mirrorState
 	ipfsCfg := ipfs.LoadMirrorConfig()
 	if ipfsCfg.Enabled {
-		if started, err := ipfs.StartMirror(context.Background(), ipfsCfg); err != nil {
-			log.Printf("IPFS mirror disabled: %v", err)
-		} else {
-			mirror = started
-		}
+		go mirror.startWithRetry(context.Background(), ipfsCfg)
 	}
 
 	// Initialize MCP components (for HTTP routes)
@@ -284,7 +281,7 @@ func runHTTPServer() {
 			middleware.SecurityHeaders(
 				middleware.CORS(
 					middleware.Timeout(30 * time.Second)(
-						setupRoutes(mux, container, store, apiKeyIssuer, apiKeyValidator, challengeStore, ingestionSvc, mirror),
+						setupRoutes(mux, container, store, apiKeyIssuer, apiKeyValidator, challengeStore, ingestionSvc, &mirror),
 					),
 				)),
 		),
@@ -309,7 +306,7 @@ func runHTTPServer() {
 	log.Fatal(http.ListenAndServe(":"+httpPort, handler))
 }
 
-func setupRoutes(mux *http.ServeMux, container *container.Container, store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, apiKeyValidator auth.APIKeyValidator, challengeStore *auth.ChallengeStore, ingestionSvc *services.IngestionService, mirror *ipfs.Mirror) http.Handler {
+func setupRoutes(mux *http.ServeMux, container *container.Container, store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, apiKeyValidator auth.APIKeyValidator, challengeStore *auth.ChallengeStore, ingestionSvc *services.IngestionService, mirror *mirrorState) http.Handler {
 	// Initialize MCP REST server for HTTP routes
 	mcpRestServer := scmiddleware.NewServer(store, apiKeyValidator, ingestionSvc)
 	mcpRestServer.RegisterRoutes(mux)
@@ -322,10 +319,7 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		status := ipfs.MirrorStatus{Enabled: false}
-		if mirror != nil {
-			status = mirror.Status()
-		}
+		status := mirror.Status()
 		if err := json.NewEncoder(w).Encode(status); err != nil {
 			http.Error(w, "failed to encode status", http.StatusInternalServerError)
 			return
@@ -536,4 +530,54 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 
 	log.Printf("All routes registered, returning handler")
 	return mux
+}
+
+type mirrorState struct {
+	mu     sync.RWMutex
+	mirror *ipfs.Mirror
+}
+
+func (m *mirrorState) Status() ipfs.MirrorStatus {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m == nil || m.mirror == nil {
+		return ipfs.MirrorStatus{Enabled: false}
+	}
+	return m.mirror.Status()
+}
+
+func (m *mirrorState) set(mirror *ipfs.Mirror) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.mirror = mirror
+}
+
+func (m *mirrorState) startWithRetry(ctx context.Context, cfg ipfs.MirrorConfig) {
+	backoff := 5 * time.Second
+	maxBackoff := 1 * time.Minute
+
+	for {
+		started, err := ipfs.StartMirror(ctx, cfg)
+		if err == nil && started != nil {
+			m.set(started)
+			log.Printf("IPFS mirror started after retry")
+			return
+		}
+		if err != nil {
+			log.Printf("IPFS mirror startup failed (retrying in %s): %v", backoff, err)
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backoff):
+		}
+
+		if backoff < maxBackoff {
+			backoff *= 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
+		}
+	}
 }
