@@ -488,6 +488,33 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 				},
 			},
 		},
+		"list_events": map[string]interface{}{
+			"description": "List recent MCP events with optional filters",
+			"parameters": map[string]interface{}{
+				"type": map[string]interface{}{
+					"type":        "string",
+					"description": "Filter by event type",
+				},
+				"actor": map[string]interface{}{
+					"type":        "string",
+					"description": "Filter by actor identifier",
+				},
+				"entity_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Filter by entity ID",
+				},
+				"limit": map[string]interface{}{
+					"type":        "integer",
+					"description": "Maximum number of events to return",
+				},
+			},
+			"examples": []map[string]interface{}{
+				{
+					"description": "List recent events",
+					"arguments":   map[string]interface{}{"limit": 50},
+				},
+			},
+		},
 	}
 }
 
@@ -2298,9 +2325,16 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 		}, nil
 
 	case "list_events":
-		// For now, return empty events since the original server has in-memory events
-		events := []smart_contract.Event{}
+		filterType := h.toString(args["type"])
+		filterActor := h.toString(args["actor"])
+		filterEntity := h.toString(args["entity_id"])
+		limit := int(h.toInt64(args["limit"]))
 
+		if res, err := h.fetchEventsViaREST(filterType, filterActor, filterEntity, limit, apiKey); err == nil {
+			return res, nil
+		}
+
+		events := []smart_contract.Event{}
 		return map[string]interface{}{
 			"events": events,
 			"total":  len(events),
@@ -2439,6 +2473,52 @@ func (h *HTTPMCPServer) fetchSubmissionsViaREST(contractID, status string, taskI
 	req, err := http.NewRequest(http.MethodGet, urlStr, nil)
 	if err != nil {
 		return nil, err
+	}
+
+	resp, err := h.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("REST returned %d", resp.StatusCode)
+	}
+
+	var parsed map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+		return nil, err
+	}
+	return parsed, nil
+}
+
+// fetchEventsViaREST lists recent events via REST with optional filters.
+func (h *HTTPMCPServer) fetchEventsViaREST(filterType, filterActor, filterEntity string, limit int, apiKey string) (map[string]interface{}, error) {
+	params := url.Values{}
+	if filterType != "" {
+		params.Set("type", filterType)
+	}
+	if filterActor != "" {
+		params.Set("actor", filterActor)
+	}
+	if filterEntity != "" {
+		params.Set("entity_id", filterEntity)
+	}
+	if limit > 0 {
+		params.Set("limit", fmt.Sprintf("%d", limit))
+	}
+
+	urlStr := h.baseURL + "/api/smart_contract/events"
+	if enc := params.Encode(); enc != "" {
+		urlStr += "?" + enc
+	}
+
+	req, err := http.NewRequest(http.MethodGet, urlStr, nil)
+	if err != nil {
+		return nil, err
+	}
+	if apiKey != "" {
+		req.Header.Set("X-API-Key", apiKey)
 	}
 
 	resp, err := h.httpClient.Do(req)
