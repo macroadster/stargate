@@ -75,9 +75,40 @@ type announcement struct {
 	Timestamp   int64  `json:"timestamp"`
 }
 
+type MirrorStatus struct {
+	Enabled           bool   `json:"enabled"`
+	PeerID            string `json:"peer_id,omitempty"`
+	Topic             string `json:"topic,omitempty"`
+	UploadsDir        string `json:"uploads_dir,omitempty"`
+	LastPublishedCID  string `json:"last_published_cid,omitempty"`
+	LastPublishAt     int64  `json:"last_publish_at,omitempty"`
+	LastSeenRemoteCID string `json:"last_seen_remote_cid,omitempty"`
+	KnownFiles        int    `json:"known_files,omitempty"`
+}
+
 type pubsubMessage struct {
 	From string `json:"from"`
 	Data string `json:"data"`
+}
+
+func (m *Mirror) Status() MirrorStatus {
+	if m == nil {
+		return MirrorStatus{Enabled: false}
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return MirrorStatus{
+		Enabled:           m.cfg.Enabled,
+		PeerID:            m.peerID,
+		Topic:             m.cfg.Topic,
+		UploadsDir:        m.cfg.UploadsDir,
+		LastPublishedCID:  m.lastPublished,
+		LastPublishAt:     m.lastPublishAt.Unix(),
+		LastSeenRemoteCID: m.lastSeenRemote,
+		KnownFiles:        len(m.knownFiles),
+	}
 }
 
 func LoadMirrorConfig() MirrorConfig {

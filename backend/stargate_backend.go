@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -242,10 +243,13 @@ func runHTTPServer() {
 	// Initialize dependency container
 	container := container.NewContainer()
 
+	var mirror *ipfs.Mirror
 	ipfsCfg := ipfs.LoadMirrorConfig()
 	if ipfsCfg.Enabled {
-		if _, err := ipfs.StartMirror(context.Background(), ipfsCfg); err != nil {
+		if started, err := ipfs.StartMirror(context.Background(), ipfsCfg); err != nil {
 			log.Printf("IPFS mirror disabled: %v", err)
+		} else {
+			mirror = started
 		}
 	}
 
@@ -280,7 +284,7 @@ func runHTTPServer() {
 			middleware.SecurityHeaders(
 				middleware.CORS(
 					middleware.Timeout(30 * time.Second)(
-						setupRoutes(mux, container, store, apiKeyIssuer, apiKeyValidator, challengeStore, ingestionSvc),
+						setupRoutes(mux, container, store, apiKeyIssuer, apiKeyValidator, challengeStore, ingestionSvc, mirror),
 					),
 				)),
 		),
@@ -305,12 +309,28 @@ func runHTTPServer() {
 	log.Fatal(http.ListenAndServe(":"+httpPort, handler))
 }
 
-func setupRoutes(mux *http.ServeMux, container *container.Container, store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, apiKeyValidator auth.APIKeyValidator, challengeStore *auth.ChallengeStore, ingestionSvc *services.IngestionService) http.Handler {
+func setupRoutes(mux *http.ServeMux, container *container.Container, store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, apiKeyValidator auth.APIKeyValidator, challengeStore *auth.ChallengeStore, ingestionSvc *services.IngestionService, mirror *ipfs.Mirror) http.Handler {
 	// Initialize MCP REST server for HTTP routes
 	mcpRestServer := scmiddleware.NewServer(store, apiKeyValidator, ingestionSvc)
 	mcpRestServer.RegisterRoutes(mux)
 	// Health endpoints
 	mux.HandleFunc("/api/health", container.HealthHandler.HandleHealth)
+	mux.HandleFunc("/api/ipfs-mirror/status", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		status := ipfs.MirrorStatus{Enabled: false}
+		if mirror != nil {
+			status = mirror.Status()
+		}
+		if err := json.NewEncoder(w).Encode(status); err != nil {
+			http.Error(w, "failed to encode status", http.StatusInternalServerError)
+			return
+		}
+	})
 
 	// Auth endpoints
 	keyHandler := handlers.NewAPIKeyHandler(apiKeyIssuer, apiKeyValidator, challengeStore)
