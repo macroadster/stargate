@@ -369,6 +369,107 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 				},
 			},
 		},
+		"create_proposal": map[string]interface{}{
+			"description": "Create a new proposal with optional tasks",
+			"parameters": map[string]interface{}{
+				"title": map[string]interface{}{
+					"type":        "string",
+					"description": "Proposal title",
+					"required":    true,
+				},
+				"description_md": map[string]interface{}{
+					"type":        "string",
+					"description": "Markdown description of the proposal",
+				},
+				"budget_sats": map[string]interface{}{
+					"type":        "integer",
+					"description": "Total budget in sats",
+				},
+				"contract_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Contract ID to link (required for manual creation)",
+				},
+				"visible_pixel_hash": map[string]interface{}{
+					"type":        "string",
+					"description": "Visible pixel hash (required for manual creation)",
+				},
+				"ingestion_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Ingestion record ID to build from",
+				},
+				"tasks": map[string]interface{}{
+					"type":        "array",
+					"description": "Optional tasks to attach to the proposal",
+					"items": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"title": map[string]interface{}{
+								"type": "string",
+							},
+							"description": map[string]interface{}{
+								"type": "string",
+							},
+							"budget_sats": map[string]interface{}{
+								"type": "integer",
+							},
+						},
+					},
+				},
+			},
+			"examples": []map[string]interface{}{
+				{
+					"description": "Create a proposal with tasks",
+					"arguments": map[string]interface{}{
+						"title":              "Improve onboarding",
+						"description_md":     "Proposal details...",
+						"budget_sats":        10000,
+						"contract_id":        "contract-123",
+						"visible_pixel_hash": "contract-123",
+						"tasks": []map[string]interface{}{
+							{
+								"title":       "Draft documentation",
+								"description": "Write onboarding guide",
+								"budget_sats": 5000,
+							},
+						},
+					},
+				},
+			},
+		},
+		"create_contract": map[string]interface{}{
+			"description": "Create a smart contract record for a stego image",
+			"parameters": map[string]interface{}{
+				"contract_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Contract ID to create",
+					"required":    true,
+				},
+				"block_height": map[string]interface{}{
+					"type":        "integer",
+					"description": "Optional block height",
+				},
+				"contract_type": map[string]interface{}{
+					"type":        "string",
+					"description": "Contract type (e.g., steganographic)",
+				},
+				"metadata": map[string]interface{}{
+					"type":        "object",
+					"description": "Additional metadata for the contract",
+				},
+			},
+			"examples": []map[string]interface{}{
+				{
+					"description": "Create a stego contract",
+					"arguments": map[string]interface{}{
+						"contract_id":   "contract-123",
+						"contract_type": "steganographic",
+						"metadata": map[string]interface{}{
+							"visible_pixel_hash": "contract-123",
+						},
+					},
+				},
+			},
+		},
 		"scan_image": map[string]interface{}{
 			"description": "Scan an image for steganographic content",
 			"parameters": map[string]interface{}{
@@ -1848,6 +1949,34 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 		}
 
 		return result, nil
+
+	case "create_contract":
+		if h.smartContractSvc == nil {
+			return nil, fmt.Errorf("smart contract service unavailable")
+		}
+		contractID := h.toString(args["contract_id"])
+		if strings.TrimSpace(contractID) == "" {
+			return nil, fmt.Errorf("contract_id is required")
+		}
+		contractType := h.toString(args["contract_type"])
+		if contractType == "" {
+			contractType = "steganographic"
+		}
+		metadata := h.toMap(args["metadata"])
+		if metadata == nil {
+			metadata = map[string]interface{}{}
+		}
+		req := models.CreateContractRequest{
+			ContractID:   contractID,
+			BlockHeight:  h.toInt64(args["block_height"]),
+			ContractType: contractType,
+			Metadata:     metadata,
+		}
+		contract, err := h.smartContractSvc.CreateContract(req)
+		if err != nil {
+			return nil, err
+		}
+		return contract, nil
 
 	case "approve_proposal":
 		proposalID, ok := args["proposal_id"].(string)
