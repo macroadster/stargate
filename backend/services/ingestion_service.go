@@ -6,10 +6,13 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
+
+var ingestionTablePattern = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
 
 type IngestionRecord struct {
 	ID            string                 `json:"id"`
@@ -27,14 +30,22 @@ type IngestionService struct {
 	tableName string
 }
 
+func isValidIngestionTableName(name string) bool {
+	return ingestionTablePattern.MatchString(name)
+}
+
 func NewIngestionService(dsn string) (*IngestionService, error) {
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open pgx: %w", err)
 	}
+	tableName := "starlight_ingestions"
+	if !isValidIngestionTableName(tableName) {
+		return nil, fmt.Errorf("invalid ingestion table name: %s", tableName)
+	}
 	s := &IngestionService{
 		db:        db,
-		tableName: "starlight_ingestions",
+		tableName: tableName,
 	}
 	if err := s.ensureSchema(context.Background()); err != nil {
 		return nil, err

@@ -7,16 +7,23 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"regexp"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"stargate-backend/bitcoin"
 )
 
+var postgresTablePattern = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
+
 // PostgresStorage implements DataStorageInterface using a Postgres JSONB table.
 type PostgresStorage struct {
 	db        *sql.DB
 	tableName string
+}
+
+func isValidPostgresTableName(name string) bool {
+	return postgresTablePattern.MatchString(name)
 }
 
 // NewPostgresStorage creates a Postgres-backed storage implementation.
@@ -35,9 +42,13 @@ func NewPostgresStorage(dsn string) (*PostgresStorage, error) {
 	db.SetConnMaxLifetime(30 * time.Minute)
 
 	ps := &PostgresStorage{
-		db:        db,
-		tableName: "block_scans",
+		db: db,
 	}
+	tableName := "block_scans"
+	if !isValidPostgresTableName(tableName) {
+		return nil, fmt.Errorf("invalid postgres table name: %s", tableName)
+	}
+	ps.tableName = tableName
 
 	if err := ps.ensureSchema(context.Background()); err != nil {
 		return nil, err

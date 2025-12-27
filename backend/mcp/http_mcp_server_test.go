@@ -192,8 +192,8 @@ func TestProposalCreationRequiresIngestion(t *testing.T) {
 			t.Fatalf("expected failure due to missing scan metadata, but got success")
 		}
 
-		if !strings.Contains(resp.Error, "scan metadata") {
-			t.Fatalf("expected error about scan metadata, got: %s", resp.Error)
+		if !strings.Contains(resp.Error, "contract_id and visible_pixel_hash") {
+			t.Fatalf("expected error about contract_id and visible_pixel_hash, got: %s", resp.Error)
 		}
 	})
 
@@ -236,7 +236,8 @@ func TestProposalCreationRequiresIngestion(t *testing.T) {
 				"title":              "Test Proposal with Scan",
 				"description_md":     "A test proposal with scan data",
 				"budget_sats":        1000,
-				"visible_pixel_hash": "a1b2c3d4e5f6a7b8",
+				"contract_id":        "a1b2c3d4e5f6a7b8a1b2c3d4e5f6a7b8a1b2c3d4e5f6a7b8a1b2c3d4e5f6a7b8",
+				"visible_pixel_hash": "a1b2c3d4e5f6a7b8a1b2c3d4e5f6a7b8a1b2c3d4e5f6a7b8a1b2c3d4e5f6a7b8",
 				"tasks": []interface{}{
 					map[string]interface{}{
 						"title":       "Task 1",
