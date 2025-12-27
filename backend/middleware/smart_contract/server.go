@@ -1703,8 +1703,9 @@ func (s *Server) publishProposalTasks(ctx context.Context, proposalID string) er
 		}
 	}
 	// Build a contract from the proposal, then upsert tasks.
+	contractID := contractIDFromMeta(p.Metadata, p.ID)
 	contract := smart_contract.Contract{
-		ContractID:          p.ID,
+		ContractID:          contractID,
 		Title:               p.Title,
 		TotalBudgetSats:     p.BudgetSats,
 		GoalsCount:          1,
@@ -1716,8 +1717,8 @@ func (s *Server) publishProposalTasks(ctx context.Context, proposalID string) er
 	tasks := make([]smart_contract.Task, 0, len(p.Tasks))
 	for _, t := range p.Tasks {
 		task := t
-		if task.ContractID == "" {
-			task.ContractID = p.ID
+		if task.ContractID == "" || task.ContractID == p.ID {
+			task.ContractID = contractID
 		}
 		if task.MerkleProof == nil && p.VisiblePixelHash != "" {
 			task.MerkleProof = &smart_contract.MerkleProof{
