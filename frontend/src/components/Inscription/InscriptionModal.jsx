@@ -224,6 +224,9 @@ const InscriptionModal = ({ inscription, onClose }) => {
     const addr = (value) => (value || '').trim();
     const candidates = isRaiseFund
       ? [
+          approvedProposal?.metadata?.funding_address,
+          approvedProposal?.metadata?.payout_address,
+          approvedProposal?.metadata?.fundraiser_wallet,
           inscription.metadata?.funding_address,
           inscription.metadata?.payout_address,
           inscription.metadata?.fundraiser_wallet,
@@ -232,6 +235,7 @@ const InscriptionModal = ({ inscription, onClose }) => {
           inscriptionAddress,
         ]
       : [
+          approvedProposal?.metadata?.funding_address,
           inscription.metadata?.funding_address,
           selectedTask?.merkle_proof?.funding_address,
     ];
@@ -240,7 +244,12 @@ const InscriptionModal = ({ inscription, onClose }) => {
     return picked || '';
   }, [
     isRaiseFund,
+    approvedProposal?.metadata?.funding_address,
+    approvedProposal?.metadata?.payout_address,
+    approvedProposal?.metadata?.fundraiser_wallet,
     inscription.metadata?.funding_address,
+    inscription.metadata?.payout_address,
+    inscription.metadata?.fundraiser_wallet,
     inscription.metadata?.payer_address,
     selectedTask?.merkle_proof?.funding_address,
     inscriptionAddress,
@@ -257,12 +266,16 @@ const InscriptionModal = ({ inscription, onClose }) => {
   const resolvedFundraiserWallet = useMemo(() => {
     const explicit =
       psbtForm.fundraiserWallet ||
+      approvedProposal?.metadata?.fundraiser_wallet ||
+      approvedProposal?.metadata?.payout_address ||
       inscription.metadata?.fundraiser_wallet ||
       inscription.metadata?.payout_address ||
       '';
     return explicit || fundDepositAddress || '';
   }, [
     psbtForm.fundraiserWallet,
+    approvedProposal?.metadata?.fundraiser_wallet,
+    approvedProposal?.metadata?.payout_address,
     inscription.metadata?.fundraiser_wallet,
     inscription.metadata?.payout_address,
     fundDepositAddress,
@@ -440,6 +453,8 @@ const InscriptionModal = ({ inscription, onClose }) => {
           contractorWallet: prev.contractorWallet || firstTask?.contractor_wallet || inscription.metadata?.contractor_wallet || '',
           fundraiserWallet:
             prev.fundraiserWallet ||
+            approved?.metadata?.fundraiser_wallet ||
+            approved?.metadata?.payout_address ||
             inscription.metadata?.fundraiser_wallet ||
             inscription.metadata?.payout_address ||
             firstTask?.contractor_wallet ||

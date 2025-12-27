@@ -94,7 +94,6 @@ if [[ -n "$FUNDRAISER_PAYOUT_ADDRESS" ]]; then
 else
   echo "No fundraiser payout address provided; approver wallet should populate it."
 fi
-fi
 
 echo "Payout contract: ${PAYOUT_CONTRACT_ID}"
 echo "Raise-fund contract: ${RAISE_FUND_CONTRACT_ID}"
