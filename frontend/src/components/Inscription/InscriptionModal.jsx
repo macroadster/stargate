@@ -122,7 +122,6 @@ const InscriptionModal = ({ inscription, onClose }) => {
     inscription.metadata?.ingestion_id,
   ]);
   const contractKey = useMemo(() => contractCandidates.join('|'), [contractCandidates]);
-  const primaryContractId = useMemo(() => psbtForm.contractId || contractCandidates[0] || inscription.contract_id || inscription.id, [psbtForm.contractId, contractCandidates, inscription.contract_id, inscription.id]);
   const allTasks = useMemo(() => {
     const collected = [];
     proposalItems.forEach((p) => {
@@ -142,6 +141,23 @@ const InscriptionModal = ({ inscription, onClose }) => {
     () =>
       proposalItems.find((p) => ['approved', 'published'].includes((p.status || '').toLowerCase())) || null,
     [proposalItems],
+  );
+  const approvedContractId = useMemo(
+    () =>
+      approvedProposal?.visible_pixel_hash ||
+      approvedProposal?.metadata?.contract_id ||
+      approvedProposal?.metadata?.visible_pixel_hash ||
+      '',
+    [approvedProposal],
+  );
+  const primaryContractId = useMemo(
+    () =>
+      psbtForm.contractId ||
+      approvedContractId ||
+      contractCandidates[0] ||
+      inscription.contract_id ||
+      inscription.id,
+    [psbtForm.contractId, approvedContractId, contractCandidates, inscription.contract_id, inscription.id],
   );
   const psbtTasks = useMemo(() => {
     if (!approvedProposal) return allTasks;
@@ -649,7 +665,11 @@ const InscriptionModal = ({ inscription, onClose }) => {
       setPsbtError('Sign in with the funding API key (payer wallet) first.');
       return;
     }
-    const contractId = psbtForm.contractId || primaryContractId;
+    const contractId =
+      psbtForm.contractId ||
+      selectedTask?.contract_id ||
+      approvedContractId ||
+      primaryContractId;
     const payoutWallet = resolvedContractorWallet;
     const fundraiserWallet = resolvedFundraiserWallet;
     const fundingTasks = deliverableTasks.length > 0 ? deliverableTasks : psbtTasks;
