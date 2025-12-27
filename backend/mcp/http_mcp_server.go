@@ -515,6 +515,29 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 				},
 			},
 		},
+		"events_stream": map[string]interface{}{
+			"description": "Get SSE stream URL and auth hints for real-time MCP events",
+			"parameters": map[string]interface{}{
+				"type": map[string]interface{}{
+					"type":        "string",
+					"description": "Filter by event type",
+				},
+				"actor": map[string]interface{}{
+					"type":        "string",
+					"description": "Filter by actor identifier",
+				},
+				"entity_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Filter by entity ID",
+				},
+			},
+			"examples": []map[string]interface{}{
+				{
+					"description": "Get SSE stream URL",
+					"arguments":   map[string]interface{}{"type": "approve"},
+				},
+			},
+		},
 	}
 }
 
@@ -2340,6 +2363,19 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 			"total":  len(events),
 		}, nil
 
+	case "events_stream":
+		filterType := h.toString(args["type"])
+		filterActor := h.toString(args["actor"])
+		filterEntity := h.toString(args["entity_id"])
+		urlStr := h.eventsStreamURL(filterType, filterActor, filterEntity, "")
+		return map[string]interface{}{
+			"url":                urlStr,
+			"accept":             "text/event-stream",
+			"auth_required":      h.apiKeyStore != nil,
+			"auth_header":        "X-API-Key",
+			"authorization_hint": "Send X-API-Key or Authorization: Bearer <key>.",
+		}, nil
+
 	case "scan_image":
 		imageDataStr, ok := args["image_data"].(string)
 		if !ok {
@@ -2536,6 +2572,31 @@ func (h *HTTPMCPServer) fetchEventsViaREST(filterType, filterActor, filterEntity
 		return nil, err
 	}
 	return parsed, nil
+}
+
+func (h *HTTPMCPServer) eventsStreamURL(filterType, filterActor, filterEntity string, limit string) string {
+	params := url.Values{}
+	if filterType != "" {
+		params.Set("type", filterType)
+	}
+	if filterActor != "" {
+		params.Set("actor", filterActor)
+	}
+	if filterEntity != "" {
+		params.Set("entity_id", filterEntity)
+	}
+	if limit != "" {
+		params.Set("limit", limit)
+	}
+	base := h.baseURL
+	if strings.TrimSpace(base) == "" {
+		base = "http://localhost:3001"
+	}
+	urlStr := base + "/mcp/events"
+	if enc := params.Encode(); enc != "" {
+		urlStr += "?" + enc
+	}
+	return urlStr
 }
 
 // bodyHeaderFallback attempts to pull X-API-Key from a nested headers map in body if present.
