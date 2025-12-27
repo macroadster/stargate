@@ -1199,7 +1199,11 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                           <input
                             className="w-full h-10 rounded bg-gray-100 dark:bg-gray-800 px-3 py-2 font-mono text-xs text-gray-600 dark:text-gray-300"
                             placeholder={isRaiseFund ? 'Contract creator address' : 'Funding address'}
-                            value={isRaiseFund ? resolvedFundraiserWallet || '' : fundDepositAddress || ''}
+                            value={
+                              isRaiseFund
+                                ? resolvedFundraiserWallet || ''
+                                : auth.wallet || fundDepositAddress || ''
+                            }
                             readOnly
                           />
                         </div>
