@@ -305,8 +305,7 @@ func (m *Mirror) publishManifest(ctx context.Context) (string, error) {
 		return "", err
 	}
 
-	encoded := base64.StdEncoding.EncodeToString(payload)
-	if err := m.pubsubPublish(ctx, encoded); err != nil {
+	if err := m.pubsubPublish(ctx, payload); err != nil {
 		return "", err
 	}
 
@@ -344,7 +343,7 @@ func (m *Mirror) createManifest(ctx context.Context) (string, error) {
 }
 
 func (m *Mirror) subscribeOnce(ctx context.Context) error {
-	reqURL := fmt.Sprintf("%s/api/v0/pubsub/sub?arg=%s", strings.TrimRight(m.cfg.APIURL, "/"), url.QueryEscape(m.cfg.Topic))
+	reqURL := fmt.Sprintf("%s/api/v0/pubsub/sub?arg=%s", strings.TrimRight(m.cfg.APIURL, "/"), url.QueryEscape(multibaseEncodeString(m.cfg.Topic)))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, nil)
 	if err != nil {
 		return err
@@ -359,6 +358,14 @@ func (m *Mirror) subscribeOnce(ctx context.Context) error {
 		return err
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		if len(body) == 0 {
+			return fmt.Errorf("pubsub subscribe failed: %s", resp.Status)
+		}
+		return fmt.Errorf("pubsub subscribe failed: %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
 
 	decoder := json.NewDecoder(resp.Body)
 	for {
@@ -497,6 +504,15 @@ func parseAnnouncementPayload(payload []byte) string {
 	return ""
 }
 
+func multibaseEncodeString(value string) string {
+	return multibaseEncodeBytes([]byte(value))
+}
+
+func multibaseEncodeBytes(value []byte) string {
+	encoded := base64.RawURLEncoding.EncodeToString(value)
+	return "u" + encoded
+}
+
 func (m *Mirror) fetchPeerID(ctx context.Context) (string, error) {
 	reqURL := fmt.Sprintf("%s/api/v0/id", strings.TrimRight(m.cfg.APIURL, "/"))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, nil)
@@ -522,8 +538,10 @@ func (m *Mirror) fetchPeerID(ctx context.Context) (string, error) {
 	return payload.ID, nil
 }
 
-func (m *Mirror) pubsubPublish(ctx context.Context, message string) error {
-	reqURL := fmt.Sprintf("%s/api/v0/pubsub/pub?arg=%s&arg=%s", strings.TrimRight(m.cfg.APIURL, "/"), url.QueryEscape(m.cfg.Topic), url.QueryEscape(message))
+func (m *Mirror) pubsubPublish(ctx context.Context, message []byte) error {
+	topic := url.QueryEscape(multibaseEncodeString(m.cfg.Topic))
+	data := url.QueryEscape(multibaseEncodeBytes(message))
+	reqURL := fmt.Sprintf("%s/api/v0/pubsub/pub?arg=%s&arg=%s", strings.TrimRight(m.cfg.APIURL, "/"), topic, data)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, nil)
 	if err != nil {
 		return err
@@ -532,7 +550,14 @@ func (m *Mirror) pubsubPublish(ctx context.Context, message string) error {
 	if err != nil {
 		return err
 	}
-	resp.Body.Close()
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		if len(body) == 0 {
+			return fmt.Errorf("pubsub publish failed: %s", resp.Status)
+		}
+		return fmt.Errorf("pubsub publish failed: %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
 	return nil
 }
 
