@@ -540,12 +540,17 @@ func (m *Mirror) fetchPeerID(ctx context.Context) (string, error) {
 
 func (m *Mirror) pubsubPublish(ctx context.Context, message []byte) error {
 	topic := url.QueryEscape(multibaseEncodeString(m.cfg.Topic))
-	data := url.QueryEscape(multibaseEncodeBytes(message))
-	reqURL := fmt.Sprintf("%s/api/v0/pubsub/pub?arg=%s&arg=%s", strings.TrimRight(m.cfg.APIURL, "/"), topic, data)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, nil)
+	reqURL := fmt.Sprintf("%s/api/v0/pubsub/pub?arg=%s", strings.TrimRight(m.cfg.APIURL, "/"), topic)
+
+	body, contentType, err := multipartBody("data", "data", message)
 	if err != nil {
 		return err
 	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, body)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", contentType)
 	resp, err := m.client.Do(req)
 	if err != nil {
 		return err
@@ -559,6 +564,22 @@ func (m *Mirror) pubsubPublish(ctx context.Context, message []byte) error {
 		return fmt.Errorf("pubsub publish failed: %s: %s", resp.Status, strings.TrimSpace(string(body)))
 	}
 	return nil
+}
+
+func multipartBody(fieldName string, filename string, payload []byte) (io.Reader, string, error) {
+	buf := &bytes.Buffer{}
+	writer := multipart.NewWriter(buf)
+	part, err := writer.CreateFormFile(fieldName, filename)
+	if err != nil {
+		return nil, "", err
+	}
+	if _, err := part.Write(payload); err != nil {
+		return nil, "", err
+	}
+	if err := writer.Close(); err != nil {
+		return nil, "", err
+	}
+	return buf, writer.FormDataContentType(), nil
 }
 
 func (m *Mirror) addFile(ctx context.Context, path string, name string) (string, error) {
