@@ -3,6 +3,7 @@ package smart_contract
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"time"
 
@@ -94,6 +95,7 @@ func refreshProofs(ctx context.Context, store *scstore.PGStore, provider Funding
 			continue
 		}
 		proof := t.MerkleProof
+		prevStatus := proof.ConfirmationStatus
 		if proof.ConfirmationStatus == "provisional" {
 			fetched, err := provider.FetchProof(ctx, t)
 			if err != nil {
@@ -102,6 +104,14 @@ func refreshProofs(ctx context.Context, store *scstore.PGStore, provider Funding
 			proof = fetched
 			if err := store.UpdateTaskProof(ctx, t.TaskID, proof); err != nil {
 				log.Printf("failed to update proof for %s: %v", t.TaskID, err)
+			} else if prevStatus != "confirmed" && proof.ConfirmationStatus == "confirmed" {
+				PublishEvent(smart_contract.Event{
+					Type:      "contract_confirmed",
+					EntityID:  t.ContractID,
+					Actor:     "oracle",
+					Message:   fmt.Sprintf("contract confirmed on-chain via task %s", t.TaskID),
+					CreatedAt: time.Now(),
+				})
 			}
 		}
 		if err := bitcoin.SweepCommitmentIfReady(ctx, store, mempool, t, proof); err != nil {

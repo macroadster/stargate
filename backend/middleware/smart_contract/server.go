@@ -65,12 +65,14 @@ type ProposalUpdateBody struct {
 
 // NewServer builds a Server with the given store.
 func NewServer(store Store, apiKeys auth.APIKeyValidator, ingest *services.IngestionService) *Server {
-	return &Server{
+	srv := &Server{
 		store:        store,
 		apiKeys:      apiKeys,
 		ingestionSvc: ingest,
 		mempool:      bitcoin.NewMempoolClient(),
 	}
+	RegisterEventSink(srv.recordEvent)
+	return srv
 }
 
 // RegisterRoutes attaches handlers to the mux.
