@@ -478,25 +478,21 @@ func (m *Mirror) extractManifestCID(encoded string) (string, error) {
 		return "", nil
 	}
 
-	if cid := parseAnnouncementPayload([]byte(encoded)); cid != "" {
-		return cid, nil
-	}
-
+	candidates := make([][]byte, 0, 4)
+	candidates = append(candidates, []byte(encoded))
 	if decoded := decodeMultibasePayload([]byte(encoded)); len(decoded) > 0 {
-		if cid := parseAnnouncementPayload(decoded); cid != "" {
-			return cid, nil
+		candidates = append(candidates, decoded)
+	}
+	if decoded := decodeBase64Payload(encoded); len(decoded) > 0 {
+		candidates = append(candidates, decoded)
+		if decoded2 := decodeMultibasePayload(decoded); len(decoded2) > 0 {
+			candidates = append(candidates, decoded2)
 		}
 	}
 
-	raw, err := base64.StdEncoding.DecodeString(encoded)
-	if err == nil {
-		if cid := parseAnnouncementPayload(raw); cid != "" {
+	for _, payload := range candidates {
+		if cid := parseAnnouncementPayload(payload); cid != "" {
 			return cid, nil
-		}
-		if decoded := decodeMultibasePayload(raw); len(decoded) > 0 {
-			if cid := parseAnnouncementPayload(decoded); cid != "" {
-				return cid, nil
-			}
 		}
 	}
 
@@ -536,6 +532,25 @@ func decodeMultibasePayload(raw []byte) []byte {
 		return nil
 	}
 	return decoded
+}
+
+func decodeBase64Payload(encoded string) []byte {
+	encoded = strings.TrimSpace(encoded)
+	if encoded == "" {
+		return nil
+	}
+	encodings := []*base64.Encoding{
+		base64.StdEncoding,
+		base64.RawStdEncoding,
+		base64.URLEncoding,
+		base64.RawURLEncoding,
+	}
+	for _, enc := range encodings {
+		if decoded, err := enc.DecodeString(encoded); err == nil {
+			return decoded
+		}
+	}
+	return nil
 }
 
 func (m *Mirror) fetchPeerID(ctx context.Context) (string, error) {
