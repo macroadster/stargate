@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -138,6 +139,10 @@ func (h *HTTPMCPServer) authWrap(next http.HandlerFunc) http.HandlerFunc {
 					key = strings.TrimPrefix(auth, "Bearer ")
 				}
 			}
+			if key == "" && h.allowUnauthMCP(r) {
+				next(w, r)
+				return
+			}
 			if key == "" {
 				log.Printf("AUDIT: Missing API key for %s %s", r.Method, r.URL.Path)
 				h.writeHTTPError(w, http.StatusUnauthorized, "API_KEY_REQUIRED", "API key required", "Send X-API-Key or Authorization: Bearer <key>.")
@@ -157,6 +162,36 @@ func (h *HTTPMCPServer) authWrap(next http.HandlerFunc) http.HandlerFunc {
 			log.Printf("AUDIT: Authenticated request for key %s on %s %s", key, r.Method, r.URL.Path)
 		}
 		next(w, r)
+	}
+}
+
+func (h *HTTPMCPServer) allowUnauthMCP(r *http.Request) bool {
+	if r == nil || r.URL == nil {
+		return false
+	}
+	if r.Method != http.MethodPost {
+		return false
+	}
+	if r.URL.Path != "/mcp" && r.URL.Path != "/mcp/" {
+		return false
+	}
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		return false
+	}
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	if len(body) == 0 {
+		return false
+	}
+	var req jsonRPCRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		return false
+	}
+	switch req.Method {
+	case "initialize", "notifications/initialized":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -483,6 +518,8 @@ func (h *HTTPMCPServer) handleJSONRPC(w http.ResponseWriter, r *http.Request) {
 	switch req.Method {
 	case "initialize":
 		h.handleJSONRPCInitialize(w, req)
+	case "notifications/initialized":
+		w.WriteHeader(http.StatusNoContent)
 	case "tools/list":
 		h.handleJSONRPCToolsList(w, req)
 	case "tools/call":
