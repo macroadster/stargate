@@ -457,26 +457,38 @@ const InscriptionModal = ({ inscription, onClose }) => {
         const preferredHash = first.visible_pixel_hash || psbtForm.pixelHash || inscription.metadata?.visible_pixel_hash || '';
         const firstTaskWithFunding = preferredList.find((t) => t?.merkle_proof?.funding_address);
         const firstTask = firstTaskWithFunding || preferredList[0];
+        const preferredContractId =
+          firstTask?.contract_id ||
+          approved?.visible_pixel_hash ||
+          approved?.metadata?.contract_id ||
+          approved?.metadata?.visible_pixel_hash ||
+          first.visible_pixel_hash ||
+          first.metadata?.contract_id ||
+          primaryContractId;
         const defaultBudget = preferredList.length > 0
           ? preferredList.reduce((sum, t) => sum + (Number(t.budget_sats) || 0), 0)
           : firstTask?.budget_sats || first.budget_sats || '';
-        setPsbtForm((prev) => ({
-          ...prev,
-          pixelHash: preferredHash,
-          contractId: prev.contractId || first.id || primaryContractId,
-          budgetSats: prev.budgetSats || defaultBudget,
-          taskId: prev.taskId || firstTask?.task_id || '',
-          contractorWallet: prev.contractorWallet || firstTask?.contractor_wallet || inscription.metadata?.contractor_wallet || '',
-          fundraiserWallet:
-            prev.fundraiserWallet ||
-            approved?.metadata?.fundraiser_wallet ||
-            approved?.metadata?.payout_address ||
-            inscription.metadata?.fundraiser_wallet ||
-            inscription.metadata?.payout_address ||
-            firstTask?.contractor_wallet ||
-            fundDepositAddress ||
-            '',
-        }));
+        setPsbtForm((prev) => {
+          const prevContractId = prev.contractId;
+          const shouldReplaceContractId = !prevContractId || prevContractId.startsWith('proposal-');
+          return {
+            ...prev,
+            pixelHash: preferredHash,
+            contractId: shouldReplaceContractId ? preferredContractId : prevContractId,
+            budgetSats: prev.budgetSats || defaultBudget,
+            taskId: prev.taskId || firstTask?.task_id || '',
+            contractorWallet: prev.contractorWallet || firstTask?.contractor_wallet || inscription.metadata?.contractor_wallet || '',
+            fundraiserWallet:
+              prev.fundraiserWallet ||
+              approved?.metadata?.fundraiser_wallet ||
+              approved?.metadata?.payout_address ||
+              inscription.metadata?.fundraiser_wallet ||
+              inscription.metadata?.payout_address ||
+              firstTask?.contractor_wallet ||
+              fundDepositAddress ||
+              '',
+          };
+        });
       }
       if (items.length > 0) {
         hasFetchedRef.current = true;
