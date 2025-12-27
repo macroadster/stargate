@@ -473,19 +473,25 @@ func (m *Mirror) extractManifestCID(encoded string) (string, error) {
 		return "", nil
 	}
 
-	raw, err := base64.StdEncoding.DecodeString(encoded)
-	if err != nil {
-		return "", err
-	}
-
-	if cid := parseAnnouncementPayload(raw); cid != "" {
+	if cid := parseAnnouncementPayload([]byte(encoded)); cid != "" {
 		return cid, nil
 	}
 
-	decoded := decodeMultibasePayload(raw)
-	if len(decoded) > 0 {
+	if decoded := decodeMultibasePayload([]byte(encoded)); len(decoded) > 0 {
 		if cid := parseAnnouncementPayload(decoded); cid != "" {
 			return cid, nil
+		}
+	}
+
+	raw, err := base64.StdEncoding.DecodeString(encoded)
+	if err == nil {
+		if cid := parseAnnouncementPayload(raw); cid != "" {
+			return cid, nil
+		}
+		if decoded := decodeMultibasePayload(raw); len(decoded) > 0 {
+			if cid := parseAnnouncementPayload(decoded); cid != "" {
+				return cid, nil
+			}
 		}
 	}
 
