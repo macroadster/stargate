@@ -48,6 +48,20 @@ call_mcp() {
     -d "$(jq -n --arg tool "${tool}" --argjson args "${args_json}" '{tool: $tool, arguments: $args}')"
 }
 
+resolve_contract_ref() {
+  local proposal_id=$1
+  local resp
+  local meta_contract
+  resp=$(curl -sk -H "X-API-Key: ${FUNDER_API_KEY}" \
+    "${STARGATE_BASE}/api/smart_contract/proposals/${proposal_id}")
+  meta_contract=$(echo "$resp" | jq -r '.metadata.contract_id // empty')
+  if [[ -n "$meta_contract" ]]; then
+    echo "$meta_contract"
+    return
+  fi
+  echo "$proposal_id"
+}
+
 ensure_success() {
   local resp=$1
   local context=$2
@@ -111,9 +125,11 @@ echo "$create_payout_resp" | jq '.'
 ensure_success "$create_payout_resp" "create payout proposal"
 payout_proposal_id=$(echo "$create_payout_resp" | jq -r '.result.proposal_id // empty')
 [[ -n "$payout_proposal_id" ]] || fail "payout proposal create failed"
-payout_contract_ref="$payout_proposal_id"
 
 approve_proposal "$payout_proposal_id" | jq '.'
+
+payout_contract_ref=$(resolve_contract_ref "$payout_proposal_id")
+echo "Payout contract ref: ${payout_contract_ref}"
 
 payout_tasks=$(fetch_tasks_with_retry "${payout_contract_ref}")
 ensure_success "$payout_tasks" "list payout tasks"
@@ -155,9 +171,11 @@ echo "$create_raise_resp" | jq '.'
 ensure_success "$create_raise_resp" "create raise-fund proposal"
 raise_proposal_id=$(echo "$create_raise_resp" | jq -r '.result.proposal_id // empty')
 [[ -n "$raise_proposal_id" ]] || fail "raise-fund proposal create failed"
-raise_contract_ref="$raise_proposal_id"
 
 approve_proposal "$raise_proposal_id" | jq '.'
+
+raise_contract_ref=$(resolve_contract_ref "$raise_proposal_id")
+echo "Raise-fund contract ref: ${raise_contract_ref}"
 
 raise_tasks=$(fetch_tasks_with_retry "${raise_contract_ref}")
 ensure_success "$raise_tasks" "list raise-fund tasks"
