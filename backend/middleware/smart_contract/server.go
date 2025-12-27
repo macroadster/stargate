@@ -1737,6 +1737,13 @@ func (s *Server) publishProposalTasks(ctx context.Context, proposalID string) er
 			return err
 		}
 		s.recordEvent(smart_contract.Event{
+			Type:      "contract_upsert",
+			EntityID:  contract.ContractID,
+			Actor:     "system",
+			Message:   fmt.Sprintf("contract upserted with %d tasks", len(tasks)),
+			CreatedAt: time.Now(),
+		})
+		s.recordEvent(smart_contract.Event{
 			Type:      "publish",
 			EntityID:  proposalID,
 			Actor:     "system",
@@ -1872,6 +1879,13 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 				Error(w, http.StatusBadRequest, err.Error())
 				return
 			}
+			s.recordEvent(smart_contract.Event{
+				Type:      "proposal_create",
+				EntityID:  proposal.ID,
+				Actor:     "creator",
+				Message:   "proposal created from ingestion",
+				CreatedAt: time.Now(),
+			})
 			JSON(w, http.StatusCreated, map[string]interface{}{
 				"proposal_id": proposal.ID,
 				"status":      proposal.Status,
@@ -1945,6 +1959,13 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 			Error(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		s.recordEvent(smart_contract.Event{
+			Type:      "proposal_create",
+			EntityID:  p.ID,
+			Actor:     "creator",
+			Message:   fmt.Sprintf("proposal created with %d tasks", len(p.Tasks)),
+			CreatedAt: time.Now(),
+		})
 		JSON(w, http.StatusCreated, map[string]interface{}{
 			"proposal_id": p.ID,
 			"status":      p.Status,
