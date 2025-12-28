@@ -195,12 +195,10 @@ func (m *Mirror) publishLoop(ctx context.Context) {
 				continue
 			}
 
-			log.Printf("IPFS mirror publishing manifest (changed=%t)", changed)
 			manifestCID, err := m.publishManifest(ctx)
 			if err != nil {
 				log.Printf("IPFS mirror publish failed: %v", err)
 			} else if manifestCID != "" {
-				log.Printf("IPFS mirror published manifest: %s", manifestCID)
 				m.lastPublished = manifestCID
 				m.lastPublishAt = time.Now()
 			}
@@ -275,7 +273,6 @@ func (m *Mirror) scanAndAdd(ctx context.Context) (bool, error) {
 		m.knownFiles[rel] = state
 		m.mu.Unlock()
 
-		log.Printf("IPFS mirror added file: %s (cid=%s size=%d)", rel, cid, state.Size)
 		changed = true
 		count++
 		return nil
@@ -385,7 +382,6 @@ func (m *Mirror) subscribeOnce(ctx context.Context) error {
 			continue
 		}
 		if manifestCID == "" {
-			log.Printf("IPFS mirror ignored pubsub message from %s (data_len=%d)", msg.From, len(msg.Data))
 			continue
 		}
 		if manifestCID == "" || manifestCID == m.lastSeenRemote {
@@ -410,7 +406,6 @@ func (m *Mirror) processManifest(ctx context.Context, manifestCID string) error 
 		return fmt.Errorf("invalid manifest: %w", err)
 	}
 
-	log.Printf("IPFS mirror received manifest %s with %d files", manifestCID, len(incoming.Files))
 	for _, entry := range incoming.Files {
 		if entry.Path == "" || entry.CID == "" {
 			continue
@@ -464,7 +459,6 @@ func (m *Mirror) downloadEntry(ctx context.Context, entry manifestEntry) error {
 		_ = os.Chtimes(target, modTime, modTime)
 	}
 
-	log.Printf("IPFS mirror downloaded file: %s (cid=%s size=%d)", entry.Path, entry.CID, entry.Size)
 	m.mu.Lock()
 	m.knownFiles[entry.Path] = fileState{
 		Size:    entry.Size,
