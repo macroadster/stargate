@@ -308,8 +308,7 @@ func (m *Mirror) publishManifest(ctx context.Context) (string, error) {
 		return "", err
 	}
 
-	encoded := []byte(multibaseEncodeBytes(payload))
-	if err := m.pubsubPublish(ctx, encoded); err != nil {
+	if err := m.pubsubPublish(ctx, payload); err != nil {
 		return "", err
 	}
 
