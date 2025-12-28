@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"mime/multipart"
 	"net/http"
 	"os"
@@ -228,9 +227,6 @@ func (s *Server) upsertContractFromStegoPayload(ctx context.Context, contractID,
 	}
 	if err := s.store.CreateProposal(ctx, proposal); err != nil {
 		return fmt.Errorf("create proposal failed: %w", err)
-	}
-	if err := s.store.UpdateProposal(ctx, proposal); err != nil {
-		log.Printf("update proposal metadata failed for %s: %v", contractID, err)
 	}
 	contract := smart_contract.Contract{
 		ContractID:      contractID,
