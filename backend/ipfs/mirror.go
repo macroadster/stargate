@@ -385,6 +385,10 @@ func (m *Mirror) subscribeOnce(ctx context.Context) error {
 			log.Printf("IPFS mirror message decode failed: %v", err)
 			continue
 		}
+		if manifestCID == "" {
+			log.Printf("IPFS mirror ignored pubsub message from %s (data_len=%d)", msg.From, len(msg.Data))
+			continue
+		}
 		if manifestCID == "" || manifestCID == m.lastSeenRemote {
 			continue
 		}
