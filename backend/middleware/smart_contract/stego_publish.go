@@ -99,16 +99,23 @@ func loadStegoApprovalConfig() stegoApprovalConfig {
 	}
 }
 
-func (s *Server) maybePublishStegoForProposal(ctx context.Context, proposalID string) {
+func (s *Server) maybePublishStegoForProposal(ctx context.Context, proposalID string) error {
 	cfg := loadStegoApprovalConfig()
 	if !cfg.Enabled {
-		return
+		return nil
 	}
-	go func() {
-		if err := s.publishStegoForProposal(context.Background(), proposalID, cfg); err != nil {
-			log.Printf("stego approval publish failed for proposal %s: %v", proposalID, err)
-		}
-	}()
+	timeout := cfg.InscribeTimeout + cfg.IngestTimeout + (5 * time.Second)
+	runCtx := context.Background()
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		runCtx, cancel = context.WithTimeout(runCtx, timeout)
+		defer cancel()
+	}
+	if err := s.publishStegoForProposal(runCtx, proposalID, cfg); err != nil {
+		log.Printf("stego approval publish failed for proposal %s: %v", proposalID, err)
+		return err
+	}
+	return nil
 }
 
 func (s *Server) publishStegoForProposal(ctx context.Context, proposalID string, cfg stegoApprovalConfig) error {

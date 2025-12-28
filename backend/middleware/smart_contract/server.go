@@ -1807,6 +1807,7 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 				Error(w, http.StatusBadRequest, err.Error())
 				return
 			}
+			_ = s.maybePublishStegoForProposal(r.Context(), id)
 			if err := s.store.ApproveProposal(r.Context(), id); err != nil {
 				Error(w, http.StatusBadRequest, err.Error())
 				return
@@ -1815,7 +1816,6 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 			if err := s.publishProposalTasks(r.Context(), id); err != nil {
 				log.Printf("failed to publish tasks for proposal %s: %v", id, err)
 			}
-			s.maybePublishStegoForProposal(r.Context(), id)
 			s.recordEvent(smart_contract.Event{
 				Type:      "approve",
 				EntityID:  id,
