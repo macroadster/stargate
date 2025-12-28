@@ -32,6 +32,8 @@ type stegoApprovalConfig struct {
 	APIKey          string
 	DefaultMethod   string
 	Issuer          string
+	AnnounceEnabled bool
+	AnnounceTopic   string
 	IngestPoll      time.Duration
 	IngestTimeout   time.Duration
 	InscribeTimeout time.Duration
@@ -45,6 +47,17 @@ type stegoProposalPayload = stego.PayloadProposal
 type stegoTaskPayload = stego.PayloadTask
 type stegoMetadataEntry = stego.MetadataEntry
 
+type stegoAnnouncement struct {
+	Type             string `json:"type"`
+	StegoCID         string `json:"stego_cid"`
+	ExpectedHash     string `json:"expected_hash,omitempty"`
+	ProposalID       string `json:"proposal_id,omitempty"`
+	VisiblePixelHash string `json:"visible_pixel_hash,omitempty"`
+	PayloadCID       string `json:"payload_cid,omitempty"`
+	Issuer           string `json:"issuer,omitempty"`
+	Timestamp        int64  `json:"timestamp"`
+}
+
 func loadStegoApprovalConfig() stegoApprovalConfig {
 	enabled := strings.EqualFold(strings.TrimSpace(os.Getenv("STARGATE_STEGO_APPROVAL_ENABLED")), "true")
 	proxyBase := strings.TrimSpace(os.Getenv("STARGATE_PROXY_BASE"))
@@ -54,6 +67,14 @@ func loadStegoApprovalConfig() stegoApprovalConfig {
 	method := strings.TrimSpace(os.Getenv("STARGATE_STEGO_METHOD"))
 	if method == "" {
 		method = "lsb"
+	}
+	announceTopic := strings.TrimSpace(os.Getenv("IPFS_STEGO_TOPIC"))
+	if announceTopic == "" {
+		announceTopic = "stargate-stego"
+	}
+	announceEnabled := enabled
+	if raw := strings.TrimSpace(os.Getenv("IPFS_STEGO_ANNOUNCE_ENABLED")); raw != "" {
+		announceEnabled = strings.EqualFold(raw, "true")
 	}
 	issuer := strings.TrimSpace(os.Getenv("STARGATE_STEGO_ISSUER"))
 	if issuer == "" {
@@ -90,6 +111,8 @@ func loadStegoApprovalConfig() stegoApprovalConfig {
 		APIKey:          strings.TrimSpace(os.Getenv("STARGATE_API_KEY")),
 		DefaultMethod:   method,
 		Issuer:          issuer,
+		AnnounceEnabled: announceEnabled,
+		AnnounceTopic:   announceTopic,
 		IngestPoll:      ingestPoll,
 		IngestTimeout:   ingestTimeout,
 		InscribeTimeout: inscribeTimeout,
@@ -220,6 +243,23 @@ func (s *Server) publishStegoForProposal(ctx context.Context, proposalID string,
 	p.Metadata = meta
 	if err := s.store.UpdateProposal(ctx, p); err != nil {
 		return fmt.Errorf("failed to update proposal metadata: %w", err)
+	}
+	if cfg.AnnounceEnabled && strings.TrimSpace(cfg.AnnounceTopic) != "" {
+		announce := stegoAnnouncement{
+			Type:             "stego",
+			StegoCID:         stegoCID,
+			ExpectedHash:     contractID,
+			ProposalID:       proposalID,
+			VisiblePixelHash: visibleHash,
+			PayloadCID:       payloadCID,
+			Issuer:           cfg.Issuer,
+			Timestamp:        time.Now().Unix(),
+		}
+		if payload, err := json.Marshal(announce); err != nil {
+			log.Printf("stego announce marshal failed: %v", err)
+		} else if err := ipfsClient.PubsubPublish(ctx, cfg.AnnounceTopic, payload); err != nil {
+			log.Printf("stego announce publish failed: %v", err)
+		}
 	}
 	s.recordEvent(smart_contract.Event{
 		Type:      "stego_publish",

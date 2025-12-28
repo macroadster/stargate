@@ -123,3 +123,35 @@ func (c *Client) Cat(ctx context.Context, cid string) ([]byte, error) {
 	}
 	return io.ReadAll(resp.Body)
 }
+
+func (c *Client) PubsubPublish(ctx context.Context, topic string, message []byte) error {
+	if strings.TrimSpace(topic) == "" {
+		return fmt.Errorf("ipfs pubsub missing topic")
+	}
+	encodedTopic := url.QueryEscape(multibaseEncodeString(topic))
+	reqURL := fmt.Sprintf("%s/api/v0/pubsub/pub?arg=%s", c.apiURL, encodedTopic)
+
+	body, contentType, err := multipartBody("data", "data", message)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, body)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", contentType)
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		if len(body) == 0 {
+			return fmt.Errorf("ipfs pubsub publish failed: %s", resp.Status)
+		}
+		return fmt.Errorf("ipfs pubsub publish failed: %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+	return nil
+}

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"mime/multipart"
 	"net/http"
 	"os"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	sc "stargate-backend/core/smart_contract"
+	"stargate-backend/ipfs"
 	scmiddleware "stargate-backend/middleware/smart_contract"
 	"stargate-backend/models"
 	"stargate-backend/services"
@@ -488,6 +490,7 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 				fmt.Printf("Failed to create ingestion record for %s: %v\n", ingestionID, err)
 			}
 		}
+		publishPendingIngestAnnouncement(ingestionID, visibleHash, filename, method, text, price, address, fundingMode, imgBytes)
 	}
 	// Mirror into MCP contracts/open-contracts for AI + UI consistency.
 	h.upsertOpenContract(visibleHash, text, price)
@@ -1084,4 +1087,70 @@ func (h *ProxyHandler) HandleProxy(w http.ResponseWriter, r *http.Request) {
 	// Copy response status and body
 	w.WriteHeader(resp.StatusCode)
 	io.Copy(w, resp.Body)
+}
+
+type pendingIngestAnnouncement struct {
+	Type             string `json:"type"`
+	IngestionID      string `json:"ingestion_id"`
+	VisiblePixelHash string `json:"visible_pixel_hash,omitempty"`
+	ImageCID         string `json:"image_cid"`
+	Filename         string `json:"filename,omitempty"`
+	Method           string `json:"method,omitempty"`
+	Message          string `json:"message,omitempty"`
+	Price            string `json:"price,omitempty"`
+	Address          string `json:"address,omitempty"`
+	FundingMode      string `json:"funding_mode,omitempty"`
+	Timestamp        int64  `json:"timestamp"`
+}
+
+func publishPendingIngestAnnouncement(ingestionID, visibleHash, filename, method, message, price, address, fundingMode string, imgBytes []byte) {
+	if !ipfsIngestSyncEnabled() {
+		return
+	}
+	if strings.TrimSpace(ingestionID) == "" || len(imgBytes) == 0 {
+		return
+	}
+	topic := strings.TrimSpace(os.Getenv("IPFS_MIRROR_TOPIC"))
+	if topic == "" {
+		topic = "stargate-uploads"
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	client := ipfs.NewClientFromEnv()
+	ext := filepath.Ext(filename)
+	if ext == "" {
+		ext = ".png"
+	}
+	name := fmt.Sprintf("pending-%s%s", ingestionID, ext)
+	imageCID, err := client.AddBytes(ctx, name, imgBytes)
+	if err != nil {
+		log.Printf("pending ingest announce: ipfs add failed for %s: %v", ingestionID, err)
+		return
+	}
+	ann := pendingIngestAnnouncement{
+		Type:             "pending_ingest",
+		IngestionID:      ingestionID,
+		VisiblePixelHash: strings.TrimSpace(visibleHash),
+		ImageCID:         imageCID,
+		Filename:         filename,
+		Method:           method,
+		Message:          message,
+		Price:            price,
+		Address:          address,
+		FundingMode:      fundingMode,
+		Timestamp:        time.Now().Unix(),
+	}
+	payload, err := json.Marshal(ann)
+	if err != nil {
+		log.Printf("pending ingest announce: marshal failed for %s: %v", ingestionID, err)
+		return
+	}
+	if err := client.PubsubPublish(ctx, topic, payload); err != nil {
+		log.Printf("pending ingest announce: publish failed for %s: %v", ingestionID, err)
+	}
+}
+
+func ipfsIngestSyncEnabled() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("IPFS_INGEST_SYNC_ENABLED")), "true")
 }

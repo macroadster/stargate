@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"mime/multipart"
 	"net/http"
 	"os"
@@ -18,6 +20,7 @@ import (
 
 	"stargate-backend/core/smart_contract"
 	"stargate-backend/ipfs"
+	"stargate-backend/services"
 	"stargate-backend/stego"
 )
 
@@ -121,6 +124,7 @@ func (s *Server) reconcileStegoFromIPFS(ctx context.Context, stegoCID string, ex
 	if err := s.upsertContractFromStegoPayload(ctx, contractID, stegoCID, manifest, payload); err != nil {
 		return stegoReconcileResponse{}, err
 	}
+	s.ensureStegoIngestion(ctx, contractID, stegoCID, stegoBytes, manifest)
 	return stegoReconcileResponse{
 		ContractID:       contractID,
 		StegoCID:         stegoCID,
@@ -192,6 +196,35 @@ func extractStegoManifest(ctx context.Context, image []byte, cfg stegoReconcileC
 		return nil, fmt.Errorf("stego extract returned empty message")
 	}
 	return []byte(extracted), nil
+}
+
+func (s *Server) ensureStegoIngestion(ctx context.Context, contractID, stegoCID string, stegoBytes []byte, manifest stego.Manifest) {
+	if s.ingestionSvc == nil || contractID == "" || len(stegoBytes) == 0 {
+		return
+	}
+	meta := map[string]interface{}{
+		"stego_image_cid":           stegoCID,
+		"stego_manifest_issuer":     manifest.Issuer,
+		"stego_manifest_created_at": manifest.CreatedAt,
+		"origin_proposal_id":        manifest.ProposalID,
+		"visible_pixel_hash":        manifest.VisiblePixelHash,
+	}
+	rec := services.IngestionRecord{
+		ID:            contractID,
+		Filename:      "stego.png",
+		Method:        "stego",
+		MessageLength: 0,
+		ImageBase64:   base64.StdEncoding.EncodeToString(stegoBytes),
+		Metadata:      meta,
+		Status:        "verified",
+	}
+	if existing, err := s.ingestionSvc.Get(contractID); err == nil && existing != nil {
+		_ = s.ingestionSvc.UpdateFromIngest(contractID, rec)
+		return
+	}
+	if err := s.ingestionSvc.Create(rec); err != nil {
+		log.Printf("stego reconcile: failed to create ingestion %s: %v", contractID, err)
+	}
 }
 
 func (s *Server) upsertContractFromStegoPayload(ctx context.Context, contractID, stegoCID string, manifest stego.Manifest, payload stego.Payload) error {

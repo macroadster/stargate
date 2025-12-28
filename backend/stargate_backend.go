@@ -313,6 +313,9 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 	// Initialize MCP REST server for HTTP routes
 	mcpRestServer := scmiddleware.NewServer(store, apiKeyValidator, ingestionSvc)
 	mcpRestServer.RegisterRoutes(mux)
+	if err := scmiddleware.StartStegoPubsubSync(context.Background(), mcpRestServer); err != nil {
+		log.Printf("stego pubsub sync disabled: %v", err)
+	}
 	// Health endpoints
 	mux.HandleFunc("/api/health", container.HealthHandler.HandleHealth)
 	mux.HandleFunc("/api/ipfs-mirror/status", func(w http.ResponseWriter, r *http.Request) {
