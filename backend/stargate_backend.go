@@ -413,6 +413,9 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 		bitcoinAPI,
 	)
 	blockMonitor.SetIngestionService(container.IngestionService)
+	blockMonitor.SetStegoReconciler(bitcoin.StegoReconcilerFunc(func(ctx context.Context, stegoCID, expectedHash string) error {
+		return mcpRestServer.ReconcileStego(ctx, stegoCID, expectedHash)
+	}))
 	if sweepStore, ok := store.(bitcoin.SweepTaskStore); ok {
 		blockMonitor.SetSweepDependencies(sweepStore, bitcoin.NewMempoolClient())
 	}

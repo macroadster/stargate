@@ -30,18 +30,19 @@ import (
 
 // BlockMonitor handles comprehensive Bitcoin block monitoring and data extraction
 type BlockMonitor struct {
-	bitcoinClient *BitcoinNodeClient
-	rawClient     *RawBlockClient
-	bitcoinAPI    *BitcoinAPI
-	currentHeight int64
-	lastChecked   time.Time
-	isRunning     bool
-	stopChan      chan bool
-	mu            sync.RWMutex
-	dataStorage   DataStorageInterface
-	ingestion     *services.IngestionService
-	sweepStore    SweepTaskStore
-	sweepMempool  *MempoolClient
+	bitcoinClient   *BitcoinNodeClient
+	rawClient       *RawBlockClient
+	bitcoinAPI      *BitcoinAPI
+	currentHeight   int64
+	lastChecked     time.Time
+	isRunning       bool
+	stopChan        chan bool
+	mu              sync.RWMutex
+	dataStorage     DataStorageInterface
+	ingestion       *services.IngestionService
+	sweepStore      SweepTaskStore
+	sweepMempool    *MempoolClient
+	stegoReconciler StegoReconciler
 
 	// Configuration
 	checkInterval time.Duration
@@ -117,6 +118,18 @@ type SmartContractData struct {
 	ImagePath   string         `json:"image_path"`
 	Confidence  float64        `json:"confidence"`
 	Metadata    map[string]any `json:"metadata"`
+}
+
+// StegoReconciler runs a stego reconcile given a CID + expected hash.
+type StegoReconciler interface {
+	ReconcileStego(ctx context.Context, stegoCID, expectedHash string) error
+}
+
+// StegoReconcilerFunc adapts a function to the StegoReconciler interface.
+type StegoReconcilerFunc func(ctx context.Context, stegoCID, expectedHash string) error
+
+func (fn StegoReconcilerFunc) ReconcileStego(ctx context.Context, stegoCID, expectedHash string) error {
+	return fn(ctx, stegoCID, expectedHash)
 }
 
 // BlockMetadata contains processing metadata
@@ -214,6 +227,11 @@ func NewBlockMonitorWithStorageAndAPI(client *BitcoinNodeClient, dataStorage Dat
 // SetIngestionService enables ingestion-aware reconciliation (optional).
 func (bm *BlockMonitor) SetIngestionService(ingestion *services.IngestionService) {
 	bm.ingestion = ingestion
+}
+
+// SetStegoReconciler wires stego reconcile to run when ingestions are confirmed.
+func (bm *BlockMonitor) SetStegoReconciler(reconciler StegoReconciler) {
+	bm.stegoReconciler = reconciler
 }
 
 func blocksDirFromEnv() string {
@@ -1374,6 +1392,7 @@ func (bm *BlockMonitor) reconcileIngestionContracts(blockDir string, parsedBlock
 			log.Printf("Failed to move ingestion image for %s: %v", visibleHash, err)
 			continue
 		}
+		bm.maybeReconcileStego(rec)
 
 		imageFile := filepath.Base(destPath)
 		imagePath := filepath.Join("images", imageFile)
@@ -1457,6 +1476,7 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 			if err != nil {
 				log.Printf("oracle reconcile: failed to move ingestion image for %s: %v", match.ID, err)
 			} else {
+				bm.maybeReconcileStego(match)
 				log.Printf("oracle reconcile: matched ingestion %s via funding_txid=%s", match.ID, tx.TxID)
 				imageFile := filepath.Base(destPath)
 				imagePath := filepath.Join("images", imageFile)
@@ -1504,6 +1524,7 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 				log.Printf("oracle reconcile: failed to move ingestion image for %s: %v", match.ID, err)
 				continue
 			}
+			bm.maybeReconcileStego(match)
 			log.Printf("oracle reconcile: matched ingestion %s via %s=%s in tx %s output %d", match.ID, matchType, matchedHash, tx.TxID, outIdx)
 
 			imageFile := filepath.Base(destPath)
@@ -2042,6 +2063,41 @@ func (bm *BlockMonitor) moveIngestionImageWithFilename(blockDir string, rec *ser
 		_ = os.Remove(sourcePath)
 	}
 	return destPath, nil
+}
+
+func (bm *BlockMonitor) maybeReconcileStego(rec *services.IngestionRecord) {
+	if bm.stegoReconciler == nil || rec == nil {
+		return
+	}
+	meta := rec.Metadata
+	if meta == nil {
+		return
+	}
+	stegoCID := strings.TrimSpace(stringFromAny(meta["stego_image_cid"]))
+	if stegoCID == "" {
+		stegoCID = strings.TrimSpace(stringFromAny(meta["stego_cid"]))
+	}
+	if stegoCID == "" {
+		return
+	}
+	if strings.TrimSpace(stringFromAny(meta["stego_reconciled_at"])) != "" {
+		return
+	}
+	expected := strings.TrimSpace(stringFromAny(meta["stego_contract_id"]))
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	if err := bm.stegoReconciler.ReconcileStego(ctx, stegoCID, expected); err != nil {
+		log.Printf("stego reconcile failed for %s (cid=%s): %v", rec.ID, stegoCID, err)
+		return
+	}
+	if bm.ingestion != nil {
+		now := strconv.FormatInt(time.Now().Unix(), 10)
+		if err := bm.ingestion.UpdateMetadata(rec.ID, map[string]interface{}{
+			"stego_reconciled_at": now,
+		}); err != nil {
+			log.Printf("stego reconcile: failed to mark ingestion %s reconciled: %v", rec.ID, err)
+		}
+	}
 }
 
 func txidImageFilename(txid, fallback string) string {

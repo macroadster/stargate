@@ -83,6 +83,12 @@ func (s *Server) handleStegoReconcile(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, res)
 }
 
+// ReconcileStego reconciles a stego image from IPFS and upserts contracts/tasks.
+func (s *Server) ReconcileStego(ctx context.Context, stegoCID, expectedHash string) error {
+	_, err := s.reconcileStegoFromIPFS(ctx, stegoCID, expectedHash)
+	return err
+}
+
 func (s *Server) reconcileStegoFromIPFS(ctx context.Context, stegoCID string, expectedHash string) (stegoReconcileResponse, error) {
 	ipfsClient := ipfs.NewClientFromEnv()
 	stegoBytes, err := ipfsClient.Cat(ctx, stegoCID)
