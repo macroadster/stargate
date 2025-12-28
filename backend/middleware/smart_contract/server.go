@@ -91,6 +91,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/smart_contract/submissions/", s.authWrap(s.handleSubmissions))
 	mux.HandleFunc("/api/smart_contract/events", s.authWrap(s.handleEvents))
 	mux.HandleFunc("/api/smart_contract/config", s.authWrap(s.handleConfig))
+	mux.HandleFunc("/api/smart_contract/stego/reconcile", s.authWrap(s.handleStegoReconcile))
 }
 
 func (s *Server) authWrap(next http.HandlerFunc) http.HandlerFunc {

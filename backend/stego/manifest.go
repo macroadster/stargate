@@ -7,14 +7,14 @@ import (
 )
 
 type Manifest struct {
-	SchemaVersion    int
-	ContractID       string
-	ProposalID       string
-	VisiblePixelHash string
-	PayloadCID       string
-	TasksCID         string
-	CreatedAt        int64
-	Issuer           string
+	SchemaVersion    int    `yaml:"schema_version"`
+	ContractID       string `yaml:"contract_id"`
+	ProposalID       string `yaml:"proposal_id"`
+	VisiblePixelHash string `yaml:"visible_pixel_hash"`
+	PayloadCID       string `yaml:"payload_cid"`
+	TasksCID         string `yaml:"tasks_cid"`
+	CreatedAt        int64  `yaml:"created_at"`
+	Issuer           string `yaml:"issuer"`
 }
 
 func BuildManifestYAML(m Manifest) ([]byte, error) {

@@ -9,6 +9,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -97,4 +98,28 @@ func (c *Client) addStream(ctx context.Context, name string, reader io.Reader) (
 		return "", fmt.Errorf("ipfs add returned empty hash")
 	}
 	return lastHash, nil
+}
+
+func (c *Client) Cat(ctx context.Context, cid string) ([]byte, error) {
+	if strings.TrimSpace(cid) == "" {
+		return nil, fmt.Errorf("ipfs cat missing cid")
+	}
+	reqURL := fmt.Sprintf("%s/api/v0/cat?arg=%s", c.apiURL, url.QueryEscape(cid))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		if len(body) == 0 {
+			return nil, fmt.Errorf("ipfs cat failed: %s", resp.Status)
+		}
+		return nil, fmt.Errorf("ipfs cat failed: %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+	return io.ReadAll(resp.Body)
 }
