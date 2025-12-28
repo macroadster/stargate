@@ -85,6 +85,22 @@ App runs on `http://localhost:3000`
 - Backend OpenAPI: `http://localhost:3001/api/docs/openapi.yaml` (load in Swagger UI/Insomnia); Swagger UI at `/api/docs/` and metrics at `/metrics`
 - Starlight FastAPI (when running locally): `http://localhost:8080/docs` (private, used by Stargate)
 
+## ⚙️ Optional Stego + IPFS Approval Flow
+
+To embed a YAML manifest into the approved proposal image and publish it to IPFS,
+enable the approval pipeline:
+
+```bash
+STARGATE_STEGO_APPROVAL_ENABLED=true
+STARGATE_PROXY_BASE=http://localhost:8080  # starlight fastapi
+STARGATE_API_KEY=...                       # if starlight requires auth
+STARGATE_STEGO_METHOD=lsb                  # optional; defaults to lsb
+STARGATE_STEGO_ISSUER=stargate-default     # optional; defaults to hostname
+STARGATE_STEGO_INGEST_TIMEOUT_SEC=30
+STARGATE_STEGO_INGEST_POLL_SEC=2
+IPFS_API_URL=http://127.0.0.1:5001
+```
+
 ## 📖 Usage
 
 ### Exploring Blocks
