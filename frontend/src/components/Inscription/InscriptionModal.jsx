@@ -1,4 +1,4 @@
-import React, { useLayoutEffect, useState, useEffect, useMemo } from 'react';
+import React, { useLayoutEffect, useState, useEffect, useMemo, useCallback } from 'react';
 import { X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import CopyButton from '../Common/CopyButton';
@@ -186,6 +186,30 @@ const InscriptionModal = ({ inscription, onClose }) => {
     });
     return Array.from(totals.entries()).map(([wallet, total]) => ({ wallet, total }));
   }, [deliverableTasks, psbtTasks]);
+
+  const resolvePsbtContractId = useCallback(() => {
+    const candidate =
+      psbtForm.contractId ||
+      approvedContractId ||
+      inscription.metadata?.visible_pixel_hash ||
+      selectedTask?.merkle_proof?.visible_pixel_hash ||
+      selectedTask?.contract_id ||
+      primaryContractId;
+    if (!candidate) return '';
+    if (candidate.startsWith('proposal-')) {
+      if (approvedContractId) return approvedContractId;
+      if (inscription.metadata?.visible_pixel_hash) return inscription.metadata.visible_pixel_hash;
+      if (selectedTask?.merkle_proof?.visible_pixel_hash) return selectedTask.merkle_proof.visible_pixel_hash;
+    }
+    return candidate;
+  }, [
+    psbtForm.contractId,
+    approvedContractId,
+    inscription.metadata?.visible_pixel_hash,
+    selectedTask?.merkle_proof?.visible_pixel_hash,
+    selectedTask?.contract_id,
+    primaryContractId,
+  ]);
 
   let parsedPayload = null;
   if (typeof inscriptionMessageRaw === 'string') {
@@ -677,11 +701,7 @@ const InscriptionModal = ({ inscription, onClose }) => {
       setPsbtError('Sign in with the funding API key (payer wallet) first.');
       return;
     }
-    const contractId =
-      psbtForm.contractId ||
-      selectedTask?.contract_id ||
-      approvedContractId ||
-      primaryContractId;
+    const contractId = resolvePsbtContractId();
     const payoutWallet = resolvedContractorWallet;
     const fundraiserWallet = resolvedFundraiserWallet;
     const fundingTasks = deliverableTasks.length > 0 ? deliverableTasks : psbtTasks;
