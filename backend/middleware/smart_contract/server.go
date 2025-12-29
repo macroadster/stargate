@@ -647,11 +647,13 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		}
 		if ingestionRec != nil && len(fundingTxIDs) > 0 {
 			metadata := map[string]interface{}{
-				"funding_txids":          fundingTxIDs,
-				"funding_txid":           fundingTxIDs[0],
-				"payout_scripts":         hexSlice(payoutScripts),
-				"payout_script_hashes":   payoutScriptHashes,
-				"payout_script_hash160s": payoutScriptHash160s,
+				"funding_txids":           fundingTxIDs,
+				"funding_txid":            fundingTxIDs[0],
+				"payout_scripts":          hexSlice(payoutScripts),
+				"payout_script_hashes":    payoutScriptHashes,
+				"payout_script_hash160s":  payoutScriptHash160s,
+				"commitment_lock_address": addressOrEmpty(commitmentLockAddr),
+				"commitment_target":       commitmentTarget,
 			}
 			if err := s.ingestionSvc.UpdateMetadata(ingestionRec.ID, metadata); err != nil {
 				log.Printf("psbt: failed to store funding_txids for %s: %v", ingestionRec.ID, err)
@@ -704,10 +706,12 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 	if ingestionRec != nil && res.FundingTxID != "" {
 		scriptHashes, scriptHash160s := buildScriptHashes(res.PayoutScripts)
 		if err := s.ingestionSvc.UpdateMetadata(ingestionRec.ID, map[string]interface{}{
-			"funding_txid":           res.FundingTxID,
-			"payout_scripts":         hexSlice(res.PayoutScripts),
-			"payout_script_hashes":   scriptHashes,
-			"payout_script_hash160s": scriptHash160s,
+			"funding_txid":            res.FundingTxID,
+			"payout_scripts":          hexSlice(res.PayoutScripts),
+			"payout_script_hashes":    scriptHashes,
+			"payout_script_hash160s":  scriptHash160s,
+			"commitment_lock_address": addressOrEmpty(commitmentLockAddr),
+			"commitment_target":       commitmentTarget,
 		}); err != nil {
 			log.Printf("psbt: failed to store funding_txid for %s: %v", ingestionRec.ID, err)
 		}

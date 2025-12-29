@@ -245,12 +245,20 @@ func ipfsIngestProcessManifest(ctx context.Context, ingest *services.IngestionSe
 			state.lastSeen[entry.CID] = entry.ModTime
 			continue
 		}
-		if store != nil {
-			payload, err := fetchStegoPayload(ctx, client, stegoManifest.PayloadCID)
+		var payload stego.Payload
+		var payloadMeta map[string]interface{}
+		if store != nil || ingest != nil {
+			loaded, err := fetchStegoPayload(ctx, client, stegoManifest.PayloadCID)
 			if err != nil {
 				log.Printf("ipfs ingestion sync payload fetch failed: %v", err)
-			} else if err := ensureProposalFromStegoPayload(ctx, store, entry.CID, stegoManifest, payload); err != nil {
-				log.Printf("ipfs ingestion sync proposal upsert failed: %v", err)
+			} else {
+				payload = loaded
+				payloadMeta = payloadMetadataMap(payload)
+				if store != nil {
+					if err := ensureProposalFromStegoPayload(ctx, store, entry.CID, stegoManifest, payload); err != nil {
+						log.Printf("ipfs ingestion sync proposal upsert failed: %v", err)
+					}
+				}
 			}
 		}
 		if existing, err := ingest.Get(id); err == nil && existing != nil {
@@ -261,6 +269,11 @@ func ipfsIngestProcessManifest(ctx context.Context, ingest *services.IngestionSe
 				"stego_manifest_created_at":  stegoManifest.CreatedAt,
 				"stego_manifest_proposal_id": stegoManifest.ProposalID,
 				"visible_pixel_hash":         stegoManifest.VisiblePixelHash,
+			}
+			for k, v := range payloadMeta {
+				if _, ok := metaUpdates[k]; !ok {
+					metaUpdates[k] = v
+				}
 			}
 			_ = ingest.UpdateMetadata(id, metaUpdates)
 			state.lastSeen[entry.CID] = entry.ModTime
@@ -284,6 +297,11 @@ func ipfsIngestProcessManifest(ctx context.Context, ingest *services.IngestionSe
 				"visible_pixel_hash":         stegoManifest.VisiblePixelHash,
 			},
 			Status: "verified",
+		}
+		for k, v := range payloadMeta {
+			if _, ok := rec.Metadata[k]; !ok {
+				rec.Metadata[k] = v
+			}
 		}
 		if err := ingest.Create(rec); err != nil {
 			log.Printf("ipfs ingestion create failed for %s: %v", id, err)
@@ -368,6 +386,11 @@ func ensureProposalFromStegoPayload(ctx context.Context, store Store, stegoCID s
 		"origin_proposal_id":         manifest.ProposalID,
 		"visible_pixel_hash":         manifest.VisiblePixelHash,
 	}
+	for k, v := range payloadMetadataMap(payload) {
+		if _, ok := meta[k]; !ok {
+			meta[k] = v
+		}
+	}
 	proposal := smart_contract.Proposal{
 		ID:               proposalID,
 		Title:            title,
@@ -380,6 +403,25 @@ func ensureProposalFromStegoPayload(ctx context.Context, store Store, stegoCID s
 		Metadata:         meta,
 	}
 	return store.CreateProposal(ctx, proposal)
+}
+
+func payloadMetadataMap(payload stego.Payload) map[string]interface{} {
+	if len(payload.Metadata) == 0 {
+		return nil
+	}
+	meta := make(map[string]interface{}, len(payload.Metadata))
+	for _, entry := range payload.Metadata {
+		key := strings.TrimSpace(entry.Key)
+		val := strings.TrimSpace(entry.Value)
+		if key == "" || val == "" {
+			continue
+		}
+		meta[key] = val
+	}
+	if len(meta) == 0 {
+		return nil
+	}
+	return meta
 }
 
 func ipfsIngestProcessPending(ctx context.Context, ingest *services.IngestionService, state *ipfsIngestSyncState, client *ipfs.Client, ann *pendingIngestAnnouncement) error {
