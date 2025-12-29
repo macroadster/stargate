@@ -244,6 +244,20 @@ func (s *Server) publishStegoForProposal(ctx context.Context, proposalID string,
 	if err := s.store.UpdateProposal(ctx, p); err != nil {
 		return fmt.Errorf("failed to update proposal metadata: %w", err)
 	}
+	if s.ingestionSvc != nil && ingestionID != "" {
+		updates := map[string]interface{}{
+			"stego_payload_cid":          payloadCID,
+			"stego_image_cid":            stegoCID,
+			"stego_contract_id":          contractID,
+			"stego_manifest_created_at":  strconv.FormatInt(manifestCreatedAt, 10),
+			"stego_manifest_proposal_id": proposalID,
+			"stego_manifest_issuer":      cfg.Issuer,
+			"visible_pixel_hash":         visibleHash,
+		}
+		if err := s.ingestionSvc.UpdateMetadata(ingestionID, updates); err != nil {
+			log.Printf("stego approval: failed to update ingestion %s: %v", ingestionID, err)
+		}
+	}
 	s.archiveWishContract(ctx, visibleHash)
 	if cfg.AnnounceEnabled && strings.TrimSpace(cfg.AnnounceTopic) != "" {
 		announce := stegoAnnouncement{

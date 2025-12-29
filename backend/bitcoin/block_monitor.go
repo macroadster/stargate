@@ -1395,6 +1395,7 @@ func (bm *BlockMonitor) reconcileIngestionContracts(blockDir string, parsedBlock
 		destPath, err := bm.moveIngestionImage(blockDir, rec)
 		if err != nil {
 			log.Printf("Failed to move ingestion image for %s: %v", visibleHash, err)
+			bm.maybeReconcileStego(rec)
 			continue
 		}
 		bm.maybeReconcileStego(rec)
@@ -1480,6 +1481,7 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 			destPath, err := bm.moveIngestionImageWithFilename(blockDir, match, txidImageFilename(tx.TxID, match.Filename))
 			if err != nil {
 				log.Printf("oracle reconcile: failed to move ingestion image for %s: %v", match.ID, err)
+				bm.maybeReconcileStego(match)
 			} else {
 				bm.maybeReconcileStego(match)
 				log.Printf("oracle reconcile: matched ingestion %s via funding_txid=%s", match.ID, tx.TxID)
@@ -1527,6 +1529,7 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 			destPath, err := bm.moveIngestionImageWithFilename(blockDir, match, txidImageFilename(tx.TxID, match.Filename))
 			if err != nil {
 				log.Printf("oracle reconcile: failed to move ingestion image for %s: %v", match.ID, err)
+				bm.maybeReconcileStego(match)
 				continue
 			}
 			bm.maybeReconcileStego(match)
