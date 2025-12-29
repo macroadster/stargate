@@ -252,6 +252,7 @@ func (m *Mirror) publishLoop(ctx context.Context) {
 			} else if manifestCID != "" {
 				m.lastPublished = manifestCID
 				m.lastPublishAt = time.Now()
+				log.Printf("IPFS mirror published manifest: %s (changed=%t files=%d)", manifestCID, changed, m.knownFileCount())
 			}
 		}
 	}
@@ -457,53 +458,65 @@ func (m *Mirror) processManifest(ctx context.Context, manifestCID string) error 
 		return fmt.Errorf("invalid manifest: %w", err)
 	}
 
+	downloaded := 0
+	skipped := 0
+	failed := 0
 	for _, entry := range incoming.Files {
 		if entry.Path == "" || entry.CID == "" {
 			continue
 		}
-		if err := m.downloadEntry(ctx, entry); err != nil {
+		applied, err := m.downloadEntry(ctx, entry)
+		if err != nil {
+			failed++
 			log.Printf("IPFS mirror download failed for %s: %v", entry.Path, err)
+			continue
+		}
+		if applied {
+			downloaded++
+		} else {
+			skipped++
 		}
 	}
 
+	log.Printf("IPFS mirror synced manifest: %s (downloaded=%d skipped=%d failed=%d)", manifestCID, downloaded, skipped, failed)
 	return nil
 }
 
-func (m *Mirror) downloadEntry(ctx context.Context, entry manifestEntry) error {
+func (m *Mirror) downloadEntry(ctx context.Context, entry manifestEntry) (bool, error) {
 	target, ok := safeJoin(m.cfg.UploadsDir, entry.Path)
 	if !ok {
-		return fmt.Errorf("invalid path: %s", entry.Path)
+		return false, fmt.Errorf("invalid path: %s", entry.Path)
 	}
 
 	if info, err := os.Stat(target); err == nil {
 		if info.Size() == entry.Size {
-			return nil
+			return false, nil
 		}
 	}
 
 	if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
-		return err
+		return false, err
 	}
 
 	tmp, err := os.CreateTemp(filepath.Dir(target), ".ipfs-mirror-*")
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	catErr := m.catToWriter(ctx, entry.CID, tmp)
 	closeErr := tmp.Close()
 	if catErr != nil {
 		_ = os.Remove(tmp.Name())
-		return catErr
+		return false, catErr
 	}
 	if closeErr != nil {
 		_ = os.Remove(tmp.Name())
-		return closeErr
+		return false, closeErr
 	}
 
 	if err := os.Rename(tmp.Name(), target); err != nil {
 		_ = os.Remove(tmp.Name())
-		return err
+		return false, err
 	}
 	if entry.ModTime > 0 {
 		modTime := time.Unix(entry.ModTime, 0)
@@ -518,7 +531,13 @@ func (m *Mirror) downloadEntry(ctx context.Context, entry manifestEntry) error {
 	}
 	m.mu.Unlock()
 
-	return nil
+	return true, nil
+}
+
+func (m *Mirror) knownFileCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.knownFiles)
 }
 
 func (m *Mirror) extractManifestCID(encoded string) (string, error) {
