@@ -244,6 +244,7 @@ func (s *Server) publishStegoForProposal(ctx context.Context, proposalID string,
 	if err := s.store.UpdateProposal(ctx, p); err != nil {
 		return fmt.Errorf("failed to update proposal metadata: %w", err)
 	}
+	s.archiveWishContract(ctx, visibleHash)
 	if cfg.AnnounceEnabled && strings.TrimSpace(cfg.AnnounceTopic) != "" {
 		announce := stegoAnnouncement{
 			Type:             "stego",
@@ -269,6 +270,30 @@ func (s *Server) publishStegoForProposal(ctx context.Context, proposalID string,
 		CreatedAt: time.Now(),
 	})
 	return nil
+}
+
+func (s *Server) archiveWishContract(ctx context.Context, visibleHash string) {
+	if s.store == nil {
+		return
+	}
+	visibleHash = strings.TrimSpace(visibleHash)
+	if visibleHash == "" {
+		return
+	}
+	wishID := "wish-" + visibleHash
+	contract, err := s.store.GetContract(wishID)
+	if err != nil {
+		return
+	}
+	contract.Status = "superseded"
+	type upserter interface {
+		UpsertContractWithTasks(context.Context, smart_contract.Contract, []smart_contract.Task) error
+	}
+	if u, ok := s.store.(upserter); ok {
+		if err := u.UpsertContractWithTasks(ctx, contract, nil); err != nil {
+			log.Printf("failed to archive wish contract %s: %v", wishID, err)
+		}
+	}
 }
 
 func buildStegoPayload(p smart_contract.Proposal, meta map[string]interface{}, schemaVersion int, maxTasks int) stegoPayload {

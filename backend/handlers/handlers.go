@@ -175,6 +175,16 @@ func (h *InscriptionHandler) HandleGetInscriptions(w http.ResponseWriter, r *htt
 					if inscriptions[idx].Status == "" {
 						inscriptions[idx].Status = item.Status
 					}
+				} else if idx, ok := dedupe[wishContractID(item.ID)]; ok {
+					if inscriptions[idx].ImageData == "" && item.ImageData != "" {
+						inscriptions[idx].ImageData = item.ImageData
+					}
+					if inscriptions[idx].Text == "" && item.Text != "" {
+						inscriptions[idx].Text = item.Text
+					}
+					if inscriptions[idx].Status == "" {
+						inscriptions[idx].Status = item.Status
+					}
 				} else if includeLegacyOnly {
 					// Only add new ingestion-only rows when legacy flag set
 					dedupe[item.ID] = len(inscriptions)
@@ -259,7 +269,8 @@ func (h *InscriptionHandler) fromContract(c sc.Contract) models.InscriptionReque
 	}
 	imagePath := ""
 	if c.ContractID != "" {
-		if matches, _ := filepath.Glob(filepath.Join(uploadsDir, c.ContractID+"_*")); len(matches) > 0 {
+		baseID := baseContractID(c.ContractID)
+		if matches, _ := filepath.Glob(filepath.Join(uploadsDir, baseID+"_*")); len(matches) > 0 {
 			imagePath = matches[0]
 		}
 	}
@@ -285,6 +296,72 @@ func isPendingContractStatus(status string) bool {
 func computeVisiblePixelHash(imageBytes []byte, text string) string {
 	sum := sha256.Sum256(append(imageBytes, []byte(text)...))
 	return fmt.Sprintf("%x", sum[:])
+}
+
+func wishContractID(visibleHash string) string {
+	visibleHash = strings.TrimSpace(visibleHash)
+	if visibleHash == "" {
+		return ""
+	}
+	return "wish-" + visibleHash
+}
+
+func baseContractID(contractID string) string {
+	contractID = strings.TrimSpace(contractID)
+	if strings.HasPrefix(contractID, "wish-") {
+		return strings.TrimPrefix(contractID, "wish-")
+	}
+	return contractID
+}
+
+func resolveStegoMethod(requested, filename string, image []byte) string {
+	requested = strings.TrimSpace(strings.ToLower(requested))
+	ext := strings.ToLower(filepath.Ext(filename))
+	if ext == "" && len(image) > 0 {
+		switch http.DetectContentType(image) {
+		case "image/jpeg":
+			ext = ".jpg"
+		case "image/png":
+			ext = ".png"
+		case "image/gif":
+			ext = ".gif"
+		}
+	}
+	if isMethodCompatible(requested, ext) {
+		return requested
+	}
+	switch ext {
+	case ".jpg", ".jpeg":
+		if requested == "eoi" {
+			return requested
+		}
+		return "exif"
+	case ".gif":
+		return "palette"
+	case ".png":
+		return "alpha"
+	default:
+		if requested != "" {
+			return requested
+		}
+		return "alpha"
+	}
+}
+
+func isMethodCompatible(method, ext string) bool {
+	if method == "" {
+		return false
+	}
+	switch ext {
+	case ".jpg", ".jpeg":
+		return method == "exif" || method == "eoi"
+	case ".gif":
+		return method == "palette"
+	case ".png":
+		return method == "alpha" || method == "lsb"
+	default:
+		return true
+	}
 }
 
 // ensureIngestionImageFile writes the base64 image to uploads dir if missing and returns the path.
@@ -316,7 +393,7 @@ func (h *InscriptionHandler) upsertOpenContract(visibleHash, title, priceStr str
 	}
 	priceSat, _ := strconv.ParseInt(priceStr, 10, 64)
 	contract := sc.Contract{
-		ContractID:          visibleHash,
+		ContractID:          wishContractID(visibleHash),
 		Title:               title,
 		TotalBudgetSats:     priceSat,
 		GoalsCount:          0,
@@ -455,6 +532,7 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 			filename = "placeholder.png"
 		}
 	}
+	method = resolveStegoMethod(method, filename, imgBytes)
 	visibleHash := computeVisiblePixelHash(imgBytes, text)
 	ingestionID := visibleHash
 	if ingestionID == "" {
