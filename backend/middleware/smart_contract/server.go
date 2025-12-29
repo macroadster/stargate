@@ -389,7 +389,17 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		}
 		return nil
 	}
+	decodePixelHex := func(value string) []byte {
+		if value == "" {
+			return nil
+		}
+		if b, err := hex.DecodeString(value); err == nil {
+			return normalizePixel(b)
+		}
+		return nil
+	}
 	var pixelBytes []byte
+	pixelSource := ""
 	usePixelHash := true
 	if body.UsePixelHash != nil {
 		usePixelHash = *body.UsePixelHash
@@ -400,22 +410,23 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 	}
 	if usePixelHash {
 		if ph := strings.TrimSpace(body.PixelHash); ph != "" {
-			if b, err := hex.DecodeString(ph); err == nil {
-				pixelBytes = normalizePixel(b)
+			pixelBytes = decodePixelHex(ph)
+			if pixelBytes != nil {
+				pixelSource = "pixel_hash"
 			}
 		}
-		if pixelBytes == nil && ingestionRec != nil {
-			pixelBytes = resolvePixelHashFromIngestion(ingestionRec, normalizePixel)
+		if pixelBytes == nil {
+			var requireStego bool
+			pixelBytes, pixelSource, requireStego = s.resolveStegoCommitmentHash(r.Context(), contractID, ingestionRec, decodePixelHex)
+			if requireStego {
+				Error(w, http.StatusBadRequest, "stego approval required before PSBT; stego contract id missing")
+				return
+			}
 		}
-	}
-	if usePixelHash && pixelBytes == nil {
-		if h, err := hex.DecodeString(strings.TrimSpace(contractID)); err == nil {
-			pixelBytes = normalizePixel(h)
+		if pixelBytes == nil {
+			Error(w, http.StatusBadRequest, "missing 32-byte stego hash for commitment output")
+			return
 		}
-	}
-	if usePixelHash && pixelBytes == nil {
-		Error(w, http.StatusBadRequest, "missing 32-byte pixel hash for commitment output")
-		return
 	}
 
 	var payouts []bitcoin.PayoutOutput
@@ -543,7 +554,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 				"change_amounts":     splitRes.ChangeAmounts,
 				"funding_mode":       fundingMode,
 				"contract_id":        contractID,
-				"pixel_source":       pixelSourceForBytes(pixelBytes),
+				"pixel_source":       pixelSourceOrDefault(pixelSource, pixelBytes),
 				"budget_sats":        target,
 				"contractor":         "",
 				"network_params":     params.Name,
@@ -651,7 +662,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		"change_amounts":     res.ChangeAmounts,
 		"funding_mode":       fundingMode,
 		"contract_id":        contractID,
-		"pixel_source":       pixelSourceForBytes(pixelBytes),
+		"pixel_source":       pixelSourceOrDefault(pixelSource, pixelBytes),
 		"budget_sats":        target,
 		"contractor":         contractorAddressFor(contractorAddr),
 		"network_params":     params.Name,
@@ -730,6 +741,43 @@ func (s *Server) ingestionFromProposalMeta(meta map[string]interface{}, visibleP
 		return rec
 	}
 	return nil
+}
+
+func (s *Server) resolveStegoCommitmentHash(ctx context.Context, contractID string, ingestionRec *services.IngestionRecord, decodePixelHex func(string) []byte) ([]byte, string, bool) {
+	stegoID := ""
+	if ingestionRec != nil {
+		stegoID = strings.TrimSpace(toString(ingestionRec.Metadata["stego_contract_id"]))
+	}
+	var proposalFound bool
+	if stegoID == "" && s.store != nil {
+		if stored, err := s.store.GetProposal(ctx, contractID); err == nil {
+			proposalFound = true
+			stegoID = strings.TrimSpace(toString(stored.Metadata["stego_contract_id"]))
+		} else if proposals, err := s.store.ListProposals(ctx, smart_contract.ProposalFilter{ContractID: contractID}); err == nil && len(proposals) > 0 {
+			proposalFound = true
+			stegoID = strings.TrimSpace(toString(proposals[0].Metadata["stego_contract_id"]))
+		}
+	}
+	if stegoID != "" {
+		if decoded := decodePixelHex(stegoID); decoded != nil {
+			return decoded, "stego_contract_id", false
+		}
+	}
+	if proposalFound {
+		return nil, "", true
+	}
+	// Assume contractID is already the stego hash when no proposal is found.
+	if decoded := decodePixelHex(strings.TrimSpace(contractID)); decoded != nil {
+		return decoded, "contract_id", false
+	}
+	return nil, "", true
+}
+
+func pixelSourceOrDefault(source string, pixel []byte) string {
+	if strings.TrimSpace(source) != "" {
+		return source
+	}
+	return pixelSourceForBytes(pixel)
 }
 
 func isRaiseFund(mode string) bool {
