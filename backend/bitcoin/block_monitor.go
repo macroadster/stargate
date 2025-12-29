@@ -1824,6 +1824,9 @@ func ingestionCandidateBuckets(rec services.IngestionRecord) ([]string, []string
 	if rec.ID != "" {
 		appendFallback(rec.ID)
 	}
+	if prefix := hashPrefixFromFilename(rec.Filename); prefix != "" {
+		appendPrimary(prefix)
+	}
 	if v := stringFromAny(rec.Metadata["visible_pixel_hash"]); v != "" {
 		appendPrimary(v)
 	}
@@ -1873,6 +1876,22 @@ func ingestionCandidateBuckets(rec services.IngestionRecord) ([]string, []string
 	}
 
 	return primary, fallback
+}
+
+func hashPrefixFromFilename(filename string) string {
+	if strings.TrimSpace(filename) == "" {
+		return ""
+	}
+	base := filepath.Base(filename)
+	sep := strings.Index(base, "_")
+	if sep <= 0 {
+		return ""
+	}
+	prefix := normalizeHex(base[:sep])
+	if len(prefix) != 40 && len(prefix) != 64 {
+		return ""
+	}
+	return prefix
 }
 
 func matchOracleOutput(script []byte, params *chaincfg.Params, candidates map[string]*services.IngestionRecord) (*services.IngestionRecord, string, string) {
