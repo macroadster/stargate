@@ -5,8 +5,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/json"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -2019,6 +2019,18 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 		proposal, err := store.GetProposal(ctx, proposalID)
 		if err != nil {
 			return nil, fmt.Errorf("Failed to get proposal: %v", err)
+		}
+		if proposal.Metadata == nil {
+			proposal.Metadata = map[string]interface{}{}
+		}
+		if _, ok := proposal.Metadata["creator_api_key_hash"].(string); !ok {
+			hash := apiKeyHash(apiKey)
+			if hash != "" {
+				proposal.Metadata["creator_api_key_hash"] = hash
+				if err := store.UpdateProposal(ctx, proposal); err != nil {
+					return nil, fmt.Errorf("Failed to update proposal: %v", err)
+				}
+			}
 		}
 		if err := requireCreatorApproval(apiKey, proposal); err != nil {
 			return nil, fmt.Errorf("Approval denied: %v", err)
