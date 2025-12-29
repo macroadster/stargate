@@ -1517,6 +1517,44 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 			}
 		}
 
+		if match, matchType, matchedHash := matchWitnessHash(tx, primaryCandidates, fallbackCandidates); match != nil {
+			destPath, err := bm.moveIngestionImageWithFilename(blockDir, match, txidImageFilename(tx.TxID, match.Filename))
+			if err != nil {
+				log.Printf("oracle reconcile: failed to move ingestion image for %s: %v", match.ID, err)
+				bm.maybeReconcileStego(match)
+			} else {
+				bm.maybeReconcileStego(match)
+				log.Printf("oracle reconcile: matched ingestion %s via %s=%s in tx %s witness", match.ID, matchType, matchedHash, tx.TxID)
+				imageFile := filepath.Base(destPath)
+				imagePath := filepath.Join("images", imageFile)
+				contractMeta := map[string]any{
+					"tx_id":              tx.TxID,
+					"block_height":       blockHeight,
+					"match_type":         matchType,
+					"match_hash":         matchedHash,
+					"image_file":         imageFile,
+					"image_path":         imagePath,
+					"ingestion_id":       match.ID,
+					"visible_pixel_hash": stringFromAny(match.Metadata["visible_pixel_hash"]),
+				}
+				mergeIngestionMetadata(contractMeta, match.Metadata)
+				smartContracts = upsertContractByID(smartContracts, SmartContractData{
+					ContractID:  match.ID,
+					BlockHeight: blockHeight,
+					ImagePath:   imagePath,
+					Confidence:  0,
+					Metadata:    contractMeta,
+				})
+				bm.markIngestionConfirmed(match, tx.TxID, blockHeight, imageFile, imagePath)
+				bm.updateTaskFundingProofsFromTx(match.ID, tx, blockHeight)
+				bm.confirmAndSweepContractTasks(match.ID, tx.TxID, blockHeight)
+				for _, candidate := range candidatesByID[match.ID] {
+					delete(primaryCandidates, candidate)
+					delete(fallbackCandidates, candidate)
+				}
+			}
+		}
+
 		for outIdx, output := range tx.Outputs {
 			match, matchType, matchedHash := matchOracleOutput(output.ScriptPubKey, bm.networkParams(), primaryCandidates)
 			if match == nil {
@@ -1857,6 +1895,49 @@ func matchOracleOutput(script []byte, params *chaincfg.Params, candidates map[st
 	}
 
 	return nil, "", ""
+}
+
+func matchWitnessHash(tx Transaction, primaryCandidates, fallbackCandidates map[string]*services.IngestionRecord) (*services.IngestionRecord, string, string) {
+	if len(tx.InputWitnesses) == 0 {
+		return nil, "", ""
+	}
+	if match, matchType, matched := matchWitnessCandidates(tx.InputWitnesses, primaryCandidates); match != nil {
+		return match, matchType, matched
+	}
+	return matchWitnessCandidates(tx.InputWitnesses, fallbackCandidates)
+}
+
+func matchWitnessCandidates(inputWitnesses [][][]byte, candidates map[string]*services.IngestionRecord) (*services.IngestionRecord, string, string) {
+	if len(candidates) == 0 {
+		return nil, "", ""
+	}
+	for _, stack := range inputWitnesses {
+		for _, item := range stack {
+			for _, candidate := range witnessHashes(item) {
+				if match, ok := candidates[candidate]; ok {
+					return match, "witness_hash", candidate
+				}
+			}
+		}
+	}
+	return nil, "", ""
+}
+
+func witnessHashes(item []byte) []string {
+	if len(item) == 0 {
+		return nil
+	}
+	out := make([]string, 0, 2)
+	if len(item) == 32 || len(item) == 20 {
+		out = append(out, hex.EncodeToString(item))
+	}
+	asText := normalizeHex(strings.TrimSpace(string(item)))
+	if asText != "" && (len(asText) == 64 || len(asText) == 40) {
+		if _, err := hex.DecodeString(asText); err == nil {
+			out = append(out, asText)
+		}
+	}
+	return out
 }
 
 func scriptAddressHashes(script []byte, params *chaincfg.Params) []string {
