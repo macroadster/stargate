@@ -522,7 +522,10 @@ func (api *DataAPI) HandleScanBlockOnDemand(w http.ResponseWriter, r *http.Reque
 
 	var request struct {
 		BlockHeight int64 `json:"block_height"`
+		StartHeight int64 `json:"start_height"`
+		EndHeight   int64 `json:"end_height"`
 		ForceScan   bool  `json:"force_scan"`
+		Force       bool  `json:"force"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
@@ -530,9 +533,28 @@ func (api *DataAPI) HandleScanBlockOnDemand(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	forceScan := request.ForceScan || request.Force
+	startHeight := request.BlockHeight
+	if startHeight == 0 && request.StartHeight > 0 {
+		startHeight = request.StartHeight
+	}
+	endHeight := request.EndHeight
+	if endHeight == 0 {
+		endHeight = startHeight
+	}
+
+	if startHeight == 0 {
+		http.Error(w, "block_height or start_height required", http.StatusBadRequest)
+		return
+	}
+	if endHeight < startHeight {
+		http.Error(w, "end_height must be >= start_height", http.StatusBadRequest)
+		return
+	}
+
 	// Check if we already have data for this block
-	if !request.ForceScan {
-		if existingData, err := api.dataStorage.GetBlockData(request.BlockHeight); err == nil {
+	if !forceScan && startHeight == endHeight {
+		if existingData, err := api.dataStorage.GetBlockData(startHeight); err == nil {
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]interface{}{
 				"success":    true,
@@ -545,22 +567,23 @@ func (api *DataAPI) HandleScanBlockOnDemand(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Process the block
-	log.Printf("On-demand scan requested for block %d, force_scan=%v", request.BlockHeight, request.ForceScan)
-	err := api.blockMonitor.ProcessBlock(request.BlockHeight)
-	if err != nil {
-		http.Error(w, "Failed to scan block: "+err.Error(), http.StatusInternalServerError)
-		return
+	log.Printf("On-demand scan requested for block %d-%d, force_scan=%v", startHeight, endHeight, forceScan)
+	for height := startHeight; height <= endHeight; height++ {
+		if err := api.blockMonitor.ProcessBlock(height); err != nil {
+			http.Error(w, fmt.Sprintf("Failed to scan block %d: %v", height, err), http.StatusInternalServerError)
+			return
+		}
 	}
 
 	// Get the processed data
-	blockData, err := api.dataStorage.GetBlockData(request.BlockHeight)
+	blockData, err := api.dataStorage.GetBlockData(endHeight)
 	if err != nil {
 		http.Error(w, "Failed to retrieve processed block data", http.StatusInternalServerError)
 		return
 	}
 
 	// Create real-time update
-	update := api.dataStorage.CreateRealtimeUpdate("scan_complete", request.BlockHeight, blockData)
+	update := api.dataStorage.CreateRealtimeUpdate("scan_complete", endHeight, blockData)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -568,6 +591,7 @@ func (api *DataAPI) HandleScanBlockOnDemand(w http.ResponseWriter, r *http.Reque
 		"cached":     false,
 		"block_data": blockData,
 		"message":    "Block scanned successfully",
+		"scanned":    []int64{startHeight, endHeight},
 		"update":     update,
 	})
 }
