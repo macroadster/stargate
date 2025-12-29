@@ -422,6 +422,9 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 	blockMonitor.SetStegoReconciler(bitcoin.StegoReconcilerFunc(func(ctx context.Context, stegoCID, expectedHash string) error {
 		return mcpRestServer.ReconcileStego(ctx, stegoCID, expectedHash)
 	}))
+	blockMonitor.SetIPFSUnpin(func(ctx context.Context, path string) error {
+		return mirror.UnpinPath(ctx, path)
+	})
 	if sweepStore, ok := store.(bitcoin.SweepTaskStore); ok {
 		blockMonitor.SetSweepDependencies(sweepStore, bitcoin.NewMempoolClient())
 	}
@@ -553,6 +556,15 @@ func (m *mirrorState) Status() ipfs.MirrorStatus {
 		return ipfs.MirrorStatus{Enabled: false}
 	}
 	return m.mirror.Status()
+}
+
+func (m *mirrorState) UnpinPath(ctx context.Context, path string) error {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m == nil || m.mirror == nil {
+		return nil
+	}
+	return m.mirror.UnpinPath(ctx, path)
 }
 
 func (m *mirrorState) set(mirror *ipfs.Mirror) {

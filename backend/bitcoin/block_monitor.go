@@ -43,6 +43,7 @@ type BlockMonitor struct {
 	sweepStore      SweepTaskStore
 	sweepMempool    *MempoolClient
 	stegoReconciler StegoReconciler
+	unpinPath       func(context.Context, string) error
 
 	// Configuration
 	checkInterval time.Duration
@@ -232,6 +233,10 @@ func (bm *BlockMonitor) SetIngestionService(ingestion *services.IngestionService
 // SetStegoReconciler wires stego reconcile to run when ingestions are confirmed.
 func (bm *BlockMonitor) SetStegoReconciler(reconciler StegoReconciler) {
 	bm.stegoReconciler = reconciler
+}
+
+func (bm *BlockMonitor) SetIPFSUnpin(unpin func(context.Context, string) error) {
+	bm.unpinPath = unpin
 }
 
 func blocksDirFromEnv() string {
@@ -2062,7 +2067,19 @@ func (bm *BlockMonitor) moveIngestionImageWithFilename(blockDir string, rec *ser
 		}
 		_ = os.Remove(sourcePath)
 	}
+	bm.unpinUploadPath(sourcePath)
 	return destPath, nil
+}
+
+func (bm *BlockMonitor) unpinUploadPath(path string) {
+	if bm == nil || bm.unpinPath == nil || strings.TrimSpace(path) == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := bm.unpinPath(ctx, path); err != nil {
+		log.Printf("ipfs unpin failed for %s: %v", path, err)
+	}
 }
 
 func (bm *BlockMonitor) maybeReconcileStego(rec *services.IngestionRecord) {

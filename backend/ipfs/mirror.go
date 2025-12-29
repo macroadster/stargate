@@ -112,6 +112,35 @@ func (m *Mirror) Status() MirrorStatus {
 	}
 }
 
+func (m *Mirror) UnpinPath(ctx context.Context, path string) error {
+	if m == nil {
+		return nil
+	}
+	rel := strings.TrimSpace(path)
+	if rel == "" {
+		return nil
+	}
+	if filepath.IsAbs(rel) {
+		if m.cfg.UploadsDir == "" {
+			return nil
+		}
+		if r, err := filepath.Rel(m.cfg.UploadsDir, rel); err == nil {
+			rel = r
+		}
+	}
+	rel = filepath.ToSlash(filepath.Clean(rel))
+	m.mu.Lock()
+	state, ok := m.knownFiles[rel]
+	if ok {
+		delete(m.knownFiles, rel)
+	}
+	m.mu.Unlock()
+	if !ok || state.CID == "" {
+		return nil
+	}
+	return m.unpinCID(ctx, state.CID)
+}
+
 func LoadMirrorConfig() MirrorConfig {
 	uploadsDir := os.Getenv("UPLOADS_DIR")
 	if uploadsDir == "" {
@@ -681,6 +710,24 @@ func (m *Mirror) addStream(ctx context.Context, name string, reader io.Reader) (
 		return "", fmt.Errorf("ipfs add returned empty hash")
 	}
 	return lastHash, nil
+}
+
+func (m *Mirror) unpinCID(ctx context.Context, cid string) error {
+	reqURL := fmt.Sprintf("%s/api/v0/pin/rm?arg=%s", strings.TrimRight(m.cfg.APIURL, "/"), url.QueryEscape(cid))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := m.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("ipfs unpin failed: %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+	return nil
 }
 
 func (m *Mirror) cat(ctx context.Context, cid string) ([]byte, error) {
