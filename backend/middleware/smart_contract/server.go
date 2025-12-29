@@ -267,6 +267,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		CommitmentSats   int64    `json:"commitment_sats"`
 		FeeRate          int64    `json:"fee_rate_sats_vb"`
 		UsePixelHash     *bool    `json:"use_pixel_hash"`
+		CommitmentTarget string   `json:"commitment_target"`
 		TaskID           string   `json:"task_id"`
 		SplitPSBT        bool     `json:"split_psbt"`
 		Payouts          []struct {
@@ -329,6 +330,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 
 	fundingMode, fundingAddress := s.resolveFundingMode(r.Context(), contractID)
 	primaryPayer := payerAddr
+	var fundraiserAddr btcutil.Address
 	var raiseFundPayers []bitcoin.PayerTarget
 	var raiseFundPayerAddrs []btcutil.Address
 	var raiseFundPayouts []bitcoin.PayoutOutput
@@ -361,6 +363,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 			Error(w, http.StatusBadRequest, fmt.Sprintf("invalid fundraiser payout address: %v", err))
 			return
 		}
+		fundraiserAddr = fundAddr
 		payerTotals := make(map[string]int64)
 		raiseFundPayoutsByPayer = make(map[string][]bitcoin.PayoutOutput)
 		raiseFundPayersByWallet = make(map[string]bitcoin.PayerTarget)
@@ -474,6 +477,38 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		}
 	}
 
+	commitmentTarget := strings.ToLower(strings.TrimSpace(body.CommitmentTarget))
+	if commitmentTarget == "" {
+		commitmentTarget = "funding"
+	}
+	var commitmentLockAddr btcutil.Address
+	switch commitmentTarget {
+	case "donation":
+		donation := strings.TrimSpace(os.Getenv("STARLIGHT_DONATION_ADDRESS"))
+		if donation == "" {
+			Error(w, http.StatusBadRequest, "donation address not configured")
+			return
+		}
+		commitmentLockAddr, err = btcutil.DecodeAddress(donation, params)
+		if err != nil {
+			Error(w, http.StatusBadRequest, fmt.Sprintf("invalid donation address: %v", err))
+			return
+		}
+	case "funding":
+		if isRaiseFund(fundingMode) {
+			if fundraiserAddr == nil {
+				Error(w, http.StatusBadRequest, "missing fundraiser payout address")
+				return
+			}
+			commitmentLockAddr = fundraiserAddr
+		} else {
+			commitmentLockAddr = primaryPayer
+		}
+	default:
+		Error(w, http.StatusBadRequest, "invalid commitment_target")
+		return
+	}
+
 	var payouts []bitcoin.PayoutOutput
 	payoutTotal := int64(0)
 	if isRaiseFund(fundingMode) {
@@ -549,12 +584,13 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 			payerTarget := raiseFundPayersByWallet[wallet]
 			payerPayouts := raiseFundPayoutsByPayer[wallet]
 			psbtReq := bitcoin.PSBTRequest{
-				PayerAddress:    payerTarget.Address,
-				TargetValueSats: target,
-				PixelHash:       pixelBytes,
-				CommitmentSats:  body.CommitmentSats,
-				Payouts:         payerPayouts,
-				FeeRateSatPerVB: body.FeeRate,
+				PayerAddress:      payerTarget.Address,
+				TargetValueSats:   target,
+				PixelHash:         pixelBytes,
+				CommitmentSats:    body.CommitmentSats,
+				CommitmentAddress: commitmentLockAddr,
+				Payouts:           payerPayouts,
+				FeeRateSatPerVB:   body.FeeRate,
 			}
 			splitRes, err := bitcoin.BuildFundingPSBT(s.mempool, params, psbtReq)
 			if err != nil {
@@ -578,34 +614,35 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 				}
 			}
 			psbtEntries = append(psbtEntries, map[string]interface{}{
-				"psbt":               splitRes.EncodedHex,
-				"psbt_hex":           splitRes.EncodedHex,
-				"psbt_base64":        splitRes.EncodedBase64,
-				"funding_txid":       splitRes.FundingTxID,
-				"fee_sats":           splitRes.FeeSats,
-				"change_sats":        splitRes.ChangeSats,
-				"selected_sats":      splitRes.SelectedSats,
-				"payout_script":      hex.EncodeToString(splitRes.PayoutScript),
-				"payout_scripts":     hexSlice(splitRes.PayoutScripts),
-				"payout_amounts":     splitRes.PayoutAmounts,
-				"commitment_script":  hex.EncodeToString(splitRes.CommitmentScript),
-				"commitment_sats":    splitRes.CommitmentSats,
-				"commitment_vout":    splitRes.CommitmentVout,
-				"redeem_script":      hex.EncodeToString(splitRes.RedeemScript),
-				"redeem_script_hash": hex.EncodeToString(splitRes.RedeemScriptHash),
-				"commitment_address": splitRes.CommitmentAddr,
-				"pixel_hash":         strings.TrimSpace(body.PixelHash),
-				"payer_address":      payerTarget.Address.EncodeAddress(),
-				"payer_addresses":    []string{payerTarget.Address.EncodeAddress()},
-				"change_address":     "",
-				"change_addresses":   splitRes.ChangeAddresses,
-				"change_amounts":     splitRes.ChangeAmounts,
-				"funding_mode":       fundingMode,
-				"contract_id":        contractID,
-				"pixel_source":       defaultPixelSource(pixelSource, pixelBytes),
-				"budget_sats":        target,
-				"contractor":         "",
-				"network_params":     params.Name,
+				"psbt":                    splitRes.EncodedHex,
+				"psbt_hex":                splitRes.EncodedHex,
+				"psbt_base64":             splitRes.EncodedBase64,
+				"funding_txid":            splitRes.FundingTxID,
+				"fee_sats":                splitRes.FeeSats,
+				"change_sats":             splitRes.ChangeSats,
+				"selected_sats":           splitRes.SelectedSats,
+				"payout_script":           hex.EncodeToString(splitRes.PayoutScript),
+				"payout_scripts":          hexSlice(splitRes.PayoutScripts),
+				"payout_amounts":          splitRes.PayoutAmounts,
+				"commitment_script":       hex.EncodeToString(splitRes.CommitmentScript),
+				"commitment_sats":         splitRes.CommitmentSats,
+				"commitment_vout":         splitRes.CommitmentVout,
+				"redeem_script":           hex.EncodeToString(splitRes.RedeemScript),
+				"redeem_script_hash":      hex.EncodeToString(splitRes.RedeemScriptHash),
+				"commitment_address":      splitRes.CommitmentAddr,
+				"commitment_lock_address": addressOrEmpty(commitmentLockAddr),
+				"pixel_hash":              strings.TrimSpace(body.PixelHash),
+				"payer_address":           payerTarget.Address.EncodeAddress(),
+				"payer_addresses":         []string{payerTarget.Address.EncodeAddress()},
+				"change_address":          "",
+				"change_addresses":        splitRes.ChangeAddresses,
+				"change_amounts":          splitRes.ChangeAmounts,
+				"funding_mode":            fundingMode,
+				"contract_id":             contractID,
+				"pixel_source":            defaultPixelSource(pixelSource, pixelBytes),
+				"budget_sats":             target,
+				"contractor":              "",
+				"network_params":          params.Name,
 			})
 		}
 		if ingestionRec != nil && len(fundingTxIDs) > 0 {
@@ -641,6 +678,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 			payouts,
 			pixelBytes,
 			body.CommitmentSats,
+			commitmentLockAddr,
 			body.FeeRate,
 		)
 	} else {
@@ -650,6 +688,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 			TargetValueSats:   target,
 			PixelHash:         pixelBytes,
 			CommitmentSats:    body.CommitmentSats,
+			CommitmentAddress: commitmentLockAddr,
 			ContractorAddress: contractorAddr,
 			Payouts:           payouts,
 			FeeRateSatPerVB:   body.FeeRate,
@@ -686,34 +725,35 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 	}
 
 	JSON(w, http.StatusOK, map[string]interface{}{
-		"psbt":               res.EncodedHex, // primary: hex for wallet import
-		"psbt_hex":           res.EncodedHex,
-		"psbt_base64":        res.EncodedBase64,
-		"funding_txid":       res.FundingTxID,
-		"fee_sats":           res.FeeSats,
-		"change_sats":        res.ChangeSats,
-		"selected_sats":      res.SelectedSats,
-		"payout_script":      hex.EncodeToString(res.PayoutScript),
-		"payout_scripts":     hexSlice(res.PayoutScripts),
-		"payout_amounts":     res.PayoutAmounts,
-		"commitment_script":  hex.EncodeToString(res.CommitmentScript),
-		"commitment_sats":    res.CommitmentSats,
-		"commitment_vout":    res.CommitmentVout,
-		"redeem_script":      hex.EncodeToString(res.RedeemScript),
-		"redeem_script_hash": hex.EncodeToString(res.RedeemScriptHash),
-		"commitment_address": res.CommitmentAddr,
-		"pixel_hash":         strings.TrimSpace(body.PixelHash),
-		"payer_address":      primaryPayer.EncodeAddress(),
-		"payer_addresses":    addressSlice(payerAddresses),
-		"change_address":     addressOrEmpty(changeAddr),
-		"change_addresses":   res.ChangeAddresses,
-		"change_amounts":     res.ChangeAmounts,
-		"funding_mode":       fundingMode,
-		"contract_id":        contractID,
-		"pixel_source":       defaultPixelSource(pixelSource, pixelBytes),
-		"budget_sats":        target,
-		"contractor":         contractorAddressFor(contractorAddr),
-		"network_params":     params.Name,
+		"psbt":                    res.EncodedHex, // primary: hex for wallet import
+		"psbt_hex":                res.EncodedHex,
+		"psbt_base64":             res.EncodedBase64,
+		"funding_txid":            res.FundingTxID,
+		"fee_sats":                res.FeeSats,
+		"change_sats":             res.ChangeSats,
+		"selected_sats":           res.SelectedSats,
+		"payout_script":           hex.EncodeToString(res.PayoutScript),
+		"payout_scripts":          hexSlice(res.PayoutScripts),
+		"payout_amounts":          res.PayoutAmounts,
+		"commitment_script":       hex.EncodeToString(res.CommitmentScript),
+		"commitment_sats":         res.CommitmentSats,
+		"commitment_vout":         res.CommitmentVout,
+		"redeem_script":           hex.EncodeToString(res.RedeemScript),
+		"redeem_script_hash":      hex.EncodeToString(res.RedeemScriptHash),
+		"commitment_address":      res.CommitmentAddr,
+		"commitment_lock_address": addressOrEmpty(commitmentLockAddr),
+		"pixel_hash":              strings.TrimSpace(body.PixelHash),
+		"payer_address":           primaryPayer.EncodeAddress(),
+		"payer_addresses":         addressSlice(payerAddresses),
+		"change_address":          addressOrEmpty(changeAddr),
+		"change_addresses":        res.ChangeAddresses,
+		"change_amounts":          res.ChangeAmounts,
+		"funding_mode":            fundingMode,
+		"contract_id":             contractID,
+		"pixel_source":            defaultPixelSource(pixelSource, pixelBytes),
+		"budget_sats":             target,
+		"contractor":              contractorAddressFor(contractorAddr),
+		"network_params":          params.Name,
 	})
 }
 

@@ -85,6 +85,35 @@ func BuildCommitmentSweepTx(client *MempoolClient, params *chaincfg.Params, txid
 	}, nil
 }
 
+func isHashlockOnlyRedeemScript(script []byte) bool {
+	if len(script) == 0 {
+		return false
+	}
+	tokenizer := txscript.MakeScriptTokenizer(0, script)
+	var ops []byte
+	var data [][]byte
+	for tokenizer.Next() {
+		ops = append(ops, tokenizer.Opcode())
+		data = append(data, tokenizer.Data())
+	}
+	if tokenizer.Err() != nil {
+		return false
+	}
+	if len(ops) != 3 {
+		return false
+	}
+	if ops[0] != txscript.OP_SHA256 {
+		return false
+	}
+	if ops[2] != txscript.OP_EQUAL {
+		return false
+	}
+	if len(data) < 2 || len(data[1]) != 32 {
+		return false
+	}
+	return true
+}
+
 func buildCommitmentP2WSHScript(params *chaincfg.Params, redeemScript []byte) ([]byte, error) {
 	hash := sha256.Sum256(redeemScript)
 	addr, err := btcutil.NewAddressWitnessScriptHash(hash[:], params)

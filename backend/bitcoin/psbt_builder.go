@@ -22,6 +22,7 @@ type PSBTRequest struct {
 	TargetValueSats   int64
 	PixelHash         []byte
 	CommitmentSats    int64
+	CommitmentAddress btcutil.Address
 	ContractorAddress btcutil.Address
 	Payouts           []PayoutOutput
 	FeeRateSatPerVB   int64
@@ -149,7 +150,7 @@ func BuildFundingPSBT(client *MempoolClient, params *chaincfg.Params, req PSBTRe
 	var redeemScriptHash []byte
 	var commitmentAddr string
 	if len(req.PixelHash) > 0 {
-		commitmentScript, redeemScript, redeemScriptHash, commitmentAddr, err = buildCommitmentScript(params, req.PixelHash)
+		commitmentScript, redeemScript, redeemScriptHash, commitmentAddr, err = buildCommitmentScript(params, req.PixelHash, req.CommitmentAddress)
 		if err != nil {
 			return nil, err
 		}
@@ -285,7 +286,7 @@ func BuildFundingPSBT(client *MempoolClient, params *chaincfg.Params, req PSBTRe
 }
 
 // BuildRaiseFundPSBT builds a multi-payer PSBT with per-payer change outputs.
-func BuildRaiseFundPSBT(client *MempoolClient, params *chaincfg.Params, payers []PayerTarget, payouts []PayoutOutput, pixelHash []byte, commitmentSats int64, feeRate int64) (*PSBTResult, error) {
+func BuildRaiseFundPSBT(client *MempoolClient, params *chaincfg.Params, payers []PayerTarget, payouts []PayoutOutput, pixelHash []byte, commitmentSats int64, commitmentAddress btcutil.Address, feeRate int64) (*PSBTResult, error) {
 	if feeRate < 0 {
 		feeRate = 0
 	}
@@ -334,7 +335,7 @@ func BuildRaiseFundPSBT(client *MempoolClient, params *chaincfg.Params, payers [
 	var redeemScriptHash []byte
 	var commitmentAddr string
 	if len(pixelHash) > 0 {
-		commitmentScript, redeemScript, redeemScriptHash, commitmentAddr, err = buildCommitmentScript(params, pixelHash)
+		commitmentScript, redeemScript, redeemScriptHash, commitmentAddr, err = buildCommitmentScript(params, pixelHash, commitmentAddress)
 		if err != nil {
 			return nil, err
 		}
@@ -578,11 +579,17 @@ func buildPayoutScripts(req PSBTRequest) ([][]byte, []int64, error) {
 	return [][]byte{script}, []int64{req.TargetValueSats}, nil
 }
 
-func buildCommitmentScript(params *chaincfg.Params, pixelHash []byte) ([]byte, []byte, []byte, string, error) {
+func buildCommitmentScript(params *chaincfg.Params, pixelHash []byte, commitmentAddress btcutil.Address) ([]byte, []byte, []byte, string, error) {
 	if len(pixelHash) != 32 {
 		return nil, nil, nil, "", fmt.Errorf("pixel hash must be 32 bytes for P2WSH hashlock")
 	}
-	redeemScript, err := buildHashlockRedeemScript(pixelHash)
+	var redeemScript []byte
+	var err error
+	if commitmentAddress != nil {
+		redeemScript, err = buildHashlockP2PKHRedeemScript(pixelHash, commitmentAddress)
+	} else {
+		redeemScript, err = buildHashlockRedeemScript(pixelHash)
+	}
 	if err != nil {
 		return nil, nil, nil, "", err
 	}
@@ -604,6 +611,27 @@ func buildHashlockRedeemScript(pixelHash []byte) ([]byte, error) {
 	builder.AddOp(txscript.OP_SHA256)
 	builder.AddData(lockHash[:])
 	builder.AddOp(txscript.OP_EQUAL)
+	return builder.Script()
+}
+
+func buildHashlockP2PKHRedeemScript(pixelHash []byte, addr btcutil.Address) ([]byte, error) {
+	lockHash := sha256.Sum256(pixelHash)
+	if addr == nil {
+		return nil, fmt.Errorf("commitment address required")
+	}
+	pubKeyHash := addr.ScriptAddress()
+	if len(pubKeyHash) != 20 {
+		return nil, fmt.Errorf("commitment address must be P2PKH/P2WPKH")
+	}
+	builder := txscript.NewScriptBuilder()
+	builder.AddOp(txscript.OP_SHA256)
+	builder.AddData(lockHash[:])
+	builder.AddOp(txscript.OP_EQUALVERIFY)
+	builder.AddOp(txscript.OP_DUP)
+	builder.AddOp(txscript.OP_HASH160)
+	builder.AddData(pubKeyHash)
+	builder.AddOp(txscript.OP_EQUALVERIFY)
+	builder.AddOp(txscript.OP_CHECKSIG)
 	return builder.Script()
 }
 

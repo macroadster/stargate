@@ -52,6 +52,9 @@ func SweepCommitmentIfReady(ctx context.Context, store SweepStore, mempool *Memp
 	if err != nil {
 		return markSweepStatus(ctx, store, task.TaskID, proof, "failed", "invalid redeem script")
 	}
+	if !isHashlockOnlyRedeemScript(redeemScript) {
+		return markSweepStatus(ctx, store, task.TaskID, proof, "skipped", "commitment redeem script requires signature")
+	}
 	preimage, err := hex.DecodeString(strings.TrimSpace(proof.VisiblePixelHash))
 	if err != nil {
 		return markSweepStatus(ctx, store, task.TaskID, proof, "failed", "invalid preimage")
