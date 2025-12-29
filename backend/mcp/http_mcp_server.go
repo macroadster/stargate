@@ -400,7 +400,7 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 			},
 		},
 		"create_proposal": map[string]interface{}{
-			"description": "Create a new proposal from an existing wish ingestion",
+			"description": "Create a new proposal tied to a wish",
 			"parameters": map[string]interface{}{
 				"title": map[string]interface{}{
 					"type":        "string",
@@ -421,24 +421,22 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 				},
 				"visible_pixel_hash": map[string]interface{}{
 					"type":        "string",
-					"description": "Visible pixel hash",
+					"description": "Visible pixel hash (wish id)",
 				},
 				"ingestion_id": map[string]interface{}{
 					"type":        "string",
 					"description": "Ingestion record ID to build from",
-					"required":    true,
 				},
 			},
 			"examples": []map[string]interface{}{
 				{
-					"description": "Create a proposal from ingestion",
+					"description": "Create a proposal for a wish",
 					"arguments": map[string]interface{}{
 						"title":              "Improve onboarding",
 						"description_md":     "Proposal details...",
 						"budget_sats":        10000,
-						"ingestion_id":       "ingest-123",
-						"contract_id":        "contract-123",
-						"visible_pixel_hash": "contract-123",
+						"contract_id":        "wish-hash-123",
+						"visible_pixel_hash": "wish-hash-123",
 					},
 				},
 			},
@@ -1879,7 +1877,7 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 			metadata["visible_pixel_hash"] = visiblePixelHash
 		}
 
-		// Proposals must be created from an existing ingestion (wish).
+		// Proposals must be tied to an existing wish.
 		ingestionID := h.toString(args["ingestion_id"])
 		if ingestionID != "" && h.ingestionSvc != nil {
 			// Create from ingestion record
@@ -1946,7 +1944,43 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 
 			return result, nil
 		}
-		return nil, fmt.Errorf("ingestion_id is required; proposals must be tied to an existing wish")
+
+		visiblePixelHash = h.toString(args["visible_pixel_hash"])
+		if strings.TrimSpace(visiblePixelHash) == "" {
+			return nil, fmt.Errorf("visible_pixel_hash is required; proposals must be tied to a wish")
+		}
+		contractID = h.toString(args["contract_id"])
+		if strings.TrimSpace(contractID) == "" {
+			contractID = visiblePixelHash
+		}
+		metadata["contract_id"] = contractID
+		metadata["visible_pixel_hash"] = visiblePixelHash
+		if contractID != visiblePixelHash {
+			return nil, fmt.Errorf("contract_id must match visible_pixel_hash for wish proposals")
+		}
+		if _, err := store.GetContract("wish-" + visiblePixelHash); err != nil {
+			return nil, fmt.Errorf("wish not found for visible_pixel_hash")
+		}
+
+		proposal := smart_contract.Proposal{
+			ID:               id,
+			Title:            title,
+			DescriptionMD:    h.toString(args["description_md"]),
+			VisiblePixelHash: visiblePixelHash,
+			BudgetSats:       budgetSats,
+			Status:           status,
+			CreatedAt:        time.Now(),
+			Metadata:         metadata,
+		}
+		if err := store.CreateProposal(ctx, proposal); err != nil {
+			return nil, err
+		}
+		return map[string]interface{}{
+			"proposal_id": proposal.ID,
+			"status":      proposal.Status,
+			"tasks":       len(proposal.Tasks),
+			"budget_sats": proposal.BudgetSats,
+		}, nil
 
 	case "create_contract":
 		if h.smartContractSvc == nil {

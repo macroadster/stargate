@@ -154,15 +154,15 @@ func TestClaimTaskUsesAPIKeyWallet(t *testing.T) {
 	}
 }
 
-func TestProposalCreationRequiresIngestion(t *testing.T) {
+func TestProposalCreationRequiresWish(t *testing.T) {
 	// Use a fresh memory store for this test
 	store := scstore.NewMemoryStore(72 * time.Hour)
 	ingestionSvc := &services.IngestionService{}  // nil for memory mode
 	scannerManager := &starlight.ScannerManager{} // mock scanner manager
 	server := NewHTTPMCPServer(store, allowAllValidator{}, ingestionSvc, scannerManager, nil)
 
-	// Test that proposals require an ingestion ID (wish).
-	t.Run("create_proposal_requires_scan_metadata", func(t *testing.T) {
+	// Test that proposals require a wish hash.
+	t.Run("create_proposal_requires_visible_pixel_hash", func(t *testing.T) {
 		req := MCPRequest{
 			Tool: "create_proposal",
 			Arguments: map[string]interface{}{
@@ -192,8 +192,8 @@ func TestProposalCreationRequiresIngestion(t *testing.T) {
 			t.Fatalf("expected failure due to missing scan metadata, but got success")
 		}
 
-		if !strings.Contains(resp.Error, "ingestion_id is required") {
-			t.Fatalf("expected error about ingestion_id requirement, got: %s", resp.Error)
+		if !strings.Contains(resp.Error, "visible_pixel_hash is required") {
+			t.Fatalf("expected error about visible_pixel_hash requirement, got: %s", resp.Error)
 		}
 	})
 
@@ -228,8 +228,8 @@ func TestProposalCreationRequiresIngestion(t *testing.T) {
 		}
 	})
 
-	// Test that manual creation with scan metadata is rejected
-	t.Run("create_proposal_with_scan_metadata", func(t *testing.T) {
+	// Test that proposal creation fails when wish is missing
+	t.Run("create_proposal_without_wish", func(t *testing.T) {
 		req := MCPRequest{
 			Tool: "create_proposal",
 			Arguments: map[string]interface{}{
@@ -238,13 +238,6 @@ func TestProposalCreationRequiresIngestion(t *testing.T) {
 				"budget_sats":        1000,
 				"contract_id":        "a1b2c3d4e5f6a7b8a1b2c3d4e5f6a7b8a1b2c3d4e5f6a7b8a1b2c3d4e5f6a7b8",
 				"visible_pixel_hash": "a1b2c3d4e5f6a7b8a1b2c3d4e5f6a7b8a1b2c3d4e5f6a7b8a1b2c3d4e5f6a7b8",
-				"tasks": []interface{}{
-					map[string]interface{}{
-						"title":       "Task 1",
-						"description": "First task",
-						"budget_sats": 500,
-					},
-				},
 			},
 		}
 		body, _ := json.Marshal(req)
@@ -255,8 +248,8 @@ func TestProposalCreationRequiresIngestion(t *testing.T) {
 
 		server.handleToolCall(w, r)
 
-		if w.Code != http.StatusBadRequest {
-			t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("expected 404, got %d: %s", w.Code, w.Body.String())
 		}
 
 		var resp MCPResponse
@@ -265,11 +258,55 @@ func TestProposalCreationRequiresIngestion(t *testing.T) {
 		}
 
 		if resp.Success {
-			t.Fatalf("expected failure due to missing ingestion_id, but got success")
+			t.Fatalf("expected failure due to missing wish, but got success")
 		}
 
-		if !strings.Contains(resp.Error, "ingestion_id is required") {
-			t.Fatalf("expected error about ingestion_id requirement, got: %s", resp.Error)
+		if !strings.Contains(resp.Error, "wish not found") {
+			t.Fatalf("expected error about missing wish, got: %s", resp.Error)
+		}
+	})
+
+	// Test that proposal creation succeeds when wish exists
+	t.Run("create_proposal_with_wish", func(t *testing.T) {
+		wishID := "wish-1111111111111111111111111111111111111111111111111111111111111111"
+		storeContract := smart_contract.Contract{
+			ContractID: wishID,
+			Title:      "Wish",
+			Status:     "pending",
+		}
+		if err := store.UpsertContractWithTasks(context.Background(), storeContract, nil); err != nil {
+			t.Fatalf("failed to seed wish contract: %v", err)
+		}
+
+		req := MCPRequest{
+			Tool: "create_proposal",
+			Arguments: map[string]interface{}{
+				"title":              "Wish Proposal",
+				"description_md":     "Proposal for wish",
+				"budget_sats":        1000,
+				"contract_id":        "1111111111111111111111111111111111111111111111111111111111111111",
+				"visible_pixel_hash": "1111111111111111111111111111111111111111111111111111111111111111",
+			},
+		}
+		body, _ := json.Marshal(req)
+
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("POST", "/mcp/call", bytes.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+
+		server.handleToolCall(w, r)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		var resp MCPResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to unmarshal response: %v", err)
+		}
+
+		if !resp.Success {
+			t.Fatalf("expected success, got error: %s", resp.Error)
 		}
 	})
 }
