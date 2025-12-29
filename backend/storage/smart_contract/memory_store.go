@@ -720,6 +720,20 @@ func (s *MemoryStore) ApproveProposal(ctx context.Context, id string) error {
 	p.Status = "approved"
 	s.proposals[id] = p
 
+	visible := strings.TrimSpace(p.VisiblePixelHash)
+	if visible == "" {
+		if v, ok := p.Metadata["visible_pixel_hash"].(string); ok {
+			visible = strings.TrimSpace(v)
+		}
+	}
+	if visible != "" {
+		wishID := "wish-" + visible
+		if contract, ok := s.contracts[wishID]; ok {
+			contract.Status = "superseded"
+			s.contracts[wishID] = contract
+		}
+	}
+
 	// Update related tasks
 	for i, t := range s.tasks {
 		if t.ContractID == contractID {

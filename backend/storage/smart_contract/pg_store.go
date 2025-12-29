@@ -1106,6 +1106,16 @@ WHERE id<>$1 AND status='pending' AND (
 	if _, err := tx.Exec(ctx, `UPDATE mcp_proposals SET status='approved' WHERE id=$1`, id); err != nil {
 		return err
 	}
+	visible := strings.TrimSpace(visiblePixelHash)
+	if visible == "" {
+		if v, ok := meta["visible_pixel_hash"].(string); ok {
+			visible = strings.TrimSpace(v)
+		}
+	}
+	if visible != "" {
+		wishID := "wish-" + visible
+		_, _ = tx.Exec(ctx, `UPDATE mcp_contracts SET status='superseded' WHERE contract_id=$1`, wishID)
+	}
 
 	return tx.Commit(ctx)
 }
