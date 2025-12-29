@@ -739,13 +739,12 @@ const InscriptionModal = ({ inscription, onClose }) => {
       const feeRate = Number.isFinite(feeRateParsed) ? Math.max(1, feeRateParsed) : 1;
       const payload = {
         contractor_wallet: isRaiseFund ? undefined : payoutWallet,
-        pixel_hash: psbtForm.includeDonation
-          ? selectedTask?.merkle_proof?.visible_pixel_hash ||
-            psbtForm.pixelHash?.trim() ||
-            inscription.metadata?.visible_pixel_hash ||
-            undefined
-          : undefined,
-        use_pixel_hash: psbtForm.includeDonation,
+        pixel_hash:
+          selectedTask?.merkle_proof?.visible_pixel_hash ||
+          psbtForm.pixelHash?.trim() ||
+          inscription.metadata?.visible_pixel_hash ||
+          undefined,
+        use_pixel_hash: true,
         task_id: isRaiseFund ? undefined : selectedTask?.task_id,
         payouts: payouts.length > 0 ? payouts : undefined,
         budget_sats: targetBudget || undefined,
@@ -1264,9 +1263,9 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                               type="checkbox"
                               className="mt-0.5 h-4 w-4 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500 dark:border-gray-600"
                               checked={psbtForm.includeDonation}
-                              onChange={(e) => setPsbtForm((p) => ({ ...p, includeDonation: e.target.checked }))}
+                              disabled
                             />
-                            <span>Donate to Starlight Project to keep lights on</span>
+                            <span>Commitment output required for on-chain verification</span>
                           </label>
                         </div>
                         <div className="space-y-2 md:col-span-2">
