@@ -396,9 +396,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 	}
 	var ingestionRec *services.IngestionRecord
 	if s.ingestionSvc != nil {
-		if rec, err := s.ingestionSvc.Get(contractID); err == nil {
-			ingestionRec = rec
-		}
+		ingestionRec = s.resolveIngestionRecord(r.Context(), contractID)
 	}
 	if usePixelHash {
 		if ph := strings.TrimSpace(body.PixelHash); ph != "" {
@@ -691,6 +689,47 @@ func (s *Server) resolveFundingMode(ctx context.Context, contractID string) (str
 		}
 	}
 	return mode, fundingAddressFromMeta(meta)
+}
+
+func (s *Server) resolveIngestionRecord(ctx context.Context, contractID string) *services.IngestionRecord {
+	if s.ingestionSvc == nil || strings.TrimSpace(contractID) == "" {
+		return nil
+	}
+	if rec, err := s.ingestionSvc.Get(contractID); err == nil && rec != nil {
+		return rec
+	}
+	if s.store != nil {
+		if stored, err := s.store.GetProposal(ctx, contractID); err == nil {
+			if rec := s.ingestionFromProposalMeta(stored.Metadata, stored.VisiblePixelHash); rec != nil {
+				return rec
+			}
+		} else if proposals, err := s.store.ListProposals(ctx, smart_contract.ProposalFilter{ContractID: contractID}); err == nil && len(proposals) > 0 {
+			if rec := s.ingestionFromProposalMeta(proposals[0].Metadata, proposals[0].VisiblePixelHash); rec != nil {
+				return rec
+			}
+		}
+	}
+	return nil
+}
+
+func (s *Server) ingestionFromProposalMeta(meta map[string]interface{}, visiblePixelHash string) *services.IngestionRecord {
+	if s.ingestionSvc == nil {
+		return nil
+	}
+	ingestionID := strings.TrimSpace(toString(meta["ingestion_id"]))
+	if ingestionID == "" {
+		ingestionID = strings.TrimSpace(visiblePixelHash)
+	}
+	if ingestionID == "" {
+		ingestionID = strings.TrimSpace(toString(meta["visible_pixel_hash"]))
+	}
+	if ingestionID == "" {
+		return nil
+	}
+	if rec, err := s.ingestionSvc.Get(ingestionID); err == nil && rec != nil {
+		return rec
+	}
+	return nil
 }
 
 func isRaiseFund(mode string) bool {
