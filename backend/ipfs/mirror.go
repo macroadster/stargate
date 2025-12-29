@@ -193,6 +193,10 @@ func StartMirror(ctx context.Context, cfg MirrorConfig) (*Mirror, error) {
 	}
 	m.peerID = peerID
 
+	if err := m.ensurePubsubReady(ctx); err != nil {
+		return nil, err
+	}
+
 	log.Printf("IPFS mirror enabled (peer=%s topic=%s uploads=%s)", m.peerID, m.cfg.Topic, m.cfg.UploadsDir)
 
 	if cfg.UploadEnabled {
@@ -203,6 +207,24 @@ func StartMirror(ctx context.Context, cfg MirrorConfig) (*Mirror, error) {
 	}
 
 	return m, nil
+}
+
+func (m *Mirror) ensurePubsubReady(ctx context.Context) error {
+	reqURL := fmt.Sprintf("%s/api/v0/pubsub/ls", strings.TrimRight(m.cfg.APIURL, "/"))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := m.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("ipfs pubsub not ready: %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+	return nil
 }
 
 func (m *Mirror) publishLoop(ctx context.Context) {
