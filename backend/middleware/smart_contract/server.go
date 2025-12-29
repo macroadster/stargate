@@ -1976,6 +1976,10 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 			Error(w, http.StatusBadRequest, "invalid json")
 			return
 		}
+		if strings.TrimSpace(body.IngestionID) == "" {
+			Error(w, http.StatusBadRequest, "ingestion_id is required; proposals must be tied to an existing wish")
+			return
+		}
 
 		// If an ingestion_id is provided, pull message/token/budget from that pending record.
 		if body.IngestionID != "" && s.ingestionSvc != nil {
@@ -2019,87 +2023,6 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-
-		// Manual creation path (not tied to ingestion).
-		if strings.TrimSpace(body.Title) == "" {
-			Error(w, http.StatusBadRequest, "title is required")
-			return
-		}
-		if body.ID == "" {
-			body.ID = "proposal-" + strconv.FormatInt(time.Now().UnixNano(), 10)
-		}
-		if body.Status == "" {
-			body.Status = "pending"
-		}
-		if body.BudgetSats == 0 {
-			body.BudgetSats = scstore.DefaultBudgetSats()
-		}
-		if body.Metadata == nil {
-			body.Metadata = map[string]interface{}{}
-		}
-		applyCreatorAPIKeyHash(body.Metadata, r.Header.Get("X-API-Key"))
-		if body.ContractID != "" {
-			body.Metadata["contract_id"] = body.ContractID
-		}
-		if strings.TrimSpace(body.VisiblePixelHash) != "" {
-			body.Metadata["visible_pixel_hash"] = body.VisiblePixelHash
-		}
-		contractID := strings.TrimSpace(body.ContractID)
-		if contractID == "" {
-			if v, ok := body.Metadata["contract_id"].(string); ok {
-				contractID = strings.TrimSpace(v)
-			}
-		}
-		visiblePixelHash := strings.TrimSpace(body.VisiblePixelHash)
-		if visiblePixelHash == "" {
-			if v, ok := body.Metadata["visible_pixel_hash"].(string); ok {
-				visiblePixelHash = strings.TrimSpace(v)
-			}
-		}
-		if contractID == "" || visiblePixelHash == "" {
-			Error(w, http.StatusBadRequest, "contract_id and visible_pixel_hash are required for proposal creation so the UI can display it; set both to the same 64-char hash if needed")
-			return
-		}
-		for i := range body.Tasks {
-			if body.Tasks[i].TaskID == "" {
-				body.Tasks[i].TaskID = body.ID + "-task-" + strconv.Itoa(i+1)
-			}
-			if body.Tasks[i].ContractID == "" && body.ContractID != "" {
-				body.Tasks[i].ContractID = body.ContractID
-			}
-			if body.Tasks[i].Status == "" {
-				body.Tasks[i].Status = "available"
-			}
-		}
-		p := smart_contract.Proposal{
-			ID:               body.ID,
-			Title:            body.Title,
-			DescriptionMD:    body.DescriptionMD,
-			VisiblePixelHash: body.VisiblePixelHash,
-			BudgetSats:       body.BudgetSats,
-			Status:           body.Status,
-			CreatedAt:        time.Now(),
-			Tasks:            body.Tasks,
-			Metadata:         body.Metadata,
-		}
-		if err := s.store.CreateProposal(r.Context(), p); err != nil {
-			Error(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		s.recordEvent(smart_contract.Event{
-			Type:      "proposal_create",
-			EntityID:  p.ID,
-			Actor:     "creator",
-			Message:   fmt.Sprintf("proposal created with %d tasks", len(p.Tasks)),
-			CreatedAt: time.Now(),
-		})
-		JSON(w, http.StatusCreated, map[string]interface{}{
-			"proposal_id": p.ID,
-			"status":      p.Status,
-			"tasks":       len(p.Tasks),
-			"budget_sats": p.BudgetSats,
-		})
-		return
 	case http.MethodPut, http.MethodPatch:
 		parts := strings.Split(path, "/")
 		if len(parts) < 1 || parts[0] == "" {

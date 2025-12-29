@@ -161,7 +161,7 @@ func TestProposalCreationRequiresIngestion(t *testing.T) {
 	scannerManager := &starlight.ScannerManager{} // mock scanner manager
 	server := NewHTTPMCPServer(store, allowAllValidator{}, ingestionSvc, scannerManager, nil)
 
-	// Test that proposals require scan metadata for manual creation
+	// Test that proposals require an ingestion ID (wish).
 	t.Run("create_proposal_requires_scan_metadata", func(t *testing.T) {
 		req := MCPRequest{
 			Tool: "create_proposal",
@@ -192,8 +192,8 @@ func TestProposalCreationRequiresIngestion(t *testing.T) {
 			t.Fatalf("expected failure due to missing scan metadata, but got success")
 		}
 
-		if !strings.Contains(resp.Error, "contract_id and visible_pixel_hash") {
-			t.Fatalf("expected error about contract_id and visible_pixel_hash, got: %s", resp.Error)
+		if !strings.Contains(resp.Error, "ingestion_id is required") {
+			t.Fatalf("expected error about ingestion_id requirement, got: %s", resp.Error)
 		}
 	})
 
@@ -228,7 +228,7 @@ func TestProposalCreationRequiresIngestion(t *testing.T) {
 		}
 	})
 
-	// Test that manual creation works with scan metadata
+	// Test that manual creation with scan metadata is rejected
 	t.Run("create_proposal_with_scan_metadata", func(t *testing.T) {
 		req := MCPRequest{
 			Tool: "create_proposal",
@@ -255,8 +255,8 @@ func TestProposalCreationRequiresIngestion(t *testing.T) {
 
 		server.handleToolCall(w, r)
 
-		if w.Code != http.StatusOK {
-			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
 		}
 
 		var resp MCPResponse
@@ -264,17 +264,12 @@ func TestProposalCreationRequiresIngestion(t *testing.T) {
 			t.Fatalf("failed to unmarshal response: %v", err)
 		}
 
-		if !resp.Success {
-			t.Fatalf("expected success, got error: %s", resp.Error)
+		if resp.Success {
+			t.Fatalf("expected failure due to missing ingestion_id, but got success")
 		}
 
-		result, ok := resp.Result.(map[string]interface{})
-		if !ok {
-			t.Fatalf("expected result map, got %T", resp.Result)
-		}
-
-		if _, hasID := result["proposal_id"]; !hasID {
-			t.Fatalf("expected proposal_id in result")
+		if !strings.Contains(resp.Error, "ingestion_id is required") {
+			t.Fatalf("expected error about ingestion_id requirement, got: %s", resp.Error)
 		}
 	})
 }

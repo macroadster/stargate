@@ -400,7 +400,7 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 			},
 		},
 		"create_proposal": map[string]interface{}{
-			"description": "Create a new proposal with optional tasks",
+			"description": "Create a new proposal from an existing wish ingestion",
 			"parameters": map[string]interface{}{
 				"title": map[string]interface{}{
 					"type":        "string",
@@ -417,51 +417,28 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 				},
 				"contract_id": map[string]interface{}{
 					"type":        "string",
-					"description": "Contract ID to link (required for manual creation)",
+					"description": "Contract ID to link",
 				},
 				"visible_pixel_hash": map[string]interface{}{
 					"type":        "string",
-					"description": "Visible pixel hash (required for manual creation)",
+					"description": "Visible pixel hash",
 				},
 				"ingestion_id": map[string]interface{}{
 					"type":        "string",
 					"description": "Ingestion record ID to build from",
-				},
-				"tasks": map[string]interface{}{
-					"type":        "array",
-					"description": "Optional tasks to attach to the proposal",
-					"items": map[string]interface{}{
-						"type": "object",
-						"properties": map[string]interface{}{
-							"title": map[string]interface{}{
-								"type": "string",
-							},
-							"description": map[string]interface{}{
-								"type": "string",
-							},
-							"budget_sats": map[string]interface{}{
-								"type": "integer",
-							},
-						},
-					},
+					"required":    true,
 				},
 			},
 			"examples": []map[string]interface{}{
 				{
-					"description": "Create a proposal with tasks",
+					"description": "Create a proposal from ingestion",
 					"arguments": map[string]interface{}{
 						"title":              "Improve onboarding",
 						"description_md":     "Proposal details...",
 						"budget_sats":        10000,
+						"ingestion_id":       "ingest-123",
 						"contract_id":        "contract-123",
 						"visible_pixel_hash": "contract-123",
-						"tasks": []map[string]interface{}{
-							{
-								"title":       "Draft documentation",
-								"description": "Write onboarding guide",
-								"budget_sats": 5000,
-							},
-						},
 					},
 				},
 			},
@@ -1902,7 +1879,7 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 			metadata["visible_pixel_hash"] = visiblePixelHash
 		}
 
-		// Check if creating from ingestion or manual with scan metadata
+		// Proposals must be created from an existing ingestion (wish).
 		ingestionID := h.toString(args["ingestion_id"])
 		if ingestionID != "" && h.ingestionSvc != nil {
 			// Create from ingestion record
@@ -1969,66 +1946,7 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 
 			return result, nil
 		}
-
-		// Manual creation with tasks
-		metaContractID := strings.TrimSpace(h.toString(metadata["contract_id"]))
-		metaVisiblePixelHash := strings.TrimSpace(h.toString(metadata["visible_pixel_hash"]))
-		if metaContractID == "" || metaVisiblePixelHash == "" {
-			return nil, fmt.Errorf("contract_id and visible_pixel_hash are required for proposal creation so the UI can display it; set both to the same 64-char hash if needed")
-		}
-		var tasks []smart_contract.Task
-		if taskSlice, ok := args["tasks"].([]interface{}); ok {
-			for i, taskInterface := range taskSlice {
-				if taskMap, ok := taskInterface.(map[string]interface{}); ok {
-					task := smart_contract.Task{
-						TaskID:      h.toString(taskMap["task_id"]),
-						ContractID:  h.toString(taskMap["contract_id"]),
-						GoalID:      h.toString(taskMap["goal_id"]),
-						Title:       h.toString(taskMap["title"]),
-						Description: h.toString(taskMap["description"]),
-						BudgetSats:  h.toInt64(taskMap["budget_sats"]),
-						Status:      h.toString(taskMap["status"]),
-					}
-
-					if task.TaskID == "" {
-						task.TaskID = id + "-task-" + strconv.Itoa(i+1)
-					}
-					if task.ContractID == "" && contractID != "" {
-						task.ContractID = contractID
-					}
-					if task.Status == "" {
-						task.Status = "available"
-					}
-
-					tasks = append(tasks, task)
-				}
-			}
-		}
-
-		proposal := smart_contract.Proposal{
-			ID:               id,
-			Title:            title,
-			DescriptionMD:    h.toString(args["description_md"]),
-			VisiblePixelHash: h.toString(args["visible_pixel_hash"]),
-			BudgetSats:       budgetSats,
-			Status:           status,
-			CreatedAt:        time.Now(),
-			Tasks:            tasks,
-			Metadata:         metadata,
-		}
-
-		if err := store.CreateProposal(ctx, proposal); err != nil {
-			return nil, err
-		}
-
-		result := map[string]interface{}{
-			"proposal_id": proposal.ID,
-			"status":      proposal.Status,
-			"tasks":       len(proposal.Tasks),
-			"budget_sats": proposal.BudgetSats,
-		}
-
-		return result, nil
+		return nil, fmt.Errorf("ingestion_id is required; proposals must be tied to an existing wish")
 
 	case "create_contract":
 		if h.smartContractSvc == nil {
