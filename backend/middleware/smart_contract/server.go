@@ -63,6 +63,47 @@ type ProposalUpdateBody struct {
 	Tasks            *[]smart_contract.Task  `json:"tasks"`
 }
 
+func creatorAPIKeyHash(apiKey string) string {
+	key := strings.TrimSpace(apiKey)
+	if key == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(key))
+	return hex.EncodeToString(sum[:])
+}
+
+func applyCreatorAPIKeyHash(meta map[string]interface{}, apiKey string) {
+	if meta == nil {
+		return
+	}
+	if _, ok := meta["creator_api_key_hash"].(string); ok {
+		return
+	}
+	if hash := creatorAPIKeyHash(apiKey); hash != "" {
+		meta["creator_api_key_hash"] = hash
+	}
+}
+
+func enforceCreatorApproval(r *http.Request, proposal smart_contract.Proposal) error {
+	meta := proposal.Metadata
+	if meta == nil {
+		return fmt.Errorf("proposal missing creator metadata")
+	}
+	required, _ := meta["creator_api_key_hash"].(string)
+	required = strings.TrimSpace(required)
+	if required == "" {
+		return fmt.Errorf("proposal missing creator_api_key_hash; recreate the wish to approve")
+	}
+	current := creatorAPIKeyHash(r.Header.Get("X-API-Key"))
+	if current == "" {
+		return fmt.Errorf("api key required for approval")
+	}
+	if required != current {
+		return fmt.Errorf("approver does not match proposal creator")
+	}
+	return nil
+}
+
 // NewServer builds a Server with the given store.
 func NewServer(store Store, apiKeys auth.APIKeyValidator, ingest *services.IngestionService) *Server {
 	srv := &Server{
@@ -1839,6 +1880,10 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 				Error(w, http.StatusBadRequest, err.Error())
 				return
 			}
+			if err := enforceCreatorApproval(r, proposal); err != nil {
+				Error(w, http.StatusForbidden, err.Error())
+				return
+			}
 			meta := proposal.Metadata
 			if meta == nil {
 				meta = map[string]interface{}{}
@@ -1950,6 +1995,7 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 				Error(w, http.StatusBadRequest, "contract_id and visible_pixel_hash are required for proposal creation so the UI can display it; set both to the same 64-char hash if needed")
 				return
 			}
+			applyCreatorAPIKeyHash(proposal.Metadata, r.Header.Get("X-API-Key"))
 			if err := s.store.CreateProposal(r.Context(), proposal); err != nil {
 				Error(w, http.StatusBadRequest, err.Error())
 				return
@@ -1991,6 +2037,7 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 		if body.Metadata == nil {
 			body.Metadata = map[string]interface{}{}
 		}
+		applyCreatorAPIKeyHash(body.Metadata, r.Header.Get("X-API-Key"))
 		if body.ContractID != "" {
 			body.Metadata["contract_id"] = body.ContractID
 		}

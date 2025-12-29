@@ -3,8 +3,10 @@ package mcp
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"log"
@@ -71,6 +73,34 @@ type MCPResponse struct {
 	DocsURL        string      `json:"docs_url,omitempty"`
 	RequestID      string      `json:"request_id,omitempty"`
 	Version        string      `json:"version,omitempty"`
+}
+
+func apiKeyHash(apiKey string) string {
+	key := strings.TrimSpace(apiKey)
+	if key == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(key))
+	return hex.EncodeToString(sum[:])
+}
+
+func requireCreatorApproval(apiKey string, proposal smart_contract.Proposal) error {
+	if proposal.Metadata == nil {
+		return fmt.Errorf("proposal missing creator metadata")
+	}
+	required, _ := proposal.Metadata["creator_api_key_hash"].(string)
+	required = strings.TrimSpace(required)
+	if required == "" {
+		return fmt.Errorf("proposal missing creator_api_key_hash; recreate the wish to approve")
+	}
+	current := apiKeyHash(apiKey)
+	if current == "" {
+		return fmt.Errorf("api key required for approval")
+	}
+	if required != current {
+		return fmt.Errorf("approver does not match proposal creator")
+	}
+	return nil
 }
 
 type jsonRPCRequest struct {
@@ -2034,6 +2064,13 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 			return nil, fmt.Errorf("proposal_id is required")
 		}
 
+		proposal, err := store.GetProposal(ctx, proposalID)
+		if err != nil {
+			return nil, fmt.Errorf("Failed to get proposal: %v", err)
+		}
+		if err := requireCreatorApproval(apiKey, proposal); err != nil {
+			return nil, fmt.Errorf("Approval denied: %v", err)
+		}
 		if err := store.ApproveProposal(ctx, proposalID); err != nil {
 			return nil, fmt.Errorf("Failed to approve proposal: %v", err)
 		}
