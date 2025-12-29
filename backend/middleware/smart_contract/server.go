@@ -1383,6 +1383,16 @@ func (s *Server) handleClaimTask(w http.ResponseWriter, r *http.Request, taskID 
 	if s.apiKeys != nil {
 		key := r.Header.Get("X-API-Key")
 		if contractorWallet != "" {
+			if getter, ok := s.apiKeys.(interface {
+				Get(string) (auth.APIKey, bool)
+			}); ok {
+				if rec, ok := getter.Get(key); ok {
+					if strings.TrimSpace(rec.Wallet) != "" && rec.Wallet != contractorWallet {
+						Error(w, http.StatusForbidden, "wallet already bound; rebind requires verification")
+						return
+					}
+				}
+			}
 			if updater, ok := s.apiKeys.(auth.APIKeyWalletUpdater); ok {
 				if _, err := updater.UpdateWallet(key, contractorWallet); err != nil {
 					Error(w, http.StatusBadRequest, "failed to bind wallet to api key")
