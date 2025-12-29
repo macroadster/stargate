@@ -1971,6 +1971,11 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 				Error(w, http.StatusBadRequest, err.Error())
 				return
 			}
+			// Generate stego payload immediately so the stego hash is available for PSBT.
+			if err := s.maybePublishStegoForProposal(r.Context(), proposal.ID); err != nil {
+				Error(w, http.StatusBadRequest, err.Error())
+				return
+			}
 			s.recordEvent(smart_contract.Event{
 				Type:      "proposal_create",
 				EntityID:  proposal.ID,

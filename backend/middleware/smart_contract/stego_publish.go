@@ -258,7 +258,9 @@ func (s *Server) publishStegoForProposal(ctx context.Context, proposalID string,
 			log.Printf("stego approval: failed to update ingestion %s: %v", ingestionID, err)
 		}
 	}
-	s.archiveWishContract(ctx, visibleHash)
+	if strings.EqualFold(strings.TrimSpace(p.Status), "approved") {
+		s.archiveWishContract(ctx, visibleHash)
+	}
 	if cfg.AnnounceEnabled && strings.TrimSpace(cfg.AnnounceTopic) != "" {
 		announce := stegoAnnouncement{
 			Type:             "stego",

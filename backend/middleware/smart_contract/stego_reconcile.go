@@ -202,15 +202,20 @@ func (s *Server) ensureStegoIngestion(ctx context.Context, contractID, stegoCID 
 	if s.ingestionSvc == nil || contractID == "" || len(stegoBytes) == 0 {
 		return
 	}
+	ingestionID := strings.TrimSpace(manifest.VisiblePixelHash)
+	if ingestionID == "" {
+		ingestionID = contractID
+	}
 	meta := map[string]interface{}{
 		"stego_image_cid":           stegoCID,
+		"stego_contract_id":         contractID,
 		"stego_manifest_issuer":     manifest.Issuer,
 		"stego_manifest_created_at": manifest.CreatedAt,
 		"origin_proposal_id":        manifest.ProposalID,
 		"visible_pixel_hash":        manifest.VisiblePixelHash,
 	}
 	rec := services.IngestionRecord{
-		ID:            contractID,
+		ID:            ingestionID,
 		Filename:      "stego.png",
 		Method:        "stego",
 		MessageLength: 0,
@@ -218,18 +223,22 @@ func (s *Server) ensureStegoIngestion(ctx context.Context, contractID, stegoCID 
 		Metadata:      meta,
 		Status:        "verified",
 	}
-	if existing, err := s.ingestionSvc.Get(contractID); err == nil && existing != nil {
-		_ = s.ingestionSvc.UpdateFromIngest(contractID, rec)
+	if existing, err := s.ingestionSvc.Get(ingestionID); err == nil && existing != nil {
+		_ = s.ingestionSvc.UpdateFromIngest(ingestionID, rec)
 		return
 	}
 	if err := s.ingestionSvc.Create(rec); err != nil {
-		log.Printf("stego reconcile: failed to create ingestion %s: %v", contractID, err)
+		log.Printf("stego reconcile: failed to create ingestion %s: %v", ingestionID, err)
 	}
 }
 
 func (s *Server) upsertContractFromStegoPayload(ctx context.Context, contractID, stegoCID string, manifest stego.Manifest, payload stego.Payload) error {
 	if contractID == "" {
 		return fmt.Errorf("contract id missing")
+	}
+	proposalID := strings.TrimSpace(manifest.VisiblePixelHash)
+	if proposalID == "" {
+		proposalID = contractID
 	}
 	meta := map[string]interface{}{
 		"stego_contract_id":         contractID,
@@ -246,7 +255,7 @@ func (s *Server) upsertContractFromStegoPayload(ctx context.Context, contractID,
 		payload.Proposal.Title = "Stego Contract " + contractID
 	}
 	proposal := smart_contract.Proposal{
-		ID:               contractID,
+		ID:               proposalID,
 		Title:            payload.Proposal.Title,
 		DescriptionMD:    payload.Proposal.DescriptionMD,
 		VisiblePixelHash: manifest.VisiblePixelHash,
