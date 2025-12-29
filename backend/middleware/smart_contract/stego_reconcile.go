@@ -98,9 +98,9 @@ func (s *Server) reconcileStegoFromIPFS(ctx context.Context, stegoCID string, ex
 		return stegoReconcileResponse{}, fmt.Errorf("ipfs cat stego failed: %w", err)
 	}
 	sum := sha256.Sum256(stegoBytes)
-	contractID := hex.EncodeToString(sum[:])
-	if expectedHash != "" && !strings.EqualFold(expectedHash, contractID) {
-		return stegoReconcileResponse{}, fmt.Errorf("stego hash mismatch: expected %s got %s", expectedHash, contractID)
+	stegoHash := hex.EncodeToString(sum[:])
+	if expectedHash != "" && !strings.EqualFold(expectedHash, stegoHash) {
+		return stegoReconcileResponse{}, fmt.Errorf("stego hash mismatch: expected %s got %s", expectedHash, stegoHash)
 	}
 	manifestBytes, err := extractStegoManifest(ctx, stegoBytes, loadStegoReconcileConfig())
 	if err != nil {
@@ -110,8 +110,9 @@ func (s *Server) reconcileStegoFromIPFS(ctx context.Context, stegoCID string, ex
 	if err != nil {
 		return stegoReconcileResponse{}, err
 	}
-	if manifest.ContractID != "" && !strings.EqualFold(manifest.ContractID, contractID) {
-		return stegoReconcileResponse{}, fmt.Errorf("manifest contract_id mismatch: %s", manifest.ContractID)
+	contractID := strings.TrimSpace(manifest.VisiblePixelHash)
+	if contractID == "" {
+		return stegoReconcileResponse{}, fmt.Errorf("manifest visible_pixel_hash missing")
 	}
 	payloadBytes, err := ipfsClient.Cat(ctx, manifest.PayloadCID)
 	if err != nil {
@@ -121,10 +122,10 @@ func (s *Server) reconcileStegoFromIPFS(ctx context.Context, stegoCID string, ex
 	if err := json.Unmarshal(payloadBytes, &payload); err != nil {
 		return stegoReconcileResponse{}, fmt.Errorf("payload json decode failed: %w", err)
 	}
-	if err := s.upsertContractFromStegoPayload(ctx, contractID, stegoCID, manifest, payload); err != nil {
+	if err := s.upsertContractFromStegoPayload(ctx, contractID, stegoCID, stegoHash, manifest, payload); err != nil {
 		return stegoReconcileResponse{}, err
 	}
-	s.ensureStegoIngestion(ctx, contractID, stegoCID, stegoBytes, manifest)
+	s.ensureStegoIngestion(ctx, contractID, stegoCID, stegoHash, stegoBytes, manifest)
 	return stegoReconcileResponse{
 		ContractID:       contractID,
 		StegoCID:         stegoCID,
@@ -198,24 +199,20 @@ func extractStegoManifest(ctx context.Context, image []byte, cfg stegoReconcileC
 	return []byte(extracted), nil
 }
 
-func (s *Server) ensureStegoIngestion(ctx context.Context, contractID, stegoCID string, stegoBytes []byte, manifest stego.Manifest) {
+func (s *Server) ensureStegoIngestion(ctx context.Context, contractID, stegoCID, stegoHash string, stegoBytes []byte, manifest stego.Manifest) {
 	if s.ingestionSvc == nil || contractID == "" || len(stegoBytes) == 0 {
 		return
 	}
-	ingestionID := strings.TrimSpace(manifest.VisiblePixelHash)
-	if ingestionID == "" {
-		ingestionID = contractID
-	}
 	meta := map[string]interface{}{
 		"stego_image_cid":           stegoCID,
-		"stego_contract_id":         contractID,
+		"stego_contract_id":         stegoHash,
 		"stego_manifest_issuer":     manifest.Issuer,
 		"stego_manifest_created_at": manifest.CreatedAt,
 		"origin_proposal_id":        manifest.ProposalID,
 		"visible_pixel_hash":        manifest.VisiblePixelHash,
 	}
 	rec := services.IngestionRecord{
-		ID:            ingestionID,
+		ID:            contractID,
 		Filename:      "stego.png",
 		Method:        "stego",
 		MessageLength: 0,
@@ -223,25 +220,25 @@ func (s *Server) ensureStegoIngestion(ctx context.Context, contractID, stegoCID 
 		Metadata:      meta,
 		Status:        "verified",
 	}
-	if existing, err := s.ingestionSvc.Get(ingestionID); err == nil && existing != nil {
-		_ = s.ingestionSvc.UpdateFromIngest(ingestionID, rec)
+	if existing, err := s.ingestionSvc.Get(contractID); err == nil && existing != nil {
+		_ = s.ingestionSvc.UpdateFromIngest(contractID, rec)
 		return
 	}
 	if err := s.ingestionSvc.Create(rec); err != nil {
-		log.Printf("stego reconcile: failed to create ingestion %s: %v", ingestionID, err)
+		log.Printf("stego reconcile: failed to create ingestion %s: %v", contractID, err)
 	}
 }
 
-func (s *Server) upsertContractFromStegoPayload(ctx context.Context, contractID, stegoCID string, manifest stego.Manifest, payload stego.Payload) error {
+func (s *Server) upsertContractFromStegoPayload(ctx context.Context, contractID, stegoCID, stegoHash string, manifest stego.Manifest, payload stego.Payload) error {
 	if contractID == "" {
 		return fmt.Errorf("contract id missing")
 	}
-	proposalID := strings.TrimSpace(manifest.VisiblePixelHash)
+	proposalID := strings.TrimSpace(manifest.ProposalID)
 	if proposalID == "" {
 		proposalID = contractID
 	}
 	meta := map[string]interface{}{
-		"stego_contract_id":         contractID,
+		"stego_contract_id":         stegoHash,
 		"stego_image_cid":           stegoCID,
 		"stego_payload_cid":         manifest.PayloadCID,
 		"stego_tasks_cid":           manifest.TasksCID,

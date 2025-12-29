@@ -415,16 +415,20 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 				pixelSource = "pixel_hash"
 			}
 		}
-		if pixelBytes == nil {
-			var requireStego bool
-			pixelBytes, pixelSource, requireStego = s.resolveStegoCommitmentHash(r.Context(), contractID, ingestionRec, decodePixelHex)
-			if requireStego {
-				Error(w, http.StatusBadRequest, "stego approval required before PSBT; stego contract id missing")
-				return
+		if pixelBytes == nil && ingestionRec != nil {
+			pixelBytes = resolvePixelHashFromIngestion(ingestionRec, normalizePixel)
+			if pixelBytes != nil {
+				pixelSource = "visible_pixel_hash"
 			}
 		}
 		if pixelBytes == nil {
-			Error(w, http.StatusBadRequest, "missing 32-byte stego hash for commitment output")
+			pixelBytes = decodePixelHex(strings.TrimSpace(contractID))
+			if pixelBytes != nil {
+				pixelSource = "contract_id"
+			}
+		}
+		if pixelBytes == nil {
+			Error(w, http.StatusBadRequest, "missing 32-byte pixel hash for commitment output")
 			return
 		}
 	}
@@ -474,6 +478,9 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 			if rec, ok := s.apiKeys.Get(body.ContractorAPIKey); ok && strings.TrimSpace(rec.Wallet) != "" {
 				contractorAddr, err = btcutil.DecodeAddress(rec.Wallet, params)
 			}
+		}
+		if contractorAddr == nil && strings.TrimSpace(fundingAddress) != "" {
+			contractorAddr, err = btcutil.DecodeAddress(strings.TrimSpace(fundingAddress), params)
 		}
 		if contractorAddr == nil && strings.TrimSpace(body.ContractorWallet) != "" {
 			contractorAddr, err = btcutil.DecodeAddress(strings.TrimSpace(body.ContractorWallet), params)
@@ -554,7 +561,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 				"change_amounts":     splitRes.ChangeAmounts,
 				"funding_mode":       fundingMode,
 				"contract_id":        contractID,
-				"pixel_source":       pixelSourceOrDefault(pixelSource, pixelBytes),
+				"pixel_source":       defaultPixelSource(pixelSource, pixelBytes),
 				"budget_sats":        target,
 				"contractor":         "",
 				"network_params":     params.Name,
@@ -662,7 +669,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		"change_amounts":     res.ChangeAmounts,
 		"funding_mode":       fundingMode,
 		"contract_id":        contractID,
-		"pixel_source":       pixelSourceOrDefault(pixelSource, pixelBytes),
+		"pixel_source":       defaultPixelSource(pixelSource, pixelBytes),
 		"budget_sats":        target,
 		"contractor":         contractorAddressFor(contractorAddr),
 		"network_params":     params.Name,
@@ -741,43 +748,6 @@ func (s *Server) ingestionFromProposalMeta(meta map[string]interface{}, visibleP
 		return rec
 	}
 	return nil
-}
-
-func (s *Server) resolveStegoCommitmentHash(ctx context.Context, contractID string, ingestionRec *services.IngestionRecord, decodePixelHex func(string) []byte) ([]byte, string, bool) {
-	stegoID := ""
-	if ingestionRec != nil {
-		stegoID = strings.TrimSpace(toString(ingestionRec.Metadata["stego_contract_id"]))
-	}
-	var proposalFound bool
-	if stegoID == "" && s.store != nil {
-		if stored, err := s.store.GetProposal(ctx, contractID); err == nil {
-			proposalFound = true
-			stegoID = strings.TrimSpace(toString(stored.Metadata["stego_contract_id"]))
-		} else if proposals, err := s.store.ListProposals(ctx, smart_contract.ProposalFilter{ContractID: contractID}); err == nil && len(proposals) > 0 {
-			proposalFound = true
-			stegoID = strings.TrimSpace(toString(proposals[0].Metadata["stego_contract_id"]))
-		}
-	}
-	if stegoID != "" {
-		if decoded := decodePixelHex(stegoID); decoded != nil {
-			return decoded, "stego_contract_id", false
-		}
-	}
-	if proposalFound {
-		return nil, "", true
-	}
-	// Assume contractID is already the stego hash when no proposal is found.
-	if decoded := decodePixelHex(strings.TrimSpace(contractID)); decoded != nil {
-		return decoded, "contract_id", false
-	}
-	return nil, "", true
-}
-
-func pixelSourceOrDefault(source string, pixel []byte) string {
-	if strings.TrimSpace(source) != "" {
-		return source
-	}
-	return pixelSourceForBytes(pixel)
 }
 
 func isRaiseFund(mode string) bool {
@@ -1010,6 +980,13 @@ func pixelSourceForBytes(pixel []byte) string {
 	default:
 		return ""
 	}
+}
+
+func defaultPixelSource(source string, pixel []byte) string {
+	if strings.TrimSpace(source) != "" {
+		return source
+	}
+	return pixelSourceForBytes(pixel)
 }
 
 func hexSlice(payloads [][]byte) []string {
@@ -1894,7 +1871,6 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 				Error(w, http.StatusBadRequest, err.Error())
 				return
 			}
-			_ = s.maybePublishStegoForProposal(r.Context(), id)
 			if err := s.store.ApproveProposal(r.Context(), id); err != nil {
 				Error(w, http.StatusBadRequest, err.Error())
 				return
@@ -1971,7 +1947,7 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 				Error(w, http.StatusBadRequest, err.Error())
 				return
 			}
-			// Generate stego payload immediately so the stego hash is available for PSBT.
+			// Generate stego payload immediately for wish creation.
 			if err := s.maybePublishStegoForProposal(r.Context(), proposal.ID); err != nil {
 				Error(w, http.StatusBadRequest, err.Error())
 				return
