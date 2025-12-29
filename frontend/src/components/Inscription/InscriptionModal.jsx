@@ -187,30 +187,6 @@ const InscriptionModal = ({ inscription, onClose }) => {
     return Array.from(totals.entries()).map(([wallet, total]) => ({ wallet, total }));
   }, [deliverableTasks, psbtTasks]);
 
-  const resolvePsbtContractId = useCallback(() => {
-    const candidate =
-      psbtForm.contractId ||
-      approvedContractId ||
-      inscription.metadata?.visible_pixel_hash ||
-      selectedTask?.merkle_proof?.visible_pixel_hash ||
-      selectedTask?.contract_id ||
-      primaryContractId;
-    if (!candidate) return '';
-    if (candidate.startsWith('proposal-')) {
-      if (approvedContractId) return approvedContractId;
-      if (inscription.metadata?.visible_pixel_hash) return inscription.metadata.visible_pixel_hash;
-      if (selectedTask?.merkle_proof?.visible_pixel_hash) return selectedTask.merkle_proof.visible_pixel_hash;
-    }
-    return candidate;
-  }, [
-    psbtForm.contractId,
-    approvedContractId,
-    inscription.metadata?.visible_pixel_hash,
-    selectedTask?.merkle_proof?.visible_pixel_hash,
-    selectedTask?.contract_id,
-    primaryContractId,
-  ]);
-
   let parsedPayload = null;
   if (typeof inscriptionMessageRaw === 'string') {
     try {
@@ -255,6 +231,29 @@ const InscriptionModal = ({ inscription, onClose }) => {
     const withFunding = sourceTasks.find((t) => t?.merkle_proof?.funding_address);
     return withFunding || sourceTasks[0];
   }, [psbtForm.taskId, psbtTasks, allTasks]);
+  const resolvePsbtContractId = useCallback(() => {
+    const candidate =
+      psbtForm.contractId ||
+      approvedContractId ||
+      inscription.metadata?.visible_pixel_hash ||
+      selectedTask?.merkle_proof?.visible_pixel_hash ||
+      selectedTask?.contract_id ||
+      primaryContractId;
+    if (!candidate) return '';
+    if (candidate.startsWith('proposal-')) {
+      if (approvedContractId) return approvedContractId;
+      if (inscription.metadata?.visible_pixel_hash) return inscription.metadata.visible_pixel_hash;
+      if (selectedTask?.merkle_proof?.visible_pixel_hash) return selectedTask.merkle_proof.visible_pixel_hash;
+    }
+    return candidate;
+  }, [
+    psbtForm.contractId,
+    approvedContractId,
+    inscription.metadata?.visible_pixel_hash,
+    selectedTask?.merkle_proof?.visible_pixel_hash,
+    selectedTask?.contract_id,
+    primaryContractId,
+  ]);
   const isPlaceholderAddress = React.useCallback((value) => {
     const cleaned = (value || '').trim().toLowerCase();
     if (!cleaned) return true;
