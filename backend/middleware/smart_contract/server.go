@@ -1879,6 +1879,13 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 			if err := s.publishProposalTasks(r.Context(), id); err != nil {
 				log.Printf("failed to publish tasks for proposal %s: %v", id, err)
 			}
+			visibleHash := strings.TrimSpace(proposal.VisiblePixelHash)
+			if visibleHash == "" {
+				visibleHash = strings.TrimSpace(toString(proposal.Metadata["visible_pixel_hash"]))
+			}
+			if visibleHash != "" {
+				s.archiveWishContract(r.Context(), visibleHash)
+			}
 			s.recordEvent(smart_contract.Event{
 				Type:      "approve",
 				EntityID:  id,

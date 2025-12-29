@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"stargate-backend/core/smart_contract"
 	"stargate-backend/ipfs"
 	"stargate-backend/services"
 	"stargate-backend/stego"
@@ -76,7 +77,7 @@ type pendingIngestAnnouncement struct {
 }
 
 // StartIPFSIngestionSync subscribes to IPFS mirror announcements and creates ingestion records for stego images.
-func StartIPFSIngestionSync(ctx context.Context, ingest *services.IngestionService) error {
+func StartIPFSIngestionSync(ctx context.Context, ingest *services.IngestionService, store Store) error {
 	if ingest == nil {
 		return fmt.Errorf("ipfs ingestion sync requires ingestion service")
 	}
@@ -89,7 +90,7 @@ func StartIPFSIngestionSync(ctx context.Context, ingest *services.IngestionServi
 	streamClient := &http.Client{}
 	go func() {
 		for {
-			if err := ipfsIngestSubscribe(ctx, ingest, cfg, state, client, streamClient); err != nil {
+			if err := ipfsIngestSubscribe(ctx, ingest, store, cfg, state, client, streamClient); err != nil {
 				if ctx.Err() != nil {
 					return
 				}
@@ -139,7 +140,7 @@ func loadIPFSIngestSyncConfig() ipfsIngestSyncConfig {
 	}
 }
 
-func ipfsIngestSubscribe(ctx context.Context, ingest *services.IngestionService, cfg ipfsIngestSyncConfig, state *ipfsIngestSyncState, client *ipfs.Client, streamClient *http.Client) error {
+func ipfsIngestSubscribe(ctx context.Context, ingest *services.IngestionService, store Store, cfg ipfsIngestSyncConfig, state *ipfsIngestSyncState, client *ipfs.Client, streamClient *http.Client) error {
 	reqURL := fmt.Sprintf("%s/api/v0/pubsub/sub?arg=%s", strings.TrimRight(cfg.APIURL, "/"), url.QueryEscape(multibaseEncodeString(cfg.Topic)))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, nil)
 	if err != nil {
@@ -185,7 +186,7 @@ func ipfsIngestSubscribe(ctx context.Context, ingest *services.IngestionService,
 		if manifestCID == "" || manifestCID == state.lastManifest {
 			continue
 		}
-		if err := ipfsIngestProcessManifest(ctx, ingest, cfg, state, client, manifestCID); err != nil {
+		if err := ipfsIngestProcessManifest(ctx, ingest, store, cfg, state, client, manifestCID); err != nil {
 			log.Printf("ipfs ingestion sync failed: %v", err)
 			continue
 		}
@@ -193,7 +194,7 @@ func ipfsIngestSubscribe(ctx context.Context, ingest *services.IngestionService,
 	}
 }
 
-func ipfsIngestProcessManifest(ctx context.Context, ingest *services.IngestionService, cfg ipfsIngestSyncConfig, state *ipfsIngestSyncState, client *ipfs.Client, manifestCID string) error {
+func ipfsIngestProcessManifest(ctx context.Context, ingest *services.IngestionService, store Store, cfg ipfsIngestSyncConfig, state *ipfsIngestSyncState, client *ipfs.Client, manifestCID string) error {
 	data, err := client.Cat(ctx, manifestCID)
 	if err != nil {
 		return err
@@ -244,6 +245,14 @@ func ipfsIngestProcessManifest(ctx context.Context, ingest *services.IngestionSe
 			state.lastSeen[entry.CID] = entry.ModTime
 			continue
 		}
+		if store != nil {
+			payload, err := fetchStegoPayload(ctx, client, stegoManifest.PayloadCID)
+			if err != nil {
+				log.Printf("ipfs ingestion sync payload fetch failed: %v", err)
+			} else if err := ensureProposalFromStegoPayload(ctx, store, entry.CID, stegoManifest, payload); err != nil {
+				log.Printf("ipfs ingestion sync proposal upsert failed: %v", err)
+			}
+		}
 		if existing, err := ingest.Get(id); err == nil && existing != nil {
 			metaUpdates := map[string]interface{}{
 				"stego_image_cid":            entry.CID,
@@ -287,6 +296,90 @@ func ipfsIngestProcessManifest(ctx context.Context, ingest *services.IngestionSe
 		log.Printf("ipfs ingestion sync: manifest=%s processed=%d", manifestCID, processed)
 	}
 	return nil
+}
+
+func fetchStegoPayload(ctx context.Context, client *ipfs.Client, payloadCID string) (stego.Payload, error) {
+	payloadCID = strings.TrimSpace(payloadCID)
+	if payloadCID == "" {
+		return stego.Payload{}, fmt.Errorf("payload_cid missing")
+	}
+	data, err := client.Cat(ctx, payloadCID)
+	if err != nil {
+		return stego.Payload{}, err
+	}
+	var payload stego.Payload
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return stego.Payload{}, fmt.Errorf("payload decode failed: %w", err)
+	}
+	return payload, nil
+}
+
+func ensureProposalFromStegoPayload(ctx context.Context, store Store, stegoCID string, manifest stego.Manifest, payload stego.Payload) error {
+	if store == nil {
+		return nil
+	}
+	proposalID := strings.TrimSpace(payload.Proposal.ID)
+	if proposalID == "" {
+		proposalID = strings.TrimSpace(manifest.ProposalID)
+	}
+	if proposalID == "" {
+		if vph := strings.TrimSpace(manifest.VisiblePixelHash); vph != "" {
+			proposalID = "proposal-" + vph
+		}
+	}
+	if proposalID == "" {
+		return fmt.Errorf("proposal id missing")
+	}
+	if existing, err := store.GetProposal(ctx, proposalID); err == nil && strings.TrimSpace(existing.ID) != "" {
+		return nil
+	}
+	title := strings.TrimSpace(payload.Proposal.Title)
+	if title == "" {
+		title = "Proposal " + proposalID
+	}
+	createdAt := time.Now()
+	if payload.Proposal.CreatedAt > 0 {
+		createdAt = time.Unix(payload.Proposal.CreatedAt, 0)
+	}
+	tasks := make([]smart_contract.Task, 0, len(payload.Tasks))
+	for _, t := range payload.Tasks {
+		if strings.TrimSpace(t.TaskID) == "" {
+			continue
+		}
+		tasks = append(tasks, smart_contract.Task{
+			TaskID:           t.TaskID,
+			ContractID:       proposalID,
+			GoalID:           "wish",
+			Title:            t.Title,
+			Description:      t.Description,
+			BudgetSats:       t.BudgetSats,
+			Skills:           t.Skills,
+			Status:           "available",
+			ContractorWallet: t.ContractorWallet,
+		})
+	}
+	meta := map[string]interface{}{
+		"stego_image_cid":            stegoCID,
+		"stego_payload_cid":          manifest.PayloadCID,
+		"stego_manifest_issuer":      manifest.Issuer,
+		"stego_manifest_created_at":  manifest.CreatedAt,
+		"stego_manifest_proposal_id": manifest.ProposalID,
+		"stego_manifest_schema":      manifest.SchemaVersion,
+		"origin_proposal_id":         manifest.ProposalID,
+		"visible_pixel_hash":         manifest.VisiblePixelHash,
+	}
+	proposal := smart_contract.Proposal{
+		ID:               proposalID,
+		Title:            title,
+		DescriptionMD:    payload.Proposal.DescriptionMD,
+		VisiblePixelHash: manifest.VisiblePixelHash,
+		BudgetSats:       payload.Proposal.BudgetSats,
+		Status:           "approved",
+		CreatedAt:        createdAt,
+		Tasks:            tasks,
+		Metadata:         meta,
+	}
+	return store.CreateProposal(ctx, proposal)
 }
 
 func ipfsIngestProcessPending(ctx context.Context, ingest *services.IngestionService, state *ipfsIngestSyncState, client *ipfs.Client, ann *pendingIngestAnnouncement) error {

@@ -252,7 +252,7 @@ func runHTTPServer() {
 
 	// Initialize MCP components (for HTTP routes)
 	store, apiKeyIssuer, apiKeyValidator, ingestionSvc, challengeStore := initializeMCPComponents()
-	if err := scmiddleware.StartIPFSIngestionSync(context.Background(), ingestionSvc); err != nil {
+	if err := scmiddleware.StartIPFSIngestionSync(context.Background(), ingestionSvc, store); err != nil {
 		log.Printf("ipfs ingestion sync disabled: %v", err)
 	}
 
