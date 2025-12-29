@@ -213,13 +213,7 @@ Stargate is already deployed via the starlight-stack Helm chart. For quick
 cluster validation after code changes:
 
 ```bash
-cd frontend
-docker build -t stargate-frontend:local .
-```
-
-```bash
-cd backend
-docker build -t stargate-backend:local .
+make all
 ```
 
 Then trigger a rolling restart for the updated workload(s) in the cluster
