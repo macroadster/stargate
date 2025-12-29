@@ -526,6 +526,26 @@ func (s *MemoryStore) CreateProposal(ctx context.Context, p smart_contract.Propo
 	}
 
 	s.proposals[p.ID] = p
+	if strings.EqualFold(p.Status, "approved") || strings.EqualFold(p.Status, "published") {
+		visible := strings.TrimSpace(p.VisiblePixelHash)
+		if visible == "" {
+			if v, ok := p.Metadata["visible_pixel_hash"].(string); ok {
+				visible = strings.TrimSpace(v)
+			}
+		}
+		if visible == "" {
+			if v, ok := p.Metadata["contract_id"].(string); ok {
+				visible = strings.TrimSpace(v)
+			}
+		}
+		if visible != "" {
+			wishID := "wish-" + visible
+			if contract, ok := s.contracts[wishID]; ok {
+				contract.Status = "superseded"
+				s.contracts[wishID] = contract
+			}
+		}
+	}
 	return nil
 }
 

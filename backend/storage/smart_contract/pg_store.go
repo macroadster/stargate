@@ -853,7 +853,28 @@ INSERT INTO mcp_proposals (id, title, description_md, visible_pixel_hash, budget
 VALUES ($1,$2,$3,$4,$5,$6,$7,COALESCE($8, now()))
 ON CONFLICT (id) DO NOTHING
 `, p.ID, p.Title, p.DescriptionMD, p.VisiblePixelHash, p.BudgetSats, p.Status, string(meta), p.CreatedAt)
-	return err
+	if err != nil {
+		return err
+	}
+
+	if strings.EqualFold(p.Status, "approved") || strings.EqualFold(p.Status, "published") {
+		visible := strings.TrimSpace(p.VisiblePixelHash)
+		if visible == "" {
+			if v, ok := p.Metadata["visible_pixel_hash"].(string); ok {
+				visible = strings.TrimSpace(v)
+			}
+		}
+		if visible == "" {
+			if v, ok := p.Metadata["contract_id"].(string); ok {
+				visible = strings.TrimSpace(v)
+			}
+		}
+		if visible != "" {
+			wishID := "wish-" + visible
+			_, _ = s.pool.Exec(ctx, `UPDATE mcp_contracts SET status='superseded' WHERE contract_id=$1`, wishID)
+		}
+	}
+	return nil
 }
 
 func (s *PGStore) ListProposals(ctx context.Context, filter smart_contract.ProposalFilter) ([]smart_contract.Proposal, error) {
