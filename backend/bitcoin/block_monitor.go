@@ -1927,15 +1927,40 @@ func witnessHashes(item []byte) []string {
 	if len(item) == 0 {
 		return nil
 	}
-	out := make([]string, 0, 2)
-	if len(item) == 32 || len(item) == 20 {
-		out = append(out, hex.EncodeToString(item))
+	seen := make(map[string]struct{}, 6)
+	add := func(value string) {
+		if value == "" {
+			return
+		}
+		if _, ok := seen[value]; ok {
+			return
+		}
+		seen[value] = struct{}{}
 	}
+
+	if len(item) == 32 || len(item) == 20 {
+		add(hex.EncodeToString(item))
+	}
+	sum := sha256.Sum256(item)
+	add(hex.EncodeToString(sum[:]))
+	add(hex.EncodeToString(btcutil.Hash160(item)))
+
 	asText := normalizeHex(strings.TrimSpace(string(item)))
 	if asText != "" && (len(asText) == 64 || len(asText) == 40) {
-		if _, err := hex.DecodeString(asText); err == nil {
-			out = append(out, asText)
+		if decoded, err := hex.DecodeString(asText); err == nil {
+			add(asText)
+			if len(decoded) == 32 || len(decoded) == 20 {
+				add(hex.EncodeToString(decoded))
+			}
+			decodedSum := sha256.Sum256(decoded)
+			add(hex.EncodeToString(decodedSum[:]))
+			add(hex.EncodeToString(btcutil.Hash160(decoded)))
 		}
+	}
+
+	out := make([]string, 0, len(seen))
+	for value := range seen {
+		out = append(out, value)
 	}
 	return out
 }
