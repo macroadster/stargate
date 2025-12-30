@@ -25,6 +25,7 @@ import (
 
 	"stargate-backend/core"
 	"stargate-backend/core/smart_contract"
+	"stargate-backend/ipfs"
 	"stargate-backend/services"
 )
 
@@ -44,6 +45,7 @@ type BlockMonitor struct {
 	sweepMempool    *MempoolClient
 	stegoReconciler StegoReconciler
 	unpinPath       func(context.Context, string) error
+	ipfsClient      *ipfs.Client
 
 	// Configuration
 	checkInterval time.Duration
@@ -178,6 +180,7 @@ func NewBlockMonitor(client *BitcoinNodeClient) *BlockMonitor {
 		maxRetries:    3,
 		retryDelay:    10 * time.Second,
 		lastChecked:   time.Now(),
+		ipfsClient:    ipfs.NewClientFromEnv(),
 	}
 }
 
@@ -192,6 +195,7 @@ func NewBlockMonitorWithStorage(client *BitcoinNodeClient, dataStorage DataStora
 		maxRetries:    3,
 		retryDelay:    10 * time.Second,
 		lastChecked:   time.Now(),
+		ipfsClient:    ipfs.NewClientFromEnv(),
 	}
 }
 
@@ -206,6 +210,7 @@ func NewBlockMonitorWithAPI(client *BitcoinNodeClient, bitcoinAPI *BitcoinAPI) *
 		maxRetries:    3,
 		retryDelay:    10 * time.Second,
 		lastChecked:   time.Now(),
+		ipfsClient:    ipfs.NewClientFromEnv(),
 	}
 }
 
@@ -222,6 +227,7 @@ func NewBlockMonitorWithStorageAndAPI(client *BitcoinNodeClient, dataStorage Dat
 		maxRetries:    3,
 		retryDelay:    10 * time.Second,
 		lastChecked:   time.Now(),
+		ipfsClient:    ipfs.NewClientFromEnv(),
 	}
 }
 
@@ -2180,6 +2186,13 @@ func (bm *BlockMonitor) moveIngestionImageWithFilename(blockDir string, rec *ser
 		return destPath, nil
 	}
 
+	if stegoPath, ok := bm.stegoImagePath(rec); ok {
+		if err := bm.copyStegoToBlock(stegoPath, destPath); err == nil {
+			bm.unpinUploadPath(stegoPath)
+			return destPath, nil
+		}
+	}
+
 	sourcePath := ""
 	var candidates []string
 	if filename != "" {
@@ -2227,6 +2240,53 @@ func (bm *BlockMonitor) moveIngestionImageWithFilename(blockDir string, rec *ser
 	}
 	bm.unpinUploadPath(sourcePath)
 	return destPath, nil
+}
+
+func (bm *BlockMonitor) stegoImagePath(rec *services.IngestionRecord) (string, bool) {
+	if bm == nil || rec == nil || rec.Metadata == nil {
+		return "", false
+	}
+	stegoCID := strings.TrimSpace(stringFromAny(rec.Metadata["stego_image_cid"]))
+	if stegoCID == "" {
+		stegoCID = strings.TrimSpace(stringFromAny(rec.Metadata["stego_cid"]))
+	}
+	if stegoCID == "" {
+		return "", false
+	}
+	uploadsDir := os.Getenv("UPLOADS_DIR")
+	if uploadsDir == "" {
+		uploadsDir = "/data/uploads"
+	}
+	if matches, _ := filepath.Glob(filepath.Join(uploadsDir, stegoCID+"*")); len(matches) > 0 {
+		sort.Strings(matches)
+		return matches[0], true
+	}
+	if bm.ipfsClient == nil {
+		return "", false
+	}
+	stegoBytes, err := bm.ipfsClient.Cat(context.Background(), stegoCID)
+	if err != nil || len(stegoBytes) == 0 {
+		return "", false
+	}
+	filename := strings.TrimSpace(rec.Filename)
+	if filename == "" {
+		filename = "stego.png"
+	}
+	if strings.TrimSpace(rec.ID) != "" && !strings.HasPrefix(filename, rec.ID+"_") {
+		filename = fmt.Sprintf("%s_%s", rec.ID, filename)
+	}
+	stegoPath := filepath.Join(uploadsDir, filename)
+	if err := os.WriteFile(stegoPath, stegoBytes, 0644); err != nil {
+		return "", false
+	}
+	return stegoPath, true
+}
+
+func (bm *BlockMonitor) copyStegoToBlock(src, dest string) error {
+	if err := copyFile(src, dest); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (bm *BlockMonitor) unpinUploadPath(path string) {
