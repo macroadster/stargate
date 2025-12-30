@@ -157,6 +157,20 @@ func (h *InscriptionHandler) HandleGetInscriptions(w http.ResponseWriter, r *htt
 		} else {
 			fmt.Printf("Failed to list contracts for pending view: %v\n", err)
 		}
+		if proposals, err := h.store.ListProposals(r.Context(), sc.ProposalFilter{}); err == nil {
+			for _, p := range proposals {
+				if isRejectedProposalStatus(p.Status) {
+					continue
+				}
+				item := h.fromProposal(p)
+				if _, ok := dedupe[item.ID]; !ok {
+					dedupe[item.ID] = len(inscriptions)
+					inscriptions = append(inscriptions, item)
+				}
+			}
+		} else {
+			fmt.Printf("Failed to list proposals for pending view: %v\n", err)
+		}
 	}
 
 	// Always include ingestion queue to attach images/text; merge into existing items when IDs match.
@@ -284,6 +298,40 @@ func (h *InscriptionHandler) fromContract(c sc.Contract) models.InscriptionReque
 	}
 }
 
+func (h *InscriptionHandler) fromProposal(p sc.Proposal) models.InscriptionRequest {
+	uploadsDir := os.Getenv("UPLOADS_DIR")
+	if uploadsDir == "" {
+		uploadsDir = "/data/uploads"
+	}
+	imagePath := ""
+	baseID := baseContractID(p.ID)
+	if baseID == "" {
+		baseID = strings.TrimSpace(p.VisiblePixelHash)
+	}
+	if baseID == "" {
+		if v, ok := p.Metadata["visible_pixel_hash"].(string); ok {
+			baseID = strings.TrimSpace(v)
+		}
+	}
+	if baseID != "" {
+		if matches, _ := filepath.Glob(filepath.Join(uploadsDir, baseID+"_*")); len(matches) > 0 {
+			imagePath = matches[0]
+		}
+	}
+	text := strings.TrimSpace(p.DescriptionMD)
+	if text == "" {
+		text = p.Title
+	}
+	return models.InscriptionRequest{
+		ImageData: imagePath,
+		Text:      text,
+		Price:     float64(p.BudgetSats) / 1e8,
+		Timestamp: p.CreatedAt.Unix(),
+		ID:        p.ID,
+		Status:    p.Status,
+	}
+}
+
 func isPendingContractStatus(status string) bool {
 	switch strings.ToLower(strings.TrimSpace(status)) {
 	case "", "pending", "claimed", "submitted", "pending_review", "approved", "published", "active":
@@ -291,6 +339,10 @@ func isPendingContractStatus(status string) bool {
 	default:
 		return true
 	}
+}
+
+func isRejectedProposalStatus(status string) bool {
+	return strings.EqualFold(strings.TrimSpace(status), "rejected")
 }
 
 func computeVisiblePixelHash(imageBytes []byte, text string) string {
