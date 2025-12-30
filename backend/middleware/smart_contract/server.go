@@ -716,6 +716,11 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 			log.Printf("psbt: failed to store funding_txid for %s: %v", ingestionRec.ID, err)
 		}
 	}
+	if proposalID := s.resolveProposalIDForContract(r.Context(), contractID, ingestionRec); proposalID != "" {
+		if err := s.maybePublishStegoForProposal(r.Context(), proposalID); err != nil {
+			log.Printf("stego publish on psbt failed for proposal %s: %v", proposalID, err)
+		}
+	}
 	if taskID := strings.TrimSpace(body.TaskID); taskID != "" {
 		if err := s.updateTaskCommitmentProof(r.Context(), taskID, res, pixelBytes); err != nil {
 			log.Printf("psbt: failed to update task proof for %s: %v", taskID, err)
@@ -813,6 +818,31 @@ func (s *Server) resolveIngestionRecord(ctx context.Context, contractID string) 
 		}
 	}
 	return nil
+}
+
+func (s *Server) resolveProposalIDForContract(ctx context.Context, contractID string, rec *services.IngestionRecord) string {
+	if s.store != nil {
+		if stored, err := s.store.GetProposal(ctx, contractID); err == nil && strings.TrimSpace(stored.ID) != "" {
+			return strings.TrimSpace(stored.ID)
+		}
+		if proposals, err := s.store.ListProposals(ctx, smart_contract.ProposalFilter{ContractID: contractID}); err == nil && len(proposals) > 0 {
+			if id := strings.TrimSpace(proposals[0].ID); id != "" {
+				return id
+			}
+		}
+	}
+	if rec != nil && rec.Metadata != nil {
+		if id := strings.TrimSpace(toString(rec.Metadata["origin_proposal_id"])); id != "" {
+			return id
+		}
+		if id := strings.TrimSpace(toString(rec.Metadata["stego_manifest_proposal_id"])); id != "" {
+			return id
+		}
+		if id := strings.TrimSpace(toString(rec.Metadata["proposal_id"])); id != "" {
+			return id
+		}
+	}
+	return strings.TrimSpace(contractID)
 }
 
 func (s *Server) ingestionFromProposalMeta(meta map[string]interface{}, visiblePixelHash string) *services.IngestionRecord {
@@ -1994,6 +2024,9 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 			}
 			if visibleHash != "" {
 				s.archiveWishContract(r.Context(), visibleHash)
+			}
+			if err := s.maybePublishStegoForProposal(r.Context(), id); err != nil {
+				log.Printf("stego publish on approval failed for proposal %s: %v", id, err)
 			}
 			s.recordEvent(smart_contract.Event{
 				Type:      "approve",
