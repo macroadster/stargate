@@ -508,6 +508,10 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		Error(w, http.StatusBadRequest, "invalid commitment_target")
 		return
 	}
+	commitmentMeta := map[string]interface{}{
+		"commitment_lock_address": addressOrEmpty(commitmentLockAddr),
+		"commitment_target":       commitmentTarget,
+	}
 
 	var payouts []bitcoin.PayoutOutput
 	payoutTotal := int64(0)
@@ -659,6 +663,9 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 				log.Printf("psbt: failed to store funding_txids for %s: %v", ingestionRec.ID, err)
 			}
 		}
+		if proposalID := s.resolveProposalIDForContract(r.Context(), contractID, ingestionRec); proposalID != "" {
+			s.updateProposalMetadataBestEffort(r.Context(), proposalID, commitmentMeta)
+		}
 		JSON(w, http.StatusOK, map[string]interface{}{
 			"psbts":           psbtEntries,
 			"funding_mode":    fundingMode,
@@ -715,6 +722,9 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		}); err != nil {
 			log.Printf("psbt: failed to store funding_txid for %s: %v", ingestionRec.ID, err)
 		}
+	}
+	if proposalID := s.resolveProposalIDForContract(r.Context(), contractID, ingestionRec); proposalID != "" {
+		s.updateProposalMetadataBestEffort(r.Context(), proposalID, commitmentMeta)
 	}
 	if proposalID := s.resolveProposalIDForContract(r.Context(), contractID, ingestionRec); proposalID != "" {
 		if err := s.maybePublishStegoForProposal(r.Context(), proposalID); err != nil {
@@ -843,6 +853,27 @@ func (s *Server) resolveProposalIDForContract(ctx context.Context, contractID st
 		}
 	}
 	return strings.TrimSpace(contractID)
+}
+
+func (s *Server) updateProposalMetadataBestEffort(ctx context.Context, proposalID string, updates map[string]interface{}) {
+	if s.store == nil || strings.TrimSpace(proposalID) == "" || len(updates) == 0 {
+		return
+	}
+	proposal, err := s.store.GetProposal(ctx, proposalID)
+	if err != nil {
+		return
+	}
+	meta := copyMeta(proposal.Metadata)
+	if meta == nil {
+		meta = map[string]interface{}{}
+	}
+	for k, v := range updates {
+		meta[k] = v
+	}
+	proposal.Metadata = meta
+	if err := s.store.UpdateProposal(ctx, proposal); err != nil {
+		log.Printf("psbt: failed to update proposal metadata for %s: %v", proposalID, err)
+	}
 }
 
 func (s *Server) ingestionFromProposalMeta(meta map[string]interface{}, visiblePixelHash string) *services.IngestionRecord {
