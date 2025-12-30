@@ -1458,7 +1458,7 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 	txidMatches := make(map[string]*services.IngestionRecord, len(recs))
 	for _, rec := range recs {
 		recCopy := rec
-		primaryList, fallbackList := ingestionCandidateBuckets(recCopy)
+		primaryList, fallbackList := ingestionCandidateBuckets(recCopy, bm.networkParams())
 		for _, candidate := range primaryList {
 			primaryCandidates[candidate] = &recCopy
 			candidatesByID[recCopy.ID] = append(candidatesByID[recCopy.ID], candidate)
@@ -1802,7 +1802,7 @@ func (bm *BlockMonitor) findImageForScanResult(images []ExtractedImageData, resu
 	return nil
 }
 
-func ingestionCandidateBuckets(rec services.IngestionRecord) ([]string, []string) {
+func ingestionCandidateBuckets(rec services.IngestionRecord, params *chaincfg.Params) ([]string, []string) {
 	var primary []string
 	var fallback []string
 
@@ -1828,6 +1828,9 @@ func ingestionCandidateBuckets(rec services.IngestionRecord) ([]string, []string
 		appendPrimary(prefix)
 	}
 	if v := stringFromAny(rec.Metadata["visible_pixel_hash"]); v != "" {
+		appendPrimary(v)
+	}
+	if v := commitmentScriptHashFromMeta(rec, params); v != "" {
 		appendPrimary(v)
 	}
 	if v := stringFromAny(rec.Metadata["pixel_hash"]); v != "" {
@@ -1892,6 +1895,33 @@ func hashPrefixFromFilename(filename string) string {
 		return ""
 	}
 	return prefix
+}
+
+func commitmentScriptHashFromMeta(rec services.IngestionRecord, params *chaincfg.Params) string {
+	if params == nil || rec.Metadata == nil {
+		return ""
+	}
+	visible := normalizeHex(stringFromAny(rec.Metadata["visible_pixel_hash"]))
+	if len(visible) != 64 {
+		return ""
+	}
+	lockAddr := strings.TrimSpace(stringFromAny(rec.Metadata["commitment_lock_address"]))
+	if lockAddr == "" {
+		return ""
+	}
+	pixelBytes, err := hex.DecodeString(visible)
+	if err != nil {
+		return ""
+	}
+	addr, err := btcutil.DecodeAddress(lockAddr, params)
+	if err != nil {
+		return ""
+	}
+	_, _, redeemScriptHash, _, err := buildCommitmentScript(params, pixelBytes, addr)
+	if err != nil || len(redeemScriptHash) == 0 {
+		return ""
+	}
+	return hex.EncodeToString(redeemScriptHash)
 }
 
 func matchOracleOutput(script []byte, params *chaincfg.Params, candidates map[string]*services.IngestionRecord) (*services.IngestionRecord, string, string) {
