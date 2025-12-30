@@ -302,10 +302,10 @@ func (api *DataAPI) HandleGetRecentBlocks(w http.ResponseWriter, r *http.Request
 			log.Printf("Block %d: %d inscriptions, %d transactions", blockData.BlockHeight, len(blockData.Inscriptions), txCount)
 
 			inscriptions := blockData.Inscriptions
-			if len(inscriptions) == 0 && len(blockData.SmartContracts) > 0 {
-				inscriptions, _, _ = buildContractInscriptions(blockData.SmartContracts, blockData.BlockHeight)
+			smartContracts := filterSmartContractsForUI(blockData.SmartContracts)
+			if len(inscriptions) == 0 && len(smartContracts) > 0 {
+				inscriptions, _, _ = buildContractInscriptions(smartContracts, blockData.BlockHeight)
 			}
-			smartContracts := blockData.SmartContracts
 			if len(smartContracts) == 0 {
 				smartContracts = nil
 			}
@@ -402,8 +402,9 @@ func (api *DataAPI) HandleGetBlockSummaries(w http.ResponseWriter, r *http.Reque
 			continue
 		}
 		inscriptions := block.Inscriptions
-		if len(inscriptions) == 0 && len(block.SmartContracts) > 0 {
-			inscriptions, _, _ = buildContractInscriptions(block.SmartContracts, block.BlockHeight)
+		smartContracts := filterSmartContractsForUI(block.SmartContracts)
+		if len(inscriptions) == 0 && len(smartContracts) > 0 {
+			inscriptions, _, _ = buildContractInscriptions(smartContracts, block.BlockHeight)
 		}
 		preview := []string{}
 		for i, ins := range inscriptions {
@@ -413,7 +414,7 @@ func (api *DataAPI) HandleGetBlockSummaries(w http.ResponseWriter, r *http.Reque
 			preview = append(preview, ins.FileName)
 		}
 		inscriptionCount := len(block.Inscriptions)
-		contractCount := len(block.SmartContracts)
+		contractCount := len(smartContracts)
 		hasImages := len(block.Images) > 0 || inscriptionCount > 0 || contractCount > 0
 		summaries = append(summaries, map[string]interface{}{
 			"block_height":          block.BlockHeight,
@@ -763,7 +764,7 @@ func (api *DataAPI) HandleGetBlockInscriptionsPaginated(w http.ResponseWriter, r
 	imageURLOverrides := map[int]string{}
 	metadataOverrides := map[int]map[string]any{}
 	if len(block.SmartContracts) > 0 {
-		contractInscriptions, contractImageOverrides, contractMetadataOverrides := buildContractInscriptions(block.SmartContracts, height)
+		contractInscriptions, contractImageOverrides, contractMetadataOverrides := buildContractInscriptions(filterSmartContractsForUI(block.SmartContracts), height)
 		if len(inscriptions) == 0 {
 			inscriptions = contractInscriptions
 			imageURLOverrides = contractImageOverrides
@@ -903,6 +904,9 @@ func buildContractInscriptions(contracts []bitcoin.SmartContractData, height int
 	}
 
 	for _, contract := range contracts {
+		if isSyntheticStegoContract(contract) {
+			continue
+		}
 		meta := contract.Metadata
 		fileName := strings.TrimSpace(stringFromAny(meta["image_file"]))
 		if fileName == "" {
@@ -963,6 +967,35 @@ func buildContractInscriptions(contracts []bitcoin.SmartContractData, height int
 	}
 
 	return out, imageURLs, metadata
+}
+
+func filterSmartContractsForUI(contracts []bitcoin.SmartContractData) []bitcoin.SmartContractData {
+	if len(contracts) == 0 {
+		return contracts
+	}
+	out := make([]bitcoin.SmartContractData, 0, len(contracts))
+	for _, contract := range contracts {
+		if isSyntheticStegoContract(contract) {
+			continue
+		}
+		out = append(out, contract)
+	}
+	return out
+}
+
+func isSyntheticStegoContract(contract bitcoin.SmartContractData) bool {
+	contractID := strings.ToLower(strings.TrimSpace(contract.ContractID))
+	if strings.HasPrefix(contractID, "stego_") {
+		return true
+	}
+	if contract.Metadata == nil {
+		return false
+	}
+	txID := strings.ToLower(strings.TrimSpace(stringFromAny(contract.Metadata["tx_id"])))
+	if strings.HasPrefix(txID, "unknown_") {
+		return true
+	}
+	return false
 }
 
 // HandleStegoCallback ingests scan results from the Python scanner instead of filesystem writes.
