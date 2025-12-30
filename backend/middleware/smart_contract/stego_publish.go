@@ -156,7 +156,11 @@ func (s *Server) publishStegoForProposal(ctx context.Context, proposalID string,
 	if meta == nil {
 		meta = map[string]interface{}{}
 	}
-	if strings.TrimSpace(toString(meta["stego_contract_id"])) != "" && strings.TrimSpace(toString(meta["stego_image_cid"])) != "" {
+	commitmentLock := strings.TrimSpace(toString(meta["commitment_lock_address"]))
+	stegoCommitmentLock := strings.TrimSpace(toString(meta["stego_commitment_lock_address"]))
+	if strings.TrimSpace(toString(meta["stego_contract_id"])) != "" &&
+		strings.TrimSpace(toString(meta["stego_image_cid"])) != "" &&
+		(commitmentLock == "" || commitmentLock == stegoCommitmentLock) {
 		return nil
 	}
 	ingestionID := strings.TrimSpace(toString(meta["ingestion_id"]))
@@ -240,6 +244,9 @@ func (s *Server) publishStegoForProposal(ctx context.Context, proposalID string,
 	meta["stego_manifest_created_at"] = strconv.FormatInt(manifestCreatedAt, 10)
 	meta["stego_request_id"] = requestID
 	meta["stego_ingestion_id"] = requestID
+	if commitmentLock != "" {
+		meta["stego_commitment_lock_address"] = commitmentLock
+	}
 	p.Metadata = meta
 	if err := s.store.UpdateProposal(ctx, p); err != nil {
 		return fmt.Errorf("failed to update proposal metadata: %w", err)
