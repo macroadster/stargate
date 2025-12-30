@@ -247,8 +247,7 @@ func (s *Server) publishStegoForProposal(ctx context.Context, proposalID string,
 	if commitmentLock != "" {
 		meta["stego_commitment_lock_address"] = commitmentLock
 	}
-	p.Metadata = meta
-	if err := s.store.UpdateProposal(ctx, p); err != nil {
+	if err := s.store.UpdateProposalMetadata(ctx, p.ID, meta); err != nil {
 		return fmt.Errorf("failed to update proposal metadata: %w", err)
 	}
 	if s.ingestionSvc != nil && ingestionID != "" {
