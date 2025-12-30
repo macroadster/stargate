@@ -19,8 +19,6 @@ type PGStore struct {
 	claimTTL time.Duration
 }
 
-
-
 // NewPGStore connects, initializes schema, and optionally seeds fixtures.
 func NewPGStore(ctx context.Context, dsn string, claimTTL time.Duration, seed bool) (*PGStore, error) {
 	pool, err := pgxpool.New(ctx, dsn)
@@ -1030,6 +1028,55 @@ UPDATE mcp_proposals
 SET title=$2, description_md=$3, visible_pixel_hash=$4, budget_sats=$5, metadata=$6
 WHERE id=$1
 `, p.ID, p.Title, p.DescriptionMD, p.VisiblePixelHash, p.BudgetSats, string(metaOut)); err != nil {
+		return err
+	}
+
+	return tx.Commit(ctx)
+}
+
+// UpdateProposalMetadata updates proposal metadata without status restrictions.
+func (s *PGStore) UpdateProposalMetadata(ctx context.Context, id string, updates map[string]interface{}) error {
+	if strings.TrimSpace(id) == "" || len(updates) == 0 {
+		return nil
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var metaJSON []byte
+	var visiblePixelHash string
+	if err := tx.QueryRow(ctx, `
+SELECT metadata, visible_pixel_hash
+FROM mcp_proposals WHERE id=$1 FOR UPDATE
+`, id).Scan(&metaJSON, &visiblePixelHash); err != nil {
+		if strings.Contains(err.Error(), "no rows") {
+			return fmt.Errorf("proposal %s not found", id)
+		}
+		return err
+	}
+
+	var meta map[string]interface{}
+	_ = json.Unmarshal(metaJSON, &meta)
+	if meta == nil {
+		meta = map[string]interface{}{}
+	}
+	for k, v := range updates {
+		meta[k] = v
+	}
+	if strings.TrimSpace(visiblePixelHash) != "" {
+		if vph, ok := meta["visible_pixel_hash"].(string); !ok || strings.TrimSpace(vph) == "" {
+			meta["visible_pixel_hash"] = visiblePixelHash
+		}
+	}
+	metaOut, _ := json.Marshal(meta)
+
+	if _, err := tx.Exec(ctx, `
+UPDATE mcp_proposals
+SET metadata=$2
+WHERE id=$1
+`, id, string(metaOut)); err != nil {
 		return err
 	}
 

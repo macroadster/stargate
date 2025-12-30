@@ -859,19 +859,7 @@ func (s *Server) updateProposalMetadataBestEffort(ctx context.Context, proposalI
 	if s.store == nil || strings.TrimSpace(proposalID) == "" || len(updates) == 0 {
 		return
 	}
-	proposal, err := s.store.GetProposal(ctx, proposalID)
-	if err != nil {
-		return
-	}
-	meta := copyMeta(proposal.Metadata)
-	if meta == nil {
-		meta = map[string]interface{}{}
-	}
-	for k, v := range updates {
-		meta[k] = v
-	}
-	proposal.Metadata = meta
-	if err := s.store.UpdateProposal(ctx, proposal); err != nil {
+	if err := s.store.UpdateProposalMetadata(ctx, proposalID, updates); err != nil {
 		log.Printf("psbt: failed to update proposal metadata for %s: %v", proposalID, err)
 	}
 }

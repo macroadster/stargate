@@ -671,6 +671,35 @@ func (s *MemoryStore) UpdateProposal(ctx context.Context, p smart_contract.Propo
 	return nil
 }
 
+// UpdateProposalMetadata updates proposal metadata without status restrictions.
+func (s *MemoryStore) UpdateProposalMetadata(ctx context.Context, id string, updates map[string]interface{}) error {
+	if strings.TrimSpace(id) == "" || len(updates) == 0 {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	existing, ok := s.proposals[id]
+	if !ok {
+		return fmt.Errorf("proposal %s not found", id)
+	}
+	meta := existing.Metadata
+	if meta == nil {
+		meta = map[string]interface{}{}
+	}
+	for k, v := range updates {
+		meta[k] = v
+	}
+	if strings.TrimSpace(existing.VisiblePixelHash) != "" {
+		if vph, ok := meta["visible_pixel_hash"].(string); !ok || strings.TrimSpace(vph) == "" {
+			meta["visible_pixel_hash"] = existing.VisiblePixelHash
+		}
+	}
+	existing.Metadata = meta
+	s.proposals[id] = existing
+	return nil
+}
+
 // ApproveProposal approves a proposal and auto-rejects others for the same contract.
 func (s *MemoryStore) ApproveProposal(ctx context.Context, id string) error {
 	s.mu.Lock()

@@ -8,9 +8,9 @@ import (
 )
 
 var (
-	ErrTaskNotFound  = Err("task not found")
-	ErrClaimNotFound = Err("claim not found")
-	ErrTaskTaken     = Err("task already claimed by another agent")
+	ErrTaskNotFound    = Err("task not found")
+	ErrClaimNotFound   = Err("claim not found")
+	ErrTaskTaken       = Err("task already claimed by another agent")
 	ErrTaskUnavailable = Err("task is not available for claiming")
 )
 
@@ -37,6 +37,7 @@ type Store interface {
 	ListProposals(ctx context.Context, filter smart_contract.ProposalFilter) ([]smart_contract.Proposal, error)
 	GetProposal(ctx context.Context, id string) (smart_contract.Proposal, error)
 	UpdateProposal(ctx context.Context, p smart_contract.Proposal) error
+	UpdateProposalMetadata(ctx context.Context, id string, updates map[string]interface{}) error
 	ApproveProposal(ctx context.Context, id string) error
 	PublishProposal(ctx context.Context, id string) error
 	ListSubmissions(ctx context.Context, taskIDs []string) ([]smart_contract.Submission, error)
