@@ -340,15 +340,37 @@ func ensureProposalFromStegoPayload(ctx context.Context, store Store, stegoCID s
 	if proposalID == "" {
 		proposalID = strings.TrimSpace(manifest.ProposalID)
 	}
-	if proposalID == "" {
-		if vph := strings.TrimSpace(manifest.VisiblePixelHash); vph != "" {
-			proposalID = "proposal-" + vph
-		}
+	visibleHash := strings.TrimSpace(manifest.VisiblePixelHash)
+	if visibleHash == "" {
+		visibleHash = strings.TrimSpace(payload.Proposal.VisiblePixelHash)
+	}
+	if proposalID == "" && visibleHash != "" {
+		proposalID = "proposal-" + visibleHash
 	}
 	if proposalID == "" {
 		return fmt.Errorf("proposal id missing")
 	}
 	if existing, err := store.GetProposal(ctx, proposalID); err == nil && strings.TrimSpace(existing.ID) != "" {
+		updates := map[string]interface{}{
+			"stego_image_cid":            stegoCID,
+			"stego_payload_cid":          manifest.PayloadCID,
+			"stego_manifest_issuer":      manifest.Issuer,
+			"stego_manifest_created_at":  manifest.CreatedAt,
+			"stego_manifest_proposal_id": manifest.ProposalID,
+			"stego_manifest_schema":      manifest.SchemaVersion,
+			"origin_proposal_id":         manifest.ProposalID,
+		}
+		if visibleHash != "" {
+			updates["visible_pixel_hash"] = visibleHash
+			updates["contract_id"] = visibleHash
+			updates["ingestion_id"] = visibleHash
+		}
+		for k, v := range payloadMetadataMap(payload) {
+			if _, ok := updates[k]; !ok {
+				updates[k] = v
+			}
+		}
+		_ = store.UpdateProposalMetadata(ctx, proposalID, updates)
 		return nil
 	}
 	title := strings.TrimSpace(payload.Proposal.Title)
@@ -359,6 +381,10 @@ func ensureProposalFromStegoPayload(ctx context.Context, store Store, stegoCID s
 	if payload.Proposal.CreatedAt > 0 {
 		createdAt = time.Unix(payload.Proposal.CreatedAt, 0)
 	}
+	contractID := proposalID
+	if visibleHash != "" {
+		contractID = visibleHash
+	}
 	tasks := make([]smart_contract.Task, 0, len(payload.Tasks))
 	for _, t := range payload.Tasks {
 		if strings.TrimSpace(t.TaskID) == "" {
@@ -366,7 +392,7 @@ func ensureProposalFromStegoPayload(ctx context.Context, store Store, stegoCID s
 		}
 		tasks = append(tasks, smart_contract.Task{
 			TaskID:           t.TaskID,
-			ContractID:       proposalID,
+			ContractID:       contractID,
 			GoalID:           "wish",
 			Title:            t.Title,
 			Description:      t.Description,
@@ -384,7 +410,11 @@ func ensureProposalFromStegoPayload(ctx context.Context, store Store, stegoCID s
 		"stego_manifest_proposal_id": manifest.ProposalID,
 		"stego_manifest_schema":      manifest.SchemaVersion,
 		"origin_proposal_id":         manifest.ProposalID,
-		"visible_pixel_hash":         manifest.VisiblePixelHash,
+		"visible_pixel_hash":         visibleHash,
+	}
+	if visibleHash != "" {
+		meta["contract_id"] = visibleHash
+		meta["ingestion_id"] = visibleHash
 	}
 	for k, v := range payloadMetadataMap(payload) {
 		if _, ok := meta[k]; !ok {
@@ -395,7 +425,7 @@ func ensureProposalFromStegoPayload(ctx context.Context, store Store, stegoCID s
 		ID:               proposalID,
 		Title:            title,
 		DescriptionMD:    payload.Proposal.DescriptionMD,
-		VisiblePixelHash: manifest.VisiblePixelHash,
+		VisiblePixelHash: visibleHash,
 		BudgetSats:       payload.Proposal.BudgetSats,
 		Status:           "approved",
 		CreatedAt:        createdAt,
