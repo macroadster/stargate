@@ -32,8 +32,9 @@ type ipfsIngestSyncConfig struct {
 }
 
 type ipfsIngestSyncState struct {
-	lastSeen     map[string]int64
-	lastManifest string
+	lastSeen      map[string]int64
+	repairChecked map[string]bool
+	lastManifest  string
 }
 
 type ipfsIngestManifest struct {
@@ -85,7 +86,10 @@ func StartIPFSIngestionSync(ctx context.Context, ingest *services.IngestionServi
 	if !cfg.Enabled {
 		return nil
 	}
-	state := &ipfsIngestSyncState{lastSeen: make(map[string]int64)}
+	state := &ipfsIngestSyncState{
+		lastSeen:      make(map[string]int64),
+		repairChecked: make(map[string]bool),
+	}
 	client := ipfs.NewClientFromEnv()
 	streamClient := &http.Client{}
 	go func() {
@@ -220,7 +224,10 @@ func ipfsIngestProcessManifest(ctx context.Context, ingest *services.IngestionSe
 			continue
 		}
 		if last, ok := state.lastSeen[entry.CID]; ok && entry.ModTime <= last {
-			continue
+			if state.repairChecked[entry.CID] {
+				continue
+			}
+			state.repairChecked[entry.CID] = true
 		}
 
 		blob, err := client.Cat(ctx, entry.CID)
