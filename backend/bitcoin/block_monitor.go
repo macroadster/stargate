@@ -1280,7 +1280,7 @@ func (bm *BlockMonitor) saveBlockSummaryWithScanResults(blockDir string, parsedB
 			"total_transactions": summary.TotalTransactions,
 			"inscriptions":       summary.Inscriptions,
 			"images":             enhancedImages,
-			"smart_contracts":    []SmartContractData{},
+			"smart_contracts":    summary.SmartContracts,
 			"processing_time_ms": summary.ProcessingTime,
 			"success":            summary.Success,
 		}
