@@ -1905,8 +1905,11 @@ func (s *Server) publishProposalTasks(ctx context.Context, proposalID string) er
 	// Preserve hashes/funding if present.
 	fundingAddr := scstore.FundingAddressFromMeta(p.Metadata)
 	tasks := make([]smart_contract.Task, 0, len(p.Tasks))
-	for _, t := range p.Tasks {
+	for i, t := range p.Tasks {
 		task := t
+		if strings.TrimSpace(task.TaskID) == "" {
+			task.TaskID = proposalID + "-task-" + strconv.Itoa(i+1)
+		}
 		if task.ContractID == "" || task.ContractID == p.ID {
 			task.ContractID = contractID
 		}
@@ -2461,6 +2464,17 @@ func BuildProposalFromIngestion(body ProposalCreateBody, rec *services.Ingestion
 	if len(tasks) == 0 {
 		if em, _ := meta["embedded_message"].(string); em != "" {
 			tasks = scstore.BuildTasksFromMarkdown(id, em, visible, budget, scstore.FundingAddressFromMeta(meta))
+		}
+	}
+	for i := range tasks {
+		if tasks[i].TaskID == "" {
+			tasks[i].TaskID = id + "-task-" + strconv.Itoa(i+1)
+		}
+		if tasks[i].ContractID == "" {
+			tasks[i].ContractID = id
+		}
+		if tasks[i].Status == "" {
+			tasks[i].Status = "available"
 		}
 	}
 
