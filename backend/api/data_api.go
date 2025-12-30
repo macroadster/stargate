@@ -762,8 +762,22 @@ func (api *DataAPI) HandleGetBlockInscriptionsPaginated(w http.ResponseWriter, r
 	inscriptions := block.Inscriptions
 	imageURLOverrides := map[int]string{}
 	metadataOverrides := map[int]map[string]any{}
-	if len(inscriptions) == 0 && len(block.SmartContracts) > 0 {
-		inscriptions, imageURLOverrides, metadataOverrides = buildContractInscriptions(block.SmartContracts, height)
+	if len(block.SmartContracts) > 0 {
+		contractInscriptions, contractImageOverrides, contractMetadataOverrides := buildContractInscriptions(block.SmartContracts, height)
+		if len(inscriptions) == 0 {
+			inscriptions = contractInscriptions
+			imageURLOverrides = contractImageOverrides
+			metadataOverrides = contractMetadataOverrides
+		} else {
+			offset := len(inscriptions)
+			inscriptions = append(inscriptions, contractInscriptions...)
+			for idx, url := range contractImageOverrides {
+				imageURLOverrides[offset+idx] = url
+			}
+			for idx, meta := range contractMetadataOverrides {
+				metadataOverrides[offset+idx] = meta
+			}
+		}
 	}
 	if filter == "text" {
 		var filtered []bitcoin.InscriptionData
