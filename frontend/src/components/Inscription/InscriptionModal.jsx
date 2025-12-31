@@ -49,6 +49,9 @@ const InscriptionModal = ({ inscription, onClose }) => {
   const [stegoPayload, setStegoPayload] = useState(null);
   const [stegoPayloadLoading, setStegoPayloadLoading] = useState(false);
   const [stegoPayloadError, setStegoPayloadError] = useState('');
+  const [scanMessage, setScanMessage] = useState('');
+  const [scanLoading, setScanLoading] = useState(false);
+  const [scanError, setScanError] = useState('');
   const lastFetchedKeyRef = React.useRef('');
   const hasFetchedRef = React.useRef(false);
   const refreshIntervalRef = React.useRef(null);
@@ -203,7 +206,7 @@ const InscriptionModal = ({ inscription, onClose }) => {
   }
 
   const stegoManifest = useMemo(() => {
-    const raw = inscription?.metadata?.extracted_message || '';
+    const raw = scanMessage || inscription?.metadata?.extracted_message || '';
     if (!raw) return null;
     const manifest = {};
     raw.split('\n').forEach((line) => {
@@ -216,7 +219,7 @@ const InscriptionModal = ({ inscription, onClose }) => {
       }
     });
     return Object.keys(manifest).length > 0 ? manifest : null;
-  }, [inscription?.metadata?.extracted_message]);
+  }, [inscription?.metadata?.extracted_message, scanMessage]);
 
   const stegoPayloadCid = useMemo(() => {
     return (
@@ -476,6 +479,50 @@ const InscriptionModal = ({ inscription, onClose }) => {
       alive = false;
     };
   }, [stegoPayloadCid, fetchWithTimeout]);
+
+  useEffect(() => {
+    let alive = true;
+    const runScan = async () => {
+      if (!isActuallyImageFile || !modalImageSource) {
+        setScanMessage('');
+        setScanError('');
+        return;
+      }
+      setScanLoading(true);
+      setScanError('');
+      try {
+        const imageRes = await fetchWithTimeout(modalImageSource, {}, 10000);
+        if (!imageRes.ok) {
+          throw new Error(`image fetch failed: ${imageRes.status}`);
+        }
+        const blob = await imageRes.blob();
+        const form = new FormData();
+        form.append('image', blob, 'stego.png');
+        const scanRes = await fetchWithTimeout(`${API_BASE}/bitcoin/v1/extract`, { method: 'POST', body: form }, 15000);
+        if (!scanRes.ok) {
+          throw new Error(`scan failed: ${scanRes.status}`);
+        }
+        const data = await scanRes.json();
+        const message = data?.extraction_result?.message || '';
+        if (alive) {
+          setScanMessage(message);
+        }
+      } catch (err) {
+        if (alive) {
+          setScanMessage('');
+          setScanError(err.message || 'scan failed');
+        }
+      } finally {
+        if (alive) {
+          setScanLoading(false);
+        }
+      }
+    };
+    runScan();
+    return () => {
+      alive = false;
+    };
+  }, [isActuallyImageFile, modalImageSource, fetchWithTimeout]);
 
   const loadProposals = React.useCallback(async (options = {}) => {
     const { showLoading = false } = options;
@@ -1899,6 +1946,12 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                           <CopyButton text={hiddenMessageText} />
                         </div>
 
+                        {scanLoading && (
+                          <div className="text-sm text-green-700 dark:text-green-300">Scanning stego image…</div>
+                        )}
+                        {!scanLoading && scanError && (
+                          <div className="text-sm text-amber-700 dark:text-amber-300">Scan unavailable: {scanError}</div>
+                        )}
                         {stegoPayloadLoading && (
                           <div className="text-sm text-green-700 dark:text-green-300">Loading stego payload…</div>
                         )}
