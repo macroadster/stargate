@@ -2048,6 +2048,18 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 		if err := requireCreatorApproval(apiKey, proposal); err != nil {
 			return nil, fmt.Errorf("Approval denied: %v", err)
 		}
+		visibleHash := strings.TrimSpace(proposal.VisiblePixelHash)
+		if visibleHash == "" {
+			if v, ok := proposal.Metadata["visible_pixel_hash"].(string); ok {
+				visibleHash = strings.TrimSpace(v)
+			}
+		}
+		if visibleHash == "" {
+			return nil, fmt.Errorf("visible_pixel_hash is required for approval")
+		}
+		if _, err := store.GetContract("wish-" + visibleHash); err != nil {
+			return nil, fmt.Errorf("wish not found for visible_pixel_hash")
+		}
 		if err := store.ApproveProposal(ctx, proposalID); err != nil {
 			return nil, fmt.Errorf("Failed to approve proposal: %v", err)
 		}

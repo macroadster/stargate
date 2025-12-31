@@ -1833,6 +1833,28 @@ func looksLikeStegoManifestText(text string) bool {
 		strings.Contains(lower, "visible_pixel_hash:")
 }
 
+func proposalVisibleHash(p smart_contract.Proposal) string {
+	if strings.TrimSpace(p.VisiblePixelHash) != "" {
+		return strings.TrimSpace(p.VisiblePixelHash)
+	}
+	if v, ok := p.Metadata["visible_pixel_hash"].(string); ok && strings.TrimSpace(v) != "" {
+		return strings.TrimSpace(v)
+	}
+	return ""
+}
+
+func (s *Server) requireWishForApproval(ctx context.Context, proposal smart_contract.Proposal) error {
+	visible := proposalVisibleHash(proposal)
+	if visible == "" {
+		return fmt.Errorf("visible_pixel_hash is required for approval")
+	}
+	wishID := "wish-" + visible
+	if _, err := s.store.GetContract(wishID); err != nil {
+		return fmt.Errorf("wish not found for visible_pixel_hash")
+	}
+	return nil
+}
+
 func proofConfirmed(proof *smart_contract.MerkleProof) bool {
 	if proof == nil {
 		return false
@@ -2132,6 +2154,10 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 			}
 			if err := enforceCreatorApproval(r, proposal); err != nil {
 				Error(w, http.StatusForbidden, err.Error())
+				return
+			}
+			if err := s.requireWishForApproval(r.Context(), proposal); err != nil {
+				Error(w, http.StatusBadRequest, err.Error())
 				return
 			}
 			meta := proposal.Metadata
@@ -2545,9 +2571,9 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 						if canonicalID, exists := canonicalContractByTitle[key]; exists {
 							proposalContractID := contractIDFromMeta(p.Metadata, p.ID)
 							if proposalContractID != canonicalID && strings.TrimSpace(p.ID) != canonicalID {
-							continue
+								continue
+							}
 						}
-					}
 					}
 					if proposalMetaConfirmed(p.Metadata) || proposalHasConfirmedProof(p) {
 						continue
