@@ -125,6 +125,14 @@ func processRecord(ctx context.Context, rec services.IngestionRecord, ingest *se
 	// Try JSON contract first.
 	contract, tasks, err := parseEmbeddedContract(raw)
 	if err != nil || contract.ContractID == "" || len(tasks) == 0 {
+		if store != nil {
+			visible := strings.TrimSpace(metaString(meta["visible_pixel_hash"]))
+			if visible != "" {
+				if _, err := store.GetContract("wish-" + visible); err != nil {
+					return ingest.UpdateStatusWithNote(rec.ID, "ignored", "wish not found for visible hash")
+				}
+			}
+		}
 		// Fallback: treat embedded_message as markdown wish -> create proposal only.
 		proposal, err := parseMarkdownProposal(rec.ID, raw, meta, rec.ImageBase64)
 		if err != nil {
