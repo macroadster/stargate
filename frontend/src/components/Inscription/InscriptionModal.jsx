@@ -227,42 +227,6 @@ const InscriptionModal = ({ inscription, onClose }) => {
     );
   }, [inscription?.metadata?.payload_cid, inscription?.metadata?.stego_payload_cid, stegoManifest]);
 
-  useEffect(() => {
-    let alive = true;
-    const fetchPayload = async () => {
-      if (!stegoPayloadCid) {
-        setStegoPayload(null);
-        setStegoPayloadError('');
-        return;
-      }
-      setStegoPayloadLoading(true);
-      setStegoPayloadError('');
-      try {
-        const res = await fetchWithTimeout(`${API_BASE}/api/smart_contract/stego/payload/${stegoPayloadCid}`, {}, 6000);
-        if (!res.ok) {
-          throw new Error(`payload fetch failed: ${res.status}`);
-        }
-        const data = await res.json();
-        if (alive) {
-          setStegoPayload(data);
-        }
-      } catch (err) {
-        if (alive) {
-          setStegoPayload(null);
-          setStegoPayloadError(err.message || 'payload fetch failed');
-        }
-      } finally {
-        if (alive) {
-          setStegoPayloadLoading(false);
-        }
-      }
-    };
-    fetchPayload();
-    return () => {
-      alive = false;
-    };
-  }, [stegoPayloadCid, fetchWithTimeout]);
-
   const stegoProposal = useMemo(() => {
     if (!stegoPayload?.proposal) return null;
     return stegoPayload.proposal;
@@ -476,6 +440,42 @@ const InscriptionModal = ({ inscription, onClose }) => {
       clearTimeout(timer);
     }
   }, [auth.apiKey]);
+
+  useEffect(() => {
+    let alive = true;
+    const fetchPayload = async () => {
+      if (!stegoPayloadCid) {
+        setStegoPayload(null);
+        setStegoPayloadError('');
+        return;
+      }
+      setStegoPayloadLoading(true);
+      setStegoPayloadError('');
+      try {
+        const res = await fetchWithTimeout(`${API_BASE}/api/smart_contract/stego/payload/${stegoPayloadCid}`, {}, 6000);
+        if (!res.ok) {
+          throw new Error(`payload fetch failed: ${res.status}`);
+        }
+        const data = await res.json();
+        if (alive) {
+          setStegoPayload(data);
+        }
+      } catch (err) {
+        if (alive) {
+          setStegoPayload(null);
+          setStegoPayloadError(err.message || 'payload fetch failed');
+        }
+      } finally {
+        if (alive) {
+          setStegoPayloadLoading(false);
+        }
+      }
+    };
+    fetchPayload();
+    return () => {
+      alive = false;
+    };
+  }, [stegoPayloadCid, fetchWithTimeout]);
 
   const loadProposals = React.useCallback(async (options = {}) => {
     const { showLoading = false } = options;
