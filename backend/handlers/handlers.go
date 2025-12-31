@@ -134,6 +134,7 @@ func (h *InscriptionHandler) HandleGetInscriptions(w http.ResponseWriter, r *htt
 	dedupe := make(map[string]int) // id -> index in inscriptions
 	includeLegacyOnly := r.URL.Query().Get("legacy") == "true" || r.URL.Query().Get("legacy") == "1"
 	contractTitles := make(map[string]struct{})
+	canonicalContractIDs := make(map[string]struct{})
 
 	// Prefer open-contracts (MCP store) to keep UI + AI in sync.
 	if h.store != nil {
@@ -155,6 +156,12 @@ func (h *InscriptionHandler) HandleGetInscriptions(w http.ResponseWriter, r *htt
 				if key := normalizeWishText(c.Title); key != "" {
 					contractTitles[key] = struct{}{}
 				}
+				if c.ContractID != "" {
+					canonicalContractIDs[c.ContractID] = struct{}{}
+					if base := baseContractID(c.ContractID); base != "" {
+						canonicalContractIDs[base] = struct{}{}
+					}
+				}
 				item := h.fromContract(c)
 				if _, ok := dedupe[item.ID]; !ok {
 					dedupe[item.ID] = len(inscriptions)
@@ -168,6 +175,11 @@ func (h *InscriptionHandler) HandleGetInscriptions(w http.ResponseWriter, r *htt
 			for _, p := range proposals {
 				if looksLikeStegoManifestText(p.DescriptionMD) {
 					continue
+				}
+				if proposalID := proposalContractID(p); proposalID != "" {
+					if _, exists := canonicalContractIDs[proposalID]; exists {
+						continue
+					}
 				}
 				if key := normalizeWishText(p.DescriptionMD); key != "" {
 					if _, exists := contractTitles[key]; exists {
@@ -195,6 +207,11 @@ func (h *InscriptionHandler) HandleGetInscriptions(w http.ResponseWriter, r *htt
 				item := h.fromIngestion(rec)
 				if looksLikeStegoManifestText(item.Text) {
 					continue
+				}
+				if ingestionID := ingestionContractID(rec); ingestionID != "" {
+					if _, exists := canonicalContractIDs[ingestionID]; exists {
+						continue
+					}
 				}
 				if key := normalizeWishText(item.Text); key != "" {
 					if _, exists := contractTitles[key]; exists {
@@ -383,6 +400,35 @@ func looksLikeStegoManifestText(text string) bool {
 	return strings.Contains(lower, "schema_version:") &&
 		strings.Contains(lower, "proposal_id:") &&
 		strings.Contains(lower, "visible_pixel_hash:")
+}
+
+func proposalContractID(p sc.Proposal) string {
+	if v, ok := p.Metadata["visible_pixel_hash"].(string); ok && strings.TrimSpace(v) != "" {
+		return strings.TrimSpace(v)
+	}
+	if v, ok := p.Metadata["contract_id"].(string); ok && strings.TrimSpace(v) != "" {
+		return strings.TrimSpace(v)
+	}
+	if v, ok := p.Metadata["ingestion_id"].(string); ok && strings.TrimSpace(v) != "" {
+		return strings.TrimSpace(v)
+	}
+	if strings.TrimSpace(p.VisiblePixelHash) != "" {
+		return strings.TrimSpace(p.VisiblePixelHash)
+	}
+	return baseContractID(p.ID)
+}
+
+func ingestionContractID(rec services.IngestionRecord) string {
+	if v, ok := rec.Metadata["visible_pixel_hash"].(string); ok && strings.TrimSpace(v) != "" {
+		return strings.TrimSpace(v)
+	}
+	if v, ok := rec.Metadata["contract_id"].(string); ok && strings.TrimSpace(v) != "" {
+		return strings.TrimSpace(v)
+	}
+	if v, ok := rec.Metadata["ingestion_id"].(string); ok && strings.TrimSpace(v) != "" {
+		return strings.TrimSpace(v)
+	}
+	return baseContractID(rec.ID)
 }
 
 func isRejectedProposalStatus(status string) bool {
