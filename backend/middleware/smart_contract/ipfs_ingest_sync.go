@@ -393,6 +393,9 @@ func ensureProposalFromStegoPayload(ctx context.Context, store Store, stegoCID s
 	if visibleHash == "" {
 		visibleHash = strings.TrimSpace(payload.Proposal.VisiblePixelHash)
 	}
+	if visibleHash != "" {
+		proposalID = visibleHash
+	}
 	if proposalID == "" && visibleHash != "" {
 		proposalID = "proposal-" + visibleHash
 	}

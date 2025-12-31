@@ -1801,6 +1801,23 @@ func includeConfirmed(r *http.Request) bool {
 	return strings.EqualFold(raw, "true") || strings.EqualFold(raw, "yes") || raw == "1"
 }
 
+func normalizeWishText(text string) string {
+	text = strings.TrimSpace(text)
+	text = strings.TrimPrefix(text, "#")
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	return strings.ToLower(strings.Join(strings.Fields(text), " "))
+}
+
+func looksLikeStegoManifestText(text string) bool {
+	lower := strings.ToLower(text)
+	return strings.Contains(lower, "schema_version:") &&
+		strings.Contains(lower, "proposal_id:") &&
+		strings.Contains(lower, "visible_pixel_hash:")
+}
+
 func proofConfirmed(proof *smart_contract.MerkleProof) bool {
 	if proof == nil {
 		return false
@@ -2490,10 +2507,26 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 				Error(w, http.StatusInternalServerError, err.Error())
 				return
 			}
+			contractTitles := map[string]struct{}{}
+			if contracts, err := s.store.ListContracts(smart_contract.ContractFilter{}); err == nil {
+				for _, c := range contracts {
+					if key := normalizeWishText(c.Title); key != "" {
+						contractTitles[key] = struct{}{}
+					}
+				}
+			}
 			if !includeConfirmed(r) {
 				ingestionStatus := make(map[string]string)
 				filtered := make([]smart_contract.Proposal, 0, len(proposals))
 				for _, p := range proposals {
+					if looksLikeStegoManifestText(p.DescriptionMD) {
+						continue
+					}
+					if key := normalizeWishText(p.DescriptionMD); key != "" {
+						if _, exists := contractTitles[key]; exists {
+							continue
+						}
+					}
 					if proposalMetaConfirmed(p.Metadata) || proposalHasConfirmedProof(p) {
 						continue
 					}

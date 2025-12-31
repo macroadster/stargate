@@ -98,6 +98,9 @@ func processRecord(ctx context.Context, rec services.IngestionRecord, ingest *se
 		raw = normalized
 		meta = updatedMeta
 	}
+	if looksLikeStegoManifestText(raw) {
+		return ingest.UpdateStatusWithNote(rec.ID, "ignored", "stego manifest metadata")
+	}
 
 	// Try JSON contract first.
 	contract, tasks, err := parseEmbeddedContract(raw)
@@ -411,6 +414,13 @@ func normalizeEmbedded(raw string, meta map[string]interface{}) (string, map[str
 		}
 	}
 	return raw, updated, nil
+}
+
+func looksLikeStegoManifestText(text string) bool {
+	lower := strings.ToLower(text)
+	return strings.Contains(lower, "schema_version:") &&
+		strings.Contains(lower, "proposal_id:") &&
+		strings.Contains(lower, "visible_pixel_hash:")
 }
 
 func btcToSats(v interface{}) int64 {

@@ -133,11 +133,15 @@ func (h *InscriptionHandler) HandleGetInscriptions(w http.ResponseWriter, r *htt
 	var inscriptions []models.InscriptionRequest
 	dedupe := make(map[string]int) // id -> index in inscriptions
 	includeLegacyOnly := r.URL.Query().Get("legacy") == "true" || r.URL.Query().Get("legacy") == "1"
+	contractTitles := make(map[string]struct{})
 
 	// Prefer open-contracts (MCP store) to keep UI + AI in sync.
 	if h.store != nil {
 		if contracts, err := h.store.ListContracts(sc.ContractFilter{}); err == nil {
 			for _, c := range contracts {
+				if strings.EqualFold(strings.TrimSpace(c.Status), "superseded") {
+					continue
+				}
 				if isPendingContractStatus(c.Status) {
 					continue
 				}
@@ -147,6 +151,9 @@ func (h *InscriptionHandler) HandleGetInscriptions(w http.ResponseWriter, r *htt
 							continue
 						}
 					}
+				}
+				if key := normalizeWishText(c.Title); key != "" {
+					contractTitles[key] = struct{}{}
 				}
 				item := h.fromContract(c)
 				if _, ok := dedupe[item.ID]; !ok {
@@ -159,6 +166,14 @@ func (h *InscriptionHandler) HandleGetInscriptions(w http.ResponseWriter, r *htt
 		}
 		if proposals, err := h.store.ListProposals(r.Context(), sc.ProposalFilter{}); err == nil {
 			for _, p := range proposals {
+				if looksLikeStegoManifestText(p.DescriptionMD) {
+					continue
+				}
+				if key := normalizeWishText(p.DescriptionMD); key != "" {
+					if _, exists := contractTitles[key]; exists {
+						continue
+					}
+				}
 				if isRejectedProposalStatus(p.Status) {
 					continue
 				}
@@ -178,6 +193,14 @@ func (h *InscriptionHandler) HandleGetInscriptions(w http.ResponseWriter, r *htt
 		if recs, err := h.ingestionService.ListRecent("", 200); err == nil {
 			for _, rec := range recs {
 				item := h.fromIngestion(rec)
+				if looksLikeStegoManifestText(item.Text) {
+					continue
+				}
+				if key := normalizeWishText(item.Text); key != "" {
+					if _, exists := contractTitles[key]; exists {
+						continue
+					}
+				}
 				if idx, ok := dedupe[item.ID]; ok {
 					// Enrich existing entry with image/text if missing.
 					if inscriptions[idx].ImageData == "" && item.ImageData != "" {
@@ -343,6 +366,23 @@ func isPendingContractStatus(status string) bool {
 	default:
 		return true
 	}
+}
+
+func normalizeWishText(text string) string {
+	text = strings.TrimSpace(text)
+	text = strings.TrimPrefix(text, "#")
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	return strings.ToLower(strings.Join(strings.Fields(text), " "))
+}
+
+func looksLikeStegoManifestText(text string) bool {
+	lower := strings.ToLower(text)
+	return strings.Contains(lower, "schema_version:") &&
+		strings.Contains(lower, "proposal_id:") &&
+		strings.Contains(lower, "visible_pixel_hash:")
 }
 
 func isRejectedProposalStatus(status string) bool {
