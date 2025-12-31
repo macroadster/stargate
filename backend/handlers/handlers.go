@@ -332,6 +332,7 @@ func (h *InscriptionHandler) fromIngestion(rec services.IngestionRecord) models.
 	if msg, ok := rec.Metadata["message"].(string); ok && embeddedMsg == "" {
 		embeddedMsg = msg
 	}
+	embeddedMsg = stripWishTimestamp(embeddedMsg)
 
 	return models.InscriptionRequest{
 		ImageData: targetPath,
@@ -468,6 +469,26 @@ func ingestionContractID(rec services.IngestionRecord) string {
 
 func isRejectedProposalStatus(status string) bool {
 	return strings.EqualFold(strings.TrimSpace(status), "rejected")
+}
+
+func appendWishTimestamp(message string, ts int64) string {
+	message = strings.TrimSpace(message)
+	if message == "" {
+		return message
+	}
+	return fmt.Sprintf("%s\n\n[stargate-ts:%d]", message, ts)
+}
+
+func stripWishTimestamp(message string) string {
+	message = strings.TrimSpace(message)
+	if message == "" {
+		return message
+	}
+	idx := strings.LastIndex(message, "\n\n[stargate-ts:")
+	if idx < 0 {
+		return message
+	}
+	return strings.TrimSpace(message[:idx])
 }
 
 func computeVisiblePixelHash(imageBytes []byte, text string) string {
@@ -760,7 +781,9 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 		}
 	}
 	method = resolveStegoMethod(method, filename, imgBytes)
-	visibleHash := computeVisiblePixelHash(imgBytes, text)
+	wishTimestamp := time.Now().Unix()
+	embeddedMessage := appendWishTimestamp(text, wishTimestamp)
+	visibleHash := computeVisiblePixelHash(imgBytes, embeddedMessage)
 	ingestionID := visibleHash
 	if ingestionID == "" {
 		ingestionID = fmt.Sprintf("pending_%d", time.Now().UnixNano())
@@ -770,8 +793,9 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 	if h.ingestionService != nil {
 		imgB64 := base64.StdEncoding.EncodeToString(imgBytes)
 		meta := map[string]interface{}{
-			"embedded_message":   text,
+			"embedded_message":   embeddedMessage,
 			"message":            text,
+			"wish_timestamp":     wishTimestamp,
 			"price":              price,
 			"price_unit":         priceUnit,
 			"address":            address,
@@ -786,7 +810,7 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 			ID:            ingestionID,
 			Filename:      filename,
 			Method:        method,
-			MessageLength: len(text),
+			MessageLength: len(embeddedMessage),
 			ImageBase64:   imgB64,
 			Metadata:      meta,
 			Status:        "pending",
@@ -799,7 +823,7 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 				fmt.Printf("Failed to create ingestion record for %s: %v\n", ingestionID, err)
 			}
 		}
-		publishPendingIngestAnnouncement(ingestionID, visibleHash, filename, method, text, price, priceUnit, address, fundingMode, imgBytes)
+		publishPendingIngestAnnouncement(ingestionID, visibleHash, filename, method, embeddedMessage, price, priceUnit, address, fundingMode, imgBytes)
 	}
 	// Mirror into MCP contracts/open-contracts for AI + UI consistency.
 	h.upsertOpenContract(visibleHash, text, price)
@@ -815,7 +839,7 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 
 		// Text & method (embed message, price, address as JSON string)
 		embedPayload := map[string]string{
-			"message":      text,
+			"message":      embeddedMessage,
 			"price":        price,
 			"price_unit":   priceUnit,
 			"address":      address,
@@ -856,7 +880,7 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 
 	// Fallback to legacy local inscription creation
 	req := models.InscribeRequest{
-		Text:    text,
+		Text:    embeddedMessage,
 		Price:   price,
 		Address: address,
 	}

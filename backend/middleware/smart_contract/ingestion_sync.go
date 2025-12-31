@@ -383,7 +383,8 @@ func normalizeEmbedded(raw string, meta map[string]interface{}) (string, map[str
 	}
 	var obj map[string]interface{}
 	if err := json.Unmarshal([]byte(raw), &obj); err != nil {
-		return raw, meta, nil
+		cleaned, updated := stripWishTimestamp(raw, meta)
+		return cleaned, updated, nil
 	}
 	updated := copyMeta(meta)
 	if msg, ok := obj["message"].(string); ok && strings.TrimSpace(msg) != "" {
@@ -413,7 +414,31 @@ func normalizeEmbedded(raw string, meta map[string]interface{}) (string, map[str
 			updated["budget_sats"] = sats
 		}
 	}
+	raw, updated = stripWishTimestamp(raw, updated)
 	return raw, updated, nil
+}
+
+func stripWishTimestamp(message string, meta map[string]interface{}) (string, map[string]interface{}) {
+	message = strings.TrimSpace(message)
+	if message == "" {
+		return message, meta
+	}
+	idx := strings.LastIndex(message, "\n\n[stargate-ts:")
+	if idx < 0 {
+		return message, meta
+	}
+	tsPart := strings.TrimSuffix(message[idx+len("\n\n[stargate-ts:"):], "]")
+	if tsPart != "" {
+		if ts, err := strconv.ParseInt(strings.TrimSpace(tsPart), 10, 64); err == nil {
+			if meta == nil {
+				meta = map[string]interface{}{}
+			}
+			if _, exists := meta["wish_timestamp"]; !exists {
+				meta["wish_timestamp"] = ts
+			}
+		}
+	}
+	return strings.TrimSpace(message[:idx]), meta
 }
 
 func looksLikeStegoManifestTextIngest(text string) bool {
