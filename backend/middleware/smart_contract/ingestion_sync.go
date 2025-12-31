@@ -121,7 +121,7 @@ func processRecord(ctx context.Context, rec services.IngestionRecord, ingest *se
 	contract, tasks, err := parseEmbeddedContract(raw)
 	if err != nil || contract.ContractID == "" || len(tasks) == 0 {
 		if store != nil {
-			if wishKey := wishKeyFromText(raw); wishKey != "" {
+			if wishKey := wishKeyFromTextIngest(raw); wishKey != "" {
 				if hasExistingWishKey(ctx, store, wishKey) {
 					return ingest.UpdateStatusWithNote(rec.ID, "ignored", "wish already exists")
 				}
@@ -463,7 +463,7 @@ func stripWishTimestamp(message string, meta map[string]interface{}) (string, ma
 	return strings.TrimSpace(message[:idx]), meta
 }
 
-func normalizeWishText(text string) string {
+func normalizeWishTextIngest(text string) string {
 	text = strings.TrimSpace(text)
 	text = strings.TrimPrefix(text, "#")
 	text = strings.TrimSpace(text)
@@ -473,7 +473,7 @@ func normalizeWishText(text string) string {
 	return strings.ToLower(strings.Join(strings.Fields(text), " "))
 }
 
-func wishKeyFromText(text string) string {
+func wishKeyFromTextIngest(text string) string {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return ""
@@ -482,18 +482,18 @@ func wishKeyFromText(text string) string {
 	if idx := strings.IndexRune(text, '\n'); idx >= 0 {
 		line = text[:idx]
 	}
-	return normalizeWishText(line)
+	return normalizeWishTextIngest(line)
 }
 
 func proposalWishKey(p smart_contract.Proposal) string {
-	if key := wishKeyFromText(p.DescriptionMD); key != "" {
+	if key := wishKeyFromTextIngest(p.DescriptionMD); key != "" {
 		return key
 	}
-	return wishKeyFromText(p.Title)
+	return wishKeyFromTextIngest(p.Title)
 }
 
 func contractWishKey(c smart_contract.Contract) string {
-	return wishKeyFromText(c.Title)
+	return wishKeyFromTextIngest(c.Title)
 }
 
 func hasExistingWishKey(ctx context.Context, store *scstore.PGStore, wishKey string) bool {
