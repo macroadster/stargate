@@ -9,7 +9,7 @@ type Contract struct {
 	TotalBudgetSats     int64    `json:"total_budget_sats"`
 	GoalsCount          int      `json:"goals_count"`
 	AvailableTasksCount int      `json:"available_tasks_count"`
-	Status              string   `json:"status"` // created | active | funded | expired
+	Status              string   `json:"status"` // created | active | funded | confirmed | expired
 	Skills              []string `json:"skills,omitempty"`
 }
 

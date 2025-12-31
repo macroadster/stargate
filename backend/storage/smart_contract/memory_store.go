@@ -488,6 +488,24 @@ func (s *MemoryStore) UpdateTaskProof(ctx context.Context, taskID string, proof 
 	return nil
 }
 
+// UpdateContractStatus updates the status for a contract.
+func (s *MemoryStore) UpdateContractStatus(ctx context.Context, contractID, status string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	contractID = strings.TrimSpace(contractID)
+	status = strings.TrimSpace(status)
+	if contractID == "" || status == "" {
+		return nil
+	}
+	contract, ok := s.contracts[contractID]
+	if !ok {
+		return fmt.Errorf("contract %s not found", contractID)
+	}
+	contract.Status = status
+	s.contracts[contractID] = contract
+	return nil
+}
+
 // CreateProposal stores a new proposal with validation.
 func (s *MemoryStore) CreateProposal(ctx context.Context, p smart_contract.Proposal) error {
 	s.mu.Lock()

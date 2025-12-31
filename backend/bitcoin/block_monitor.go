@@ -2695,6 +2695,33 @@ func (bm *BlockMonitor) markIngestionConfirmed(rec *services.IngestionRecord, tx
 	if err := bm.ingestion.UpdateStatusWithNote(rec.ID, "confirmed", fmt.Sprintf("confirmed in block %d", height)); err != nil {
 		log.Printf("oracle reconcile: failed to update ingestion status for %s: %v", rec.ID, err)
 	}
+	if bm.sweepStore != nil {
+		contractID := contractIDFromIngestion(rec)
+		if contractID != "" {
+			if err := bm.sweepStore.UpdateContractStatus(context.Background(), contractID, "confirmed"); err != nil {
+				log.Printf("oracle reconcile: failed to update contract status for %s: %v", contractID, err)
+			}
+		}
+	}
+}
+
+func contractIDFromIngestion(rec *services.IngestionRecord) string {
+	if rec == nil {
+		return ""
+	}
+	if meta := rec.Metadata; meta != nil {
+		if contractID, ok := meta["contract_id"].(string); ok {
+			if trimmed := strings.TrimSpace(contractID); trimmed != "" {
+				return trimmed
+			}
+		}
+		if visibleHash, ok := meta["visible_pixel_hash"].(string); ok {
+			if trimmed := strings.TrimSpace(visibleHash); trimmed != "" {
+				return trimmed
+			}
+		}
+	}
+	return strings.TrimSpace(rec.ID)
 }
 
 func copyFile(src, dest string) error {

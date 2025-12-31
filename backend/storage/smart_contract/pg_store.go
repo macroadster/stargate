@@ -804,6 +804,17 @@ func (s *PGStore) UpdateTaskProof(ctx context.Context, taskID string, proof *sma
 	return err
 }
 
+// UpdateContractStatus updates the status for a contract.
+func (s *PGStore) UpdateContractStatus(ctx context.Context, contractID, status string) error {
+	contractID = strings.TrimSpace(contractID)
+	status = strings.TrimSpace(status)
+	if contractID == "" || status == "" {
+		return nil
+	}
+	_, err := s.pool.Exec(ctx, `UPDATE mcp_contracts SET status=$2 WHERE contract_id=$1`, contractID, status)
+	return err
+}
+
 // Proposal operations
 func (s *PGStore) CreateProposal(ctx context.Context, p smart_contract.Proposal) error {
 	if p.Metadata == nil {
