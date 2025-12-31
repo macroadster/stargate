@@ -135,6 +135,7 @@ func (h *InscriptionHandler) HandleGetInscriptions(w http.ResponseWriter, r *htt
 	includeLegacyOnly := r.URL.Query().Get("legacy") == "true" || r.URL.Query().Get("legacy") == "1"
 	contractTitles := make(map[string]struct{})
 	canonicalContractIDs := make(map[string]struct{})
+	wishKeys := make(map[string]struct{})
 
 	// Prefer open-contracts (MCP store) to keep UI + AI in sync.
 	if h.store != nil {
@@ -176,6 +177,11 @@ func (h *InscriptionHandler) HandleGetInscriptions(w http.ResponseWriter, r *htt
 				if looksLikeStegoManifestText(p.DescriptionMD) {
 					continue
 				}
+				if key := wishKeyFromText(p.DescriptionMD); key != "" {
+					wishKeys[key] = struct{}{}
+				} else if key := wishKeyFromText(p.Title); key != "" {
+					wishKeys[key] = struct{}{}
+				}
 				if proposalID := proposalContractID(p); proposalID != "" {
 					if _, exists := canonicalContractIDs[proposalID]; exists {
 						continue
@@ -210,6 +216,11 @@ func (h *InscriptionHandler) HandleGetInscriptions(w http.ResponseWriter, r *htt
 				}
 				if ingestionID := ingestionContractID(rec); ingestionID != "" {
 					if _, exists := canonicalContractIDs[ingestionID]; exists {
+						continue
+					}
+				}
+				if key := wishKeyFromText(item.Text); key != "" {
+					if _, exists := wishKeys[key]; exists {
 						continue
 					}
 				}
@@ -393,6 +404,18 @@ func normalizeWishText(text string) string {
 		return ""
 	}
 	return strings.ToLower(strings.Join(strings.Fields(text), " "))
+}
+
+func wishKeyFromText(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	line := text
+	if idx := strings.IndexRune(text, '\n'); idx >= 0 {
+		line = text[:idx]
+	}
+	return normalizeWishText(line)
 }
 
 func looksLikeStegoManifestText(text string) bool {
