@@ -46,6 +46,9 @@ const InscriptionModal = ({ inscription, onClose }) => {
   const [authBlocked, setAuthBlocked] = useState(false);
   const [copiedPsbt, setCopiedPsbt] = useState('');
   const [showPsbtQr, setShowPsbtQr] = useState(false);
+  const [stegoPayload, setStegoPayload] = useState(null);
+  const [stegoPayloadLoading, setStegoPayloadLoading] = useState(false);
+  const [stegoPayloadError, setStegoPayloadError] = useState('');
   const lastFetchedKeyRef = React.useRef('');
   const hasFetchedRef = React.useRef(false);
   const refreshIntervalRef = React.useRef(null);
@@ -198,6 +201,106 @@ const InscriptionModal = ({ inscription, onClose }) => {
       // not json
     }
   }
+
+  const stegoManifest = useMemo(() => {
+    const raw = inscription?.metadata?.extracted_message || '';
+    if (!raw) return null;
+    const manifest = {};
+    raw.split('\n').forEach((line) => {
+      const idx = line.indexOf(':');
+      if (idx < 0) return;
+      const key = line.slice(0, idx).trim();
+      const value = line.slice(idx + 1).trim();
+      if (key) {
+        manifest[key] = value;
+      }
+    });
+    return Object.keys(manifest).length > 0 ? manifest : null;
+  }, [inscription?.metadata?.extracted_message]);
+
+  const stegoPayloadCid = useMemo(() => {
+    return (
+      inscription?.metadata?.stego_payload_cid ||
+      inscription?.metadata?.payload_cid ||
+      stegoManifest?.payload_cid ||
+      ''
+    );
+  }, [inscription?.metadata?.payload_cid, inscription?.metadata?.stego_payload_cid, stegoManifest]);
+
+  useEffect(() => {
+    let alive = true;
+    const fetchPayload = async () => {
+      if (!stegoPayloadCid) {
+        setStegoPayload(null);
+        setStegoPayloadError('');
+        return;
+      }
+      setStegoPayloadLoading(true);
+      setStegoPayloadError('');
+      try {
+        const res = await fetch(`${API_BASE}/api/smart_contract/stego/payload/${stegoPayloadCid}`);
+        if (!res.ok) {
+          throw new Error(`payload fetch failed: ${res.status}`);
+        }
+        const data = await res.json();
+        if (alive) {
+          setStegoPayload(data);
+        }
+      } catch (err) {
+        if (alive) {
+          setStegoPayload(null);
+          setStegoPayloadError(err.message || 'payload fetch failed');
+        }
+      } finally {
+        if (alive) {
+          setStegoPayloadLoading(false);
+        }
+      }
+    };
+    fetchPayload();
+    return () => {
+      alive = false;
+    };
+  }, [stegoPayloadCid]);
+
+  const stegoProposal = useMemo(() => {
+    if (!stegoPayload?.proposal) return null;
+    return stegoPayload.proposal;
+  }, [stegoPayload]);
+
+  const stegoTasks = useMemo(() => {
+    return Array.isArray(stegoPayload?.tasks) ? stegoPayload.tasks : [];
+  }, [stegoPayload]);
+
+  const stegoProposalStatus = useMemo(() => {
+    if (!stegoProposal) return '';
+    const id = stegoProposal.id;
+    const match = proposalItems.find(
+      (p) =>
+        p.id === id ||
+        p.visible_pixel_hash === id ||
+        p.metadata?.visible_pixel_hash === id ||
+        p.metadata?.contract_id === id,
+    );
+    return match?.status || '';
+  }, [proposalItems, stegoProposal]);
+
+  const stegoTaskStatusMap = useMemo(() => {
+    const map = new Map();
+    allTasks.forEach((t) => {
+      if (t.task_id) {
+        map.set(t.task_id, t.status || '');
+      }
+    });
+    return map;
+  }, [allTasks]);
+
+  const hiddenMessageText = useMemo(() => {
+    if (stegoPayload) {
+      return JSON.stringify(stegoPayload, null, 2);
+    }
+    return inscription?.metadata?.extracted_message || '';
+  }, [stegoPayload, inscription?.metadata?.extracted_message]);
 
   const inscriptionMessage = parsedPayload?.message || inscriptionMessageRaw;
   const inscriptionAddress = parsedPayload?.address ?? inscriptionAddressRaw;
@@ -1787,41 +1890,73 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                         <span className="w-2 h-2 bg-green-500 rounded-full"></span>
                         Hidden Message
                       </h4>
-                        <div className="bg-green-50 dark:bg-green-900 border border-green-200 dark:border-green-700 rounded-lg p-4">
-                          <div className="flex items-center justify-between mb-2">
-                            <div className="flex items-start gap-2">
-                              <span className="text-green-600 dark:text-green-400 text-sm">🔓</span>
-                              <span className="text-green-800 dark:text-green-200 text-sm font-medium">Extracted Hidden Data</span>
-                            </div>
-                            <CopyButton text={inscription.metadata.extracted_message} />
+                      <div className="bg-green-50 dark:bg-green-900 border border-green-200 dark:border-green-700 rounded-lg p-4 space-y-4">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-start gap-2">
+                            <span className="text-green-600 dark:text-green-400 text-sm">🔓</span>
+                            <span className="text-green-800 dark:text-green-200 text-sm font-medium">Extracted Hidden Data</span>
                           </div>
-                        <div className="bg-white dark:bg-gray-800 rounded p-4 max-h-96 min-h-[200px] overflow-y-auto w-full">
+                          <CopyButton text={hiddenMessageText} />
+                        </div>
+
+                        {stegoPayloadLoading && (
+                          <div className="text-sm text-green-700 dark:text-green-300">Loading stego payload…</div>
+                        )}
+                        {!stegoPayloadLoading && stegoPayloadError && (
+                          <div className="text-sm text-amber-700 dark:text-amber-300">Payload unavailable: {stegoPayloadError}</div>
+                        )}
+
+                        {stegoProposal ? (
+                          <div className="space-y-3">
+                            <div className="bg-white dark:bg-gray-800 rounded p-4">
+                              <div className="text-xs text-green-700 dark:text-green-300 uppercase tracking-wide mb-2">Proposal</div>
+                              <div className="text-lg font-semibold text-green-900 dark:text-green-100">{stegoProposal.title || 'Untitled'}</div>
+                              {stegoProposal.description_md && (
+                                <div className="text-sm text-green-800 dark:text-green-200 mt-2 whitespace-pre-wrap">
+                                  {stegoProposal.description_md}
+                                </div>
+                              )}
+                              <div className="mt-3 flex flex-wrap gap-4 text-xs text-green-700 dark:text-green-300">
+                                <span>Budget: {stegoProposal.budget_sats || 0} sats</span>
+                                <span>Visible Hash: {stegoProposal.visible_pixel_hash || '—'}</span>
+                                {stegoProposalStatus && <span>Status: {stegoProposalStatus}</span>}
+                              </div>
+                            </div>
+
+                            <div className="bg-white dark:bg-gray-800 rounded p-4">
+                              <div className="text-xs text-green-700 dark:text-green-300 uppercase tracking-wide mb-2">Tasks</div>
+                              {stegoTasks.length > 0 ? (
+                                <div className="divide-y divide-gray-200 dark:divide-gray-700 text-sm">
+                                  {stegoTasks.map((task) => (
+                                    <div key={task.task_id || task.title} className="py-2 flex flex-col gap-1">
+                                      <div className="flex items-center justify-between">
+                                        <span className="text-green-900 dark:text-green-100 font-semibold">{task.title || 'Untitled task'}</span>
+                                        <span className="text-green-700 dark:text-green-300 text-xs">
+                                          {task.budget_sats || 0} sats
+                                        </span>
+                                      </div>
+                                      {task.description && (
+                                        <div className="text-green-800 dark:text-green-200 text-xs whitespace-pre-wrap">{task.description}</div>
+                                      )}
+                                      <div className="text-xs text-green-700 dark:text-green-300 flex flex-wrap gap-3">
+                                        {task.task_id && <span>ID: {task.task_id}</span>}
+                                        <span>Status: {stegoTaskStatusMap.get(task.task_id) || 'unknown'}</span>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <div className="text-sm text-green-700 dark:text-green-300">No tasks found in payload.</div>
+                              )}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="bg-white dark:bg-gray-800 rounded p-4 max-h-96 min-h-[200px] overflow-y-auto w-full">
                             <pre className="text-green-900 dark:text-green-100 font-mono text-sm leading-relaxed whitespace-pre-wrap break-words max-w-full">
-                              {inscription.metadata.extracted_message}
+                              {hiddenMessageText}
                             </pre>
                           </div>
-                        <div className="mt-4 pt-4 border-t border-green-200 dark:border-green-700">
-                          <div className="grid grid-cols-3 gap-4 w-full">
-                            <div className="text-center">
-                              <div className="text-2xl font-bold text-green-600 dark:text-green-400">
-                                {inscription.metadata.extracted_message.length}
-                              </div>
-                              <div className="text-sm text-green-700 dark:text-green-300">Characters</div>
-                            </div>
-                            <div className="text-center">
-                              <div className="text-2xl font-bold text-green-600 dark:text-green-400">
-                                {inscription.metadata.extracted_message.split(' ').filter(word => word.length > 0).length}
-                              </div>
-                              <div className="text-sm text-green-700 dark:text-green-300">Words</div>
-                            </div>
-                            <div className="text-center">
-                              <div className="text-2xl font-bold text-green-600 dark:text-green-400">
-                                {inscription.metadata.extracted_message.split('\n').length}
-                              </div>
-                              <div className="text-sm text-green-700 dark:text-green-300">Lines</div>
-                            </div>
-                          </div>
-                        </div>
+                        )}
                       </div>
                     </div>
                   )}
@@ -1860,11 +1995,11 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                         <div className="bg-white dark:bg-gray-800 rounded-lg p-4 border border-green-300 dark:border-green-600">
                           <div className="flex items-center justify-between mb-2">
                             <div className="text-green-800 dark:text-green-200 text-xs font-mono uppercase tracking-wider">Hidden Content:</div>
-                            <CopyButton text={inscription.metadata.extracted_message} />
+                            <CopyButton text={hiddenMessageText} />
                           </div>
                            <div className="bg-gray-50 dark:bg-gray-900 rounded p-3 max-h-64 overflow-y-auto">
                              <pre className="text-green-900 dark:text-green-100 font-mono text-sm leading-relaxed whitespace-pre-wrap break-words max-w-full">
-                               {inscription.metadata.extracted_message}
+                               {hiddenMessageText}
                              </pre>
                            </div>
                         </div>
@@ -1873,13 +2008,13 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                           <div className="grid grid-cols-2 gap-4">
                             <div className="text-center">
                               <div className="text-2xl font-bold text-green-600 dark:text-green-400">
-                                {inscription.metadata.extracted_message.length}
+                                {hiddenMessageText.length}
                               </div>
                               <div className="text-sm text-green-700 dark:text-green-300">Characters</div>
                             </div>
                             <div className="text-center">
                               <div className="text-2xl font-bold text-green-600 dark:text-green-400">
-                                {inscription.metadata.extracted_message.split(' ').length}
+                                {hiddenMessageText.split(' ').length}
                               </div>
                               <div className="text-sm text-green-700 dark:text-green-300">Words</div>
                             </div>

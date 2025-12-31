@@ -134,6 +134,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/smart_contract/events", s.authWrap(s.handleEvents))
 	mux.HandleFunc("/api/smart_contract/config", s.authWrap(s.handleConfig))
 	mux.HandleFunc("/api/smart_contract/stego/reconcile", s.authWrap(s.handleStegoReconcile))
+	mux.HandleFunc("/api/smart_contract/stego/payload/", s.authWrap(s.handleStegoPayload))
 }
 
 func (s *Server) authWrap(next http.HandlerFunc) http.HandlerFunc {
@@ -161,6 +162,31 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, map[string]string{
 		"donation_address": strings.TrimSpace(os.Getenv("STARLIGHT_DONATION_ADDRESS")),
 	})
+}
+
+func (s *Server) handleStegoPayload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		Error(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	cid := strings.TrimPrefix(r.URL.Path, "/api/smart_contract/stego/payload/")
+	cid = strings.TrimSpace(cid)
+	if cid == "" {
+		Error(w, http.StatusBadRequest, "payload cid required")
+		return
+	}
+	client := ipfs.NewClientFromEnv()
+	data, err := client.Cat(r.Context(), cid)
+	if err != nil {
+		Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		Error(w, http.StatusBadRequest, "payload decode failed")
+		return
+	}
+	JSON(w, http.StatusOK, payload)
 }
 
 func (s *Server) handleContracts(w http.ResponseWriter, r *http.Request) {
