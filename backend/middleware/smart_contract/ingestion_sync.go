@@ -120,6 +120,13 @@ func processRecord(ctx context.Context, rec services.IngestionRecord, ingest *se
 	// Try JSON contract first.
 	contract, tasks, err := parseEmbeddedContract(raw)
 	if err != nil || contract.ContractID == "" || len(tasks) == 0 {
+		if store != nil {
+			if wishKey := wishKeyFromText(raw); wishKey != "" {
+				if hasExistingWishKey(ctx, store, wishKey) {
+					return ingest.UpdateStatusWithNote(rec.ID, "ignored", "wish already exists")
+				}
+			}
+		}
 		// Fallback: treat embedded_message as markdown wish -> create proposal only.
 		proposal, err := parseMarkdownProposal(rec.ID, raw, meta, rec.ImageBase64)
 		if err != nil {
@@ -454,6 +461,59 @@ func stripWishTimestamp(message string, meta map[string]interface{}) (string, ma
 		}
 	}
 	return strings.TrimSpace(message[:idx]), meta
+}
+
+func normalizeWishText(text string) string {
+	text = strings.TrimSpace(text)
+	text = strings.TrimPrefix(text, "#")
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	return strings.ToLower(strings.Join(strings.Fields(text), " "))
+}
+
+func wishKeyFromText(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	line := text
+	if idx := strings.IndexRune(text, '\n'); idx >= 0 {
+		line = text[:idx]
+	}
+	return normalizeWishText(line)
+}
+
+func proposalWishKey(p smart_contract.Proposal) string {
+	if key := wishKeyFromText(p.DescriptionMD); key != "" {
+		return key
+	}
+	return wishKeyFromText(p.Title)
+}
+
+func contractWishKey(c smart_contract.Contract) string {
+	return wishKeyFromText(c.Title)
+}
+
+func hasExistingWishKey(ctx context.Context, store *scstore.PGStore, wishKey string) bool {
+	proposals, err := store.ListProposals(ctx, smart_contract.ProposalFilter{})
+	if err == nil {
+		for _, proposal := range proposals {
+			if proposalWishKey(proposal) == wishKey {
+				return true
+			}
+		}
+	}
+	contracts, err := store.ListContracts(smart_contract.ContractFilter{})
+	if err == nil {
+		for _, contract := range contracts {
+			if contractWishKey(contract) == wishKey {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func looksLikeStegoManifestTextIngest(text string) bool {
