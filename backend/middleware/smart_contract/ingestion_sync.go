@@ -101,6 +101,11 @@ func processRecord(ctx context.Context, rec services.IngestionRecord, ingest *se
 	if looksLikeStegoManifestTextIngest(raw) {
 		return ingest.UpdateStatusWithNote(rec.ID, "ignored", "stego manifest metadata")
 	}
+	if strings.TrimSpace(rec.ImageBase64) == "" {
+		if strings.TrimSpace(metaString(meta["ipfs_image_cid"])) == "" {
+			return ingest.UpdateStatusWithNote(rec.ID, "ignored", "missing image data")
+		}
+	}
 
 	if store != nil {
 		visible := strings.TrimSpace(metaString(meta["visible_pixel_hash"]))
