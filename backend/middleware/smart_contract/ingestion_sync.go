@@ -98,7 +98,7 @@ func processRecord(ctx context.Context, rec services.IngestionRecord, ingest *se
 		raw = normalized
 		meta = updatedMeta
 	}
-	if looksLikeStegoManifestText(raw) {
+	if looksLikeStegoManifestTextIngest(raw) {
 		return ingest.UpdateStatusWithNote(rec.ID, "ignored", "stego manifest metadata")
 	}
 
@@ -416,7 +416,7 @@ func normalizeEmbedded(raw string, meta map[string]interface{}) (string, map[str
 	return raw, updated, nil
 }
 
-func looksLikeStegoManifestText(text string) bool {
+func looksLikeStegoManifestTextIngest(text string) bool {
 	lower := strings.ToLower(text)
 	return strings.Contains(lower, "schema_version:") &&
 		strings.Contains(lower, "proposal_id:") &&
