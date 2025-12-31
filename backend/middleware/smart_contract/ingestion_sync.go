@@ -102,6 +102,21 @@ func processRecord(ctx context.Context, rec services.IngestionRecord, ingest *se
 		return ingest.UpdateStatusWithNote(rec.ID, "ignored", "stego manifest metadata")
 	}
 
+	if store != nil {
+		visible := strings.TrimSpace(metaString(meta["visible_pixel_hash"]))
+		if visible == "" {
+			visible = strings.TrimSpace(rec.ID)
+		}
+		if visible != "" {
+			if existing, err := store.GetProposal(ctx, visible); err == nil && strings.TrimSpace(existing.ID) != "" {
+				return ingest.UpdateStatusWithNote(rec.ID, "ignored", "proposal already exists for visible hash")
+			}
+			if _, err := store.GetContract(visible); err == nil {
+				return ingest.UpdateStatusWithNote(rec.ID, "ignored", "contract already exists for visible hash")
+			}
+		}
+	}
+
 	// Try JSON contract first.
 	contract, tasks, err := parseEmbeddedContract(raw)
 	if err != nil || contract.ContractID == "" || len(tasks) == 0 {
