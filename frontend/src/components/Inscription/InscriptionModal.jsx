@@ -52,6 +52,7 @@ const InscriptionModal = ({ inscription, onClose }) => {
   const [scanMessage, setScanMessage] = useState('');
   const [scanLoading, setScanLoading] = useState(false);
   const [scanError, setScanError] = useState('');
+  const [scanAttempted, setScanAttempted] = useState(false);
   const lastFetchedKeyRef = React.useRef('');
   const hasFetchedRef = React.useRef(false);
   const refreshIntervalRef = React.useRef(null);
@@ -222,13 +223,9 @@ const InscriptionModal = ({ inscription, onClose }) => {
   }, [inscription?.metadata?.extracted_message, scanMessage]);
 
   const stegoPayloadCid = useMemo(() => {
-    return (
-      inscription?.metadata?.stego_payload_cid ||
-      inscription?.metadata?.payload_cid ||
-      stegoManifest?.payload_cid ||
-      ''
-    );
-  }, [inscription?.metadata?.payload_cid, inscription?.metadata?.stego_payload_cid, stegoManifest]);
+    if (!scanAttempted) return '';
+    return stegoManifest?.payload_cid || '';
+  }, [scanAttempted, stegoManifest]);
 
   const stegoProposal = useMemo(() => {
     if (!stegoPayload?.proposal) return null;
@@ -487,6 +484,7 @@ const InscriptionModal = ({ inscription, onClose }) => {
       if (!scanImageSource) {
         setScanMessage('');
         setScanError('');
+        setScanAttempted(true);
         return;
       }
       setScanLoading(true);
@@ -516,6 +514,7 @@ const InscriptionModal = ({ inscription, onClose }) => {
       } finally {
         if (alive) {
           setScanLoading(false);
+          setScanAttempted(true);
         }
       }
     };
