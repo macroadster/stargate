@@ -496,7 +496,12 @@ func contractWishKey(c smart_contract.Contract) string {
 	return wishKeyFromTextIngest(c.Title)
 }
 
-func hasExistingWishKey(ctx context.Context, store *scstore.PGStore, wishKey string) bool {
+type wishKeyStore interface {
+	ListProposals(ctx context.Context, filter smart_contract.ProposalFilter) ([]smart_contract.Proposal, error)
+	ListContracts(filter smart_contract.ContractFilter) ([]smart_contract.Contract, error)
+}
+
+func hasExistingWishKey(ctx context.Context, store wishKeyStore, wishKey string) bool {
 	proposals, err := store.ListProposals(ctx, smart_contract.ProposalFilter{})
 	if err == nil {
 		for _, proposal := range proposals {
