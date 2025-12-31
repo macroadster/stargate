@@ -929,13 +929,20 @@ func (s *Server) resolveIngestionRecord(ctx context.Context, contractID string) 
 
 func (s *Server) resolveProposalIDForContract(ctx context.Context, contractID string, rec *services.IngestionRecord) string {
 	if s.store != nil {
-		if stored, err := s.store.GetProposal(ctx, contractID); err == nil && strings.TrimSpace(stored.ID) != "" {
-			return strings.TrimSpace(stored.ID)
-		}
 		if proposals, err := s.store.ListProposals(ctx, smart_contract.ProposalFilter{ContractID: contractID}); err == nil && len(proposals) > 0 {
+			for _, proposal := range proposals {
+				if status := strings.ToLower(strings.TrimSpace(proposal.Status)); status == "approved" || status == "published" {
+					if id := strings.TrimSpace(proposal.ID); id != "" {
+						return id
+					}
+				}
+			}
 			if id := strings.TrimSpace(proposals[0].ID); id != "" {
 				return id
 			}
+		}
+		if stored, err := s.store.GetProposal(ctx, contractID); err == nil && strings.TrimSpace(stored.ID) != "" {
+			return strings.TrimSpace(stored.ID)
 		}
 	}
 	if rec != nil && rec.Metadata != nil {
