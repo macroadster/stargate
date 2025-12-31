@@ -126,7 +126,7 @@ func TestClaimTaskUsesAPIKeyWallet(t *testing.T) {
 	req := MCPRequest{
 		Tool: "claim_task",
 		Arguments: map[string]interface{}{
-			"task_id":      task.TaskID,
+			"task_id":       task.TaskID,
 			"ai_identifier": "agent-claim-wallet",
 		},
 	}
@@ -305,6 +305,93 @@ func TestProposalCreationRequiresWish(t *testing.T) {
 			t.Fatalf("failed to unmarshal response: %v", err)
 		}
 
+		if !resp.Success {
+			t.Fatalf("expected success, got error: %s", resp.Error)
+		}
+	})
+
+	t.Run("approve_proposal_requires_wish", func(t *testing.T) {
+		apiKey := "approve-test-key"
+		visibleHash := strings.Repeat("a", 64)
+		proposal := smart_contract.Proposal{
+			ID:               "proposal-approve-test",
+			Title:            "Approve proposal",
+			DescriptionMD:    "Approve proposal details",
+			VisiblePixelHash: visibleHash,
+			BudgetSats:       1000,
+			Status:           "pending",
+			Tasks: []smart_contract.Task{
+				{
+					TaskID:     "proposal-approve-test-task-1",
+					ContractID: "proposal-approve-test",
+					Title:      "Do work",
+					BudgetSats: 1000,
+					Status:     "available",
+				},
+			},
+			Metadata: map[string]interface{}{
+				"creator_api_key_hash": apiKeyHash(apiKey),
+				"visible_pixel_hash":   visibleHash,
+			},
+		}
+		if err := store.CreateProposal(context.Background(), proposal); err != nil {
+			t.Fatalf("failed to seed proposal: %v", err)
+		}
+
+		req := MCPRequest{
+			Tool: "approve_proposal",
+			Arguments: map[string]interface{}{
+				"proposal_id": proposal.ID,
+			},
+		}
+		body, _ := json.Marshal(req)
+
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("POST", "/mcp/call", bytes.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("X-API-Key", apiKey)
+
+		server.handleToolCall(w, r)
+
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("expected 404, got %d: %s", w.Code, w.Body.String())
+		}
+
+		var resp MCPResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to unmarshal response: %v", err)
+		}
+		if resp.Success {
+			t.Fatalf("expected failure due to missing wish, but got success")
+		}
+		if !strings.Contains(resp.Error, "wish not found") {
+			t.Fatalf("expected error about missing wish, got: %s", resp.Error)
+		}
+
+		wishID := "wish-" + visibleHash
+		storeContract := smart_contract.Contract{
+			ContractID: wishID,
+			Title:      "Wish",
+			Status:     "pending",
+		}
+		if err := store.UpsertContractWithTasks(context.Background(), storeContract, nil); err != nil {
+			t.Fatalf("failed to seed wish contract: %v", err)
+		}
+
+		w = httptest.NewRecorder()
+		r = httptest.NewRequest("POST", "/mcp/call", bytes.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("X-API-Key", apiKey)
+
+		server.handleToolCall(w, r)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to unmarshal response: %v", err)
+		}
 		if !resp.Success {
 			t.Fatalf("expected success, got error: %s", resp.Error)
 		}
