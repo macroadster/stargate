@@ -252,9 +252,6 @@ func runHTTPServer() {
 
 	// Initialize MCP components (for HTTP routes)
 	store, apiKeyIssuer, apiKeyValidator, ingestionSvc, challengeStore := initializeMCPComponents()
-	if err := scmiddleware.StartIPFSIngestionSync(context.Background(), ingestionSvc, store); err != nil {
-		log.Printf("ipfs ingestion sync disabled: %v", err)
-	}
 
 	// Initialize HTTP MCP server (always enabled)
 	scannerManager := starlight.GetScannerManager()
@@ -428,9 +425,18 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 	if sweepStore, ok := store.(bitcoin.SweepTaskStore); ok {
 		blockMonitor.SetSweepDependencies(sweepStore, bitcoin.NewMempoolClient())
 	}
+	if err := scmiddleware.StartIPFSIngestionSync(context.Background(), ingestionSvc, store, func(ctx context.Context, recent int) error {
+		return blockMonitor.ReconcileRecentBlocks(ctx, recent)
+	}); err != nil {
+		log.Printf("ipfs ingestion sync disabled: %v", err)
+	}
 
 	// Pre-cache historical blocks (with rate limiting)
 	go func() {
+		if bitcoinNetwork != "mainnet" {
+			log.Printf("Skipping historical block pre-cache on %s", bitcoinNetwork)
+			return
+		}
 		log.Println("Pre-caching historical Bitcoin blocks...")
 		// Start with most important blocks first
 		priorityBlocks := []int64{0, 174923, 481824}
@@ -503,6 +509,16 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 		// Try to locate the image on disk (blocks/<height>_<hash>/images/<filename>)
 		if fsPath, ok := findImagePath(height, filename); ok {
 			log.Printf("Serving image from filesystem: %s", fsPath)
+			if filepath.Ext(fsPath) == "" {
+				if file, err := os.Open(fsPath); err == nil {
+					defer file.Close()
+					buf := make([]byte, 512)
+					n, _ := file.Read(buf)
+					if n > 0 {
+						w.Header().Set("Content-Type", http.DetectContentType(buf[:n]))
+					}
+				}
+			}
 			http.ServeFile(w, r, fsPath)
 			return
 		}

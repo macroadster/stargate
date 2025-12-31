@@ -46,6 +46,7 @@ type BlockMonitor struct {
 	stegoReconciler StegoReconciler
 	unpinPath       func(context.Context, string) error
 	ipfsClient      *ipfs.Client
+	reconcileMu     sync.Mutex
 
 	// Configuration
 	checkInterval time.Duration
@@ -61,6 +62,9 @@ type BlockMonitor struct {
 	totalInscriptions   int64
 	lastProcessTime     time.Duration
 }
+
+const reconcileSweepInterval = 20 * time.Minute
+const reconcileSweepBlocks = 6
 
 // BlockData represents comprehensive block data stored to disk
 type BlockData struct {
@@ -272,6 +276,7 @@ func (bm *BlockMonitor) Start() error {
 	log.Printf("Starting block monitor with %s interval, bitcoinAPI set: %v", bm.checkInterval, bm.bitcoinAPI != nil)
 
 	go bm.monitorLoop()
+	go bm.reconcileSweepLoop()
 
 	return nil
 }
@@ -330,6 +335,27 @@ func (bm *BlockMonitor) monitorLoop() {
 			}
 		case <-bm.stopChan:
 			log.Println("Block monitor stopped")
+			return
+		}
+	}
+}
+
+func (bm *BlockMonitor) reconcileSweepLoop() {
+	if reconcileSweepBlocks <= 0 || reconcileSweepInterval <= 0 {
+		return
+	}
+	ticker := time.NewTicker(reconcileSweepInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			if bm.ingestion == nil {
+				continue
+			}
+			if err := bm.ReconcileRecentBlocks(context.Background(), reconcileSweepBlocks); err != nil {
+				log.Printf("reconcile sweep failed: %v", err)
+			}
+		case <-bm.stopChan:
 			return
 		}
 	}
@@ -421,6 +447,9 @@ func (bm *BlockMonitor) checkForNewBlocks() error {
 	}
 
 	log.Printf("Current blockchain height: %d, monitor height: %d", currentHeight, bm.currentHeight)
+	if err := bm.reconcileCanonicalTip(currentHeight, 6); err != nil {
+		log.Printf("Failed to reconcile canonical tip: %v", err)
+	}
 
 	var startHeight int64
 	var maxBlocksPerCycle int64 = 2            // Very conservative: only 2 blocks per cycle
@@ -452,9 +481,6 @@ func (bm *BlockMonitor) checkForNewBlocks() error {
 	} else {
 		// Process new blocks in batches with throttling
 		startHeight = bm.currentHeight + 1
-		if currentHeight-startHeight > maxBlocksPerCycle {
-			startHeight = currentHeight - maxBlocksPerCycle + 1
-		}
 
 		log.Printf("Processing new blocks from %d to %d (max %d per cycle) with %v delay between requests", startHeight, currentHeight, maxBlocksPerCycle, delayBetweenRequests)
 
@@ -487,6 +513,146 @@ func (bm *BlockMonitor) checkForNewBlocks() error {
 	}
 
 	return nil
+}
+
+func (bm *BlockMonitor) reconcileCanonicalTip(currentHeight int64, depth int) error {
+	if depth <= 0 || bm.rawClient == nil || bm.bitcoinClient == nil {
+		return nil
+	}
+	for i := 0; i < depth; i++ {
+		height := currentHeight - int64(i)
+		if height < 0 {
+			break
+		}
+		canonicalHash, err := bm.getCanonicalBlockHash(height)
+		if err != nil {
+			return err
+		}
+		if canonicalHash == "" {
+			continue
+		}
+		removed, err := bm.pruneBlockDirsForHeight(height, canonicalHash)
+		if err != nil {
+			return err
+		}
+		if removed {
+			if err := bm.ProcessBlock(height); err != nil {
+				log.Printf("Failed to reprocess block %d after reorg: %v", height, err)
+			}
+		}
+	}
+	return nil
+}
+
+func (bm *BlockMonitor) getCanonicalBlockHash(height int64) (string, error) {
+	baseURL := strings.TrimSpace(bm.bitcoinClient.baseURL)
+	if baseURL == "" {
+		return "", fmt.Errorf("bitcoin client baseURL missing")
+	}
+	url := fmt.Sprintf("%s/block-height/%d", baseURL, height)
+	resp, err := bm.bitcoinClient.httpClient.Get(url)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("block hash status %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(body)), nil
+}
+
+func (bm *BlockMonitor) pruneBlockDirsForHeight(height int64, canonicalHash string) (bool, error) {
+	blocksDir := bm.blocksDir
+	if blocksDir == "" {
+		blocksDir = blocksDirFromEnv()
+	}
+	if blocksDir == "" {
+		return false, nil
+	}
+	entries, err := os.ReadDir(blocksDir)
+	if err != nil {
+		return false, err
+	}
+	var removed bool
+	var hasCanonical bool
+	heightPrefix := fmt.Sprintf("%d_", height)
+	reorgDir := filepath.Join(blocksDir, "reorgs")
+	for _, entry := range entries {
+		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), heightPrefix) {
+			continue
+		}
+		dirPath := filepath.Join(blocksDir, entry.Name())
+		hash, err := readBlockHeaderHash(filepath.Join(dirPath, "block.json"))
+		if err != nil || hash == "" {
+			continue
+		}
+		if hash == canonicalHash {
+			hasCanonical = true
+			continue
+		}
+		log.Printf("Reorg cleanup: moving stale block dir %s to reorgs (hash=%s canonical=%s)", entry.Name(), hash, canonicalHash)
+		if err := os.MkdirAll(reorgDir, 0755); err != nil {
+			return removed, err
+		}
+		dest := filepath.Join(reorgDir, entry.Name())
+		if err := os.Rename(dirPath, dest); err != nil {
+			if err := copyDir(dirPath, dest); err != nil {
+				return removed, err
+			}
+			if err := os.RemoveAll(dirPath); err != nil {
+				return removed, err
+			}
+		}
+		removed = true
+	}
+	if removed && !hasCanonical {
+		return true, nil
+	}
+	return false, nil
+}
+
+func copyDir(src, dest string) error {
+	return filepath.WalkDir(src, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dest, rel)
+		if d.IsDir() {
+			return os.MkdirAll(target, 0755)
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		if err := copyFile(path, target); err != nil {
+			return err
+		}
+		return os.Chmod(target, info.Mode())
+	})
+}
+
+func readBlockHeaderHash(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	var payload struct {
+		BlockHeader struct {
+			Hash string `json:"Hash"`
+		} `json:"block_header"`
+	}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(payload.BlockHeader.Hash), nil
 }
 
 // getCurrentHeightFromBlockchainInfo gets current height from the configured Bitcoin network
@@ -651,6 +817,33 @@ func (bm *BlockMonitor) ProcessBlock(height int64) error {
 	log.Printf("Successfully processed block %d in %v: %d txs, %d images, %d inscriptions, %d stego detected",
 		height, processingTime, len(parsedBlock.Transactions), len(parsedBlock.Images), len(inscriptions), bm.countStegoImages(scanResults))
 
+	return nil
+}
+
+// ReconcileRecentBlocks forces a reprocess of the most recent N blocks.
+func (bm *BlockMonitor) ReconcileRecentBlocks(ctx context.Context, count int) error {
+	if count <= 0 {
+		return nil
+	}
+	bm.reconcileMu.Lock()
+	defer bm.reconcileMu.Unlock()
+
+	height, err := bm.getCurrentHeightFromBlockchainInfo()
+	if err != nil {
+		return fmt.Errorf("get current height: %w", err)
+	}
+	for i := 0; i < count; i++ {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		h := height - int64(i)
+		if h < 0 {
+			break
+		}
+		if err := bm.ProcessBlock(h); err != nil {
+			log.Printf("reconcile recent blocks: failed to process block %d: %v", h, err)
+		}
+	}
 	return nil
 }
 
@@ -1484,7 +1677,7 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 
 	for _, tx := range parsedBlock.Transactions {
 		if match, ok := txidMatches[tx.TxID]; ok && match != nil {
-			destPath, err := bm.moveIngestionImageWithFilename(blockDir, match, txidImageFilename(tx.TxID, match.Filename))
+			destPath, err := bm.moveIngestionImageWithFilename(blockDir, match, blockImageFilename(match, tx.TxID))
 			if err != nil {
 				log.Printf("oracle reconcile: failed to move ingestion image for %s: %v", match.ID, err)
 				bm.maybeReconcileStego(match)
@@ -1505,6 +1698,7 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 					"visible_pixel_hash": stringFromAny(match.Metadata["visible_pixel_hash"]),
 				}
 				mergeIngestionMetadata(contractMeta, match.Metadata)
+				applyStegoMetadata(contractMeta, match.Metadata)
 				smartContracts = upsertContractByID(smartContracts, SmartContractData{
 					ContractID:  match.ID,
 					BlockHeight: blockHeight,
@@ -1524,7 +1718,7 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 		}
 
 		if match, matchType, matchedHash := matchWitnessHash(tx, primaryCandidates, fallbackCandidates); match != nil {
-			destPath, err := bm.moveIngestionImageWithFilename(blockDir, match, txidImageFilename(tx.TxID, match.Filename))
+			destPath, err := bm.moveIngestionImageWithFilename(blockDir, match, blockImageFilename(match, tx.TxID))
 			if err != nil {
 				log.Printf("oracle reconcile: failed to move ingestion image for %s: %v", match.ID, err)
 				bm.maybeReconcileStego(match)
@@ -1544,6 +1738,7 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 					"visible_pixel_hash": stringFromAny(match.Metadata["visible_pixel_hash"]),
 				}
 				mergeIngestionMetadata(contractMeta, match.Metadata)
+				applyStegoMetadata(contractMeta, match.Metadata)
 				smartContracts = upsertContractByID(smartContracts, SmartContractData{
 					ContractID:  match.ID,
 					BlockHeight: blockHeight,
@@ -1570,7 +1765,7 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 				continue
 			}
 
-			destPath, err := bm.moveIngestionImageWithFilename(blockDir, match, txidImageFilename(tx.TxID, match.Filename))
+			destPath, err := bm.moveIngestionImageWithFilename(blockDir, match, blockImageFilename(match, tx.TxID))
 			if err != nil {
 				log.Printf("oracle reconcile: failed to move ingestion image for %s: %v", match.ID, err)
 				bm.maybeReconcileStego(match)
@@ -1594,6 +1789,7 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 				"visible_pixel_hash": stringFromAny(match.Metadata["visible_pixel_hash"]),
 			}
 			mergeIngestionMetadata(contractMeta, match.Metadata)
+			applyStegoMetadata(contractMeta, match.Metadata)
 
 			smartContracts = upsertContractByID(smartContracts, SmartContractData{
 				ContractID:  match.ID,
@@ -2174,7 +2370,10 @@ func (bm *BlockMonitor) moveIngestionImageWithFilename(blockDir string, rec *ser
 		filename = "inscription.png"
 	}
 	if strings.TrimSpace(destFilename) == "" {
-		destFilename = filename
+		destFilename = blockImageFilename(rec, "")
+		if destFilename == "" {
+			destFilename = filename
+		}
 	}
 
 	destDir := filepath.Join(blockDir, "images")
@@ -2183,14 +2382,20 @@ func (bm *BlockMonitor) moveIngestionImageWithFilename(blockDir string, rec *ser
 	}
 	destPath := filepath.Join(destDir, destFilename)
 	if _, err := os.Stat(destPath); err == nil {
+		bm.cleanupUploadArtifacts(rec)
 		return destPath, nil
 	}
 
 	if stegoPath, ok := bm.stegoImagePath(rec); ok {
 		if err := bm.copyStegoToBlock(stegoPath, destPath); err == nil {
 			bm.unpinUploadPath(stegoPath)
+			bm.cleanupUploadArtifacts(rec)
 			return destPath, nil
 		}
+	}
+	if bm.writeStegoToBlock(rec, destPath) {
+		bm.cleanupUploadArtifacts(rec)
+		return destPath, nil
 	}
 
 	sourcePath := ""
@@ -2229,6 +2434,7 @@ func (bm *BlockMonitor) moveIngestionImageWithFilename(blockDir string, rec *ser
 		if err := os.WriteFile(destPath, data, 0644); err != nil {
 			return "", fmt.Errorf("write ingestion image: %w", err)
 		}
+		bm.cleanupUploadArtifacts(rec)
 		return destPath, nil
 	}
 
@@ -2239,6 +2445,7 @@ func (bm *BlockMonitor) moveIngestionImageWithFilename(blockDir string, rec *ser
 		_ = os.Remove(sourcePath)
 	}
 	bm.unpinUploadPath(sourcePath)
+	bm.cleanupUploadArtifacts(rec)
 	return destPath, nil
 }
 
@@ -2246,10 +2453,7 @@ func (bm *BlockMonitor) stegoImagePath(rec *services.IngestionRecord) (string, b
 	if bm == nil || rec == nil || rec.Metadata == nil {
 		return "", false
 	}
-	stegoCID := strings.TrimSpace(stringFromAny(rec.Metadata["stego_image_cid"]))
-	if stegoCID == "" {
-		stegoCID = strings.TrimSpace(stringFromAny(rec.Metadata["stego_cid"]))
-	}
+	stegoCID := stegoCIDFromRecord(rec)
 	if stegoCID == "" {
 		return "", false
 	}
@@ -2261,25 +2465,40 @@ func (bm *BlockMonitor) stegoImagePath(rec *services.IngestionRecord) (string, b
 		sort.Strings(matches)
 		return matches[0], true
 	}
-	if bm.ipfsClient == nil {
-		return "", false
+	return "", false
+}
+
+func stegoCIDFromRecord(rec *services.IngestionRecord) string {
+	if rec == nil || rec.Metadata == nil {
+		return ""
+	}
+	stegoCID := strings.TrimSpace(stringFromAny(rec.Metadata["stego_image_cid"]))
+	if stegoCID == "" {
+		stegoCID = strings.TrimSpace(stringFromAny(rec.Metadata["stego_cid"]))
+	}
+	return stegoCID
+}
+
+func (bm *BlockMonitor) writeStegoToBlock(rec *services.IngestionRecord, destPath string) bool {
+	if bm == nil || bm.ipfsClient == nil {
+		return false
+	}
+	stegoCID := stegoCIDFromRecord(rec)
+	if stegoCID == "" {
+		return false
+	}
+	if destPath == "" {
+		return false
 	}
 	stegoBytes, err := bm.ipfsClient.Cat(context.Background(), stegoCID)
 	if err != nil || len(stegoBytes) == 0 {
-		return "", false
+		return false
 	}
-	filename := strings.TrimSpace(rec.Filename)
-	if filename == "" {
-		filename = "stego.png"
+	if err := os.WriteFile(destPath, stegoBytes, 0644); err != nil {
+		log.Printf("failed to write stego image to block dir: %v", err)
+		return false
 	}
-	if strings.TrimSpace(rec.ID) != "" && !strings.HasPrefix(filename, rec.ID+"_") {
-		filename = fmt.Sprintf("%s_%s", rec.ID, filename)
-	}
-	stegoPath := filepath.Join(uploadsDir, filename)
-	if err := os.WriteFile(stegoPath, stegoBytes, 0644); err != nil {
-		return "", false
-	}
-	return stegoPath, true
+	return true
 }
 
 func (bm *BlockMonitor) copyStegoToBlock(src, dest string) error {
@@ -2290,13 +2509,41 @@ func (bm *BlockMonitor) copyStegoToBlock(src, dest string) error {
 }
 
 func (bm *BlockMonitor) unpinUploadPath(path string) {
-	if bm == nil || bm.unpinPath == nil || strings.TrimSpace(path) == "" {
+	if bm == nil || strings.TrimSpace(path) == "" {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if err := bm.unpinPath(ctx, path); err != nil {
-		log.Printf("ipfs unpin failed for %s: %v", path, err)
+	if bm.unpinPath != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := bm.unpinPath(ctx, path); err != nil {
+			log.Printf("ipfs unpin failed for %s: %v", path, err)
+		}
+	}
+	uploadsDir := os.Getenv("UPLOADS_DIR")
+	if uploadsDir == "" {
+		uploadsDir = "/data/uploads"
+	}
+	if rel, err := filepath.Rel(uploadsDir, path); err == nil && rel != "." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)) && rel != ".." {
+		_ = os.Remove(path)
+	}
+}
+
+func (bm *BlockMonitor) cleanupUploadArtifacts(rec *services.IngestionRecord) {
+	if bm == nil || rec == nil {
+		return
+	}
+	id := strings.TrimSpace(rec.ID)
+	if id == "" {
+		return
+	}
+	uploadsDir := os.Getenv("UPLOADS_DIR")
+	if uploadsDir == "" {
+		uploadsDir = "/data/uploads"
+	}
+	pattern := filepath.Join(uploadsDir, id+"_*")
+	matches, _ := filepath.Glob(pattern)
+	for _, match := range matches {
+		bm.unpinUploadPath(match)
 	}
 }
 
@@ -2343,6 +2590,25 @@ func txidImageFilename(txid, fallback string) string {
 	return fmt.Sprintf("%s%s", txid, ext)
 }
 
+func blockImageFilename(rec *services.IngestionRecord, fallbackTxid string) string {
+	if rec != nil && rec.Metadata != nil {
+		cid := strings.TrimSpace(stringFromAny(rec.Metadata["stego_image_cid"]))
+		if cid == "" {
+			cid = strings.TrimSpace(stringFromAny(rec.Metadata["ipfs_image_cid"]))
+		}
+		if cid == "" {
+			cid = strings.TrimSpace(stringFromAny(rec.Metadata["stego_cid"]))
+		}
+		if cid != "" {
+			return cid
+		}
+	}
+	if strings.TrimSpace(fallbackTxid) != "" {
+		return txidImageFilename(fallbackTxid, rec.Filename)
+	}
+	return strings.TrimSpace(rec.Filename)
+}
+
 func mergeIngestionMetadata(target map[string]any, meta map[string]interface{}) {
 	if len(meta) == 0 {
 		return
@@ -2355,6 +2621,52 @@ func mergeIngestionMetadata(target map[string]any, meta map[string]interface{}) 
 	}
 }
 
+func applyStegoMetadata(target map[string]any, meta map[string]interface{}) {
+	if len(target) == 0 || len(meta) == 0 {
+		return
+	}
+	if !hasStegoMetadata(meta) {
+		return
+	}
+	if _, exists := target["is_stego"]; !exists {
+		target["is_stego"] = true
+	}
+	if _, exists := target["stego_probability"]; !exists {
+		target["stego_probability"] = 1.0
+	}
+	if _, exists := target["stego_type"]; !exists {
+		if method := strings.TrimSpace(stringFromAny(meta["stego_method"])); method != "" {
+			target["stego_type"] = method
+		} else {
+			target["stego_type"] = "stego"
+		}
+	}
+	if _, exists := target["extracted_message"]; !exists {
+		if manifest := strings.TrimSpace(stringFromAny(meta["stego_manifest_yaml"])); manifest != "" {
+			target["extracted_message"] = manifest
+		}
+	}
+}
+
+func hasStegoMetadata(meta map[string]interface{}) bool {
+	if meta == nil {
+		return false
+	}
+	keys := []string{
+		"stego_image_cid",
+		"stego_payload_cid",
+		"stego_manifest_yaml",
+		"stego_manifest_proposal_id",
+		"stego_contract_id",
+	}
+	for _, key := range keys {
+		if strings.TrimSpace(stringFromAny(meta[key])) != "" {
+			return true
+		}
+	}
+	return false
+}
+
 func (bm *BlockMonitor) markIngestionConfirmed(rec *services.IngestionRecord, txid string, height int64, imageFile, imagePath string) {
 	if bm.ingestion == nil || rec == nil {
 		return
@@ -2364,6 +2676,18 @@ func (bm *BlockMonitor) markIngestionConfirmed(rec *services.IngestionRecord, tx
 		"confirmed_height": height,
 		"image_file":       imageFile,
 		"image_path":       imagePath,
+	}
+	if meta := rec.Metadata; meta != nil {
+		if prevHeight, ok := meta["confirmed_height"].(float64); ok && int64(prevHeight) != height {
+			updates["reorg_from_height"] = int64(prevHeight)
+		} else if prevHeightStr, ok := meta["confirmed_height"].(string); ok {
+			if prevHeightInt, err := strconv.ParseInt(strings.TrimSpace(prevHeightStr), 10, 64); err == nil && prevHeightInt != height {
+				updates["reorg_from_height"] = prevHeightInt
+			}
+		}
+		if prevTxid, ok := meta["confirmed_txid"].(string); ok && strings.TrimSpace(prevTxid) != "" && strings.TrimSpace(prevTxid) != txid {
+			updates["reorg_from_txid"] = prevTxid
+		}
 	}
 	if err := bm.ingestion.UpdateMetadata(rec.ID, updates); err != nil {
 		log.Printf("oracle reconcile: failed to update ingestion metadata for %s: %v", rec.ID, err)

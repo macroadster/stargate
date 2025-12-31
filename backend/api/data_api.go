@@ -814,6 +814,11 @@ func (api *DataAPI) HandleGetBlockInscriptionsPaginated(w http.ResponseWriter, r
 		// Derive a safe content type; some historical entries may miss it.
 		contentType := ins.ContentType
 		contentType = inferMime(contentType, nil, ins.FileName)
+		if contentType == "" || contentType == "application/octet-stream" {
+			if sniffed := api.sniffContentType(height, ins.FilePath); sniffed != "" {
+				contentType = sniffed
+			}
+		}
 
 		imageURL := fmt.Sprintf("/content/%s%s", ins.TxID, func() string {
 			if ins.InputIndex >= 0 {
@@ -875,6 +880,28 @@ func (api *DataAPI) HandleGetBlockInscriptionsPaginated(w http.ResponseWriter, r
 		"has_more":     hasMore,
 		"next_cursor":  nextCursor,
 	})
+}
+
+func (api *DataAPI) sniffContentType(height int64, filePath string) string {
+	if strings.TrimSpace(filePath) == "" {
+		return ""
+	}
+	base := strings.TrimRight(api.resolveBlocksDir(), "/")
+	fsPath := filepath.Join(fmt.Sprintf("%s/%d_00000000", base, height), filePath)
+	file, err := os.Open(fsPath)
+	if err != nil {
+		return ""
+	}
+	defer file.Close()
+	buf := make([]byte, 512)
+	n, _ := file.Read(buf)
+	if n <= 0 {
+		return ""
+	}
+	if detected := http.DetectContentType(buf[:n]); detected != "" {
+		return detected
+	}
+	return ""
 }
 
 func buildContractInscriptions(contracts []bitcoin.SmartContractData, height int64) ([]bitcoin.InscriptionData, map[int]string, map[int]map[string]any) {
@@ -1299,6 +1326,10 @@ func (api *DataAPI) handleContentRaw(w http.ResponseWriter, r *http.Request, txi
 
 	height, insList, err := api.findInscriptionsByTx(txid)
 	if err != nil || len(insList) == 0 {
+		if height, filePath, ok := api.findContractImageByTx(txid); ok {
+			api.serveBlockImage(w, height, filePath)
+			return
+		}
 		http.Error(w, "inscription not found", http.StatusNotFound)
 		return
 	}
@@ -1325,6 +1356,26 @@ func (api *DataAPI) handleContentRaw(w http.ResponseWriter, r *http.Request, txi
 	w.Header().Set("X-Inscription-Size", fmt.Sprintf("%d", len(content)))
 	w.Header().Set("X-Inscription-Hash", sha256Hex(content))
 	w.Write(content)
+}
+
+func (api *DataAPI) serveBlockImage(w http.ResponseWriter, height int64, filePath string) {
+	if strings.TrimSpace(filePath) == "" {
+		http.Error(w, "inscription not found", http.StatusNotFound)
+		return
+	}
+	base := strings.TrimRight(api.resolveBlocksDir(), "/")
+	fsPath := filepath.Join(fmt.Sprintf("%s/%d_00000000", base, height), filePath)
+	data, err := os.ReadFile(fsPath)
+	if err != nil {
+		http.Error(w, "inscription not found", http.StatusNotFound)
+		return
+	}
+	mimeType := inferMime("", data, filepath.Base(filePath))
+	w.Header().Set("Content-Type", mimeType)
+	w.Header().Set("X-Inscription-Mime", mimeType)
+	w.Header().Set("X-Inscription-Size", fmt.Sprintf("%d", len(data)))
+	w.Header().Set("X-Inscription-Hash", sha256Hex(data))
+	w.Write(data)
 }
 
 // handleContentManifest returns a JSON manifest of all inscription parts for a txid.
@@ -1402,6 +1453,64 @@ func (api *DataAPI) findInscriptionsByTx(txid string) (int64, []bitcoin.Inscript
 		}
 	}
 	return 0, nil, fmt.Errorf("not found")
+}
+
+func (api *DataAPI) findContractImageByTx(txid string) (int64, string, bool) {
+	txid = normalizeTxID(txid)
+	if txid == "" {
+		return 0, "", false
+	}
+	heights := api.listAvailableBlockHeights()
+	for _, height := range heights {
+		block, err := api.loadBlock(height)
+		if err != nil {
+			continue
+		}
+		for _, contract := range block.SmartContracts {
+			meta := contract.Metadata
+			if !contractMatchesTx(meta, txid) {
+				continue
+			}
+			filePath := strings.TrimSpace(contract.ImagePath)
+			if filePath == "" {
+				filePath = filepath.Join("images", filepath.Base(strings.TrimSpace(stringFromAny(meta["image_file"]))))
+			}
+			if strings.TrimSpace(filePath) != "" {
+				return height, filePath, true
+			}
+		}
+	}
+	return 0, "", false
+}
+
+func contractMatchesTx(meta map[string]any, txid string) bool {
+	if meta == nil || txid == "" {
+		return false
+	}
+	candidates := []string{
+		stringFromAny(meta["tx_id"]),
+		stringFromAny(meta["confirmed_txid"]),
+		stringFromAny(meta["funding_txid"]),
+		stringFromAny(meta["match_hash"]),
+	}
+	switch values := meta["funding_txids"].(type) {
+	case []string:
+		candidates = append(candidates, values...)
+	case []any:
+		for _, item := range values {
+			if v, ok := item.(string); ok {
+				candidates = append(candidates, v)
+			}
+		}
+	case string:
+		candidates = append(candidates, strings.Split(values, ",")...)
+	}
+	for _, candidate := range candidates {
+		if normalizeTxID(candidate) == txid {
+			return true
+		}
+	}
+	return false
 }
 
 // loadInscriptionContent fetches inscription payload and inferred MIME.
@@ -1521,7 +1630,15 @@ func inferMime(current string, content []byte, fileName string) string {
 		}
 	}
 	if m == "" || m == "application/octet-stream" {
-		// leave empty; fall back to content sniffing below
+		if len(content) > 0 {
+			sample := content
+			if len(sample) > 512 {
+				sample = sample[:512]
+			}
+			if detected := http.DetectContentType(sample); detected != "" && detected != "application/octet-stream" {
+				m = detected
+			}
+		}
 	}
 	if m == "" {
 		trim := strings.TrimSpace(string(content))

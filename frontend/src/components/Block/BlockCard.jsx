@@ -138,7 +138,8 @@ const BlockCard = ({ block, onClick, isSelected }) => {
       } ${block.isFuture ? 'opacity-75' : ''} cursor-pointer`}
       title={undefined}
     >
-      <div className={`rounded-xl overflow-hidden border-2 ${
+      <div className={`${block.isNew ? 'block-slide-in' : ''}`}>
+        <div className={`rounded-xl overflow-hidden border-2 ${
         isSelected ? 'border-indigo-500' : block.isFuture ? 'border-yellow-400' : 'border-gray-300 dark:border-gray-700'
       } bg-gradient-to-br ${getBackgroundClass()}`}>
         <div className="h-32 flex items-center justify-center bg-black bg-opacity-20 relative">
@@ -232,6 +233,7 @@ const BlockCard = ({ block, onClick, isSelected }) => {
           }
           return null;
         })()}
+        </div>
       </div>
     </div>
   );

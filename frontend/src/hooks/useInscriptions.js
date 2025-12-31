@@ -113,21 +113,22 @@ export const useInscriptions = (selectedBlock) => {
           };
         }
 
+        const baseMetadata = image.metadata && typeof image.metadata === 'object' ? image.metadata : {};
         if (!scanResult) {
+          const metaStegoProbability = Number(baseMetadata.stego_probability || 0);
+          const metaIsStego = Boolean(baseMetadata.is_stego) || metaStegoProbability > 0 || Boolean(baseMetadata.stego_type);
           scanResult = {
-            is_stego: false,
+            is_stego: metaIsStego,
             confidence: 0.0,
-            stego_probability: 0.0,
-            prediction: 'unanalyzed',
-            stego_type: '',
-            extracted_message: '',
-            scan_error: 'Analysis not performed',
+            stego_probability: metaStegoProbability || (metaIsStego ? 1.0 : 0.0),
+            prediction: metaIsStego ? 'stego' : 'unanalyzed',
+            stego_type: baseMetadata.stego_type || '',
+            extracted_message: baseMetadata.extracted_message || baseMetadata.embedded_message || '',
+            scan_error: metaIsStego ? '' : 'Analysis not performed',
             scanned_at: Date.now() / 1000
           };
         }
         const textContent = image.content || '';
-        
-        const baseMetadata = image.metadata && typeof image.metadata === 'object' ? image.metadata : {};
         return {
           id: image.tx_id,
           number: selectedBlock.height,

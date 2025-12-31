@@ -21,6 +21,7 @@ import (
 	"golang.org/x/crypto/ripemd160"
 	"stargate-backend/bitcoin"
 	"stargate-backend/core/smart_contract"
+	"stargate-backend/ipfs"
 	"stargate-backend/services"
 	auth "stargate-backend/storage/auth"
 	scstore "stargate-backend/storage/smart_contract"
@@ -181,6 +182,22 @@ func (s *Server) handleContracts(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				Error(w, http.StatusInternalServerError, err.Error())
 				return
+			}
+			if !includeConfirmed(r) {
+				filtered := make([]smart_contract.Contract, 0, len(contracts))
+				for _, c := range contracts {
+					_, proofs, err := s.store.ContractFunding(c.ContractID)
+					if err != nil {
+						log.Printf("contract funding lookup failed for %s: %v", c.ContractID, err)
+						filtered = append(filtered, c)
+						continue
+					}
+					if proofsConfirmed(proofs) {
+						continue
+					}
+					filtered = append(filtered, c)
+				}
+				contracts = filtered
 			}
 			JSON(w, http.StatusOK, map[string]interface{}{
 				"contracts":   contracts,
@@ -580,6 +597,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 	if splitRaiseFund {
 		var psbtEntries []map[string]interface{}
 		var fundingTxIDs []string
+		var commitmentInfo *bitcoin.PSBTResult
 		var payoutScripts [][]byte
 		var payoutScriptHashes []string
 		var payoutScriptHash160s []string
@@ -603,6 +621,9 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 			}
 			if splitRes.FundingTxID != "" {
 				fundingTxIDs = append(fundingTxIDs, splitRes.FundingTxID)
+			}
+			if commitmentInfo == nil {
+				commitmentInfo = splitRes
 			}
 			if len(splitRes.PayoutScripts) > 0 {
 				payoutScripts = append(payoutScripts, splitRes.PayoutScripts...)
@@ -649,6 +670,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 				"network_params":          params.Name,
 			})
 		}
+		proposalID := s.resolveProposalIDForContract(r.Context(), contractID, ingestionRec)
 		if ingestionRec != nil && len(fundingTxIDs) > 0 {
 			metadata := map[string]interface{}{
 				"funding_txids":           fundingTxIDs,
@@ -662,8 +684,9 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 			if err := s.ingestionSvc.UpdateMetadata(ingestionRec.ID, metadata); err != nil {
 				log.Printf("psbt: failed to store funding_txids for %s: %v", ingestionRec.ID, err)
 			}
+			s.publishIngestUpdate(r.Context(), proposalID, ingestionRec.ID, strings.TrimSpace(body.PixelHash), fundingTxIDs, commitmentInfo, commitmentLockAddr, commitmentTarget)
 		}
-		if proposalID := s.resolveProposalIDForContract(r.Context(), contractID, ingestionRec); proposalID != "" {
+		if proposalID != "" {
 			s.updateProposalMetadataBestEffort(r.Context(), proposalID, commitmentMeta)
 		}
 		JSON(w, http.StatusOK, map[string]interface{}{
@@ -710,6 +733,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	proposalID := s.resolveProposalIDForContract(r.Context(), contractID, ingestionRec)
 	if ingestionRec != nil && res.FundingTxID != "" {
 		scriptHashes, scriptHash160s := buildScriptHashes(res.PayoutScripts)
 		if err := s.ingestionSvc.UpdateMetadata(ingestionRec.ID, map[string]interface{}{
@@ -722,11 +746,12 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		}); err != nil {
 			log.Printf("psbt: failed to store funding_txid for %s: %v", ingestionRec.ID, err)
 		}
+		s.publishIngestUpdate(r.Context(), proposalID, ingestionRec.ID, strings.TrimSpace(body.PixelHash), []string{res.FundingTxID}, res, commitmentLockAddr, commitmentTarget)
 	}
-	if proposalID := s.resolveProposalIDForContract(r.Context(), contractID, ingestionRec); proposalID != "" {
+	if proposalID != "" {
 		s.updateProposalMetadataBestEffort(r.Context(), proposalID, commitmentMeta)
 	}
-	if proposalID := s.resolveProposalIDForContract(r.Context(), contractID, ingestionRec); proposalID != "" {
+	if proposalID != "" {
 		if err := s.maybePublishStegoForProposal(r.Context(), proposalID); err != nil {
 			log.Printf("stego publish on psbt failed for proposal %s: %v", proposalID, err)
 		}
@@ -781,6 +806,52 @@ func contractorAddressFor(addr btcutil.Address) string {
 		return ""
 	}
 	return addr.EncodeAddress()
+}
+
+func (s *Server) publishIngestUpdate(ctx context.Context, proposalID, ingestionID, visiblePixelHash string, fundingTxIDs []string, res *bitcoin.PSBTResult, commitmentLockAddr btcutil.Address, commitmentTarget string) {
+	topic := strings.TrimSpace(os.Getenv("IPFS_MIRROR_TOPIC"))
+	if topic == "" {
+		return
+	}
+	ingestionID = strings.TrimSpace(ingestionID)
+	visiblePixelHash = strings.TrimSpace(visiblePixelHash)
+	if ingestionID == "" && visiblePixelHash == "" {
+		return
+	}
+	announcement := ingestUpdateAnnouncement{
+		Type:               "ingest_update",
+		IngestionID:        ingestionID,
+		ProposalID:         strings.TrimSpace(proposalID),
+		VisiblePixelHash:   visiblePixelHash,
+		FundingTxIDs:       fundingTxIDs,
+		CommitmentLockAddr: addressOrEmpty(commitmentLockAddr),
+		CommitmentTarget:   strings.TrimSpace(commitmentTarget),
+		Timestamp:          time.Now().Unix(),
+	}
+	if len(fundingTxIDs) > 0 {
+		announcement.FundingTxID = fundingTxIDs[0]
+	}
+	if res != nil {
+		announcement.CommitmentAddress = strings.TrimSpace(res.CommitmentAddr)
+		if len(res.CommitmentScript) > 0 {
+			announcement.CommitmentScript = hex.EncodeToString(res.CommitmentScript)
+		}
+		if res.CommitmentVout > 0 {
+			announcement.CommitmentVout = res.CommitmentVout
+		}
+		if res.CommitmentSats > 0 {
+			announcement.CommitmentSats = res.CommitmentSats
+		}
+	}
+	payload, err := json.Marshal(announcement)
+	if err != nil {
+		log.Printf("psbt: ingest update marshal failed: %v", err)
+		return
+	}
+	client := ipfs.NewClientFromEnv()
+	if err := client.PubsubPublish(ctx, topic, payload); err != nil {
+		log.Printf("psbt: ingest update publish failed: %v", err)
+	}
 }
 
 func (s *Server) resolveFundingMode(ctx context.Context, contractID string) (string, string) {
@@ -1730,6 +1801,37 @@ func includeConfirmed(r *http.Request) bool {
 	return strings.EqualFold(raw, "true") || strings.EqualFold(raw, "yes") || raw == "1"
 }
 
+func proofConfirmed(proof *smart_contract.MerkleProof) bool {
+	if proof == nil {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(proof.ConfirmationStatus), "confirmed") {
+		return true
+	}
+	if proof.ConfirmedAt != nil {
+		return true
+	}
+	return false
+}
+
+func proposalHasConfirmedProof(p smart_contract.Proposal) bool {
+	for _, t := range p.Tasks {
+		if proofConfirmed(t.MerkleProof) {
+			return true
+		}
+	}
+	return false
+}
+
+func proofsConfirmed(proofs []smart_contract.MerkleProof) bool {
+	for i := range proofs {
+		if proofConfirmed(&proofs[i]) {
+			return true
+		}
+	}
+	return false
+}
+
 func proposalMetaConfirmed(meta map[string]interface{}) bool {
 	if meta == nil {
 		return false
@@ -2031,6 +2133,26 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 			if err := s.store.UpdateProposal(r.Context(), proposal); err != nil {
 				Error(w, http.StatusBadRequest, err.Error())
 				return
+			}
+			if len(proposal.Tasks) == 0 {
+				desc := strings.TrimSpace(proposal.DescriptionMD)
+				if desc != "" {
+					if proposal.Metadata == nil {
+						proposal.Metadata = map[string]interface{}{}
+					}
+					if _, ok := proposal.Metadata["embedded_message"].(string); !ok {
+						proposal.Metadata["embedded_message"] = desc
+					}
+					visible := strings.TrimSpace(proposal.VisiblePixelHash)
+					if visible == "" {
+						visible = strings.TrimSpace(toString(proposal.Metadata["visible_pixel_hash"]))
+					}
+					proposal.Tasks = scstore.BuildTasksFromMarkdown(proposal.ID, desc, visible, proposal.BudgetSats, scstore.FundingAddressFromMeta(proposal.Metadata))
+					if err := s.store.UpdateProposal(r.Context(), proposal); err != nil {
+						Error(w, http.StatusBadRequest, err.Error())
+						return
+					}
+				}
 			}
 			if err := s.store.ApproveProposal(r.Context(), id); err != nil {
 				Error(w, http.StatusBadRequest, err.Error())
@@ -2372,7 +2494,7 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 				ingestionStatus := make(map[string]string)
 				filtered := make([]smart_contract.Proposal, 0, len(proposals))
 				for _, p := range proposals {
-					if proposalMetaConfirmed(p.Metadata) {
+					if proposalMetaConfirmed(p.Metadata) || proposalHasConfirmedProof(p) {
 						continue
 					}
 					if s.ingestionSvc != nil {

@@ -65,6 +65,21 @@ CREATE TABLE IF NOT EXISTS %s (
   status TEXT NOT NULL DEFAULT 'pending',
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS starlight_ingest_updates (
+  id BIGSERIAL PRIMARY KEY,
+  ingestion_id TEXT,
+  visible_pixel_hash TEXT,
+  proposal_id TEXT,
+  payload JSONB NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  attempts INT NOT NULL DEFAULT 0,
+  last_error TEXT,
+  next_retry_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS starlight_ingest_updates_status_idx
+  ON starlight_ingest_updates (status, next_retry_at);
 `, s.tableName)
 	_, err := s.db.ExecContext(ctx, schema)
 	return err
@@ -282,4 +297,99 @@ func fromJSONB(b []byte) (map[string]interface{}, error) {
 		return map[string]interface{}{}, err
 	}
 	return m, nil
+}
+
+type IngestUpdateRow struct {
+	ID       int64
+	Payload  []byte
+	Attempts int
+}
+
+func (s *IngestionService) EnqueueIngestUpdate(ctx context.Context, ingestionID, visiblePixelHash, proposalID string, payload []byte) error {
+	if len(payload) == 0 {
+		return fmt.Errorf("missing payload")
+	}
+	query := `
+INSERT INTO starlight_ingest_updates (ingestion_id, visible_pixel_hash, proposal_id, payload)
+VALUES ($1, $2, $3, $4)
+`
+	_, err := s.db.ExecContext(ctx, query, ingestionID, visiblePixelHash, proposalID, string(payload))
+	return err
+}
+
+func (s *IngestionService) ClaimIngestUpdates(ctx context.Context, limit int) ([]IngestUpdateRow, error) {
+	if limit <= 0 {
+		limit = 25
+	}
+	query := `
+WITH picked AS (
+  SELECT id
+  FROM starlight_ingest_updates
+  WHERE status IN ('pending', 'retry')
+    AND (next_retry_at IS NULL OR next_retry_at <= now())
+  ORDER BY created_at ASC
+  LIMIT $1
+  FOR UPDATE SKIP LOCKED
+)
+UPDATE starlight_ingest_updates
+SET status = 'processing',
+    attempts = attempts + 1,
+    updated_at = now()
+WHERE id IN (SELECT id FROM picked)
+RETURNING id, payload, attempts
+`
+	rows, err := s.db.QueryContext(ctx, query, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []IngestUpdateRow
+	for rows.Next() {
+		var row IngestUpdateRow
+		if err := rows.Scan(&row.ID, &row.Payload, &row.Attempts); err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
+func (s *IngestionService) MarkIngestUpdateApplied(ctx context.Context, id int64) error {
+	query := `
+UPDATE starlight_ingest_updates
+SET status = 'applied',
+    last_error = NULL,
+    next_retry_at = NULL,
+    updated_at = now()
+WHERE id = $1
+`
+	_, err := s.db.ExecContext(ctx, query, id)
+	return err
+}
+
+func (s *IngestionService) MarkIngestUpdateRetry(ctx context.Context, id int64, lastErr string, delay time.Duration) error {
+	nextRetry := time.Now().Add(delay)
+	query := `
+UPDATE starlight_ingest_updates
+SET status = 'retry',
+    last_error = $2,
+    next_retry_at = $3,
+    updated_at = now()
+WHERE id = $1
+`
+	_, err := s.db.ExecContext(ctx, query, id, lastErr, nextRetry)
+	return err
+}
+
+func (s *IngestionService) MarkIngestUpdateFailed(ctx context.Context, id int64, lastErr string) error {
+	query := `
+UPDATE starlight_ingest_updates
+SET status = 'failed',
+    last_error = $2,
+    updated_at = now()
+WHERE id = $1
+`
+	_, err := s.db.ExecContext(ctx, query, id, lastErr)
+	return err
 }

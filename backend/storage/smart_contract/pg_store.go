@@ -1253,6 +1253,12 @@ func populateProposalTasks(p *smart_contract.Proposal) {
 	if em, ok := p.Metadata["embedded_message"].(string); ok && em != "" && len(p.Tasks) == 0 {
 		p.Tasks = BuildTasksFromMarkdown(p.ID, em, p.VisiblePixelHash, p.BudgetSats, FundingAddressFromMeta(p.Metadata))
 	}
+	if len(p.Tasks) == 0 {
+		desc := strings.TrimSpace(p.DescriptionMD)
+		if desc != "" {
+			p.Tasks = BuildTasksFromMarkdown(p.ID, desc, p.VisiblePixelHash, p.BudgetSats, FundingAddressFromMeta(p.Metadata))
+		}
+	}
 }
 
 func scanTask(scanner interface {

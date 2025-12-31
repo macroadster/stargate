@@ -178,6 +178,9 @@ func (s *Server) publishStegoForProposal(ctx context.Context, proposalID string,
 	if err != nil {
 		return fmt.Errorf("failed to decode ingestion image: %w", err)
 	}
+	mergeStegoLinkage(meta, coverRec.Metadata)
+	addProposalStegoMeta(meta, p)
+	addWishStegoMeta(meta, coverRec.Metadata)
 	visibleHash := strings.TrimSpace(p.VisiblePixelHash)
 	if visibleHash == "" {
 		visibleHash = strings.TrimSpace(toString(meta["visible_pixel_hash"]))
@@ -339,6 +342,132 @@ func buildStegoPayload(p smart_contract.Proposal, meta map[string]interface{}, s
 		payload.Metadata = metaEntries
 	}
 	return payload
+}
+
+func mergeStegoLinkage(meta map[string]interface{}, ingestMeta map[string]interface{}) {
+	if meta == nil || ingestMeta == nil {
+		return
+	}
+	if strings.TrimSpace(toString(meta["funding_txid"])) == "" {
+		if v := strings.TrimSpace(toString(ingestMeta["funding_txid"])); v != "" {
+			meta["funding_txid"] = v
+		} else if list := fundingTxIDsFromMeta(ingestMeta); len(list) > 0 {
+			meta["funding_txid"] = list[0]
+		}
+	}
+	// Do not embed block_height; rely on funding_txid and on-chain verification instead.
+}
+
+func addProposalStegoMeta(meta map[string]interface{}, p smart_contract.Proposal) {
+	if meta == nil {
+		return
+	}
+	if strings.TrimSpace(p.Title) != "" {
+		meta["proposal_title"] = p.Title
+	}
+	if strings.TrimSpace(p.DescriptionMD) != "" {
+		meta["proposal_description_md"] = p.DescriptionMD
+	}
+	if p.BudgetSats > 0 {
+		meta["proposal_budget_sats"] = strconv.FormatInt(p.BudgetSats, 10)
+	}
+}
+
+func addWishStegoMeta(meta map[string]interface{}, ingestMeta map[string]interface{}) {
+	if meta == nil || ingestMeta == nil {
+		return
+	}
+	wishText := strings.TrimSpace(toString(ingestMeta["embedded_message"]))
+	if wishText == "" {
+		wishText = strings.TrimSpace(toString(ingestMeta["message"]))
+	}
+	if wishText != "" {
+		meta["wish_text"] = wishText
+	}
+	sats := satsFromMeta(ingestMeta["budget_sats"])
+	if sats == 0 {
+		sats = satsFromMeta(ingestMeta["price"])
+	}
+	if sats > 0 {
+		meta["wish_price_sats"] = strconv.FormatInt(sats, 10)
+	}
+}
+
+func satsFromMeta(value interface{}) int64 {
+	switch v := value.(type) {
+	case int64:
+		return v
+	case int:
+		return int64(v)
+	case float64:
+		if v < 1e6 {
+			return int64(v * 1e8)
+		}
+		return int64(v)
+	case json.Number:
+		if i, err := v.Int64(); err == nil {
+			return i
+		}
+		if f, err := v.Float64(); err == nil {
+			if f < 1e6 {
+				return int64(f * 1e8)
+			}
+			return int64(f)
+		}
+	case string:
+		raw := strings.TrimSpace(v)
+		if raw == "" {
+			return 0
+		}
+		if strings.Contains(raw, ".") {
+			if f, err := strconv.ParseFloat(raw, 64); err == nil {
+				return int64(f * 1e8)
+			}
+		}
+		if i, err := strconv.ParseInt(raw, 10, 64); err == nil {
+			return i
+		}
+	}
+	return 0
+}
+
+func fundingTxIDsFromMeta(meta map[string]interface{}) []string {
+	var txids []string
+	add := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		for _, existing := range txids {
+			if existing == value {
+				return
+			}
+		}
+		txids = append(txids, value)
+	}
+	if meta == nil {
+		return txids
+	}
+	if txid := strings.TrimSpace(toString(meta["funding_txid"])); txid != "" {
+		add(txid)
+	}
+	switch v := meta["funding_txids"].(type) {
+	case []string:
+		for _, txid := range v {
+			add(txid)
+		}
+	case []any:
+		for _, item := range v {
+			if txid, ok := item.(string); ok {
+				add(txid)
+			}
+		}
+	case string:
+		for _, part := range strings.Split(v, ",") {
+			add(part)
+		}
+	}
+	return txids
 }
 
 func buildStegoTasks(p smart_contract.Proposal, meta map[string]interface{}, maxTasks int) []stegoTaskPayload {

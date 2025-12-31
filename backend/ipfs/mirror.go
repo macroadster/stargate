@@ -47,6 +47,7 @@ type Mirror struct {
 	lastSeenRemote string
 	mu             sync.Mutex
 	knownFiles     map[string]fileState
+	deletedFiles   map[string]bool
 }
 
 type fileState struct {
@@ -134,11 +135,88 @@ func (m *Mirror) UnpinPath(ctx context.Context, path string) error {
 	if ok {
 		delete(m.knownFiles, rel)
 	}
+	m.deletedFiles[rel] = true
+	m.persistDeletedLocked()
 	m.mu.Unlock()
 	if !ok || state.CID == "" {
 		return nil
 	}
 	return m.unpinCID(ctx, state.CID)
+}
+
+func (m *Mirror) isDeleted(path string) bool {
+	if m == nil {
+		return false
+	}
+	rel := filepath.ToSlash(filepath.Clean(path))
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.deletedFiles[rel]
+}
+
+func (m *Mirror) deletedFilePath() string {
+	if m == nil || m.cfg.UploadsDir == "" {
+		return ""
+	}
+	return filepath.Join(m.cfg.UploadsDir, ".ipfs-mirror-deleted.json")
+}
+
+func (m *Mirror) loadDeleted() {
+	path := m.deletedFilePath()
+	if path == "" {
+		return
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	var payload struct {
+		Paths []string `json:"paths"`
+	}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return
+	}
+	m.mu.Lock()
+	for _, rel := range payload.Paths {
+		rel = filepath.ToSlash(filepath.Clean(rel))
+		if rel == "" || rel == "." {
+			continue
+		}
+		m.deletedFiles[rel] = true
+	}
+	m.mu.Unlock()
+}
+
+func (m *Mirror) persistDeletedLocked() {
+	path := m.deletedFilePath()
+	if path == "" {
+		return
+	}
+	paths := make([]string, 0, len(m.deletedFiles))
+	for rel := range m.deletedFiles {
+		paths = append(paths, rel)
+	}
+	sort.Strings(paths)
+	payload, err := json.Marshal(struct {
+		Paths []string `json:"paths"`
+	}{Paths: paths})
+	if err != nil {
+		return
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".ipfs-mirror-deleted-*")
+	if err != nil {
+		return
+	}
+	if _, err := tmp.Write(payload); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmp.Name())
+		return
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmp.Name())
+		return
+	}
+	_ = os.Rename(tmp.Name(), path)
 }
 
 func LoadMirrorConfig() MirrorConfig {
@@ -185,7 +263,9 @@ func StartMirror(ctx context.Context, cfg MirrorConfig) (*Mirror, error) {
 		client:       &http.Client{Timeout: cfg.HTTPTimeout},
 		streamClient: &http.Client{},
 		knownFiles:   make(map[string]fileState),
+		deletedFiles: make(map[string]bool),
 	}
+	m.loadDeleted()
 
 	peerID, err := m.fetchPeerID(ctx)
 	if err != nil {
@@ -483,6 +563,9 @@ func (m *Mirror) processManifest(ctx context.Context, manifestCID string) error 
 }
 
 func (m *Mirror) downloadEntry(ctx context.Context, entry manifestEntry) (bool, error) {
+	if m.isDeleted(entry.Path) {
+		return false, nil
+	}
 	target, ok := safeJoin(m.cfg.UploadsDir, entry.Path)
 	if !ok {
 		return false, fmt.Errorf("invalid path: %s", entry.Path)

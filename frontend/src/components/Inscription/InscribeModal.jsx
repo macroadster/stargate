@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import { API_BASE } from '../../apiBase';
 import { useAuth } from '../../context/AuthContext';
@@ -9,6 +9,8 @@ const InscribeModal = ({ onClose, onSuccess }) => {
   const [imageFile, setImageFile] = useState(null);
   const [embedText, setEmbedText] = useState('');
   const [price, setPrice] = useState('');
+  const [priceUnit, setPriceUnit] = useState('btc');
+  const lastUnitRef = useRef('btc');
   const [address, setAddress] = useState(auth.wallet || '');
   const [fundingMode, setFundingMode] = useState('payout');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -30,15 +32,55 @@ const InscribeModal = ({ onClose, onSuccess }) => {
     reader.readAsDataURL(file);
   });
 
+  useEffect(() => {
+    setAddress(auth.wallet || '');
+  }, [auth.wallet]);
+
+  useEffect(() => {
+    const lastUnit = lastUnitRef.current;
+    if (lastUnit === priceUnit) {
+      return;
+    }
+    lastUnitRef.current = priceUnit;
+    if (price === '') {
+      return;
+    }
+    const numeric = Number(price);
+    if (!Number.isFinite(numeric)) {
+      return;
+    }
+    if (priceUnit === 'sats') {
+      setPrice(String(Math.max(0, Math.trunc(numeric * 1e8))));
+    } else {
+      setPrice((numeric / 1e8).toFixed(8));
+    }
+  }, [priceUnit, price]);
+
+  const formatAltPrice = () => {
+    const numeric = Number(price);
+    if (!Number.isFinite(numeric)) {
+      return '';
+    }
+    if (priceUnit === 'sats') {
+      return `${(numeric / 1e8).toFixed(8)} BTC`;
+    }
+    return `${Math.max(0, Math.trunc(numeric * 1e8))} sats`;
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setIsSubmitting(true);
 
     try {
       const uploadImage = imageFile || buildPlaceholderImage();
+      const payloadPrice =
+        priceUnit === 'sats'
+          ? String(Math.max(0, Math.trunc(Number(price) || 0)))
+          : price;
       const payload = {
         message: embedText,
-        price,
+        price: payloadPrice,
+        price_unit: priceUnit,
         address,
         funding_mode: fundingMode,
         method: 'alpha',
@@ -113,30 +155,44 @@ const InscribeModal = ({ onClose, onSuccess }) => {
 
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                Price (BTC)
+                Price
               </label>
-              <input
-                type="number"
-                value={price}
-                onChange={(e) => setPrice(e.target.value)}
-                step="0.00000001"
-                required
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:bg-gray-700 dark:text-white"
-                placeholder="0.00000000"
-              />
+              <div className="flex gap-2">
+                <input
+                  type="number"
+                  value={price}
+                  onChange={(e) => setPrice(e.target.value)}
+                  step={priceUnit === 'sats' ? '1' : '0.00000001'}
+                  required
+                  className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:bg-gray-700 dark:text-white"
+                  placeholder={priceUnit === 'sats' ? '1000' : '0.00000000'}
+                />
+                <select
+                  value={priceUnit}
+                  onChange={(e) => setPriceUnit(e.target.value)}
+                  className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:bg-gray-700 dark:text-white"
+                >
+                  <option value="btc">BTC</option>
+                  <option value="sats">sats</option>
+                </select>
+              </div>
+              {price !== '' && (
+                <div className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                  ≈ {formatAltPrice()}
+                </div>
+              )}
             </div>
 
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                Wallet Address
+                Wallet Address (from API key)
               </label>
               <input
                 type="text"
                 value={address}
-                onChange={(e) => setAddress(e.target.value)}
-                required
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:bg-gray-700 dark:text-white"
-                placeholder="bc1..."
+                readOnly
+                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300"
+                placeholder="Not signed in"
               />
             </div>
 

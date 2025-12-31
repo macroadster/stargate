@@ -260,6 +260,11 @@ func budgetFromMeta(meta map[string]interface{}) int64 {
 	if meta == nil {
 		return scstore.DefaultBudgetSats()
 	}
+	if unit := strings.ToLower(strings.TrimSpace(metaString(meta["price_unit"]))); unit == "sats" {
+		if sats := satsFromMetaValue(meta["price"]); sats > 0 {
+			return sats
+		}
+	}
 	// budget_sats or funding_btc fields
 	if v, ok := meta["budget_sats"]; ok {
 		switch t := v.(type) {
@@ -267,6 +272,12 @@ func budgetFromMeta(meta map[string]interface{}) int64 {
 			return int64(t)
 		case int64:
 			return t
+		case int:
+			return int64(t)
+		case json.Number:
+			if i, err := t.Int64(); err == nil {
+				return i
+			}
 		}
 	}
 	if sats := btcToSats(meta["funding_btc"]); sats > 0 {
@@ -276,6 +287,55 @@ func budgetFromMeta(meta map[string]interface{}) int64 {
 		return sats
 	}
 	return scstore.DefaultBudgetSats()
+}
+
+func metaString(v interface{}) string {
+	switch t := v.(type) {
+	case string:
+		return t
+	case fmt.Stringer:
+		return t.String()
+	case float64:
+		return strconv.FormatFloat(t, 'f', -1, 64)
+	case int64:
+		return strconv.FormatInt(t, 10)
+	case int:
+		return strconv.Itoa(t)
+	case json.Number:
+		return t.String()
+	default:
+		return ""
+	}
+}
+
+func satsFromMetaValue(v interface{}) int64 {
+	switch t := v.(type) {
+	case int64:
+		return t
+	case int:
+		return int64(t)
+	case float64:
+		return int64(t)
+	case json.Number:
+		if i, err := t.Int64(); err == nil {
+			return i
+		}
+	case string:
+		raw := strings.TrimSpace(t)
+		if raw == "" {
+			return 0
+		}
+		if strings.Contains(raw, ".") {
+			if f, err := strconv.ParseFloat(raw, 64); err == nil {
+				return int64(f)
+			}
+			return 0
+		}
+		if i, err := strconv.ParseInt(raw, 10, 64); err == nil {
+			return i
+		}
+	}
+	return 0
 }
 
 func decodeProof(v map[string]interface{}) *smart_contract.MerkleProof {
@@ -331,9 +391,22 @@ func normalizeEmbedded(raw string, meta map[string]interface{}) (string, map[str
 		updated["funding_address"] = addr
 		updated["address"] = addr
 	}
+	if unit, ok := obj["price_unit"].(string); ok && strings.TrimSpace(unit) != "" {
+		updated["price_unit"] = strings.ToLower(strings.TrimSpace(unit))
+	}
+	if budget, ok := obj["budget_sats"]; ok {
+		if sats := satsFromMetaValue(budget); sats > 0 {
+			updated["budget_sats"] = sats
+		}
+	}
 	if price, ok := obj["price"]; ok {
 		updated["price"] = price
-		if sats := btcToSats(price); sats > 0 {
+		unit := strings.ToLower(strings.TrimSpace(metaString(updated["price_unit"])))
+		if unit == "sats" {
+			if sats := satsFromMetaValue(price); sats > 0 {
+				updated["budget_sats"] = sats
+			}
+		} else if sats := btcToSats(price); sats > 0 {
 			updated["budget_sats"] = sats
 		}
 	}

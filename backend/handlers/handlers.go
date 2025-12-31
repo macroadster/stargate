@@ -250,7 +250,11 @@ func (h *InscriptionHandler) fromIngestion(rec services.IngestionRecord) models.
 		filename = fmt.Sprintf("%s_%s", rec.ID, filename)
 	}
 	targetPath := filepath.Join(uploadsDir, filename)
-	if _, err := os.Stat(targetPath); os.IsNotExist(err) {
+	if _, err := os.Stat(targetPath); err == nil {
+		// ok
+	} else if isUploadTombstoned(uploadsDir, filepath.Base(filename)) {
+		targetPath = ""
+	} else if os.IsNotExist(err) {
 		if data, err := base64.StdEncoding.DecodeString(rec.ImageBase64); err == nil {
 			if err := os.WriteFile(targetPath, data, 0644); err != nil {
 				fmt.Printf("Failed to write ingestion image to %s: %v\n", targetPath, err)
@@ -429,6 +433,9 @@ func ensureIngestionImageFile(rec services.IngestionRecord) (string, error) {
 	if _, err := os.Stat(target); err == nil {
 		return target, nil
 	}
+	if isUploadTombstoned(uploadsDir, filepath.Base(rec.Filename)) {
+		return "", fmt.Errorf("upload tombstoned")
+	}
 	data, err := base64.StdEncoding.DecodeString(rec.ImageBase64)
 	if err != nil {
 		return "", err
@@ -439,11 +446,34 @@ func ensureIngestionImageFile(rec services.IngestionRecord) (string, error) {
 	return target, nil
 }
 
+func isUploadTombstoned(uploadsDir, filename string) bool {
+	if uploadsDir == "" || filename == "" {
+		return false
+	}
+	path := filepath.Join(uploadsDir, ".ipfs-mirror-deleted.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	var payload struct {
+		Paths []string `json:"paths"`
+	}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return false
+	}
+	for _, rel := range payload.Paths {
+		if filepath.Base(rel) == filename {
+			return true
+		}
+	}
+	return false
+}
+
 func (h *InscriptionHandler) upsertOpenContract(visibleHash, title, priceStr string) {
 	if h.store == nil || visibleHash == "" {
 		return
 	}
-	priceSat, _ := strconv.ParseInt(priceStr, 10, 64)
+	priceSat := parsePriceSats(priceStr)
 	contract := sc.Contract{
 		ContractID:          wishContractID(visibleHash),
 		Title:               title,
@@ -460,6 +490,23 @@ func (h *InscriptionHandler) upsertOpenContract(visibleHash, title, priceStr str
 	if u, ok := h.store.(upserter); ok {
 		_ = u.UpsertContractWithTasks(context.Background(), contract, nil)
 	}
+}
+
+func parsePriceSats(raw string) int64 {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0
+	}
+	if strings.Contains(raw, ".") {
+		if v, err := strconv.ParseFloat(raw, 64); err == nil {
+			return int64(v * 1e8)
+		}
+		return 0
+	}
+	if v, err := strconv.ParseInt(raw, 10, 64); err == nil {
+		return v
+	}
+	return 0
 }
 
 // HandleCreateInscription handles creating a new inscription
@@ -479,6 +526,7 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 		text        string
 		method      string
 		price       string
+		priceUnit   string
 		address     string
 		fundingMode string
 		filename    string
@@ -493,6 +541,7 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 			Text        string `json:"text"`
 			Method      string `json:"method"`
 			Price       string `json:"price"`
+			PriceUnit   string `json:"price_unit"`
 			Address     string `json:"address"`
 			FundingMode string `json:"funding_mode"`
 			ImageBase64 string `json:"image_base64"`
@@ -508,6 +557,7 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 		}
 		method = payload.Method
 		price = payload.Price
+		priceUnit = payload.PriceUnit
 		address = payload.Address
 		fundingMode = payload.FundingMode
 		filename = payload.Filename
@@ -538,6 +588,7 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 			method = "alpha"
 		}
 		price = r.FormValue("price")
+		priceUnit = r.FormValue("price_unit")
 		address = r.FormValue("address")
 		fundingMode = r.FormValue("funding_mode")
 
@@ -565,6 +616,9 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 
 	if price == "" {
 		price = "0"
+	}
+	if priceUnit == "" {
+		priceUnit = "btc"
 	}
 
 	// Slurp image bytes from multipart file if present
@@ -598,10 +652,14 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 			"embedded_message":   text,
 			"message":            text,
 			"price":              price,
+			"price_unit":         priceUnit,
 			"address":            address,
 			"funding_mode":       fundingMode,
 			"ingestion_id":       ingestionID,
 			"visible_pixel_hash": visibleHash,
+		}
+		if strings.EqualFold(priceUnit, "sats") {
+			meta["budget_sats"] = parsePriceSats(price)
 		}
 		ingRec := services.IngestionRecord{
 			ID:            ingestionID,
@@ -620,7 +678,7 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 				fmt.Printf("Failed to create ingestion record for %s: %v\n", ingestionID, err)
 			}
 		}
-		publishPendingIngestAnnouncement(ingestionID, visibleHash, filename, method, text, price, address, fundingMode, imgBytes)
+		publishPendingIngestAnnouncement(ingestionID, visibleHash, filename, method, text, price, priceUnit, address, fundingMode, imgBytes)
 	}
 	// Mirror into MCP contracts/open-contracts for AI + UI consistency.
 	h.upsertOpenContract(visibleHash, text, price)
@@ -638,6 +696,7 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 		embedPayload := map[string]string{
 			"message":      text,
 			"price":        price,
+			"price_unit":   priceUnit,
 			"address":      address,
 			"funding_mode": fundingMode,
 		}
@@ -745,6 +804,36 @@ type SmartContractHandler struct {
 	ingestion       *services.IngestionService
 }
 
+func includeConfirmedQuery(r *http.Request) bool {
+	raw := strings.TrimSpace(r.URL.Query().Get("include_confirmed"))
+	if raw == "" {
+		return false
+	}
+	return strings.EqualFold(raw, "true") || strings.EqualFold(raw, "yes") || raw == "1"
+}
+
+func proofConfirmed(proof *sc.MerkleProof) bool {
+	if proof == nil {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(proof.ConfirmationStatus), "confirmed") {
+		return true
+	}
+	if proof.ConfirmedAt != nil {
+		return true
+	}
+	return false
+}
+
+func proofsConfirmed(proofs []sc.MerkleProof) bool {
+	for i := range proofs {
+		if proofConfirmed(&proofs[i]) {
+			return true
+		}
+	}
+	return false
+}
+
 // NewSmartContractHandler creates a new smart contract handler
 func NewSmartContractHandler(contractService *services.SmartContractService, store scmiddleware.Store, ingestion *services.IngestionService) *SmartContractHandler {
 	return &SmartContractHandler{
@@ -771,7 +860,16 @@ func (h *SmartContractHandler) HandleGetContracts(w http.ResponseWriter, r *http
 
 	// Convert smart_contract.Contract to models.SmartContractImage for API compatibility
 	var results []models.SmartContractImage
+	includeConfirmed := includeConfirmedQuery(r)
 	for _, contract := range contracts {
+		if !includeConfirmed {
+			_, proofs, err := h.store.ContractFunding(contract.ContractID)
+			if err != nil {
+				log.Printf("contract funding lookup failed for %s: %v", contract.ContractID, err)
+			} else if proofsConfirmed(proofs) {
+				continue
+			}
+		}
 		result := models.SmartContractImage{
 			ContractID:   contract.ContractID,
 			BlockHeight:  0,  // Not available in Contract struct
@@ -1228,12 +1326,13 @@ type pendingIngestAnnouncement struct {
 	Method           string `json:"method,omitempty"`
 	Message          string `json:"message,omitempty"`
 	Price            string `json:"price,omitempty"`
+	PriceUnit        string `json:"price_unit,omitempty"`
 	Address          string `json:"address,omitempty"`
 	FundingMode      string `json:"funding_mode,omitempty"`
 	Timestamp        int64  `json:"timestamp"`
 }
 
-func publishPendingIngestAnnouncement(ingestionID, visibleHash, filename, method, message, price, address, fundingMode string, imgBytes []byte) {
+func publishPendingIngestAnnouncement(ingestionID, visibleHash, filename, method, message, price, priceUnit, address, fundingMode string, imgBytes []byte) {
 	if !ipfsIngestSyncEnabled() {
 		return
 	}
@@ -1267,6 +1366,7 @@ func publishPendingIngestAnnouncement(ingestionID, visibleHash, filename, method
 		Method:           method,
 		Message:          message,
 		Price:            price,
+		PriceUnit:        priceUnit,
 		Address:          address,
 		FundingMode:      fundingMode,
 		Timestamp:        time.Now().Unix(),

@@ -1496,6 +1496,19 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 		if err != nil {
 			return nil, fmt.Errorf("Failed to list contracts: %v", err)
 		}
+		filtered := make([]smart_contract.Contract, 0, len(contracts))
+		for _, c := range contracts {
+			_, proofs, err := store.ContractFunding(c.ContractID)
+			if err != nil {
+				filtered = append(filtered, c)
+				continue
+			}
+			if proofsConfirmed(proofs) {
+				continue
+			}
+			filtered = append(filtered, c)
+		}
+		contracts = filtered
 		return map[string]interface{}{
 			"contracts":   contracts,
 			"total_count": len(contracts),
@@ -2611,6 +2624,28 @@ func bodyHeaderFallback(body map[string]interface{}) string {
 		}
 	}
 	return ""
+}
+
+func proofConfirmed(proof *smart_contract.MerkleProof) bool {
+	if proof == nil {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(proof.ConfirmationStatus), "confirmed") {
+		return true
+	}
+	if proof.ConfirmedAt != nil {
+		return true
+	}
+	return false
+}
+
+func proofsConfirmed(proofs []smart_contract.MerkleProof) bool {
+	for i := range proofs {
+		if proofConfirmed(&proofs[i]) {
+			return true
+		}
+	}
+	return false
 }
 
 // fetchContractsViaREST lists contracts via REST with optional filters.

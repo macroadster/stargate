@@ -49,6 +49,8 @@ export const useBlocks = () => {
   const [showHistorical, setShowHistorical] = useState(true);
   const loadingRef = useRef(false);
   const blocksRef = useRef([]);
+  const latestHeightRef = useRef(null);
+  const newBlockTimeoutRef = useRef(null);
   const selectedBlockRef = useRef(null);
   const manualSelectedHeight = useRef(null);
   const pinnedMilestones = useRef([
@@ -178,6 +180,29 @@ export const useBlocks = () => {
 
       deduped = deduped.sort((a, b) => b.height - a.height);
 
+      const topBlock = deduped.find((b) => !b.isFuture && typeof b.height === 'number');
+      let newHeight = null;
+      if (topBlock && latestHeightRef.current !== null && topBlock.height > latestHeightRef.current) {
+        newHeight = topBlock.height;
+      }
+      if (topBlock && (latestHeightRef.current === null || topBlock.height > latestHeightRef.current)) {
+        latestHeightRef.current = topBlock.height;
+      }
+      if (newHeight !== null) {
+        deduped = deduped.map((block) =>
+          block.height === newHeight ? { ...block, isNew: true } : block
+        );
+        if (newBlockTimeoutRef.current) {
+          clearTimeout(newBlockTimeoutRef.current);
+        }
+        newBlockTimeoutRef.current = setTimeout(() => {
+          blocksRef.current = blocksRef.current.map((block) =>
+            block.height === newHeight ? { ...block, isNew: false } : block
+          );
+          setBlocks([...blocksRef.current]);
+        }, 1200);
+      }
+
       blocksRef.current = deduped;
       setBlocks(deduped);
       setNextCursor(data.next_cursor || null);
@@ -253,6 +278,10 @@ export const useBlocks = () => {
     document.addEventListener('visibilitychange', handleVisibility);
     return () => {
       stopPolling();
+      if (newBlockTimeoutRef.current) {
+        clearTimeout(newBlockTimeoutRef.current);
+        newBlockTimeoutRef.current = null;
+      }
       document.removeEventListener('visibilitychange', handleVisibility);
     };
   }, [fetchBlocks]);

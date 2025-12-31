@@ -24,3 +24,18 @@ code {
   font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
     monospace;
 }
+
+@keyframes block-slide-in {
+  0% {
+    transform: translateX(-14px);
+    opacity: 0.65;
+  }
+  100% {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.block-slide-in {
+  animation: block-slide-in 0.65s ease-out;
+}
