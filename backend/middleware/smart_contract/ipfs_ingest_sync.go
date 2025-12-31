@@ -545,6 +545,9 @@ func ipfsIngestProcessPending(ctx context.Context, ingest *services.IngestionSer
 		"visible_pixel_hash": ann.VisiblePixelHash,
 		"ipfs_image_cid":     ann.ImageCID,
 	}
+	if strings.EqualFold(strings.TrimSpace(ann.Method), "stego") {
+		meta["stego_image_cid"] = ann.ImageCID
+	}
 	if strings.EqualFold(ann.PriceUnit, "sats") {
 		meta["budget_sats"] = priceSatsFromString(ann.Price)
 	}

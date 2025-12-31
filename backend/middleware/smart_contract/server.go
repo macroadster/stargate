@@ -781,6 +781,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		if err := s.maybePublishStegoForProposal(r.Context(), proposalID); err != nil {
 			log.Printf("stego publish on psbt failed for proposal %s: %v", proposalID, err)
 		}
+		s.publishPendingStegoIngest(r.Context(), proposalID, strings.TrimSpace(body.PixelHash))
 	}
 	if taskID := strings.TrimSpace(body.TaskID); taskID != "" {
 		if err := s.updateTaskCommitmentProof(r.Context(), taskID, res, pixelBytes); err != nil {
@@ -877,6 +878,62 @@ func (s *Server) publishIngestUpdate(ctx context.Context, proposalID, ingestionI
 	client := ipfs.NewClientFromEnv()
 	if err := client.PubsubPublish(ctx, topic, payload); err != nil {
 		log.Printf("psbt: ingest update publish failed: %v", err)
+	}
+}
+
+func (s *Server) publishPendingStegoIngest(ctx context.Context, proposalID, visiblePixelHash string) {
+	topic := strings.TrimSpace(os.Getenv("IPFS_MIRROR_TOPIC"))
+	if topic == "" || s.store == nil {
+		return
+	}
+	proposalID = strings.TrimSpace(proposalID)
+	if proposalID == "" {
+		return
+	}
+	p, err := s.store.GetProposal(ctx, proposalID)
+	if err != nil {
+		return
+	}
+	meta := p.Metadata
+	if meta == nil {
+		return
+	}
+	stegoCID := strings.TrimSpace(toString(meta["stego_image_cid"]))
+	if stegoCID == "" {
+		return
+	}
+	visible := strings.TrimSpace(visiblePixelHash)
+	if visible == "" {
+		visible = strings.TrimSpace(p.VisiblePixelHash)
+	}
+	if visible == "" {
+		visible = strings.TrimSpace(toString(meta["visible_pixel_hash"]))
+	}
+	if visible == "" {
+		return
+	}
+	announcement := pendingIngestAnnouncement{
+		Type:             "pending_ingest",
+		IngestionID:      visible,
+		ProposalID:       proposalID,
+		VisiblePixelHash: visible,
+		ImageCID:         stegoCID,
+		Filename:         "stego.png",
+		Method:           "stego",
+		Message:          strings.TrimSpace(p.DescriptionMD),
+		Price:            strings.TrimSpace(toString(meta["price"])),
+		PriceUnit:        strings.TrimSpace(toString(meta["price_unit"])),
+		Address:          strings.TrimSpace(toString(meta["funding_address"])),
+		FundingMode:      strings.TrimSpace(toString(meta["funding_mode"])),
+		Timestamp:        time.Now().Unix(),
+	}
+	payload, err := json.Marshal(announcement)
+	if err != nil {
+		return
+	}
+	client := ipfs.NewClientFromEnv()
+	if err := client.PubsubPublish(ctx, topic, payload); err != nil {
+		log.Printf("psbt: pending ingest publish failed: %v", err)
 	}
 }
 
