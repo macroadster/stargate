@@ -1811,6 +1811,21 @@ func normalizeWishText(text string) string {
 	return strings.ToLower(strings.Join(strings.Fields(text), " "))
 }
 
+func preferCanonicalContractID(existing, candidate string) string {
+	existing = strings.TrimSpace(existing)
+	candidate = strings.TrimSpace(candidate)
+	if existing == "" {
+		return candidate
+	}
+	if candidate == "" {
+		return existing
+	}
+	if strings.HasPrefix(existing, "wish-") && !strings.HasPrefix(candidate, "wish-") {
+		return candidate
+	}
+	return existing
+}
+
 func looksLikeStegoManifestText(text string) bool {
 	lower := strings.ToLower(text)
 	return strings.Contains(lower, "schema_version:") &&
@@ -2507,11 +2522,11 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 				Error(w, http.StatusInternalServerError, err.Error())
 				return
 			}
-			contractTitles := map[string]struct{}{}
+			canonicalContractByTitle := map[string]string{}
 			if contracts, err := s.store.ListContracts(smart_contract.ContractFilter{}); err == nil {
 				for _, c := range contracts {
 					if key := normalizeWishText(c.Title); key != "" {
-						contractTitles[key] = struct{}{}
+						canonicalContractByTitle[key] = preferCanonicalContractID(canonicalContractByTitle[key], c.ContractID)
 					}
 				}
 			}
@@ -2522,10 +2537,17 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 					if looksLikeStegoManifestText(p.DescriptionMD) {
 						continue
 					}
-					if key := normalizeWishText(p.DescriptionMD); key != "" {
-						if _, exists := contractTitles[key]; exists {
+					key := normalizeWishText(p.DescriptionMD)
+					if key == "" {
+						key = normalizeWishText(p.Title)
+					}
+					if key != "" {
+						if canonicalID, exists := canonicalContractByTitle[key]; exists {
+							proposalContractID := contractIDFromMeta(p.Metadata, p.ID)
+							if proposalContractID != canonicalID && strings.TrimSpace(p.ID) != canonicalID {
 							continue
 						}
+					}
 					}
 					if proposalMetaConfirmed(p.Metadata) || proposalHasConfirmedProof(p) {
 						continue
