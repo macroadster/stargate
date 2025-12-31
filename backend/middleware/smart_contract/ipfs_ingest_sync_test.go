@@ -50,9 +50,13 @@ func TestEnsureProposalFromStegoPayloadCreatesProposal(t *testing.T) {
 		t.Fatalf("ensureProposalFromStegoPayload error: %v", err)
 	}
 
-	got, err := store.GetProposal(ctx, payload.Proposal.ID)
+	expectedID := payload.Proposal.VisiblePixelHash
+	got, err := store.GetProposal(ctx, expectedID)
 	if err != nil {
 		t.Fatalf("proposal not created: %v", err)
+	}
+	if got.ID != expectedID {
+		t.Fatalf("expected proposal id %s, got %s", expectedID, got.ID)
 	}
 	if got.Status != "approved" {
 		t.Fatalf("expected proposal status approved, got %s", got.Status)
@@ -62,6 +66,9 @@ func TestEnsureProposalFromStegoPayloadCreatesProposal(t *testing.T) {
 	}
 	if meta := got.Metadata; meta == nil || meta["stego_image_cid"] != "stegocid123" {
 		t.Fatalf("missing stego_image_cid in metadata")
+	}
+	if meta := got.Metadata; meta == nil || meta["origin_proposal_id"] != payload.Proposal.ID {
+		t.Fatalf("missing origin_proposal_id in metadata")
 	}
 
 	if len(got.Tasks) == 0 {
