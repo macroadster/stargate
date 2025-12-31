@@ -136,9 +136,26 @@ func (h *InscriptionHandler) HandleGetInscriptions(w http.ResponseWriter, r *htt
 	contractTitles := make(map[string]struct{})
 	canonicalContractIDs := make(map[string]struct{})
 	wishKeys := make(map[string]struct{})
+	var proposals []sc.Proposal
+	var proposalsErr error
 
 	// Prefer open-contracts (MCP store) to keep UI + AI in sync.
 	if h.store != nil {
+		if list, err := h.store.ListProposals(r.Context(), sc.ProposalFilter{}); err == nil {
+			proposals = list
+			for _, p := range proposals {
+				if looksLikeStegoManifestText(p.DescriptionMD) {
+					continue
+				}
+				if key := wishKeyFromText(p.DescriptionMD); key != "" {
+					wishKeys[key] = struct{}{}
+				} else if key := wishKeyFromText(p.Title); key != "" {
+					wishKeys[key] = struct{}{}
+				}
+			}
+		} else {
+			proposalsErr = err
+		}
 		if contracts, err := h.store.ListContracts(sc.ContractFilter{}); err == nil {
 			for _, c := range contracts {
 				if strings.EqualFold(strings.TrimSpace(c.Status), "superseded") {
@@ -172,15 +189,12 @@ func (h *InscriptionHandler) HandleGetInscriptions(w http.ResponseWriter, r *htt
 		} else {
 			fmt.Printf("Failed to list contracts for pending view: %v\n", err)
 		}
-		if proposals, err := h.store.ListProposals(r.Context(), sc.ProposalFilter{}); err == nil {
+		if proposals == nil {
+			fmt.Printf("Failed to list proposals for pending view: %v\n", proposalsErr)
+		} else {
 			for _, p := range proposals {
 				if looksLikeStegoManifestText(p.DescriptionMD) {
 					continue
-				}
-				if key := wishKeyFromText(p.DescriptionMD); key != "" {
-					wishKeys[key] = struct{}{}
-				} else if key := wishKeyFromText(p.Title); key != "" {
-					wishKeys[key] = struct{}{}
 				}
 				if proposalID := proposalContractID(p); proposalID != "" {
 					if _, exists := canonicalContractIDs[proposalID]; exists {
@@ -201,8 +215,6 @@ func (h *InscriptionHandler) HandleGetInscriptions(w http.ResponseWriter, r *htt
 					inscriptions = append(inscriptions, item)
 				}
 			}
-		} else {
-			fmt.Printf("Failed to list proposals for pending view: %v\n", err)
 		}
 	}
 
