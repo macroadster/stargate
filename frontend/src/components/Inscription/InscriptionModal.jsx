@@ -425,6 +425,7 @@ const InscriptionModal = ({ inscription, onClose }) => {
     !inscription.image_url?.endsWith('.txt') &&
     (inscription.image_url || inscription.thumbnail);
   const modalImageSource = isActuallyImageFile ? (inscription.thumbnail || inscription.image_url) : null;
+  const scanImageSource = modalImageSource || inscription.image_url || inscription.thumbnail || '';
   const mime = (inscription.mime_type || '').toLowerCase();
   const isHtmlContent = mime.includes('text/html') || mime.includes('application/xhtml');
   const isSvgContent = mime === 'image/svg+xml' || (mime.includes('svg') && mime.includes('xml'));
@@ -483,7 +484,7 @@ const InscriptionModal = ({ inscription, onClose }) => {
   useEffect(() => {
     let alive = true;
     const runScan = async () => {
-      if (!isActuallyImageFile || !modalImageSource) {
+      if (!scanImageSource) {
         setScanMessage('');
         setScanError('');
         return;
@@ -491,7 +492,7 @@ const InscriptionModal = ({ inscription, onClose }) => {
       setScanLoading(true);
       setScanError('');
       try {
-        const imageRes = await fetchWithTimeout(modalImageSource, {}, 10000);
+        const imageRes = await fetchWithTimeout(scanImageSource, {}, 10000);
         if (!imageRes.ok) {
           throw new Error(`image fetch failed: ${imageRes.status}`);
         }
@@ -522,7 +523,7 @@ const InscriptionModal = ({ inscription, onClose }) => {
     return () => {
       alive = false;
     };
-  }, [isActuallyImageFile, modalImageSource, fetchWithTimeout]);
+  }, [scanImageSource, fetchWithTimeout]);
 
   const loadProposals = React.useCallback(async (options = {}) => {
     const { showLoading = false } = options;
@@ -1931,7 +1932,7 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                     </div>
                   )}
 
-                  {inscription.metadata?.extracted_message && (
+                  {(inscription.metadata?.extracted_message || scanLoading || scanMessage || stegoPayloadLoading || stegoPayload || stegoPayloadError || scanError) && (
                     <div>
                       <h4 className="text-lg font-semibold text-black dark:text-white mb-3 flex items-center gap-2">
                         <span className="w-2 h-2 bg-green-500 rounded-full"></span>
