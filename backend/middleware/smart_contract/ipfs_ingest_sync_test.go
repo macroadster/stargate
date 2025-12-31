@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"stargate-backend/core/smart_contract"
 	"stargate-backend/stego"
 	scstore "stargate-backend/storage/smart_contract"
 )
@@ -44,6 +45,14 @@ func TestEnsureProposalFromStegoPayloadCreatesProposal(t *testing.T) {
 		PayloadCID:       "payloadcid123",
 		CreatedAt:        now,
 		Issuer:           "test-issuer",
+	}
+	contract := smart_contract.Contract{
+		ContractID: "wish-" + payload.Proposal.VisiblePixelHash,
+		Title:      "Wish",
+		Status:     "pending",
+	}
+	if err := store.UpsertContractWithTasks(ctx, contract, nil); err != nil {
+		t.Fatalf("failed to seed wish contract: %v", err)
 	}
 
 	if err := ensureProposalFromStegoPayload(ctx, store, "stegocid123", manifest, payload); err != nil {

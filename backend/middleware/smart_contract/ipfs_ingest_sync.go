@@ -425,6 +425,11 @@ func ensureProposalFromStegoPayload(ctx context.Context, store Store, stegoCID s
 		_ = store.UpdateProposalMetadata(ctx, proposalID, updates)
 		return nil
 	}
+	if visibleHash != "" {
+		if _, err := store.GetContract("wish-" + visibleHash); err != nil {
+			return nil
+		}
+	}
 	title := strings.TrimSpace(payload.Proposal.Title)
 	if title == "" {
 		title = "Proposal " + proposalID
