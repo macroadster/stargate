@@ -238,7 +238,7 @@ const InscriptionModal = ({ inscription, onClose }) => {
       setStegoPayloadLoading(true);
       setStegoPayloadError('');
       try {
-        const res = await fetch(`${API_BASE}/api/smart_contract/stego/payload/${stegoPayloadCid}`);
+        const res = await fetchWithTimeout(`${API_BASE}/api/smart_contract/stego/payload/${stegoPayloadCid}`, {}, 6000);
         if (!res.ok) {
           throw new Error(`payload fetch failed: ${res.status}`);
         }
@@ -261,7 +261,7 @@ const InscriptionModal = ({ inscription, onClose }) => {
     return () => {
       alive = false;
     };
-  }, [stegoPayloadCid]);
+  }, [stegoPayloadCid, fetchWithTimeout]);
 
   const stegoProposal = useMemo(() => {
     if (!stegoPayload?.proposal) return null;
