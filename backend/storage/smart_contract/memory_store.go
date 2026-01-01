@@ -757,6 +757,7 @@ func (s *MemoryStore) ApproveProposal(ctx context.Context, id string) error {
 	}
 
 	contractID := contractIDFromMeta(p.Metadata, id)
+	normalizedContractID := normalizeContractID(contractID)
 	hasTasks := len(p.Tasks) > 0
 	if !hasTasks {
 		for _, task := range s.tasks {
@@ -775,9 +776,9 @@ func (s *MemoryStore) ApproveProposal(ctx context.Context, id string) error {
 		if pid == id {
 			continue
 		}
-		otherCID := contractIDFromMeta(other.Metadata, other.ID)
-		if otherCID == contractID && (strings.EqualFold(other.Status, "approved") || strings.EqualFold(other.Status, "published")) {
-			return fmt.Errorf("another proposal is already approved/published for contract %s", contractID)
+		otherCID := normalizeContractID(contractIDFromMeta(other.Metadata, other.ID))
+		if otherCID == normalizedContractID && (strings.EqualFold(other.Status, "approved") || strings.EqualFold(other.Status, "published")) {
+			return fmt.Errorf("another proposal is already approved/published for contract %s", normalizedContractID)
 		}
 	}
 
@@ -786,8 +787,8 @@ func (s *MemoryStore) ApproveProposal(ctx context.Context, id string) error {
 		if pid == id {
 			continue
 		}
-		otherCID := contractIDFromMeta(other.Metadata, other.ID)
-		if otherCID == contractID && strings.EqualFold(other.Status, "pending") {
+		otherCID := normalizeContractID(contractIDFromMeta(other.Metadata, other.ID))
+		if otherCID == normalizedContractID && strings.EqualFold(other.Status, "pending") {
 			other.Status = "rejected"
 			s.proposals[pid] = other
 		}

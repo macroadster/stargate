@@ -1141,6 +1141,8 @@ func (s *PGStore) ApproveProposal(ctx context.Context, id string) error {
 		}
 	}
 	contractID := contractIDFromMeta(meta, id)
+	normalizedContractID := normalizeContractID(contractID)
+	wishContractID := "wish-" + normalizedContractID
 
 	// Block double-approval/publish for the same contract.
 	var conflict int
@@ -1148,25 +1150,25 @@ func (s *PGStore) ApproveProposal(ctx context.Context, id string) error {
 SELECT count(*) FROM mcp_proposals
 WHERE id<>$1 AND status IN ('approved','published')
 AND (
-  metadata->>'contract_id' = $2 OR
-  metadata->>'ingestion_id' = $2 OR
-  metadata->>'visible_pixel_hash' = $2 OR
-  id = $2
-)`, id, contractID).Scan(&conflict); err != nil {
+  metadata->>'contract_id' IN ($2, $3) OR
+  metadata->>'ingestion_id' IN ($2, $3) OR
+  metadata->>'visible_pixel_hash' IN ($2, $3) OR
+  id IN ($2, $3)
+)`, id, normalizedContractID, wishContractID).Scan(&conflict); err != nil {
 		return err
 	}
 	if conflict > 0 {
-		return fmt.Errorf("another proposal is already approved/published for contract %s", contractID)
+		return fmt.Errorf("another proposal is already approved/published for contract %s", normalizedContractID)
 	}
 	// Auto-reject any other pending proposals for this contract.
 	_, _ = tx.Exec(ctx, `
 UPDATE mcp_proposals SET status='rejected'
 WHERE id<>$1 AND status='pending' AND (
-  metadata->>'contract_id' = $2 OR
-  metadata->>'ingestion_id' = $2 OR
-  metadata->>'visible_pixel_hash' = $2 OR
-  id = $2
-)`, id, contractID)
+  metadata->>'contract_id' IN ($2, $3) OR
+  metadata->>'ingestion_id' IN ($2, $3) OR
+  metadata->>'visible_pixel_hash' IN ($2, $3) OR
+  id IN ($2, $3)
+)`, id, normalizedContractID, wishContractID)
 
 	// Load complete proposal for validation
 	proposal, err := s.GetProposal(ctx, id)

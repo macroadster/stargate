@@ -48,3 +48,11 @@ func budgetFromMeta(meta map[string]interface{}) int64 {
 	}
 	return DefaultBudgetSats()
 }
+
+func normalizeContractID(id string) string {
+	id = strings.TrimSpace(id)
+	if strings.HasPrefix(id, "wish-") {
+		id = strings.TrimPrefix(id, "wish-")
+	}
+	return strings.TrimSpace(id)
+}
