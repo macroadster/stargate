@@ -914,33 +914,35 @@ func (s *Server) publishPendingStegoIngest(ctx context.Context, proposalID, visi
 	}
 	message := strings.TrimSpace(p.DescriptionMD)
 	if s.ingestionSvc != nil && visible != "" {
-		if rec, err := s.ingestionSvc.Get(visible); err == nil && rec != nil {
-			if rec.Metadata != nil {
-				if v, ok := rec.Metadata["wish_text"].(string); ok && strings.TrimSpace(v) != "" {
+		rec, err := s.ingestionSvc.Get(visible)
+		if (err != nil || rec == nil) && !strings.HasPrefix(visible, "wish-") {
+			rec, err = s.ingestionSvc.Get("wish-" + visible)
+		}
+		if err == nil && rec != nil && rec.Metadata != nil {
+			if v, ok := rec.Metadata["wish_text"].(string); ok && strings.TrimSpace(v) != "" {
+				message = strings.TrimSpace(v)
+			}
+			if message == "" {
+				if v, ok := rec.Metadata["embedded_message"].(string); ok && strings.TrimSpace(v) != "" {
 					message = strings.TrimSpace(v)
 				}
-				if message == "" {
-					if v, ok := rec.Metadata["embedded_message"].(string); ok && strings.TrimSpace(v) != "" {
-						message = strings.TrimSpace(v)
-					}
+			}
+			if message == "" {
+				if v, ok := rec.Metadata["message"].(string); ok && strings.TrimSpace(v) != "" {
+					message = strings.TrimSpace(v)
 				}
-				if message == "" {
-					if v, ok := rec.Metadata["message"].(string); ok && strings.TrimSpace(v) != "" {
-						message = strings.TrimSpace(v)
-					}
-				}
-				if v, ok := rec.Metadata["price"].(string); ok && strings.TrimSpace(v) != "" {
-					meta["price"] = v
-				}
-				if v, ok := rec.Metadata["price_unit"].(string); ok && strings.TrimSpace(v) != "" {
-					meta["price_unit"] = v
-				}
-				if v, ok := rec.Metadata["address"].(string); ok && strings.TrimSpace(v) != "" {
-					meta["funding_address"] = v
-				}
-				if v, ok := rec.Metadata["funding_mode"].(string); ok && strings.TrimSpace(v) != "" {
-					meta["funding_mode"] = v
-				}
+			}
+			if v, ok := rec.Metadata["price"].(string); ok && strings.TrimSpace(v) != "" {
+				meta["price"] = v
+			}
+			if v, ok := rec.Metadata["price_unit"].(string); ok && strings.TrimSpace(v) != "" {
+				meta["price_unit"] = v
+			}
+			if v, ok := rec.Metadata["address"].(string); ok && strings.TrimSpace(v) != "" {
+				meta["funding_address"] = v
+			}
+			if v, ok := rec.Metadata["funding_mode"].(string); ok && strings.TrimSpace(v) != "" {
+				meta["funding_mode"] = v
 			}
 		}
 	}
