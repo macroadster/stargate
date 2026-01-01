@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -220,6 +221,10 @@ func (h *InscriptionHandler) HandleGetInscriptions(w http.ResponseWriter, r *htt
 		}
 	}
 
+	sort.SliceStable(inscriptions, func(i, j int) bool {
+		return inscriptions[i].Timestamp > inscriptions[j].Timestamp
+	})
+
 	response := models.PendingTransactionsResponse{
 		Transactions: inscriptions,
 		Total:        len(inscriptions),
@@ -279,6 +284,7 @@ func (h *InscriptionHandler) fromContract(c sc.Contract) models.InscriptionReque
 		uploadsDir = "/data/uploads"
 	}
 	imagePath := ""
+	timestamp := int64(0)
 	if c.ContractID != "" {
 		baseID := baseContractID(c.ContractID)
 		if matches, _ := filepath.Glob(filepath.Join(uploadsDir, baseID+"_*")); len(matches) > 0 {
@@ -295,6 +301,7 @@ func (h *InscriptionHandler) fromContract(c sc.Contract) models.InscriptionReque
 			}
 		}
 		if rec != nil {
+			timestamp = rec.CreatedAt.Unix()
 			if v, ok := rec.Metadata["wish_text"].(string); ok {
 				wishText = strings.TrimSpace(v)
 			}
@@ -308,6 +315,14 @@ func (h *InscriptionHandler) fromContract(c sc.Contract) models.InscriptionReque
 					wishText = strings.TrimSpace(v)
 				}
 			}
+			if v, ok := rec.Metadata["wish_timestamp"].(float64); ok && v > 0 {
+				timestamp = int64(v)
+			}
+			if v, ok := rec.Metadata["wish_timestamp"].(string); ok && strings.TrimSpace(v) != "" {
+				if parsed, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64); err == nil {
+					timestamp = parsed
+				}
+			}
 		}
 	}
 	wishText = stripWishTimestamp(wishText)
@@ -319,7 +334,7 @@ func (h *InscriptionHandler) fromContract(c sc.Contract) models.InscriptionReque
 		ImageData: imagePath,
 		Text:      text,
 		Price:     float64(c.TotalBudgetSats) / 1e8,
-		Timestamp: 0,
+		Timestamp: timestamp,
 		ID:        c.ContractID,
 		Status:    c.Status,
 	}
