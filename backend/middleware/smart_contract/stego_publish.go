@@ -165,7 +165,16 @@ func (s *Server) publishStegoForProposal(ctx context.Context, proposalID string,
 	}
 	ingestionID := strings.TrimSpace(toString(meta["ingestion_id"]))
 	if ingestionID == "" {
-		return fmt.Errorf("proposal %s missing ingestion_id metadata", proposalID)
+		visible := strings.TrimSpace(p.VisiblePixelHash)
+		if visible == "" {
+			visible = strings.TrimSpace(toString(meta["visible_pixel_hash"]))
+		}
+		ingestionID = visible
+		if ingestionID != "" {
+			meta["ingestion_id"] = ingestionID
+		} else {
+			return fmt.Errorf("proposal %s missing ingestion_id metadata", proposalID)
+		}
 	}
 	coverRec, err := s.ingestionSvc.Get(ingestionID)
 	if err != nil || coverRec == nil {
