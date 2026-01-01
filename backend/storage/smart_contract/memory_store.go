@@ -503,6 +503,16 @@ func (s *MemoryStore) UpdateContractStatus(ctx context.Context, contractID, stat
 	}
 	contract.Status = status
 	s.contracts[contractID] = contract
+	if strings.EqualFold(status, "confirmed") {
+		normalized := normalizeContractID(contractID)
+		for id, proposal := range s.proposals {
+			proposalCID := normalizeContractID(contractIDFromMeta(proposal.Metadata, proposal.ID))
+			if proposalCID == normalized && strings.EqualFold(proposal.Status, "approved") {
+				proposal.Status = "confirmed"
+				s.proposals[id] = proposal
+			}
+		}
+	}
 	return nil
 }
 

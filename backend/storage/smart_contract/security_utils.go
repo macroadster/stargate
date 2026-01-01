@@ -480,7 +480,7 @@ func ValidateAPIKeyFormat(key string) error {
 
 // isValidProposalStatus checks if a status is valid for proposals
 func isValidProposalStatus(status string) bool {
-	validStatuses := []string{"pending", "approved", "rejected", "published"}
+	validStatuses := []string{"pending", "approved", "rejected", "published", "confirmed"}
 	for _, valid := range validStatuses {
 		if strings.EqualFold(status, valid) {
 			return true

@@ -812,6 +812,21 @@ func (s *PGStore) UpdateContractStatus(ctx context.Context, contractID, status s
 		return nil
 	}
 	_, err := s.pool.Exec(ctx, `UPDATE mcp_contracts SET status=$2 WHERE contract_id=$1`, contractID, status)
+	if err != nil {
+		return err
+	}
+	if strings.EqualFold(status, "confirmed") {
+		normalized := normalizeContractID(contractID)
+		wishID := "wish-" + normalized
+		_, err = s.pool.Exec(ctx, `
+UPDATE mcp_proposals SET status='confirmed'
+WHERE status='approved' AND (
+  metadata->>'contract_id' IN ($1, $2) OR
+  metadata->>'ingestion_id' IN ($1, $2) OR
+  metadata->>'visible_pixel_hash' IN ($1, $2) OR
+  id IN ($1, $2)
+)`, normalized, wishID)
+	}
 	return err
 }
 

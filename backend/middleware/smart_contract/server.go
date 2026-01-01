@@ -1670,6 +1670,26 @@ func (s *Server) handleClaimTask(w http.ResponseWriter, r *http.Request, taskID 
 		return
 	}
 
+	if task, err := s.store.GetTask(taskID); err == nil {
+		if strings.TrimSpace(task.ContractID) != "" {
+			if contract, err := s.store.GetContract(task.ContractID); err == nil {
+				status := strings.ToLower(strings.TrimSpace(contract.Status))
+				if status == "confirmed" || status == "published" {
+					Error(w, http.StatusConflict, "task claims closed for confirmed contract")
+					return
+				}
+			}
+			if proposals, err := s.store.ListProposals(r.Context(), smart_contract.ProposalFilter{ContractID: task.ContractID}); err == nil {
+				for _, p := range proposals {
+					if strings.EqualFold(strings.TrimSpace(p.Status), "confirmed") {
+						Error(w, http.StatusConflict, "task claims closed for confirmed proposal")
+						return
+					}
+				}
+			}
+		}
+	}
+
 	contractorWallet := strings.TrimSpace(body.Wallet)
 	if s.apiKeys != nil {
 		key := r.Header.Get("X-API-Key")
@@ -2701,6 +2721,9 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 						continue
 					}
 					if strings.EqualFold(strings.TrimSpace(p.Status), "rejected") {
+						continue
+					}
+					if strings.EqualFold(strings.TrimSpace(p.Status), "confirmed") {
 						continue
 					}
 					if proposalMetaConfirmed(p.Metadata) || proposalHasConfirmedProof(p) {
