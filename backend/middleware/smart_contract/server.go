@@ -2694,6 +2694,19 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 				Error(w, http.StatusInternalServerError, err.Error())
 				return
 			}
+			var taskIDs []string
+			for _, p := range proposals {
+				for _, t := range p.Tasks {
+					taskIDs = append(taskIDs, t.TaskID)
+				}
+			}
+			subs, _ := s.store.ListSubmissions(r.Context(), taskIDs)
+			rejectedTasks := make(map[string]struct{})
+			for _, sub := range subs {
+				if strings.EqualFold(sub.Status, "rejected") && strings.TrimSpace(sub.TaskID) != "" {
+					rejectedTasks[sub.TaskID] = struct{}{}
+				}
+			}
 			if !includeConfirmed(r) {
 				filtered := make([]smart_contract.Proposal, 0, len(proposals))
 				for _, p := range proposals {
@@ -2706,18 +2719,21 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 					if proposalMetaConfirmed(p.Metadata) || proposalHasConfirmedProof(p) {
 						continue
 					}
+					rejected := false
+					for _, t := range p.Tasks {
+						if _, ok := rejectedTasks[t.TaskID]; ok {
+							rejected = true
+							break
+						}
+					}
+					if rejected {
+						continue
+					}
 					filtered = append(filtered, p)
 				}
 				proposals = filtered
 			}
 			// hydrate submissions alongside tasks
-			var taskIDs []string
-			for _, p := range proposals {
-				for _, t := range p.Tasks {
-					taskIDs = append(taskIDs, t.TaskID)
-				}
-			}
-			subs, _ := s.store.ListSubmissions(r.Context(), taskIDs)
 			JSON(w, http.StatusOK, map[string]interface{}{
 				"proposals":   proposals,
 				"total":       len(proposals),
