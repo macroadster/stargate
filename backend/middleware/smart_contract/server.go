@@ -1970,6 +1970,21 @@ func proposalVisibleHash(p smart_contract.Proposal) string {
 	return ""
 }
 
+func (s *Server) requireWishForProposalCreation(ctx context.Context, proposal smart_contract.Proposal) error {
+	if s.store == nil {
+		return fmt.Errorf("wish store unavailable")
+	}
+	visible := proposalVisibleHash(proposal)
+	if visible == "" {
+		return fmt.Errorf("visible_pixel_hash is required to create proposal")
+	}
+	wishID := "wish-" + visible
+	if _, err := s.store.GetContract(wishID); err != nil {
+		return fmt.Errorf("wish not found for visible_pixel_hash")
+	}
+	return nil
+}
+
 func (s *Server) requireWishForApproval(ctx context.Context, proposal smart_contract.Proposal) error {
 	visible := proposalVisibleHash(proposal)
 	if visible == "" {
@@ -2414,6 +2429,10 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 				Error(w, http.StatusBadRequest, err.Error())
 				return
 			}
+			if err := s.requireWishForProposalCreation(r.Context(), proposal); err != nil {
+				Error(w, http.StatusBadRequest, err.Error())
+				return
+			}
 			metaContractID, _ := proposal.Metadata["contract_id"].(string)
 			metaVisiblePixelHash, _ := proposal.Metadata["visible_pixel_hash"].(string)
 			if strings.TrimSpace(metaContractID) == "" || strings.TrimSpace(metaVisiblePixelHash) == "" {
@@ -2675,49 +2694,17 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 				Error(w, http.StatusInternalServerError, err.Error())
 				return
 			}
-			canonicalContractByTitle := map[string]string{}
-			if contracts, err := s.store.ListContracts(smart_contract.ContractFilter{}); err == nil {
-				for _, c := range contracts {
-					if key := normalizeWishText(c.Title); key != "" {
-						canonicalContractByTitle[key] = preferCanonicalContractID(canonicalContractByTitle[key], c.ContractID)
-					}
-				}
-			}
 			if !includeConfirmed(r) {
-				ingestionStatus := make(map[string]string)
 				filtered := make([]smart_contract.Proposal, 0, len(proposals))
 				for _, p := range proposals {
 					if looksLikeStegoManifestText(p.DescriptionMD) {
 						continue
 					}
-					key := normalizeWishText(p.DescriptionMD)
-					if key == "" {
-						key = normalizeWishText(p.Title)
-					}
-					if key != "" {
-						if canonicalID, exists := canonicalContractByTitle[key]; exists {
-							proposalContractID := contractIDFromMeta(p.Metadata, p.ID)
-							if proposalContractID != canonicalID && strings.TrimSpace(p.ID) != canonicalID {
-								continue
-							}
-						}
+					if strings.EqualFold(strings.TrimSpace(p.Status), "rejected") {
+						continue
 					}
 					if proposalMetaConfirmed(p.Metadata) || proposalHasConfirmedProof(p) {
 						continue
-					}
-					if s.ingestionSvc != nil {
-						if ingestionID, ok := p.Metadata["ingestion_id"].(string); ok && strings.TrimSpace(ingestionID) != "" {
-							status, cached := ingestionStatus[ingestionID]
-							if !cached {
-								if rec, err := s.ingestionSvc.Get(ingestionID); err == nil && rec != nil {
-									status = rec.Status
-								}
-								ingestionStatus[ingestionID] = status
-							}
-							if strings.EqualFold(status, "confirmed") {
-								continue
-							}
-						}
 					}
 					filtered = append(filtered, p)
 				}

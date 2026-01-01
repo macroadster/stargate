@@ -910,15 +910,25 @@ func (s *PGStore) ListProposals(ctx context.Context, filter smart_contract.Propo
 		populateProposalTasks(&p)
 		s.hydrateProposalTasks(ctx, &p)
 		if filter.ContractID != "" {
-			contractID := p.Metadata["contract_id"]
-			if contractID == nil {
-				contractID = p.Metadata["ingestion_id"]
+			var candidates []string
+			if v, ok := p.Metadata["contract_id"].(string); ok {
+				candidates = append(candidates, v)
 			}
-			cid, _ := contractID.(string)
-			if cid == "" {
-				cid = p.ID
+			if v, ok := p.Metadata["ingestion_id"].(string); ok {
+				candidates = append(candidates, v)
 			}
-			if cid != filter.ContractID {
+			if v, ok := p.Metadata["visible_pixel_hash"].(string); ok {
+				candidates = append(candidates, v)
+			}
+			candidates = append(candidates, p.VisiblePixelHash, p.ID)
+			match := false
+			for _, candidate := range candidates {
+				if strings.TrimSpace(candidate) == strings.TrimSpace(filter.ContractID) {
+					match = true
+					break
+				}
+			}
+			if !match {
 				continue
 			}
 		}

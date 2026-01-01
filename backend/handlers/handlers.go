@@ -133,29 +133,9 @@ func (h *InscriptionHandler) HandleGetInscriptions(w http.ResponseWriter, r *htt
 	var inscriptions []models.InscriptionRequest
 	dedupe := make(map[string]int) // id -> index in inscriptions
 	includeLegacyOnly := r.URL.Query().Get("legacy") == "true" || r.URL.Query().Get("legacy") == "1"
-	contractTitles := make(map[string]struct{})
-	canonicalContractIDs := make(map[string]struct{})
-	wishKeys := make(map[string]struct{})
-	var proposals []sc.Proposal
-	var proposalsErr error
 
 	// Prefer open-contracts (MCP store) to keep UI + AI in sync.
 	if h.store != nil {
-		if list, err := h.store.ListProposals(r.Context(), sc.ProposalFilter{}); err == nil {
-			proposals = list
-			for _, p := range proposals {
-				if looksLikeStegoManifestText(p.DescriptionMD) {
-					continue
-				}
-				if key := wishKeyFromText(p.DescriptionMD); key != "" {
-					wishKeys[key] = struct{}{}
-				} else if key := wishKeyFromText(p.Title); key != "" {
-					wishKeys[key] = struct{}{}
-				}
-			}
-		} else {
-			proposalsErr = err
-		}
 		if contracts, err := h.store.ListContracts(sc.ContractFilter{}); err == nil {
 			for _, c := range contracts {
 				if strings.EqualFold(strings.TrimSpace(c.Status), "superseded") {
@@ -171,15 +151,6 @@ func (h *InscriptionHandler) HandleGetInscriptions(w http.ResponseWriter, r *htt
 						}
 					}
 				}
-				if key := normalizeWishText(c.Title); key != "" {
-					contractTitles[key] = struct{}{}
-				}
-				if c.ContractID != "" {
-					canonicalContractIDs[c.ContractID] = struct{}{}
-					if base := baseContractID(c.ContractID); base != "" {
-						canonicalContractIDs[base] = struct{}{}
-					}
-				}
 				item := h.fromContract(c)
 				if _, ok := dedupe[item.ID]; !ok {
 					dedupe[item.ID] = len(inscriptions)
@@ -188,33 +159,6 @@ func (h *InscriptionHandler) HandleGetInscriptions(w http.ResponseWriter, r *htt
 			}
 		} else {
 			fmt.Printf("Failed to list contracts for pending view: %v\n", err)
-		}
-		if proposals == nil {
-			fmt.Printf("Failed to list proposals for pending view: %v\n", proposalsErr)
-		} else {
-			for _, p := range proposals {
-				if looksLikeStegoManifestText(p.DescriptionMD) {
-					continue
-				}
-				if proposalID := proposalContractID(p); proposalID != "" {
-					if _, exists := canonicalContractIDs[proposalID]; exists {
-						continue
-					}
-				}
-				if key := normalizeWishText(p.DescriptionMD); key != "" {
-					if _, exists := contractTitles[key]; exists {
-						continue
-					}
-				}
-				if isRejectedProposalStatus(p.Status) {
-					continue
-				}
-				item := h.fromProposal(p)
-				if _, ok := dedupe[item.ID]; !ok {
-					dedupe[item.ID] = len(inscriptions)
-					inscriptions = append(inscriptions, item)
-				}
-			}
 		}
 	}
 
@@ -225,21 +169,6 @@ func (h *InscriptionHandler) HandleGetInscriptions(w http.ResponseWriter, r *htt
 				item := h.fromIngestion(rec)
 				if looksLikeStegoManifestText(item.Text) {
 					continue
-				}
-				if ingestionID := ingestionContractID(rec); ingestionID != "" {
-					if _, exists := canonicalContractIDs[ingestionID]; exists {
-						continue
-					}
-				}
-				if key := wishKeyFromText(item.Text); key != "" {
-					if _, exists := wishKeys[key]; exists {
-						continue
-					}
-				}
-				if key := normalizeWishText(item.Text); key != "" {
-					if _, exists := contractTitles[key]; exists {
-						continue
-					}
 				}
 				if idx, ok := dedupe[item.ID]; ok {
 					// Enrich existing entry with image/text if missing.
