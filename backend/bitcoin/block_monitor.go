@@ -1655,6 +1655,7 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 	fallbackCandidates := make(map[string]*services.IngestionRecord, len(recs))
 	candidatesByID := make(map[string][]string, len(recs))
 	txidMatches := make(map[string]*services.IngestionRecord, len(recs))
+	matchedTxIDs := make(map[string]string)
 	for _, rec := range recs {
 		recCopy := rec
 		primaryList, fallbackList := ingestionCandidateBuckets(recCopy, bm.networkParams())
@@ -1714,10 +1715,14 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 					delete(fallbackCandidates, candidate)
 				}
 				delete(txidMatches, tx.TxID)
+				matchedTxIDs[tx.TxID] = match.ID
 			}
 		}
 
 		if match, matchType, matchedHash := matchWitnessHash(tx, primaryCandidates, fallbackCandidates); match != nil {
+			if existingID, ok := matchedTxIDs[tx.TxID]; ok && existingID != match.ID {
+				log.Printf("oracle reconcile: skipping %s match for %s (tx %s already matched by funding_txid)", matchType, match.ID, tx.TxID)
+			} else {
 			destPath, err := bm.moveIngestionImageWithFilename(blockDir, match, blockImageFilename(match, tx.TxID))
 			if err != nil {
 				log.Printf("oracle reconcile: failed to move ingestion image for %s: %v", match.ID, err)
@@ -1754,6 +1759,7 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 					delete(fallbackCandidates, candidate)
 				}
 			}
+			}
 		}
 
 		for outIdx, output := range tx.Outputs {
@@ -1762,6 +1768,10 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 				match, matchType, matchedHash = matchOracleOutput(output.ScriptPubKey, bm.networkParams(), fallbackCandidates)
 			}
 			if match == nil {
+				continue
+			}
+			if existingID, ok := matchedTxIDs[tx.TxID]; ok && existingID != match.ID {
+				log.Printf("oracle reconcile: skipping %s match for %s (tx %s already matched by funding_txid)", matchType, match.ID, tx.TxID)
 				continue
 			}
 
