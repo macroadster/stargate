@@ -200,13 +200,14 @@ function MainContent() {
     const rawUrl = contract.stego_image_url || contract.stegoImageUrl || '';
     const imageUrl = rawUrl && !rawUrl.startsWith('http') ? `${CONTENT_BASE}${rawUrl}` : rawUrl;
     const metadata = contract.metadata || {};
+    const wishText = metadata.wish_text || metadata.embedded_message || metadata.message || '';
     const inscription = {
       id: contract.contract_id || contract.contractId || contract.id,
       contract_type: contract.contract_type || 'Smart Contract',
       metadata,
       image_url: imageUrl,
       mime_type: metadata.content_type || 'image/png',
-      text: metadata.embedded_message || metadata.message || '',
+      text: wishText,
       genesis_block_height: contract.block_height || 0,
       block_height: contract.block_height || 0,
       status: metadata.confirmation_status || 'open',

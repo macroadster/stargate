@@ -37,6 +37,7 @@ const PendingTransactionsView = ({ setSelectedInscription, refreshKey }) => {
       } else if (uploadFile) {
         imageUrl = `${API_BASE}/uploads/${encodeURIComponent(uploadFile)}`;
       }
+      const wishText = tx.wish_text || tx.embedded_message || tx.message || '';
       return {
         id: tx.id,
         contract_type: 'Pending Contract',
@@ -50,7 +51,7 @@ const PendingTransactionsView = ({ setSelectedInscription, refreshKey }) => {
         address: tx.address || 'bc1q...pending',
         genesis_block_height: tx.blockHeight || 0,
         mime_type: imageUrl ? 'image/png' : 'text/plain',
-        text: tx.text,
+        text: wishText || tx.text,
         price: tx.price,
         timestamp: tx.timestamp,
         status: tx.status,
@@ -61,7 +62,8 @@ const PendingTransactionsView = ({ setSelectedInscription, refreshKey }) => {
           is_stego: false,
           confidence: 0,
           stego_probability: 0,
-          transaction_id: tx.id
+          transaction_id: tx.id,
+          wish_text: wishText
         }
       };
     });
