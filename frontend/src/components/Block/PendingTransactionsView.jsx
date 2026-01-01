@@ -22,6 +22,13 @@ const PendingTransactionsView = ({ setSelectedInscription, refreshKey }) => {
     fetchPendingTransactions();
   }, [fetchPendingTransactions, refreshKey]);
 
+  useEffect(() => {
+    const intervalId = setInterval(() => {
+      fetchPendingTransactions();
+    }, 8000);
+    return () => clearInterval(intervalId);
+  }, [fetchPendingTransactions]);
+
   const mappedInscriptions = useMemo(() => {
     const list = Array.isArray(pendingTxs) ? pendingTxs : [];
     return list
