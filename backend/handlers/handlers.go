@@ -356,9 +356,39 @@ func (h *InscriptionHandler) fromContract(c sc.Contract) models.InscriptionReque
 			imagePath = matches[0]
 		}
 	}
+	wishText := ""
+	if h.ingestionService != nil {
+		ingestionID := strings.TrimSpace(c.ContractID)
+		rec, err := h.ingestionService.Get(ingestionID)
+		if err != nil {
+			if baseID := baseContractID(ingestionID); baseID != "" && baseID != ingestionID {
+				rec, _ = h.ingestionService.Get(baseID)
+			}
+		}
+		if rec != nil {
+			if v, ok := rec.Metadata["wish_text"].(string); ok {
+				wishText = strings.TrimSpace(v)
+			}
+			if wishText == "" {
+				if v, ok := rec.Metadata["embedded_message"].(string); ok {
+					wishText = strings.TrimSpace(v)
+				}
+			}
+			if wishText == "" {
+				if v, ok := rec.Metadata["message"].(string); ok {
+					wishText = strings.TrimSpace(v)
+				}
+			}
+		}
+	}
+	wishText = stripWishTimestamp(wishText)
+	text := strings.TrimSpace(c.Title)
+	if wishText != "" {
+		text = wishText
+	}
 	return models.InscriptionRequest{
 		ImageData: imagePath,
-		Text:      c.Title,
+		Text:      text,
 		Price:     float64(c.TotalBudgetSats) / 1e8,
 		Timestamp: 0,
 		ID:        c.ContractID,
