@@ -386,7 +386,25 @@ func (h *InscriptionHandler) fromProposal(p sc.Proposal) models.InscriptionReque
 			imagePath = matches[0]
 		}
 	}
+	wishText := ""
+	if v, ok := p.Metadata["wish_text"].(string); ok {
+		wishText = strings.TrimSpace(v)
+	}
+	if wishText == "" {
+		if v, ok := p.Metadata["embedded_message"].(string); ok {
+			wishText = strings.TrimSpace(v)
+		}
+	}
+	if wishText == "" {
+		if v, ok := p.Metadata["message"].(string); ok {
+			wishText = strings.TrimSpace(v)
+		}
+	}
+	wishText = stripWishTimestamp(wishText)
 	text := strings.TrimSpace(p.DescriptionMD)
+	if wishText != "" {
+		text = wishText
+	}
 	if text == "" {
 		text = p.Title
 	}
