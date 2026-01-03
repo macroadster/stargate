@@ -49,10 +49,41 @@ func budgetFromMeta(meta map[string]interface{}) int64 {
 	return DefaultBudgetSats()
 }
 
-func normalizeContractID(id string) string {
+func NormalizeContractID(id string) string {
 	id = strings.TrimSpace(id)
-	if strings.HasPrefix(id, "wish-") {
-		id = strings.TrimPrefix(id, "wish-")
+
+	// Remove common prefixes to get the canonical hash
+	prefixes := []string{"wish-", "proposal-", "task-"}
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(id, prefix) {
+			id = strings.TrimPrefix(id, prefix)
+			break // Only remove one prefix to avoid issues with compound prefixes
+		}
 	}
+
 	return strings.TrimSpace(id)
+}
+
+// ToWishID converts a hash to the standard wish ID format
+func ToWishID(hash string) string {
+	normalized := NormalizeContractID(hash)
+	if normalized == "" {
+		return ""
+	}
+	return "wish-" + normalized
+}
+
+// IsValidHash checks if a string looks like a valid hash (64 hex chars)
+func IsValidHash(hash string) bool {
+	normalized := NormalizeContractID(hash)
+	if len(normalized) != 64 {
+		return false
+	}
+	// Basic hex validation
+	for _, c := range normalized {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return true
 }

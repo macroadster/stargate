@@ -1998,9 +1998,16 @@ func (s *Server) requireWishForProposalCreation(ctx context.Context, proposal sm
 	if visible == "" {
 		return fmt.Errorf("visible_pixel_hash is required to create proposal")
 	}
-	wishID := "wish-" + visible
+
+	// Try both with and without wish prefix for flexibility
+	wishID := scstore.ToWishID(visible)
 	if _, err := s.store.GetContract(wishID); err != nil {
-		return fmt.Errorf("wish not found for visible_pixel_hash")
+		// Try without prefix in case the contract was created differently
+		if _, err2 := s.store.GetContract(visible); err2 != nil {
+			return fmt.Errorf("wish not found for visible_pixel_hash (tried %s and %s): %v", wishID, visible, err)
+		}
+		// If found without prefix, update the wish ID for consistency
+		wishID = visible
 	}
 	return nil
 }
@@ -2010,9 +2017,16 @@ func (s *Server) requireWishForApproval(ctx context.Context, proposal smart_cont
 	if visible == "" {
 		return fmt.Errorf("visible_pixel_hash is required for approval")
 	}
-	wishID := "wish-" + visible
+
+	// Try both with and without wish prefix for flexibility
+	wishID := scstore.ToWishID(visible)
 	if _, err := s.store.GetContract(wishID); err != nil {
-		return fmt.Errorf("wish not found for visible_pixel_hash")
+		// Try without prefix in case the contract was created differently
+		if _, err2 := s.store.GetContract(visible); err2 != nil {
+			return fmt.Errorf("wish not found for visible_pixel_hash (tried %s and %s): %v", wishID, visible, err)
+		}
+		// If found without prefix, update the wish ID for consistency
+		wishID = visible
 	}
 	return nil
 }

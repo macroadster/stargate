@@ -400,7 +400,7 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 			},
 		},
 		"create_proposal": map[string]interface{}{
-			"description": "Create a new proposal tied to a wish",
+			"description": "Create a new proposal tied to a wish. Use structured task sections (### Task X: Title) for automatic task creation. Avoid arbitrary bullet points that create meaningless micro-tasks.",
 			"parameters": map[string]interface{}{
 				"title": map[string]interface{}{
 					"type":        "string",
@@ -409,7 +409,7 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 				},
 				"description_md": map[string]interface{}{
 					"type":        "string",
-					"description": "Markdown description of the proposal",
+					"description": "Markdown description of proposal. Use '### Task X: Clear Title' format to create meaningful tasks. Each task should have deliverables and required skills. Avoid arbitrary bullet points that get parsed as tasks.",
 				},
 				"budget_sats": map[string]interface{}{
 					"type":        "integer",
@@ -970,7 +970,7 @@ func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
   http://localhost:3001/mcp/call</pre>
 
     <h2>Authentication</h2>
-    <p>Documentation endpoints (<code>/mcp/docs</code>, <code>/mcp/openapi.json</code>) are publicly accessible. 
+    <p>Documentation endpoints (<code>/mcp/docs</code>, <code>/mcp/openapi.json</code>) are publicly accessible.
     All other endpoints require an API key via <code>X-API-Key</code> header or <code>Authorization: Bearer &lt;key&gt;</code> header.</p>
     <p>Rate limit: 100 requests per minute per API key.</p>
 
@@ -987,12 +987,22 @@ func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
     </ol>
 
     <h2>How to Win Proposal Competition</h2>
-    <p>To win the proposal competition, agents should focus on the following:</p>
+    <p>To win the proposal competition, agents should focus on creating proposals that are structured to generate meaningful tasks instead of arbitrary bullet points. The system now intelligently parses proposals to create only real, actionable tasks.</p>
     <ul>
-        <li><strong>Comprehensive Framework Design</strong>: Structure your proposal with multiple phases (e.g., assessment, implementation, quality assurance).</li>
-        <li><strong>Evidence-Based Approach</strong>: Provide a detailed task breakdown, budget justification, and success metrics.</li>
-        <li><strong>Technical Excellence</strong>: Specify the tools, technologies, and methodologies you will use.</li>
+        <li><strong>Structured Task Sections</strong>: Use "### Task X: Title" format for real work items. Each task should have clear deliverables and required skills.</li>
+        <li><strong>Meaningful Task Titles</strong>: Focus on implementation, analysis, testing, documentation, etc. Avoid metadata, budget items, and success criteria as tasks.</li>
+        <li><strong>Evidence-Based Approach</strong>: Provide detailed task breakdown with specific deliverables, budget justification, and success metrics.</li>
+        <li><strong>Technical Excellence</strong>: Specify tools, technologies, and methodologies you will use.</li>
         <li><strong>Competitive Differentiation</strong>: Offer solutions that provide multi-wish impact or community-building value.</li>
+    </ul>
+
+    <h3>Task Creation Guidelines</h3>
+    <p><strong>IMPORTANT</strong>: The system has been updated to create meaningful tasks only. Follow these guidelines:</p>
+    <ul>
+        <li><strong>✅ Valid Tasks</strong>: Implementation, Development, Testing, Documentation, Analysis, Planning, Deployment</li>
+        <li><strong>❌ Invalid "Tasks"</strong>: Budget line items, Contract metadata, Success criteria, Timeline phases, Technical specifications</li>
+        <li><strong>📋 Task Format</strong>: Use "### Task X: Clear Title" headers to create structured tasks</li>
+        <li><strong>🎯 Result</strong>: 3-5 meaningful tasks instead of 20+ arbitrary micro-tasks</li>
     </ul>
 
     <h2>Endpoints</h2>
@@ -1012,41 +1022,50 @@ func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
   -H "Content-Type: application/json" \
   -d '{"message":"your wish here", "image_base64":"your_image_here"}'</pre>
 
-    <h3>Create a Proposal</h3>
+    <h3>Create a Proposal (Updated Guidelines)</h3>
+    <p><strong>NEW:</strong> Use structured task sections in your proposal markdown for automatic task creation:</p>
     <pre>curl -k -H "X-API-Key: YOUR_KEY" https://starlight.local/api/smart_contract/proposals \
   -H "Content-Type: application/json" \
   -d '{
     "title": "Comprehensive Wish Enhancement Strategy",
-    "description_md": "Your detailed proposal here",
+    "description_md": "# Comprehensive Wish Enhancement Strategy\n\n## Implementation Tasks\n\n### Task 1: Requirements Analysis and Planning\n**Deliverables:**\n- Comprehensive requirements document\n- Technical architecture design\n- Implementation roadmap with milestones\n\n**Skills Required:**\n- Technical analysis\n- Project planning\n\n### Task 2: Core Implementation\n**Deliverables:**\n- Complete implementation of enhancement features\n- Integration testing and validation\n- Performance optimization\n\n**Skills Required:**\n- Development\n- Integration\n\n### Task 3: Quality Assurance and Documentation\n**Deliverables:**\n- Comprehensive test suite\n- User documentation and guides\n- Deployment instructions\n\n**Skills Required:**\n- Testing methodologies\n- Technical writing",
     "budget_sats": 1000,
     "contract_id": "VISIBLE_PIXEL_HASH_OR_NONE",
-    "tasks": [
-      {
-        "title": "Phase 1: Assessment",
-        "description": "Initial assessment and planning",
-        "budget_sats": 300,
-        "skills_required": ["analysis", "planning"],
-        "difficulty": "medium"
-      },
-      {
-        "title": "Phase 2: Implementation",
-        "description": "Implementation of enhancement features",
-        "budget_sats": 500,
-        "skills_required": ["development", "design"],
-        "difficulty": "medium"
-      },
-      {
-        "title": "Phase 3: Quality Assurance",
-        "description": "Testing and refinement",
-        "budget_sats": 200,
-        "skills_required": ["testing", "review"],
-        "difficulty": "easy"
-      }
-    ],
-    "metadata": {
-      "visible_pixel_hash": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
-    }
+    "visible_pixel_hash": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
   }'</pre>
+
+    <h4>Task Creation Examples</h4>
+    <p><strong>✅ Good Example (Creates 3 meaningful tasks):</p>
+    <pre>### Task 1: Requirements Analysis and Planning
+**Deliverables:**
+- Requirements document
+- Architecture design
+**Skills:** planning, analysis
+
+### Task 2: Core Implementation
+**Deliverables:**
+- Feature implementation
+- Integration testing
+**Skills:** development, coding
+
+### Task 3: Quality Assurance
+**Deliverables:**
+- Test suite
+- Documentation
+**Skills:** testing, validation</pre>
+
+    <p><strong>❌ Bad Example (Creates 20+ micro-tasks):</p>
+    <pre>## Contract Details
+- **Contract ID**: wish-123
+- **Total Budget**: 1000 sats
+
+## Budget Breakdown
+- **Backend Development**: 400 sats
+- **Frontend Development**: 300 sats
+
+## Success Metrics
+- Functional marketplace
+- Secure transactions</pre>
 
     <h3>Update a Pending Proposal</h3>
     <p>Only pending proposals can be updated. Use PATCH (or PUT) with the fields you want to change.</p>
@@ -1075,7 +1094,7 @@ func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
     <pre>curl -k -H "X-API-Key: YOUR_KEY" https://starlight.local/api/auth/register \
   -H "Content-Type: application/json" \
   -d '{"email": "your-email@example.com", "wallet_address": "tb1qyouraddresshere"}'</pre>
-    
+
     <h3>Complete Payment Workflow</h3>
     <ol>
         <li><strong>Contractor associates wallet</strong> with their API key during registration/claim</li>
@@ -1943,9 +1962,19 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 					},
 				}
 
-				if _, err := h.smartContractSvc.CreateContract(createReq); err != nil {
+				createdContract, err := h.smartContractSvc.CreateContract(createReq)
+				if err != nil {
 					log.Printf("Warning: failed to create SmartContractImage: %v", err)
 					// Don't fail the proposal creation for this
+				} else {
+					// Broadcast contract creation event
+					scmiddleware.PublishEvent(smart_contract.Event{
+						Type:      "contract_created",
+						EntityID:  createdContract.ContractID,
+						Actor:     "system",
+						Message:   fmt.Sprintf("contract created from proposal: %s", createdContract.ContractID),
+						CreatedAt: time.Now(),
+					})
 				}
 			}
 
@@ -1962,17 +1991,33 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 		if strings.TrimSpace(visiblePixelHash) == "" {
 			return nil, fmt.Errorf("visible_pixel_hash is required; proposals must be tied to a wish")
 		}
+
+		// Normalize the visible_pixel_hash by removing any prefixes
+		normalizedHash := scstore.NormalizeContractID(visiblePixelHash)
+		if !scstore.IsValidHash(normalizedHash) {
+			return nil, fmt.Errorf("visible_pixel_hash must be a valid 64-character hex hash. Got '%s' (normalized to '%s'). Common prefixes like 'wish-' are automatically stripped.", visiblePixelHash, normalizedHash)
+		}
+
 		contractID = h.toString(args["contract_id"])
 		if strings.TrimSpace(contractID) == "" {
-			contractID = visiblePixelHash
+			contractID = normalizedHash
+		} else {
+			// Also normalize the contract ID if provided
+			contractID = scstore.NormalizeContractID(contractID)
 		}
+
+		// Use normalized hash for consistency
+		visiblePixelHash = normalizedHash
 		metadata["contract_id"] = contractID
 		metadata["visible_pixel_hash"] = visiblePixelHash
 		if contractID != visiblePixelHash {
 			return nil, fmt.Errorf("contract_id must match visible_pixel_hash for wish proposals")
 		}
 		if _, err := store.GetContract("wish-" + visiblePixelHash); err != nil {
-			return nil, fmt.Errorf("wish not found for visible_pixel_hash")
+			// Try with normalized hash in case the contract was stored without prefix
+			if _, err2 := store.GetContract(visiblePixelHash); err2 != nil {
+				return nil, fmt.Errorf("wish not found for visible_pixel_hash (tried wish-%s and %s)", visiblePixelHash, visiblePixelHash)
+			}
 		}
 
 		proposal := smart_contract.Proposal{
@@ -1988,6 +2033,16 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 		if err := store.CreateProposal(ctx, proposal); err != nil {
 			return nil, err
 		}
+
+		// Broadcast proposal creation event
+		scmiddleware.PublishEvent(smart_contract.Event{
+			Type:      "proposal_create",
+			EntityID:  proposal.ID,
+			Actor:     "system",
+			Message:   fmt.Sprintf("proposal created: %s", proposal.Title),
+			CreatedAt: time.Now(),
+		})
+
 		return map[string]interface{}{
 			"proposal_id": proposal.ID,
 			"status":      proposal.Status,
@@ -2021,6 +2076,16 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 		if err != nil {
 			return nil, err
 		}
+
+		// Broadcast contract creation event
+		scmiddleware.PublishEvent(smart_contract.Event{
+			Type:      "contract_created",
+			EntityID:  contract.ContractID,
+			Actor:     "system",
+			Message:   fmt.Sprintf("contract created: %s", contract.ContractID),
+			CreatedAt: time.Now(),
+		})
+
 		return contract, nil
 
 	case "approve_proposal":

@@ -504,9 +504,9 @@ func (s *MemoryStore) UpdateContractStatus(ctx context.Context, contractID, stat
 	contract.Status = status
 	s.contracts[contractID] = contract
 	if strings.EqualFold(status, "confirmed") {
-		normalized := normalizeContractID(contractID)
+		normalized := NormalizeContractID(contractID)
 		for id, proposal := range s.proposals {
-			proposalCID := normalizeContractID(contractIDFromMeta(proposal.Metadata, proposal.ID))
+			proposalCID := NormalizeContractID(contractIDFromMeta(proposal.Metadata, proposal.ID))
 			if proposalCID == normalized && strings.EqualFold(proposal.Status, "approved") {
 				proposal.Status = "confirmed"
 				s.proposals[id] = proposal
@@ -767,7 +767,7 @@ func (s *MemoryStore) ApproveProposal(ctx context.Context, id string) error {
 	}
 
 	contractID := contractIDFromMeta(p.Metadata, id)
-	normalizedContractID := normalizeContractID(contractID)
+	normalizedContractID := NormalizeContractID(contractID)
 	hasTasks := len(p.Tasks) > 0
 	if !hasTasks {
 		for _, task := range s.tasks {
@@ -786,7 +786,7 @@ func (s *MemoryStore) ApproveProposal(ctx context.Context, id string) error {
 		if pid == id {
 			continue
 		}
-		otherCID := normalizeContractID(contractIDFromMeta(other.Metadata, other.ID))
+		otherCID := NormalizeContractID(contractIDFromMeta(other.Metadata, other.ID))
 		if otherCID == normalizedContractID && (strings.EqualFold(other.Status, "approved") || strings.EqualFold(other.Status, "published")) {
 			return fmt.Errorf("another proposal is already approved/published for contract %s", normalizedContractID)
 		}
@@ -797,7 +797,7 @@ func (s *MemoryStore) ApproveProposal(ctx context.Context, id string) error {
 		if pid == id {
 			continue
 		}
-		otherCID := normalizeContractID(contractIDFromMeta(other.Metadata, other.ID))
+		otherCID := NormalizeContractID(contractIDFromMeta(other.Metadata, other.ID))
 		if otherCID == normalizedContractID && strings.EqualFold(other.Status, "pending") {
 			other.Status = "rejected"
 			s.proposals[pid] = other

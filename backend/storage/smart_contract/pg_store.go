@@ -816,7 +816,7 @@ func (s *PGStore) UpdateContractStatus(ctx context.Context, contractID, status s
 		return err
 	}
 	if strings.EqualFold(status, "confirmed") {
-		normalized := normalizeContractID(contractID)
+		normalized := NormalizeContractID(contractID)
 		wishID := "wish-" + normalized
 		_, err = s.pool.Exec(ctx, `
 UPDATE mcp_proposals SET status='confirmed'
@@ -1156,7 +1156,7 @@ func (s *PGStore) ApproveProposal(ctx context.Context, id string) error {
 		}
 	}
 	contractID := contractIDFromMeta(meta, id)
-	normalizedContractID := normalizeContractID(contractID)
+	normalizedContractID := NormalizeContractID(contractID)
 	wishContractID := "wish-" + normalizedContractID
 
 	// Block double-approval/publish for the same contract.
