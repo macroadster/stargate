@@ -2406,15 +2406,15 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			// Update all tasks for this proposal with creator wallet for auto-sweep
-			if creatorWallet != "" {
+			// Update all tasks for this proposal with approver wallet for auto-sweep
+			if approverWallet != "" {
 				proposal, err := s.store.GetProposal(r.Context(), id)
 				if err == nil {
 					for _, task := range proposal.Tasks {
 						if task.MerkleProof != nil {
-							task.MerkleProof.CreatorWallet = creatorWallet
+							task.MerkleProof.ApproverWallet = approverWallet
 							if err := s.store.UpdateTaskProof(r.Context(), task.TaskID, task.MerkleProof); err != nil {
-								log.Printf("failed to update task proof with creator wallet: %v", err)
+								log.Printf("failed to update task proof with approver wallet: %v", err)
 							}
 						}
 					}
