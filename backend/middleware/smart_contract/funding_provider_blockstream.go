@@ -60,7 +60,7 @@ func (p *blockstreamProvider) FetchProof(ctx context.Context, task smart_contrac
 	proof.BlockHeight = int64(mp.BlockHeight)
 	proof.ConfirmationStatus = "confirmed"
 	now := time.Now()
-	proof.ConfirmedAt = &now
+	proof.SweepAttemptedAt = &now
 	proof.ProofPath = make([]smart_contract.ProofNode, 0, len(mp.Merkle))
 	for _, h := range mp.Merkle {
 		proof.ProofPath = append(proof.ProofPath, smart_contract.ProofNode{Hash: h, Direction: "left"})

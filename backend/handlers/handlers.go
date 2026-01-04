@@ -956,7 +956,7 @@ func proofConfirmed(proof *sc.MerkleProof) bool {
 	if strings.EqualFold(strings.TrimSpace(proof.ConfirmationStatus), "confirmed") {
 		return true
 	}
-	if proof.ConfirmedAt != nil {
+	if proof.SeenAt != nil && !proof.SeenAt.IsZero() {
 		return true
 	}
 	return false

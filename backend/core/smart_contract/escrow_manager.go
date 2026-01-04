@@ -273,8 +273,8 @@ func (em *EscrowManager) handleFundingConfirmation(_ context.Context, contract *
 		FundedAmountSats:      contract.TotalBudgetSats,
 		FundingAddress:        contract.Address,
 		ConfirmationStatus:    "confirmed",
-		SeenAt:                time.Now(),
-		ConfirmedAt:           &now,
+		SeenAt:                &now,
+		SweepAttemptedAt:      &now,
 	}
 
 	contract.MerkleProof = merkleProof

@@ -20,8 +20,8 @@ func SeedData() ([]smart_contract.Contract, []smart_contract.Task) {
 		},
 		FundedAmountSats:   5_000_000,
 		ConfirmationStatus: "confirmed",
-		SeenAt:             seen,
-		ConfirmedAt:        &confirm,
+		SeenAt:             &seen,
+		SweepAttemptedAt:   &confirm,
 	}
 
 	contracts := []smart_contract.Contract{
@@ -74,7 +74,7 @@ func SeedData() ([]smart_contract.Contract, []smart_contract.Task) {
 				},
 				FundedAmountSats:   3_000_000,
 				ConfirmationStatus: "provisional",
-				SeenAt:             seen,
+				SweepAttemptedAt:   &seen,
 			},
 		},
 		{

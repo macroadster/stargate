@@ -1381,8 +1381,9 @@ func (s *Server) updateTaskCommitmentProof(ctx context.Context, taskID string, r
 	if proof.ConfirmationStatus == "" {
 		proof.ConfirmationStatus = "provisional"
 	}
-	if proof.SeenAt.IsZero() {
-		proof.SeenAt = time.Now()
+	if proof.SeenAt == nil || proof.SeenAt.IsZero() {
+		now := time.Now()
+		proof.SeenAt = &now
 	}
 	if len(res.RedeemScript) > 0 {
 		proof.CommitmentRedeemScript = hex.EncodeToString(res.RedeemScript)
@@ -2038,7 +2039,7 @@ func proofConfirmed(proof *smart_contract.MerkleProof) bool {
 	if strings.EqualFold(strings.TrimSpace(proof.ConfirmationStatus), "confirmed") {
 		return true
 	}
-	if proof.ConfirmedAt != nil {
+	if proof.SeenAt != nil && !proof.SeenAt.IsZero() {
 		return true
 	}
 	return false
@@ -2388,9 +2389,33 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 			}
+			// Get creator's wallet before approval
+			apiKey := r.Header.Get("X-API-Key")
+			creatorWallet := ""
+			if apiKey != "" && s.apiKeys != nil {
+				if apiRec, ok := s.apiKeys.Get(apiKey); ok {
+					creatorWallet = strings.TrimSpace(apiRec.Wallet)
+				}
+			}
+
 			if err := s.store.ApproveProposal(r.Context(), id); err != nil {
 				Error(w, http.StatusBadRequest, err.Error())
 				return
+			}
+
+			// Update all tasks for this proposal with creator wallet for auto-sweep
+			if creatorWallet != "" {
+				proposal, err := s.store.GetProposal(r.Context(), id)
+				if err == nil {
+					for _, task := range proposal.Tasks {
+						if task.MerkleProof != nil {
+							task.MerkleProof.CreatorWallet = creatorWallet
+							if err := s.store.UpdateTaskProof(r.Context(), task.TaskID, task.MerkleProof); err != nil {
+								log.Printf("failed to update task proof with creator wallet: %v", err)
+							}
+						}
+					}
+				}
 			}
 			// Publish tasks for this proposal if available.
 			if err := s.publishProposalTasks(r.Context(), id); err != nil {

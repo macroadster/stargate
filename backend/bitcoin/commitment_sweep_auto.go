@@ -44,9 +44,27 @@ func SweepCommitmentIfReady(ctx context.Context, store SweepStore, mempool *Memp
 	if strings.TrimSpace(proof.VisiblePixelHash) == "" {
 		return nil
 	}
+	// Determine destination address: creator's wallet first (auto-sweep to creator)
+	destinationAddress := ""
+	if proof.CreatorWallet != "" {
+		destinationAddress = strings.TrimSpace(proof.CreatorWallet)
+	}
+
+	// If no creator wallet, try contractor's wallet
+	if destinationAddress == "" && task.ContractorWallet != "" {
+		destinationAddress = strings.TrimSpace(task.ContractorWallet)
+	}
+	if destinationAddress == "" {
+		destinationAddress = strings.TrimSpace(proof.ContractorWallet)
+	}
+
+	// Fall back to donation address if no wallet available
 	donation := strings.TrimSpace(os.Getenv("STARLIGHT_DONATION_ADDRESS"))
-	if donation == "" {
-		return markSweepStatus(ctx, store, task.TaskID, proof, "skipped", "donation address not configured")
+	if destinationAddress == "" {
+		if donation == "" {
+			return markSweepStatus(ctx, store, task.TaskID, proof, "skipped", "no destination address available (creator/contractor wallet or donation address required)")
+		}
+		destinationAddress = donation
 	}
 
 	redeemScript, err := hex.DecodeString(strings.TrimSpace(proof.CommitmentRedeemScript))
@@ -62,9 +80,9 @@ func SweepCommitmentIfReady(ctx context.Context, store SweepStore, mempool *Memp
 	}
 
 	params := sweepNetworkParamsFromEnv()
-	destAddr, err := btcutil.DecodeAddress(donation, params)
+	destAddr, err := btcutil.DecodeAddress(destinationAddress, params)
 	if err != nil {
-		return markSweepStatus(ctx, store, task.TaskID, proof, "failed", "invalid donation address")
+		return markSweepStatus(ctx, store, task.TaskID, proof, "failed", "invalid destination address")
 	}
 
 	feeRate := int64(1)
@@ -92,7 +110,7 @@ func SweepCommitmentIfReady(ctx context.Context, store SweepStore, mempool *Memp
 	now := time.Now()
 	proof.SweepAttemptedAt = &now
 	proof.SweepError = ""
-	log.Printf("commitment sweep broadcast tx=%s task=%s contract=%s output=%d", txid, task.TaskID, task.ContractID, proof.CommitmentVout)
+	log.Printf("commitment sweep auto-returned to creator tx=%s task=%s contract=%s output=%d", txid, task.TaskID, task.ContractID, proof.CommitmentVout)
 	return store.UpdateTaskProof(ctx, task.TaskID, proof)
 }
 

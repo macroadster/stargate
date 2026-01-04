@@ -11,6 +11,7 @@ type Contract struct {
 	AvailableTasksCount int      `json:"available_tasks_count"`
 	Status              string   `json:"status"` // created | active | funded | confirmed | expired
 	Skills              []string `json:"skills,omitempty"`
+	CreatorWallet       string   `json:"creator_wallet,omitempty"`
 }
 
 // Task describes a specific unit of work an AI can claim.
@@ -42,6 +43,7 @@ type MerkleProof struct {
 	ProofPath              []ProofNode `json:"proof_path"`
 	VisiblePixelHash       string      `json:"visible_pixel_hash,omitempty"`
 	ContractorWallet       string      `json:"contractor_wallet,omitempty"`
+	CreatorWallet          string      `json:"creator_wallet,omitempty"`
 	FundedAmountSats       int64       `json:"funded_amount_sats"`
 	FundingAddress         string      `json:"funding_address,omitempty"`
 	CommitmentRedeemScript string      `json:"commitment_redeem_script,omitempty"`
@@ -49,13 +51,13 @@ type MerkleProof struct {
 	CommitmentAddress      string      `json:"commitment_address,omitempty"`
 	CommitmentVout         uint32      `json:"commitment_vout,omitempty"`
 	CommitmentSats         int64       `json:"commitment_sats,omitempty"`
+	TaskStatus             string      `json:"task_status,omitempty"`
+	ConfirmationStatus     string      `json:"confirmation_status,omitempty"`
+	SeenAt                 *time.Time  `json:"seen_at,omitempty"`
 	SweepTxID              string      `json:"sweep_tx_id,omitempty"`
 	SweepStatus            string      `json:"sweep_status,omitempty"`
 	SweepError             string      `json:"sweep_error,omitempty"`
 	SweepAttemptedAt       *time.Time  `json:"sweep_attempted_at,omitempty"`
-	ConfirmationStatus     string      `json:"confirmation_status"` // provisional | confirmed
-	SeenAt                 time.Time   `json:"seen_at"`
-	ConfirmedAt            *time.Time  `json:"confirmed_at,omitempty"`
 }
 
 // ProofNode represents a single step in a Merkle proof path.

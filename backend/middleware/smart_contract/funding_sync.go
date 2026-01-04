@@ -45,7 +45,7 @@ func (m *mockFundingProvider) FetchProof(ctx context.Context, task smart_contrac
 	}
 	now := time.Now()
 	proof.ConfirmationStatus = "confirmed"
-	proof.ConfirmedAt = &now
+	proof.SweepAttemptedAt = &now
 	if proof.BlockHeight == 0 {
 		proof.BlockHeight = 0
 	}

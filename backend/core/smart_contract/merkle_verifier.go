@@ -100,8 +100,8 @@ func (mpv *MerkleProofVerifier) VerifyProof(proof *MerkleProof) (*ProofVerificat
 
 	// Step 7: Verify confirmation status
 	if proof.ConfirmationStatus == "confirmed" {
-		if proof.ConfirmedAt == nil {
-			result.Error = "Confirmed proof must have confirmed_at timestamp"
+		if proof.SeenAt == nil || proof.SeenAt.IsZero() {
+			result.Error = "Confirmed proof must have seen_at timestamp"
 			return result, nil
 		}
 
@@ -354,7 +354,7 @@ func (mpv *MerkleProofVerifier) RefreshProof(proof *MerkleProof) (*MerkleProof, 
 		if mpv.isTransactionInBlock(txData, proof.BlockHeight) {
 			updatedProof.ConfirmationStatus = "confirmed"
 			now := time.Now()
-			updatedProof.ConfirmedAt = &now
+			updatedProof.SeenAt = &now
 		}
 	}
 

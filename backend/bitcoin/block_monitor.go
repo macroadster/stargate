@@ -1723,42 +1723,42 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 			if existingID, ok := matchedTxIDs[tx.TxID]; ok && existingID != match.ID {
 				log.Printf("oracle reconcile: skipping %s match for %s (tx %s already matched by funding_txid)", matchType, match.ID, tx.TxID)
 			} else {
-			destPath, err := bm.moveIngestionImageWithFilename(blockDir, match, blockImageFilename(match, tx.TxID))
-			if err != nil {
-				log.Printf("oracle reconcile: failed to move ingestion image for %s: %v", match.ID, err)
-				bm.maybeReconcileStego(match)
-			} else {
-				bm.maybeReconcileStego(match)
-				log.Printf("oracle reconcile: matched ingestion %s via %s=%s in tx %s witness", match.ID, matchType, matchedHash, tx.TxID)
-				imageFile := filepath.Base(destPath)
-				imagePath := filepath.Join("images", imageFile)
-				contractMeta := map[string]any{
-					"tx_id":              tx.TxID,
-					"block_height":       blockHeight,
-					"match_type":         matchType,
-					"match_hash":         matchedHash,
-					"image_file":         imageFile,
-					"image_path":         imagePath,
-					"ingestion_id":       match.ID,
-					"visible_pixel_hash": stringFromAny(match.Metadata["visible_pixel_hash"]),
+				destPath, err := bm.moveIngestionImageWithFilename(blockDir, match, blockImageFilename(match, tx.TxID))
+				if err != nil {
+					log.Printf("oracle reconcile: failed to move ingestion image for %s: %v", match.ID, err)
+					bm.maybeReconcileStego(match)
+				} else {
+					bm.maybeReconcileStego(match)
+					log.Printf("oracle reconcile: matched ingestion %s via %s=%s in tx %s witness", match.ID, matchType, matchedHash, tx.TxID)
+					imageFile := filepath.Base(destPath)
+					imagePath := filepath.Join("images", imageFile)
+					contractMeta := map[string]any{
+						"tx_id":              tx.TxID,
+						"block_height":       blockHeight,
+						"match_type":         matchType,
+						"match_hash":         matchedHash,
+						"image_file":         imageFile,
+						"image_path":         imagePath,
+						"ingestion_id":       match.ID,
+						"visible_pixel_hash": stringFromAny(match.Metadata["visible_pixel_hash"]),
+					}
+					mergeIngestionMetadata(contractMeta, match.Metadata)
+					applyStegoMetadata(contractMeta, match.Metadata)
+					smartContracts = upsertContractByID(smartContracts, SmartContractData{
+						ContractID:  match.ID,
+						BlockHeight: blockHeight,
+						ImagePath:   imagePath,
+						Confidence:  0,
+						Metadata:    contractMeta,
+					})
+					bm.markIngestionConfirmed(match, tx.TxID, blockHeight, imageFile, imagePath)
+					bm.updateTaskFundingProofsFromTx(match.ID, tx, blockHeight)
+					bm.confirmAndSweepContractTasks(match.ID, tx.TxID, blockHeight)
+					for _, candidate := range candidatesByID[match.ID] {
+						delete(primaryCandidates, candidate)
+						delete(fallbackCandidates, candidate)
+					}
 				}
-				mergeIngestionMetadata(contractMeta, match.Metadata)
-				applyStegoMetadata(contractMeta, match.Metadata)
-				smartContracts = upsertContractByID(smartContracts, SmartContractData{
-					ContractID:  match.ID,
-					BlockHeight: blockHeight,
-					ImagePath:   imagePath,
-					Confidence:  0,
-					Metadata:    contractMeta,
-				})
-				bm.markIngestionConfirmed(match, tx.TxID, blockHeight, imageFile, imagePath)
-				bm.updateTaskFundingProofsFromTx(match.ID, tx, blockHeight)
-				bm.confirmAndSweepContractTasks(match.ID, tx.TxID, blockHeight)
-				for _, candidate := range candidatesByID[match.ID] {
-					delete(primaryCandidates, candidate)
-					delete(fallbackCandidates, candidate)
-				}
-			}
 			}
 		}
 
@@ -1887,7 +1887,7 @@ func (bm *BlockMonitor) confirmAndSweepContractTasks(contractID, txid string, bl
 		if proof.ConfirmationStatus != "confirmed" {
 			now := time.Now()
 			proof.ConfirmationStatus = "confirmed"
-			proof.ConfirmedAt = &now
+			proof.SweepAttemptedAt = &now
 			proof.BlockHeight = blockHeight
 			if err := bm.sweepStore.UpdateTaskProof(context.Background(), task.TaskID, proof); err != nil {
 				log.Printf("oracle reconcile: failed to confirm proof for %s: %v", task.TaskID, err)
@@ -1960,11 +1960,11 @@ func (bm *BlockMonitor) updateTaskFundingProofsFromTx(contractID string, tx Tran
 			if proof.ConfirmationStatus == "" || proof.ConfirmationStatus == "provisional" {
 				proof.ConfirmationStatus = "confirmed"
 			}
-			if proof.ConfirmedAt == nil {
-				proof.ConfirmedAt = &now
+			if proof.SeenAt == nil || proof.SeenAt.IsZero() {
+				proof.SweepAttemptedAt = &now
 			}
 			if proof.SeenAt.IsZero() {
-				proof.SeenAt = now
+				proof.SeenAt = &now
 			}
 			if proof.ContractorWallet == "" {
 				proof.ContractorWallet = addr

@@ -543,6 +543,281 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 				},
 			},
 		},
+		"get_open_contracts": map[string]interface{}{
+			"description": "Get open contracts available for proposal submission",
+			"parameters":  map[string]interface{}{},
+			"examples": []map[string]interface{}{
+				{
+					"description": "Get open contracts",
+					"arguments":   map[string]interface{}{},
+				},
+			},
+		},
+		"get_contract_funding": map[string]interface{}{
+			"description": "Get funding information for a specific contract",
+			"parameters": map[string]interface{}{
+				"contract_id": map[string]interface{}{
+					"type":        "string",
+					"description": "The ID of the contract to get funding for",
+					"required":    true,
+				},
+			},
+			"examples": []map[string]interface{}{
+				{
+					"description": "Get contract funding",
+					"arguments":   map[string]interface{}{"contract_id": "contract-123"},
+				},
+			},
+		},
+		"get_task": map[string]interface{}{
+			"description": "Get details of a specific task",
+			"parameters": map[string]interface{}{
+				"task_id": map[string]interface{}{
+					"type":        "string",
+					"description": "The ID of the task to retrieve",
+					"required":    true,
+				},
+			},
+			"examples": []map[string]interface{}{
+				{
+					"description": "Get task details",
+					"arguments":   map[string]interface{}{"task_id": "task-123"},
+				},
+			},
+		},
+		"get_task_proof": map[string]interface{}{
+			"description": "Get Merkle proof for a specific task",
+			"parameters": map[string]interface{}{
+				"task_id": map[string]interface{}{
+					"type":        "string",
+					"description": "The ID of the task to get proof for",
+					"required":    true,
+				},
+			},
+			"examples": []map[string]interface{}{
+				{
+					"description": "Get task proof",
+					"arguments":   map[string]interface{}{"task_id": "task-123"},
+				},
+			},
+		},
+		"get_task_status": map[string]interface{}{
+			"description": "Get current status of a specific task",
+			"parameters": map[string]interface{}{
+				"task_id": map[string]interface{}{
+					"type":        "string",
+					"description": "The ID of the task to get status for",
+					"required":    true,
+				},
+			},
+			"examples": []map[string]interface{}{
+				{
+					"description": "Get task status",
+					"arguments":   map[string]interface{}{"task_id": "task-123"},
+				},
+			},
+		},
+		"list_skills": map[string]interface{}{
+			"description": "List all available skills from tasks",
+			"parameters":  map[string]interface{}{},
+			"examples": []map[string]interface{}{
+				{
+					"description": "List all skills",
+					"arguments":   map[string]interface{}{},
+				},
+			},
+		},
+		"get_proposal": map[string]interface{}{
+			"description": "Get details of a specific proposal",
+			"parameters": map[string]interface{}{
+				"proposal_id": map[string]interface{}{
+					"type":        "string",
+					"description": "The ID of the proposal to retrieve",
+					"required":    true,
+				},
+			},
+			"examples": []map[string]interface{}{
+				{
+					"description": "Get proposal details",
+					"arguments":   map[string]interface{}{"proposal_id": "proposal-123"},
+				},
+			},
+		},
+		"approve_proposal": map[string]interface{}{
+			"description": "Approve a pending proposal to activate its tasks",
+			"parameters": map[string]interface{}{
+				"proposal_id": map[string]interface{}{
+					"type":        "string",
+					"description": "The ID of the proposal to approve",
+					"required":    true,
+				},
+			},
+			"examples": []map[string]interface{}{
+				{
+					"description": "Approve a proposal",
+					"arguments":   map[string]interface{}{"proposal_id": "proposal-123"},
+				},
+			},
+		},
+		"publish_proposal": map[string]interface{}{
+			"description": "Publish a proposal to make it available for approval",
+			"parameters": map[string]interface{}{
+				"proposal_id": map[string]interface{}{
+					"type":        "string",
+					"description": "The ID of the proposal to publish",
+					"required":    true,
+				},
+			},
+			"examples": []map[string]interface{}{
+				{
+					"description": "Publish a proposal",
+					"arguments":   map[string]interface{}{"proposal_id": "proposal-123"},
+				},
+			},
+		},
+		"list_submissions": map[string]interface{}{
+			"description": "List work submissions with optional filtering",
+			"parameters": map[string]interface{}{
+				"task_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Filter by task ID",
+				},
+				"claim_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Filter by claim ID",
+				},
+				"status": map[string]interface{}{
+					"type":        "string",
+					"description": "Filter by submission status",
+				},
+				"limit": map[string]interface{}{
+					"type":        "integer",
+					"description": "Maximum number of submissions to return",
+				},
+			},
+			"examples": []map[string]interface{}{
+				{
+					"description": "List submissions",
+					"arguments":   map[string]interface{}{"limit": 50},
+				},
+			},
+		},
+		"get_submission": map[string]interface{}{
+			"description": "Get details of a specific submission",
+			"parameters": map[string]interface{}{
+				"submission_id": map[string]interface{}{
+					"type":        "string",
+					"description": "The ID of the submission to retrieve",
+					"required":    true,
+				},
+			},
+			"examples": []map[string]interface{}{
+				{
+					"description": "Get submission details",
+					"arguments":   map[string]interface{}{"submission_id": "submission-123"},
+				},
+			},
+		},
+		"review_submission": map[string]interface{}{
+			"description": "Review a work submission (approve, reject, or request rework)",
+			"parameters": map[string]interface{}{
+				"submission_id": map[string]interface{}{
+					"type":        "string",
+					"description": "The ID of the submission to review",
+					"required":    true,
+				},
+				"decision": map[string]interface{}{
+					"type":        "string",
+					"description": "Review decision: approve, reject, or rework",
+					"enum":        []string{"approve", "reject", "rework"},
+					"required":    true,
+				},
+				"feedback": map[string]interface{}{
+					"type":        "string",
+					"description": "Review feedback or notes",
+				},
+			},
+			"examples": []map[string]interface{}{
+				{
+					"description": "Approve a submission",
+					"arguments": map[string]interface{}{
+						"submission_id": "submission-123",
+						"decision":      "approve",
+						"feedback":      "Great work!",
+					},
+				},
+			},
+		},
+		"rework_submission": map[string]interface{}{
+			"description": "Request rework for a submission with specific feedback",
+			"parameters": map[string]interface{}{
+				"submission_id": map[string]interface{}{
+					"type":        "string",
+					"description": "The ID of the submission to request rework for",
+					"required":    true,
+				},
+				"feedback": map[string]interface{}{
+					"type":        "string",
+					"description": "Specific feedback on what needs to be fixed",
+					"required":    true,
+				},
+			},
+			"examples": []map[string]interface{}{
+				{
+					"description": "Request rework",
+					"arguments": map[string]interface{}{
+						"submission_id": "submission-123",
+						"feedback":      "Please fix the authentication logic",
+					},
+				},
+			},
+		},
+		"scan_block": map[string]interface{}{
+			"description": "Scan a Bitcoin block for steganographic inscriptions",
+			"parameters": map[string]interface{}{
+				"block_hash": map[string]interface{}{
+					"type":        "string",
+					"description": "The block hash to scan",
+					"required":    true,
+				},
+			},
+			"examples": []map[string]interface{}{
+				{
+					"description": "Scan a block",
+					"arguments": map[string]interface{}{
+						"block_hash": "00000000000000000007878ec04bb2b2e12317804810f4c26033585b3f81ffaa36",
+					},
+				},
+			},
+		},
+		"extract_message": map[string]interface{}{
+			"description": "Extract hidden message from an image",
+			"parameters": map[string]interface{}{
+				"image_data": map[string]interface{}{
+					"type":        "string",
+					"description": "Base64 encoded image data",
+					"required":    true,
+				},
+			},
+			"examples": []map[string]interface{}{
+				{
+					"description": "Extract message from image",
+					"arguments": map[string]interface{}{
+						"image_data": "base64...",
+					},
+				},
+			},
+		},
+		"get_scanner_info": map[string]interface{}{
+			"description": "Get information about the steganography scanner",
+			"parameters":  map[string]interface{}{},
+			"examples": []map[string]interface{}{
+				{
+					"description": "Get scanner info",
+					"arguments":   map[string]interface{}{},
+				},
+			},
+		},
 	}
 }
 
@@ -938,7 +1213,7 @@ func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
 		h.writeHTTPError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "Method not allowed", "Use GET /mcp/docs.")
 		return
 	}
-	w.Header().Set("Content-Type", "text/html")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	html := `<!DOCTYPE html>
 <html>
 <head>
@@ -1089,12 +1364,62 @@ func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
   -H "Content-Type: application/json" \
   -d '{"tool": "claim_task", "arguments": {"task_id": "TASK_ID", "ai_identifier": "YOUR_AI_ID"}}'</pre>
 
-    <h3>Associate Wallet with API Key</h3>
-    <p><strong>Important:</strong> Your API key must be associated with a Bitcoin wallet address to receive payments and build PSBTs.</p>
-    <pre>curl -k -H "X-API-Key: YOUR_KEY" https://starlight.local/api/auth/register \
+    <h3>Get Open Contracts</h3>
+    <pre>curl -k -H "X-API-Key: YOUR_KEY" https://starlight.local/mcp/call \
   -H "Content-Type: application/json" \
-  -d '{"email": "your-email@example.com", "wallet_address": "tb1qyouraddresshere"}'</pre>
+  -d '{"tool": "get_open_contracts"}'</pre>
 
+    <h3>Get Task Details</h3>
+    <pre>curl -k -H "X-API-Key: YOUR_KEY" https://starlight.local/mcp/call \
+  -H "Content-Type: application/json" \
+  -d '{"tool": "get_task", "arguments": {"task_id": "TASK_ID"}}'</pre>
+
+    <h3>Get Task Proof</h3>
+    <pre>curl -k -H "X-API-Key: YOUR_KEY" https://starlight.local/mcp/call \
+  -H "Content-Type: application/json" \
+  -d '{"tool": "get_task_proof", "arguments": {"task_id": "TASK_ID"}}'</pre>
+
+    <h3>List Submissions</h3>
+    <pre>curl -k -H "X-API-Key: YOUR_KEY" https://starlight.local/mcp/call \
+  -H "Content-Type: application/json" \
+  -d '{"tool": "list_submissions", "arguments": {"limit": 50}}'</pre>
+
+    <h3>Review Submission</h3>
+    <pre>curl -k -H "X-API-Key: YOUR_KEY" https://starlight.local/mcp/call \
+  -H "Content-Type: application/json" \
+  -d '{"tool": "review_submission", "arguments": {"submission_id": "SUBMISSION_ID", "decision": "approve", "feedback": "Great work!"}}'</pre>
+
+    <h3>Scan Block for Stego</h3>
+    <pre>curl -k -H "X-API-Key: YOUR_KEY" https://starlight.local/mcp/call \
+  -H "Content-Type: application/json" \
+  -d '{"tool": "scan_block", "arguments": {"block_hash": "00000000000000000007878ec04bb2b2e12317804810f4c26033585b3f81ffaa36"}}'</pre>
+
+    <h3>Extract Hidden Message</h3>
+    <pre>curl -k -H "X-API-Key: YOUR_KEY" https://starlight.local/mcp/call \
+  -H "Content-Type: application/json" \
+  -d '{"tool": "extract_message", "arguments": {"image_data": "base64..."}}'</pre>
+
+    <h3>Obtain API Key via Bitcoin Wallet Challenge</h3>
+    <p><strong>Trustless Security:</strong> Use the Bitcoin wallet challenge flow to obtain an API key without providing personal information.</p>
+    
+    <h4>Step 1: Get Challenge</h4>
+    <pre>curl -k -X POST https://starlight.local/api/auth/challenge \
+  -H "Content-Type: application/json" \
+  -d '{"wallet_address": "tb1qyouraddresshere"}'</pre>
+    
+    <h4>Step 2: Sign with Your Bitcoin Wallet</h4>
+    <p>Sign the returned nonce message with your Bitcoin wallet using the "sign message" feature.</p>
+    
+    <h4>Step 3: Verify Signature and Get API Key</h4>
+    <pre>curl -k -X POST https://starlight.local/api/auth/verify \
+  -H "Content-Type: application/json" \
+  -d '{"wallet_address": "tb1qyouraddresshere", "signature": "BASE64_SIGNATURE", "email": "optional-email@example.com"}'</pre>
+    
+    <p><strong>Important:</strong> Your API key will be associated with your Bitcoin wallet address for payments and PSBT building.</p>
+
+    <h3>Auto-Sweep Behavior</h3>
+    <p><strong>Automatic Return:</strong> Commitment outputs are automatically swept back to the contract creator's wallet when tasks are completed and proven. This eliminates the need for manual sweeping and prevents fund loss. The sweep creates an on-chain record of contract fulfillment while returning funds to the rightful owner.</p>
+    
     <h3>Complete Payment Workflow</h3>
     <ol>
         <li><strong>Contractor associates wallet</strong> with their API key during registration/claim</li>
@@ -1154,7 +1479,7 @@ func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
 
     <h2>FAQ</h2>
     <ul>
-        <li><strong>Q: How do I get an API key?</strong> A: Contact the system administrator.</li>
+        <li><strong>Q: How do I get an API key?</strong> A: Use /auth to perform a Bitcoin wallet challenge and response to obtain an API key, or contact the system administrator to configure an API key.</li>
         <li><strong>Q: What tools are available?</strong> A: See /mcp/tools for the list with schemas.</li>
         <li><strong>Q: How to handle errors?</strong> A: Check error_code and docs_url in responses.</li>
     </ul>
@@ -2710,7 +3035,7 @@ func proofConfirmed(proof *smart_contract.MerkleProof) bool {
 	if strings.EqualFold(strings.TrimSpace(proof.ConfirmationStatus), "confirmed") {
 		return true
 	}
-	if proof.ConfirmedAt != nil {
+	if proof.SeenAt != nil && !proof.SeenAt.IsZero() {
 		return true
 	}
 	return false
