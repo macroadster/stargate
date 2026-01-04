@@ -48,7 +48,7 @@ func SweepCommitmentIfReady(ctx context.Context, store SweepStore, mempool *Memp
 	destinationAddress := ""
 	if proof.CreatorWallet != "" {
 		destinationAddress = strings.TrimSpace(proof.CreatorWallet)
-	} else if task != nil && task.MerkleProof != nil && task.MerkleProof.ApproverWallet != "" {
+	} else if task.MerkleProof != nil && task.MerkleProof.ApproverWallet != "" {
 		// Fallback to approver wallet if creator wallet not set (for contracts approved by approver)
 		destinationAddress = strings.TrimSpace(task.MerkleProof.ApproverWallet)
 	}
