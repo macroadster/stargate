@@ -44,10 +44,13 @@ func SweepCommitmentIfReady(ctx context.Context, store SweepStore, mempool *Memp
 	if strings.TrimSpace(proof.VisiblePixelHash) == "" {
 		return nil
 	}
-	// Determine destination address: creator's wallet first (auto-sweep to creator)
+	// Determine destination address: creator's wallet first, then approver wallet (auto-sweep to rightful owner)
 	destinationAddress := ""
 	if proof.CreatorWallet != "" {
 		destinationAddress = strings.TrimSpace(proof.CreatorWallet)
+	} else if task != nil && task.MerkleProof != nil && task.MerkleProof.ApproverWallet != "" {
+		// Fallback to approver wallet if creator wallet not set (for contracts approved by approver)
+		destinationAddress = strings.TrimSpace(task.MerkleProof.ApproverWallet)
 	}
 
 	// If no creator wallet, try contractor's wallet

@@ -44,6 +44,7 @@ type MerkleProof struct {
 	VisiblePixelHash       string      `json:"visible_pixel_hash,omitempty"`
 	ContractorWallet       string      `json:"contractor_wallet,omitempty"`
 	CreatorWallet          string      `json:"creator_wallet,omitempty"`
+	ApproverWallet         string      `json:"approver_wallet,omitempty"`
 	FundedAmountSats       int64       `json:"funded_amount_sats"`
 	FundingAddress         string      `json:"funding_address,omitempty"`
 	CommitmentRedeemScript string      `json:"commitment_redeem_script,omitempty"`
