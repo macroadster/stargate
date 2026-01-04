@@ -21,8 +21,8 @@ func BuildTasksFromMarkdown(proposalID, markdown string, visibleHash string, bud
 	for i, line := range lines {
 		trim := strings.TrimSpace(line)
 
-		// Look for proper task headers: "### Task X:" or "### Task X "
-		if strings.HasPrefix(trim, "### Task ") && (strings.Contains(trim, ":") || strings.HasSuffix(trim, ":")) {
+		// Look for proper task headers: "### Task X:" pattern
+		if strings.HasPrefix(trim, "### Task ") && strings.Contains(trim, ":") {
 			// Save previous task if exists
 			if currentTask != nil {
 				tasks = append(tasks, *currentTask)
@@ -140,11 +140,10 @@ func extractTaskDescription(markdown string, startIndex int) string {
 		return markdown
 	}
 
-	// Look ahead for deliverables and skills within task section
+	// Collect lines until next task header or major section
 	var descLines []string
-	inTaskSection := false
 
-	for i := startIndex; i < len(lines) && len(descLines) < 5; i++ {
+	for i := startIndex; i < len(lines); i++ {
 		line := strings.TrimSpace(lines[i])
 
 		// Stop at next task or major section
@@ -152,13 +151,8 @@ func extractTaskDescription(markdown string, startIndex int) string {
 			break
 		}
 
-		// Start collecting after task header
-		if strings.HasPrefix(line, "### Task ") {
-			inTaskSection = true
-			continue
-		}
-
-		if inTaskSection && line != "" {
+		// Collect non-empty lines
+		if line != "" {
 			descLines = append(descLines, line)
 		}
 	}

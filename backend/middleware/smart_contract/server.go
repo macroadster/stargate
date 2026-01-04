@@ -2378,14 +2378,17 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 					if _, ok := proposal.Metadata["embedded_message"].(string); !ok {
 						proposal.Metadata["embedded_message"] = desc
 					}
-					visible := strings.TrimSpace(proposal.VisiblePixelHash)
-					if visible == "" {
-						visible = strings.TrimSpace(toString(proposal.Metadata["visible_pixel_hash"]))
-					}
-					proposal.Tasks = scstore.BuildTasksFromMarkdown(proposal.ID, desc, visible, proposal.BudgetSats, scstore.FundingAddressFromMeta(proposal.Metadata))
-					if err := s.store.UpdateProposal(r.Context(), proposal); err != nil {
-						Error(w, http.StatusBadRequest, err.Error())
-						return
+					// Only create tasks if proposal doesn't already have them
+					if len(proposal.Tasks) == 0 {
+						visible := strings.TrimSpace(proposal.VisiblePixelHash)
+						if visible == "" {
+							visible = strings.TrimSpace(toString(proposal.Metadata["visible_pixel_hash"]))
+						}
+						proposal.Tasks = scstore.BuildTasksFromMarkdown(proposal.ID, desc, visible, proposal.BudgetSats, scstore.FundingAddressFromMeta(proposal.Metadata))
+						if err := s.store.UpdateProposal(r.Context(), proposal); err != nil {
+							Error(w, http.StatusBadRequest, err.Error())
+							return
+						}
 					}
 				}
 			}

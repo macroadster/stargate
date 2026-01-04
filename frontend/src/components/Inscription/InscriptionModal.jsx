@@ -1989,7 +1989,14 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                                         </span>
                                       </div>
                                       {task.description && (
-                                        <div className="text-green-800 dark:text-green-200 text-xs whitespace-pre-wrap">{task.description}</div>
+                                        <details className="text-green-800 dark:text-green-200 text-xs">
+                                          <summary className="cursor-pointer hover:text-green-600 dark:hover:text-green-400">
+                                                    Description ({task.description.length} chars)
+                                                  </summary>
+                                                  <div className="mt-1 p-2 bg-green-50 dark:bg-green-900/20 rounded border border-green-200 dark:border-green-700 whitespace-pre-wrap max-h-32 overflow-y-auto">
+                                                    {task.description}
+                                                  </div>
+                                                </details>
                                       )}
                                       <div className="text-xs text-green-700 dark:text-green-300 flex flex-wrap gap-3">
                                         {task.task_id && <span>ID: {task.task_id}</span>}

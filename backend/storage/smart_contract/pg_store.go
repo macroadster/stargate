@@ -1261,10 +1261,17 @@ func (s *PGStore) PublishProposal(ctx context.Context, id string) error {
 }
 
 // populateProposalTasks hydrates Tasks from metadata suggested_tasks or embedded_message.
+// Only creates tasks if none exist to prevent duplicates.
 func populateProposalTasks(p *smart_contract.Proposal) {
 	if p == nil {
 		return
 	}
+
+	// Don't create tasks if proposal already has them
+	if len(p.Tasks) > 0 {
+		return
+	}
+
 	if p.BudgetSats == 0 {
 		p.BudgetSats = DefaultBudgetSats()
 		if p.Metadata == nil {
@@ -1288,7 +1295,7 @@ func populateProposalTasks(p *smart_contract.Proposal) {
 			return
 		}
 	}
-	if em, ok := p.Metadata["embedded_message"].(string); ok && em != "" && len(p.Tasks) == 0 {
+	if em, ok := p.Metadata["embedded_message"].(string); ok && em != "" {
 		p.Tasks = BuildTasksFromMarkdown(p.ID, em, p.VisiblePixelHash, p.BudgetSats, FundingAddressFromMeta(p.Metadata))
 	}
 	if len(p.Tasks) == 0 {
