@@ -64,10 +64,35 @@ func SweepCommitmentIfReady(ctx context.Context, store SweepStore, mempool *Memp
 		proof.SweepStatus = ""
 		proof.SweepAttemptedAt = nil
 	}
+	log.Printf("commitment sweep DEBUG: task %s checking required fields - script: %s, vout: %d, txid: %s, hash: %s",
+		task.TaskID,
+		func() string {
+			if proof.CommitmentRedeemScript == "" {
+				return "EMPTY"
+			}
+			return proof.CommitmentRedeemScript[:10] + "..."
+		}(),
+		proof.CommitmentVout,
+		func() string {
+			if proof.TxID == "" {
+				return "EMPTY"
+			}
+			return proof.TxID
+		}(),
+		func() string {
+			if proof.VisiblePixelHash == "" {
+				return "EMPTY"
+			}
+			return proof.VisiblePixelHash[:10] + "..."
+		}())
+
 	if proof.CommitmentRedeemScript == "" || proof.CommitmentVout == 0 || proof.TxID == "" {
+		log.Printf("commitment sweep: missing required data for task %s - script_empty: %v, vout_zero: %v, txid_empty: %v",
+			task.TaskID, proof.CommitmentRedeemScript == "", proof.CommitmentVout == 0, proof.TxID == "")
 		return nil
 	}
 	if strings.TrimSpace(proof.VisiblePixelHash) == "" {
+		log.Printf("commitment sweep: missing visible pixel hash for task %s", task.TaskID)
 		return nil
 	}
 	donation := strings.TrimSpace(os.Getenv("STARLIGHT_DONATION_ADDRESS"))
