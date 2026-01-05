@@ -763,7 +763,7 @@ ON CONFLICT (contract_id) DO UPDATE SET
 		if t.MerkleProof != nil {
 			proofJSON, _ = json.Marshal(t.MerkleProof)
 		} else {
-			proofJSON = []byte("null")
+			proofJSON = nil // Use nil instead of "null" to let COALESCE preserve existing data
 		}
 		_, err := tx.Exec(ctx, `
 INSERT INTO mcp_tasks (task_id, contract_id, goal_id, title, description, budget_sats, skills, status, claimed_by, claimed_at, claim_expires_at, difficulty, estimated_hours, requirements, merkle_proof)
@@ -782,7 +782,7 @@ ON CONFLICT (task_id) DO UPDATE SET
   difficulty = EXCLUDED.difficulty,
   estimated_hours = EXCLUDED.estimated_hours,
   requirements = EXCLUDED.requirements,
-  merkle_proof = EXCLUDED.merkle_proof
+  merkle_proof = COALESCE(EXCLUDED.merkle_proof, mcp_tasks.merkle_proof)
 `, t.TaskID, t.ContractID, t.GoalID, t.Title, t.Description, t.BudgetSats, t.Skills, t.Status, t.ClaimedBy, t.ClaimedAt, t.ClaimExpires, t.Difficulty, t.EstimatedHours, string(reqJSON), string(proofJSON))
 		if err != nil {
 			return err

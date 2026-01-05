@@ -350,8 +350,15 @@ func (s *Server) upsertContractFromStegoPayload(ctx context.Context, contractID,
 			continue
 		}
 
-		// Create MerkleProof for script payout redemption
+		// Load existing task to preserve existing merkle_proof
+		existingTask, err := s.store.GetTask(t.TaskID)
 		var merkleProof *smart_contract.MerkleProof
+		if err == nil && existingTask.MerkleProof != nil {
+			// Preserve existing merkle_proof to avoid overwriting with nil
+			merkleProof = existingTask.MerkleProof
+		}
+
+		// Update MerkleProof for script payout redemption if contractor wallet exists
 		if strings.TrimSpace(t.ContractorWallet) != "" {
 			// Generate script for contractor wallet to enable proper payout redemption
 			payoutScript, err := generatePayoutScript(t.ContractorWallet)
@@ -360,7 +367,7 @@ func (s *Server) upsertContractFromStegoPayload(ctx context.Context, contractID,
 			} else {
 				// Calculate script hashes for proper redemption matching
 				scriptHash := sha256.Sum256(payoutScript)
-				merkleProof = &smart_contract.MerkleProof{
+				contractorProof := &smart_contract.MerkleProof{
 					VisiblePixelHash:       manifest.VisiblePixelHash,
 					ContractorWallet:       t.ContractorWallet,
 					CommitmentAddress:      t.ContractorWallet, // Use contractor wallet as commitment address for redemption
@@ -368,6 +375,21 @@ func (s *Server) upsertContractFromStegoPayload(ctx context.Context, contractID,
 					CommitmentRedeemHash:   hex.EncodeToString(scriptHash[:]),
 					ConfirmationStatus:     "provisional",
 					SeenAt:                 time.Now(),
+				}
+
+				// Merge with existing proof or use new one
+				if merkleProof == nil {
+					merkleProof = contractorProof
+				} else {
+					// Update contractor-specific fields while preserving other existing data
+					merkleProof.ContractorWallet = contractorProof.ContractorWallet
+					merkleProof.CommitmentAddress = contractorProof.CommitmentAddress
+					merkleProof.CommitmentRedeemScript = contractorProof.CommitmentRedeemScript
+					merkleProof.CommitmentRedeemHash = contractorProof.CommitmentRedeemHash
+					merkleProof.VisiblePixelHash = contractorProof.VisiblePixelHash
+					if merkleProof.SeenAt.IsZero() {
+						merkleProof.SeenAt = contractorProof.SeenAt
+					}
 				}
 			}
 		}

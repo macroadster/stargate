@@ -382,8 +382,8 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 			commitmentSats = 0
 			log.Printf("DEBUG: Setting commitmentSats=0 for skipped donation")
 		} else {
-			commitmentSats = contract.TotalBudgetSats
-			log.Printf("DEBUG: Setting commitmentSats=%d for donation", contract.TotalBudgetSats)
+			commitmentSats = 1000
+			log.Printf("DEBUG: Setting commitmentSats=1000 for donation")
 		}
 	}
 	// Only apply default for donation case if it was actually sent but empty
