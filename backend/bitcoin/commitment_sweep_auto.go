@@ -30,6 +30,17 @@ type SweepTaskStore interface {
 // SweepCommitmentIfReady builds and broadcasts a sweep transaction for confirmed commitment outputs.
 func SweepCommitmentIfReady(ctx context.Context, store SweepStore, mempool *MempoolClient, task smart_contract.Task, proof *smart_contract.MerkleProof) error {
 	if proof == nil {
+		log.Printf("commitment sweep: proof is nil for task %s", task.TaskID)
+		return nil
+	}
+	log.Printf("commitment sweep DEBUG: task %s proof status=%s sweep_status=%s txid=%s", task.TaskID, proof.ConfirmationStatus, proof.SweepStatus, proof.SweepTxID)
+	if proof.ConfirmationStatus != "confirmed" {
+		log.Printf("commitment sweep: proof not confirmed for task %s (status: %s)", task.TaskID, proof.ConfirmationStatus)
+		return nil
+	}
+	// Only exit early if sweep is confirmed
+	if proof.SweepStatus == "confirmed" {
+		log.Printf("commitment sweep: sweep already confirmed for task %s", task.TaskID)
 		return nil
 	}
 	if proof.ConfirmationStatus != "confirmed" {
