@@ -35,8 +35,22 @@ func SweepCommitmentIfReady(ctx context.Context, store SweepStore, mempool *Memp
 	if proof.ConfirmationStatus != "confirmed" {
 		return nil
 	}
-	if proof.SweepTxID != "" || proof.SweepStatus == "broadcast" || proof.SweepStatus == "confirmed" {
+	// Only exit early if sweep is confirmed
+	if proof.SweepStatus == "confirmed" {
 		return nil
+	}
+
+	// Allow retry for broadcast transactions that may have failed
+	if proof.SweepTxID != "" && proof.SweepStatus == "broadcast" {
+		// Check if enough time has passed since last broadcast attempt
+		if proof.SweepAttemptedAt != nil && time.Since(*proof.SweepAttemptedAt) < 10*time.Minute {
+			log.Printf("commitment sweep: skipping retry for task %s, last attempt %v ago", task.TaskID, time.Since(*proof.SweepAttemptedAt))
+			return nil
+		}
+		log.Printf("commitment sweep: retrying broadcast for task %s (previous tx: %s)", task.TaskID, proof.SweepTxID)
+		// Clear previous sweep info to allow retry
+		proof.SweepTxID = ""
+		proof.SweepStatus = ""
 	}
 	if proof.CommitmentRedeemScript == "" || proof.CommitmentVout == 0 || proof.TxID == "" {
 		return nil
