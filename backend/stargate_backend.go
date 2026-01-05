@@ -313,6 +313,10 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 	if err := scmiddleware.StartStegoPubsubSync(context.Background(), mcpRestServer); err != nil {
 		log.Printf("stego pubsub sync disabled: %v", err)
 	}
+	// Start escort service for proof lifecycle management
+	if err := mcpRestServer.StartEscortService(context.Background()); err != nil {
+		log.Printf("escort service failed to start: %v", err)
+	}
 	// Health endpoints
 	mux.HandleFunc("/api/health", container.HealthHandler.HandleHealth)
 	mux.HandleFunc("/api/ipfs-mirror/status", func(w http.ResponseWriter, r *http.Request) {
@@ -331,7 +335,7 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 
 	// Auth endpoints
 	keyHandler := handlers.NewAPIKeyHandler(apiKeyIssuer, apiKeyValidator, challengeStore)
-	mux.HandleFunc("/api/auth/register", keyHandler.HandleRegister)
+	// mux.HandleFunc("/api/auth/register", keyHandler.HandleRegister) // DISABLED for security
 	mux.HandleFunc("/api/auth/login", keyHandler.HandleLogin)
 	mux.HandleFunc("/api/auth/challenge", keyHandler.HandleChallenge)
 	mux.HandleFunc("/api/auth/verify", keyHandler.HandleVerify)

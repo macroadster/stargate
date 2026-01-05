@@ -33,43 +33,12 @@ func NewAPIKeyHandler(issuer auth.APIKeyIssuer, validator auth.APIKeyValidator, 
 	return &APIKeyHandler{BaseHandler: NewBaseHandler(), issuer: issuer, validator: validator, challenges: challenges}
 }
 
-// HandleRegister issues a new API key for the provided email and wallet.
-// Request: {"email":"user@example.com","wallet_address":"..."}
-// Response: {"api_key":"...","email":"user@example.com"}
+// HandleRegister is DISABLED for security reasons.
+// Email-based registration without validation is a security vulnerability.
+// Use wallet challenge verification instead.
 func (h *APIKeyHandler) HandleRegister(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		h.sendError(w, http.StatusMethodNotAllowed, "Method not allowed")
-		return
-	}
-
-	var body struct {
-		Email  string `json:"email"`
-		Wallet string `json:"wallet_address"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		h.sendError(w, http.StatusBadRequest, "invalid json")
-		return
-	}
-
-	email := strings.TrimSpace(body.Email)
-	wallet := strings.TrimSpace(body.Wallet)
-	if wallet == "" {
-		h.sendError(w, http.StatusBadRequest, "wallet_address required")
-		return
-	}
-
-	rec, err := h.issuer.Issue(email, wallet, "registration")
-	if err != nil {
-		h.sendError(w, http.StatusInternalServerError, "failed to issue api key")
-		return
-	}
-
-	h.sendSuccess(w, map[string]interface{}{
-		"api_key":    rec.Key,
-		"email":      rec.Email,
-		"wallet":     rec.Wallet,
-		"created_at": rec.CreatedAt,
-	})
+	h.sendError(w, http.StatusForbidden, "Email-based registration is disabled for security reasons. Use wallet challenge verification instead: POST /api/auth/challenge followed by POST /api/auth/verify")
+	return
 }
 
 // HandleLogin verifies an existing API key.

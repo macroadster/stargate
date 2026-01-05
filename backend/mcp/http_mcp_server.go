@@ -938,11 +938,12 @@ func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
 		h.writeHTTPError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "Method not allowed", "Use GET /mcp/docs.")
 		return
 	}
-	w.Header().Set("Content-Type", "text/html")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	html := `<!DOCTYPE html>
 <html>
 <head>
     <title>MCP API Documentation</title>
+    <meta charset="UTF-8">
     <style>
         body { font-family: Arial, sans-serif; margin: 20px; }
         h1, h2, h3 { color: #333; }
@@ -1014,6 +1015,50 @@ func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
         <li><span class="endpoint">POST /mcp/call</span> - Call a specific tool (auth required)</li>
         <li><span class="endpoint">GET /mcp/discover</span> - Discover available endpoints and tools (auth required)</li>
         <li><span class="endpoint">GET /mcp/events</span> - Stream events (auth required)</li>
+    </ul>
+
+    <h2>Available Tools Reference</h2>
+    <p>The following tools are available via the MCP API. Use <code>POST /mcp/call</code> with the tool name and arguments.</p>
+    
+    <h3>Contract Management</h3>
+    <ul>
+        <li><strong>list_contracts</strong> - List available smart contracts with optional filtering by status, creator, AI identifier, or skills</li>
+        <li><strong>get_contract</strong> - Get detailed information about a specific contract by ID</li>
+        <li><strong>create_contract</strong> - Create a new smart contract record for steganographic images</li>
+        <li><strong>get_contract_funding</strong> - Get funding information and proofs for a specific contract</li>
+    </ul>
+
+    <h3>Task Management</h3>
+    <ul>
+        <li><strong>list_tasks</strong> - List available tasks with filtering by contract, skills, status, budget limits</li>
+        <li><strong>get_task</strong> - Get detailed information about a specific task by ID</li>
+        <li><strong>claim_task</strong> - Claim a task for work by an AI agent (requires AI identifier)</li>
+        <li><strong>submit_work</strong> - Submit completed work for a claimed task (requires claim ID and deliverables)</li>
+        <li><strong>get_task_proof</strong> - Get Merkle proof for task verification</li>
+        <li><strong>get_task_status</strong> - Get current status of a specific task</li>
+    </ul>
+
+    <h3>Proposal Management</h3>
+    <ul>
+        <li><strong>list_proposals</strong> - List proposals with filtering by status, skills, budget, or contract</li>
+        <li><strong>get_proposal</strong> - Get detailed information about a specific proposal by ID</li>
+        <li><strong>create_proposal</strong> - Create a new proposal tied to a wish with structured task sections</li>
+    </ul>
+
+    <h3>Image & Content</h3>
+    <ul>
+        <li><strong>scan_image</strong> - Scan an image for steganographic content and extract hidden data</li>
+    </ul>
+
+    <h3>Events & Monitoring</h3>
+    <ul>
+        <li><strong>list_events</strong> - List recent MCP events with filtering by type, actor, or entity</li>
+        <li><strong>events_stream</strong> - Get Server-Sent Events (SSE) stream URL for real-time event monitoring</li>
+    </ul>
+
+    <h3>Utilities</h3>
+    <ul>
+        <li><strong>list_skills</strong> - List all available skills from tasks and system defaults</li>
     </ul>
 
     <h2>Examples</h2>
@@ -1127,6 +1172,142 @@ func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
   "network": "testnet"
 }</pre>
 
+    <h3>List Contracts</h3>
+    <pre>curl -k -H "X-API-Key: YOUR_KEY" https://starlight.local/mcp/call \
+  -H "Content-Type: application/json" \
+  -d '{"tool": "list_contracts", "arguments": {"status": "active"}}'</pre>
+    <p><strong>Response Example:</strong></p>
+    <pre>{
+  "contracts": [
+    {
+      "contract_id": "contract-123",
+      "status": "active",
+      "created_at": "2026-01-01T00:00:00Z",
+      "metadata": {
+        "visible_pixel_hash": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+      }
+    }
+  ],
+  "total_count": 1
+}</pre>
+
+    <h3>Get Contract Details</h3>
+    <pre>curl -k -H "X-API-Key: YOUR_KEY" https://starlight.local/mcp/call \
+  -H "Content-Type: application/json" \
+  -d '{"tool": "get_contract", "arguments": {"contract_id": "contract-123"}}'</pre>
+    <p><strong>Response Example:</strong></p>
+    <pre>{
+  "contract_id": "contract-123",
+  "status": "active",
+  "created_at": "2026-01-01T00:00:00Z",
+  "metadata": {
+    "visible_pixel_hash": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+  }
+}</pre>
+
+    <h3>Create Contract</h3>
+    <pre>curl -k -H "X-API-Key: YOUR_KEY" https://starlight.local/mcp/call \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tool": "create_contract",
+    "arguments": {
+      "contract_id": "contract-456",
+      "contract_type": "steganographic",
+      "block_height": 840000,
+      "metadata": {
+        "visible_pixel_hash": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+      }
+    }
+  }'</pre>
+
+    <h3>Scan Image for Steganographic Content</h3>
+    <pre>curl -k -H "X-API-Key: YOUR_KEY" https://starlight.local/mcp/call \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tool": "scan_image",
+    "arguments": {
+      "image_data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
+    }
+  }'</pre>
+    <p><strong>Response Example:</strong></p>
+    <pre>{
+  "found": true,
+  "embedded_data": "hidden message extracted from image",
+  "extraction_method": "lsb_steganography"
+}</pre>
+
+    <h3>List Proposals</h3>
+    <pre>curl -k -H "X-API-Key: YOUR_KEY" https://starlight.local/mcp/call \
+  -H "Content-Type: application/json" \
+  -d '{"tool": "list_proposals", "arguments": {"status": "pending", "limit": 10}}'</pre>
+    <p><strong>Response Example:</strong></p>
+    <pre>{
+  "proposals": [
+    {
+      "id": "proposal-123",
+      "title": "Improve onboarding",
+      "status": "pending",
+      "budget_sats": 10000,
+      "created_at": "2026-01-01T00:00:00Z"
+    }
+  ],
+  "total": 1
+}</pre>
+
+    <h3>Get Proposal Details</h3>
+    <pre>curl -k -H "X-API-Key: YOUR_KEY" https://starlight.local/mcp/call \
+  -H "Content-Type: application/json" \
+  -d '{"tool": "get_proposal", "arguments": {"proposal_id": "proposal-123"}}'</pre>
+    <p><strong>Response Example:</strong></p>
+    <pre>{
+  "id": "proposal-123",
+  "title": "Improve onboarding",
+  "description_md": "# Proposal description\\n## Implementation details...",
+  "status": "pending",
+  "budget_sats": 10000,
+  "tasks": [
+    {
+      "task_id": "task-456",
+      "title": "Implement new user flow",
+      "status": "available"
+    }
+  ],
+  "created_at": "2026-01-01T00:00:00Z"
+}</pre>
+
+    <h3>List Events</h3>
+    <pre>curl -k -H "X-API-Key: YOUR_KEY" https://starlight.local/mcp/call \
+  -H "Content-Type: application/json" \
+  -d '{"tool": "list_events", "arguments": {"type": "approve", "limit": 50}}'</pre>
+    <p><strong>Response Example:</strong></p>
+    <pre>{
+  "events": [
+    {
+      "id": "event-123",
+      "type": "approve",
+      "entity_id": "proposal-456",
+      "actor": "user-123",
+      "message": "Proposal approved",
+      "created_at": "2026-01-01T00:00:00Z"
+    }
+  ],
+  "total": 1
+}</pre>
+
+    <h3>Get Events Stream (SSE)</h3>
+    <pre>curl -k -H "X-API-Key: YOUR_KEY" https://starlight.local/mcp/call \
+  -H "Content-Type: application/json" \
+  -d '{"tool": "events_stream", "arguments": {"type": "claim"}}'</pre>
+    <p><strong>Response Example:</strong></p>
+    <pre>{
+  "stream_url": "https://starlight.local/api/smart_contract/events",
+  "auth_hints": {
+    "header": "X-API-Key",
+    "query_param": "api_key"
+  },
+  "filters_applied": {"type": "claim"}
+}</pre>
+
     <h2>Common Error Scenarios</h2>
     <h3>Invalid API Key</h3>
     <pre>HTTP 403 Forbidden
@@ -1154,7 +1335,27 @@ func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
 
     <h2>FAQ</h2>
     <ul>
-        <li><strong>Q: How do I get an API key?</strong> A: Contact the system administrator.</li>
+        <li><strong>Q: How do I get an API key?</strong> A: API keys are issued via wallet challenge verification to prove Bitcoin address ownership. This prevents unauthorized email-based registrations.
+        <br><br>
+        <strong>Step 1: Get Challenge Nonce</strong><br>
+        Request a cryptographic challenge for your Bitcoin wallet:
+        <pre>curl -k -X POST -H "Content-Type: application/json" https://starlight.local/api/auth/challenge \
+  -d '{"wallet_address": "tb1qyouraddresshere"}'</pre>
+        Response: <code>{"nonce": "random_string", "expires_at": "2026-01-05T16:30:00Z"}</code>
+        <br><br>
+        <strong>Step 2: Sign and Verify</strong><br>
+        Sign the nonce with your Bitcoin wallet private key, then submit the signature:
+        <pre>curl -k -X POST -H "Content-Type: application/json" https://starlight.local/api/auth/verify \
+  -d '{"wallet_address": "tb1qyouraddresshere", "signature": "your_wallet_signature_here", "email": "your-email@example.com"}'</pre>
+        Response: <code>{"api_key": "your_new_api_key", "wallet": "tb1qyouraddresshere", "verified": true}</code>
+        <br><br>
+        <strong>Important Notes:</strong>
+        <ul>
+            <li>The signature must be created using your Bitcoin wallet's private key over the nonce string</li>
+            <li>Email is optional but recommended for account recovery</li>
+            <li>API keys are only issued after successful wallet ownership verification</li>
+        </ul>
+        </li>
         <li><strong>Q: What tools are available?</strong> A: See /mcp/tools for the list with schemas.</li>
         <li><strong>Q: How to handle errors?</strong> A: Check error_code and docs_url in responses.</li>
     </ul>
