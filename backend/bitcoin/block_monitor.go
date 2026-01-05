@@ -1723,42 +1723,42 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 			if existingID, ok := matchedTxIDs[tx.TxID]; ok && existingID != match.ID {
 				log.Printf("oracle reconcile: skipping %s match for %s (tx %s already matched by funding_txid)", matchType, match.ID, tx.TxID)
 			} else {
-			destPath, err := bm.moveIngestionImageWithFilename(blockDir, match, blockImageFilename(match, tx.TxID))
-			if err != nil {
-				log.Printf("oracle reconcile: failed to move ingestion image for %s: %v", match.ID, err)
-				bm.maybeReconcileStego(match)
-			} else {
-				bm.maybeReconcileStego(match)
-				log.Printf("oracle reconcile: matched ingestion %s via %s=%s in tx %s witness", match.ID, matchType, matchedHash, tx.TxID)
-				imageFile := filepath.Base(destPath)
-				imagePath := filepath.Join("images", imageFile)
-				contractMeta := map[string]any{
-					"tx_id":              tx.TxID,
-					"block_height":       blockHeight,
-					"match_type":         matchType,
-					"match_hash":         matchedHash,
-					"image_file":         imageFile,
-					"image_path":         imagePath,
-					"ingestion_id":       match.ID,
-					"visible_pixel_hash": stringFromAny(match.Metadata["visible_pixel_hash"]),
+				destPath, err := bm.moveIngestionImageWithFilename(blockDir, match, blockImageFilename(match, tx.TxID))
+				if err != nil {
+					log.Printf("oracle reconcile: failed to move ingestion image for %s: %v", match.ID, err)
+					bm.maybeReconcileStego(match)
+				} else {
+					bm.maybeReconcileStego(match)
+					log.Printf("oracle reconcile: matched ingestion %s via %s=%s in tx %s witness", match.ID, matchType, matchedHash, tx.TxID)
+					imageFile := filepath.Base(destPath)
+					imagePath := filepath.Join("images", imageFile)
+					contractMeta := map[string]any{
+						"tx_id":              tx.TxID,
+						"block_height":       blockHeight,
+						"match_type":         matchType,
+						"match_hash":         matchedHash,
+						"image_file":         imageFile,
+						"image_path":         imagePath,
+						"ingestion_id":       match.ID,
+						"visible_pixel_hash": stringFromAny(match.Metadata["visible_pixel_hash"]),
+					}
+					mergeIngestionMetadata(contractMeta, match.Metadata)
+					applyStegoMetadata(contractMeta, match.Metadata)
+					smartContracts = upsertContractByID(smartContracts, SmartContractData{
+						ContractID:  match.ID,
+						BlockHeight: blockHeight,
+						ImagePath:   imagePath,
+						Confidence:  0,
+						Metadata:    contractMeta,
+					})
+					bm.markIngestionConfirmed(match, tx.TxID, blockHeight, imageFile, imagePath)
+					bm.updateTaskFundingProofsFromTx(match.ID, tx, blockHeight)
+					bm.confirmAndSweepContractTasks(match.ID, tx.TxID, blockHeight)
+					for _, candidate := range candidatesByID[match.ID] {
+						delete(primaryCandidates, candidate)
+						delete(fallbackCandidates, candidate)
+					}
 				}
-				mergeIngestionMetadata(contractMeta, match.Metadata)
-				applyStegoMetadata(contractMeta, match.Metadata)
-				smartContracts = upsertContractByID(smartContracts, SmartContractData{
-					ContractID:  match.ID,
-					BlockHeight: blockHeight,
-					ImagePath:   imagePath,
-					Confidence:  0,
-					Metadata:    contractMeta,
-				})
-				bm.markIngestionConfirmed(match, tx.TxID, blockHeight, imageFile, imagePath)
-				bm.updateTaskFundingProofsFromTx(match.ID, tx, blockHeight)
-				bm.confirmAndSweepContractTasks(match.ID, tx.TxID, blockHeight)
-				for _, candidate := range candidatesByID[match.ID] {
-					delete(primaryCandidates, candidate)
-					delete(fallbackCandidates, candidate)
-				}
-			}
 			}
 		}
 
@@ -1876,25 +1876,40 @@ func (bm *BlockMonitor) confirmAndSweepContractTasks(contractID, txid string, bl
 		log.Printf("oracle reconcile: failed to list tasks for %s: %v", contractID, err)
 		return
 	}
-	for _, task := range tasks {
+	log.Printf("oracle reconcile DEBUG: found %d tasks for contract %s", len(tasks), contractID)
+	log.Printf("oracle reconcile DEBUG: flushing logs")
+	for i, task := range tasks {
 		proof := task.MerkleProof
+		log.Printf("oracle reconcile DEBUG: task %d - ID: %s, proof: %v", i, task.TaskID, proof != nil)
+		log.Printf("oracle reconcile DEBUG: flushing logs")
+		log.Println() // Force flush
 		if proof == nil {
+			log.Printf("oracle reconcile DEBUG: skipping task %s - no proof", task.TaskID)
 			continue
 		}
+		log.Printf("oracle reconcile DEBUG: checking task %s proof.TxID=%s against txid=%s", task.TaskID, strings.TrimSpace(proof.TxID), strings.TrimSpace(txid))
 		if strings.TrimSpace(proof.TxID) != strings.TrimSpace(txid) {
+			log.Printf("oracle reconcile DEBUG: skipping task %s - txid mismatch", task.TaskID)
 			continue
 		}
+		log.Printf("oracle reconcile DEBUG: task %s confirmation_status=%s", task.TaskID, proof.ConfirmationStatus)
+		log.Printf("oracle reconcile DEBUG: flushing logs")
+		log.Println() // Force flush
 		if proof.ConfirmationStatus != "confirmed" {
 			now := time.Now()
 			proof.ConfirmationStatus = "confirmed"
 			proof.ConfirmedAt = &now
 			proof.BlockHeight = blockHeight
+			log.Printf("oracle reconcile DEBUG: confirming proof for task %s at block %d", task.TaskID, blockHeight)
 			if err := bm.sweepStore.UpdateTaskProof(context.Background(), task.TaskID, proof); err != nil {
 				log.Printf("oracle reconcile: failed to confirm proof for %s: %v", task.TaskID, err)
 			}
 		}
+		log.Printf("oracle reconcile DEBUG: attempting commitment sweep for task %s", task.TaskID)
 		if err := SweepCommitmentIfReady(context.Background(), bm.sweepStore, bm.sweepMempool, task, proof); err != nil {
 			log.Printf("oracle reconcile: sweep error for %s: %v", task.TaskID, err)
+		} else {
+			log.Printf("oracle reconcile DEBUG: commitment sweep successful for task %s", task.TaskID)
 		}
 	}
 }

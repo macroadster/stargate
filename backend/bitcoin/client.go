@@ -106,33 +106,85 @@ func NewBitcoinNodeClient(baseURL string) *BitcoinNodeClient {
 	}
 }
 
-// GetCurrentHeight gets the current blockchain height
+// GetCurrentHeight gets the current blockchain height with retry logic
 func (btc *BitcoinNodeClient) GetCurrentHeight() (int64, error) {
+	return btc.getCurrentHeightWithRetry(3)
+}
+
+// getCurrentHeightWithRetry attempts to get height with exponential backoff
+func (btc *BitcoinNodeClient) getCurrentHeightWithRetry(maxRetries int) (int64, error) {
+	var lastErr error
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		// Wait for rate limit with exponential backoff
+		if attempt > 0 {
+			waitTime := time.Duration(attempt*attempt) * time.Second
+			if waitTime > 10*time.Second {
+				waitTime = 10 * time.Second
+			}
+			time.Sleep(waitTime)
+		}
+
+		// Check rate limit
+		if !btc.rateLimiter.AllowRequest() {
+			lastErr = fmt.Errorf("rate limit exceeded (attempt %d/%d)", attempt+1, maxRetries)
+			continue
+		}
+
+		resp, err := btc.httpClient.Get(btc.baseURL + "/blocks/tip/height")
+		if err != nil {
+			lastErr = fmt.Errorf("failed to get current height: %w", err)
+			continue
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			lastErr = fmt.Errorf("bitcoin node returned status %d", resp.StatusCode)
+			continue
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			lastErr = fmt.Errorf("failed to read response: %w", err)
+			continue
+		}
+
+		height, err := strconv.ParseInt(strings.TrimSpace(string(body)), 10, 64)
+		if err != nil {
+			lastErr = fmt.Errorf("failed to parse height: %w", err)
+			continue
+		}
+
+		return height, nil
+	}
+
+	return 0, lastErr
+}
+
+// waitForRateLimit waits for rate limit to reset with exponential backoff
+func (btc *BitcoinNodeClient) waitForRateLimit(attempt int) error {
+	if attempt == 0 {
+		if !btc.rateLimiter.AllowRequest() {
+			return fmt.Errorf("rate limit exceeded")
+		}
+		return nil
+	}
+
+	// Exponential backoff with jitter
+	waitTime := time.Duration(attempt*attempt) * time.Second
+	if waitTime > 30*time.Second {
+		waitTime = 30 * time.Second
+	}
+
+	// Add some jitter to avoid thundering herd
+	jitter := time.Duration(float64(waitTime) * 0.1 * (0.5 + 0.5*float64(time.Now().UnixNano()%1000)/1000))
+	time.Sleep(waitTime + jitter)
+
 	if !btc.rateLimiter.AllowRequest() {
-		return 0, fmt.Errorf("rate limit exceeded")
+		return fmt.Errorf("rate limit exceeded after backoff")
 	}
 
-	resp, err := btc.httpClient.Get(btc.baseURL + "/blocks/tip/height")
-	if err != nil {
-		return 0, fmt.Errorf("failed to get current height: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return 0, fmt.Errorf("bitcoin node returned status %d", resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return 0, fmt.Errorf("failed to read response: %w", err)
-	}
-
-	height, err := strconv.ParseInt(strings.TrimSpace(string(body)), 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("failed to parse height: %w", err)
-	}
-
-	return height, nil
+	return nil
 }
 
 // GetBlockData gets comprehensive block data

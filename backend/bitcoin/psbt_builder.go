@@ -155,11 +155,12 @@ func BuildFundingPSBT(client *MempoolClient, params *chaincfg.Params, req PSBTRe
 			return nil, err
 		}
 		commitmentSats = req.CommitmentSats
-		if commitmentSats <= 0 {
-			commitmentSats = 1000
-		}
-		if commitmentSats < 546 {
-			commitmentSats = 546
+		// Only apply minimums for donations (non-zero commitment)
+		// Allow 0 commitment when user skips donation
+		if commitmentSats > 0 {
+			if commitmentSats < 546 {
+				commitmentSats = 546
+			}
 		}
 	}
 
@@ -247,7 +248,8 @@ func BuildFundingPSBT(client *MempoolClient, params *chaincfg.Params, req PSBTRe
 	for i, script := range payoutScripts {
 		tx.AddTxOut(&wire.TxOut{Value: payoutAmounts[i], PkScript: script})
 	}
-	if commitmentScript != nil {
+	// Only add commitment output if commitment_sats > 0 (avoids dust outputs)
+	if commitmentScript != nil && commitmentSats > 0 {
 		commitmentVout = uint32(len(tx.TxOut))
 		tx.AddTxOut(&wire.TxOut{Value: commitmentSats, PkScript: commitmentScript})
 	}

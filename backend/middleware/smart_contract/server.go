@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -371,6 +372,27 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		target = scstore.DefaultBudgetSats()
 	}
 
+	// Handle commitment_sats separately from budget_sats
+	commitmentSats := body.CommitmentSats
+	log.Printf("DEBUG: Initial body.CommitmentSats=%d, body.CommitmentTarget=%s", body.CommitmentSats, body.CommitmentTarget)
+	if commitmentSats <= 0 {
+		// If user is skipping donation (commitment_target != 'donation'), set commitment budget to 0
+		// Otherwise fall back to contract budget for task payouts
+		if body.CommitmentTarget != "donation" {
+			commitmentSats = 0
+			log.Printf("DEBUG: Setting commitmentSats=0 for skipped donation")
+		} else {
+			commitmentSats = contract.TotalBudgetSats
+			log.Printf("DEBUG: Setting commitmentSats=%d for donation", contract.TotalBudgetSats)
+		}
+	}
+	// Only apply default for donation case if it was actually sent but empty
+	if commitmentSats <= 0 && body.CommitmentTarget == "donation" && body.CommitmentSats == 0 {
+		commitmentSats = scstore.DefaultBudgetSats()
+		log.Printf("DEBUG: Setting commitmentSats=%d (default)", commitmentSats)
+	}
+	log.Printf("DEBUG: Final commitmentSats=%d", commitmentSats)
+
 	fundingMode, fundingAddress := s.resolveFundingMode(r.Context(), contractID)
 	primaryPayer := payerAddr
 	var fundraiserAddr btcutil.Address
@@ -635,7 +657,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 				PayerAddress:      payerTarget.Address,
 				TargetValueSats:   target,
 				PixelHash:         pixelBytes,
-				CommitmentSats:    body.CommitmentSats,
+				CommitmentSats:    commitmentSats,
 				CommitmentAddress: commitmentLockAddr,
 				Payouts:           payerPayouts,
 				FeeRateSatPerVB:   body.FeeRate,
@@ -735,7 +757,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 			raiseFundPayers,
 			payouts,
 			pixelBytes,
-			body.CommitmentSats,
+			commitmentSats,
 			commitmentLockAddr,
 			body.FeeRate,
 		)
@@ -745,7 +767,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 			PayerAddresses:    payerAddresses,
 			TargetValueSats:   target,
 			PixelHash:         pixelBytes,
-			CommitmentSats:    body.CommitmentSats,
+			CommitmentSats:    commitmentSats,
 			CommitmentAddress: commitmentLockAddr,
 			ContractorAddress: contractorAddr,
 			Payouts:           payouts,
@@ -956,7 +978,7 @@ func (s *Server) publishPendingStegoIngest(ctx context.Context, proposalID, visi
 		VisiblePixelHash: visible,
 		ImageCID:         stegoCID,
 		Filename:         "stego.png",
-		Method:           "stego",
+		Method:           getStegoMethodFromFilename("stego.png"), // Use appropriate method based on image format
 		Message:          message,
 		Price:            strings.TrimSpace(toString(meta["price"])),
 		PriceUnit:        strings.TrimSpace(toString(meta["price_unit"])),
@@ -2773,6 +2795,25 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 	default:
 		Error(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
+}
+
+// getStegoMethodForFilename determines the appropriate steganography method based on image format
+func getStegoMethodFromFilename(filename string) string {
+	// Default to lsb if we can't determine format
+	defaultMethod := "lsb"
+
+	// Try to determine from file extension
+	ext := strings.ToLower(filepath.Ext(filename))
+	switch ext {
+	case ".png":
+		return "alpha"
+	case ".jpg", ".jpeg":
+		return "exif"
+	case ".gif":
+		return "palette"
+	}
+
+	return defaultMethod
 }
 
 // buildProposalFromIngestion derives a proposal from a pending ingestion record.

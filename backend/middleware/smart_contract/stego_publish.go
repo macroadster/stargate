@@ -562,6 +562,21 @@ func (s *Server) inscribeStego(ctx context.Context, cfg stegoApprovalConfig, cov
 	if strings.TrimSpace(cfg.ProxyBase) == "" {
 		return nil, "", fmt.Errorf("stego proxy base not configured")
 	}
+
+	// Validate inputs before sending request
+	if len(cover) == 0 {
+		return nil, "", fmt.Errorf("cover image cannot be empty")
+	}
+	if strings.TrimSpace(filename) == "" {
+		return nil, "", fmt.Errorf("filename cannot be empty")
+	}
+	if strings.TrimSpace(method) == "" {
+		return nil, "", fmt.Errorf("method cannot be empty")
+	}
+	if len(message) == 0 {
+		return nil, "", fmt.Errorf("message cannot be empty")
+	}
+
 	var buf bytes.Buffer
 	writer := multipart.NewWriter(&buf)
 	part, err := writer.CreateFormFile("image", filename)
@@ -581,23 +596,86 @@ func (s *Server) inscribeStego(ctx context.Context, cfg stegoApprovalConfig, cov
 		return nil, "", err
 	}
 	reqURL := fmt.Sprintf("%s/inscribe", strings.TrimRight(cfg.ProxyBase, "/"))
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, &buf)
-	if err != nil {
-		return nil, "", err
+
+	var lastErr error
+	var resp *http.Response
+	var body []byte
+
+	// Retry inscribe with exponential backoff for transient failures
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			waitTime := time.Duration(attempt*attempt) * time.Second
+			if waitTime > 10*time.Second {
+				waitTime = 10 * time.Second
+			}
+			log.Printf("inscribe retry attempt %d/%d after %v wait", attempt+1, 3, waitTime)
+			time.Sleep(waitTime)
+		}
+
+		// Create fresh request for each attempt
+		var buf bytes.Buffer
+		writer := multipart.NewWriter(&buf)
+		part, err := writer.CreateFormFile("image", filename)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if _, err := io.Copy(part, bytes.NewReader(cover)); err != nil {
+			lastErr = err
+			continue
+		}
+		if err := writer.WriteField("message", string(message)); err != nil {
+			lastErr = err
+			continue
+		}
+		if err := writer.WriteField("method", method); err != nil {
+			lastErr = err
+			continue
+		}
+		if err := writer.Close(); err != nil {
+			lastErr = err
+			continue
+		}
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, &buf)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		req.Header.Set("Content-Type", writer.FormDataContentType())
+		if cfg.APIKey != "" {
+			req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
+		}
+
+		client := &http.Client{Timeout: cfg.InscribeTimeout}
+		resp, err = client.Do(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		body, _ = io.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			// Success!
+			break
+		}
+
+		// Log failure and continue to retry
+		lastErr = fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		log.Printf("inscribe attempt %d failed - URL: %s, Status: %s, Response: %s",
+			attempt+1, reqURL, resp.Status, strings.TrimSpace(string(body)))
+		log.Printf("inscribe request details - filename: %s, method: %s, message length: %d", filename, method, len(message))
+
+		// Don't retry on client errors (4xx) except 429 (rate limit)
+		if resp.StatusCode >= 400 && resp.StatusCode < 500 && resp.StatusCode != 429 {
+			break
+		}
 	}
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-	if cfg.APIKey != "" {
-		req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
-	}
-	client := &http.Client{Timeout: cfg.InscribeTimeout}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, "", err
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, "", fmt.Errorf("inscribe failed: %s: %s", resp.Status, strings.TrimSpace(string(body)))
+
+	if lastErr != nil {
+		return nil, "", fmt.Errorf("inscribe failed after retries: %w", lastErr)
 	}
 	var payload struct {
 		RequestID string `json:"request_id"`

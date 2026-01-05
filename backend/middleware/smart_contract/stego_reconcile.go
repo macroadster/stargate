@@ -13,10 +13,15 @@ import (
 	"mime/multipart"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/btcsuite/btcd/btcutil"
+	"github.com/btcsuite/btcd/chaincfg"
+	"github.com/btcsuite/btcd/txscript"
 
 	"stargate-backend/core/smart_contract"
 	"stargate-backend/ipfs"
@@ -41,6 +46,68 @@ type stegoReconcileConfig struct {
 	ProxyBase   string
 	APIKey      string
 	ScanTimeout time.Duration
+}
+
+// generatePayoutScript creates a Bitcoin script for the given address.
+func generatePayoutScript(address string) ([]byte, error) {
+	// Default to mainnet parameters
+	params := &chaincfg.MainNetParams
+	addr, err := btcutil.DecodeAddress(address, params)
+	if err != nil {
+		return nil, fmt.Errorf("decode address failed: %w", err)
+	}
+	script, err := txscript.PayToAddrScript(addr)
+	if err != nil {
+		return nil, fmt.Errorf("create payout script failed: %w", err)
+	}
+	return script, nil
+}
+
+// stringFromAny safely converts interface{} to string
+func stringFromAny(value any) string {
+	switch v := value.(type) {
+	case string:
+		return v
+	case []byte:
+		return string(v)
+	default:
+		return ""
+	}
+}
+
+// getStegoMethodFromImage determines the appropriate steganography method based on image format
+func getStegoMethodFromImage(imageBytes []byte, filename string) string {
+	// Default to lsb if we can't determine format
+	defaultMethod := "lsb"
+
+	// Try to determine from file extension first
+	ext := strings.ToLower(filepath.Ext(filename))
+	switch ext {
+	case ".png":
+		return "alpha"
+	case ".jpg", ".jpeg":
+		return "exif"
+	case ".gif":
+		return "palette"
+	}
+
+	// If extension doesn't work, try to detect from image header
+	if len(imageBytes) >= 8 {
+		// PNG signature: 89 50 4E 47
+		if imageBytes[0] == 0x89 && imageBytes[1] == 0x50 && imageBytes[2] == 0x4E && imageBytes[3] == 0x47 {
+			return "alpha"
+		}
+		// JPEG signature: FF D8 FF
+		if imageBytes[0] == 0xFF && imageBytes[1] == 0xD8 && imageBytes[2] == 0xFF {
+			return "exif"
+		}
+		// GIF signature: GIF87a or GIF89a
+		if len(imageBytes) >= 6 && string(imageBytes[:3]) == "GIF" {
+			return "palette"
+		}
+	}
+
+	return defaultMethod
 }
 
 func loadStegoReconcileConfig() stegoReconcileConfig {
@@ -211,10 +278,13 @@ func (s *Server) ensureStegoIngestion(ctx context.Context, contractID, stegoCID,
 		"origin_proposal_id":        manifest.ProposalID,
 		"visible_pixel_hash":        manifest.VisiblePixelHash,
 	}
+	// Determine appropriate steganography method based on image format
+	stegoMethod := getStegoMethodFromImage(stegoBytes, "stego.png")
+
 	rec := services.IngestionRecord{
 		ID:            contractID,
 		Filename:      "stego.png",
-		Method:        "stego",
+		Method:        stegoMethod,
 		MessageLength: 0,
 		ImageBase64:   base64.StdEncoding.EncodeToString(stegoBytes),
 		Metadata:      meta,
@@ -279,6 +349,29 @@ func (s *Server) upsertContractFromStegoPayload(ctx context.Context, contractID,
 		if strings.TrimSpace(t.TaskID) == "" {
 			continue
 		}
+
+		// Create MerkleProof for script payout redemption
+		var merkleProof *smart_contract.MerkleProof
+		if strings.TrimSpace(t.ContractorWallet) != "" {
+			// Generate script for contractor wallet to enable proper payout redemption
+			payoutScript, err := generatePayoutScript(t.ContractorWallet)
+			if err != nil {
+				log.Printf("stego reconcile: failed to generate payout script for task %s: %v", t.TaskID, err)
+			} else {
+				// Calculate script hashes for proper redemption matching
+				scriptHash := sha256.Sum256(payoutScript)
+				merkleProof = &smart_contract.MerkleProof{
+					VisiblePixelHash:       manifest.VisiblePixelHash,
+					ContractorWallet:       t.ContractorWallet,
+					CommitmentAddress:      t.ContractorWallet, // Use contractor wallet as commitment address for redemption
+					CommitmentRedeemScript: hex.EncodeToString(payoutScript),
+					CommitmentRedeemHash:   hex.EncodeToString(scriptHash[:]),
+					ConfirmationStatus:     "provisional",
+					SeenAt:                 time.Now(),
+				}
+			}
+		}
+
 		tasks = append(tasks, smart_contract.Task{
 			TaskID:           t.TaskID,
 			ContractID:       contractID,
@@ -289,6 +382,7 @@ func (s *Server) upsertContractFromStegoPayload(ctx context.Context, contractID,
 			Skills:           t.Skills,
 			Status:           "available",
 			ContractorWallet: t.ContractorWallet,
+			MerkleProof:      merkleProof,
 		})
 	}
 	sort.Slice(tasks, func(i, j int) bool {

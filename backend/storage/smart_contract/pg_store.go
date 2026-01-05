@@ -460,9 +460,14 @@ func (s *PGStore) SubmitWork(claimID string, deliverables map[string]interface{}
 		log.Printf("Failed to begin transaction: %v", err)
 		return smart_contract.Submission{}, fmt.Errorf("database transaction failed: %v", err)
 	}
+
+	// Track if transaction was committed to avoid unnecessary rollback warnings
+	txCommitted := false
 	defer func() {
-		if r := tx.Rollback(ctx); r != nil {
-			log.Printf("Warning: transaction rollback failed: %v", r)
+		if !txCommitted {
+			if r := tx.Rollback(ctx); r != nil {
+				log.Printf("Warning: transaction rollback failed: %v", r)
+			}
 		}
 	}()
 
@@ -567,6 +572,7 @@ func (s *PGStore) SubmitWork(claimID string, deliverables map[string]interface{}
 		log.Printf("Failed to commit transaction: %v", err)
 		return smart_contract.Submission{}, err
 	}
+	txCommitted = true
 
 	log.Printf("Successfully created submission %s for claim %s", subID, claimID)
 	return sub, nil

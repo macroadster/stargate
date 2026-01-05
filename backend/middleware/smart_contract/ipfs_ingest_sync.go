@@ -333,7 +333,7 @@ func ipfsIngestProcessManifest(ctx context.Context, ingest *services.IngestionSe
 		rec := services.IngestionRecord{
 			ID:            id,
 			Filename:      filepath.Base(entry.Path),
-			Method:        "stego",
+			Method:        getStegoMethodForFilename(entry.Path), // Use appropriate method based on image format
 			MessageLength: len(manifestBytes),
 			ImageBase64:   base64.StdEncoding.EncodeToString(blob),
 			Metadata: map[string]interface{}{
@@ -606,8 +606,26 @@ func enqueueIngestUpdate(ctx context.Context, ingest *services.IngestionService,
 	if err := ingest.EnqueueIngestUpdate(ctx, id, strings.TrimSpace(ann.VisiblePixelHash), strings.TrimSpace(ann.ProposalID), payload); err != nil {
 		return err
 	}
-	state.lastSeen[seenKey] = seenAt
 	return nil
+}
+
+// getStegoMethodForFilename determines appropriate steganography method based on image format
+func getStegoMethodForFilename(filename string) string {
+	// Default to lsb if we can't determine format
+	defaultMethod := "lsb"
+
+	// Try to determine from file extension
+	ext := strings.ToLower(filepath.Ext(filename))
+	switch ext {
+	case ".png":
+		return "alpha"
+	case ".jpg", ".jpeg":
+		return "exif"
+	case ".gif":
+		return "palette"
+	}
+
+	return defaultMethod
 }
 
 func signalIngestUpdateQueue(state *ipfsIngestSyncState) {
