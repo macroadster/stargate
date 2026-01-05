@@ -313,10 +313,6 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 	if err := scmiddleware.StartStegoPubsubSync(context.Background(), mcpRestServer); err != nil {
 		log.Printf("stego pubsub sync disabled: %v", err)
 	}
-	// Start escort service for proof lifecycle management
-	if err := mcpRestServer.StartEscortService(context.Background()); err != nil {
-		log.Printf("escort service failed to start: %v", err)
-	}
 	// Health endpoints
 	mux.HandleFunc("/api/health", container.HealthHandler.HandleHealth)
 	mux.HandleFunc("/api/ipfs-mirror/status", func(w http.ResponseWriter, r *http.Request) {
