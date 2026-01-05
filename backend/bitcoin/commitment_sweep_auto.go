@@ -96,14 +96,22 @@ func SweepCommitmentIfReady(ctx context.Context, store SweepStore, mempool *Memp
 		return nil
 	}
 	donation := strings.TrimSpace(os.Getenv("STARLIGHT_DONATION_ADDRESS"))
+	log.Printf("commitment sweep DEBUG: task %s donation address: %s", task.TaskID, func() string {
+		if donation == "" {
+			return "NOT_SET"
+		}
+		return donation[:10] + "..."
+	}())
 	if donation == "" {
 		return markSweepStatus(ctx, store, task.TaskID, proof, "skipped", "donation address not configured")
 	}
 
 	redeemScript, err := hex.DecodeString(strings.TrimSpace(proof.CommitmentRedeemScript))
 	if err != nil {
+		log.Printf("commitment sweep: failed to decode redeem script for task %s: %v", task.TaskID, err)
 		return markSweepStatus(ctx, store, task.TaskID, proof, "failed", "invalid redeem script")
 	}
+	log.Printf("commitment sweep DEBUG: task %s redeem script length: %d, hashlock_only: %v", task.TaskID, len(redeemScript), isHashlockOnlyRedeemScript(redeemScript))
 	if !isHashlockOnlyRedeemScript(redeemScript) {
 		return markSweepStatus(ctx, store, task.TaskID, proof, "skipped", "commitment redeem script requires signature")
 	}
