@@ -144,6 +144,10 @@ func SweepCommitmentIfReady(ctx context.Context, store SweepStore, mempool *Memp
 		if strings.Contains(err.Error(), "output below dust") {
 			return markSweepStatus(ctx, store, task.TaskID, proof, "skipped", err.Error())
 		}
+		// If transaction fetch failed, mark as retryable
+		if strings.Contains(err.Error(), "Transaction not found") {
+			return markSweepStatus(ctx, store, task.TaskID, proof, "skipped", "fetch retry: "+err.Error())
+		}
 		return markSweepStatus(ctx, store, task.TaskID, proof, "failed", err.Error())
 	}
 	log.Printf("commitment sweep DEBUG: task %s built sweep tx successfully - raw_tx_length=%d", task.TaskID, len(res.RawTxHex))
