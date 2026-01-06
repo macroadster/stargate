@@ -379,9 +379,20 @@ func (s *Server) upsertContractFromStegoPayload(ctx context.Context, contractID,
 
 				// Merge with existing proof or use new one
 				if merkleProof == nil {
+					// Preserve funding fields from existing task if available
+					if existingTask.MerkleProof != nil {
+						contractorProof.TxID = existingTask.MerkleProof.TxID
+						contractorProof.BlockHeight = existingTask.MerkleProof.BlockHeight
+						contractorProof.BlockHeaderMerkleRoot = existingTask.MerkleProof.BlockHeaderMerkleRoot
+						contractorProof.ProofPath = existingTask.MerkleProof.ProofPath
+						contractorProof.FundingAddress = existingTask.MerkleProof.FundingAddress
+						contractorProof.FundedAmountSats = existingTask.MerkleProof.FundedAmountSats
+						contractorProof.CommitmentVout = existingTask.MerkleProof.CommitmentVout
+						contractorProof.CommitmentSats = existingTask.MerkleProof.CommitmentSats
+					}
 					merkleProof = contractorProof
 				} else {
-					// Update contractor-specific fields while preserving other existing data
+					// Update contractor-specific fields while preserving existing data
 					merkleProof.ContractorWallet = contractorProof.ContractorWallet
 					merkleProof.CommitmentAddress = contractorProof.CommitmentAddress
 					merkleProof.CommitmentRedeemScript = contractorProof.CommitmentRedeemScript

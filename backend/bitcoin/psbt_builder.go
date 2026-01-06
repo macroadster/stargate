@@ -283,7 +283,7 @@ func BuildFundingPSBT(client *MempoolClient, params *chaincfg.Params, req PSBTRe
 		RedeemScript:     redeemScript,
 		RedeemScriptHash: redeemScriptHash,
 		CommitmentAddr:   commitmentAddr,
-		FundingTxID:      tx.TxHash().String(),
+		FundingTxID:      "", // Don't set until transaction is actually broadcast
 	}, nil
 }
 
@@ -541,7 +541,7 @@ func BuildRaiseFundPSBT(client *MempoolClient, params *chaincfg.Params, payers [
 		RedeemScript:     redeemScript,
 		RedeemScriptHash: redeemScriptHash,
 		CommitmentAddr:   commitmentAddr,
-		FundingTxID:      tx.TxHash().String(),
+		FundingTxID:      "", // Don't set until transaction is actually broadcast
 	}, nil
 }
 
