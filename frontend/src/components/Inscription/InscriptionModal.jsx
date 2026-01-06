@@ -820,7 +820,19 @@ const InscriptionModal = ({ inscription, onClose }) => {
       const res = await fetchWithTimeout(`${API_BASE}/api/smart_contract/proposals/${proposalId}/${endpoint}`, { method: 'POST' }, 6000);
       if (!res.ok) {
         const body = await res.text();
-        throw new Error(body || `HTTP ${res.status}`);
+        let errorMessage = body || `HTTP ${res.status}`;
+        try {
+          const parsedBody = JSON.parse(body);
+          const errorObj = parsedBody?.error;
+          errorMessage = 
+            parsedBody?.message || 
+            (typeof errorObj === 'string' ? errorObj : errorObj?.message || errorObj?.error) || 
+            body || 
+            `HTTP ${res.status}`;
+        } catch {
+          // Use original body if it's not valid JSON
+        }
+        throw new Error(errorMessage);
       }
       await loadProposals({ showLoading: true });
       toast.success(isPublish ? 'Proposal published' : 'Proposal approved & published');
@@ -913,7 +925,13 @@ const InscriptionModal = ({ inscription, onClose }) => {
       const data = await res.json();
       const payloadData = data?.data || data;
       if (!res.ok) {
-        throw new Error(data?.message || payloadData?.message || payloadData?.error || `HTTP ${res.status}`);
+        const errorObj = payloadData?.error || data?.error;
+        const errorMessage = 
+          data?.message || 
+          payloadData?.message || 
+          (typeof errorObj === 'string' ? errorObj : errorObj?.message || errorObj?.error) || 
+          `HTTP ${res.status}`;
+        throw new Error(errorMessage);
       }
       setPsbtResult(payloadData);
     } catch (err) {
