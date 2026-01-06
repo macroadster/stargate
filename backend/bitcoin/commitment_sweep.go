@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"log"
 
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
@@ -36,10 +37,13 @@ func BuildCommitmentSweepTx(client *MempoolClient, params *chaincfg.Params, txid
 		feeRate = 1
 	}
 
+	log.Printf("commitment sweep DEBUG: fetching txid=%s, vout=%d", txid, vout)
 	_, prevOut, err := client.FetchTxOutput(txid, vout)
 	if err != nil {
+		log.Printf("commitment sweep ERROR: failed to fetch txid=%s, vout=%d: %v", txid, vout, err)
 		return nil, fmt.Errorf("fetch commitment output: %w", err)
 	}
+	log.Printf("commitment sweep DEBUG: successfully fetched txid=%s, vout=%d, value=%d", txid, vout, prevOut.Value)
 
 	expectedPkScript, err := buildCommitmentP2WSHScript(params, redeemScript)
 	if err != nil {
