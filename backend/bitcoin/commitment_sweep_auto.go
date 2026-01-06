@@ -122,7 +122,8 @@ func SweepCommitmentIfReady(ctx context.Context, store SweepStore, mempool *Memp
 
 	params := sweepNetworkParamsFromEnv()
 
-	// All commitments (donation and contractor) are now hashlock-only and sweep to donation address
+	// Simple hashlock sweep - use the visible_pixel_hash as preimage to unlock
+	// The commitment script should be hashlock-only (no signature required)
 	destAddr, err := btcutil.DecodeAddress(donation, params)
 	if err != nil {
 		return markSweepStatus(ctx, store, task.TaskID, proof, "failed", "invalid donation address")
