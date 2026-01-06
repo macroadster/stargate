@@ -587,10 +587,11 @@ func buildCommitmentScript(params *chaincfg.Params, pixelHash []byte, commitment
 	}
 	var redeemScript []byte
 	var err error
-	if commitmentAddress != nil {
-		redeemScript, err = buildHashlockP2PKHRedeemScript(pixelHash, commitmentAddress)
-	} else {
-		redeemScript, err = buildHashlockRedeemScript(pixelHash)
+	// Both donation and contractor commitments should be hashlock-only (no signature required)
+	// commitmentAddress is used for display purposes only, not for script construction
+	redeemScript, err = buildHashlockRedeemScript(pixelHash)
+	if err != nil {
+		return nil, nil, nil, "", err
 	}
 	if err != nil {
 		return nil, nil, nil, "", err
