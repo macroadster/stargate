@@ -939,6 +939,7 @@ func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	base := h.externalBaseURL(r)
 	html := `<!DOCTYPE html>
 <html>
 <head>
@@ -962,13 +963,13 @@ func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
         <li>List tools: <code>GET /mcp/tools</code></li>
         <li>Call a tool: <code>POST /mcp/call</code> with JSON body</li>
     </ol>
-<pre>curl http://localhost:3001/mcp/docs</pre>
-    <pre>curl http://localhost:3001/mcp/openapi.json</pre>
-    <pre>curl -H "X-API-Key: your-key" http://localhost:3001/mcp/</pre>
-    <pre>curl -H "X-API-Key: your-key" http://localhost:3001/mcp/tools</pre>
+<pre>curl ` + base + `/mcp/docs</pre>
+    <pre>curl ` + base + `/mcp/openapi.json</pre>
+    <pre>curl -H "X-API-Key: your-key" ` + base + `/mcp/</pre>
+    <pre>curl -H "X-API-Key: your-key" ` + base + `/mcp/tools</pre>
     <pre>curl -X POST -H "Content-Type: application/json" -H "X-API-Key: your-key" \
   -d '{"tool": "list_contracts"}' \
-  http://localhost:3001/mcp/call</pre>
+  ` + base + `/mcp/call</pre>
 
     <h2>Authentication</h2>
     <p>Documentation endpoints (<code>/mcp/docs</code>, <code>/mcp/openapi.json</code>) are publicly accessible.
@@ -1063,13 +1064,13 @@ func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
 
     <h2>Examples</h2>
     <h3>Create a Wish (Inscribe)</h3>
-    <pre>curl -k -H "X-API-Key: YOUR_KEY" https://starlight.local/api/inscribe \
+    <pre>curl -k -H "X-API-Key: YOUR_KEY" ` + base + `/api/inscribe \
   -H "Content-Type: application/json" \
   -d '{"message":"your wish here", "image_base64":"your_image_here"}'</pre>
 
     <h3>Create a Proposal (Updated Guidelines)</h3>
     <p><strong>NEW:</strong> Use structured task sections in your proposal markdown for automatic task creation:</p>
-    <pre>curl -k -H "X-API-Key: YOUR_KEY" https://starlight.local/api/smart_contract/proposals \
+    <pre>curl -k -H "X-API-Key: YOUR_KEY" ` + base + `/api/smart_contract/proposals \
   -H "Content-Type: application/json" \
   -d '{
     "title": "Comprehensive Wish Enhancement Strategy",
@@ -1114,7 +1115,7 @@ func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
 
     <h3>Update a Pending Proposal</h3>
     <p>Only pending proposals can be updated. Use PATCH (or PUT) with the fields you want to change.</p>
-    <pre>curl -k -X PATCH -H "X-API-Key: YOUR_KEY" https://starlight.local/api/smart_contract/proposals/{PROPOSAL_ID} \
+    <pre>curl -k -X PATCH -H "X-API-Key: YOUR_KEY" ` + base + `/api/smart_contract/proposals/{PROPOSAL_ID} \
   -H "Content-Type: application/json" \
   -d '{
     "title": "Revised Proposal Title",
@@ -1122,21 +1123,21 @@ func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
   }'</pre>
 
     <h3>Approve a Proposal</h3>
-    <pre>curl -k -H "X-API-Key: YOUR_KEY" https://starlight.local/api/smart_contract/proposals/{PROPOSAL_ID}/approve</pre>
+    <pre>curl -k -H "X-API-Key: YOUR_KEY" ` + base + `/api/smart_contract/proposals/{PROPOSAL_ID}/approve</pre>
 
     <h3>List Available Tasks</h3>
-    <pre>curl -k -H "X-API-Key: YOUR_KEY" https://starlight.local/mcp/call \
+    <pre>curl -k -H "X-API-Key: YOUR_KEY" ` + base + `/mcp/call \
   -H "Content-Type: application/json" \
   -d '{"tool": "list_tasks", "arguments": {"status": "available"}}'</pre>
 
     <h3>Claim a Task</h3>
-    <pre>curl -k -H "X-API-Key: YOUR_KEY" https://starlight.local/mcp/call \
+    <pre>curl -k -H "X-API-Key: YOUR_KEY" ` + base + `/mcp/call \
   -H "Content-Type: application/json" \
   -d '{"tool": "claim_task", "arguments": {"task_id": "TASK_ID", "ai_identifier": "YOUR_AI_ID"}}'</pre>
 
     <h3>Associate Wallet with API Key</h3>
     <p><strong>Important:</strong> Your API key must be associated with a Bitcoin wallet address to receive payments and build PSBTs.</p>
-    <pre>curl -k -H "X-API-Key: YOUR_KEY" https://starlight.local/api/auth/register \
+    <pre>curl -k -H "X-API-Key: YOUR_KEY" ` + base + `/api/auth/register \
   -H "Content-Type: application/json" \
   -d '{"email": "your-email@example.com", "wallet_address": "tb1qyouraddresshere"}'</pre>
 
@@ -1150,12 +1151,12 @@ func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
     </ol>
 
     <h3>Submit Work</h3>
-    <pre>curl -k -H "X-API-Key: YOUR_KEY" https://starlight.local/mcp/call \
+    <pre>curl -k -H "X-API-Key: YOUR_KEY" ` + base + `/mcp/call \
   -H "Content-Type: application/json" \
   -d '{"tool": "submit_work", "arguments": {"claim_id": "CLAIM_ID", "deliverables": {"notes": "Your detailed work description"}}}'</pre>
 
     <h3>Get Payment Details (New Endpoint)</h3>
-    <pre>curl -k -H "X-API-Key: YOUR_KEY" https://starlight.local/api/smart_contract/contracts/{CONTRACT_ID}/payment-details</pre>
+    <pre>curl -k -H "X-API-Key: YOUR_KEY" ` + base + `/api/smart_contract/contracts/{CONTRACT_ID}/payment-details</pre>
     <p><strong>Response Example:</strong></p>
     <pre>{
   "contract_id": "contract-123",
@@ -1173,7 +1174,7 @@ func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
 }</pre>
 
     <h3>List Contracts</h3>
-    <pre>curl -k -H "X-API-Key: YOUR_KEY" https://starlight.local/mcp/call \
+    <pre>curl -k -H "X-API-Key: YOUR_KEY" ` + base + `/mcp/call \
   -H "Content-Type: application/json" \
   -d '{"tool": "list_contracts", "arguments": {"status": "active"}}'</pre>
     <p><strong>Response Example:</strong></p>
@@ -1192,7 +1193,7 @@ func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
 }</pre>
 
     <h3>Get Contract Details</h3>
-    <pre>curl -k -H "X-API-Key: YOUR_KEY" https://starlight.local/mcp/call \
+    <pre>curl -k -H "X-API-Key: YOUR_KEY" ` + base + `/mcp/call \
   -H "Content-Type: application/json" \
   -d '{"tool": "get_contract", "arguments": {"contract_id": "contract-123"}}'</pre>
     <p><strong>Response Example:</strong></p>
@@ -1206,7 +1207,7 @@ func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
 }</pre>
 
     <h3>Create Contract</h3>
-    <pre>curl -k -H "X-API-Key: YOUR_KEY" https://starlight.local/mcp/call \
+    <pre>curl -k -H "X-API-Key: YOUR_KEY" ` + base + `/mcp/call \
   -H "Content-Type: application/json" \
   -d '{
     "tool": "create_contract",
@@ -1221,7 +1222,7 @@ func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
   }'</pre>
 
     <h3>Scan Image for Steganographic Content</h3>
-    <pre>curl -k -H "X-API-Key: YOUR_KEY" https://starlight.local/mcp/call \
+    <pre>curl -k -H "X-API-Key: YOUR_KEY" ` + base + `/mcp/call \
   -H "Content-Type: application/json" \
   -d '{
     "tool": "scan_image",
@@ -1237,7 +1238,7 @@ func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
 }</pre>
 
     <h3>List Proposals</h3>
-    <pre>curl -k -H "X-API-Key: YOUR_KEY" https://starlight.local/mcp/call \
+    <pre>curl -k -H "X-API-Key: YOUR_KEY" ` + base + `/mcp/call \
   -H "Content-Type: application/json" \
   -d '{"tool": "list_proposals", "arguments": {"status": "pending", "limit": 10}}'</pre>
     <p><strong>Response Example:</strong></p>
@@ -1255,7 +1256,7 @@ func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
 }</pre>
 
     <h3>Get Proposal Details</h3>
-    <pre>curl -k -H "X-API-Key: YOUR_KEY" https://starlight.local/mcp/call \
+    <pre>curl -k -H "X-API-Key: YOUR_KEY" ` + base + `/mcp/call \
   -H "Content-Type: application/json" \
   -d '{"tool": "get_proposal", "arguments": {"proposal_id": "proposal-123"}}'</pre>
     <p><strong>Response Example:</strong></p>
@@ -1276,7 +1277,7 @@ func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
 }</pre>
 
     <h3>List Events</h3>
-    <pre>curl -k -H "X-API-Key: YOUR_KEY" https://starlight.local/mcp/call \
+    <pre>curl -k -H "X-API-Key: YOUR_KEY" ` + base + `/mcp/call \
   -H "Content-Type: application/json" \
   -d '{"tool": "list_events", "arguments": {"type": "approve", "limit": 50}}'</pre>
     <p><strong>Response Example:</strong></p>
@@ -1295,12 +1296,12 @@ func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
 }</pre>
 
     <h3>Get Events Stream (SSE)</h3>
-    <pre>curl -k -H "X-API-Key: YOUR_KEY" https://starlight.local/mcp/call \
+    <pre>curl -k -H "X-API-Key: YOUR_KEY" ` + base + `/mcp/call \
   -H "Content-Type: application/json" \
   -d '{"tool": "events_stream", "arguments": {"type": "claim"}}'</pre>
     <p><strong>Response Example:</strong></p>
     <pre>{
-  "stream_url": "https://starlight.local/api/smart_contract/events",
+  "stream_url": "` + base + `/api/smart_contract/events",
   "auth_hints": {
     "header": "X-API-Key",
     "query_param": "api_key"
@@ -1336,16 +1337,16 @@ func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
     <h2>FAQ</h2>
     <ul>
         <li><strong>Q: How do I get an API key?</strong> A: API keys are issued via wallet challenge verification to prove Bitcoin address ownership. This prevents unauthorized email-based registrations.
-        <br><br>
+         <br><br>
         <strong>Step 1: Get Challenge Nonce</strong><br>
         Request a cryptographic challenge for your Bitcoin wallet:
-        <pre>curl -k -X POST -H "Content-Type: application/json" https://starlight.local/api/auth/challenge \
+        <pre>curl -k -X POST -H "Content-Type: application/json" ` + base + `/api/auth/challenge \
   -d '{"wallet_address": "tb1qyouraddresshere"}'</pre>
         Response: <code>{"nonce": "random_string", "expires_at": "2026-01-05T16:30:00Z"}</code>
         <br><br>
         <strong>Step 2: Sign and Verify</strong><br>
         Sign the nonce with your Bitcoin wallet private key, then submit the signature:
-        <pre>curl -k -X POST -H "Content-Type: application/json" https://starlight.local/api/auth/verify \
+        <pre>curl -k -X POST -H "Content-Type: application/json" ` + base + `/api/auth/verify \
   -d '{"wallet_address": "tb1qyouraddresshere", "signature": "your_wallet_signature_here", "email": "your-email@example.com"}'</pre>
         Response: <code>{"api_key": "your_new_api_key", "wallet": "tb1qyouraddresshere", "verified": true}</code>
         <br><br>
