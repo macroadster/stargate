@@ -3,6 +3,7 @@ package bitcoin
 import (
 	"context"
 	"encoding/hex"
+	"fmt"
 	"log"
 	"os"
 	"strconv"
@@ -121,9 +122,28 @@ func SweepCommitmentIfReady(ctx context.Context, store SweepStore, mempool *Memp
 	}
 
 	params := sweepNetworkParamsFromEnv()
-	destAddr, err := btcutil.DecodeAddress(donation, params)
+
+	// Determine destination address based on commitment type
+	var destAddr btcutil.Address
+	var destType string
+
+	if !isHashlockOnlyRedeemScript(redeemScript) {
+		// Contractor commitment - sweep to contractor wallet
+		if proof.ContractorWallet == "" {
+			return markSweepStatus(ctx, store, task.TaskID, proof, "failed", "contractor commitment missing contractor wallet")
+		}
+		destAddr, err = btcutil.DecodeAddress(proof.ContractorWallet, params)
+		destType = "contractor"
+		log.Printf("commitment sweep: task %s sweeping contractor commitment to %s", task.TaskID, proof.ContractorWallet)
+	} else {
+		// Donation commitment - sweep to donation address
+		destAddr, err = btcutil.DecodeAddress(donation, params)
+		destType = "donation"
+		log.Printf("commitment sweep: task %s sweeping donation commitment to %s", task.TaskID, donation)
+	}
+
 	if err != nil {
-		return markSweepStatus(ctx, store, task.TaskID, proof, "failed", "invalid donation address")
+		return markSweepStatus(ctx, store, task.TaskID, proof, "failed", fmt.Sprintf("invalid %s address", destType))
 	}
 
 	feeRate := int64(1)
