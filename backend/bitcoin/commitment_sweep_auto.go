@@ -136,13 +136,17 @@ func SweepCommitmentIfReady(ctx context.Context, store SweepStore, mempool *Memp
 		}
 	}
 
+	log.Printf("commitment sweep DEBUG: task %s building sweep transaction - txid=%s, vout=%d, dest=%s",
+		task.TaskID, proof.TxID, proof.CommitmentVout, destAddr.String())
 	res, err := BuildCommitmentSweepTx(mempool, params, proof.TxID, proof.CommitmentVout, redeemScript, preimage, destAddr, feeRate)
 	if err != nil {
+		log.Printf("commitment sweep: failed to build sweep tx for task %s: %v", task.TaskID, err)
 		if strings.Contains(err.Error(), "output below dust") {
 			return markSweepStatus(ctx, store, task.TaskID, proof, "skipped", err.Error())
 		}
 		return markSweepStatus(ctx, store, task.TaskID, proof, "failed", err.Error())
 	}
+	log.Printf("commitment sweep DEBUG: task %s built sweep tx successfully - raw_tx_length=%d", task.TaskID, len(res.RawTxHex))
 
 	txid, err := mempool.BroadcastTx(res.RawTxHex)
 	if err != nil {
