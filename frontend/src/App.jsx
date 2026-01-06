@@ -11,6 +11,7 @@ import InscriptionModal from './components/Inscription/InscriptionModal';
 import DiscoverPage from './components/Discover/DiscoverPage';
 import AuthPage from './pages/AuthPage';
 import ContractsPage from './pages/ContractsPage';
+import McpDocsPage from './pages/McpDocsPage';
 import AppHeader from './components/Common/AppHeader';
 import { AuthProvider } from './context/AuthContext';
 
@@ -676,9 +677,9 @@ function MainContent() {
                </div>
                <span className="text-gray-400">Starlight</span>
              </div>
-             <div className="text-gray-400 text-sm">
-               💡 Are you a builder? Try our API!
-             </div>
+              <a href="/mcp/docs" className="text-gray-400 text-sm hover:text-gray-600 dark:hover:text-gray-200 transition-colors">
+                💡 Are you a builder? Try our API!
+              </a>
            </div>
          </div>
        </footer>
@@ -708,6 +709,7 @@ export default function App() {
         <Route path="/contracts" element={<ContractsPage />} />
         <Route path="/discover" element={<DiscoverPage />} />
         <Route path="/auth" element={<AuthPage />} />
+        <Route path="/mcp/docs" element={<McpDocsPage />} />
       </Routes>
     </AuthProvider>
   );
