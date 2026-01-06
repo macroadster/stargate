@@ -1887,9 +1887,9 @@ func (bm *BlockMonitor) confirmAndSweepContractTasks(contractID, txid string, bl
 			log.Printf("oracle reconcile DEBUG: skipping task %s - no proof", task.TaskID)
 			continue
 		}
-		log.Printf("oracle reconcile DEBUG: checking task %s proof.TxID=%s against txid=%s", task.TaskID, strings.TrimSpace(proof.TxID), strings.TrimSpace(txid))
-		if strings.TrimSpace(proof.TxID) != strings.TrimSpace(txid) {
-			log.Printf("oracle reconcile DEBUG: skipping task %s - txid mismatch", task.TaskID)
+		log.Printf("oracle reconcile DEBUG: checking task %s proof.TxID='%s' against txid='%s'", task.TaskID, proof.TxID, txid)
+		if proof.TxID == "" || strings.TrimSpace(proof.TxID) != strings.TrimSpace(txid) {
+			log.Printf("oracle reconcile DEBUG: skipping task %s - txid mismatch (proof='%s' vs txid='%s')", task.TaskID, proof.TxID, txid)
 			continue
 		}
 		log.Printf("oracle reconcile DEBUG: task %s confirmation_status=%s", task.TaskID, proof.ConfirmationStatus)

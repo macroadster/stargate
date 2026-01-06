@@ -358,48 +358,60 @@ func (s *Server) upsertContractFromStegoPayload(ctx context.Context, contractID,
 			merkleProof = existingTask.MerkleProof
 		}
 
-		// Update MerkleProof for script payout redemption if contractor wallet exists
+		// Update MerkleProof for commitment script - use hashlock script for donation sweeping
+		// Do NOT overwrite with P2WPKH since contractors are paid directly via PSBT payouts
 		if strings.TrimSpace(t.ContractorWallet) != "" {
-			// Generate script for contractor wallet to enable proper payout redemption
-			payoutScript, err := generatePayoutScript(t.ContractorWallet)
+			// Generate hashlock commitment script for donation sweeping
+			pixelHashBytes, err := hex.DecodeString(manifest.VisiblePixelHash)
 			if err != nil {
-				log.Printf("stego reconcile: failed to generate payout script for task %s: %v", t.TaskID, err)
+				log.Printf("stego reconcile: failed to decode visible pixel hash for task %s: %v", t.TaskID, err)
 			} else {
-				// Calculate script hashes for proper redemption matching
-				scriptHash := sha256.Sum256(payoutScript)
-				contractorProof := &smart_contract.MerkleProof{
-					VisiblePixelHash:       manifest.VisiblePixelHash,
-					ContractorWallet:       t.ContractorWallet,
-					CommitmentAddress:      t.ContractorWallet, // Use contractor wallet as commitment address for redemption
-					CommitmentRedeemScript: hex.EncodeToString(payoutScript),
-					CommitmentRedeemHash:   hex.EncodeToString(scriptHash[:]),
-					ConfirmationStatus:     "provisional",
-					SeenAt:                 time.Now(),
-				}
-
-				// Merge with existing proof or use new one
-				if merkleProof == nil {
-					// Preserve funding fields from existing task if available
-					if existingTask.MerkleProof != nil {
-						contractorProof.TxID = existingTask.MerkleProof.TxID
-						contractorProof.BlockHeight = existingTask.MerkleProof.BlockHeight
-						contractorProof.BlockHeaderMerkleRoot = existingTask.MerkleProof.BlockHeaderMerkleRoot
-						contractorProof.ProofPath = existingTask.MerkleProof.ProofPath
-						contractorProof.FundingAddress = existingTask.MerkleProof.FundingAddress
-						contractorProof.FundedAmountSats = existingTask.MerkleProof.FundedAmountSats
-						contractorProof.CommitmentVout = existingTask.MerkleProof.CommitmentVout
-						contractorProof.CommitmentSats = existingTask.MerkleProof.CommitmentSats
-					}
-					merkleProof = contractorProof
+				// Build hashlock script locally (same logic as PSBT builder)
+				lockHash := sha256.Sum256(pixelHashBytes)
+				builder := txscript.NewScriptBuilder()
+				builder.AddOp(txscript.OP_SHA256)
+				builder.AddData(lockHash[:])
+				builder.AddOp(txscript.OP_EQUAL)
+				redeemScript, err := builder.Script()
+				if err != nil {
+					log.Printf("stego reconcile: failed to build hashlock redeem script for task %s: %v", t.TaskID, err)
 				} else {
-					// Update contractor-specific fields while preserving existing data
-					merkleProof.ContractorWallet = contractorProof.ContractorWallet
-					merkleProof.CommitmentAddress = contractorProof.CommitmentAddress
-					merkleProof.CommitmentRedeemScript = contractorProof.CommitmentRedeemScript
-					merkleProof.CommitmentRedeemHash = contractorProof.CommitmentRedeemHash
-					merkleProof.VisiblePixelHash = contractorProof.VisiblePixelHash
-					if merkleProof.SeenAt.IsZero() {
-						merkleProof.SeenAt = contractorProof.SeenAt
+					// Calculate script hashes for proper redemption matching
+					scriptHash := sha256.Sum256(redeemScript)
+					contractorProof := &smart_contract.MerkleProof{
+						VisiblePixelHash:       manifest.VisiblePixelHash,
+						ContractorWallet:       t.ContractorWallet,
+						CommitmentAddress:      t.ContractorWallet, // Use contractor wallet as display address
+						CommitmentRedeemScript: hex.EncodeToString(redeemScript),
+						CommitmentRedeemHash:   hex.EncodeToString(scriptHash[:]),
+						ConfirmationStatus:     "provisional",
+						SeenAt:                 time.Now(),
+					}
+
+					// Merge with existing proof or use new one
+					if merkleProof == nil {
+						// Preserve funding fields from existing task if available
+						if existingTask.MerkleProof != nil {
+							contractorProof.TxID = existingTask.MerkleProof.TxID
+							contractorProof.BlockHeight = existingTask.MerkleProof.BlockHeight
+							contractorProof.BlockHeaderMerkleRoot = existingTask.MerkleProof.BlockHeaderMerkleRoot
+							contractorProof.ProofPath = existingTask.MerkleProof.ProofPath
+							contractorProof.FundingAddress = existingTask.MerkleProof.FundingAddress
+							contractorProof.FundedAmountSats = existingTask.MerkleProof.FundedAmountSats
+							contractorProof.CommitmentVout = existingTask.MerkleProof.CommitmentVout
+							contractorProof.CommitmentSats = existingTask.MerkleProof.CommitmentSats
+						}
+						merkleProof = contractorProof
+					} else {
+						// Update contractor-specific fields while preserving existing data
+						merkleProof.ContractorWallet = contractorProof.ContractorWallet
+						merkleProof.CommitmentAddress = contractorProof.CommitmentAddress
+						merkleProof.CommitmentRedeemScript = contractorProof.CommitmentRedeemScript
+						merkleProof.CommitmentRedeemHash = contractorProof.CommitmentRedeemHash
+						merkleProof.VisiblePixelHash = contractorProof.VisiblePixelHash
+						if merkleProof.SeenAt.IsZero() {
+							merkleProof.SeenAt = contractorProof.SeenAt
+						}
 					}
 				}
 			}
