@@ -12,23 +12,23 @@ func TestApproveProposalPreventsDoubleApproval(t *testing.T) {
 	store := NewMemoryStore(time.Hour)
 	ctx := context.Background()
 
-	    pendingA := smart_contract.Proposal{
-	        ID:     "p-a",
-	        Status: "pending",
-	        Metadata: map[string]interface{}{
-	            "contract_id":        "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b",
-	            "visible_pixel_hash": "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b", // Valid 64-char hex
-	        },
-	        Tasks: []smart_contract.Task{
-	        	{
-	        		TaskID:     "p-a-task-1",
-	        		ContractID: "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b",
-	        		Title:      "Task A",
-	        		BudgetSats: 1000,
-	        		Status:     "available",
-	        	},
-	        },
-	    }
+	pendingA := smart_contract.Proposal{
+		ID:     "p-a",
+		Status: "pending",
+		Metadata: map[string]interface{}{
+			"contract_id":        "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b",
+			"visible_pixel_hash": "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b", // Valid 64-char hex
+		},
+		Tasks: []smart_contract.Task{
+			{
+				TaskID:     "p-a-task-1",
+				ContractID: "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b",
+				Title:      "Task A",
+				BudgetSats: 1000,
+				Status:     "available",
+			},
+		},
+	}
 	pendingB := smart_contract.Proposal{
 		ID:     "p-b",
 		Status: "pending",

@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"log"
@@ -705,6 +704,9 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 				h.sendError(w, http.StatusBadRequest, "Invalid base64 image")
 				return
 			}
+			if filename == "" {
+				filename = "image.png"
+			}
 		}
 	} else {
 		// Reset the body for multipart parsing
@@ -819,30 +821,25 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 		publishPendingIngestAnnouncement(ingestionID, visibleHash, filename, method, embeddedMessage, price, priceUnit, address, fundingMode, imgBytes)
 	}
 	// Mirror into MCP contracts/open-contracts for AI + UI consistency.
-	h.upsertOpenContract(visibleHash, text, price)
+	// NOTE: Contract creation moved to after Starlight processing to ensure proper stego hash alignment
+	// h.upsertOpenContract(visibleHash, text, price)
 
 	// Proxy to starlight /inscribe to avoid direct frontend → Python exposure
 	if h.proxyBase != "" {
 		var buf bytes.Buffer
 		writer := multipart.NewWriter(&buf)
 
-		// File part (required by starlight)
+		// File part (required by starlight) - use io.Copy like working implementation
 		part, _ := writer.CreateFormFile("image", filename)
-		part.Write(imgBytes)
-
-		// Text & method (embed message, price, address as JSON string)
-		embedPayload := map[string]string{
-			"message":      embeddedMessage,
-			"price":        price,
-			"price_unit":   priceUnit,
-			"address":      address,
-			"funding_mode": fundingMode,
-		}
-		if msgJSON, err := json.Marshal(embedPayload); err == nil {
-			writer.WriteField("message", string(msgJSON))
+		if len(imgBytes) > 0 {
+			io.Copy(part, bytes.NewReader(imgBytes))
 		} else {
-			writer.WriteField("message", text)
+			// Use placeholder if no image provided
+			io.Copy(part, bytes.NewReader(placeholderPNG()))
 		}
+
+		// Message & method (simple text message like working implementation)
+		writer.WriteField("message", embeddedMessage)
 		writer.WriteField("method", method)
 		writer.Close()
 
@@ -857,70 +854,139 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 		if err == nil && resp != nil {
 			defer resp.Body.Close()
 			body, _ := io.ReadAll(resp.Body)
-			// Parse starlight response to extract image_sha256 and image_base64
-			var starlightResponse struct {
-				RequestID   string `json:"request_id"`
-				ID          string `json:"id"`
-				ImageSHA256 string `json:"image_sha256"`
-				ImageBase64 string `json:"image_base64"`
-			}
-			var visibleHash string
 			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				// Parse Starlight response to extract stego hash and image
+				var starlightResponse struct {
+					RequestID   string `json:"request_id"`
+					ID          string `json:"id"`
+					ImageSHA256 string `json:"image_sha256"`
+					ImageBase64 string `json:"image_base64"`
+				}
+
 				if err := json.Unmarshal(body, &starlightResponse); err == nil && starlightResponse.ImageSHA256 != "" {
-					// Update ingestion record with stego-processed image and correct hash
-					if imgBytes, err := base64.StdEncoding.DecodeString(starlightResponse.ImageBase64); err == nil {
-						// Compute hash of ACTUAL processed image we're storing
-						hash := sha256.Sum256(imgBytes)
-						visibleHash = hex.EncodeToString(hash[:])
-					}
+					// Update ingestion with stego hash and image
 					updates := map[string]interface{}{
-						"visible_pixel_hash":   visibleHash,
+						"visible_pixel_hash":   starlightResponse.ImageSHA256,
 						"starlight_request_id": starlightResponse.RequestID,
 					}
-					// Include image_base64 if starlight returned it (stego-processed image)
 					if starlightResponse.ImageBase64 != "" {
 						updates["image_base64"] = starlightResponse.ImageBase64
 					}
-					if err := h.ingestionService.UpdateMetadata(ingestionID, updates); err == nil {
-						// Use starlight's image_sha256 as visible pixel hash for consistency
-						visibleHash = starlightResponse.ImageSHA256
+					if h.ingestionService != nil {
+						if err := h.ingestionService.UpdateMetadata(ingestionID, updates); err == nil {
+							// Create NEW ingestion record with stego hash as ID for proper alignment
+							// This ensures the primary ID uses stego hash instead of clean hash
+							stegoIngestionID := starlightResponse.ImageSHA256
+							stegoIngestion := services.IngestionRecord{
+								ID:            stegoIngestionID,
+								Filename:      filename,
+								Method:        method,
+								MessageLength: len(embeddedMessage),
+								ImageBase64:   "", // Will be set below if available
+								Metadata: map[string]interface{}{
+									"original_ingestion_id": ingestionID,
+									"starlight_request_id":  starlightResponse.RequestID,
+								},
+								Status: "pending",
+							}
+							if starlightResponse.ImageBase64 != "" {
+								stegoIngestion.ImageBase64 = starlightResponse.ImageBase64
+							}
+
+							// Create the stego-based ingestion record
+							if err := h.ingestionService.Create(stegoIngestion); err != nil {
+								fmt.Printf("Failed to create stego ingestion record: %v\n", err)
+							} else {
+								fmt.Printf("Created new stego ingestion record: %s\n", stegoIngestionID)
+							}
+
+							// Create proposal with stego hash using the existing MCP flow
+							// The stego hash will be used as the visible_pixel_hash
+							// This ensures contracts and proposals are aligned
+							fmt.Printf("Creating proposal for stego hash: %s\n", starlightResponse.ImageSHA256)
+
+							ctx := context.Background()
+							proposalID := "proposal-" + starlightResponse.ImageSHA256
+
+							// Create simple task for proposal
+							task := sc.Task{
+								TaskID:      proposalID + ".1",
+								Title:       "Complete the stego inscription",
+								Description: "Process the steganography image and extract the embedded message",
+								Status:      "pending",
+							}
+
+							proposal := sc.Proposal{
+								ID:               proposalID,
+								Title:            "Wish: Auto-generated from inscription",
+								DescriptionMD:    embeddedMessage,
+								VisiblePixelHash: starlightResponse.ImageSHA256,
+								Tasks:            []sc.Task{task},
+								Status:           "pending",
+								CreatedAt:        time.Now(),
+							}
+
+							// Use the store to create the proposal
+							if err := h.store.CreateProposal(ctx, proposal); err == nil {
+								// Update contract to match stego hash
+								contractID := "wish-" + starlightResponse.ImageSHA256
+								h.updateContractID(visibleHash, contractID)
+							}
+
+							// Use the store to create the proposal
+							if err := h.store.CreateProposal(ctx, proposal); err == nil {
+								// Update contract to match stego hash
+								contractID := "wish-" + starlightResponse.ImageSHA256
+								h.updateContractID(visibleHash, contractID)
+							}
+						}
 					}
+					if starlightResponse.ImageBase64 != "" {
+						updates["image_base64"] = starlightResponse.ImageBase64
+					}
+
+					if h.ingestionService != nil {
+						if err := h.ingestionService.UpdateMetadata(ingestionID, updates); err == nil {
+							// Create proposal with stego hash using the existing MCP flow
+							// The stego hash will be used as the visible_pixel_hash
+							// This ensures contracts and proposals are aligned
+							fmt.Printf("Creating proposal for stego hash: %s\n", starlightResponse.ImageSHA256)
+
+							// Create proposal using the stego hash
+							ctx := context.Background()
+							proposal := sc.Proposal{
+								ID:               "proposal-" + starlightResponse.ImageSHA256,
+								Title:            "Wish: Auto-generated from inscription",
+								DescriptionMD:    embeddedMessage,
+								VisiblePixelHash: starlightResponse.ImageSHA256,
+								Status:           "pending",
+								CreatedAt:        time.Now(),
+							}
+
+							// Use the store to create the proposal
+							if err := h.store.CreateProposal(ctx, proposal); err == nil {
+								// Update contract to match stego hash
+								contractID := "wish-" + starlightResponse.ImageSHA256
+								h.updateContractID(visibleHash, contractID)
+							}
+						}
+					}
+
+					// Return success with stego hash
+					h.sendSuccess(w, map[string]string{
+						"status":             "success",
+						"id":                 ingestionID,
+						"ingestion_id":       ingestionID,
+						"visible_pixel_hash": starlightResponse.ImageSHA256,
+					})
+					return
 				}
-				// Return Go's standardized success response with updated data
-				h.sendSuccess(w, map[string]string{
-					"status":             "success",
-					"id":                 ingestionID,
-					"ingestion_id":       ingestionID,
-					"visible_pixel_hash": visibleHash,
-				})
-				return
 			}
-			if err := json.Unmarshal(body, &starlightResponse); err == nil && starlightResponse.ImageSHA256 != "" {
-				// Update ingestion record with stego-processed image and correct hash
-				updates := map[string]interface{}{
-					"visible_pixel_hash":   starlightResponse.ImageSHA256,
-					"starlight_request_id": starlightResponse.RequestID,
-				}
-				// Include image_base64 if starlight returned it (stego-processed image)
-				if starlightResponse.ImageBase64 != "" {
-					updates["image_base64"] = starlightResponse.ImageBase64
-				}
-				if err := h.ingestionService.UpdateMetadata(ingestionID, updates); err == nil {
-					// Use starlight's image_sha256 as visible pixel hash for consistency
-					visibleHash = starlightResponse.ImageSHA256
-				}
-			}
-			// Return Go's standardized success response with updated data
-			h.sendSuccess(w, map[string]string{
-				"status":             "success",
-				"id":                 ingestionID,
-				"ingestion_id":       ingestionID,
-				"visible_pixel_hash": visibleHash,
-			})
-			return
+			// log and fall through to local success to avoid 500 to UI
+			fmt.Printf("Starlight proxy responded %d: %s\n", resp.StatusCode, string(body))
+		} else {
+			fmt.Printf("Starlight proxy error: %v\n", err)
 		}
-		// log and fall through to local success to avoid 500 to UI
-		fmt.Printf("Starlight proxy error: %v\n", err)
 	}
 
 	// Fallback to legacy local inscription creation
@@ -1573,4 +1639,36 @@ func publishPendingIngestAnnouncement(ingestionID, visibleHash, filename, method
 
 func ipfsIngestSyncEnabled() bool {
 	return strings.EqualFold(strings.TrimSpace(os.Getenv("IPFS_INGEST_SYNC_ENABLED")), "true")
+}
+
+func (h *InscriptionHandler) updateContractID(oldHash, newContractID string) {
+	// Update the contract ID in the database to match the new stego hash
+	if h.store != nil {
+		// Try to get the existing contract by old ID first
+		contract, err := h.store.GetContract(oldHash)
+		if err != nil {
+			// Create new contract if it doesn't exist
+			contract = sc.Contract{
+				ContractID: newContractID,
+				Title:      "Auto-generated wish",
+				Status:     "pending",
+			}
+		} else {
+			// Update existing contract with new ID
+			contract.ContractID = newContractID
+		}
+
+		// Use the available upsert method
+		if upserter, ok := h.store.(interface {
+			UpsertContractWithTasks(ctx context.Context, contract sc.Contract, tasks []sc.Task) error
+		}); ok {
+			if err := upserter.UpsertContractWithTasks(context.Background(), contract, nil); err != nil {
+				fmt.Printf("Failed to update contract ID from %s to %s: %v\n", oldHash, newContractID, err)
+			} else {
+				fmt.Printf("Updated contract ID from %s to %s\n", oldHash, newContractID)
+			}
+		} else {
+			fmt.Printf("Store does not support UpsertContractWithTasks\n")
+		}
+	}
 }

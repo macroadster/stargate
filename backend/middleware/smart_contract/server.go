@@ -2859,9 +2859,14 @@ func BuildProposalFromIngestion(body ProposalCreateBody, rec *services.Ingestion
 		budget = budgetFromMeta(meta)
 	}
 	visible := body.VisiblePixelHash
-	if visible == "" && rec.ImageBase64 != "" {
-		if h, err := hashBase64(rec.ImageBase64); err == nil {
-			visible = h
+	if visible == "" {
+		// Use stego hash from metadata if available
+		if stegoHash, ok := meta["visible_pixel_hash"].(string); ok && strings.TrimSpace(stegoHash) != "" {
+			visible = stegoHash
+		} else if rec.ImageBase64 != "" {
+			if h, err := hashBase64(rec.ImageBase64); err == nil {
+				visible = h
+			}
 		}
 	}
 	if strings.TrimSpace(visible) != "" {

@@ -256,7 +256,7 @@ func TestProposalWorkflowTransitions(t *testing.T) {
 				ID:     "workflow-" + tt.name,
 				Status: tt.initialStatus,
 				Metadata: map[string]interface{}{
-					"visible_pixel_hash": uniqueHash, 
+					"visible_pixel_hash": uniqueHash,
 				},
 				Tasks: []smart_contract.Task{
 					{
@@ -361,14 +361,14 @@ func TestProposalVisibilityWithPixelHash(t *testing.T) {
 	// Test that setting visible_pixel_hash to contract ID doesn't cause disappearance
 	pixelHashAsContractID := "a1a2a3a4b1b2b3b4c1c2c3c4d1d2d3d4e1e2e3e4f1f2f3f4a0a0a0a0a0a0a0a0" // Valid 64-char hex
 
-		proposal := smart_contract.Proposal{
-			ID:     "visibility-test",
-			Status: "pending",
-			Metadata: map[string]interface{}{
-				"visible_pixel_hash": pixelHashAsContractID,
-				"contract_id":        pixelHashAsContractID,
-			},
-		}
+	proposal := smart_contract.Proposal{
+		ID:     "visibility-test",
+		Status: "pending",
+		Metadata: map[string]interface{}{
+			"visible_pixel_hash": pixelHashAsContractID,
+			"contract_id":        pixelHashAsContractID,
+		},
+	}
 
 	// Create proposal
 	if err := store.CreateProposal(ctx, proposal); err != nil {

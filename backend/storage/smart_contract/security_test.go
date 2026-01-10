@@ -70,15 +70,15 @@ func TestMetadataTamperingPrevention(t *testing.T) {
 		expectError bool
 		description string
 	}{
-			{
-				name: "Contract ID Spoofing",
-				metadata: map[string]interface{}{
-					"visible_pixel_hash": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2", // Valid hex hash
-					"contract_id":        "spoofed456",                                                 // Attempt to change contract ID
-				},
-				expectError: true,
-				description: "Should reject mismatched contract_id and visible_pixel_hash",
+		{
+			name: "Contract ID Spoofing",
+			metadata: map[string]interface{}{
+				"visible_pixel_hash": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2", // Valid hex hash
+				"contract_id":        "spoofed456",                                                       // Attempt to change contract ID
 			},
+			expectError: true,
+			description: "Should reject mismatched contract_id and visible_pixel_hash",
+		},
 		{
 			name: "Status Override in Metadata",
 			metadata: map[string]interface{}{
@@ -92,7 +92,7 @@ func TestMetadataTamperingPrevention(t *testing.T) {
 			name: "Malicious JSON Injection",
 			metadata: map[string]interface{}{
 				"visible_pixel_hash": "c3d4e5f6a7b8c9d0e1f2a3b4c5d6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4", // Valid hex hash
-				"injection":          "{\"__proto__\": {\"admin\": true}}",                                // Attempt to override status via metadata
+				"injection":          "{\"__proto__\": {\"admin\": true}}",                               // Attempt to override status via metadata
 			},
 			expectError: false,
 			description: "Should handle prototype pollution attempts",
