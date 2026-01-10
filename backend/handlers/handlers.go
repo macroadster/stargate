@@ -865,8 +865,9 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 
 				if err := json.Unmarshal(body, &starlightResponse); err == nil && starlightResponse.ImageSHA256 != "" {
 					// Update ingestion with stego hash and image
+					// Only update image_base64 and starlight_request_id - NOT visible_pixel_hash
+					// since visible_pixel_hash already contains the correct stego hash from previous successful call
 					updates := map[string]interface{}{
-						"visible_pixel_hash":   starlightResponse.ImageSHA256,
 						"starlight_request_id": starlightResponse.RequestID,
 					}
 					if starlightResponse.ImageBase64 != "" {
