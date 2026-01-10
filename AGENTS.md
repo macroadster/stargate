@@ -224,38 +224,6 @@ kubectl rollout restart deployment/stargate-frontend -n default
 kubectl rollout restart deployment/stargate-backend -n default
 ```
 
-### PSBT Verification (Commitment + Multi-Payout)
-
-```bash
-curl -sS -X POST http://starlight.local/api/smart_contract/contracts/<contract_id>/psbt \
-  -H 'Content-Type: application/json' \
-  -H 'X-API-Key: <payer_api_key>' \
-  -d '{
-    "contractor_wallet": "<fallback_address>",
-    "task_id": "<task_id>",
-    "budget_sats": <budget_sats>,
-    "fee_rate_sats_vb": 1,
-    "pixel_hash": "<visible_pixel_hash_hex>",
-    "payouts": [
-      {"address": "<contractor_a>", "amount_sats": 500},
-      {"address": "<contractor_b>", "amount_sats": 500}
-    ]
-  }' | jq .
-```
-
-Confirm the response includes `payout_scripts`, `payout_amounts`, `commitment_script`,
-`redeem_script`, and `commitment_address`.
-
-```bash
-curl -sS -X POST http://starlight.local/api/smart_contract/contracts/<contract_id>/commitment-psbt \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "task_id": "<task_id>",
-    "preimage": "<visible_pixel_hash_hex>",
-    "fee_rate_sats_vb": 1
-  }' | jq .
-```
-
 ### Code Style Guidelines
 
 #### Frontend (React/JavaScript)

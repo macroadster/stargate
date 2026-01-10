@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"log"
@@ -856,18 +857,70 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 		if err == nil && resp != nil {
 			defer resp.Body.Close()
 			body, _ := io.ReadAll(resp.Body)
+			// Parse starlight response to extract image_sha256 and image_base64
+			var starlightResponse struct {
+				RequestID   string `json:"request_id"`
+				ID          string `json:"id"`
+				ImageSHA256 string `json:"image_sha256"`
+				ImageBase64 string `json:"image_base64"`
+			}
+			var visibleHash string
 			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-				// We already mirrored to MCP; just return proxy response.
-				w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
-				w.WriteHeader(resp.StatusCode)
-				w.Write(body)
+				if err := json.Unmarshal(body, &starlightResponse); err == nil && starlightResponse.ImageSHA256 != "" {
+					// Update ingestion record with stego-processed image and correct hash
+					if imgBytes, err := base64.StdEncoding.DecodeString(starlightResponse.ImageBase64); err == nil {
+						// Compute hash of ACTUAL processed image we're storing
+						hash := sha256.Sum256(imgBytes)
+						visibleHash = hex.EncodeToString(hash[:])
+					}
+					updates := map[string]interface{}{
+						"visible_pixel_hash":   visibleHash,
+						"starlight_request_id": starlightResponse.RequestID,
+					}
+					// Include image_base64 if starlight returned it (stego-processed image)
+					if starlightResponse.ImageBase64 != "" {
+						updates["image_base64"] = starlightResponse.ImageBase64
+					}
+					if err := h.ingestionService.UpdateMetadata(ingestionID, updates); err == nil {
+						// Use starlight's image_sha256 as visible pixel hash for consistency
+						visibleHash = starlightResponse.ImageSHA256
+					}
+				}
+				// Return Go's standardized success response with updated data
+				h.sendSuccess(w, map[string]string{
+					"status":             "success",
+					"id":                 ingestionID,
+					"ingestion_id":       ingestionID,
+					"visible_pixel_hash": visibleHash,
+				})
 				return
 			}
-			// log and fall through to local success to avoid 500 to UI
-			fmt.Printf("Starlight proxy responded %d: %s\n", resp.StatusCode, string(body))
-		} else {
-			fmt.Printf("Starlight proxy error: %v\n", err)
+			if err := json.Unmarshal(body, &starlightResponse); err == nil && starlightResponse.ImageSHA256 != "" {
+				// Update ingestion record with stego-processed image and correct hash
+				updates := map[string]interface{}{
+					"visible_pixel_hash":   starlightResponse.ImageSHA256,
+					"starlight_request_id": starlightResponse.RequestID,
+				}
+				// Include image_base64 if starlight returned it (stego-processed image)
+				if starlightResponse.ImageBase64 != "" {
+					updates["image_base64"] = starlightResponse.ImageBase64
+				}
+				if err := h.ingestionService.UpdateMetadata(ingestionID, updates); err == nil {
+					// Use starlight's image_sha256 as visible pixel hash for consistency
+					visibleHash = starlightResponse.ImageSHA256
+				}
+			}
+			// Return Go's standardized success response with updated data
+			h.sendSuccess(w, map[string]string{
+				"status":             "success",
+				"id":                 ingestionID,
+				"ingestion_id":       ingestionID,
+				"visible_pixel_hash": visibleHash,
+			})
+			return
 		}
+		// log and fall through to local success to avoid 500 to UI
+		fmt.Printf("Starlight proxy error: %v\n", err)
 	}
 
 	// Fallback to legacy local inscription creation
