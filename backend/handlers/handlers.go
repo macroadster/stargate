@@ -870,7 +870,8 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 						}
 
 						proposalMeta := map[string]interface{}{
-							"ingestion_id": ingestionID,
+							"ingestion_id":       ingestionID,
+							"visible_pixel_hash": starlightResponse.ImageSHA256,
 						}
 
 						if starlightResponse.ImageBase64 != "" {
