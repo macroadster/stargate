@@ -36,7 +36,7 @@ export const useHorizontalScroll = () => {
 
         // Apply scroll based on velocity
         el.scrollLeft += scrollVelocity.current;
-        scrollVelocity.current *= 0.92; // Deceleration factor (slightly less aggressive)
+        scrollVelocity.current *= 0.95; // Deceleration factor (increased for smoother feel)
 
         if (Math.abs(scrollVelocity.current) < 0.1) { // Stop animation if velocity is very low
           stopAnimation();
