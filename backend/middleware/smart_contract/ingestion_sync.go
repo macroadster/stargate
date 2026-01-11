@@ -125,14 +125,6 @@ func processRecord(ctx context.Context, rec services.IngestionRecord, ingest *se
 	// Try JSON contract first.
 	contract, tasks, err := parseEmbeddedContract(raw)
 	if err != nil || contract.ContractID == "" || len(tasks) == 0 {
-		if store != nil {
-			visible := strings.TrimSpace(metaString(meta["visible_pixel_hash"]))
-			if visible != "" {
-				if _, err := store.GetContract("wish-" + visible); err != nil {
-					return ingest.UpdateStatusWithNote(rec.ID, "ignored", "wish not found for visible hash")
-				}
-			}
-		}
 		// Fallback: treat embedded_message as markdown wish -> create proposal only.
 		proposal, err := parseMarkdownProposal(rec.ID, raw, meta, rec.ImageBase64)
 		if err != nil {
@@ -234,9 +226,11 @@ func parseMarkdownProposal(ingestionID, markdown string, meta map[string]interfa
 
 	// Prefer visible pixel hash (from image scan) or the ingestionID directly to avoid duplicate wish-* wrappers.
 	contractIDBase := strings.TrimSpace(ingestionID)
+	var visibleHash string
 	if meta != nil {
 		if v, ok := meta["visible_pixel_hash"].(string); ok && strings.TrimSpace(v) != "" {
-			contractIDBase = strings.TrimSpace(v)
+			visibleHash = strings.TrimSpace(v)
+			contractIDBase = visibleHash
 		}
 	}
 	contractID := contractIDBase
@@ -248,6 +242,7 @@ func parseMarkdownProposal(ingestionID, markdown string, meta map[string]interfa
 
 	// Default proof placeholder with funding info (provisional).
 	defaultProof := &smart_contract.MerkleProof{
+		VisiblePixelHash:   visibleHash,
 		FundedAmountSats:   budget,
 		FundingAddress:     fundingAddr,
 		ConfirmationStatus: "provisional",
@@ -274,6 +269,9 @@ func parseMarkdownProposal(ingestionID, markdown string, meta map[string]interfa
 	}
 	meta["budget_sats"] = budget
 	meta["funding_address"] = fundingAddr
+	if visibleHash != "" {
+		meta["visible_pixel_hash"] = visibleHash
+	}
 
 	return smart_contract.Proposal{
 		ID:               contractID,
