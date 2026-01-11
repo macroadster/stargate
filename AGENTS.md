@@ -326,9 +326,8 @@ kubectl get pods -n default | grep stargate-backend | grep Running | awk '{print
 kubectl describe pod <pod-name> -n default | grep "Image:"
 # Should show: stargate-backend:latest (local) or macroadster/stargate-backend:latest (Docker Hub)
 
-# Verify image SHA256 matches what you built
-docker images | grep stargate-backend
-kubectl exec <pod-name> -n default -- md5sum /usr/local/bin/stargate
+# Verify image ID matches what you built
+docker images | grep stargate-backend  # Note the Image ID (SHA256)
 ```
 
 ### When to Use Build Commands
@@ -483,9 +482,9 @@ kubectl describe pod <pod-name> -n default | grep "Image:"
 # 2. Check if that image exists locally
 docker images | grep <image-name-from-step1>
 
-# 3. Verify image SHA256 matches your build
-docker images | grep stargate-backend  # Note the SHA256
-kubectl exec <pod-name> -n default -- md5sum /usr/local/bin/stargate  # Compare
+# 3. Verify image ID matches your build
+kubectl describe pod <pod-name> -n default | grep -A 5 "Image:" | grep "Image ID:"
+docker images | grep stargate-backend  # Note the Image ID (SHA256)
 
 # 4. Check deployment config
 kubectl get deployment stargate-backend -n default -o yaml | grep imagePullPolicy
@@ -507,9 +506,9 @@ When something "doesn't work" after deployment, check these in order:
 
 2. **Is the deployed code the new version?**
    ```bash
-   kubectl describe pod <pod-name> -n default | grep "Image ID:"
+   kubectl describe pod <pod-name> -n default | grep -A 5 "Image:" | grep "Image ID:"
    docker images | grep stargate-backend
-   # Compare SHA256 values
+   # Compare Image ID values
    ```
 
 3. **Is the bug actually in the code?**
@@ -540,11 +539,11 @@ Check what's actually running:
 # Get pod name
 kubectl get pods -n default | grep stargate-backend | grep Running | awk '{print $1}'
 
-# Check image SHA256
-kubectl describe pod <pod-name> -n default | grep "Image ID:"
+# Check image ID
+kubectl describe pod <pod-name> -n default | grep -A 5 "Image:" | grep "Image ID:"
 
 # Compare with local build
-docker images | grep stargate-backend
+docker images | grep stargate-backend  # Note: Local build Image ID (SHA256)
 ```
 
 **Issue: "Pod keeps crashing with ImagePullBackOff"**
@@ -561,6 +560,6 @@ docker images | grep stargate-backend
 
 **Issue: "Approval still times out after deployment"**
 
-- Verify code changes are in the binary: `kubectl exec <pod> -n default -- md5sum /usr/local/bin/stargate`
 - Check backend logs for the actual error: `kubectl logs <pod> -n default | grep -i "timeout\|stego"`
 - Review the fix logic - check both `stego_contract_id` AND skip reinscribing condition
+- Verify metadata is being set correctly during `/api/inscribe`
