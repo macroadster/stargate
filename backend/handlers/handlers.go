@@ -868,7 +868,7 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 							Title:       "Complete the stego inscription",
 							Description: "Process the steganography image and extract the embedded message",
 							BudgetSats:  parsePriceSats(price),
-							Status:      "pending",
+							Status:      "available",
 						}
 
 						proposalMeta := map[string]interface{}{
