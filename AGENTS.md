@@ -1,5 +1,38 @@
 # Agent Instructions (Stargate)
 
+**IMPORTANT: Read Build & Deployment Workflow section before touching deployment or images.**
+
+## Common Stuck Points
+
+Agents frequently get stuck on these issues. Before claiming tasks, understand:
+
+1. **"make backend" doesn't deploy automatically**
+   - `make backend` only builds Docker image locally
+   - Must follow "Proper Deployment Workflow" to actually deploy
+   - Never assume build = deploy
+
+2. **Don't blame "image not deployed" without verification**
+   - Check actual pod image: `kubectl describe pod <name> | grep "Image:"`
+   - Compare SHA256 with: `docker images | grep stargate-backend`
+   - Check code first before blaming deployment
+
+3. **Deployment verification is MANDATORY**
+   - After deploying, ALWAYS verify with kubectl commands
+   - Check backend logs for actual errors (not assumed issues)
+   - See "What to Check Before Blaming Deployment" section
+
+## Deployment Readiness Checklist
+
+Before claiming a deployment or image-related task, verify you understand:
+
+- [ ] Difference between `make backend` (local Docker build) and local dev runs
+- [ ] How to deploy local images vs Docker Hub images
+- [ ] How to verify which image is actually running in pods
+- [ ] How `imagePullPolicy` affects deployment behavior
+- [ ] When to use `kubectl rollout restart` vs `helm upgrade`
+
+**If unsure, read the "Proper Deployment Workflow" and "Troubleshooting Deployment Issues" sections first.**
+
 ## Beads Workflow
 
 - Issue lifecycle: `bd ready` → `bd update <id> --status in_progress` → work → `bd close <id>`.
@@ -71,11 +104,33 @@ bd close bd-42 --reason "Completed" --json
 
 1. **Check ready work**: `bd ready --json`
 2. **Claim your task**: `bd update <id> --status in_progress`
-3. **Work on it**: Implement, test, document
-4. **Discover new work?** Create linked issue:
+3. **Understand the task first**:
+   - Read relevant code files before making changes
+   - Check existing patterns and conventions
+   - Identify what actually needs to be fixed/improved
+4. **Work on it**: Implement, test, document
+5. **Deploy and verify** (if code changes):
+   - Follow "Proper Deployment Workflow" section
+   - Verify the deployed code actually has your changes
+   - NEVER assume deployment worked without verification
+6. **Discover new work?** Create linked issue:
    - `bd create "Found bug" -p 1 --deps discovered-from:<parent-id>`
-5. **Complete**: `bd close <id> --reason "Done"`
-6. **Commit together**: Always commit the `.beads/issues.jsonl` file together with the code changes so issue state stays in sync with code state
+7. **Complete**: `bd close <id> --reason "Done"`
+8. **Commit together**: Always commit the `.beads/issues.jsonl` file together with the code changes so issue state stays in sync with code state
+
+### Before Making Code Changes
+
+**ALWAYS do this first:**
+1. Read the file(s) you'll be editing
+2. Understand the current code structure
+3. Identify the specific location of the issue
+4. Check for similar patterns in the codebase
+
+**This prevents:**
+- Making random guesses about what code does
+- Breaking things you didn't understand
+- Getting stuck on build/deployment issues
+- Blaming "image not deployed" when code is wrong
 
 ### Auto-Sync
 
@@ -182,8 +237,110 @@ For more details, see README.md and QUICKSTART.md.
 - NEVER stop before pushing - that leaves work stranded locally
 - NEVER say "ready to push when you are" - YOU must push
 - If push fails, resolve and retry until it succeeds
+- Before blaming "image not deployed", follow "Troubleshooting Deployment Issues" section above
 
 ## Stargate Development Guide
+
+### Build & Deployment Workflow
+
+**CRITICAL: Docker vs Local Images**
+
+This project uses TWO different build methods. Do NOT confuse them:
+
+1. **Docker builds (for deployment)**:
+   ```bash
+   make backend  # Builds stargate-backend:latest Docker image
+   make frontend # Builds stargate-frontend:latest Docker image
+   ```
+   - Creates `stargate-backend:latest` and `stargate-frontend:latest` locally
+   - Used for Kubernetes deployment
+   - Images live in your local Docker daemon
+
+2. **Local dev builds (for local testing only)**:
+   ```bash
+   cd backend && go run stargate_backend.go  # Run Go locally
+   cd frontend && npm start                    # Run React locally
+   ```
+   - No Docker involved
+   - Only for local development
+   - Does NOT affect deployed services
+
+**DEPLOYMENT RULES:**
+
+1. **NEVER assume `make backend` automatically deploys** - it only builds locally
+2. **NEVER blame "image not deployed" without verifying** - check actual pod image
+3. **ALWAYS verify deployment** with `kubectl get pods` and `kubectl describe pod <name>`
+4. **If deployment uses Docker Hub images**, you must push there first
+5. **If using local images**, set `imagePullPolicy: Never` in deployment
+
+### Proper Deployment Workflow
+
+When you need to deploy code changes:
+
+**OPTION A: Deploy local Docker images (for testing)**
+```bash
+# 1. Build locally
+make backend
+make frontend
+
+# 2. Update deployment to use local images
+kubectl set image deployment/stargate-backend stargate=stargate-backend:latest -n default
+kubectl set image deployment/stargate-frontend stargate=stargate-frontend:latest -n default
+
+# 3. Force use of local images (bypass Docker Hub pull)
+kubectl patch deployment stargate-backend -n default -p '{"spec":{"template":{"spec":{"containers":[{"name":"stargate","image":"stargate-backend:latest","imagePullPolicy":"Never"}]}}}}'
+kubectl patch deployment stargate-frontend -n default -p '{"spec":{"template":{"spec":{"containers":[{"name":"stargate","image":"stargate-frontend:latest","imagePullPolicy":"Never"}]}}}}'
+
+# 4. Wait for rollout
+kubectl wait --for=condition=available --timeout=60s deployment/stargate-backend -n default
+kubectl wait --for=condition=available --timeout=60s deployment/stargate-frontend -n default
+
+# 5. Verify
+kubectl get pods -n default | grep stargate
+kubectl describe pod <new-pod-name> -n default | grep "Image:"
+```
+
+**OPTION B: Deploy via Helm chart (for production)**
+```bash
+# 1. Build and push to Docker Hub (if you have access)
+make backend
+docker tag stargate-backend:latest macroadster/stargate-backend:latest
+docker push macroadster/stargate-backend:latest
+
+# 2. Upgrade Helm release
+helm upgrade --install starlight-stack starlight-helm/ -f starlight-helm/values.yaml -n default
+
+# 3. Wait and verify
+kubectl wait --for=condition=available --timeout=60s deployment/stargate-backend -n default
+```
+
+**VERIFYING DEPLOYMENT:**
+```bash
+# Check running pods
+kubectl get pods -n default
+
+# Get new pod name
+kubectl get pods -n default | grep stargate-backend | grep Running | awk '{print $1}'
+
+# Check actual image deployed
+kubectl describe pod <pod-name> -n default | grep "Image:"
+# Should show: stargate-backend:latest (local) or macroadster/stargate-backend:latest (Docker Hub)
+
+# Verify image SHA256 matches what you built
+docker images | grep stargate-backend
+kubectl exec <pod-name> -n default -- md5sum /usr/local/bin/stargate
+```
+
+### When to Use Build Commands
+
+**Use `make backend` / `make frontend` ONLY for deployment:**
+- When you need to deploy code changes to Kubernetes cluster
+- When testing deployment workflow
+- NOT for local development
+
+**Use local dev builds for local testing:**
+- `cd backend && go run stargate_backend.go &`
+- `cd frontend && npm start &`
 
 ### Build Commands
 
@@ -207,22 +364,18 @@ go test ./...      # Run all tests (when implemented)
 go test -run TestSpecificFunction  # Run single test
 ```
 
-### Kubernetes Smoke Testing (starlight-stack)
+### Quick Testing (local only)
 
-Stargate is already deployed via the starlight-stack Helm chart. For quick
-cluster validation after code changes:
-
+**For quick validation WITHOUT building Docker images:**
 ```bash
-make all
+# Start backend locally (no Docker)
+cd backend && go run stargate_backend.go > backend.log &
+
+# Start frontend locally (no Docker)
+cd frontend && npm start > frontend.log &
 ```
 
-Then trigger a rolling restart for the updated workload(s) in the cluster
-(deployment names in default namespace):
-
-```bash
-kubectl rollout restart deployment/stargate-frontend -n default
-kubectl rollout restart deployment/stargate-backend -n default
-```
+**NOTE:** This only tests local code, not deployed cluster. Use "Proper Deployment Workflow" above for deployment.
 
 ### Code Style Guidelines
 
@@ -285,7 +438,129 @@ kubectl rollout restart deployment/stargate-backend -n default
 
 ### Development Workflow
 
-1. Start backend: `cd backend && go run stargate_backend.go &`
-2. Start frontend: `cd frontend && npm start`
-3. Backend runs on :3001, Frontend on :3000
-4. Use background processes for long-running servers
+**LOCAL DEVELOPMENT (testing code changes locally):**
+```bash
+# Start backend locally (no Docker)
+cd backend && go run stargate_backend.go > backend.log &
+
+# Start frontend locally (no Docker)
+cd frontend && npm start > frontend.log &
+
+# Backend runs on :3001, Frontend on :3000
+# Use background processes for long-running servers
+```
+
+**DEPLOYMENT (pushing code changes to cluster):**
+```bash
+# 1. Build Docker images
+make backend
+make frontend
+
+# 2. Deploy (choose OPTION A or B from "Proper Deployment Workflow" above)
+# - OPTION A: Local images (faster for testing)
+# - OPTION B: Helm chart + Docker Hub (production)
+
+# 3. Verify deployment with kubectl commands
+kubectl get pods -n default
+kubectl describe pod <new-pod> -n default | grep "Image:"
+```
+
+### Common Pitfalls
+
+**Don't blame "image not deployed" without evidence:**
+
+Common mistakes:
+- Assuming `make backend` automatically deploys to cluster
+- Assuming `helm upgrade` always pulls latest local images
+- Assuming `kubectl rollout restart` uses newly built images
+- Not verifying actual pod image after deployment
+
+**Before blaming deployment, verify:**
+```bash
+# 1. Check what image pod is actually using
+kubectl describe pod <pod-name> -n default | grep "Image:"
+
+# 2. Check if that image exists locally
+docker images | grep <image-name-from-step1>
+
+# 3. Verify image SHA256 matches your build
+docker images | grep stargate-backend  # Note the SHA256
+kubectl exec <pod-name> -n default -- md5sum /usr/local/bin/stargate  # Compare
+
+# 4. Check deployment config
+kubectl get deployment stargate-backend -n default -o yaml | grep imagePullPolicy
+```
+
+**If images don't match:**
+- Check deployment `imagePullPolicy` setting
+- Verify you're building to right image name
+- Check if Helm values override image settings
+### What to Check Before Blaming Deployment
+
+When something "doesn't work" after deployment, check these in order:
+
+1. **Did the code actually change?**
+   ```bash
+   git diff HEAD~1 backend/handlers/handlers.go
+   # Or review specific files you edited
+   ```
+
+2. **Is the deployed code the new version?**
+   ```bash
+   kubectl describe pod <pod-name> -n default | grep "Image ID:"
+   docker images | grep stargate-backend
+   # Compare SHA256 values
+   ```
+
+3. **Is the bug actually in the code?**
+   - Read the file you edited
+   - Check logic and error handling
+   - Look for typos or missing imports
+   - Don't assume "deployment failed" when code might be wrong
+
+4. **Check backend logs for actual errors:**
+   ```bash
+   kubectl logs <pod-name> -n default --tail=50 | grep -i error
+   ```
+
+5. **Then consider deployment issues:**
+   - Image not found
+   - ImagePullBackOff
+   - CrashLoopBackOff
+   - Pods not rolling out
+
+**Rule of thumb:** Check code first, then verify deployment, only then blame deployment.
+
+### Troubleshooting Deployment Issues (Detailed)
+
+**Issue: "Changes not visible after deployment"**
+
+Check what's actually running:
+```bash
+# Get pod name
+kubectl get pods -n default | grep stargate-backend | grep Running | awk '{print $1}'
+
+# Check image SHA256
+kubectl describe pod <pod-name> -n default | grep "Image ID:"
+
+# Compare with local build
+docker images | grep stargate-backend
+```
+
+**Issue: "Pod keeps crashing with ImagePullBackOff"**
+
+- Verify image exists locally: `docker images | grep stargate-backend`
+- If using local images, ensure `imagePullPolicy: Never` is set
+- If using Docker Hub, verify image exists: `docker pull macroadster/stargate-backend:latest`
+
+**Issue: "Old code still running"**
+
+- Check deployment actually updated: `kubectl get deployment stargate-backend -n default -o yaml | grep image:`
+- Force restart: `kubectl rollout restart deployment/stargate-backend -n default`
+- Wait for rollout: `kubectl rollout status deployment/stargate-backend -n default`
+
+**Issue: "Approval still times out after deployment"**
+
+- Verify code changes are in the binary: `kubectl exec <pod> -n default -- md5sum /usr/local/bin/stargate`
+- Check backend logs for the actual error: `kubectl logs <pod> -n default | grep -i "timeout\|stego"`
+- Review the fix logic - check both `stego_contract_id` AND skip reinscribing condition
