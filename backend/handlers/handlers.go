@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -868,6 +869,19 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 							Status:      "pending",
 						}
 
+						proposalMeta := map[string]interface{}{
+							"ingestion_id": ingestionID,
+						}
+
+						if starlightResponse.ImageBase64 != "" {
+							stegoBytes, err := base64.StdEncoding.DecodeString(starlightResponse.ImageBase64)
+							if err == nil {
+								stegoSum := sha256.Sum256(stegoBytes)
+								stegoContractID := hex.EncodeToString(stegoSum[:])
+								proposalMeta["stego_contract_id"] = stegoContractID
+							}
+						}
+
 						proposal := sc.Proposal{
 							ID:               proposalID,
 							Title:            "Wish: Auto-generated from inscription",
@@ -876,6 +890,7 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 							Tasks:            []sc.Task{task},
 							Status:           "pending",
 							CreatedAt:        time.Now(),
+							Metadata:         proposalMeta,
 						}
 
 						if err := h.store.CreateProposal(ctx, proposal); err != nil {
