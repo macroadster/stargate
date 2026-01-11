@@ -782,6 +782,7 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 
 	// Proxy to starlight /inscribe to avoid direct frontend → Python exposure
 	if h.proxyBase != "" {
+		fmt.Printf("DEBUG: Proxy path selected, proxyBase=%s\n", h.proxyBase)
 		var buf bytes.Buffer
 		writer := multipart.NewWriter(&buf)
 
@@ -866,6 +867,7 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 							TaskID:      proposalID + ".1",
 							Title:       "Complete the stego inscription",
 							Description: "Process the steganography image and extract the embedded message",
+							BudgetSats:  parsePriceSats(price),
 							Status:      "pending",
 						}
 
@@ -921,14 +923,20 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 					return
 				}
 			}
-			fmt.Printf("Starlight proxy responded %d: %s\n", resp.StatusCode, string(body))
-		} else {
-			fmt.Printf("Starlight proxy error: %v\n", err)
+
+			// Starlight-api returned an error - forward the error to client
+			// Don't fall back to local inscription - that causes duplicate proposal creation
+			w.WriteHeader(resp.StatusCode)
+			w.Write(body)
+			return
 		}
 	}
 
+	// Only use fallback path if proxy is not configured
 	// Fallback to legacy local inscription creation
+	fmt.Printf("DEBUG: Taking fallback path (proxy not configured)\n")
 	visibleHash := computeVisiblePixelHash(imgBytes, embeddedMessage)
+
 	req := models.InscribeRequest{
 		Text:    embeddedMessage,
 		Price:   price,
@@ -946,38 +954,6 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 	if err != nil {
 		h.sendError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to create inscription: %v", err))
 		return
-	}
-
-	// Auto-create ingestion record for MCP sync so proposals are generated.
-	if h.ingestionService != nil {
-		imgB64 := base64.StdEncoding.EncodeToString(imgBytes)
-		meta := map[string]interface{}{
-			"embedded_message": embeddedMessage,
-			"message":          text,
-			"wish_timestamp":   wishTimestamp,
-			"price":            price,
-			"price_unit":       priceUnit,
-			"address":          address,
-			"funding_mode":     fundingMode,
-		}
-		if strings.EqualFold(priceUnit, "sats") {
-			meta["budget_sats"] = parsePriceSats(price)
-		}
-		ingRec := services.IngestionRecord{
-			ID:            visibleHash,
-			Filename:      filename,
-			Method:        method,
-			MessageLength: len(embeddedMessage),
-			ImageBase64:   imgB64,
-			Metadata:      meta,
-			Status:        "pending",
-		}
-		if ingRec.Filename == "" {
-			ingRec.Filename = "inscription.png"
-		}
-		if err := h.ingestionService.Create(ingRec); err != nil {
-			fmt.Printf("Failed to create ingestion record for %s: %v\n", visibleHash, err)
-		}
 	}
 
 	h.sendSuccess(w, map[string]string{
