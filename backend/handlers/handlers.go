@@ -887,7 +887,7 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 
 						proposal := sc.Proposal{
 							ID:               proposalID,
-							Title:            "Wish: Auto-generated from inscription",
+							Title:            embeddedMessage,
 							DescriptionMD:    embeddedMessage,
 							VisiblePixelHash: starlightResponse.ImageSHA256,
 							Tasks:            []sc.Task{task},
