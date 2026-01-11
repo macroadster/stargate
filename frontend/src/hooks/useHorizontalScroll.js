@@ -3,7 +3,7 @@ import { useRef, useEffect, useState } from 'react';
 export const useHorizontalScroll = () => {
   const elRef = useRef();
   const [isDragging, setIsDragging] = useState(false);
-  const [isClick, setIsClick] = useState(false);
+  const dragThreshold = 5; // Pixels to move before considering it a drag
 
   useEffect(() => {
     const el = elRef.current;
@@ -20,41 +20,40 @@ export const useHorizontalScroll = () => {
       let isDown = false;
       let startX;
       let scrollLeft;
-      let walk = 0;
+      let initialPageX;
 
       const onMouseDown = (e) => {
         isDown = true;
-        setIsDragging(false);
-        setIsClick(false);
         el.classList.add('active');
+        initialPageX = e.pageX;
         startX = e.pageX - el.offsetLeft;
         scrollLeft = el.scrollLeft;
-        walk = 0;
+        setIsDragging(false); // Reset dragging state on mouse down
       };
 
       const onMouseLeave = () => {
         isDown = false;
         el.classList.remove('active');
+        el.classList.remove('dragging');
       };
 
       const onMouseUp = () => {
         isDown = false;
         el.classList.remove('active');
-        if (walk < 5) {
-          setIsClick(true);
-        }
-        setTimeout(() => {
-          setIsDragging(false);
-          setIsClick(false);
-        }, 0);
+        el.classList.remove('dragging');
       };
 
       const onMouseMove = (e) => {
         if (!isDown) return;
         e.preventDefault();
-        setIsDragging(true);
         const x = e.pageX - el.offsetLeft;
-        walk = x - startX;
+        const walk = (x - startX); // Raw pixel movement
+
+        // Only set isDragging to true if movement exceeds threshold
+        if (Math.abs(e.pageX - initialPageX) > dragThreshold) {
+            setIsDragging(true);
+        }
+        
         el.scrollLeft = scrollLeft - walk;
       };
 
@@ -73,5 +72,5 @@ export const useHorizontalScroll = () => {
       };
     }
   }, []);
-  return { elRef, isDragging, isClick };
+  return { elRef, isDragging };
 };
