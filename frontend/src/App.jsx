@@ -19,6 +19,8 @@ import { useBlocks } from './hooks/useBlocks';
 import { useInscriptions } from './hooks/useInscriptions';
 import { API_BASE, CONTENT_BASE } from './apiBase';
 
+import { useHorizontalScroll } from './hooks/useHorizontalScroll';
+
 const formatTimeAgo = (timestamp) => {
   const now = Date.now();
   const blockTime = timestamp * 1000;
@@ -50,6 +52,7 @@ function MainContent() {
   const sentinelRef = useRef(null);
   const [hideBrc20, setHideBrc20] = useState(true);
   const [pendingRefreshKey, setPendingRefreshKey] = useState(0);
+  const { elRef: scrollRef, isDragging } = useHorizontalScroll();
   // MCP proposal management handled in inscription modal.
 
   const {
@@ -64,6 +67,7 @@ function MainContent() {
   } = useBlocks();
 
   const handleBlockSelect = (block) => {
+    if (isDragging) return;
     originalHandleBlockSelect(block);
     navigate(`/block/${block.height}`);
   };
@@ -381,7 +385,8 @@ function MainContent() {
           <div className="relative pt-6">
                         <div
               id="block-scroll"
-              className="flex gap-4 overflow-x-auto whitespace-nowrap pb-4 px-12"
+              ref={scrollRef}
+              className="flex gap-4 overflow-x-auto whitespace-nowrap pb-4 px-12 no-scrollbar"
               onScroll={(e) => {
                 const el = e.currentTarget;
                 if (el.scrollLeft + el.clientWidth >= el.scrollWidth - 50) {
