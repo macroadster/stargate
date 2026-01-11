@@ -2,12 +2,18 @@
 @tailwind components;
 @tailwind utilities;
 
-body, html {
-  background: white;
+/* Root theme backgrounds for html and body */
+html, body {
+  background-color: white;
+  color: black;
+  margin: 0;
+  padding: 0;
 }
- 
-.dark body, html {
-  background: rgb(3 7 18); /* gray-950 */
+
+/* Explicit dark mode for root elements */
+html.dark, html.dark body {
+  background-color: #030712 !important; /* Tailwind gray-950 */
+  color: white !important;
 }
 
 .no-scrollbar::-webkit-scrollbar {

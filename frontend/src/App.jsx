@@ -581,13 +581,13 @@ function MainContent() {
             <div className="mb-8">
               <h2 className="text-4xl font-bold mb-4 text-black dark:text-white">Block {selectedBlock.height}</h2>
               <div className="flex items-center gap-4 text-sm">
-                <div className="flex items-center gap-2">
-                  <span className="text-gray-600 dark:text-gray-400">{selectedBlock.hash}</span>
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-gray-600 dark:text-gray-400 truncate max-w-[200px] sm:max-w-none">{selectedBlock.hash}</span>
                   {copiedText === selectedBlock.hash ? (
-                    <Check className="w-4 h-4 text-green-600 dark:text-green-400" />
+                    <Check className="w-4 h-4 text-green-600 dark:text-green-400 flex-shrink-0" />
                   ) : (
                     <Copy
-                      className="w-4 h-4 text-gray-600 dark:text-gray-400 hover:text-black dark:hover:text-white cursor-pointer"
+                      className="w-4 h-4 text-gray-600 dark:text-gray-400 hover:text-black dark:hover:text-white cursor-pointer flex-shrink-0"
                       onClick={() => copyToClipboard(selectedBlock.hash)}
                     />
                   )}
