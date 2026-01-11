@@ -934,14 +934,32 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 
 	// Only use fallback path if proxy is not configured
 	// Fallback to legacy local inscription creation
-	fmt.Printf("DEBUG: Taking fallback path (proxy not configured)\n")
+	// Do NOT create proposals when starlight-api returns error - that causes duplicate proposals
+	fmt.Printf("DEBUG: Taking fallback path (proxy not configured or starlight-api error)\n")
 	visibleHash := computeVisiblePixelHash(imgBytes, embeddedMessage)
-
 	req := models.InscribeRequest{
 		Text:    embeddedMessage,
 		Price:   price,
 		Address: address,
 	}
+	fallbackBytes := imgBytes
+	if len(fallbackBytes) == 0 {
+		fallbackBytes = placeholderPNG()
+		if filename == "" {
+			filename = "placeholder.png"
+		}
+	}
+
+	inscription, err := h.inscriptionService.CreateInscription(req, io.NopCloser(bytes.NewReader(fallbackBytes)), filename)
+	if err != nil {
+		h.sendError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to create inscription: %v", err))
+		return
+	}
+
+	// Auto-create ingestion record for MCP sync so proposals are generated ONLY if starlight-api succeeded
+	// When starlight-api returns error, ingestion record should NOT be created to avoid duplicate proposals
+	// Only ipfs_ingest_sync should create/update proposals from valid ingestion records
+	// User must manually create valid inscription first (using smaller image, beta method, etc.)
 	fallbackBytes := imgBytes
 	if len(fallbackBytes) == 0 {
 		fallbackBytes = placeholderPNG()
