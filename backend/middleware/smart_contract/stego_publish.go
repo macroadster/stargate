@@ -726,6 +726,62 @@ func (s *Server) inscribeStego(ctx context.Context, cfg stegoApprovalConfig, cov
 			} else {
 				log.Printf("stego: created ingestion record for %s with image data from response", ingestionID)
 			}
+
+			uploadsDir := os.Getenv("UPLOADS_DIR")
+			if uploadsDir == "" {
+				uploadsDir = "/data/uploads"
+			}
+			uploadPath := filepath.Join(uploadsDir, filename)
+			if writeErr := os.WriteFile(uploadPath, stegoBytes, 0644); writeErr != nil {
+				log.Printf("stego: failed to write stego image to %s: %v", uploadPath, writeErr)
+			} else {
+				log.Printf("stego: wrote stego image to %s (%d bytes)", uploadPath, len(stegoBytes))
+			}
+
+			topic := strings.TrimSpace(os.Getenv("IPFS_MIRROR_TOPIC"))
+			if topic == "" {
+				topic = "stargate-uploads"
+			}
+			if strings.TrimSpace(topic) != "" && len(stegoBytes) > 0 {
+				pubCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				client := ipfs.NewClientFromEnv()
+				ext := filepath.Ext(filename)
+				if ext == "" {
+					ext = ".png"
+				}
+				name := fmt.Sprintf("stego-%s%s", ingestionID, ext)
+				imageCID, err := client.AddBytes(pubCtx, name, stegoBytes)
+				if err != nil {
+					log.Printf("stego: ipfs add failed for %s: %v", ingestionID, err)
+				} else {
+					log.Printf("stego: ipfs added %s -> %s", ingestionID, imageCID)
+					ann := struct {
+						Type        string `json:"type"`
+						IngestionID string `json:"ingestion_id"`
+						ImageCID    string `json:"image_cid"`
+						Filename    string `json:"filename,omitempty"`
+						Method      string `json:"method,omitempty"`
+						Message     string `json:"message,omitempty"`
+						Timestamp   int64  `json:"timestamp"`
+					}{
+						Type:        "stego_ingest",
+						IngestionID: ingestionID,
+						ImageCID:    imageCID,
+						Filename:    filename,
+						Method:      method,
+						Message:     string(message),
+						Timestamp:   time.Now().Unix(),
+					}
+					if payload, err := json.Marshal(ann); err != nil {
+						log.Printf("stego: announce marshal failed: %v", err)
+					} else if err := client.PubsubPublish(pubCtx, topic, payload); err != nil {
+						log.Printf("stego: announce publish failed: %v", err)
+					} else {
+						log.Printf("stego: published announcement to topic %s", topic)
+					}
+				}
+			}
 		}
 	} else {
 		rec, waitErr := s.waitForIngestion(ctx, ingestionID, cfg.IngestTimeout, cfg.IngestPoll)
