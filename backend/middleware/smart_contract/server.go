@@ -2425,8 +2425,14 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 			if visibleHash != "" {
 				s.archiveWishContract(r.Context(), visibleHash)
 			}
-			if err := s.maybePublishStegoForProposal(r.Context(), id); err != nil {
-				log.Printf("stego publish on approval failed for proposal %s: %v", id, err)
+
+			stegoAlreadyPublished := strings.TrimSpace(toString(proposal.Metadata["stego_contract_id"])) != "" &&
+				strings.TrimSpace(toString(proposal.Metadata["stego_image_cid"])) != ""
+
+			if !stegoAlreadyPublished {
+				if err := s.maybePublishStegoForProposal(r.Context(), id); err != nil {
+					log.Printf("stego publish on approval failed for proposal %s: %v", id, err)
+				}
 			}
 			s.recordEvent(smart_contract.Event{
 				Type:      "approve",
