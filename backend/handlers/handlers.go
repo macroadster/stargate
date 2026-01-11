@@ -25,6 +25,7 @@ import (
 	"stargate-backend/models"
 	"stargate-backend/services"
 	"stargate-backend/storage"
+	scstore "stargate-backend/storage/smart_contract"
 )
 
 // BaseHandler provides common functionality for all handlers
@@ -823,23 +824,24 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 				if err := json.Unmarshal(body, &starlightResponse); err == nil && starlightResponse.ImageSHA256 != "" {
 					ingestionID := starlightResponse.ImageSHA256
 
+					meta := map[string]interface{}{
+						"embedded_message":     embeddedMessage,
+						"message":              text,
+						"wish_timestamp":       wishTimestamp,
+						"price":                price,
+						"price_unit":           priceUnit,
+						"address":              address,
+						"funding_mode":         fundingMode,
+						"starlight_request_id": starlightResponse.RequestID,
+					}
+					if strings.EqualFold(priceUnit, "sats") {
+						meta["budget_sats"] = parsePriceSats(price)
+					}
+
 					if h.ingestionService != nil {
 						imgB64 := base64.StdEncoding.EncodeToString(imgBytes)
 						if starlightResponse.ImageBase64 != "" {
 							imgB64 = starlightResponse.ImageBase64
-						}
-						meta := map[string]interface{}{
-							"embedded_message":     embeddedMessage,
-							"message":              text,
-							"wish_timestamp":       wishTimestamp,
-							"price":                price,
-							"price_unit":           priceUnit,
-							"address":              address,
-							"funding_mode":         fundingMode,
-							"starlight_request_id": starlightResponse.RequestID,
-						}
-						if strings.EqualFold(priceUnit, "sats") {
-							meta["budget_sats"] = parsePriceSats(price)
 						}
 						ingRec := services.IngestionRecord{
 							ID:            ingestionID,
@@ -862,18 +864,16 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 					if h.store != nil {
 						ctx := context.Background()
 						proposalID := "proposal-" + starlightResponse.ImageSHA256
+						budget := parsePriceSats(price)
+						fundingAddr := scstore.FundingAddressFromMeta(meta)
 
-						task := sc.Task{
-							TaskID:      proposalID + ".1",
-							Title:       "Complete the stego inscription",
-							Description: "Process the steganography image and extract the embedded message",
-							BudgetSats:  parsePriceSats(price),
-							Status:      "available",
-						}
+						tasks := scstore.BuildTasksFromMarkdown(proposalID, embeddedMessage, starlightResponse.ImageSHA256, budget, fundingAddr)
 
 						proposalMeta := map[string]interface{}{
 							"ingestion_id":       ingestionID,
 							"visible_pixel_hash": starlightResponse.ImageSHA256,
+							"budget_sats":        budget,
+							"funding_address":    fundingAddr,
 						}
 
 						if starlightResponse.ImageBase64 != "" {
@@ -885,12 +885,20 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 							}
 						}
 
+						proposalTitle := strings.TrimSpace(text)
+						if strings.HasPrefix(proposalTitle, "#") {
+							proposalTitle = strings.TrimSpace(strings.TrimLeft(proposalTitle, "#"))
+						}
+						if proposalTitle == "" {
+							proposalTitle = "Wish " + starlightResponse.ImageSHA256
+						}
+
 						proposal := sc.Proposal{
 							ID:               proposalID,
-							Title:            embeddedMessage,
+							Title:            proposalTitle,
 							DescriptionMD:    embeddedMessage,
 							VisiblePixelHash: starlightResponse.ImageSHA256,
-							Tasks:            []sc.Task{task},
+							Tasks:            tasks,
 							Status:           "pending",
 							CreatedAt:        time.Now(),
 							Metadata:         proposalMeta,
@@ -906,8 +914,8 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 						}); ok {
 							_ = u.UpsertContractWithTasks(context.Background(), sc.Contract{
 								ContractID:      contractID,
-								Title:           text,
-								TotalBudgetSats: parsePriceSats(price),
+								Title:           proposalTitle,
+								TotalBudgetSats: budget,
 								GoalsCount:      0,
 								Status:          "pending",
 							}, nil)
@@ -942,24 +950,6 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 		Price:   price,
 		Address: address,
 	}
-	fallbackBytes := imgBytes
-	if len(fallbackBytes) == 0 {
-		fallbackBytes = placeholderPNG()
-		if filename == "" {
-			filename = "placeholder.png"
-		}
-	}
-
-	inscription, err := h.inscriptionService.CreateInscription(req, io.NopCloser(bytes.NewReader(fallbackBytes)), filename)
-	if err != nil {
-		h.sendError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to create inscription: %v", err))
-		return
-	}
-
-	// Auto-create ingestion record for MCP sync so proposals are generated ONLY if starlight-api succeeded
-	// When starlight-api returns error, ingestion record should NOT be created to avoid duplicate proposals
-	// Only ipfs_ingest_sync should create/update proposals from valid ingestion records
-	// User must manually create valid inscription first (using smaller image, beta method, etc.)
 	fallbackBytes := imgBytes
 	if len(fallbackBytes) == 0 {
 		fallbackBytes = placeholderPNG()
