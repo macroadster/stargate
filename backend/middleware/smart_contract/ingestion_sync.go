@@ -113,7 +113,8 @@ func processRecord(ctx context.Context, rec services.IngestionRecord, ingest *se
 			visible = strings.TrimSpace(rec.ID)
 		}
 		if visible != "" {
-			if existing, err := store.GetProposal(ctx, visible); err == nil && strings.TrimSpace(existing.ID) != "" {
+			proposalID := "proposal-" + visible
+			if existing, err := store.GetProposal(ctx, proposalID); err == nil && strings.TrimSpace(existing.ID) != "" {
 				return ingest.UpdateStatusWithNote(rec.ID, "ignored", "proposal already exists for visible hash")
 			}
 			if _, err := store.GetContract(visible); err == nil {
