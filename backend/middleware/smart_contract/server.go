@@ -2426,8 +2426,7 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 				s.archiveWishContract(r.Context(), visibleHash)
 			}
 
-			stegoAlreadyPublished := strings.TrimSpace(toString(proposal.Metadata["stego_contract_id"])) != "" &&
-				strings.TrimSpace(toString(proposal.Metadata["stego_image_cid"])) != ""
+			stegoAlreadyPublished := strings.TrimSpace(toString(proposal.Metadata["stego_contract_id"])) != ""
 
 			if !stegoAlreadyPublished {
 				if err := s.maybePublishStegoForProposal(r.Context(), id); err != nil {
