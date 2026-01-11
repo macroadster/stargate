@@ -800,10 +800,15 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		s.updateProposalMetadataBestEffort(r.Context(), proposalID, commitmentMeta)
 	}
 	if proposalID != "" {
-		if err := s.maybePublishStegoForProposal(r.Context(), proposalID); err != nil {
-			log.Printf("stego publish on psbt failed for proposal %s: %v", proposalID, err)
-		}
-		s.publishPendingStegoIngest(r.Context(), proposalID, strings.TrimSpace(body.PixelHash))
+		publishPixelHash := strings.TrimSpace(body.PixelHash)
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+			defer cancel()
+			if err := s.maybePublishStegoForProposal(ctx, proposalID); err != nil {
+				log.Printf("stego publish on psbt failed for proposal %s: %v", proposalID, err)
+			}
+			s.publishPendingStegoIngest(ctx, proposalID, publishPixelHash)
+		}()
 	}
 	if taskID := strings.TrimSpace(body.TaskID); taskID != "" {
 		if err := s.updateTaskCommitmentProof(r.Context(), taskID, res, pixelBytes); err != nil {
@@ -1059,6 +1064,14 @@ func (s *Server) resolveProposalIDForContract(ctx context.Context, contractID st
 		}
 		if stored, err := s.store.GetProposal(ctx, contractID); err == nil && strings.TrimSpace(stored.ID) != "" {
 			return strings.TrimSpace(stored.ID)
+		}
+		// Handle wish-<hash> contracts by stripping the prefix and looking for proposal
+		candidateID := strings.TrimSpace(contractID)
+		if strings.HasPrefix(candidateID, "wish-") {
+			stripped := strings.TrimPrefix(candidateID, "wish-")
+			if stored, err := s.store.GetProposal(ctx, stripped); err == nil && strings.TrimSpace(stored.ID) != "" {
+				return strings.TrimSpace(stored.ID)
+			}
 		}
 	}
 	if rec != nil && rec.Metadata != nil {
