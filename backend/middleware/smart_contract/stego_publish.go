@@ -681,6 +681,7 @@ func (s *Server) inscribeStego(ctx context.Context, cfg stegoApprovalConfig, cov
 		RequestID   string `json:"request_id"`
 		ID          string `json:"id"`
 		ImageSHA256 string `json:"image_sha256"`
+		ImageBase64 string `json:"image_base64"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return nil, "", fmt.Errorf("inscribe response parse failed: %w", err)
@@ -696,16 +697,49 @@ func (s *Server) inscribeStego(ctx context.Context, cfg stegoApprovalConfig, cov
 	if requestID == "" {
 		requestID = ingestionID
 	}
-	rec, err := s.waitForIngestion(ctx, ingestionID, cfg.IngestTimeout, cfg.IngestPoll)
-	if err != nil {
-		return nil, "", err
-	}
-	if rec.ImageBase64 == "" {
-		return nil, "", fmt.Errorf("ingestion %s missing image payload", ingestionID)
-	}
-	stegoBytes, err := base64.StdEncoding.DecodeString(rec.ImageBase64)
-	if err != nil {
-		return nil, "", fmt.Errorf("failed to decode stego image: %w", err)
+
+	var stegoBytes []byte
+
+	if strings.TrimSpace(payload.ImageBase64) != "" {
+		log.Printf("stego: using image_base64 from inscribe response for %s", ingestionID)
+		var decodeErr error
+		stegoBytes, decodeErr = base64.StdEncoding.DecodeString(payload.ImageBase64)
+		if decodeErr != nil {
+			return nil, "", fmt.Errorf("failed to decode stego image from response: %w", decodeErr)
+		}
+
+		if s.ingestionSvc != nil {
+			ingestionRec := &services.IngestionRecord{
+				ID:            ingestionID,
+				ImageBase64:   payload.ImageBase64,
+				Status:        "verified",
+				MessageLength: len(message),
+				Filename:      filename,
+				Method:        method,
+				Metadata: map[string]interface{}{
+					"stego_request_id":   requestID,
+					"stego_ingestion_id": ingestionID,
+				},
+			}
+			if createErr := s.ingestionSvc.Create(*ingestionRec); createErr != nil {
+				log.Printf("stego: failed to create ingestion record for %s: %v", ingestionID, createErr)
+			} else {
+				log.Printf("stego: created ingestion record for %s with image data from response", ingestionID)
+			}
+		}
+	} else {
+		rec, waitErr := s.waitForIngestion(ctx, ingestionID, cfg.IngestTimeout, cfg.IngestPoll)
+		if waitErr != nil {
+			return nil, "", waitErr
+		}
+		if rec.ImageBase64 == "" {
+			return nil, "", fmt.Errorf("ingestion %s missing image payload", ingestionID)
+		}
+		var decodeErr error
+		stegoBytes, decodeErr = base64.StdEncoding.DecodeString(rec.ImageBase64)
+		if decodeErr != nil {
+			return nil, "", fmt.Errorf("failed to decode stego image: %w", decodeErr)
+		}
 	}
 	return stegoBytes, ingestionID, nil
 }
