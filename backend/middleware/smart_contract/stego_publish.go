@@ -236,7 +236,7 @@ func (s *Server) publishStegoForProposal(ctx context.Context, proposalID string,
 	if filename == "" {
 		filename = "cover.png"
 	}
-	stegoBytes, requestID, err := s.inscribeStego(ctx, cfg, coverBytes, filename, method, manifestBytes)
+	stegoBytes, _, err := s.inscribeStego(ctx, cfg, coverBytes, filename, method, manifestBytes)
 	if err != nil {
 		return err
 	}
@@ -254,8 +254,8 @@ func (s *Server) publishStegoForProposal(ctx context.Context, proposalID string,
 	meta["stego_image_cid"] = stegoCID
 	meta["stego_contract_id"] = contractID
 	meta["stego_manifest_created_at"] = strconv.FormatInt(manifestCreatedAt, 10)
-	meta["stego_request_id"] = requestID
-	meta["stego_ingestion_id"] = requestID
+	meta["stego_request_id"] = visibleHash
+	meta["stego_ingestion_id"] = visibleHash
 	if commitmentLock != "" {
 		meta["stego_commitment_lock_address"] = commitmentLock
 	}
@@ -678,31 +678,36 @@ func (s *Server) inscribeStego(ctx context.Context, cfg stegoApprovalConfig, cov
 		return nil, "", fmt.Errorf("inscribe failed after retries: %w", lastErr)
 	}
 	var payload struct {
-		RequestID string `json:"request_id"`
-		ID        string `json:"id"`
+		RequestID   string `json:"request_id"`
+		ID          string `json:"id"`
+		ImageSHA256 string `json:"image_sha256"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return nil, "", fmt.Errorf("inscribe response parse failed: %w", err)
 	}
+	ingestionID := strings.TrimSpace(payload.ImageSHA256)
+	if ingestionID == "" {
+		ingestionID = strings.TrimSpace(payload.ID)
+	}
+	if ingestionID == "" {
+		return nil, "", fmt.Errorf("inscribe response missing image_sha256 or id")
+	}
 	requestID := strings.TrimSpace(payload.RequestID)
 	if requestID == "" {
-		requestID = strings.TrimSpace(payload.ID)
+		requestID = ingestionID
 	}
-	if requestID == "" {
-		return nil, "", fmt.Errorf("inscribe response missing request id")
-	}
-	rec, err := s.waitForIngestion(ctx, requestID, cfg.IngestTimeout, cfg.IngestPoll)
+	rec, err := s.waitForIngestion(ctx, ingestionID, cfg.IngestTimeout, cfg.IngestPoll)
 	if err != nil {
 		return nil, "", err
 	}
 	if rec.ImageBase64 == "" {
-		return nil, "", fmt.Errorf("ingestion %s missing image payload", requestID)
+		return nil, "", fmt.Errorf("ingestion %s missing image payload", ingestionID)
 	}
 	stegoBytes, err := base64.StdEncoding.DecodeString(rec.ImageBase64)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to decode stego image: %w", err)
 	}
-	return stegoBytes, requestID, nil
+	return stegoBytes, ingestionID, nil
 }
 
 func (s *Server) waitForIngestion(ctx context.Context, id string, timeout time.Duration, poll time.Duration) (*services.IngestionRecord, error) {
