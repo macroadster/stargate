@@ -1072,7 +1072,7 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
 
               <div className="flex-1 w-full">
               <div className="border-b border-gray-200 dark:border-gray-700 mb-6">
-                <div className="flex gap-6 relative overflow-x-auto no-scrollbar">
+                <div className="flex gap-6 overflow-x-auto no-scrollbar">
 {[
   { id: 'overview', label: 'Details', icon: '📋' },
   { id: 'content', label: 'Content', icon: '📄' },
