@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -25,7 +24,6 @@ import (
 	"stargate-backend/models"
 	"stargate-backend/services"
 	"stargate-backend/storage"
-	scstore "stargate-backend/storage/smart_contract"
 )
 
 // BaseHandler provides common functionality for all handlers
@@ -859,67 +857,6 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 							fmt.Printf("Failed to create ingestion record for %s: %v\n", ingestionID, err)
 						}
 						publishPendingIngestAnnouncement(ingestionID, ingestionID, filename, method, embeddedMessage, price, priceUnit, address, fundingMode, imgBytes)
-					}
-
-					if h.store != nil {
-						ctx := context.Background()
-						proposalID := "proposal-" + starlightResponse.ImageSHA256
-						budget := parsePriceSats(price)
-						fundingAddr := scstore.FundingAddressFromMeta(meta)
-
-						tasks := scstore.BuildTasksFromMarkdown(proposalID, embeddedMessage, starlightResponse.ImageSHA256, budget, fundingAddr)
-
-						proposalMeta := map[string]interface{}{
-							"ingestion_id":       ingestionID,
-							"visible_pixel_hash": starlightResponse.ImageSHA256,
-							"budget_sats":        budget,
-							"funding_address":    fundingAddr,
-						}
-
-						if starlightResponse.ImageBase64 != "" {
-							stegoBytes, err := base64.StdEncoding.DecodeString(starlightResponse.ImageBase64)
-							if err == nil {
-								stegoSum := sha256.Sum256(stegoBytes)
-								stegoContractID := hex.EncodeToString(stegoSum[:])
-								proposalMeta["stego_contract_id"] = stegoContractID
-							}
-						}
-
-						proposalTitle := strings.TrimSpace(text)
-						if strings.HasPrefix(proposalTitle, "#") {
-							proposalTitle = strings.TrimSpace(strings.TrimLeft(proposalTitle, "#"))
-						}
-						if proposalTitle == "" {
-							proposalTitle = "Wish " + starlightResponse.ImageSHA256
-						}
-
-						proposal := sc.Proposal{
-							ID:               proposalID,
-							Title:            proposalTitle,
-							DescriptionMD:    embeddedMessage,
-							VisiblePixelHash: starlightResponse.ImageSHA256,
-							Tasks:            tasks,
-							Status:           "pending",
-							CreatedAt:        time.Now(),
-							Metadata:         proposalMeta,
-						}
-
-						if err := h.store.CreateProposal(ctx, proposal); err != nil {
-							fmt.Printf("Failed to create proposal: %v\n", err)
-						}
-
-						contractID := "wish-" + starlightResponse.ImageSHA256
-						if u, ok := h.store.(interface {
-							UpsertContractWithTasks(ctx context.Context, contract sc.Contract, tasks []sc.Task) error
-						}); ok {
-							_ = u.UpsertContractWithTasks(context.Background(), sc.Contract{
-								ContractID:      contractID,
-								Title:           proposalTitle,
-								TotalBudgetSats: budget,
-								GoalsCount:      0,
-								Status:          "pending",
-							}, nil)
-						}
 					}
 
 					h.sendSuccess(w, map[string]string{
