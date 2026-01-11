@@ -60,6 +60,7 @@ export const useHorizontalScroll = () => {
         stopAnimation(); // Stop any ongoing animation
         isDown.current = true;
         el.classList.add('active');
+        el.classList.add('dragging'); // Add dragging class
         initialPageX.current = e.pageX;
         startX.current = e.pageX; // StartX now tracks actual pageX
         initialScrollLeft.current = el.scrollLeft;
@@ -68,6 +69,7 @@ export const useHorizontalScroll = () => {
         lastFrameTime.current = performance.now();
         scrollVelocity.current = 0; // Reset velocity on new drag
 
+        e.preventDefault(); // Prevent text selection
         animationFrameId.current = requestAnimationFrame(animateScroll); // Start animation for drag
       };
 
