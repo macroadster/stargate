@@ -859,6 +859,30 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 						publishPendingIngestAnnouncement(ingestionID, ingestionID, filename, method, embeddedMessage, price, priceUnit, address, fundingMode, imgBytes)
 					}
 
+					if h.store != nil {
+						proposalTitle := strings.TrimSpace(text)
+						if strings.HasPrefix(proposalTitle, "#") {
+							proposalTitle = strings.TrimSpace(strings.TrimLeft(proposalTitle, "#"))
+						}
+						if proposalTitle == "" {
+							proposalTitle = "Wish " + starlightResponse.ImageSHA256
+						}
+
+						contractID := "wish-" + starlightResponse.ImageSHA256
+						type upserter interface {
+							UpsertContractWithTasks(ctx context.Context, contract sc.Contract, tasks []sc.Task) error
+						}
+						if u, ok := h.store.(upserter); ok {
+							_ = u.UpsertContractWithTasks(context.Background(), sc.Contract{
+								ContractID:      contractID,
+								Title:           proposalTitle,
+								TotalBudgetSats: parsePriceSats(price),
+								GoalsCount:      0,
+								Status:          "pending",
+							}, nil)
+						}
+					}
+
 					h.sendSuccess(w, map[string]string{
 						"status":             "success",
 						"id":                 ingestionID,
