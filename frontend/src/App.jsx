@@ -52,7 +52,7 @@ function MainContent() {
   const sentinelRef = useRef(null);
   const [hideBrc20, setHideBrc20] = useState(true);
   const [pendingRefreshKey, setPendingRefreshKey] = useState(0);
-  const { elRef: scrollRef, isDragging } = useHorizontalScroll();
+  const { elRef: scrollRef, isClick } = useHorizontalScroll();
   // MCP proposal management handled in inscription modal.
 
   const {
@@ -67,7 +67,7 @@ function MainContent() {
   } = useBlocks();
 
   const handleBlockSelect = (block) => {
-    if (isDragging) return;
+    if (!isClick) return;
     originalHandleBlockSelect(block);
     navigate(`/block/${block.height}`);
   };

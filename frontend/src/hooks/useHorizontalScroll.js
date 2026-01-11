@@ -3,6 +3,7 @@ import { useRef, useEffect, useState } from 'react';
 export const useHorizontalScroll = () => {
   const elRef = useRef();
   const [isDragging, setIsDragging] = useState(false);
+  const [isClick, setIsClick] = useState(false);
 
   useEffect(() => {
     const el = elRef.current;
@@ -19,13 +20,16 @@ export const useHorizontalScroll = () => {
       let isDown = false;
       let startX;
       let scrollLeft;
+      let walk = 0;
 
       const onMouseDown = (e) => {
         isDown = true;
         setIsDragging(false);
+        setIsClick(false);
         el.classList.add('active');
         startX = e.pageX - el.offsetLeft;
         scrollLeft = el.scrollLeft;
+        walk = 0;
       };
 
       const onMouseLeave = () => {
@@ -36,7 +40,13 @@ export const useHorizontalScroll = () => {
       const onMouseUp = () => {
         isDown = false;
         el.classList.remove('active');
-        setTimeout(() => setIsDragging(false), 0);
+        if (walk < 5) {
+          setIsClick(true);
+        }
+        setTimeout(() => {
+          setIsDragging(false);
+          setIsClick(false);
+        }, 0);
       };
 
       const onMouseMove = (e) => {
@@ -44,7 +54,7 @@ export const useHorizontalScroll = () => {
         e.preventDefault();
         setIsDragging(true);
         const x = e.pageX - el.offsetLeft;
-        const walk = (x - startX) * 3; //scroll-fast
+        walk = x - startX;
         el.scrollLeft = scrollLeft - walk;
       };
 
@@ -63,5 +73,5 @@ export const useHorizontalScroll = () => {
       };
     }
   }, []);
-  return { elRef, isDragging };
+  return { elRef, isDragging, isClick };
 };
