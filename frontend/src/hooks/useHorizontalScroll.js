@@ -50,7 +50,7 @@ export const useHorizontalScroll = () => {
         if (e.deltaY === 0) return;
         e.preventDefault();
         el.scrollLeft += e.deltaY; // Direct scroll for immediate response
-        scrollVelocity.current = e.deltaY * 0.5; // Apply a kick for momentum
+        scrollVelocity.current = e.deltaY * 0.7; // Apply a stronger kick for momentum
         if (animationFrameId.current === null) {
           animationFrameId.current = requestAnimationFrame(animateScroll);
         }
@@ -110,12 +110,13 @@ export const useHorizontalScroll = () => {
 
         // Calculate velocity based on actual scroll change over time
         if (deltaTime > 0) {
-            scrollVelocity.current = -deltaX / (deltaTime / 16); // Scale to ~60fps frame
+            // Increase sensitivity for a more "flicky" feel
+            scrollVelocity.current = -deltaX / (deltaTime / 16) * 1.5; 
         }
         
-        // Clamp max velocity
-        if (Math.abs(scrollVelocity.current) > 50) {
-            scrollVelocity.current = Math.sign(scrollVelocity.current) * 50;
+        // Clamp max velocity (increased to allow faster initial flick)
+        if (Math.abs(scrollVelocity.current) > 70) {
+            scrollVelocity.current = Math.sign(scrollVelocity.current) * 70;
         }
       };
 
