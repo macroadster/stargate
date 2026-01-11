@@ -271,6 +271,7 @@ func parseMarkdownProposal(ingestionID, markdown string, meta map[string]interfa
 	meta["funding_address"] = fundingAddr
 	if visibleHash != "" {
 		meta["visible_pixel_hash"] = visibleHash
+		meta["stego_contract_id"] = visibleHash
 	}
 
 	return smart_contract.Proposal{
