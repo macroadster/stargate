@@ -7,11 +7,14 @@ export const useHorizontalScroll = () => {
 
   // Refs for animation and velocity
   const animationFrameId = useRef(null);
-  const velocity = useRef(0);
-  const lastScrollTime = useRef(0);
-  const startX = useRef(0);
-  const scrollLeft = useRef(0);
+  const scrollVelocity = useRef(0); // Renamed from 'velocity' to avoid confusion with drag calculation
+  const lastPosition = useRef(0); // To track position for velocity calculation during drag
+  const lastFrameTime = useRef(0); // To track time for velocity calculation during drag
+
+  // State for drag
   const isDown = useRef(false);
+  const startX = useRef(0);
+  const initialScrollLeft = useRef(0);
   const initialPageX = useRef(0);
 
   useEffect(() => {
@@ -21,20 +24,24 @@ export const useHorizontalScroll = () => {
         if (animationFrameId.current) {
           cancelAnimationFrame(animationFrameId.current);
           animationFrameId.current = null;
-          velocity.current = 0;
+          scrollVelocity.current = 0;
         }
       };
 
       const animateScroll = () => {
-        if (velocity.current !== 0) {
-          el.scrollLeft += velocity.current;
-          velocity.current *= 0.95; // Deceleration factor
-          if (Math.abs(velocity.current) < 0.5) {
-            velocity.current = 0;
-          }
-          animationFrameId.current = requestAnimationFrame(animateScroll);
-        } else {
+        if (!el) { // Ensure element exists before attempting to scroll
           stopAnimation();
+          return;
+        }
+
+        // Apply scroll based on velocity
+        el.scrollLeft += scrollVelocity.current;
+        scrollVelocity.current *= 0.92; // Deceleration factor (slightly less aggressive)
+
+        if (Math.abs(scrollVelocity.current) < 0.1) { // Stop animation if velocity is very low
+          stopAnimation();
+        } else {
+          animationFrameId.current = requestAnimationFrame(animateScroll);
         }
       };
       
@@ -42,9 +49,8 @@ export const useHorizontalScroll = () => {
         stopAnimation(); // Stop any ongoing animation
         if (e.deltaY === 0) return;
         e.preventDefault();
-        el.scrollLeft += e.deltaY;
-        // Optionally add some gentle momentum to wheel scrolling
-        velocity.current = e.deltaY * 0.5; // Initial velocity for wheel
+        el.scrollLeft += e.deltaY; // Direct scroll for immediate response
+        scrollVelocity.current = e.deltaY * 0.5; // Apply a kick for momentum
         if (animationFrameId.current === null) {
           animationFrameId.current = requestAnimationFrame(animateScroll);
         }
@@ -55,54 +61,62 @@ export const useHorizontalScroll = () => {
         isDown.current = true;
         el.classList.add('active');
         initialPageX.current = e.pageX;
-        startX.current = e.pageX - el.offsetLeft;
-        scrollLeft.current = el.scrollLeft;
+        startX.current = e.pageX; // StartX now tracks actual pageX
+        initialScrollLeft.current = el.scrollLeft;
         setIsDragging(false); // Reset dragging state on mouse down
-        lastScrollTime.current = performance.now();
-        velocity.current = 0; // Reset velocity on new drag
+        lastPosition.current = e.pageX;
+        lastFrameTime.current = performance.now();
+        scrollVelocity.current = 0; // Reset velocity on new drag
+
+        animationFrameId.current = requestAnimationFrame(animateScroll); // Start animation for drag
       };
 
       const onMouseLeave = () => {
         if (isDown.current) {
-          // If mouse leaves while dragging, initiate momentum scroll
-          animationFrameId.current = requestAnimationFrame(animateScroll);
+          isDown.current = false; // Treat mouse leave as mouse up for dragging purposes
+          el.classList.remove('active');
+          el.classList.remove('dragging');
+          // Momentum scroll will continue if scrollVelocity is non-zero
         }
-        isDown.current = false;
-        el.classList.remove('active');
-        el.classList.remove('dragging');
       };
 
       const onMouseUp = () => {
         isDown.current = false;
         el.classList.remove('active');
         el.classList.remove('dragging');
-        // Initiate momentum scroll after releasing mouse
-        animationFrameId.current = requestAnimationFrame(animateScroll);
+        // Momentum scroll will continue if scrollVelocity is non-zero
       };
 
       const onMouseMove = (e) => {
         if (!isDown.current) return;
         e.preventDefault();
+
         const currentTime = performance.now();
-        const deltaTime = currentTime - lastScrollTime.current;
-        lastScrollTime.current = currentTime;
+        const deltaTime = currentTime - lastFrameTime.current;
+        const currentX = e.pageX;
+        const deltaX = currentX - lastPosition.current;
+        lastPosition.current = currentX;
+        lastFrameTime.current = currentTime;
 
-        const x = e.pageX - el.offsetLeft;
-        const walk = (x - startX.current); // Raw pixel movement
+        // Calculate drag distance from initial mousedown
+        const dragDistance = Math.abs(currentX - initialPageX.current);
 
-        // Only set isDragging to true if movement exceeds threshold
-        if (Math.abs(e.pageX - initialPageX.current) > dragThreshold) {
+        if (dragDistance > dragThreshold) {
             setIsDragging(true);
         }
         
-        const newScrollLeft = scrollLeft.current - walk;
-        const scrollDelta = newScrollLeft - el.scrollLeft;
-        velocity.current = scrollDelta / (deltaTime / 1000); // pixels per second
-        if (Math.abs(velocity.current) > 200) { // Limit max velocity
-            velocity.current = Math.sign(velocity.current) * 200;
-        }
+        // Update scroll position immediately during drag for responsiveness
+        el.scrollLeft -= deltaX;
 
-        el.scrollLeft = newScrollLeft;
+        // Calculate velocity based on actual scroll change over time
+        if (deltaTime > 0) {
+            scrollVelocity.current = -deltaX / (deltaTime / 16); // Scale to ~60fps frame
+        }
+        
+        // Clamp max velocity
+        if (Math.abs(scrollVelocity.current) > 50) {
+            scrollVelocity.current = Math.sign(scrollVelocity.current) * 50;
+        }
       };
 
       el.addEventListener('wheel', onWheel);
