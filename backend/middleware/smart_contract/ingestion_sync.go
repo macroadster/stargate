@@ -280,6 +280,7 @@ func parseMarkdownProposal(ingestionID, markdown string, meta map[string]interfa
 		VisiblePixelHash: defaultProof.VisiblePixelHash,
 		BudgetSats:       budget,
 		Status:           "pending",
+		CreatedAt:        time.Now(),
 		Tasks:            tasks,
 		Metadata:         meta,
 	}, nil
