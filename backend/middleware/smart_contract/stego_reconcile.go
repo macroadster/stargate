@@ -158,6 +158,75 @@ func (s *Server) ReconcileStego(ctx context.Context, stegoCID, expectedHash stri
 	return err
 }
 
+// ReconcileStegoWithAnnouncement reconciles a stego image using embedded announcement data.
+// This is for the new architecture where contract info is embedded in the stego image
+// and passed via IPFS pubsub announcement.
+func (s *Server) ReconcileStegoWithAnnouncement(ctx context.Context, ann *stegoAnnouncement) error {
+	// Download stego image from IPFS
+	ipfsClient := ipfs.NewClientFromEnv()
+	stegoBytes, err := ipfsClient.Cat(ctx, ann.StegoCID)
+	if err != nil {
+		return fmt.Errorf("ipfs cat stego failed: %w", err)
+	}
+
+	// Write stego image to /data/uploads
+	uploadsDir := strings.TrimSpace(os.Getenv("UPLOADS_DIR"))
+	if uploadsDir == "" {
+		uploadsDir = "/data/uploads"
+	}
+	uploadPath := filepath.Join(uploadsDir, "stego.png")
+	if err := os.WriteFile(uploadPath, stegoBytes, 0644); err != nil {
+		return fmt.Errorf("failed to write stego image: %w", err)
+	}
+	log.Printf("stego: wrote stego image to %s (%d bytes)", uploadPath, len(stegoBytes))
+
+	// Build manifest from announcement data
+	manifest := stego.Manifest{
+		SchemaVersion:    1,
+		ProposalID:       ann.ProposalID,
+		VisiblePixelHash: ann.VisiblePixelHash,
+		PayloadCID:       ann.PayloadCID,
+		CreatedAt:        time.Now().Unix(),
+		Issuer:           ann.Issuer,
+	}
+
+	// Download payload from IPFS
+	var payload stego.Payload
+	if ann.PayloadCID != "" {
+		payloadBytes, err := ipfsClient.Cat(ctx, ann.PayloadCID)
+		if err != nil {
+			return fmt.Errorf("ipfs cat payload failed: %w", err)
+		}
+		if err := json.Unmarshal(payloadBytes, &payload); err != nil {
+			return fmt.Errorf("payload json decode failed: %w", err)
+		}
+	}
+
+	// Determine contract ID
+	contractID := strings.TrimSpace(ann.ExpectedHash)
+	if contractID == "" && ann.ProposalID != "" {
+		contractID = ann.ProposalID
+	}
+	if contractID == "" {
+		return fmt.Errorf("unable to determine contract ID from announcement")
+	}
+
+	// Create hash of stego image
+	sum := sha256.Sum256(stegoBytes)
+	stegoHash := hex.EncodeToString(sum[:])
+
+	// Upsert contract from payload
+	if err := s.upsertContractFromStegoPayload(ctx, contractID, ann.StegoCID, stegoHash, manifest, payload); err != nil {
+		return fmt.Errorf("failed to upsert contract: %w", err)
+	}
+
+	// Ensure stego ingestion record
+	s.ensureStegoIngestion(ctx, contractID, ann.StegoCID, stegoHash, stegoBytes, manifest)
+
+	log.Printf("stego: reconciled from announcement: contract_id=%s, stego_cid=%s", contractID, ann.StegoCID)
+	return nil
+}
+
 func (s *Server) reconcileStegoFromIPFS(ctx context.Context, stegoCID string, expectedHash string) (stegoReconcileResponse, error) {
 	ipfsClient := ipfs.NewClientFromEnv()
 	stegoBytes, err := ipfsClient.Cat(ctx, stegoCID)
