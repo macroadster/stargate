@@ -675,14 +675,14 @@ function MainContent() {
 
        <footer className="bg-gray-100 dark:bg-gray-900 border-t border-gray-300 dark:border-gray-800 mt-12">
          <div className="container mx-auto px-6 py-6">
-           <div className="flex items-center justify-between">
+           <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
              <div className="flex items-center gap-2">
                <div className="flex items-center justify-center w-6 h-6 bg-gradient-to-br from-indigo-500 to-purple-600 rounded">
                  <span className="text-white text-sm">✦</span>
                </div>
                <span className="text-gray-400">Starlight</span>
              </div>
-              <a href="/mcp/docs" className="text-gray-400 text-sm hover:text-gray-600 dark:hover:text-gray-200 transition-colors">
+              <a href="/mcp/docs" className="text-gray-400 text-sm hover:text-gray-600 dark:hover:text-gray-200 transition-colors whitespace-nowrap">
                 💡 Are you a builder? Try our API!
               </a>
            </div>
