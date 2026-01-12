@@ -2270,10 +2270,10 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                     </h4>
                     <div className="bg-blue-50 dark:bg-blue-900 border border-blue-200 dark:border-blue-700 rounded-lg p-4">
                       <div className="grid grid-cols-2 gap-4">
-                         <div className="bg-white dark:bg-gray-800 rounded-lg p-3">
-                           <div className="text-blue-700 dark:text-blue-300 text-xs mb-1">File Name</div>
-                           <div className="text-blue-900 dark:text-blue-100 font-semibold break-words">{inscription.file_name || 'N/A'}</div>
-                         </div>
+                        <div className="bg-white dark:bg-gray-800 rounded-lg p-3">
+                          <div className="text-blue-700 dark:text-blue-300 text-xs mb-1">File Name</div>
+                          <div className="text-blue-900 dark:text-blue-100 font-semibold break-all">{inscription.file_name || 'N/A'}</div>
+                        </div>
                         <div className="bg-white dark:bg-gray-800 rounded-lg p-3">
                           <div className="text-blue-700 dark:text-blue-300 text-xs mb-1">File Size</div>
                           <div className="text-blue-900 dark:text-blue-100 font-semibold">{inscription.size_bytes ? `${(inscription.size_bytes / 1024).toFixed(2)} KB` : 'Unknown'}</div>
