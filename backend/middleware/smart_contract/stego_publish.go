@@ -738,9 +738,9 @@ func (s *Server) inscribeStego(ctx context.Context, cfg stegoApprovalConfig, cov
 				log.Printf("stego: wrote stego image to %s (%d bytes)", uploadPath, len(stegoBytes))
 			}
 
-			topic := strings.TrimSpace(os.Getenv("IPFS_MIRROR_TOPIC"))
+			topic := strings.TrimSpace(os.Getenv("IPFS_STEGO_TOPIC"))
 			if topic == "" {
-				topic = "stargate-uploads"
+				topic = "stargate-stego"
 			}
 			if strings.TrimSpace(topic) != "" && len(stegoBytes) > 0 {
 				pubCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
