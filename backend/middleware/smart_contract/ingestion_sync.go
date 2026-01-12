@@ -125,7 +125,7 @@ func processRecord(ctx context.Context, rec services.IngestionRecord, ingest *se
 	// Try JSON contract first.
 	contract, tasks, err := parseEmbeddedContract(raw)
 	if err != nil || contract.ContractID == "" || len(tasks) == 0 {
-		// Fallback: treat embedded_message as markdown wish -> create proposal only.
+		// Fallback: treat embedded_message as markdown wish -> create proposal AND contract.
 		proposal, err := parseMarkdownProposal(rec.ID, raw, meta, rec.ImageBase64)
 		if err != nil {
 			return ingest.UpdateStatusWithNote(rec.ID, "invalid", fmt.Sprintf("parse error: %v", err))
@@ -133,7 +133,22 @@ func processRecord(ctx context.Context, rec services.IngestionRecord, ingest *se
 		if err := store.CreateProposal(ctx, proposal); err != nil {
 			return ingest.UpdateStatusWithNote(rec.ID, "invalid", fmt.Sprintf("proposal upsert failed: %v", err))
 		}
-		return ingest.UpdateStatusWithNote(rec.ID, "verified", "proposal created; awaiting approval")
+		// Also create contract for wishes so they show up in contracts list
+		if proposal.ID != "" {
+			wishContract := smart_contract.Contract{
+				ContractID:          proposal.ID,
+				Title:               proposal.Title,
+				TotalBudgetSats:     proposal.BudgetSats,
+				GoalsCount:          len(proposal.Tasks),
+				AvailableTasksCount: len(proposal.Tasks),
+				Status:              proposal.Status,
+				Skills:              proposal.Tasks[0].Skills,
+			}
+			if err := store.UpsertContractWithTasks(ctx, wishContract, proposal.Tasks); err != nil {
+				log.Printf("wish contract creation failed for %s: %v", proposal.ID, err)
+			}
+		}
+		return ingest.UpdateStatusWithNote(rec.ID, "verified", "proposal and contract created; awaiting approval")
 	}
 
 	// If no visible_pixel_hash provided, derive from image for each task.
@@ -236,6 +251,10 @@ func parseMarkdownProposal(ingestionID, markdown string, meta map[string]interfa
 	contractID := contractIDBase
 	if contractID == "" {
 		contractID = fmt.Sprintf("wish-%s", ingestionID)
+	}
+	// Always use wish- prefix for contract ID when visible hash is available
+	if visibleHash != "" && !strings.HasPrefix(contractID, "wish-") {
+		contractID = fmt.Sprintf("wish-%s", visibleHash)
 	}
 	budget := budgetFromMeta(meta)
 	fundingAddr := scstore.FundingAddressFromMeta(meta)

@@ -609,16 +609,14 @@ func buildCommitmentScript(params *chaincfg.Params, pixelHash []byte, commitment
 }
 
 func buildHashlockRedeemScript(pixelHash []byte) ([]byte, error) {
-	lockHash := sha256.Sum256(pixelHash)
 	builder := txscript.NewScriptBuilder()
 	builder.AddOp(txscript.OP_SHA256)
-	builder.AddData(lockHash[:])
+	builder.AddData(pixelHash[:])
 	builder.AddOp(txscript.OP_EQUAL)
 	return builder.Script()
 }
 
 func buildHashlockP2PKHRedeemScript(pixelHash []byte, addr btcutil.Address) ([]byte, error) {
-	lockHash := sha256.Sum256(pixelHash)
 	if addr == nil {
 		return nil, fmt.Errorf("commitment address required")
 	}
@@ -628,7 +626,7 @@ func buildHashlockP2PKHRedeemScript(pixelHash []byte, addr btcutil.Address) ([]b
 	}
 	builder := txscript.NewScriptBuilder()
 	builder.AddOp(txscript.OP_SHA256)
-	builder.AddData(lockHash[:])
+	builder.AddData(pixelHash[:])
 	builder.AddOp(txscript.OP_EQUALVERIFY)
 	builder.AddOp(txscript.OP_DUP)
 	builder.AddOp(txscript.OP_HASH160)

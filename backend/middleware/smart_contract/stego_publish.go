@@ -283,7 +283,7 @@ func (s *Server) publishStegoForProposal(ctx context.Context, proposalID string,
 		announce := stegoAnnouncement{
 			Type:             "stego",
 			StegoCID:         stegoCID,
-			ExpectedHash:     contractID,
+			ExpectedHash:     visibleHash,
 			ProposalID:       proposalID,
 			VisiblePixelHash: visibleHash,
 			PayloadCID:       payloadCID,
