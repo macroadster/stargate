@@ -1002,6 +1002,26 @@ func (s *PGStore) CreateProposal(ctx context.Context, p smart_contract.Proposal)
 		return fmt.Errorf("invalid proposal status: %s (must be one of: pending, approved, rejected, published)", p.Status)
 	}
 
+	// Check for duplicate visible_pixel_hash with approved/published status
+	visibleHash := strings.TrimSpace(p.VisiblePixelHash)
+	if visibleHash == "" {
+		if v, ok := p.Metadata["visible_pixel_hash"].(string); ok {
+			visibleHash = strings.TrimSpace(v)
+		}
+	}
+	if visibleHash != "" {
+		var conflictID string
+		err := s.pool.QueryRow(ctx, `
+		SELECT id FROM mcp_proposals
+		WHERE visible_pixel_hash=$1 AND id<>$2
+		AND status IN ('approved','published')
+		LIMIT 1
+		`, visibleHash, p.ID).Scan(&conflictID)
+		if err == nil && conflictID != "" {
+			return fmt.Errorf("a proposal with visible_pixel_hash=%s is already approved/published (id=%s)", visibleHash, conflictID)
+		}
+	}
+
 	metaMap := p.Metadata
 	if metaMap == nil {
 		metaMap = map[string]interface{}{}
@@ -1013,7 +1033,13 @@ func (s *PGStore) CreateProposal(ctx context.Context, p smart_contract.Proposal)
 	_, err := s.pool.Exec(ctx, `
 INSERT INTO mcp_proposals (id, title, description_md, visible_pixel_hash, budget_sats, status, metadata, created_at)
 VALUES ($1,$2,$3,$4,$5,$6,$7,COALESCE($8, now()))
-ON CONFLICT (id) DO NOTHING
+ON CONFLICT (id) DO UPDATE SET
+  status = EXCLUDED.status,
+  metadata = EXCLUDED.metadata,
+  title = EXCLUDED.title,
+  description_md = EXCLUDED.description_md,
+  visible_pixel_hash = EXCLUDED.visible_pixel_hash,
+  budget_sats = EXCLUDED.budget_sats
 `, p.ID, p.Title, p.DescriptionMD, p.VisiblePixelHash, p.BudgetSats, p.Status, string(meta), p.CreatedAt)
 	if err != nil {
 		return err

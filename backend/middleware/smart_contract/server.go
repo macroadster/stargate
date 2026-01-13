@@ -2239,6 +2239,58 @@ func (s *Server) ReconcileSyncAnnouncement(ctx context.Context, ann *syncAnnounc
 
 	var err error
 	switch ann.Type {
+	case "approve", "publish", "update", "proposal_create":
+		if ann.Proposal != nil {
+			// Normalize proposal ID for sync: find by visible_pixel_hash to handle wish- prefix changes
+			originalID := ann.Proposal.ID
+			if ann.Proposal.VisiblePixelHash != "" {
+				// Try to find existing proposal by visible_pixel_hash
+				filter := smart_contract.ProposalFilter{
+					ContractID: ann.Proposal.VisiblePixelHash,
+					MaxResults: 1,
+				}
+				existing, findErr := s.store.ListProposals(ctx, filter)
+				if findErr == nil && len(existing) > 0 {
+					// Found existing proposal with same visible_pixel_hash, use local ID
+					ann.Proposal.ID = existing[0].ID
+					log.Printf("sync: normalizing proposal ID from %s to %s (visible_pixel_hash=%s)", originalID, ann.Proposal.ID, ann.Proposal.VisiblePixelHash)
+				}
+			}
+
+			if ann.Type == "approve" {
+				// For approve type, call ApproveProposal to ensure all validation and side effects
+				err = s.store.ApproveProposal(ctx, ann.Proposal.ID)
+				if err != nil {
+					// If already approved or published, treat as success (idempotent sync)
+					if strings.Contains(err.Error(), "already") && strings.Contains(err.Error(), "approved") {
+						log.Printf("sync: proposal %s already approved locally", ann.Proposal.ID)
+						err = nil
+						// Still publish tasks to ensure consistency
+						_ = s.publishProposalTasks(ctx, ann.Proposal.ID)
+					} else if strings.Contains(err.Error(), "already") && strings.Contains(err.Error(), "published") {
+						log.Printf("sync: proposal %s already published locally", ann.Proposal.ID)
+						err = nil
+					}
+				}
+				if err == nil {
+					// Publish tasks after approval
+					_ = s.publishProposalTasks(ctx, ann.Proposal.ID)
+				}
+			} else if ann.Type == "publish" {
+				// For publish type, call PublishProposal
+				err = s.store.PublishProposal(ctx, ann.Proposal.ID)
+				if err != nil && strings.Contains(err.Error(), "must be approved") {
+					// If proposal needs approval first, try to approve it
+					if approveErr := s.store.ApproveProposal(ctx, ann.Proposal.ID); approveErr == nil {
+						// Retry publish after approval
+						err = s.store.PublishProposal(ctx, ann.Proposal.ID)
+					}
+				}
+			} else {
+				// For update and proposal_create, use CreateProposal (upsert)
+				err = s.store.CreateProposal(ctx, *ann.Proposal)
+			}
+		}
 	case "claim", "task_proof_update", "task_update":
 		if ann.Task != nil {
 			err = s.store.UpsertTask(ctx, *ann.Task)
@@ -2253,14 +2305,6 @@ func (s *Server) ReconcileSyncAnnouncement(ctx context.Context, ann *syncAnnounc
 		}
 		if ann.Task != nil {
 			err = s.store.UpsertTask(ctx, *ann.Task)
-		}
-	case "approve", "publish", "update", "proposal_create":
-		if ann.Proposal != nil {
-			err = s.store.CreateProposal(ctx, *ann.Proposal)
-			if err == nil && (ann.Type == "approve" || ann.Type == "publish") {
-				// Also publish tasks locally
-				_ = s.publishProposalTasks(ctx, ann.Proposal.ID)
-			}
 		}
 	case "contract_upsert":
 		if ann.Contract != nil {
