@@ -38,6 +38,12 @@ type Server struct {
 	listenersMu  sync.Mutex
 	listeners    []chan smart_contract.Event
 	mempool      *bitcoin.MempoolClient
+	escort       *smart_contract.EscortService
+}
+
+// SetEscortService sets the escort service for the server.
+func (s *Server) SetEscortService(escort *smart_contract.EscortService) {
+	s.escort = escort
 }
 
 // proposalCreateBody captures POST payload for creating proposals.
@@ -2115,17 +2121,155 @@ func proposalMetaConfirmed(meta map[string]interface{}) bool {
 
 // recordEvent appends an event to the in-memory log with a small bounded buffer.
 func (s *Server) recordEvent(evt smart_contract.Event) {
+	s.processEvent(evt, true)
+}
+
+func (s *Server) processEvent(evt smart_contract.Event, shouldPublish bool) {
 	const maxEvents = 200
 	if evt.CreatedAt.IsZero() {
 		evt.CreatedAt = time.Now()
 	}
 	s.eventsMu.Lock()
-	defer s.eventsMu.Unlock()
 	s.events = append([]smart_contract.Event{evt}, s.events...)
 	if len(s.events) > maxEvents {
 		s.events = s.events[:maxEvents]
 	}
+	s.eventsMu.Unlock()
 	s.broadcastEvent(evt)
+
+	if shouldPublish {
+		go s.publishSyncEvent(evt)
+	}
+}
+
+func (s *Server) publishSyncEvent(evt smart_contract.Event) {
+	ann := &syncAnnouncement{
+		Type:  evt.Type,
+		Event: &evt,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	switch evt.Type {
+	case "claim", "task_proof_update":
+		// EntityID is TaskID
+		task, err := s.store.GetTask(evt.EntityID)
+		if err == nil {
+			ann.Task = &task
+		}
+	case "contract_confirmed":
+		// EntityID is ContractID
+		contract, err := s.store.GetContract(evt.EntityID)
+		if err == nil {
+			ann.Contract = &contract
+		}
+	case "submit":
+		// EntityID is ClaimID. Wait, handleSubmissions says parts[0] is claimID but EntityID recorded is claimID.
+		// Let's find the submission that was just created.
+		// Actually, recordEvent is called after SubmitWork returns.
+		// If EntityID is claimID, we might need to find the latest submission for it.
+		// But in handleSubmissions:
+		// s.recordEvent(smart_contract.Event{ Type: "submit", EntityID: claimID, ... })
+		// We should probably find the latest submission for this claim.
+		tasks, _ := s.store.ListTasks(smart_contract.TaskFilter{})
+		taskIDs := make([]string, len(tasks))
+		for i, t := range tasks {
+			taskIDs[i] = t.TaskID
+		}
+		subs, _ := s.store.ListSubmissions(ctx, taskIDs)
+		var latest *smart_contract.Submission
+		for _, sub := range subs {
+			if sub.ClaimID == evt.EntityID {
+				if latest == nil || sub.CreatedAt.After(latest.CreatedAt) {
+					s := sub
+					latest = &s
+				}
+			}
+		}
+		if latest != nil {
+			ann.Submission = latest
+			// Also include the task because its status changed to "submitted"
+			task, err := s.store.GetTask(latest.TaskID)
+			if err == nil {
+				ann.Task = &task
+			}
+		}
+	case "review", "rework":
+		// EntityID is submissionID
+		sub, err := s.store.GetSubmission(ctx, evt.EntityID)
+		if err == nil {
+			ann.Submission = &sub
+			// Also include the task because its status might have changed
+			task, err := s.store.GetTask(sub.TaskID)
+			if err == nil {
+				ann.Task = &task
+			}
+		}
+	case "approve", "publish", "update", "proposal_create":
+		p, err := s.store.GetProposal(ctx, evt.EntityID)
+		if err == nil {
+			ann.Proposal = &p
+		}
+	}
+
+	if err := s.PublishSyncAnnouncement(ctx, ann); err != nil {
+		log.Printf("failed to publish sync announcement: %v", err)
+	}
+}
+
+func (s *Server) ReconcileSyncAnnouncement(ctx context.Context, ann *syncAnnouncement) error {
+	if ann == nil {
+		return nil
+	}
+
+	log.Printf("Reconciling sync announcement: type=%s from issuer=%s", ann.Type, ann.Issuer)
+
+	var err error
+	switch ann.Type {
+	case "claim", "task_proof_update", "task_update":
+		if ann.Task != nil {
+			err = s.store.UpsertTask(ctx, *ann.Task)
+		}
+	case "contract_confirmed":
+		if ann.Contract != nil {
+			err = s.store.UpdateContractStatus(ctx, ann.Contract.ContractID, "confirmed")
+		}
+	case "submit":
+		if ann.Submission != nil {
+			err = s.store.SyncSubmission(ctx, *ann.Submission)
+		}
+		if ann.Task != nil {
+			err = s.store.UpsertTask(ctx, *ann.Task)
+		}
+	case "approve", "publish", "update", "proposal_create":
+		if ann.Proposal != nil {
+			err = s.store.CreateProposal(ctx, *ann.Proposal)
+			if err == nil && (ann.Type == "approve" || ann.Type == "publish") {
+				// Also publish tasks locally
+				_ = s.publishProposalTasks(ctx, ann.Proposal.ID)
+			}
+		}
+	case "contract_upsert":
+		if ann.Contract != nil {
+			// UpsertContractWithTasks is not in Store interface yet
+			if pg, ok := s.store.(interface {
+				UpsertContractWithTasks(context.Context, smart_contract.Contract, []smart_contract.Task) error
+			}); ok {
+				err = pg.UpsertContractWithTasks(ctx, *ann.Contract, nil)
+			}
+		}
+	case "escort_validation":
+		if ann.EscortStatus != nil {
+			err = s.store.SyncEscortStatus(ctx, *ann.EscortStatus)
+		}
+	}
+
+	if ann.Event != nil {
+		s.processEvent(*ann.Event, false)
+	}
+
+	return err
 }
 
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {

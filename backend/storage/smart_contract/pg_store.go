@@ -103,8 +103,29 @@ CREATE INDEX IF NOT EXISTS idx_mcp_tasks_contract_status ON mcp_tasks(contract_i
 ALTER TABLE mcp_submissions ADD COLUMN IF NOT EXISTS rejection_reason TEXT;
 ALTER TABLE mcp_submissions ADD COLUMN IF NOT EXISTS rejection_type TEXT;
 ALTER TABLE mcp_submissions ADD COLUMN IF NOT EXISTS rejected_at TIMESTAMPTZ;
+
+CREATE TABLE IF NOT EXISTS mcp_escort_status (
+  task_id TEXT PRIMARY KEY,
+  proof_status TEXT,
+  last_checked TIMESTAMPTZ,
+  payload JSONB
+);
 `
 	_, err := s.pool.Exec(ctx, schema)
+	return err
+}
+
+// SyncEscortStatus persists escort validation results from another instance.
+func (s *PGStore) SyncEscortStatus(ctx context.Context, status smart_contract.EscortStatus) error {
+	payload, _ := json.Marshal(status)
+	_, err := s.pool.Exec(ctx, `
+INSERT INTO mcp_escort_status (task_id, proof_status, last_checked, payload)
+VALUES ($1,$2,$3,$4)
+ON CONFLICT (task_id) DO UPDATE SET
+  proof_status = EXCLUDED.proof_status,
+  last_checked = EXCLUDED.last_checked,
+  payload = EXCLUDED.payload
+`, status.TaskID, status.ProofStatus, status.LastChecked, string(payload))
 	return err
 }
 
@@ -578,7 +599,50 @@ func (s *PGStore) SubmitWork(claimID string, deliverables map[string]interface{}
 	return sub, nil
 }
 
+// GetSubmission returns a submission by ID.
+func (s *PGStore) GetSubmission(ctx context.Context, id string) (smart_contract.Submission, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT s.submission_id, s.claim_id, c.task_id, s.status, s.deliverables, s.completion_proof, s.rejection_reason, s.rejection_type, s.rejected_at, s.created_at
+FROM mcp_submissions s
+JOIN mcp_claims c ON c.claim_id = s.claim_id
+WHERE s.submission_id = $1
+`, id)
+	if err != nil {
+		return smart_contract.Submission{}, err
+	}
+	defer rows.Close()
+	if rows.Next() {
+		var sub smart_contract.Submission
+		var delivJSON, proofJSON []byte
+		var rejectionReason sql.NullString
+		var rejectionType sql.NullString
+		var rejectedAt sql.NullTime
+		if err := rows.Scan(&sub.SubmissionID, &sub.ClaimID, &sub.TaskID, &sub.Status, &delivJSON, &proofJSON, &rejectionReason, &rejectionType, &rejectedAt, &sub.CreatedAt); err != nil {
+			return smart_contract.Submission{}, err
+		}
+		if rejectionReason.Valid {
+			sub.RejectionReason = rejectionReason.String
+		}
+		if rejectionType.Valid {
+			sub.RejectionType = rejectionType.String
+		}
+		if rejectedAt.Valid {
+			t := rejectedAt.Time
+			sub.RejectedAt = &t
+		}
+		if len(delivJSON) > 0 {
+			_ = json.Unmarshal(delivJSON, &sub.Deliverables)
+		}
+		if len(proofJSON) > 0 {
+			_ = json.Unmarshal(proofJSON, &sub.CompletionProof)
+		}
+		return sub, nil
+	}
+	return smart_contract.Submission{}, fmt.Errorf("submission %s not found", id)
+}
+
 // ListSubmissions returns submissions for the given task IDs by joining claims.
+
 func (s *PGStore) ListSubmissions(ctx context.Context, taskIDs []string) ([]smart_contract.Submission, error) {
 	if len(taskIDs) == 0 {
 		return nil, nil
@@ -790,6 +854,71 @@ ON CONFLICT (task_id) DO UPDATE SET
 	}
 
 	return tx.Commit(ctx)
+}
+
+// SyncClaim persists a claim from another instance.
+func (s *PGStore) SyncClaim(ctx context.Context, claim smart_contract.Claim) error {
+	_, err := s.pool.Exec(ctx, `
+INSERT INTO mcp_claims (claim_id, task_id, ai_identifier, status, expires_at, created_at)
+VALUES ($1,$2,$3,$4,$5,$6)
+ON CONFLICT (claim_id) DO UPDATE SET
+  status = EXCLUDED.status,
+  expires_at = EXCLUDED.expires_at
+`, claim.ClaimID, claim.TaskID, claim.AiIdentifier, claim.Status, claim.ExpiresAt, claim.CreatedAt)
+	if err != nil {
+		return err
+	}
+
+	// Also update task if this is the active claim
+	if claim.Status == "active" || claim.Status == "submitted" {
+		_, err = s.pool.Exec(ctx, `
+UPDATE mcp_tasks SET 
+  status = CASE WHEN $2 = 'active' THEN 'claimed' ELSE 'submitted' END,
+  claimed_by = $3,
+  claimed_at = $4,
+  claim_expires_at = $5
+WHERE task_id = $1 AND (status = 'available' OR status = 'claimed' OR status = 'submitted')
+`, claim.TaskID, claim.Status, claim.AiIdentifier, claim.CreatedAt, claim.ExpiresAt)
+	}
+	return err
+}
+
+// SyncSubmission persists a submission from another instance.
+func (s *PGStore) SyncSubmission(ctx context.Context, sub smart_contract.Submission) error {
+	delivJSON, _ := json.Marshal(sub.Deliverables)
+	proofJSON, _ := json.Marshal(sub.CompletionProof)
+	_, err := s.pool.Exec(ctx, `
+INSERT INTO mcp_submissions (submission_id, claim_id, status, deliverables, completion_proof, rejection_reason, rejection_type, rejected_at, created_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+ON CONFLICT (submission_id) DO UPDATE SET
+  status = EXCLUDED.status,
+  deliverables = EXCLUDED.deliverables,
+  completion_proof = EXCLUDED.completion_proof,
+  rejection_reason = EXCLUDED.rejection_reason,
+  rejection_type = EXCLUDED.rejection_type,
+  rejected_at = EXCLUDED.rejected_at
+`, sub.SubmissionID, sub.ClaimID, sub.Status, string(delivJSON), string(proofJSON), sub.RejectionReason, sub.RejectionType, sub.RejectedAt, sub.CreatedAt)
+	return err
+}
+
+// UpsertTask persists a single task, useful for syncing individual task updates.
+func (s *PGStore) UpsertTask(ctx context.Context, t smart_contract.Task) error {
+	reqJSON, _ := json.Marshal(t.Requirements)
+	var proofJSON []byte
+	if t.MerkleProof != nil {
+		proofJSON, _ = json.Marshal(t.MerkleProof)
+	}
+	_, err := s.pool.Exec(ctx, `
+INSERT INTO mcp_tasks (task_id, contract_id, goal_id, title, description, budget_sats, skills, status, claimed_by, claimed_at, claim_expires_at, difficulty, estimated_hours, requirements, merkle_proof)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+ON CONFLICT (task_id) DO UPDATE SET
+  status = EXCLUDED.status,
+  claimed_by = COALESCE(EXCLUDED.claimed_by, mcp_tasks.claimed_by),
+  claimed_at = COALESCE(EXCLUDED.claimed_at, mcp_tasks.claimed_at),
+  claim_expires_at = COALESCE(EXCLUDED.claim_expires_at, mcp_tasks.claim_expires_at),
+  merkle_proof = COALESCE(EXCLUDED.merkle_proof, mcp_tasks.merkle_proof)
+`, t.TaskID, t.ContractID, t.GoalID, t.Title, t.Description, t.BudgetSats, t.Skills, t.Status, t.ClaimedBy, t.ClaimedAt, t.ClaimExpires, t.Difficulty, t.EstimatedHours, string(reqJSON), string(proofJSON))
+	return err
 }
 
 // UpdateTaskProof replaces the merkle_proof for a task.

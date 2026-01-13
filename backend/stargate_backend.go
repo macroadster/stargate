@@ -16,6 +16,7 @@ import (
 	"stargate-backend/api"
 	"stargate-backend/bitcoin"
 	"stargate-backend/container"
+	"stargate-backend/core/smart_contract"
 	"stargate-backend/handlers"
 	"stargate-backend/ipfs"
 	"stargate-backend/mcp"
@@ -158,7 +159,7 @@ func initializeMCPComponents() (scmiddleware.Store, auth.APIKeyIssuer, auth.APIK
 }
 
 // startMCPServices starts background services for MCP when using PostgreSQL
-func startMCPServices() {
+func startMCPServices(escort *smart_contract.EscortService) {
 	storeDriver := os.Getenv("MCP_STORE_DRIVER")
 	if storeDriver != "postgres" {
 		return
@@ -220,7 +221,7 @@ func startMCPServices() {
 		}
 
 		provider := scmiddleware.NewFundingProvider(fundingProvider, fundingAPIBase)
-		if err := scmiddleware.StartFundingSync(context.Background(), store, provider, fundingInterval); err != nil {
+		if err := scmiddleware.StartFundingSync(context.Background(), store, provider, escort, fundingInterval); err != nil {
 			log.Printf("funding sync disabled (init error): %v", err)
 		} else {
 			log.Printf("funding sync enabled (interval=%s)", fundingInterval)
@@ -253,6 +254,15 @@ func runHTTPServer() {
 	// Initialize MCP components (for HTTP routes)
 	store, apiKeyIssuer, apiKeyValidator, ingestionSvc, challengeStore := initializeMCPComponents()
 
+	// Initialize EscortService
+	rpcURL := bitcoin.GetNetworkConfig(bitcoin.GetCurrentNetwork()).BaseURL
+	if env := os.Getenv("MCP_FUNDING_API_BASE"); env != "" {
+		rpcURL = env
+	}
+	verifier := smart_contract.NewMerkleProofVerifier(rpcURL)
+	interpreter := smart_contract.NewScriptInterpreter()
+	escort := smart_contract.NewEscortService(verifier, interpreter)
+
 	// Initialize HTTP MCP server (always enabled)
 	scannerManager := starlight.GetScannerManager()
 	httpMCPServer := mcp.NewHTTPMCPServer(store, apiKeyValidator, ingestionSvc, scannerManager, container.SmartContractService)
@@ -264,7 +274,7 @@ func runHTTPServer() {
 
 	// Start MCP background services if using PostgreSQL AND MCP server is not running separately
 	if os.Getenv("STARGATE_MODE") != "mcp-only" && os.Getenv("STARGATE_MODE") != "both" {
-		startMCPServices()
+		startMCPServices(escort)
 	} else {
 		log.Println("MCP background services skipped (will be handled by separate MCP process)")
 	}
@@ -281,7 +291,7 @@ func runHTTPServer() {
 			middleware.SecurityHeaders(
 				middleware.CORS(
 					middleware.Timeout(30 * time.Second)(
-						setupRoutes(mux, container, store, apiKeyIssuer, apiKeyValidator, challengeStore, ingestionSvc, &mirror),
+						setupRoutes(mux, container, store, apiKeyIssuer, apiKeyValidator, challengeStore, ingestionSvc, &mirror, escort),
 					),
 				)),
 		),
@@ -306,12 +316,18 @@ func runHTTPServer() {
 	log.Fatal(http.ListenAndServe(":"+httpPort, handler))
 }
 
-func setupRoutes(mux *http.ServeMux, container *container.Container, store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, apiKeyValidator auth.APIKeyValidator, challengeStore *auth.ChallengeStore, ingestionSvc *services.IngestionService, mirror *mirrorState) http.Handler {
+func setupRoutes(mux *http.ServeMux, container *container.Container, store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, apiKeyValidator auth.APIKeyValidator, challengeStore *auth.ChallengeStore, ingestionSvc *services.IngestionService, mirror *mirrorState, escort *smart_contract.EscortService) http.Handler {
 	// Initialize MCP REST server for HTTP routes
 	mcpRestServer := scmiddleware.NewServer(store, apiKeyValidator, ingestionSvc)
+	if escort != nil {
+		mcpRestServer.SetEscortService(escort)
+	}
 	mcpRestServer.RegisterRoutes(mux)
 	if err := scmiddleware.StartStegoPubsubSync(context.Background(), mcpRestServer); err != nil {
 		log.Printf("stego pubsub sync disabled: %v", err)
+	}
+	if err := scmiddleware.StartSyncPubsubSync(context.Background(), mcpRestServer); err != nil {
+		log.Printf("mcp event sync disabled: %v", err)
 	}
 	// Health endpoints
 	mux.HandleFunc("/api/health", container.HealthHandler.HandleHealth)

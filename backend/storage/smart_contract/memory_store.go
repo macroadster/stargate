@@ -19,6 +19,7 @@ type MemoryStore struct {
 	claims      map[string]smart_contract.Claim
 	submissions map[string]smart_contract.Submission
 	proposals   map[string]smart_contract.Proposal
+	escortStatus map[string]smart_contract.EscortStatus
 	claimTTL    time.Duration
 }
 
@@ -39,6 +40,7 @@ func NewMemoryStore(claimTTL time.Duration) *MemoryStore {
 		claims:      make(map[string]smart_contract.Claim),
 		submissions: make(map[string]smart_contract.Submission),
 		proposals:   make(map[string]smart_contract.Proposal),
+		escortStatus: make(map[string]smart_contract.EscortStatus),
 		claimTTL:    claimTTL,
 	}
 
@@ -867,6 +869,65 @@ func (s *MemoryStore) PublishProposal(ctx context.Context, id string) error {
 	p.Status = "published"
 	s.proposals[id] = p
 	return nil
+}
+
+// SyncClaim persists a claim from another instance.
+func (s *MemoryStore) SyncClaim(ctx context.Context, claim smart_contract.Claim) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.claims[claim.ClaimID] = claim
+	if t, ok := s.tasks[claim.TaskID]; ok {
+		if claim.Status == "active" || claim.Status == "submitted" {
+			if claim.Status == "active" {
+				t.Status = "claimed"
+			} else {
+				t.Status = "submitted"
+			}
+			t.ClaimedBy = claim.AiIdentifier
+			cc := claim.CreatedAt
+			t.ClaimedAt = &cc
+			ex := claim.ExpiresAt
+			t.ClaimExpires = &ex
+			t.ActiveClaimID = claim.ClaimID
+			s.tasks[claim.TaskID] = t
+		}
+	}
+	return nil
+}
+
+// SyncSubmission persists a submission from another instance.
+func (s *MemoryStore) SyncSubmission(ctx context.Context, sub smart_contract.Submission) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.submissions[sub.SubmissionID] = sub
+	return nil
+}
+
+// UpsertTask persists a single task update.
+func (s *MemoryStore) UpsertTask(ctx context.Context, task smart_contract.Task) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.tasks[task.TaskID] = task
+	return nil
+}
+
+// SyncEscortStatus persists escort validation results from another instance.
+func (s *MemoryStore) SyncEscortStatus(ctx context.Context, status smart_contract.EscortStatus) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.escortStatus[status.TaskID] = status
+	return nil
+}
+
+// GetSubmission returns a submission by ID.
+func (s *MemoryStore) GetSubmission(ctx context.Context, id string) (smart_contract.Submission, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	sub, ok := s.submissions[id]
+	if !ok {
+		return smart_contract.Submission{}, fmt.Errorf("submission %s not found", id)
+	}
+	return sub, nil
 }
 
 // UpdateSubmissionStatus updates the status of a submission and related entities.
