@@ -37,13 +37,40 @@ func BuildCommitmentSweepTx(client *MempoolClient, params *chaincfg.Params, txid
 		feeRate = 1
 	}
 
-	log.Printf("commitment sweep DEBUG: fetching txid=%s, vout=%d", txid, vout)
-	_, prevOut, err := client.FetchTxOutput(txid, vout)
+	log.Printf("commitment sweep DEBUG: fetching txid=%s to find commitment output by script hash", txid)
+	msg, err := client.FetchTx(txid)
 	if err != nil {
-		log.Printf("commitment sweep ERROR: failed to fetch txid=%s, vout=%d: %v", txid, vout, err)
-		return nil, fmt.Errorf("fetch commitment output: %w", err)
+		log.Printf("commitment sweep ERROR: failed to fetch txid=%s: %v", txid, err)
+		return nil, fmt.Errorf("fetch commitment tx: %w", err)
 	}
-	log.Printf("commitment sweep DEBUG: successfully fetched txid=%s, vout=%d, value=%d", txid, vout, prevOut.Value)
+
+	// Find commitment output by iterating through ALL outputs
+	expectedCommitmentScript, err := buildCommitmentP2WSHScript(params, redeemScript)
+	if err != nil {
+		return nil, err
+	}
+	expectedCommitmentHash := sha256.Sum256(expectedCommitmentScript)
+
+	var commitmentVout uint32
+	var prevOut *wire.TxOut
+	var found bool
+
+	for i, out := range msg.TxOut {
+		outHash := sha256.Sum256(out.PkScript)
+		if bytes.Equal(outHash[:], expectedCommitmentHash[:]) {
+			commitmentVout = uint32(i)
+			prevOut = out
+			found = true
+			log.Printf("commitment sweep DEBUG: found commitment output at vout=%d, value=%d, hash=%s", i, out.Value, hex.EncodeToString(outHash[:]))
+			break
+		}
+	}
+
+	if !found {
+		return nil, fmt.Errorf("commitment output not found in tx %s (no matching script hash)", txid)
+	}
+
+	log.Printf("commitment sweep DEBUG: using commitment output at vout=%d, value=%d", commitmentVout, prevOut.Value)
 
 	expectedPkScript, err := buildCommitmentP2WSHScript(params, redeemScript)
 	if err != nil {
