@@ -874,6 +874,16 @@ ON CONFLICT (claim_id) DO UPDATE SET
 
 	// Also update task if this is the active claim
 	if claim.Status == "active" || claim.Status == "submitted" {
+		// Check for conflicting claim: if task already claimed by different user, reject sync
+		var currentClaimedBy string
+		err = s.pool.QueryRow(ctx, `
+SELECT claimed_by FROM mcp_tasks
+WHERE task_id=$1 AND claimed_by IS NOT NULL
+`, claim.TaskID).Scan(&currentClaimedBy)
+		if err == nil && currentClaimedBy != "" && currentClaimedBy != claim.AiIdentifier {
+			return fmt.Errorf("sync conflict: task %s already claimed by %s, cannot overwrite with claim from %s", claim.TaskID, currentClaimedBy, claim.AiIdentifier)
+		}
+
 		_, err = s.pool.Exec(ctx, `
 UPDATE mcp_tasks SET 
   status = CASE WHEN $2 = 'active' THEN 'claimed' ELSE 'submitted' END,
@@ -906,6 +916,26 @@ ON CONFLICT (submission_id) DO UPDATE SET
 
 // UpsertTask persists a single task, useful for syncing individual task updates.
 func (s *PGStore) UpsertTask(ctx context.Context, t smart_contract.Task) error {
+	// Prevent overwriting claimed tasks with different claim information
+	if strings.EqualFold(t.Status, "claimed") && t.ClaimedBy != "" {
+		var currentClaimedBy string
+		var currentClaimedAt time.Time
+		err := s.pool.QueryRow(ctx, `
+SELECT claimed_by, claimed_at FROM mcp_tasks
+WHERE task_id=$1 AND claimed_by IS NOT NULL
+`, t.TaskID).Scan(&currentClaimedBy, &currentClaimedAt)
+		if err == nil && currentClaimedBy != "" && currentClaimedBy != t.ClaimedBy {
+			// Different user has claimed this task
+			if !currentClaimedAt.IsZero() && t.ClaimedAt != nil && t.ClaimedAt.After(currentClaimedAt) {
+				// New claim is more recent, allow overwrite but log it
+				log.Printf("task sync: overwriting claim from %s with newer claim from %s for task %s", currentClaimedBy, t.ClaimedBy, t.TaskID)
+			} else {
+				// Keep existing claim (older or same time)
+				return fmt.Errorf("task %s already claimed by %s, cannot overwrite with claim from %s", t.TaskID, currentClaimedBy, t.ClaimedBy)
+			}
+		}
+	}
+
 	reqJSON, _ := json.Marshal(t.Requirements)
 	var proofJSON []byte
 	if t.MerkleProof != nil {
@@ -920,7 +950,7 @@ ON CONFLICT (task_id) DO UPDATE SET
   claimed_at = COALESCE(EXCLUDED.claimed_at, mcp_tasks.claimed_at),
   claim_expires_at = COALESCE(EXCLUDED.claim_expires_at, mcp_tasks.claim_expires_at),
   merkle_proof = COALESCE(EXCLUDED.merkle_proof, mcp_tasks.merkle_proof)
-`, t.TaskID, t.ContractID, t.GoalID, t.Title, t.Description, t.BudgetSats, t.Skills, t.Status, t.ClaimedBy, t.ClaimedAt, t.ClaimExpires, t.Difficulty, t.EstimatedHours, string(reqJSON), string(proofJSON))
+ `, t.TaskID, t.ContractID, t.GoalID, t.Title, t.Description, t.BudgetSats, t.Skills, t.Status, t.ClaimedBy, t.ClaimedAt, t.ClaimExpires, t.Difficulty, t.EstimatedHours, string(reqJSON), string(proofJSON))
 	return err
 }
 

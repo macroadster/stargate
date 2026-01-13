@@ -879,6 +879,11 @@ func (s *MemoryStore) SyncClaim(ctx context.Context, claim smart_contract.Claim)
 	s.claims[claim.ClaimID] = claim
 	if t, ok := s.tasks[claim.TaskID]; ok {
 		if claim.Status == "active" || claim.Status == "submitted" {
+			// Check for conflicting claim: if task already claimed by different user, reject sync
+			if t.ClaimedBy != "" && t.ClaimedBy != claim.AiIdentifier {
+				return fmt.Errorf("sync conflict: task %s already claimed by %s, cannot overwrite with claim from %s", claim.TaskID, t.ClaimedBy, claim.AiIdentifier)
+			}
+
 			if claim.Status == "active" {
 				t.Status = "claimed"
 			} else {
@@ -908,6 +913,16 @@ func (s *MemoryStore) SyncSubmission(ctx context.Context, sub smart_contract.Sub
 func (s *MemoryStore) UpsertTask(ctx context.Context, task smart_contract.Task) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	// Prevent overwriting claimed tasks with different claim information
+	if existing, ok := s.tasks[task.TaskID]; ok {
+		if strings.EqualFold(task.Status, "claimed") && task.ClaimedBy != "" {
+			if existing.ClaimedBy != "" && existing.ClaimedBy != task.ClaimedBy {
+				return fmt.Errorf("task %s already claimed by %s, cannot overwrite with claim from %s", task.TaskID, existing.ClaimedBy, task.ClaimedBy)
+			}
+		}
+	}
+
 	s.tasks[task.TaskID] = task
 	return nil
 }
