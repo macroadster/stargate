@@ -13,14 +13,14 @@ import (
 
 // MemoryStore holds in-memory MCP data. It is intentionally simple for the MVP and can be swapped for persistent storage later.
 type MemoryStore struct {
-	mu          sync.RWMutex
-	contracts   map[string]smart_contract.Contract
-	tasks       map[string]smart_contract.Task
-	claims      map[string]smart_contract.Claim
-	submissions map[string]smart_contract.Submission
-	proposals   map[string]smart_contract.Proposal
+	mu           sync.RWMutex
+	contracts    map[string]smart_contract.Contract
+	tasks        map[string]smart_contract.Task
+	claims       map[string]smart_contract.Claim
+	submissions  map[string]smart_contract.Submission
+	proposals    map[string]smart_contract.Proposal
 	escortStatus map[string]smart_contract.EscortStatus
-	claimTTL    time.Duration
+	claimTTL     time.Duration
 }
 
 // NewMemoryStore seeds fixtures and returns a MemoryStore.
@@ -35,13 +35,13 @@ func NewMemoryStore(claimTTL time.Duration) *MemoryStore {
 		tMap[t.TaskID] = t
 	}
 	store := &MemoryStore{
-		contracts:   cMap,
-		tasks:       tMap,
-		claims:      make(map[string]smart_contract.Claim),
-		submissions: make(map[string]smart_contract.Submission),
-		proposals:   make(map[string]smart_contract.Proposal),
+		contracts:    cMap,
+		tasks:        tMap,
+		claims:       make(map[string]smart_contract.Claim),
+		submissions:  make(map[string]smart_contract.Submission),
+		proposals:    make(map[string]smart_contract.Proposal),
 		escortStatus: make(map[string]smart_contract.EscortStatus),
-		claimTTL:    claimTTL,
+		claimTTL:     claimTTL,
 	}
 
 	// Create missing tasks for contracts that should have them
@@ -331,6 +331,7 @@ SubmitWork:
 	sub := smart_contract.Submission{
 		SubmissionID:    subID,
 		ClaimID:         claimID,
+		TaskID:          claim.TaskID,
 		Status:          "pending_review",
 		Deliverables:    deliverables,
 		CompletionProof: proof,

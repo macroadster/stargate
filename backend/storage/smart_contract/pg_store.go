@@ -384,7 +384,7 @@ FROM mcp_tasks WHERE task_id=$1 FOR UPDATE
 	if err != nil {
 		return smart_contract.Claim{}, ErrTaskNotFound
 	}
-	if strings.EqualFold(task.Status, "approved") || strings.EqualFold(task.Status, "completed") || strings.EqualFold(task.Status, "published") || strings.EqualFold(task.Status, "claimed") || strings.EqualFold(task.Status, "submitted") {
+	if strings.EqualFold(task.Status, "approved") || strings.EqualFold(task.Status, "completed") || strings.EqualFold(task.Status, "claimed") || strings.EqualFold(task.Status, "submitted") {
 		return smart_contract.Claim{}, ErrTaskUnavailable
 	}
 
@@ -454,7 +454,7 @@ VALUES ($1,$2,$3,$4,$5,$6)
 
 	_, err = tx.Exec(ctx, `
 UPDATE mcp_tasks SET status='claimed', claimed_by=$2, claimed_at=$3, claim_expires_at=$4 WHERE task_id=$1
-`, taskID, aiID, claim.CreatedAt, claim.ExpiresAt)
+`, taskID, claim.AiIdentifier, claim.CreatedAt, claim.ExpiresAt)
 	if err != nil {
 		return smart_contract.Claim{}, err
 	}
@@ -839,7 +839,10 @@ ON CONFLICT (task_id) DO UPDATE SET
   description = EXCLUDED.description,
   budget_sats = EXCLUDED.budget_sats,
   skills = EXCLUDED.skills,
-  status = EXCLUDED.status,
+  status = CASE 
+    WHEN EXCLUDED.status = 'available' THEN 'available'
+    ELSE mcp_tasks.status
+  END,
   claimed_by = COALESCE(EXCLUDED.claimed_by, mcp_tasks.claimed_by),
   claimed_at = COALESCE(EXCLUDED.claimed_at, mcp_tasks.claimed_at),
   claim_expires_at = COALESCE(EXCLUDED.claim_expires_at, mcp_tasks.claim_expires_at),
@@ -1385,6 +1388,8 @@ func (s *PGStore) PublishProposal(ctx context.Context, id string) error {
 	if _, err := tx.Exec(ctx, `UPDATE mcp_tasks SET status='published' WHERE contract_id=$1 AND status IN ('submitted','pending_review','claimed','approved')`, contractID); err != nil {
 		return err
 	}
+	// Keep "available" tasks as "available" - only publish when contract is actually funded
+	// Do NOT update available tasks to published
 	if _, err := tx.Exec(ctx, `UPDATE mcp_claims SET status='complete' WHERE task_id IN (SELECT task_id FROM mcp_tasks WHERE contract_id=$1) AND status IN ('submitted','pending_review','active','approved')`, contractID); err != nil {
 		return err
 	}

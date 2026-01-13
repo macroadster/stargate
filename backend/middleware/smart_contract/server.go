@@ -2143,6 +2143,12 @@ func (s *Server) processEvent(evt smart_contract.Event, shouldPublish bool) {
 }
 
 func (s *Server) publishSyncEvent(evt smart_contract.Event) {
+	// TEMPORARY FIX: Add basic rate limiting to prevent sync storms
+	if evt.Type == "contract_upsert" || evt.Type == "publish" {
+		// Add small delay to reduce rapid firing
+		time.Sleep(100 * time.Millisecond)
+	}
+
 	ann := &syncAnnouncement{
 		Type:  evt.Type,
 		Event: &evt,
@@ -2157,6 +2163,12 @@ func (s *Server) publishSyncEvent(evt smart_contract.Event) {
 		task, err := s.store.GetTask(evt.EntityID)
 		if err == nil {
 			ann.Task = &task
+		} else {
+			// For claim events, log error but still publish to maintain sync flow
+			// The receiving instance will retry getting task data during reconciliation
+			if evt.Type == "claim" {
+				log.Printf("WARNING: Failed to get task %s for claim sync: %v", evt.EntityID, err)
+			}
 		}
 	case "contract_confirmed":
 		// EntityID is ContractID
@@ -2931,14 +2943,27 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 				}
 				proposals = filtered
 			}
-			// hydrate submissions alongside tasks
+			// hydrate tasks and submissions with current state from task store
 			var taskIDs []string
 			for _, p := range proposals {
 				for _, t := range p.Tasks {
 					taskIDs = append(taskIDs, t.TaskID)
 				}
 			}
+			tasks, _ := s.store.ListTasks(smart_contract.TaskFilter{})
+			taskByID := make(map[string]smart_contract.Task)
+			for _, t := range tasks {
+				taskByID[t.TaskID] = t
+			}
 			subs, _ := s.store.ListSubmissions(r.Context(), taskIDs)
+			// Hydrate proposal tasks with current task state
+			for i := range proposals {
+				for j := range proposals[i].Tasks {
+					if currentTask, ok := taskByID[proposals[i].Tasks[j].TaskID]; ok {
+						proposals[i].Tasks[j] = currentTask
+					}
+				}
+			}
 			JSON(w, http.StatusOK, map[string]interface{}{
 				"proposals":   proposals,
 				"total":       len(proposals),

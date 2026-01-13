@@ -26,7 +26,9 @@
     "lint": "eslint \"src/**/*.{js,jsx}\"",
     "test": "NODE_NO_WARNINGS=1 vitest",
     "test:e2e": "npx playwright test frontend/tests/selection.spec.js",
-    "test:watch": "NODE_NO_WARNINGS=1 vitest --watch"
+    "test:watch": "NODE_NO_WARNINGS=1 vitest --watch",
+    "test:real": "npx playwright test tests/mcp_workflow_real.spec.js --headed",
+    "test:real:headless": "npx playwright test tests/mcp_workflow_real.spec.js"
   },
   "eslintConfig": {
     "extends": [
