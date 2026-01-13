@@ -110,8 +110,9 @@ bd close bd-42 --reason "Completed" --json
    - Identify what actually needs to be fixed/improved
 4. **Work on it**: Implement, test, document
 5. **Deploy and verify** (if code changes):
+   - **MANDATORY**: Build and deploy to Kubernetes cluster BEFORE pushing code
    - Follow "Proper Deployment Workflow" section
-   - Verify the deployed code actually has your changes
+   - Verify the deployed code actually has your changes in the cluster
    - NEVER assume deployment worked without verification
 6. **Discover new work?** Create linked issue:
    - `bd create "Found bug" -p 1 --deps discovered-from:<parent-id>`
@@ -220,17 +221,21 @@ For more details, see README.md and QUICKSTART.md.
 
 1. **File issues for remaining work** - Create issues for anything that needs follow-up
 2. **Run quality gates** (if code changed) - Tests, linters, builds
-3. **Update issue status** - Close finished work, update in-progress items
-4. **PUSH TO REMOTE** - This is MANDATORY:
+3. **DEPLOY AND VERIFY IN CLUSTER** - Mandatory for all code changes:
+   - Build Docker images: `make backend` / `make frontend`
+   - Deploy to cluster: Follow "Proper Deployment Workflow"
+   - Verify: Check logs and pod image IDs
+4. **Update issue status** - Close finished work, update in-progress items
+5. **PUSH TO REMOTE** - This is MANDATORY:
    ```bash
    git pull --rebase
    bd sync
    git push
    git status  # MUST show "up to date with origin"
    ```
-5. **Clean up** - Clear stashes, prune remote branches
-6. **Verify** - All changes committed AND pushed
-7. **Hand off** - Provide context for next session
+6. **Clean up** - Clear stashes, prune remote branches
+7. **Verify** - All changes committed AND pushed
+8. **Hand off** - Provide context for next session
 
 **CRITICAL RULES:**
 - Work is NOT complete until `git push` succeeds
