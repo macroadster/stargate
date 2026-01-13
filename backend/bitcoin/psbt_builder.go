@@ -250,7 +250,8 @@ func BuildFundingPSBT(client *MempoolClient, params *chaincfg.Params, req PSBTRe
 	}
 	// Only add commitment output if commitment_sats > 0 (avoids dust outputs)
 	if commitmentScript != nil && commitmentSats > 0 {
-		commitmentVout = uint32(len(tx.TxOut) - 1)
+		commitmentVout = uint32(len(tx.TxOut))
+		tx.AddTxOut(&wire.TxOut{Value: commitmentSats, PkScript: commitmentScript})
 	}
 	var changeAddresses []string
 	var changeAmounts []int64
