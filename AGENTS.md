@@ -282,42 +282,21 @@ This project uses TWO different build methods. Do NOT confuse them:
 
 When you need to deploy code changes:
 
-**OPTION A: Deploy local Docker images (for testing)**
+**Deploy local Docker images (for testing)**
 ```bash
 # 1. Build locally
 make backend
 make frontend
 
 # 2. Update deployment to use local images
-kubectl set image deployment/stargate-backend stargate=stargate-backend:latest -n default
-kubectl set image deployment/stargate-frontend stargate=stargate-frontend:latest -n default
+kubectl rollout restart deployment/stargate-backend:latest -n default
+kubectl rollout restart deployment/stargate-frontend:latest -n default
 
-# 3. Force use of local images (bypass Docker Hub pull)
-kubectl patch deployment stargate-backend -n default -p '{"spec":{"template":{"spec":{"containers":[{"name":"stargate","image":"stargate-backend:latest","imagePullPolicy":"Never"}]}}}}'
-kubectl patch deployment stargate-frontend -n default -p '{"spec":{"template":{"spec":{"containers":[{"name":"stargate","image":"stargate-frontend:latest","imagePullPolicy":"Never"}]}}}}'
-
-# 4. Wait for rollout
+# 3. Wait for rollout
 kubectl wait --for=condition=available --timeout=60s deployment/stargate-backend -n default
 kubectl wait --for=condition=available --timeout=60s deployment/stargate-frontend -n default
-
-# 5. Verify
-kubectl get pods -n default | grep stargate
-kubectl describe pod <new-pod-name> -n default | grep "Image:"
 ```
 
-**OPTION B: Deploy via Helm chart (for production)**
-```bash
-# 1. Build and push to Docker Hub (if you have access)
-make backend
-docker tag stargate-backend:latest macroadster/stargate-backend:latest
-docker push macroadster/stargate-backend:latest
-
-# 2. Upgrade Helm release
-helm upgrade --install starlight-stack starlight-helm/ -f starlight-helm/values.yaml -n default
-
-# 3. Wait and verify
-kubectl wait --for=condition=available --timeout=60s deployment/stargate-backend -n default
-```
 
 **VERIFYING DEPLOYMENT:**
 ```bash
@@ -328,7 +307,7 @@ kubectl get pods -n default
 kubectl get pods -n default | grep stargate-backend | grep Running | awk '{print $1}'
 
 # Check actual image deployed
-kubectl describe pod <pod-name> -n default | grep "Image:"
+kubectl describe pod <pod-name> -n default | grep "Image ID:"
 # Should show: stargate-backend:latest (local) or macroadster/stargate-backend:latest (Docker Hub)
 
 # Verify image ID matches what you built

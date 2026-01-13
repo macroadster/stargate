@@ -1,6 +1,7 @@
 package smart_contract
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -11,15 +12,19 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
+
+	"stargate-backend/ipfs"
 )
 
 type syncPubsubConfig struct {
-	Enabled  bool
-	Topic    string
-	APIURL   string
-	Interval time.Duration
-	Issuer   string
+	Enabled        bool
+	Topic          string
+	APIURL         string
+	Interval       time.Duration
+	Issuer         string
+	DedupeInterval time.Duration
 }
 
 // StartSyncPubsubSync listens for sync announcements and applies them locally.
@@ -56,20 +61,27 @@ func StartSyncPubsubSync(ctx context.Context, server *Server) error {
 	return nil
 }
 
+// Global deduplication state to prevent sync storms
+var (
+	lastSyncTime = make(map[string]time.Time)
+	syncMutex    sync.RWMutex
+)
+
 func loadSyncPubsubConfig() syncPubsubConfig {
 	enabled := true
-	if raw := os.Getenv("IPFS_SYNC_ENABLED"); raw != "" {
+	if raw := os.Getenv("STARGATE_SYNC_ENABLED"); raw != "" {
 		enabled = strings.EqualFold(raw, "true")
 	}
 	apiURL := os.Getenv("IPFS_API_URL")
 	if apiURL == "" {
 		apiURL = "http://127.0.0.1:5001"
 	}
+	// Use existing stargate-stego topic for sync announcements
 	topic := os.Getenv("IPFS_SYNC_TOPIC")
 	if topic == "" {
-		topic = "stargate-mcp-sync"
+		topic = "stargate-stego"
 	}
-	interval := 5 * time.Second
+	interval := 10 * time.Second
 	if raw := os.Getenv("IPFS_SYNC_INTERVAL_SEC"); raw != "" {
 		if v, err := strconv.Atoi(raw); err == nil && v > 0 {
 			interval = time.Duration(v) * time.Second
@@ -85,16 +97,17 @@ func loadSyncPubsubConfig() syncPubsubConfig {
 	}
 
 	return syncPubsubConfig{
-		Enabled:  enabled,
-		Topic:    topic,
-		APIURL:   apiURL,
-		Interval: interval,
-		Issuer:   issuer,
+		Enabled:        enabled,
+		Topic:          topic,
+		APIURL:         apiURL,
+		Interval:       interval,
+		Issuer:         issuer,
+		DedupeInterval: 5 * time.Second, // 5-second deduplication window
 	}
 }
 
 func syncPubsubSubscribe(ctx context.Context, server *Server, cfg syncPubsubConfig, client *http.Client) error {
-	reqURL := fmt.Sprintf("%s/api/v0/pubsub/sub?arg=%s", strings.TrimRight(cfg.APIURL, "/"), url.QueryEscape(cfg.Topic))
+	reqURL := fmt.Sprintf("%s/api/v0/pubsub/sub?arg=%s", strings.TrimRight(cfg.APIURL, "/"), url.QueryEscape(multibaseEncodeString(cfg.Topic)))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, nil)
 	if err != nil {
 		return err
@@ -107,29 +120,72 @@ func syncPubsubSubscribe(ctx context.Context, server *Server, cfg syncPubsubConf
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("pubsub subscribe failed: %s", resp.Status)
+		body, _ := io.ReadAll(resp.Body)
+		if len(body) == 0 {
+			return fmt.Errorf("pubsub subscribe failed: %s", resp.Status)
+		}
+		return fmt.Errorf("pubsub subscribe failed: %s: %s", resp.Status, strings.TrimSpace(string(body)))
 	}
 
 	decoder := json.NewDecoder(resp.Body)
 	for {
-		var msg struct {
-			Data []byte `json:"data"`
-			From string `json:"from"`
-		}
+		var msg pubsubMessage
 		if err := decoder.Decode(&msg); err != nil {
 			return err
 		}
 
+		// Try to parse as sync announcement first, then as stego announcement
+		candidates := make([][]byte, 0, 3)
+		candidates = append(candidates, []byte(msg.Data))
+		if decoded := decodeMultibasePayload([]byte(msg.Data)); len(decoded) > 0 {
+			candidates = append(candidates, decoded)
+		}
+		if decoded := decodeBase64Payload(msg.Data); len(decoded) > 0 {
+			candidates = append(candidates, decoded)
+			if decoded2 := decodeMultibasePayload(decoded); len(decoded2) > 0 {
+				candidates = append(candidates, decoded2)
+			}
+		}
+
 		var ann syncAnnouncement
-		// IPFS data is sometimes double-encoded or multibase
-		payload := decodePubsubPayload(msg.Data)
-		if err := json.Unmarshal(payload, &ann); err != nil {
-			continue
+		parsed := false
+		for _, payload := range candidates {
+			payload = bytes.TrimSpace(payload)
+			if len(payload) == 0 {
+				continue
+			}
+			if err := json.Unmarshal(payload, &ann); err == nil && ann.Type != "" {
+				parsed = true
+				break
+			}
+		}
+
+		if !parsed {
+			continue // Not a sync announcement, skip
 		}
 
 		if ann.Issuer == cfg.Issuer {
 			continue // Skip our own announcements
 		}
+
+		// Create deduplication key based on announcement content
+		dedupeKey := fmt.Sprintf("%s:%s:%d", ann.Type, ann.Issuer, ann.Timestamp)
+
+		// Check if we've recently processed this announcement
+		syncMutex.RLock()
+		if lastProcessed, exists := lastSyncTime[dedupeKey]; exists {
+			if time.Since(lastProcessed) < cfg.DedupeInterval {
+				syncMutex.RUnlock()
+				log.Printf("sync deduplication: skipping duplicate announcement from %s", ann.Issuer)
+				continue
+			}
+		}
+		syncMutex.RUnlock()
+
+		// Mark this announcement as processed
+		syncMutex.Lock()
+		lastSyncTime[dedupeKey] = time.Now()
+		syncMutex.Unlock()
 
 		if err := server.ReconcileSyncAnnouncement(ctx, &ann); err != nil {
 			log.Printf("sync reconcile failed: %v", err)
@@ -151,32 +207,33 @@ func (s *Server) PublishSyncAnnouncement(ctx context.Context, ann *syncAnnouncem
 	ann.Issuer = cfg.Issuer
 	ann.Timestamp = time.Now().Unix()
 
+	// Create deduplication key to check if we recently published this
+	dedupeKey := fmt.Sprintf("%s:%s:%d", ann.Type, ann.Issuer, ann.Timestamp)
+
+	// Check if we recently published this exact announcement
+	syncMutex.RLock()
+	if lastPublished, exists := lastSyncTime[dedupeKey]; exists {
+		if time.Since(lastPublished) < cfg.DedupeInterval {
+			syncMutex.RUnlock()
+			log.Printf("sync publish deduplication: skipping recent republication of %s", ann.Type)
+			return nil
+		}
+	}
+	syncMutex.RUnlock()
+
+	// Mark as published before actual publish to prevent race conditions
+	syncMutex.Lock()
+	lastSyncTime[dedupeKey] = time.Now()
+	syncMutex.Unlock()
+
 	data, err := json.Marshal(ann)
 	if err != nil {
 		return err
 	}
 
-	reqURL := fmt.Sprintf("%s/api/v0/pubsub/pub?arg=%s&arg=%s", 
-		strings.TrimRight(cfg.APIURL, "/"), 
-		url.QueryEscape(cfg.Topic),
-		url.QueryEscape(string(data)))
+	log.Printf("publishing sync announcement: type=%s, issuer=%s", ann.Type, ann.Issuer)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, nil)
-	if err != nil {
-		return err
-	}
-
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("pubsub publish failed: %s: %s", resp.Status, string(body))
-	}
-
-	return nil
+	// Use IPFS client for proper multipart form publishing
+	client := ipfs.NewClientFromEnv()
+	return client.PubsubPublish(ctx, cfg.Topic, data)
 }

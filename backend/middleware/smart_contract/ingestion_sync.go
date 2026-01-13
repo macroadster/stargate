@@ -8,14 +8,51 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"stargate-backend/core/smart_contract"
+	"stargate-backend/ipfs"
 	"stargate-backend/services"
 	scstore "stargate-backend/storage/smart_contract"
 )
+
+// publishProposalEvent publishes a proposal creation event via IPFS for cross-instance sync
+func publishProposalEvent(ctx context.Context, proposal smart_contract.Proposal) error {
+	// Check if sync is enabled
+	if os.Getenv("STARGATE_SYNC_ENABLE") == "false" {
+		return nil
+	}
+
+	// Get sync configuration
+	topic := "stargate-stego" // Default topic
+	if envTopic := os.Getenv("STARGATE_SYNC_TOPIC"); envTopic != "" {
+		topic = envTopic
+	}
+
+	// Create sync announcement for proposal creation
+	ann := map[string]interface{}{
+		"type":     "proposal_create",
+		"proposal": &proposal,
+		"issuer":   os.Getenv("STARGATE_SYNC_ISSUER"),
+	}
+
+	if ann["issuer"] == "" {
+		ann["issuer"] = "stargate-backend"
+	}
+	ann["timestamp"] = time.Now().Unix()
+
+	data, err := json.Marshal(ann)
+	if err != nil {
+		return err
+	}
+
+	// Use IPFS client for publishing
+	client := ipfs.NewClientFromEnv()
+	return client.PubsubPublish(ctx, topic, data)
+}
 
 // StartIngestionSync polls starlight_ingestions for pending records, validates embedded payloads,
 // and upserts contracts/tasks into the MCP store. It requires a Postgres-backed store.
@@ -132,6 +169,10 @@ func processRecord(ctx context.Context, rec services.IngestionRecord, ingest *se
 		}
 		if err := store.CreateProposal(ctx, proposal); err != nil {
 			return ingest.UpdateStatusWithNote(rec.ID, "invalid", fmt.Sprintf("proposal upsert failed: %v", err))
+		}
+		// Publish proposal creation event to sync across instances
+		if err := publishProposalEvent(ctx, proposal); err != nil {
+			log.Printf("failed to publish proposal create event for %s: %v", proposal.ID, err)
 		}
 		// Also create contract for wishes so they show up in contracts list
 		if proposal.ID != "" {
