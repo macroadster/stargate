@@ -24,6 +24,7 @@ type CommitmentSweepResult struct {
 
 // BuildCommitmentSweepTx builds a signed-less hashlock sweep transaction with the preimage witness.
 func BuildCommitmentSweepTx(client *MempoolClient, params *chaincfg.Params, txid string, vout uint32, redeemScript, preimage []byte, dest btcutil.Address, feeRate int64) (*CommitmentSweepResult, error) {
+	log.Printf("commitment sweep DEBUG: BuildCommitmentSweepTx called with txid=%s, vout=%d, preimage_len=%d", txid, vout, len(preimage))
 	if client == nil {
 		return nil, fmt.Errorf("mempool client required")
 	}
@@ -43,6 +44,7 @@ func BuildCommitmentSweepTx(client *MempoolClient, params *chaincfg.Params, txid
 		log.Printf("commitment sweep ERROR: failed to fetch txid=%s: %v", txid, err)
 		return nil, fmt.Errorf("fetch commitment tx: %w", err)
 	}
+	log.Printf("commitment sweep DEBUG: fetched txid=%s successfully, num_outputs=%d", txid, len(msg.TxOut))
 
 	// Find commitment output by iterating through ALL outputs
 	expectedCommitmentScript, err := buildCommitmentP2WSHScript(params, redeemScript)
@@ -76,9 +78,12 @@ func BuildCommitmentSweepTx(client *MempoolClient, params *chaincfg.Params, txid
 	if err != nil {
 		return nil, err
 	}
+	log.Printf("commitment sweep DEBUG: checking script mismatch - actual=%s, expected=%s", hex.EncodeToString(prevOut.PkScript), hex.EncodeToString(expectedPkScript))
 	if !bytes.Equal(prevOut.PkScript, expectedPkScript) {
+		log.Printf("commitment sweep ERROR: script mismatch detected!")
 		return nil, fmt.Errorf("commitment output script mismatch")
 	}
+	log.Printf("commitment sweep DEBUG: script mismatch check passed")
 
 	destScript, err := txscript.PayToAddrScript(dest)
 	if err != nil {

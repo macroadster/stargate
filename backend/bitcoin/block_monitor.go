@@ -2772,7 +2772,7 @@ func visiblePixelHash(imageBytes []byte, message string) string {
 	if len(imageBytes) == 0 || message == "" {
 		return ""
 	}
-	sum := sha256.Sum256(append(imageBytes, []byte(message)...))
+	sum := sha256.Sum256(imageBytes)
 	return fmt.Sprintf("%x", sum[:8])
 }
 

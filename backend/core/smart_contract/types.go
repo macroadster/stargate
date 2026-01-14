@@ -45,6 +45,7 @@ type MerkleProof struct {
 	FundedAmountSats       int64       `json:"funded_amount_sats"`
 	FundingAddress         string      `json:"funding_address,omitempty"`
 	CommitmentRedeemScript string      `json:"commitment_redeem_script,omitempty"`
+	CommitmentPixelHash    string      `json:"commitment_pixel_hash,omitempty"`
 	CommitmentRedeemHash   string      `json:"commitment_redeem_hash,omitempty"`
 	CommitmentAddress      string      `json:"commitment_address,omitempty"`
 	CommitmentVout         uint32      `json:"commitment_vout,omitempty"`

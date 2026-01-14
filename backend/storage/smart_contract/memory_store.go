@@ -474,19 +474,21 @@ func (s *MemoryStore) UpdateTaskProof(ctx context.Context, taskID string, proof 
 	if !ok {
 		return ErrTaskNotFound
 	}
-	existingWallet := strings.TrimSpace(t.ContractorWallet)
-	if existingWallet == "" && t.MerkleProof != nil {
-		existingWallet = strings.TrimSpace(t.MerkleProof.ContractorWallet)
+	if proof != nil {
+		existingWallet := strings.TrimSpace(t.ContractorWallet)
+		if existingWallet == "" && t.MerkleProof != nil {
+			existingWallet = strings.TrimSpace(t.MerkleProof.ContractorWallet)
+		}
+		if existingWallet != "" && strings.TrimSpace(proof.ContractorWallet) == "" {
+			cp := *proof
+			cp.ContractorWallet = existingWallet
+			proof = &cp
+		}
+		if strings.TrimSpace(t.ContractorWallet) == "" && strings.TrimSpace(proof.ContractorWallet) != "" {
+			t.ContractorWallet = strings.TrimSpace(proof.ContractorWallet)
+		}
+		t.MerkleProof = proof
 	}
-	if proof != nil && existingWallet != "" && strings.TrimSpace(proof.ContractorWallet) == "" {
-		cp := *proof
-		cp.ContractorWallet = existingWallet
-		proof = &cp
-	}
-	if proof != nil && strings.TrimSpace(t.ContractorWallet) == "" && strings.TrimSpace(proof.ContractorWallet) != "" {
-		t.ContractorWallet = strings.TrimSpace(proof.ContractorWallet)
-	}
-	t.MerkleProof = proof
 	s.tasks[taskID] = t
 	return nil
 }

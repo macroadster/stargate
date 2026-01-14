@@ -1335,11 +1335,6 @@ func resolvePixelHashFromIngestion(rec *services.IngestionRecord, normalize func
 		return nil
 	}
 
-	if message != "" {
-		sum := sha256.Sum256(append(imageBytes, []byte(message)...))
-		return normalize(sum[:])
-	}
-
 	sum := sha256.Sum256(imageBytes)
 	return normalize(sum[:])
 }
@@ -1440,6 +1435,9 @@ func (s *Server) updateTaskCommitmentProof(ctx context.Context, taskID string, r
 	if res.CommitmentSats > 0 {
 		proof.CommitmentSats = res.CommitmentSats
 	}
+	if len(pixelBytes) == 32 {
+		proof.CommitmentPixelHash = hex.EncodeToString(pixelBytes)
+	}
 	return s.store.UpdateTaskProof(ctx, taskID, proof)
 }
 
@@ -1488,7 +1486,7 @@ func (s *Server) handleCommitmentPSBT(w http.ResponseWriter, r *http.Request, co
 
 	preimageHex := strings.TrimSpace(body.Preimage)
 	if preimageHex == "" {
-		preimageHex = strings.TrimSpace(proof.VisiblePixelHash)
+		preimageHex = strings.TrimSpace(proof.CommitmentPixelHash)
 	}
 	preimage, err := hex.DecodeString(preimageHex)
 	if err != nil {

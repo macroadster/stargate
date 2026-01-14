@@ -484,7 +484,7 @@ func stripWishTimestamp(message string) string {
 }
 
 func computeVisiblePixelHash(imageBytes []byte, text string) string {
-	sum := sha256.Sum256(append(imageBytes, []byte(text)...))
+	sum := sha256.Sum256(imageBytes)
 	return fmt.Sprintf("%x", sum[:])
 }
 
