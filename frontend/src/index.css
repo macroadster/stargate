@@ -2,6 +2,14 @@
 @tailwind components;
 @tailwind utilities;
 
+body, html {
+  background: white;
+}
+ 
+.dark body, html {
+  background: rgb(3 7 18); /* gray-950 */
+}
+
 .no-scrollbar::-webkit-scrollbar {
   display: none;
 }
