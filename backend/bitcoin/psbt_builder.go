@@ -611,7 +611,10 @@ func buildCommitmentScript(params *chaincfg.Params, pixelHash []byte, commitment
 func buildHashlockRedeemScript(pixelHash []byte) ([]byte, error) {
 	builder := txscript.NewScriptBuilder()
 	builder.AddOp(txscript.OP_SHA256)
-	builder.AddData(pixelHash[:])
+	// The pixelHash passed in is actually the preimage (visible pixel hash or stego hash).
+	// We must hash it so the script becomes OP_SHA256 <SHA256(preimage)> OP_EQUAL.
+	hash := sha256.Sum256(pixelHash)
+	builder.AddData(hash[:])
 	builder.AddOp(txscript.OP_EQUAL)
 	return builder.Script()
 }
