@@ -126,20 +126,37 @@ func NewServer(store Store, apiKeys auth.APIKeyValidator, ingest *services.Inges
 
 // RegisterRoutes attaches handlers to the mux.
 func (s *Server) RegisterRoutes(mux *http.ServeMux) {
+	// Health and config endpoints
 	mux.HandleFunc("/healthz", s.handleHealth)
+	mux.HandleFunc("/api/smart_contract/config", s.authWrap(s.handleConfig))
+
+	// Contract endpoints
 	mux.HandleFunc("/api/smart_contract/contracts", s.authWrap(s.handleContracts))
 	mux.HandleFunc("/api/smart_contract/contracts/", s.authWrap(s.handleContracts))
+
+	// Task endpoints
 	mux.HandleFunc("/api/smart_contract/tasks", s.authWrap(s.handleTasks))
 	mux.HandleFunc("/api/smart_contract/tasks/", s.authWrap(s.handleTasks))
+
+	// Claim endpoints
 	mux.HandleFunc("/api/smart_contract/claims/", s.authWrap(s.handleClaims))
+
+	// Skill and discovery endpoints
 	mux.HandleFunc("/api/smart_contract/skills", s.authWrap(s.handleSkills))
 	mux.HandleFunc("/api/smart_contract/discover", s.authWrap(s.handleDiscover))
+
+	// Proposal endpoints
 	mux.HandleFunc("/api/smart_contract/proposals", s.authWrap(s.handleProposals))
 	mux.HandleFunc("/api/smart_contract/proposals/", s.authWrap(s.handleProposals))
+
+	// Submission endpoints
 	mux.HandleFunc("/api/smart_contract/submissions", s.authWrap(s.handleSubmissions))
 	mux.HandleFunc("/api/smart_contract/submissions/", s.authWrap(s.handleSubmissions))
+
+	// Event endpoints
 	mux.HandleFunc("/api/smart_contract/events", s.authWrap(s.handleEvents))
-	mux.HandleFunc("/api/smart_contract/config", s.authWrap(s.handleConfig))
+
+	// Stego endpoints (still using original handlers for now)
 	mux.HandleFunc("/api/smart_contract/stego/reconcile", s.authWrap(s.handleStegoReconcile))
 	mux.HandleFunc("/api/smart_contract/stego/payload/", s.authWrap(s.handleStegoPayload))
 }
