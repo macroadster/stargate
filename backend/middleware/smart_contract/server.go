@@ -2684,6 +2684,10 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 			Error(w, http.StatusUnsupportedMediaType, "Content-Type must be application/json")
 			return
 		}
+
+		// CRITICAL: Log entry for every request
+		log.Printf("CRITICAL: HandleCreateProposal called at %s from %s, User-Agent: %s", time.Now().Format(time.RFC3339), r.RemoteAddr, r.Header.Get("User-Agent"))
+
 		var body ProposalCreateBody
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			Error(w, http.StatusBadRequest, "invalid json")
