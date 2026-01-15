@@ -161,15 +161,14 @@ AI assistants often create planning and design documents during development:
 **Best Practice: Use a dedicated directory for these ephemeral files**
 
 **Recommended approach:**
-- Create a `history/` directory in the project root
-- Store ALL AI-generated planning/design docs in `history/`
+- Store ALL AI-generated planning/design docs in `docs/history/`
 - Keep the repository root clean and focused on permanent project files
-- Only access `history/` when explicitly asked to review past planning
+- Only access `docs/history/` when explicitly asked to review past planning
 
 **Example .gitignore entry (optional):**
 ```
 # AI planning documents (ephemeral)
-history/
+docs/history/
 ```
 
 **Benefits:**
@@ -190,7 +189,7 @@ For example: `bd create --help` shows `--parent`, `--deps`, `--assignee`, etc.
 - Always use `--json` flag for programmatic use
 - Link discovered work with `discovered-from` dependencies
 - Check `bd ready` before asking "what should I work on?"
-- Store AI planning docs in `history/` directory
+- Store AI planning docs in `docs/history/` directory
 - Run `bd <cmd> --help` to discover available flags
 - Do NOT create markdown TODO lists
 - Do NOT use external issue trackers
