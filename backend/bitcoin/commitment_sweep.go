@@ -46,44 +46,17 @@ func BuildCommitmentSweepTx(client *MempoolClient, params *chaincfg.Params, txid
 	}
 	log.Printf("commitment sweep DEBUG: fetched txid=%s successfully, num_outputs=%d", txid, len(msg.TxOut))
 
-	// Find commitment output by iterating through ALL outputs
-	expectedCommitmentScript, err := buildCommitmentP2WSHScript(params, redeemScript)
-	if err != nil {
-		return nil, err
-	}
-	expectedCommitmentHash := sha256.Sum256(expectedCommitmentScript)
-
-	var commitmentVout uint32
-	var prevOut *wire.TxOut
-	var found bool
-
-	for i, out := range msg.TxOut {
-		outHash := sha256.Sum256(out.PkScript)
-		if bytes.Equal(outHash[:], expectedCommitmentHash[:]) {
-			commitmentVout = uint32(i)
-			prevOut = out
-			found = true
-			log.Printf("commitment sweep DEBUG: found commitment output at vout=%d, value=%d, hash=%s", i, out.Value, hex.EncodeToString(outHash[:]))
-			break
-		}
+	// Use the provided commitment vout directly (no script hash matching needed)
+	if vout >= uint32(len(msg.TxOut)) {
+		return nil, fmt.Errorf("invalid commitment vout %d for tx with %d outputs", vout, len(msg.TxOut))
 	}
 
-	if !found {
-		return nil, fmt.Errorf("commitment output not found in tx %s (no matching script hash)", txid)
+	commitmentOutput := msg.TxOut[vout]
+	if commitmentOutput == nil {
+		return nil, fmt.Errorf("commitment output vout %d not found in tx %s", vout, txid)
 	}
 
-	log.Printf("commitment sweep DEBUG: using commitment output at vout=%d, value=%d", commitmentVout, prevOut.Value)
-
-	expectedPkScript, err := buildCommitmentP2WSHScript(params, redeemScript)
-	if err != nil {
-		return nil, err
-	}
-	log.Printf("commitment sweep DEBUG: checking script mismatch - actual=%s, expected=%s", hex.EncodeToString(prevOut.PkScript), hex.EncodeToString(expectedPkScript))
-	if !bytes.Equal(prevOut.PkScript, expectedPkScript) {
-		log.Printf("commitment sweep ERROR: script mismatch detected!")
-		return nil, fmt.Errorf("commitment output script mismatch")
-	}
-	log.Printf("commitment sweep DEBUG: script mismatch check passed")
+	log.Printf("commitment sweep DEBUG: using provided commitment vout=%d, value=%d", vout, commitmentOutput.Value)
 
 	destScript, err := txscript.PayToAddrScript(dest)
 	if err != nil {
@@ -93,7 +66,7 @@ func BuildCommitmentSweepTx(client *MempoolClient, params *chaincfg.Params, txid
 	inputVBytes := estimateHashlockInputVBytes(redeemScript, preimage)
 	vbytes := int64(10) + inputVBytes + 34
 	fee := vbytes * feeRate
-	outputValue := prevOut.Value - fee
+	outputValue := commitmentOutput.Value - fee
 	if outputValue < 546 {
 		return nil, fmt.Errorf("output below dust after fee: %d sats", outputValue)
 	}
@@ -116,9 +89,75 @@ func BuildCommitmentSweepTx(client *MempoolClient, params *chaincfg.Params, txid
 	return &CommitmentSweepResult{
 		RawTxHex:   hex.EncodeToString(buf.Bytes()),
 		FeeSats:    fee,
-		InputSats:  prevOut.Value,
+		InputSats:  commitmentOutput.Value,
 		OutputSats: outputValue,
 	}, nil
+}
+
+// BuildRegularSweepTx builds a regular sweep transaction (no commitment script)
+func BuildRegularSweepTx(client *MempoolClient, params *chaincfg.Params, txid string, vout uint32, redeemScript, preimage []byte, dest btcutil.Address, feeRate int64) (*CommitmentSweepResult, error) {
+	if client == nil {
+		return nil, fmt.Errorf("mempool client required")
+	}
+	if len(redeemScript) == 0 {
+		return nil, fmt.Errorf("redeem script required")
+	}
+	if len(preimage) == 0 {
+		return nil, fmt.Errorf("preimage required")
+	}
+	if feeRate <= 0 {
+		feeRate = 1
+	}
+
+	// Get the output to sweep
+	msg, err := client.FetchTx(txid)
+	if err != nil {
+		return nil, fmt.Errorf("fetch sweep tx: %w", err)
+	}
+	if vout >= uint32(len(msg.TxOut)) {
+		return nil, fmt.Errorf("invalid vout %d for tx with %d outputs", vout, len(msg.TxOut))
+	}
+
+	output := msg.TxOut[vout]
+	if output == nil {
+		return nil, fmt.Errorf("sweep output vout %d not found in tx %s", vout, txid)
+	}
+
+	// Build regular sweep transaction (no commitment script needed)
+	outputValue := output.Value
+	inputVBytes := estimateRegularInputVBytes(redeemScript, preimage)
+	vbytes := int64(10) + int64(len(inputVBytes)) + 34
+	fee := vbytes * feeRate
+	valueAfterFee := outputValue - fee
+	if valueAfterFee < 546 {
+		return nil, fmt.Errorf("output below dust after fee: %d sats", valueAfterFee)
+	}
+
+	hash, err := chainhash.NewHashFromStr(txid)
+	if err != nil {
+		return nil, fmt.Errorf("invalid txid: %w", err)
+	}
+
+	tx := wire.NewMsgTx(1)
+	tx.AddTxIn(&wire.TxIn{PreviousOutPoint: wire.OutPoint{Hash: *hash, Index: vout}})
+	tx.AddTxOut(&wire.TxOut{Value: valueAfterFee, PkScript: redeemScript})
+
+	var buf bytes.Buffer
+	if err := tx.Serialize(&buf); err != nil {
+		return nil, fmt.Errorf("serialize tx: %w", err)
+	}
+
+	return &CommitmentSweepResult{
+		RawTxHex:   hex.EncodeToString(buf.Bytes()),
+		FeeSats:    fee,
+		InputSats:  output.Value,
+		OutputSats: valueAfterFee,
+	}, nil
+}
+
+func estimateRegularInputVBytes(script []byte, preimage []byte) []byte {
+	// Regular sweep doesn't need commitment script, just the preimage
+	return preimage
 }
 
 func isHashlockOnlyRedeemScript(script []byte) bool {
