@@ -2721,10 +2721,13 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			// Generate stego payload immediately for wish creation.
+			log.Printf("CRITICAL: About to call maybePublishStegoForProposal for proposal %s, ingestion %s", proposal.ID, body.IngestionID)
 			if err := s.maybePublishStegoForProposal(r.Context(), proposal.ID); err != nil {
+				log.Printf("CRITICAL: maybePublishStegoForProposal failed for proposal %s: %v", proposal.ID, err)
 				Error(w, http.StatusBadRequest, err.Error())
 				return
 			}
+			log.Printf("CRITICAL: maybePublishStegoForProposal succeeded for proposal %s", proposal.ID)
 			s.recordEvent(smart_contract.Event{
 				Type:      "proposal_create",
 				EntityID:  proposal.ID,
