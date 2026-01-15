@@ -650,11 +650,19 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 		return
 	}
 
-	// Parse multipart form
+	// Only support JSON requests
 	contentType := r.Header.Get("Content-Type")
-	bodyBytes, _ := io.ReadAll(r.Body)
+	if !strings.HasPrefix(contentType, "application/json") && !strings.HasPrefix(contentType, "application/json;") {
+		h.sendError(w, http.StatusBadRequest, "Only JSON content type is supported")
+		return
+	}
+
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		h.sendError(w, http.StatusBadRequest, "Failed to read request body")
+		return
+	}
 	defer r.Body.Close()
-	isJSON := strings.HasPrefix(contentType, "application/json") || strings.HasPrefix(contentType, "application/json;") || (len(bodyBytes) > 0 && strings.TrimSpace(string(bodyBytes))[0] == '{')
 
 	var (
 		text        string
@@ -666,106 +674,65 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 		filename    string
 		imgBytes    []byte
 		imageErr    error
-		imageReader io.ReadCloser
 	)
 
-	if isJSON {
-		var payload struct {
-			Message     string `json:"message"`
-			Text        string `json:"text"`
-			Method      string `json:"method"`
-			Price       string `json:"price"`
-			PriceUnit   string `json:"price_unit"`
-			Address     string `json:"address"`
-			FundingMode string `json:"funding_mode"`
-			ImageBase64 string `json:"image_base64"`
-			Filename    string `json:"filename"`
-		}
-		if err := json.Unmarshal(bodyBytes, &payload); err != nil {
-			h.sendError(w, http.StatusBadRequest, "Invalid JSON")
-			return
-		}
-		text = payload.Message
-		if text == "" {
-			text = payload.Text
-		}
-		method = payload.Method
-		price = payload.Price
-		priceUnit = payload.PriceUnit
-		address = payload.Address
-		fundingMode = payload.FundingMode
-		filename = payload.Filename
-		if method == "" {
-			method = "alpha"
-		}
-		if payload.ImageBase64 != "" {
-			imgBytes, imageErr = base64.StdEncoding.DecodeString(payload.ImageBase64)
-			if imageErr != nil {
-				h.sendError(w, http.StatusBadRequest, "Invalid base64 image")
-				return
-			}
-			if filename == "" {
-				filename = "image.png"
-			}
-		}
-	} else {
-		// Reset the body for multipart parsing
-		r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-		if err := r.ParseMultipartForm(32 << 20); err != nil {
-			h.sendError(w, http.StatusBadRequest, "Failed to parse form")
-			return
-		}
+	var payload struct {
+		Message     string `json:"message"`
+		Text        string `json:"text"`
+		Method      string `json:"method"`
+		Price       string `json:"price"`
+		PriceUnit   string `json:"price_unit"`
+		Address     string `json:"address"`
+		FundingMode string `json:"funding_mode"`
+		ImageBase64 string `json:"image_base64"`
+		Filename    string `json:"filename"`
+	}
+	if err := json.Unmarshal(bodyBytes, &payload); err != nil {
+		h.sendError(w, http.StatusBadRequest, "Invalid JSON")
+		return
+	}
+	text = payload.Message
+	if text == "" {
+		text = payload.Text
+	}
+	if text == "" {
+		h.sendError(w, http.StatusBadRequest, "Message is required for inscription")
+		return
+	}
 
-		text = r.FormValue("text")
-		if text == "" {
-			text = r.FormValue("message")
-		}
-		method = r.FormValue("method")
-		if method == "" {
-			method = "alpha"
-		}
-		price = r.FormValue("price")
-		priceUnit = r.FormValue("price_unit")
-		address = r.FormValue("address")
-		fundingMode = r.FormValue("funding_mode")
+	method = payload.Method
+	if method == "" {
+		method = "alpha"
+	}
 
-		// Get file (optional)
-		file, header, err := r.FormFile("image")
-		if err != nil && err != http.ErrMissingFile {
-			h.sendError(w, http.StatusBadRequest, "Error processing image file")
+	price = payload.Price
+	if price == "" {
+		price = "0"
+	}
+
+	priceUnit = payload.PriceUnit
+	if priceUnit == "" {
+		priceUnit = "btc"
+	}
+
+	address = payload.Address
+	fundingMode = payload.FundingMode
+	filename = payload.Filename
+
+	if payload.ImageBase64 != "" {
+		imgBytes, imageErr = base64.StdEncoding.DecodeString(payload.ImageBase64)
+		if imageErr != nil {
+			h.sendError(w, http.StatusBadRequest, "Invalid base64 image")
 			return
 		}
-		if err == nil {
-			imageReader = file
-			filename = header.Filename
+		if filename == "" {
+			filename = "image.png"
 		}
 	}
 
 	if text == "" {
 		h.sendError(w, http.StatusBadRequest, "Message is required for inscription")
 		return
-	}
-
-	if imageErr != nil {
-		h.sendError(w, http.StatusBadRequest, "Invalid image data")
-		return
-	}
-
-	if price == "" {
-		price = "0"
-	}
-	if priceUnit == "" {
-		priceUnit = "btc"
-	}
-
-	// Slurp image bytes from multipart file if present
-	if imageReader != nil {
-		defer imageReader.Close()
-		if b, err := io.ReadAll(imageReader); err == nil {
-			imgBytes = b
-		} else {
-			imageErr = err
-		}
 	}
 
 	// Ensure we have image bytes & filename for downstream hashing/storage
@@ -837,16 +804,19 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 					}
 
 					if h.ingestionService != nil {
-						imgB64 := base64.StdEncoding.EncodeToString(imgBytes)
-						if starlightResponse.ImageBase64 != "" {
-							imgB64 = starlightResponse.ImageBase64
+						// Decode stego image from starlight response first - must succeed for security
+						stegoImgBytes, err := base64.StdEncoding.DecodeString(starlightResponse.ImageBase64)
+						if err != nil {
+							h.sendError(w, http.StatusInternalServerError, fmt.Sprintf("Critical: failed to decode stego image - cannot proceed securely: %v", err))
+							return
 						}
+
 						ingRec := services.IngestionRecord{
 							ID:            ingestionID,
 							Filename:      filename,
 							Method:        method,
 							MessageLength: len(embeddedMessage),
-							ImageBase64:   imgB64,
+							ImageBase64:   starlightResponse.ImageBase64,
 							Metadata:      meta,
 							Status:        "pending",
 						}
@@ -856,10 +826,12 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 						if err := h.ingestionService.Create(ingRec); err != nil {
 							fmt.Printf("Failed to create ingestion record for %s: %v\n", ingestionID, err)
 						}
-						publishPendingIngestAnnouncement(ingestionID, ingestionID, filename, method, embeddedMessage, price, priceUnit, address, fundingMode, imgBytes)
+						// Publish announcement with verified stego image
+						publishPendingIngestAnnouncement(ingestionID, ingestionID, filename, method, embeddedMessage, price, priceUnit, address, fundingMode, stegoImgBytes)
 					}
 
 					if h.store != nil {
+						// Create proposal first
 						proposalTitle := strings.TrimSpace(text)
 						if strings.HasPrefix(proposalTitle, "#") {
 							proposalTitle = strings.TrimSpace(strings.TrimLeft(proposalTitle, "#"))
@@ -868,18 +840,40 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 							proposalTitle = "Wish " + starlightResponse.ImageSHA256
 						}
 
-						contractID := "wish-" + starlightResponse.ImageSHA256
-						type upserter interface {
-							UpsertContractWithTasks(ctx context.Context, contract sc.Contract, tasks []sc.Task) error
+						proposal := sc.Proposal{
+							ID:               starlightResponse.ImageSHA256,
+							Title:            proposalTitle,
+							DescriptionMD:    text,
+							VisiblePixelHash: starlightResponse.ImageSHA256,
+							BudgetSats:       parsePriceSats(price),
+							Status:           "pending",
+							CreatedAt:        time.Now(),
+							Metadata: map[string]any{
+								"starlight_request_id": starlightResponse.RequestID,
+								"funding_mode":         fundingMode,
+								"address":              address,
+								"price_unit":           priceUnit,
+							},
 						}
-						if u, ok := h.store.(upserter); ok {
-							_ = u.UpsertContractWithTasks(context.Background(), sc.Contract{
-								ContractID:      contractID,
-								Title:           proposalTitle,
-								TotalBudgetSats: parsePriceSats(price),
+
+						if err := h.store.CreateProposal(context.Background(), proposal); err != nil {
+							fmt.Printf("Failed to create proposal for wish %s: %v\n", starlightResponse.ImageSHA256, err)
+						} else {
+							// Also create contract for wishes so they show up in contracts list
+							// Use wish- prefix for compatibility with PSBT building
+							wishContract := sc.Contract{
+								ContractID:      "wish-" + proposal.ID,
+								Title:           proposal.Title,
+								TotalBudgetSats: proposal.BudgetSats,
 								GoalsCount:      0,
-								Status:          "pending",
-							}, nil)
+								Status:          proposal.Status,
+							}
+							type upserter interface {
+								UpsertContractWithTasks(ctx context.Context, contract sc.Contract, tasks []sc.Task) error
+							}
+							if u, ok := h.store.(upserter); ok {
+								_ = u.UpsertContractWithTasks(context.Background(), wishContract, nil)
+							}
 						}
 					}
 
@@ -901,36 +895,11 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 		}
 	}
 
-	// Only use fallback path if proxy is not configured
-	// Fallback to legacy local inscription creation
-	// Do NOT create proposals when starlight-api returns error - that causes duplicate proposals
-	fmt.Printf("DEBUG: Taking fallback path (proxy not configured or starlight-api error)\n")
-	visibleHash := computeVisiblePixelHash(imgBytes, embeddedMessage)
-	req := models.InscribeRequest{
-		Text:    embeddedMessage,
-		Price:   price,
-		Address: address,
-	}
-	fallbackBytes := imgBytes
-	if len(fallbackBytes) == 0 {
-		fallbackBytes = placeholderPNG()
-		if filename == "" {
-			filename = "placeholder.png"
-		}
-	}
-
-	inscription, err := h.inscriptionService.CreateInscription(req, io.NopCloser(bytes.NewReader(fallbackBytes)), filename)
-	if err != nil {
-		h.sendError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to create inscription: %v", err))
+	// No legacy fallback - proxy is required for inscription creation
+	if h.proxyBase == "" {
+		h.sendError(w, http.StatusServiceUnavailable, "Inscription service not available - STARGATE_PROXY_BASE not configured")
 		return
 	}
-
-	h.sendSuccess(w, map[string]string{
-		"status":             "success",
-		"id":                 inscription.ID,
-		"ingestion_id":       visibleHash,
-		"visible_pixel_hash": visibleHash,
-	})
 }
 
 // BlockHandler handles block-related requests
