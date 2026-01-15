@@ -7,24 +7,21 @@ import (
 
 	"github.com/btcsuite/btcd/chaincfg"
 	"stargate-backend/bitcoin"
-	smartcontract "stargate-backend/core/smart_contract"
-	"stargate-backend/middleware/smart_contract"
+	"stargate-backend/core/smart_contract"
+	smartstore "stargate-backend/middleware/smart_contract"
 	"stargate-backend/middleware/smart_contract/middleware"
 	"stargate-backend/services"
 )
 
-// Store interface for contract handler
-type Store = smartcontract.Store
-
 // ContractHandler handles contract-related HTTP endpoints
 type ContractHandler struct {
-	store        Store
+	store        smartstore.Store
 	mempool      *bitcoin.MempoolClient
 	ingestionSvc *services.IngestionService
 }
 
 // NewContractHandler creates a new contract handler
-func NewContractHandler(store Store, mempool *bitcoin.MempoolClient, ingestionSvc *services.IngestionService) *ContractHandler {
+func NewContractHandler(store smartstore.Store, mempool *bitcoin.MempoolClient, ingestionSvc *services.IngestionService) *ContractHandler {
 	return &ContractHandler{
 		store:        store,
 		mempool:      mempool,
@@ -82,9 +79,6 @@ func (h *ContractHandler) ContractPSBT(w http.ResponseWriter, r *http.Request, c
 
 	params := &chaincfg.TestNet4Params
 
-	// TODO: Continue extracting the remaining PSBT logic
-	// This is a simplified version showing the structure
-
 	response := map[string]interface{}{
 		"message":     "PSBT handling extracted - implementation needed",
 		"contract_id": contractID,
@@ -113,7 +107,7 @@ func (h *ContractHandler) validatePSBTRequest(w http.ResponseWriter, r *http.Req
 
 // handleGetContracts handles GET /contracts
 func (h *ContractHandler) handleGetContracts(w http.ResponseWriter, r *http.Request) {
-	filter := smartcontract.ContractFilter{}
+	filter := smart_contract.ContractFilter{}
 	contracts, err := h.store.ListContracts(filter)
 	if err != nil {
 		middleware.Error(w, http.StatusInternalServerError, err.Error())
@@ -126,12 +120,11 @@ func (h *ContractHandler) handleGetContracts(w http.ResponseWriter, r *http.Requ
 
 // handleCreateContract handles POST /contracts
 func (h *ContractHandler) handleCreateContract(w http.ResponseWriter, r *http.Request) {
-	var contract smartcontract.Contract
+	var contract smart_contract.Contract
 	if err := json.NewDecoder(r.Body).Decode(&contract); err != nil {
 		middleware.Error(w, http.StatusBadRequest, "invalid json")
 		return
 	}
 
-	// TODO: Implement contract creation logic
 	middleware.Error(w, http.StatusNotImplemented, "contract creation not implemented")
 }

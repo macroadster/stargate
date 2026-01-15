@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/btcsuite/btcd/btcutil"
-	"github.com/btcsuite/btcd/chaincfg"
 	"stargate-backend/bitcoin"
 	"stargate-backend/middleware/smart_contract"
 	"stargate-backend/services"
@@ -13,13 +11,13 @@ import (
 
 // PSBTService handles PSBT building and contract operations
 type PSBTService struct {
-	store   smartcontract.Store
+	store   smart_contract.Store
 	mempool *bitcoin.MempoolClient
 	apiKeys interface{} // auth.APIKeyValidator
 }
 
 // NewPSBTService creates a new PSBT service
-func NewPSBTService(store smartcontract.Store, mempool *bitcoin.MempoolClient, apiKeys interface{}) *PSBTService {
+func NewPSBTService(store smart_contract.Store, mempool *bitcoin.MempoolClient, apiKeys interface{}) *PSBTService {
 	return &PSBTService{
 		store:   store,
 		mempool: mempool,
@@ -29,12 +27,10 @@ func NewPSBTService(store smartcontract.Store, mempool *bitcoin.MempoolClient, a
 
 // BuildContractPSBT builds a PSBT for contract execution
 func (s *PSBTService) BuildContractPSBT(ctx context.Context, contractID string, req *ContractPSBTRequest) (*bitcoin.PSBTResult, error) {
-	contract, err := s.store.GetContract(contractID)
+	_, err := s.store.GetContract(contractID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get contract: %w", err)
 	}
-
-	params := &chaincfg.TestNet4Params
 
 	// Validate API key and wallet binding
 	if !s.validateAPIKey(req.ContractorAPIKey) {
@@ -45,8 +41,8 @@ func (s *PSBTService) BuildContractPSBT(ctx context.Context, contractID string, 
 	// This is a placeholder showing the structure
 
 	result := &bitcoin.PSBTResult{
-		PSBT: nil, // TODO: Build actual PSBT
-		TxID: "",  // TODO: Get transaction ID
+		EncodedBase64: "",
+		EncodedHex:    "",
 	}
 
 	return result, nil
