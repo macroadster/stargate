@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strings"
 	"time"
+
+	auth "stargate-backend/storage/auth"
 )
 
 // CORS middleware
@@ -13,7 +16,7 @@ func CORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key")
 
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
@@ -211,4 +214,49 @@ type responseWriter struct {
 func (rw *responseWriter) WriteHeader(code int) {
 	rw.statusCode = code
 	rw.ResponseWriter.WriteHeader(code)
+}
+
+// APIAuth validates API keys against the validator
+func APIAuth(validator auth.APIKeyValidator) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			apiKey := r.Header.Get("X-API-Key")
+			if apiKey == "" {
+				auth := r.Header.Get("Authorization")
+				if strings.HasPrefix(auth, "Bearer ") {
+					apiKey = strings.TrimPrefix(auth, "Bearer ")
+				}
+			}
+
+			if apiKey == "" {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"success": false,
+					"error": map[string]interface{}{
+						"error":   "api_key_required",
+						"message": "API key required",
+						"code":    http.StatusUnauthorized,
+					},
+				})
+				return
+			}
+
+			if validator != nil && !validator.Validate(apiKey) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusForbidden)
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"success": false,
+					"error": map[string]interface{}{
+						"error":   "api_key_invalid",
+						"message": "Invalid API key",
+						"code":    http.StatusForbidden,
+					},
+				})
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
 }

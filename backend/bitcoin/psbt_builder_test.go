@@ -53,7 +53,7 @@ func TestBuildHashlockRedeemScript(t *testing.T) {
 	data := script[2:34]
 	if !bytes.Equal(data, expectedHash[:]) {
 		t.Errorf("Script data mismatch.\nExpected (SHA256 of preimage): %x\nGot (in script): %x", expectedHash, data)
-		
+
 		// Specific regression check
 		if bytes.Equal(data, preimage) {
 			t.Error("CRITICAL FAILURE: Script contains raw preimage! This causes 'Witness program hash mismatch'.")

@@ -132,7 +132,7 @@ func refreshProofs(ctx context.Context, store *scstore.PGStore, provider Funding
 			if err == nil && escortStatus != nil {
 				// We need TaskID in EscortStatus for sync
 				escortStatus.TaskID = t.TaskID
-				
+
 				// Persist locally
 				_ = store.SyncEscortStatus(ctx, *escortStatus)
 

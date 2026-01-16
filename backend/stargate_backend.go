@@ -352,6 +352,11 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 	mux.HandleFunc("/api/auth/challenge", keyHandler.HandleChallenge)
 	mux.HandleFunc("/api/auth/verify", keyHandler.HandleVerify)
 
+	// Helper function to wrap handlers with auth
+	wrapWithAuth := func(h http.HandlerFunc) http.Handler {
+		return middleware.APIAuth(apiKeyValidator)(h)
+	}
+
 	// API Documentation - includes Swagger UI
 	mux.HandleFunc("/api/docs", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/api/docs/", http.StatusFound)
@@ -370,7 +375,7 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 
 	// Inscription endpoints
 	mux.HandleFunc("/api/inscriptions", container.InscriptionHandler.HandleGetInscriptions)
-	mux.HandleFunc("/api/inscribe", container.InscriptionHandler.HandleCreateInscription)
+	mux.Handle("/api/inscribe", wrapWithAuth(container.InscriptionHandler.HandleCreateInscription))
 	mux.HandleFunc("/api/pending-transactions", container.InscriptionHandler.HandleGetInscriptions)
 	mux.HandleFunc("/api/open-contracts", container.SmartContractHandler.HandleGetContracts)
 
@@ -380,10 +385,10 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 	// Smart contract endpoints
 	mux.HandleFunc("/api/smart-contracts", container.SmartContractHandler.HandleGetContracts)
 	mux.HandleFunc("/api/contract-stego", container.SmartContractHandler.HandleGetContract)
-	mux.HandleFunc("/api/contract-stego/create", container.SmartContractHandler.HandleCreateContract)
+	mux.Handle("/api/contract-stego/create", wrapWithAuth(container.SmartContractHandler.HandleCreateContract))
 
 	// Ingestion endpoints
-	mux.HandleFunc("/api/ingest-inscription", container.IngestionHandler.HandleIngest)
+	mux.Handle("/api/ingest-inscription", wrapWithAuth(container.IngestionHandler.HandleIngest))
 	mux.HandleFunc("/api/ingest-inscription/", container.IngestionHandler.HandleGetIngestion)
 	mux.HandleFunc("/api/ingest-hash", container.IngestionHandler.HandleHashImage)
 
@@ -394,9 +399,9 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 	mux.HandleFunc("/api/qrcode", container.QRCodeHandler.HandleGenerateQRCode)
 
 	// Proxy endpoints
-	mux.HandleFunc("/stego/", container.ProxyHandler.HandleProxy)
-	mux.HandleFunc("/analyze/", container.ProxyHandler.HandleProxy)
-	mux.HandleFunc("/generate/", container.ProxyHandler.HandleProxy)
+	mux.Handle("/stego/", wrapWithAuth(container.ProxyHandler.HandleProxy))
+	mux.Handle("/analyze/", wrapWithAuth(container.ProxyHandler.HandleProxy))
+	mux.Handle("/generate/", wrapWithAuth(container.ProxyHandler.HandleProxy))
 
 	// Serve uploaded files
 	uploadsDir := os.Getenv("UPLOADS_DIR")

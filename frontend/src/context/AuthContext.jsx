@@ -47,6 +47,9 @@ export function AuthProvider({ children }) {
   };
 
   const signOut = () => {
+    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem('X-Wallet-Address');
+    localStorage.removeItem('X-User-Email');
     setAuth({ apiKey: '', wallet: '', email: '' });
   };
 
