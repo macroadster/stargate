@@ -332,6 +332,7 @@ func (h *HTTPMCPServer) handleGetScannerInfo(ctx context.Context, args map[strin
 // RegisterRoutes registers HTTP MCP endpoints
 func (h *HTTPMCPServer) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/mcp/tools", h.handleListTools)      // No auth - allows discovery
+	mux.HandleFunc("/mcp/search", h.handleToolSearch)    // No auth - search tools
 	mux.HandleFunc("/mcp/call", h.handleToolCall)        // Tool-level auth for specific tools
 	mux.HandleFunc("/mcp/discover", h.handleDiscover)    // No auth - allows discovery
 	mux.HandleFunc("/mcp/docs", h.handleDocs)            // No auth required for documentation

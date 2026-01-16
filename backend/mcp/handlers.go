@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,6 +31,11 @@ func (h *HTTPMCPServer) handleListTools(w http.ResponseWriter, r *http.Request) 
 		"tools":      tools,
 		"tool_names": toolNames,
 		"total":      len(tools),
+		"categories": map[string]bool{
+			"discovery": true,
+			"write":     true,
+			"utility":   true,
+		},
 		"http_endpoints": map[string]interface{}{
 			"inscribe": map[string]interface{}{
 				"method":          "POST",
@@ -248,4 +254,32 @@ func (h *HTTPMCPServer) handleToolCall(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+func (h *HTTPMCPServer) handleToolSearch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		h.writeHTTPError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "Method not allowed", "Use GET /mcp/search")
+		return
+	}
+
+	query := r.URL.Query().Get("q")
+	category := r.URL.Query().Get("category")
+	limit := 10
+
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+			limit = l
+		}
+	}
+
+	results := h.searchTools(query, category, limit)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"query":    query,
+		"category": category,
+		"limit":    limit,
+		"matched":  len(results),
+		"tools":    results,
+	})
 }

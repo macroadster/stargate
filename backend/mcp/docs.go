@@ -33,6 +33,7 @@ func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
     <h2>Quick Start</h2>
     <ol>
         <li>Check server metadata: <code>GET /mcp/</code> (no auth required)</li>
+        <li>Search tools: <code>GET /mcp/search</code> (no auth required, reduces context usage)</li>
         <li>List tools: <code>GET /mcp/tools</code> (no auth required)</li>
         <li>Call a discovery tool: <code>POST /mcp/call</code> with JSON body (no auth required for discovery tools)</li>
         <li>Call a write tool: <code>POST /mcp/call</code> with JSON body (auth required for write tools)</li>
@@ -40,6 +41,12 @@ func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
 <pre>curl ` + base + `/mcp/docs</pre>
     <pre>curl ` + base + `/mcp/openapi.json</pre>
     <pre>curl ` + base + `/mcp/</pre>
+    <pre># Search for tools (reduces context)
+curl "` + base + `/mcp/search?q=contract"</pre>
+    <pre># Search by category
+curl "` + base + `/mcp/search?category=discovery"</pre>
+    <pre># Search with limit
+curl "` + base + `/mcp/search?q=task&limit=5"</pre>
     <pre>curl ` + base + `/mcp/tools</pre>
     <pre>curl -X POST -H "Content-Type: application/json" \
   -d '{"tool": "list_contracts"}' \
@@ -102,15 +109,16 @@ func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
         <li><span class="endpoint">GET /mcp/docs</span> - This documentation page (no auth required)</li>
         <li><span class="endpoint">GET /mcp/openapi.json</span> - OpenAPI specification (no auth required)</li>
         <li><span class="endpoint">GET /mcp/health</span> - Health check (no auth required)</li>
+        <li><span class="endpoint">GET /mcp/search</span> - Search tools by keyword or category (no auth required, reduces context usage)</li>
         <li><span class="endpoint">GET /mcp/tools</span> - List available tools with schemas and examples (no auth required)</li>
         <li><span class="endpoint">GET /mcp/discover</span> - Discover available endpoints and tools (no auth required)</li>
-        <li><span class="endpoint">GET /mcp/</span> - Server metadata and links (no auth required)</li>
         <li><span class="endpoint">POST /mcp/call</span> - Call a specific tool (auth only for write operations: create_contract, create_proposal, claim_task, submit_work, approve_proposal)</li>
         <li><span class="endpoint">GET /mcp/events</span> - Stream events (no auth required)</li>
     </ul>
 
     <h2>Available Tools Reference</h2>
     <p>The following tools are available via the MCP API. Use <code>POST /mcp/call</code> with the tool name and arguments.</p>
+    <p><strong>💡 Tip:</strong> Use <code>GET /mcp/search</code> to find tools by keyword or category instead of loading all tool schemas. This reduces context window usage.</p>
     <p><strong>Note:</strong> Tools marked with <span style="color: #d9534f;">🔒</span> require API key authentication. All other tools are publicly accessible for guest AI discovery.</p>
     
     <h3>Contract Management</h3>
@@ -155,6 +163,37 @@ func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
     </ul>
 
     <h2>Examples</h2>
+    <h3>Search for Tools (No Auth Required)</h3>
+    <h4>Search by keyword</h4>
+    <pre>curl "` + base + `/mcp/search?q=contract"</pre>
+    <p><strong>Response Example:</strong></p>
+    <pre>{
+  "query": "contract",
+  "category": "",
+  "limit": 10,
+  "matched": 2,
+  "tools": [
+    {
+      "name": "list_contracts",
+      "description": "List available smart contracts with optional filtering",
+      "category": "discovery",
+      "auth_required": false
+    },
+    {
+      "name": "create_contract",
+      "description": "Create a smart contract record for a stego image",
+      "category": "write",
+      "auth_required": true
+    }
+  ]
+}</pre>
+
+    <h4>Search by category</h4>
+    <pre>curl "` + base + `/mcp/search?category=discovery"</pre>
+
+    <h4>Search with limit</h4>
+    <pre>curl "` + base + `/mcp/search?q=task&limit=3"</pre>
+
     <h3>Discovery Tools (No Auth Required)</h3>
     <h4>List Available Contracts</h4>
     <pre>curl -X POST -H "Content-Type: application/json" \
@@ -462,6 +501,7 @@ func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
         </ul>
         </li>
         <li><strong>Q: What tools are available?</strong> A: See /mcp/tools for the list with schemas.</li>
+        <li><strong>Q: How do I search for specific tools?</strong> A: Use <code>GET /mcp/search</code> with a query parameter to find tools by keyword, category, or limit results. This is more efficient than loading all tools.</li>
         <li><strong>Q: How to handle errors?</strong> A: Check error_code and docs_url in responses.</li>
     </ul>
 </body>

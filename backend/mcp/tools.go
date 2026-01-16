@@ -1,9 +1,26 @@
 package mcp
 
+import "strings"
+
+const (
+	ToolCategoryDiscovery = "discovery" // list, get, scan - no auth
+	ToolCategoryWrite     = "write"     // create, claim, submit - requires auth
+	ToolCategoryUtility   = "utility"   // helpers, tools
+)
+
+// ToolMetadata contains lightweight metadata for search
+type ToolMetadata struct {
+	Name         string `json:"name"`
+	Description  string `json:"description"`
+	Category     string `json:"category"`
+	AuthRequired bool   `json:"auth_required"`
+}
+
 // getToolSchemas returns detailed schemas for all available tools
 func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 	return map[string]interface{}{
 		"list_contracts": map[string]interface{}{
+			"category":    ToolCategoryDiscovery,
 			"description": "List available smart contracts with optional filtering",
 			"parameters": map[string]interface{}{
 				"status": map[string]interface{}{
@@ -33,6 +50,7 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 			},
 		},
 		"get_contract": map[string]interface{}{
+			"category":    ToolCategoryDiscovery,
 			"description": "Get details of a specific contract",
 			"parameters": map[string]interface{}{
 				"contract_id": map[string]interface{}{
@@ -49,6 +67,7 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 			},
 		},
 		"list_tasks": map[string]interface{}{
+			"category":    ToolCategoryDiscovery,
 			"description": "List available tasks with filtering options",
 			"parameters": map[string]interface{}{
 				"contract_id": map[string]interface{}{
@@ -78,6 +97,7 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 			},
 		},
 		"claim_task": map[string]interface{}{
+			"category":    ToolCategoryWrite,
 			"description": "Claim a task for work by an AI agent",
 			"parameters": map[string]interface{}{
 				"task_id": map[string]interface{}{
@@ -102,6 +122,7 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 			},
 		},
 		"submit_work": map[string]interface{}{
+			"category":    ToolCategoryWrite,
 			"description": "Submit completed work for a claimed task",
 			"parameters": map[string]interface{}{
 				"claim_id": map[string]interface{}{
@@ -135,6 +156,7 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 		},
 		// Add more tools as needed...
 		"list_proposals": map[string]interface{}{
+			"category":    ToolCategoryDiscovery,
 			"description": "List proposals with filtering",
 			"parameters": map[string]interface{}{
 				"status": map[string]interface{}{
@@ -150,6 +172,7 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 			},
 		},
 		"create_proposal": map[string]interface{}{
+			"category":    ToolCategoryWrite,
 			"description": "Create a new proposal tied to a wish. Use structured task sections (### Task X: Title) for automatic task creation. Avoid arbitrary bullet points that create meaningless micro-tasks.",
 			"parameters": map[string]interface{}{
 				"title": map[string]interface{}{
@@ -192,6 +215,7 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 			},
 		},
 		"create_contract": map[string]interface{}{
+			"category":    ToolCategoryWrite,
 			"description": "Create a smart contract record for a stego image",
 			"parameters": map[string]interface{}{
 				"contract_id": map[string]interface{}{
@@ -226,6 +250,7 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 			},
 		},
 		"scan_image": map[string]interface{}{
+			"category":    ToolCategoryDiscovery,
 			"description": "Scan an image for steganographic content",
 			"parameters": map[string]interface{}{
 				"image_data": map[string]interface{}{
@@ -244,6 +269,7 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 			},
 		},
 		"list_events": map[string]interface{}{
+			"category":    ToolCategoryDiscovery,
 			"description": "List recent MCP events with optional filters",
 			"parameters": map[string]interface{}{
 				"type": map[string]interface{}{
@@ -271,6 +297,7 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 			},
 		},
 		"events_stream": map[string]interface{}{
+			"category":    ToolCategoryDiscovery,
 			"description": "Get SSE stream URL and auth hints for real-time MCP events",
 			"parameters": map[string]interface{}{
 				"type": map[string]interface{}{
@@ -293,5 +320,79 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 				},
 			},
 		},
+		"approve_proposal": map[string]interface{}{
+			"category":    ToolCategoryWrite,
+			"description": "Approve a proposal to publish tasks",
+			"parameters": map[string]interface{}{
+				"proposal_id": map[string]interface{}{
+					"type":        "string",
+					"description": "The ID of the proposal to approve",
+					"required":    true,
+				},
+			},
+			"examples": []map[string]interface{}{
+				{
+					"description": "Approve a proposal",
+					"arguments":   map[string]interface{}{"proposal_id": "proposal-123"},
+				},
+			},
+		},
 	}
+}
+
+// getToolList returns lightweight metadata for all tools
+func (h *HTTPMCPServer) getToolList() []ToolMetadata {
+	schemas := h.getToolSchemas()
+	metadata := make([]ToolMetadata, 0, len(schemas))
+	for name, tool := range schemas {
+		tm, ok := tool.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		category, _ := tm["category"].(string)
+		description, _ := tm["description"].(string)
+		metadata = append(metadata, ToolMetadata{
+			Name:         name,
+			Description:  description,
+			Category:     category,
+			AuthRequired: h.toolRequiresAuth(name),
+		})
+	}
+	return metadata
+}
+
+// searchTools filters tools by keyword and category
+func (h *HTTPMCPServer) searchTools(query string, category string, limit int) []ToolMetadata {
+	allTools := h.getToolList()
+	queryLower := strings.ToLower(query)
+	categoryLower := strings.ToLower(category)
+
+	var filtered []ToolMetadata
+	for _, tool := range allTools {
+		matched := true
+
+		// Filter by category
+		if categoryLower != "" && strings.ToLower(tool.Category) != categoryLower {
+			matched = false
+		}
+
+		// Filter by query
+		if matched && queryLower != "" {
+			nameMatch := strings.Contains(strings.ToLower(tool.Name), queryLower)
+			descMatch := strings.Contains(strings.ToLower(tool.Description), queryLower)
+			if !nameMatch && !descMatch {
+				matched = false
+			}
+		}
+
+		if matched {
+			filtered = append(filtered, tool)
+		}
+
+		// Apply limit
+		if limit > 0 && len(filtered) >= limit {
+			break
+		}
+	}
+	return filtered
 }
