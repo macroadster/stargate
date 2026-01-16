@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Check, Copy } from 'lucide-react';
-import { Routes, Route, useParams, useNavigate, useLocation } from 'react-router-dom';
+import { Routes, Route, useParams, useNavigate } from 'react-router-dom';
 
 
 import BlockCard from './components/Block/BlockCard';
@@ -42,7 +42,6 @@ const formatTimeAgo = (timestamp) => {
 function MainContent() {
   const { height } = useParams();
   const navigate = useNavigate();
-  const location = useLocation();
   const [showInscribeModal, setShowInscribeModal] = useState(false);
   const [selectedInscription, setSelectedInscription] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -80,7 +79,7 @@ function MainContent() {
     error: inscriptionsError
   } = useInscriptions(selectedBlock);
 
-  const isPendingRoute = location.pathname === '/pending';
+
 
   const filteredInscriptions = inscriptions.filter((inscription) => {
     if (!hideBrc20) return true;
@@ -125,15 +124,16 @@ function MainContent() {
   }, [selectedBlock, height, navigate, setIsUserNavigating]);
 
   useEffect(() => {
-    if (!isPendingRoute || !blocks.length) return;
+    if (!blocks.length) return;
 
-    // Only auto-select pending once when nothing is selected; avoid overriding user selection on this page.
+    // Auto-select pending block on initial load (both root and /pending routes)
+    // Only do this once when nothing is selected yet
     const pendingBlock = blocks.find((b) => b.isFuture);
     if (pendingBlock && !selectedBlock) {
       setSelectedBlock(pendingBlock);
       setIsUserNavigating(true);
     }
-  }, [blocks, isPendingRoute, selectedBlock, setSelectedBlock, setIsUserNavigating]);
+  }, [blocks, selectedBlock, setSelectedBlock, setIsUserNavigating]);
 
   useEffect(() => {
     if (isDarkMode) {
