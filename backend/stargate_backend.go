@@ -211,9 +211,15 @@ func startMCPServices(escort *smart_contract.EscortService) {
 			}
 		}
 
-		fundingProvider := "mock"
+		fundingProvider := "blockstream"
 		if env := os.Getenv("MCP_FUNDING_PROVIDER"); env != "" {
 			fundingProvider = env
+		}
+		network := bitcoin.GetCurrentNetwork()
+		if network == "testnet4" || network == "testnet" {
+			// For testnet, use Blockcypher instead (Blockstream endpoints return HTML)
+			fundingProvider = "blockcypher"
+			log.Printf("Using Blockcypher funding provider for %s", network)
 		}
 		fundingAPIBase := bitcoin.GetNetworkConfig(bitcoin.GetCurrentNetwork()).BaseURL
 		if env := os.Getenv("MCP_FUNDING_API_BASE"); env != "" {
@@ -224,7 +230,7 @@ func startMCPServices(escort *smart_contract.EscortService) {
 		if err := scmiddleware.StartFundingSync(context.Background(), store, provider, escort, fundingInterval); err != nil {
 			log.Printf("funding sync disabled (init error): %v", err)
 		} else {
-			log.Printf("funding sync enabled (interval=%s)", fundingInterval)
+			log.Printf("funding sync enabled (interval=%s, provider=%s)", fundingInterval, fundingProvider)
 		}
 	}
 }
