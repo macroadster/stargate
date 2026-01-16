@@ -5,14 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"sync"
 	"time"
+
+	scstore "stargate-backend/storage/smart_contract"
 
 	"stargate-backend/bitcoin"
 	"stargate-backend/core/smart_contract"
-	scstore "stargate-backend/storage/smart_contract"
 )
 
-// FundingProvider fetches up-to-date funding proofs for a task.
 type FundingProvider interface {
 	FetchProof(ctx context.Context, task smart_contract.Task) (*smart_contract.MerkleProof, error)
 }
@@ -21,10 +22,76 @@ type FundingProvider interface {
 func NewFundingProvider(name, base string) FundingProvider {
 	switch name {
 	case "blockstream":
-		return NewBlockstreamFundingProvider(base)
+		return NewCachedFundingProvider(NewBlockstreamFundingProvider(base))
 	default:
-		return NewMockFundingProvider()
+		return NewCachedFundingProvider(NewMockFundingProvider())
 	}
+}
+
+// cachedFundingProvider wraps a funding provider with caching
+type cachedFundingProvider struct {
+	provider FundingProvider
+
+	// Cache for proof results
+	cache      map[string]*proofCacheEntry
+	cacheTime  time.Time
+	cacheMutex sync.RWMutex
+	ttl        time.Duration
+}
+
+type proofCacheEntry struct {
+	proof    *smart_contract.MerkleProof
+	cachedAt time.Time
+}
+
+// NewCachedFundingProvider creates a funding provider with caching
+func NewCachedFundingProvider(provider FundingProvider) FundingProvider {
+	return &cachedFundingProvider{
+		provider:   provider,
+		cache:      make(map[string]*proofCacheEntry),
+		cacheTime:  time.Time{},
+		cacheMutex: sync.RWMutex{},
+		ttl:        60 * time.Second, // Cache proofs for 1 minute
+	}
+}
+
+func (p *cachedFundingProvider) FetchProof(ctx context.Context, task smart_contract.Task) (*smart_contract.MerkleProof, error) {
+	// Check cache first
+	taskID := task.TaskID
+	if taskID == "" && task.MerkleProof != nil && task.MerkleProof.TxID != "" {
+		taskID = task.MerkleProof.TxID
+	}
+
+	if taskID == "" {
+		return p.provider.FetchProof(ctx, task)
+	}
+
+	// Check cache
+	p.cacheMutex.RLock()
+	entry, exists := p.cache[taskID]
+	p.cacheMutex.RUnlock()
+
+	if exists && time.Since(entry.cachedAt) < p.ttl {
+		log.Printf("Funding sync cache hit for task %s", taskID)
+		return entry.proof, nil
+	}
+
+	// Cache miss - fetch from underlying provider
+	log.Printf("Funding sync cache miss for task %s", taskID)
+	proof, err := p.provider.FetchProof(ctx, task)
+	if err != nil {
+		return nil, err
+	}
+
+	// Update cache
+	p.cacheMutex.Lock()
+	p.cache[taskID] = &proofCacheEntry{
+		proof:    proof,
+		cachedAt: time.Now(),
+	}
+	p.cacheMutex.Unlock()
+
+	return proof, nil
 }
 
 // mockFundingProvider confirms provisional proofs without external calls.
