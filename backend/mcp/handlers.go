@@ -213,6 +213,28 @@ func (h *HTTPMCPServer) handleToolCall(w http.ResponseWriter, r *http.Request) {
 	}
 
 	apiKey := strings.TrimSpace(r.Header.Get("X-API-Key"))
+	if apiKey == "" {
+		auth := r.Header.Get("Authorization")
+		if strings.HasPrefix(auth, "Bearer ") {
+			apiKey = strings.TrimPrefix(auth, "Bearer ")
+		}
+	}
+
+	if h.toolRequiresAuth(req.Tool) {
+		if apiKey == "" {
+			h.writeHTTPError(w, http.StatusUnauthorized, "API_KEY_REQUIRED", "API key required", "Tool '"+req.Tool+"' requires authentication. Send X-API-Key or Authorization: Bearer <key>.")
+			return
+		}
+		if h.apiKeyStore != nil && !h.apiKeyStore.Validate(apiKey) {
+			h.writeHTTPError(w, http.StatusForbidden, "API_KEY_INVALID", "Invalid API key", "Double-check the X-API-Key header value.")
+			return
+		}
+		if h.apiKeyStore != nil && !h.checkRateLimit(apiKey) {
+			h.writeHTTPError(w, http.StatusTooManyRequests, "RATE_LIMITED", "Rate limit exceeded", "Retry after a short delay.")
+			return
+		}
+	}
+
 	result, err := h.callToolDirect(r.Context(), req.Tool, req.Arguments, apiKey)
 	if err != nil {
 		status := h.statusFromError(err)

@@ -103,6 +103,17 @@ func (h *HTTPMCPServer) statusFromError(err error) int {
 	}
 }
 
+func (h *HTTPMCPServer) toolRequiresAuth(toolName string) bool {
+	authenticatedTools := map[string]bool{
+		"create_contract":  true,
+		"create_proposal":  true,
+		"claim_task":       true,
+		"submit_work":      true,
+		"approve_proposal": true,
+	}
+	return authenticatedTools[toolName]
+}
+
 func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, args map[string]interface{}, apiKey string) (interface{}, error) {
 	switch toolName {
 	case "list_contracts":
@@ -320,14 +331,14 @@ func (h *HTTPMCPServer) handleGetScannerInfo(ctx context.Context, args map[strin
 
 // RegisterRoutes registers HTTP MCP endpoints
 func (h *HTTPMCPServer) RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("/mcp/tools", h.authWrap(h.handleListTools))
-	mux.HandleFunc("/mcp/call", h.authWrap(h.handleToolCall))
-	mux.HandleFunc("/mcp/discover", h.authWrap(h.handleDiscover))
+	mux.HandleFunc("/mcp/tools", h.handleListTools)      // No auth - allows discovery
+	mux.HandleFunc("/mcp/call", h.handleToolCall)        // Tool-level auth for specific tools
+	mux.HandleFunc("/mcp/discover", h.handleDiscover)    // No auth - allows discovery
 	mux.HandleFunc("/mcp/docs", h.handleDocs)            // No auth required for documentation
 	mux.HandleFunc("/mcp/openapi.json", h.handleOpenAPI) // No auth required for API spec
 	mux.HandleFunc("/mcp/health", h.handleHealth)
-	mux.HandleFunc("/mcp/events", h.authWrap(h.handleEventsProxy))
-	mux.HandleFunc("/mcp", h.authWrap(h.handleIndex))
+	mux.HandleFunc("/mcp/events", h.handleEventsProxy)
+	mux.HandleFunc("/mcp", h.handleIndex)
 	// Register catch-all last
-	mux.HandleFunc("/mcp/", h.authWrap(h.handleIndex))
+	mux.HandleFunc("/mcp/", h.handleIndex)
 }

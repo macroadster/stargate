@@ -176,6 +176,7 @@ func TestProposalCreationRequiresWish(t *testing.T) {
 		w := httptest.NewRecorder()
 		r := httptest.NewRequest("POST", "/mcp/call", bytes.NewReader(body))
 		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("X-API-Key", "test-key")
 
 		server.handleToolCall(w, r)
 
@@ -189,7 +190,7 @@ func TestProposalCreationRequiresWish(t *testing.T) {
 		}
 
 		if resp.Success {
-			t.Fatalf("expected failure due to missing scan metadata, but got success")
+			t.Fatalf("expected failure due to missing visible_pixel_hash, but got success")
 		}
 
 		if !strings.Contains(resp.Error, "visible_pixel_hash is required") {
@@ -245,6 +246,7 @@ func TestProposalCreationRequiresWish(t *testing.T) {
 		w := httptest.NewRecorder()
 		r := httptest.NewRequest("POST", "/mcp/call", bytes.NewReader(body))
 		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("X-API-Key", "test-key")
 
 		server.handleToolCall(w, r)
 
@@ -268,7 +270,8 @@ func TestProposalCreationRequiresWish(t *testing.T) {
 
 	// Test that proposal creation succeeds when wish exists
 	t.Run("create_proposal_with_wish", func(t *testing.T) {
-		wishID := "wish-1111111111111111111111111111111111111111111111111111111111111111"
+		visibleHash := strings.Repeat("1", 64)
+		wishID := "wish-" + visibleHash
 		storeContract := smart_contract.Contract{
 			ContractID: wishID,
 			Title:      "Wish",
@@ -284,15 +287,14 @@ func TestProposalCreationRequiresWish(t *testing.T) {
 				"title":              "Wish Proposal",
 				"description_md":     "Proposal for wish",
 				"budget_sats":        1000,
-				"contract_id":        "1111111111111111111111111111111111111111111111111111111111111111",
-				"visible_pixel_hash": "1111111111111111111111111111111111111111111111111111111111111111",
+				"visible_pixel_hash": visibleHash,
 			},
 		}
 		body, _ := json.Marshal(req)
-
 		w := httptest.NewRecorder()
 		r := httptest.NewRequest("POST", "/mcp/call", bytes.NewReader(body))
 		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("X-API-Key", "test-key")
 
 		server.handleToolCall(w, r)
 
