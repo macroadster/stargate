@@ -5,7 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 
 export default function AuthPage() {
-  const { auth, signIn, savedKeys } = useAuth();
+  const { auth, signIn, getSavedWallets } = useAuth();
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [apiKey, setApiKey] = useState(auth.apiKey || '');
@@ -16,9 +16,11 @@ export default function AuthPage() {
   const [signature, setSignature] = useState('');
   const [view, setView] = useState('wallet'); // login | wallet
 
-  // When a saved key is chosen, hydrate wallet/email so the binding survives re-login.
+  const savedWallets = getSavedWallets();
+
+  // When a saved key is chosen, hydrate wallet/email so that binding survives re-login.
   React.useEffect(() => {
-    const selected = savedKeys.find((k) => k.apiKey === loginKey);
+    const selected = savedWallets.find((k) => k.apiKey === loginKey);
     if (selected) {
       if (selected.wallet) {
         setWallet(selected.wallet);
@@ -27,7 +29,7 @@ export default function AuthPage() {
         setEmail(selected.email);
       }
     }
-  }, [loginKey, savedKeys]);
+  }, [loginKey, savedWallets]);
 
   const setStatusBubble = (msg) => setStatus(msg || '');
 
@@ -35,7 +37,7 @@ export default function AuthPage() {
   const handleLogin = async () => {
     setStatus('Signing in...');
     try {
-      const saved = savedKeys.find((k) => k.apiKey === loginKey);
+      const saved = savedWallets.find((k) => k.apiKey === loginKey);
       const walletToSend = wallet || saved?.wallet || '';
       const res = await fetch(`${API_BASE}/api/auth/login`, {
         method: 'POST',
@@ -99,17 +101,17 @@ export default function AuthPage() {
     <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl p-6 shadow-lg">
       <h2 className="text-xl font-semibold mb-2">Sign In</h2>
       <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">Use an existing API key.</p>
-      {savedKeys.length > 0 && (
+      {savedWallets.length > 0 && (
         <div className="mb-4">
-          <label className="block text-sm mb-2">Saved keys</label>
+          <label className="block text-sm mb-2">Saved wallets</label>
           <select
             className="w-full h-10 mb-2 px-3 rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700"
             onChange={(e) => setLoginKey(e.target.value)}
             value={loginKey}
           >
-            <option value="">Choose saved key</option>
-            {savedKeys.map((k) => (
-              <option key={k.apiKey} value={k.apiKey}>
+            <option value="">Choose saved wallet</option>
+            {savedWallets.map((k) => (
+              <option key={k.wallet} value={k.apiKey}>
                 {(k.wallet || k.email || 'Key') + ' …' + k.apiKey.slice(-6)}
               </option>
             ))}
