@@ -3,15 +3,11 @@ package services
 import (
 	"context"
 	"encoding/hex"
-	"fmt"
-	"strconv"
-	"strings"
 	"time"
 
 	"stargate-backend/bitcoin"
 	"stargate-backend/core/smart_contract"
 	smartstore "stargate-backend/middleware/smart_contract"
-	scstore "stargate-backend/storage/smart_contract"
 )
 
 // TaskServiceExtended handles advanced task business logic
