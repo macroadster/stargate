@@ -1,9 +1,11 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -120,10 +122,22 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 		return h.handleListContracts(ctx, args)
 	case "list_proposals":
 		return h.handleListProposals(ctx, args)
+	case "list_tasks":
+		return h.handleListTasks(ctx, args)
+	case "get_contract":
+		return h.handleGetContract(ctx, args)
+	case "list_events":
+		return h.handleListEvents(ctx, args)
+	case "events_stream":
+		return h.handleEventsStream(ctx, args)
+	case "create_contract":
+		return h.handleCreateContract(ctx, args, apiKey)
 	case "claim_task":
 		return h.handleClaimTask(ctx, args, apiKey)
 	case "create_proposal":
 		return h.handleCreateProposal(ctx, args, apiKey)
+	case "submit_work":
+		return h.handleSubmitWork(ctx, args, apiKey)
 	case "approve_proposal":
 		return h.handleApproveProposal(ctx, args, apiKey)
 	case "scan_image":
@@ -326,6 +340,173 @@ func (h *HTTPMCPServer) handleGetScannerInfo(ctx context.Context, args map[strin
 	return map[string]interface{}{
 		"available": true,
 		"version":   "1.0.0",
+	}, nil
+}
+
+func (h *HTTPMCPServer) handleListTasks(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	filter := smart_contract.TaskFilter{}
+	if contractID, ok := args["contract_id"].(string); ok {
+		filter.ContractID = contractID
+	}
+	if status, ok := args["status"].(string); ok {
+		filter.Status = status
+	}
+	if limit, ok := args["limit"].(float64); ok {
+		filter.Limit = int(limit)
+	}
+
+	tasks, err := h.store.ListTasks(filter)
+	if err != nil {
+		return nil, err
+	}
+
+	return map[string]interface{}{
+		"tasks":       tasks,
+		"total_count": len(tasks),
+	}, nil
+}
+
+func (h *HTTPMCPServer) handleGetContract(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	contractID, ok := args["contract_id"].(string)
+	if !ok {
+		return nil, fmt.Errorf("contract_id is required")
+	}
+
+	contract, err := h.store.GetContract(contractID)
+	if err != nil {
+		return nil, err
+	}
+
+	return contract, nil
+}
+
+func (h *HTTPMCPServer) handleListEvents(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	return map[string]interface{}{
+		"endpoint": "/api/smart_contract/events",
+		"message":  "Use the events endpoint directly with optional filters",
+		"filters": map[string]interface{}{
+			"type":      "Event type filter",
+			"entity_id": "Entity ID filter",
+			"actor":     "Actor identifier filter",
+			"limit":     "Maximum number of events to return",
+		},
+	}, nil
+}
+
+func (h *HTTPMCPServer) handleEventsStream(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	baseURL := h.externalBaseURL(&http.Request{})
+	return map[string]interface{}{
+		"stream_url": baseURL + "/api/smart_contract/events/stream",
+		"auth_hints": map[string]string{
+			"header": "Authorization: Bearer <api_key>",
+			"query":  "actor=<identifier>&entity_id=<id>&type=<event_type>",
+		},
+		"message": "Connect to this SSE endpoint to receive real-time MCP events",
+	}, nil
+}
+
+func (h *HTTPMCPServer) handleCreateContract(ctx context.Context, args map[string]interface{}, apiKey string) (interface{}, error) {
+	message, ok := args["message"].(string)
+	if !ok || message == "" {
+		return nil, fmt.Errorf("message is required")
+	}
+
+	imageBase64, _ := args["image_base64"].(string)
+	price, _ := args["price"].(string)
+	priceUnit, _ := args["price_unit"].(string)
+	address, _ := args["address"].(string)
+	fundingMode, _ := args["funding_mode"].(string)
+
+	reqBody := map[string]interface{}{
+		"message": message,
+	}
+
+	if imageBase64 != "" {
+		reqBody["image_base64"] = imageBase64
+	}
+	if price != "" {
+		reqBody["price"] = price
+	}
+	if priceUnit != "" {
+		reqBody["price_unit"] = priceUnit
+	}
+	if address != "" {
+		reqBody["address"] = address
+	}
+	if fundingMode != "" {
+		reqBody["funding_mode"] = fundingMode
+	}
+
+	jsonBody, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	inscribeURL := h.baseURL + "/api/inscribe"
+	req, err := http.NewRequestWithContext(ctx, "POST", inscribeURL, bytes.NewReader(jsonBody))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+
+	resp, err := h.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call inscribe API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode >= 400 {
+		var errResp struct {
+			Success bool   `json:"success"`
+			Error   string `json:"error"`
+			Message string `json:"message"`
+		}
+		json.Unmarshal(body, &errResp)
+		return nil, fmt.Errorf("inscribe API error (%d): %s - %s", resp.StatusCode, errResp.Error, errResp.Message)
+	}
+
+	var successResp struct {
+		Success bool   `json:"success"`
+		Data    any    `json:"data"`
+		Error   string `json:"error"`
+	}
+	if err := json.Unmarshal(body, &successResp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	if !successResp.Success {
+		return nil, fmt.Errorf("inscribe failed: %s", successResp.Error)
+	}
+
+	return successResp.Data, nil
+}
+
+func (h *HTTPMCPServer) handleSubmitWork(ctx context.Context, args map[string]interface{}, apiKey string) (interface{}, error) {
+	claimID, ok := args["claim_id"].(string)
+	if !ok {
+		return nil, fmt.Errorf("claim_id is required")
+	}
+
+	deliverables, ok := args["deliverables"].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("deliverables is required")
+	}
+
+	submission, err := h.store.SubmitWork(claimID, deliverables, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return map[string]interface{}{
+		"message":    "work submitted successfully",
+		"claim_id":   claimID,
+		"submission": submission,
 	}, nil
 }
 

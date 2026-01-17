@@ -216,35 +216,49 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 		},
 		"create_contract": map[string]interface{}{
 			"category":    ToolCategoryWrite,
-			"description": "Create a smart contract record for a stego image",
+			"description": "Create a wish/contract by inscribing a message (creates proposal and contract automatically)",
 			"parameters": map[string]interface{}{
-				"contract_id": map[string]interface{}{
+				"message": map[string]interface{}{
 					"type":        "string",
-					"description": "Contract ID to create",
+					"description": "Wish message (markdown supported)",
 					"required":    true,
 				},
-				"block_height": map[string]interface{}{
-					"type":        "integer",
-					"description": "Optional block height",
-				},
-				"contract_type": map[string]interface{}{
+				"image_base64": map[string]interface{}{
 					"type":        "string",
-					"description": "Contract type (e.g., steganographic)",
+					"description": "Base64 encoded image (optional, uses placeholder if not provided)",
 				},
-				"metadata": map[string]interface{}{
-					"type":        "object",
-					"description": "Additional metadata for the contract",
+				"price": map[string]interface{}{
+					"type":        "string",
+					"description": "Price in BTC or sats (optional, default: 0)",
+				},
+				"price_unit": map[string]interface{}{
+					"type":        "string",
+					"description": "Price unit: btc or sats (optional, default: btc)",
+					"enum":        []string{"btc", "sats"},
+				},
+				"address": map[string]interface{}{
+					"type":        "string",
+					"description": "Bitcoin address (optional)",
+				},
+				"funding_mode": map[string]interface{}{
+					"type":        "string",
+					"description": "Funding mode: payout or raise_fund (optional)",
+					"enum":        []string{"payout", "raise_fund"},
 				},
 			},
 			"examples": []map[string]interface{}{
 				{
-					"description": "Create a stego contract",
+					"description": "Create a simple wish",
 					"arguments": map[string]interface{}{
-						"contract_id":   "contract-123",
-						"contract_type": "steganographic",
-						"metadata": map[string]interface{}{
-							"visible_pixel_hash": "contract-123",
-						},
+						"message": "Build me a trading bot",
+					},
+				},
+				{
+					"description": "Create a funded wish",
+					"arguments": map[string]interface{}{
+						"message":    "Create a website design",
+						"price":      "0.01",
+						"price_unit": "btc",
 					},
 				},
 			},
