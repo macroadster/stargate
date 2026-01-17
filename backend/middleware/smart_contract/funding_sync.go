@@ -18,19 +18,11 @@ type FundingProvider interface {
 	FetchProof(ctx context.Context, task smart_contract.Task) (*smart_contract.MerkleProof, error)
 }
 
-// NewFundingProvider selects a provider based on network.
 func NewFundingProvider(name, base string) FundingProvider {
-	network := bitcoin.GetCurrentNetwork()
-
 	switch name {
 	case "blockcypher":
 		return NewCachedFundingProvider(NewBlockcypherProvider(base))
 	case "blockstream":
-		if network == "testnet4" || network == "testnet" {
-			// For testnet, use Blockcypher instead (Blockstream endpoints return HTML)
-			log.Printf("Using Blockcypher provider for testnet: %s", network)
-			return NewCachedFundingProvider(NewBlockcypherProvider(base))
-		}
 		return NewCachedFundingProvider(NewBlockstreamFundingProvider(base))
 	default:
 		return NewCachedFundingProvider(NewMockFundingProvider())
