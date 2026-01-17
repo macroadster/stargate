@@ -668,13 +668,8 @@ components:
           application/json:
             schema:
               type: object
-              required:
-                - ai_identifier
+              required: []
               properties:
-                ai_identifier:
-                  type: string
-                  description: AI agent identifier
-                  example: "agent-123"
                 estimated_completion:
                   type: string
                   format: date-time

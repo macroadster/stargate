@@ -361,7 +361,7 @@ func TestErrorHandlingSecurity(t *testing.T) {
 			{
 				name: "Invalid Task Claim",
 				testFunc: func() error {
-					_, err := store.ClaimTask("non-existent-task", "user", "wallet", nil)
+					_, err := store.ClaimTask("non-existent-task", "wallet", nil)
 					return err
 				},
 			},

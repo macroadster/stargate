@@ -223,10 +223,9 @@ func (s *Server) handleContracts(w http.ResponseWriter, r *http.Request) {
 			status := r.URL.Query().Get("status")
 			skills := splitCSV(r.URL.Query().Get("skills"))
 			filter := smart_contract.ContractFilter{
-				Status:       status,
-				Skills:       skills,
-				Creator:      r.URL.Query().Get("creator"),
-				AiIdentifier: r.URL.Query().Get("ai_identifier"),
+				Status:  status,
+				Skills:  skills,
+				Creator: r.URL.Query().Get("creator"),
 			}
 			contracts, err := s.store.ListContracts(filter)
 			if err != nil {
@@ -1719,16 +1718,10 @@ func (s *Server) handleClaimTask(w http.ResponseWriter, r *http.Request, taskID 
 		return
 	}
 	var body struct {
-		AiIdentifier        string     `json:"ai_identifier"`
-		Wallet              string     `json:"wallet_address,omitempty"`
 		EstimatedCompletion *time.Time `json:"estimated_completion,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		Error(w, http.StatusBadRequest, "invalid json")
-		return
-	}
-	if body.AiIdentifier == "" {
-		Error(w, http.StatusBadRequest, "ai_identifier required")
 		return
 	}
 
@@ -1752,38 +1745,24 @@ func (s *Server) handleClaimTask(w http.ResponseWriter, r *http.Request, taskID 
 		}
 	}
 
-	contractorWallet := strings.TrimSpace(body.Wallet)
+	walletAddress := ""
 	if s.apiKeys != nil {
 		key := r.Header.Get("X-API-Key")
-		if contractorWallet != "" {
-			if getter, ok := s.apiKeys.(interface {
-				Get(string) (auth.APIKey, bool)
-			}); ok {
-				if rec, ok := getter.Get(key); ok {
-					if strings.TrimSpace(rec.Wallet) != "" && rec.Wallet != contractorWallet {
-						Error(w, http.StatusForbidden, "wallet already bound; rebind requires verification")
-						return
-					}
-				}
-			}
-			if updater, ok := s.apiKeys.(auth.APIKeyWalletUpdater); ok {
-				if _, err := updater.UpdateWallet(key, contractorWallet); err != nil {
-					Error(w, http.StatusBadRequest, "failed to bind wallet to api key")
-					return
-				}
-			}
-		}
-		if rec, ok := s.apiKeys.Get(key); ok && strings.TrimSpace(rec.Wallet) != "" {
-			contractorWallet = strings.TrimSpace(rec.Wallet)
+		if rec, ok := s.apiKeys.Get(key); ok {
+			walletAddress = strings.TrimSpace(rec.Wallet)
 		}
 	}
+	if walletAddress == "" {
+		Error(w, http.StatusBadRequest, "wallet address required - please bind wallet to API key using /api/auth/verify")
+		return
+	}
 
-	claim, err := s.store.ClaimTask(taskID, body.AiIdentifier, contractorWallet, body.EstimatedCompletion)
+	claim, err := s.store.ClaimTask(taskID, walletAddress, body.EstimatedCompletion)
 	if err != nil {
 		if err == ErrTaskNotFound {
 			// Attempt to publish tasks lazily from proposals that reference this task id, then retry.
 			if s.tryPublishTasksForTaskID(r.Context(), taskID) == nil {
-				if retry, retryErr := s.store.ClaimTask(taskID, body.AiIdentifier, contractorWallet, body.EstimatedCompletion); retryErr == nil {
+				if retry, retryErr := s.store.ClaimTask(taskID, walletAddress, body.EstimatedCompletion); retryErr == nil {
 					claim = retry
 					err = nil
 				} else {
@@ -1817,7 +1796,7 @@ claim_success:
 	s.recordEvent(smart_contract.Event{
 		Type:      "claim",
 		EntityID:  taskID,
-		Actor:     body.AiIdentifier,
+		Actor:     walletAddress,
 		Message:   "task claimed",
 		CreatedAt: time.Now(),
 	})

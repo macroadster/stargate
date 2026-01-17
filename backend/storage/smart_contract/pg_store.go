@@ -369,7 +369,7 @@ FROM mcp_contracts WHERE contract_id=$1
 }
 
 // ClaimTask reserves a task for an AI. It is idempotent if the same AI reclaims before expiry.
-func (s *PGStore) ClaimTask(taskID, aiID, contractorWallet string, estimatedCompletion *time.Time) (smart_contract.Claim, error) {
+func (s *PGStore) ClaimTask(taskID, walletAddress string, estimatedCompletion *time.Time) (smart_contract.Claim, error) {
 	ctx := context.Background()
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -388,11 +388,12 @@ FROM mcp_tasks WHERE task_id=$1 FOR UPDATE
 		return smart_contract.Claim{}, ErrTaskUnavailable
 	}
 
-	normalizedWallet := strings.TrimSpace(contractorWallet)
-	if normalizedWallet != "" {
-		if err := ValidateBitcoinAddress(normalizedWallet); err != nil {
-			return smart_contract.Claim{}, fmt.Errorf("contractor wallet validation failed: %v", err)
-		}
+	normalizedWallet := strings.TrimSpace(walletAddress)
+	if normalizedWallet == "" {
+		return smart_contract.Claim{}, fmt.Errorf("wallet address required")
+	}
+	if err := ValidateBitcoinAddress(normalizedWallet); err != nil {
+		return smart_contract.Claim{}, fmt.Errorf("wallet address validation failed: %v", err)
 	}
 	persistWallet := func(wallet string) error {
 		wallet = strings.TrimSpace(wallet)
@@ -424,7 +425,7 @@ FROM mcp_tasks WHERE task_id=$1 FOR UPDATE
 			return smart_contract.Claim{}, err
 		}
 		if c.Status == "active" && now.Before(c.ExpiresAt) {
-			if c.AiIdentifier == aiID {
+			if c.AiIdentifier == walletAddress {
 				if err := persistWallet(normalizedWallet); err != nil {
 					return smart_contract.Claim{}, err
 				}
@@ -439,7 +440,7 @@ FROM mcp_tasks WHERE task_id=$1 FOR UPDATE
 	claim := smart_contract.Claim{
 		ClaimID:      claimID,
 		TaskID:       taskID,
-		AiIdentifier: aiID,
+		AiIdentifier: walletAddress,
 		Status:       "active",
 		ExpiresAt:    expires,
 		CreatedAt:    now,

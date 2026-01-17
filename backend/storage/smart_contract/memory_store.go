@@ -229,7 +229,7 @@ func (s *MemoryStore) GetContract(id string) (smart_contract.Contract, error) {
 }
 
 // ClaimTask reserves a task for an AI. It is idempotent if the same AI reclaims before expiry.
-func (s *MemoryStore) ClaimTask(taskID, aiID, contractorWallet string, estimatedCompletion *time.Time) (smart_contract.Claim, error) {
+func (s *MemoryStore) ClaimTask(taskID, walletAddress string, estimatedCompletion *time.Time) (smart_contract.Claim, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -240,13 +240,16 @@ func (s *MemoryStore) ClaimTask(taskID, aiID, contractorWallet string, estimated
 	if strings.EqualFold(task.Status, "approved") || strings.EqualFold(task.Status, "completed") || strings.EqualFold(task.Status, "published") || strings.EqualFold(task.Status, "claimed") || strings.EqualFold(task.Status, "submitted") {
 		return smart_contract.Claim{}, ErrTaskUnavailable
 	}
-	normalizedWallet := strings.TrimSpace(contractorWallet)
+	normalizedWallet := strings.TrimSpace(walletAddress)
+	if normalizedWallet == "" {
+		return smart_contract.Claim{}, fmt.Errorf("wallet address required")
+	}
 
 	// Existing claim?
 	for _, c := range s.claims {
 		if c.TaskID == taskID {
-			if c.AiIdentifier == aiID && c.Status == "active" && time.Now().Before(c.ExpiresAt) {
-				if normalizedWallet != "" && task.ContractorWallet == "" {
+			if c.AiIdentifier == walletAddress && c.Status == "active" && time.Now().Before(c.ExpiresAt) {
+				if task.ContractorWallet == "" {
 					task.ContractorWallet = normalizedWallet
 					if task.MerkleProof == nil {
 						task.MerkleProof = &smart_contract.MerkleProof{}
@@ -267,26 +270,26 @@ func (s *MemoryStore) ClaimTask(taskID, aiID, contractorWallet string, estimated
 	claim := smart_contract.Claim{
 		ClaimID:      claimID,
 		TaskID:       taskID,
-		AiIdentifier: aiID,
+		AiIdentifier: walletAddress,
 		Status:       "active",
 		ExpiresAt:    expires,
 		CreatedAt:    time.Now(),
 	}
 	task.Status = "claimed"
-	task.ClaimedBy = aiID
+	task.ClaimedBy = walletAddress
 	task.ClaimedAt = &claim.CreatedAt
 	task.ClaimExpires = &expires
 	task.ActiveClaimID = claimID
-	if normalizedWallet != "" {
+	if task.ContractorWallet == "" {
 		task.ContractorWallet = normalizedWallet
 		if task.MerkleProof == nil {
 			task.MerkleProof = &smart_contract.MerkleProof{}
 		}
 		task.MerkleProof.ContractorWallet = normalizedWallet
 	}
+	s.tasks[taskID] = task
 
 	s.claims[claimID] = claim
-	s.tasks[taskID] = task
 
 	_ = estimatedCompletion // placeholder until persisted in model
 	return claim, nil
