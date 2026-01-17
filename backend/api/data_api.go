@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"stargate-backend/bitcoin"
+	"stargate-backend/security"
 	"stargate-backend/storage"
 )
 
@@ -855,9 +856,11 @@ func (api *DataAPI) HandleGetBlockInscriptionsPaginated(w http.ResponseWriter, r
 			looksPlaceholder := inscriptionContent == "" || strings.HasPrefix(inscriptionContent, "Extracted from transaction")
 			if looksPlaceholder {
 				blockDir := fmt.Sprintf("%s/%d_00000000", strings.TrimRight(api.resolveBlocksDir(), "/"), height)
-				textPath := filepath.Join(blockDir, ins.FilePath)
-				if data, err := os.ReadFile(textPath); err == nil {
-					inscriptionContent = string(data)
+				safePath, err := security.SanitizePath(blockDir, ins.FilePath)
+				if err == nil {
+					if data, err := os.ReadFile(safePath); err == nil {
+						inscriptionContent = string(data)
+					}
 				}
 			}
 		}
@@ -1364,8 +1367,13 @@ func (api *DataAPI) serveBlockImage(w http.ResponseWriter, height int64, filePat
 		return
 	}
 	base := strings.TrimRight(api.resolveBlocksDir(), "/")
-	fsPath := filepath.Join(fmt.Sprintf("%s/%d_00000000", base, height), filePath)
-	data, err := os.ReadFile(fsPath)
+	baseDir := fmt.Sprintf("%s/%d_00000000", base, height)
+	safePath, err := security.SanitizePath(baseDir, filePath)
+	if err != nil {
+		http.Error(w, "inscription not found", http.StatusNotFound)
+		return
+	}
+	data, err := os.ReadFile(safePath)
 	if err != nil {
 		http.Error(w, "inscription not found", http.StatusNotFound)
 		return
@@ -1520,21 +1528,12 @@ func (api *DataAPI) loadInscriptionContent(height int64, ins bitcoin.Inscription
 
 	base := strings.TrimRight(api.resolveBlocksDir(), "/")
 	blockDir := fmt.Sprintf("%s/%d_00000000", base, height)
-	fsPath := filepath.Join(blockDir, ins.FilePath)
-	if data, err := os.ReadFile(fsPath); err == nil {
-		// Prefer filesystem copy whenever it exists; it's the source of truth.
-		content = data
-		mimeType = inferMime(ins.ContentType, content, ins.FileName)
-	} else {
-		log.Printf("content fallback to cached: tx=%s height=%d path=%s err=%v", ins.TxID, height, fsPath, err)
-		// Attempt to regenerate the block on-demand if the file is missing.
-		if api.blockMonitor != nil {
-			if scanErr := api.blockMonitor.ProcessBlock(height); scanErr == nil {
-				if data, err2 := os.ReadFile(fsPath); err2 == nil {
-					content = data
-					mimeType = inferMime(ins.ContentType, content, ins.FileName)
-				}
-			}
+	safePath, err := security.SanitizePath(blockDir, ins.FilePath)
+	if err == nil {
+		if data, err := os.ReadFile(safePath); err == nil {
+			// Prefer filesystem copy whenever it exists; it's the source of truth.
+			content = data
+			mimeType = inferMime(ins.ContentType, content, ins.FileName)
 		}
 	}
 

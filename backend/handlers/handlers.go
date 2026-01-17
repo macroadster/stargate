@@ -22,6 +22,7 @@ import (
 	"stargate-backend/ipfs"
 	scmiddleware "stargate-backend/middleware/smart_contract"
 	"stargate-backend/models"
+	"stargate-backend/security"
 	"stargate-backend/services"
 	"stargate-backend/storage"
 )
@@ -246,7 +247,7 @@ func (h *InscriptionHandler) fromIngestion(rec services.IngestionRecord) models.
 	if !strings.HasPrefix(filename, rec.ID+"_") {
 		filename = fmt.Sprintf("%s_%s", rec.ID, filename)
 	}
-	targetPath := filepath.Join(uploadsDir, filename)
+	targetPath := security.SafeFilePath(uploadsDir, filename)
 	if _, err := os.Stat(targetPath); err == nil {
 		// ok
 	} else if isUploadTombstoned(uploadsDir, filepath.Base(filename)) {
@@ -563,7 +564,7 @@ func ensureIngestionImageFile(rec services.IngestionRecord) (string, error) {
 	if err := os.MkdirAll(uploadsDir, 0755); err != nil {
 		return "", err
 	}
-	target := filepath.Join(uploadsDir, rec.Filename)
+	target := security.SafeFilePath(uploadsDir, rec.Filename)
 	if _, err := os.Stat(target); err == nil {
 		return target, nil
 	}
@@ -719,6 +720,11 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 	fundingMode = payload.FundingMode
 	filename = payload.Filename
 
+	if filename != "" && !security.ValidateExtension(filename, security.AllowedImageExtensions) {
+		h.sendError(w, http.StatusBadRequest, "Invalid file type. Allowed types: png, jpg, jpeg, gif, webp, avif, bmp, svg")
+		return
+	}
+
 	if payload.ImageBase64 != "" {
 		imgBytes, imageErr = base64.StdEncoding.DecodeString(payload.ImageBase64)
 		if imageErr != nil {
@@ -827,7 +833,7 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 						if !strings.HasPrefix(imageFilename, ingestionID+"_") {
 							imageFilename = fmt.Sprintf("%s_%s", ingestionID, imageFilename)
 						}
-						imagePath := filepath.Join(uploadsDir, imageFilename)
+						imagePath := security.SafeFilePath(uploadsDir, imageFilename)
 						if err := os.WriteFile(imagePath, stegoImgBytes, 0644); err != nil {
 							h.sendError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to write image to %s: %v", imagePath, err))
 							return
