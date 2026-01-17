@@ -153,10 +153,7 @@ test.describe('MCP Workflow E2E (Real Backend)', () => {
         'Content-Type': 'application/json',
         'X-API-Key': AGENT_API_KEY
       },
-      data: {
-        ai_identifier: 'test-integration-agent',
-        wallet_address: ''
-      }
+      data: {}
     });
     expect(claimResp.ok()).toBeTruthy();
     const claimData = await claimResp.json();
