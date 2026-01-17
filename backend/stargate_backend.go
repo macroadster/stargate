@@ -211,15 +211,9 @@ func startMCPServices(escort *smart_contract.EscortService) {
 			}
 		}
 
-		fundingProvider := "blockstream"
+		fundingProvider := "mock"
 		if env := os.Getenv("MCP_FUNDING_PROVIDER"); env != "" {
 			fundingProvider = env
-		}
-		network := bitcoin.GetCurrentNetwork()
-		if network == "testnet4" || network == "testnet" {
-			// For testnet, use Blockcypher instead (Blockstream endpoints return HTML)
-			fundingProvider = "blockcypher"
-			log.Printf("Using Blockcypher funding provider for %s", network)
 		}
 		fundingAPIBase := bitcoin.GetNetworkConfig(bitcoin.GetCurrentNetwork()).BaseURL
 		if env := os.Getenv("MCP_FUNDING_API_BASE"); env != "" {

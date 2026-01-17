@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"time"
 
@@ -68,6 +69,8 @@ func (p *blockcypherProvider) FetchProof(ctx context.Context, task smart_contrac
 	if err := json.NewDecoder(resp.Body).Decode(&txResp); err != nil {
 		return nil, err
 	}
+
+	log.Printf("Blockcypher fetch for tx %s: status=%d, height=%d, block_hash=%s", txid, resp.StatusCode, txResp.BlockHeight, txResp.BlockHash)
 
 	// Build merkle proof
 	proof := *task.MerkleProof

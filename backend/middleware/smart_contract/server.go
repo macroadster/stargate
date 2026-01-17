@@ -755,7 +755,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 			if err := s.ingestionSvc.UpdateMetadata(ingestionRec.ID, metadata); err != nil {
 				log.Printf("psbt: failed to store funding_txids for %s: %v", ingestionRec.ID, err)
 			}
-			s.publishIngestUpdate(r.Context(), proposalID, ingestionRec.ID, strings.TrimSpace(body.PixelHash), fundingTxIDs, commitmentInfo, commitmentLockAddr, commitmentTarget)
+			s.publishIngestUpdate(r.Context(), proposalID, ingestionRec.ID, strings.TrimSpace(body.PixelHash), fundingTxIDs, commitmentInfo, commitmentLockAddr, commitmentTarget, payoutScripts, payoutScriptHashes, payoutScriptHash160s)
 		}
 		if proposalID != "" {
 			s.updateProposalMetadataBestEffort(r.Context(), proposalID, commitmentMeta)
@@ -817,7 +817,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		}); err != nil {
 			log.Printf("psbt: failed to store funding_txid for %s: %v", ingestionRec.ID, err)
 		}
-		s.publishIngestUpdate(r.Context(), proposalID, ingestionRec.ID, strings.TrimSpace(body.PixelHash), []string{res.FundingTxID}, res, commitmentLockAddr, commitmentTarget)
+		s.publishIngestUpdate(r.Context(), proposalID, ingestionRec.ID, strings.TrimSpace(body.PixelHash), []string{res.FundingTxID}, res, commitmentLockAddr, commitmentTarget, res.PayoutScripts, nil, nil)
 	}
 	if proposalID != "" {
 		s.updateProposalMetadataBestEffort(r.Context(), proposalID, commitmentMeta)
@@ -885,7 +885,7 @@ func contractorAddressFor(addr btcutil.Address) string {
 	return addr.EncodeAddress()
 }
 
-func (s *Server) publishIngestUpdate(ctx context.Context, proposalID, ingestionID, visiblePixelHash string, fundingTxIDs []string, res *bitcoin.PSBTResult, commitmentLockAddr btcutil.Address, commitmentTarget string) {
+func (s *Server) publishIngestUpdate(ctx context.Context, proposalID, ingestionID, visiblePixelHash string, fundingTxIDs []string, res *bitcoin.PSBTResult, commitmentLockAddr btcutil.Address, commitmentTarget string, payoutScripts [][]byte, payoutScriptHashes, payoutScriptHash160s []string) {
 	topic := strings.TrimSpace(os.Getenv("IPFS_MIRROR_TOPIC"))
 	if topic == "" {
 		return
@@ -918,6 +918,12 @@ func (s *Server) publishIngestUpdate(ctx context.Context, proposalID, ingestionI
 		}
 		if res.CommitmentSats > 0 {
 			announcement.CommitmentSats = res.CommitmentSats
+		}
+		if len(res.PayoutScript) > 0 {
+			announcement.PayoutScript = hex.EncodeToString(res.PayoutScript)
+		}
+		if len(res.PayoutScripts) > 0 {
+			announcement.PayoutScripts = hexSlice(res.PayoutScripts)
 		}
 	}
 	payload, err := json.Marshal(announcement)
