@@ -352,6 +352,32 @@ go test -run TestSpecificFunction  # Run single test
 - **Error Handling**: Explicit error returns, wrap errors with context
 - **Imports**: Grouped (stdlib, third-party, local packages)
 
+**SECURITY - File Operations (CRITICAL):**
+- **NEVER use `filepath.Join()` directly with user-controlled input**
+- **ALWAYS use `security.SafeFilePath(baseDir, filename)` for file writes**
+- **ALWAYS use `security.SanitizePath(baseDir, userPath)` for file reads**
+- **ALWAYS validate extensions**: `security.ValidateExtension(filename, allowed)`
+- **Valid examples**:
+  ```go
+  // File write:
+  path := security.SafeFilePath(uploadsDir, userFilename)
+  os.WriteFile(path, data, 0644)
+
+  // File read:
+  safePath, err := security.SanitizePath(baseDir, userPath)
+  if err != nil {
+      return fmt.Errorf("invalid path")
+  }
+  data, _ := os.ReadFile(safePath)
+  ```
+- **Invalid examples**:
+  ```go
+  // DON'T:
+  path := filepath.Join(baseDir, userFilename)  // VULNERABLE
+  path = baseDir + "/" + userFilename         // VULNERABLE
+  data, _ := os.ReadFile(userPath)             // VULNERABLE
+  ```
+
 ### Testing
 
 #### Frontend

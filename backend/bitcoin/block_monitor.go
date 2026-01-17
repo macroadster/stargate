@@ -26,6 +26,7 @@ import (
 	"stargate-backend/core"
 	"stargate-backend/core/smart_contract"
 	"stargate-backend/ipfs"
+	"stargate-backend/security"
 	"stargate-backend/services"
 )
 
@@ -909,7 +910,7 @@ func (bm *BlockMonitor) saveImages(blockDir string, images []ExtractedImageData)
 
 	for _, image := range images {
 		cleaned := sanitizeExtractedImage(image)
-		imageFile := filepath.Join(imagesDir, cleaned.FileName)
+		imageFile := security.SafeFilePath(imagesDir, cleaned.FileName)
 		// Save the actual image data
 		if err := os.WriteFile(imageFile, cleaned.Data, 0644); err != nil {
 			log.Printf("Failed to save image %s: %v", cleaned.FileName, err)
@@ -2405,7 +2406,7 @@ func (bm *BlockMonitor) moveIngestionImageWithFilename(blockDir string, rec *ser
 	if err := os.MkdirAll(destDir, 0755); err != nil {
 		return "", fmt.Errorf("failed to create images dir: %w", err)
 	}
-	destPath := filepath.Join(destDir, destFilename)
+	destPath := security.SafeFilePath(destDir, destFilename)
 	if _, err := os.Stat(destPath); err == nil {
 		bm.cleanupUploadArtifacts(rec)
 		return destPath, nil
