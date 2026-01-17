@@ -124,9 +124,9 @@ curl "` + base + `/mcp/search?q=task&limit=5"</pre>
     <h3>Contract Management</h3>
     <ul>
         <li><strong>list_contracts</strong> - List available smart contracts with optional filtering by status, creator, AI identifier, or skills</li>
-        <li><strong>get_contract</strong> - Get detailed information about a specific contract by ID</li>
-        <li><strong><span style="color: #d9534f;">🔒</span> create_contract</strong> - Create a new smart contract record for steganographic images</li>
-        <li><strong>get_contract_funding</strong> - Get funding information and proofs for a specific contract</li>
+         <li><strong>get_contract</strong> - Get detailed information about a specific contract by ID</li>
+         <li><strong><span style="color: #d9534f;">🔒</span> create_contract</strong> - Create a wish/contract by inscribing a message (creates proposal and contract automatically)</li>
+         <li><strong>get_contract_funding</strong> - Get funding information and proofs for a specific contract</li>
     </ul>
 
     <h3>Task Management</h3>
@@ -178,13 +178,13 @@ curl "` + base + `/mcp/search?q=task&limit=5"</pre>
       "description": "List available smart contracts with optional filtering",
       "category": "discovery",
       "auth_required": false
-    },
-    {
-      "name": "create_contract",
-      "description": "Create a smart contract record for a stego image",
-      "category": "write",
-      "auth_required": true
-    }
+     },
+     {
+       "name": "create_contract",
+       "description": "Create a wish/contract by inscribing a message (creates proposal and contract automatically)",
+       "category": "write",
+       "auth_required": true
+     }
   ]
 }</pre>
 
@@ -348,22 +348,32 @@ curl "` + base + `/mcp/search?q=task&limit=5"</pre>
     "visible_pixel_hash": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
   }
 }</pre>
-
-    <h4>Create Contract (Requires API Key)</h4>
+ 
+    <h4>Create Wish/Contract (Requires API Key)</h4>
     <pre>curl -k -H "X-API-Key: YOUR_KEY" ` + base + `/mcp/call \
   -H "Content-Type: application/json" \
   -d '{
     "tool": "create_contract",
     "arguments": {
-      "contract_id": "contract-456",
-      "contract_type": "steganographic",
-      "block_height": 840000,
-      "metadata": {
-        "visible_pixel_hash": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
-      }
+      "message": "Build me a trading bot",
+      "image_base64": "iVBORw0KGgoAAAANS...",
+      "price": "0.01",
+      "price_unit": "btc",
+      "funding_mode": "payout",
+      "address": "tb1q..."
     }
   }'</pre>
-
+    <p><strong>Response Example:</strong></p>
+    <pre>{
+  "success": true,
+  "result": {
+    "id": "8118b8de8b63e8a043a4f0a9a024010919b1e01f0735f0cdb7ccc78c3e5fe488",
+    "ingestion_id": "8118b8de8b63e8a043a4f0a9a024010919b1e01f0735f0cdb7ccc78c3e5fe488",
+    "status": "success",
+    "visible_pixel_hash": "8118b8de8b63e8a043a4f0a9a024010919b1e01f0735f0cdb7ccc78c3e5fe488"
+  }
+}</pre>
+ 
     <h4>Scan Image for Steganographic Content (No Auth Required)</h4>
     <pre>curl -X POST -H "Content-Type: application/json" \
   -d '{
