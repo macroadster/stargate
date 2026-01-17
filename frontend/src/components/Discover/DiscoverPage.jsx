@@ -111,7 +111,7 @@ export default function DiscoverPage() {
           'Content-Type': 'application/json',
           ...(auth.apiKey ? { 'X-API-Key': auth.apiKey } : {}),
         },
-        body: JSON.stringify({ ai_identifier: aiId }),
+        body: JSON.stringify({}),
       });
       if (!res.ok) {
         const msg = await res.text();
