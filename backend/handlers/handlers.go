@@ -811,9 +811,31 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 							return
 						}
 
+						// Write stego image to uploads directory immediately
+						uploadsDir := os.Getenv("UPLOADS_DIR")
+						if uploadsDir == "" {
+							uploadsDir = "/data/uploads"
+						}
+						if err := os.MkdirAll(uploadsDir, 0755); err != nil {
+							h.sendError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to create uploads directory: %v", err))
+							return
+						}
+						imageFilename := filename
+						if imageFilename == "" {
+							imageFilename = "inscription.png"
+						}
+						if !strings.HasPrefix(imageFilename, ingestionID+"_") {
+							imageFilename = fmt.Sprintf("%s_%s", ingestionID, imageFilename)
+						}
+						imagePath := filepath.Join(uploadsDir, imageFilename)
+						if err := os.WriteFile(imagePath, stegoImgBytes, 0644); err != nil {
+							h.sendError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to write image to %s: %v", imagePath, err))
+							return
+						}
+
 						ingRec := services.IngestionRecord{
 							ID:            ingestionID,
-							Filename:      filename,
+							Filename:      imageFilename,
 							Method:        method,
 							MessageLength: len(embeddedMessage),
 							ImageBase64:   starlightResponse.ImageBase64,
@@ -827,7 +849,7 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 							fmt.Printf("Failed to create ingestion record for %s: %v\n", ingestionID, err)
 						}
 						// Publish announcement with verified stego image
-						publishPendingIngestAnnouncement(ingestionID, ingestionID, filename, method, embeddedMessage, price, priceUnit, address, fundingMode, stegoImgBytes)
+						publishPendingIngestAnnouncement(ingestionID, ingestionID, imageFilename, method, embeddedMessage, price, priceUnit, address, fundingMode, stegoImgBytes)
 					}
 
 					if h.store != nil {
