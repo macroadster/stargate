@@ -126,8 +126,7 @@ func TestClaimTaskUsesAPIKeyWallet(t *testing.T) {
 	req := MCPRequest{
 		Tool: "claim_task",
 		Arguments: map[string]interface{}{
-			"task_id":       task.TaskID,
-			"ai_identifier": "agent-claim-wallet",
+			"task_id": task.TaskID,
 		},
 	}
 	body, _ := json.Marshal(req)

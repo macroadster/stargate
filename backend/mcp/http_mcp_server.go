@@ -192,20 +192,17 @@ func (h *HTTPMCPServer) handleClaimTask(ctx context.Context, args map[string]int
 		return nil, fmt.Errorf("task_id is required")
 	}
 
-	aiIdentifier, ok := args["ai_identifier"].(string)
-	if !ok {
-		return nil, fmt.Errorf("ai_identifier is required")
-	}
-
-	// For the wallet, we need to get it from the API key validator
 	var wallet string
 	if h.apiKeyStore != nil {
 		if keyInfo, ok := h.apiKeyStore.Get(apiKey); ok {
 			wallet = keyInfo.Wallet
 		}
 	}
+	if wallet == "" {
+		return nil, fmt.Errorf("wallet address required - please bind wallet to API key using /api/auth/verify")
+	}
 
-	claim, err := h.store.ClaimTask(taskID, aiIdentifier, wallet, nil)
+	claim, err := h.store.ClaimTask(taskID, wallet, nil)
 	if err != nil {
 		return nil, err
 	}

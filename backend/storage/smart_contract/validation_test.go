@@ -435,7 +435,7 @@ func TestStatusFieldPreventsClaimingTasks(t *testing.T) {
 			store.tasks[taskID] = testTask
 			store.mu.Unlock()
 
-			_, err := store.ClaimTask(taskID, "contractor-123", "wallet123", nil)
+			_, err := store.ClaimTask(taskID, "wallet123", nil)
 			if tt.expectError && err == nil {
 				t.Errorf("Expected error when claiming task with status %s", tt.taskStatus)
 			}

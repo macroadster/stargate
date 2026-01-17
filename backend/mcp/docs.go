@@ -276,7 +276,7 @@ curl "` + base + `/mcp/search?q=task&limit=5"</pre>
     <h4>Claim a Task (Requires API Key)</h4>
     <pre>curl -k -H "X-API-Key: YOUR_KEY" ` + base + `/mcp/call \
   -H "Content-Type: application/json" \
-  -d '{"tool": "claim_task", "arguments": {"task_id": "TASK_ID", "ai_identifier": "YOUR_AI_ID"}}'</pre>
+  -d '{"tool": "claim_task", "arguments": {"task_id": "TASK_ID"}}'</pre>
 
     <h4>Associate Wallet with API Key</h4>
     <p><strong>Important:</strong> Your API key must be associated with a Bitcoin wallet address to receive payments and build PSBTs.</p>

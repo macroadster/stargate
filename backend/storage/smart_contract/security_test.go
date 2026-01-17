@@ -160,7 +160,7 @@ func TestRaceConditionPrevention(t *testing.T) {
 
 	for i := 0; i < numGoroutines; i++ {
 		go func(id int) {
-			_, err := store.ClaimTask(taskID, "contractor-"+string(rune(id)), "wallet123", nil)
+			_, err := store.ClaimTask(taskID, "wallet123", nil)
 			results <- err
 		}(i)
 	}
