@@ -149,18 +149,16 @@ func BuildFundingPSBT(client *MempoolClient, params *chaincfg.Params, req PSBTRe
 	var redeemScript []byte
 	var redeemScriptHash []byte
 	var commitmentAddr string
-	if len(req.PixelHash) > 0 {
+	// Only create commitment when BOTH pixelHash is provided AND commitmentSats > 0
+	if len(req.PixelHash) > 0 && req.CommitmentSats > 0 {
 		commitmentScript, redeemScript, redeemScriptHash, commitmentAddr, err = buildCommitmentScript(params, req.PixelHash, req.CommitmentAddress)
 		if err != nil {
 			return nil, err
 		}
 		commitmentSats = req.CommitmentSats
-		// Only apply minimums for donations (non-zero commitment)
-		// Allow 0 commitment when user skips donation
-		if commitmentSats > 0 {
-			if commitmentSats < 546 {
-				commitmentSats = 546
-			}
+		// Apply minimum for donations (must be > 0 to reach here)
+		if commitmentSats < 546 {
+			commitmentSats = 546
 		}
 	}
 
