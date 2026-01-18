@@ -1671,10 +1671,23 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 		for _, txid := range fundingTxIDsFromMeta(recCopy.Metadata) {
 			txidMatches[txid] = &recCopy
 		}
+
+		// Debug: check metadata for specific ingestion
+		if strings.Contains(recCopy.ID, "092fe0f6") {
+			var keys []string
+			for k := range recCopy.Metadata {
+				keys = append(keys, k)
+			}
+			log.Printf("DEBUG: ingestion %s metadata keys: %v", recCopy.ID, keys)
+			log.Printf("DEBUG: ingestion %s funding_txid: %v", recCopy.ID, recCopy.Metadata["funding_txid"])
+			log.Printf("DEBUG: ingestion %s funding_txids: %v", recCopy.ID, recCopy.Metadata["funding_txids"])
+			log.Printf("DEBUG: ingestion %s all funding txids: %v", recCopy.ID, fundingTxIDsFromMeta(recCopy.Metadata))
+		}
 	}
 	if len(primaryCandidates) == 0 && len(fallbackCandidates) == 0 && len(txidMatches) == 0 {
 		return smartContracts
 	}
+
 	log.Printf("oracle reconcile: %d primary hashes, %d fallback hashes, %d funding txids across %d ingestions", len(primaryCandidates), len(fallbackCandidates), len(txidMatches), len(recs))
 
 	for _, tx := range parsedBlock.Transactions {
@@ -1840,9 +1853,7 @@ func fundingTxIDsFromMeta(meta map[string]any) []string {
 	if meta == nil {
 		return txids
 	}
-	if txid, ok := meta["funding_txid"].(string); ok {
-		add(txid)
-	}
+
 	switch v := meta["funding_txids"].(type) {
 	case []string:
 		for _, txid := range v {
@@ -2157,6 +2168,7 @@ func matchOracleOutput(script []byte, params *chaincfg.Params, candidates map[st
 		return nil, "", ""
 	}
 
+	// Try script hash matching first
 	for _, hash := range []string{scriptHashHex(script), scriptHash160Hex(script)} {
 		if match, ok := candidates[hash]; ok {
 			return match, "script_hash", hash
@@ -2164,9 +2176,38 @@ func matchOracleOutput(script []byte, params *chaincfg.Params, candidates map[st
 	}
 
 	if len(candidates) > 0 {
+		// Try script address hashes (P2SH, WitnessV0ScriptHash)
 		for _, addrHash := range scriptAddressHashes(script, params) {
 			if match, ok := candidates[addrHash]; ok {
 				return match, "script_address", addrHash
+			}
+		}
+
+		// Fallback: try direct address hashes for simple outputs (P2WPKH, P2PKH)
+		class, addrs, _, err := txscript.ExtractPkScriptAddrs(script, params)
+		if err == nil {
+			for _, addr := range addrs {
+				// For simple addresses (P2WPKH, P2PKH), try multiple hash formats
+				if class == txscript.PubKeyHashTy || class == txscript.WitnessV0PubKeyHashTy {
+					addrStr := addr.String()
+					scriptAddrHash := hex.EncodeToString(addr.ScriptAddress())
+					addrHash1 := scriptHashHex([]byte(addrStr))
+					addrHash2 := scriptHashHex([]byte(scriptAddrHash))
+					addrHash3 := scriptHash160Hex([]byte(addrStr))
+
+					// Try hash of address string
+					if match, ok := candidates[addrHash1]; ok {
+						return match, "address_hash", addrHash1
+					}
+					// Try hash of script address
+					if match, ok := candidates[addrHash2]; ok {
+						return match, "script_address_hash", addrHash2
+					}
+					// Try 160 hash of address string
+					if match, ok := candidates[addrHash3]; ok {
+						return match, "address_160_hash", addrHash3
+					}
+				}
 			}
 		}
 	}

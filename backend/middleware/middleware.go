@@ -212,6 +212,10 @@ type responseWriter struct {
 }
 
 func (rw *responseWriter) WriteHeader(code int) {
+	if rw.statusCode != 0 {
+		// Headers already written, ignore superfluous calls
+		return
+	}
 	rw.statusCode = code
 	rw.ResponseWriter.WriteHeader(code)
 }
