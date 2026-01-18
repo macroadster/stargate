@@ -2639,11 +2639,7 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 
 			stegoAlreadyPublished := strings.TrimSpace(toString(proposal.Metadata["stego_contract_id"])) != ""
 
-			if !stegoAlreadyPublished {
-				if err := s.maybePublishStegoForProposal(r.Context(), id); err != nil {
-					log.Printf("stego publish on approval failed for proposal %s: %v", id, err)
-				}
-			}
+			// Approve the proposal first - IPFS announcement is async
 			s.recordEvent(smart_contract.Event{
 				Type:      "approve",
 				EntityID:  id,
@@ -2651,10 +2647,23 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 				Message:   "proposal approved",
 				CreatedAt: time.Now(),
 			})
+
+			// Async stego publishing - doesn't block approval
+			if !stegoAlreadyPublished {
+				go func() {
+					ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+					defer cancel()
+					if err := s.maybePublishStegoForProposal(ctx, id); err != nil {
+						log.Printf("stego publish failed async for proposal %s: %v", id, err)
+					} else {
+						log.Printf("stego publish succeeded async for proposal %s", id)
+					}
+				}()
+			}
 			JSON(w, http.StatusOK, map[string]interface{}{
 				"proposal_id": id,
 				"status":      "approved",
-				"message":     "Proposal approved; tasks published.",
+				"message":     "Proposal approved; stego publishing in progress.",
 			})
 			return
 		}

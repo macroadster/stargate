@@ -57,36 +57,43 @@ func NewCachedFundingProvider(provider FundingProvider) FundingProvider {
 }
 
 func (p *cachedFundingProvider) FetchProof(ctx context.Context, task smart_contract.Task) (*smart_contract.MerkleProof, error) {
-	// Check cache first
-	taskID := task.TaskID
-	if taskID == "" && task.MerkleProof != nil && task.MerkleProof.TxID != "" {
-		taskID = task.MerkleProof.TxID
+	// Check cache first - always prefer transaction ID as cache key
+	cacheKey := ""
+	if task.MerkleProof != nil && task.MerkleProof.TxID != "" {
+		cacheKey = task.MerkleProof.TxID
+	} else if task.TaskID != "" {
+		cacheKey = task.TaskID
 	}
 
-	if taskID == "" {
+	if cacheKey == "" {
 		return p.provider.FetchProof(ctx, task)
 	}
 
 	// Check cache
 	p.cacheMutex.RLock()
-	entry, exists := p.cache[taskID]
+	entry, exists := p.cache[cacheKey]
 	p.cacheMutex.RUnlock()
 
 	if exists && time.Since(entry.cachedAt) < p.ttl {
-		log.Printf("Funding sync cache hit for task %s", taskID)
+		log.Printf("Funding sync cache hit for task %s", cacheKey)
 		return entry.proof, nil
 	}
 
 	// Cache miss - fetch from underlying provider
-	log.Printf("Funding sync cache miss for task %s", taskID)
+	log.Printf("Funding sync cache miss for task %s", cacheKey)
 	proof, err := p.provider.FetchProof(ctx, task)
 	if err != nil {
 		return nil, err
 	}
 
-	// Update cache
+	// Update cache with transaction ID as key when available
+	finalCacheKey := cacheKey
+	if proof != nil && proof.TxID != "" {
+		finalCacheKey = proof.TxID
+	}
+
 	p.cacheMutex.Lock()
-	p.cache[taskID] = &proofCacheEntry{
+	p.cache[finalCacheKey] = &proofCacheEntry{
 		proof:    proof,
 		cachedAt: time.Now(),
 	}

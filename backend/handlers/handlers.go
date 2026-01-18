@@ -395,10 +395,14 @@ func (h *InscriptionHandler) fromProposal(p sc.Proposal) models.InscriptionReque
 
 func isPendingContractStatus(status string) bool {
 	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "", "pending", "claimed", "submitted", "pending_review", "approved", "published", "active":
+	case "", "pending", "claimed", "submitted", "pending_review", "approved", "published":
+		return true
+	case "confirmed", "upsert", "complete", "superseded":
+		return false
+	case "active":
 		return false
 	default:
-		return true
+		return false
 	}
 }
 

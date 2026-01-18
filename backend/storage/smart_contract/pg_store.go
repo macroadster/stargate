@@ -179,15 +179,11 @@ func (s *PGStore) Close() {
 func (s *PGStore) ListContracts(filter smart_contract.ContractFilter) ([]smart_contract.Contract, error) {
 	ctx := context.Background()
 	rows, err := s.pool.Query(ctx, `
-SELECT c.contract_id, c.title, c.total_budget_sats, c.goals_count,
-       COALESCE((SELECT COUNT(*) FROM mcp_tasks t WHERE t.contract_id = c.contract_id AND t.status = 'available'), 0) AS available_tasks_count,
-       c.status, c.skills
-FROM mcp_contracts c
-LEFT JOIN mcp_proposals p ON p.id = c.contract_id
-WHERE ($1 = '' OR c.status = $1)
-  AND ($2 = '' OR LOWER(COALESCE(p.metadata->>'creator','')) = LOWER($2))
-  AND ($3 = '' OR LOWER(COALESCE(p.metadata->>'ai_identifier','')) = LOWER($3))
-`, filter.Status, filter.Creator, filter.AiIdentifier)
+	SELECT c.contract_id, c.title, c.total_budget_sats, c.goals_count,
+		c.status, c.skills
+	FROM mcp_contracts c
+	WHERE ($1 = '' OR c.status = $1)
+	`, filter.Status)
 	if err != nil {
 		return nil, err
 	}
