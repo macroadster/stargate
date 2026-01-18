@@ -2308,12 +2308,10 @@ func (s *Server) ReconcileSyncAnnouncement(ctx context.Context, ann *syncAnnounc
 		}
 	case "contract_upsert":
 		if ann.Contract != nil {
-			// UpsertContractWithTasks is not in Store interface yet
-			if pg, ok := s.store.(interface {
-				UpsertContractWithTasks(context.Context, smart_contract.Contract, []smart_contract.Task) error
-			}); ok {
-				err = pg.UpsertContractWithTasks(ctx, *ann.Contract, nil)
-			}
+			// BUG FIX: Skip contract_upsert sync that has empty tasks, as this can reset task statuses to available
+			// This prevents PSBT build from inadvertently resetting task status
+			log.Printf("Skipping contract_upsert sync for contract %s (would reset task statuses)", ann.Contract.ContractID)
+			err = nil
 		}
 	case "escort_validation":
 		if ann.EscortStatus != nil {
