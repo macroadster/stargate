@@ -714,7 +714,7 @@ func (s *Server) inscribeStego(ctx context.Context, cfg stegoApprovalConfig, cov
 				ImageBase64:   payload.ImageBase64,
 				Status:        "verified",
 				MessageLength: len(message),
-				Filename:      filename,
+				Filename:      ingestionID, // Use just the hash for stealth
 				Method:        method,
 				Metadata: map[string]interface{}{
 					"stego_request_id":   requestID,
@@ -731,7 +731,8 @@ func (s *Server) inscribeStego(ctx context.Context, cfg stegoApprovalConfig, cov
 			if uploadsDir == "" {
 				uploadsDir = "/data/uploads"
 			}
-			uploadPath := filepath.Join(uploadsDir, filename)
+			// Use just the hash as filename for stealth
+			uploadPath := filepath.Join(uploadsDir, ingestionID)
 			if writeErr := os.WriteFile(uploadPath, stegoBytes, 0644); writeErr != nil {
 				log.Printf("stego: failed to write stego image to %s: %v", uploadPath, writeErr)
 			} else {

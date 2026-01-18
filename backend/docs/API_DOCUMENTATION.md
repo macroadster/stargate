@@ -93,14 +93,14 @@ Example:
 ```
 
 #### GET /api/open-contracts
-Get pending transaction data.
+Browse open contracts and pending human wishes. Returns `PendingTransactionsResponse` format. No authentication required.
 
 ### Blocks
 
 #### GET /api/blocks
 Retrieve block information.
 
-### Smart Contracts
+### Open Contracts
 
 #### GET /api/smart-contracts
 List available smart contracts.

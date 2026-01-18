@@ -30,7 +30,7 @@ info:
 paths:
   /api/open-contracts:
     get:
-      description: Get all pending inscriptions (smart contracts)
+      description: Browse open contracts and pending human wishes
       produces:
       - application/json
       responses:

@@ -120,6 +120,8 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 	switch toolName {
 	case "list_contracts":
 		return h.handleListContracts(ctx, args)
+	case "get_open_contracts":
+		return h.handleGetOpenContracts(ctx, args)
 	case "list_proposals":
 		return h.handleListProposals(ctx, args)
 	case "list_tasks":
@@ -504,6 +506,76 @@ func (h *HTTPMCPServer) handleSubmitWork(ctx context.Context, args map[string]in
 		"message":    "work submitted successfully",
 		"claim_id":   claimID,
 		"submission": submission,
+	}, nil
+}
+
+// handleGetOpenContracts browses open contracts with caching (no auth required)
+func (h *HTTPMCPServer) handleGetOpenContracts(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	// Build filter from args
+	filter := smart_contract.ContractFilter{}
+
+	// Handle status parameter
+	if status, ok := args["status"].(string); ok {
+		if status != "all" {
+			filter.Status = status
+		}
+	} else {
+		// Default to pending contracts for MCP tool
+		filter.Status = "pending"
+	}
+
+	// Handle limit parameter
+	limit := 50 // default
+	if lim, ok := args["limit"].(float64); ok {
+		limit = int(lim)
+		if limit <= 0 {
+			limit = 50
+		}
+	}
+
+	// Query contracts from store
+	contracts, err := h.store.ListContracts(filter)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list contracts: %w", err)
+	}
+
+	// Apply limit if specified
+	if len(contracts) > limit {
+		contracts = contracts[:limit]
+	}
+
+	// Convert contracts to MCP-compatible format
+	var mcpContracts []map[string]interface{}
+	for _, contract := range contracts {
+		mcpContract := map[string]interface{}{
+			"contract_id":       contract.ContractID,
+			"title":             contract.Title,
+			"total_budget_sats": contract.TotalBudgetSats,
+			"goals_count":       contract.GoalsCount,
+			"available_tasks":   contract.AvailableTasksCount,
+			"status":            contract.Status,
+			"skills":            contract.Skills,
+			"stego_image_url":   contract.StegoImageURL,
+		}
+
+		// Add fallback URL if no stego image URL
+		if contract.StegoImageURL == "" {
+			// Strip "wish-" prefix for stealth filename
+			hash := contract.ContractID
+			if strings.HasPrefix(contract.ContractID, "wish-") {
+				hash = strings.TrimPrefix(contract.ContractID, "wish-")
+			}
+			mcpContract["stego_image_url"] = fmt.Sprintf("/uploads/%s", hash)
+		}
+
+		mcpContracts = append(mcpContracts, mcpContract)
+	}
+
+	return map[string]interface{}{
+		"contracts":   mcpContracts,
+		"total_count": len(mcpContracts),
+		"status":      filter.Status,
+		"limit":       limit,
 	}, nil
 }
 

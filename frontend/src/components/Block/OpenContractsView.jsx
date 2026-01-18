@@ -2,32 +2,40 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import InscriptionCard from '../Inscription/InscriptionCard';
 import { API_BASE } from '../../apiBase';
 
-const PendingTransactionsView = ({ setSelectedInscription, refreshKey }) => {
+const OpenContractsView = ({ setSelectedInscription, refreshKey }) => {
   const [pendingTxs, setPendingTxs] = useState([]);
 
-  const fetchPendingTransactions = useCallback(async () => {
+  const fetchOpenContracts = useCallback(async () => {
     try {
-      const response = await fetch(`${API_BASE}/api/pending-transactions`);
+      const response = await fetch(`${API_BASE}/api/open-contracts`);
       const data = await response.json();
       const raw = data?.data?.transactions ?? data;
       const normalized = Array.isArray(raw) ? raw : [];
-      setPendingTxs(normalized);
+      
+      // Filter out superseded contracts - only show active/open contracts
+      const filtered = normalized.filter(contract => 
+        contract.status !== 'superseded' && 
+        contract.status !== 'completed' && 
+        contract.status !== 'confirmed'
+      );
+      
+      setPendingTxs(filtered);
     } catch (error) {
-      console.error('Error fetching pending transactions:', error);
+      console.error('Error fetching open contracts:', error);
       setPendingTxs([]);
     }
   }, []);
 
   useEffect(() => {
-    fetchPendingTransactions();
-  }, [fetchPendingTransactions, refreshKey]);
+    fetchOpenContracts();
+  }, [fetchOpenContracts, refreshKey]);
 
   useEffect(() => {
     const intervalId = setInterval(() => {
-      fetchPendingTransactions();
+      fetchOpenContracts();
     }, 8000);
     return () => clearInterval(intervalId);
-  }, [fetchPendingTransactions]);
+  }, [fetchOpenContracts]);
 
   const mappedInscriptions = useMemo(() => {
     const list = Array.isArray(pendingTxs) ? pendingTxs : [];
@@ -80,7 +88,7 @@ const PendingTransactionsView = ({ setSelectedInscription, refreshKey }) => {
     <div className="mb-4">
       <div className="mb-4">
         <h3 className="text-black dark:text-white text-lg font-semibold border-b-2 border-yellow-500 pb-2 inline-block">
-          Pending Transactions
+          Open Contracts
         </h3>
       </div>
 
@@ -104,4 +112,4 @@ const PendingTransactionsView = ({ setSelectedInscription, refreshKey }) => {
   );
 };
 
-export default PendingTransactionsView;
+export default OpenContractsView;

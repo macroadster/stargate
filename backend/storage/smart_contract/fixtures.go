@@ -33,6 +33,7 @@ func SeedData() ([]smart_contract.Contract, []smart_contract.Task) {
 			AvailableTasksCount: 2,
 			Status:              "active",
 			Skills:              []string{"python", "api-integration", "finance"},
+			StegoImageURL:       "", // No stego image URL for seed data
 		},
 	}
 

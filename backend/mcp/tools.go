@@ -49,6 +49,33 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 				},
 			},
 		},
+		"get_open_contracts": map[string]interface{}{
+			"category":    ToolCategoryDiscovery,
+			"description": "Browse open contracts and pending human wishes",
+			"parameters": map[string]interface{}{
+				"limit": map[string]interface{}{
+					"type":        "integer",
+					"description": "Maximum number of contracts to return",
+					"default":     50,
+				},
+				"status": map[string]interface{}{
+					"type":        "string",
+					"description": "Filter by contract status",
+					"enum":        []string{"pending", "active", "all"},
+					"default":     "pending",
+				},
+			},
+			"examples": []map[string]interface{}{
+				{
+					"description": "List pending contracts",
+					"arguments":   map[string]interface{}{"status": "pending"},
+				},
+				{
+					"description": "List all contracts with limit",
+					"arguments":   map[string]interface{}{"status": "all", "limit": 20},
+				},
+			},
+		},
 		"get_contract": map[string]interface{}{
 			"category":    ToolCategoryDiscovery,
 			"description": "Get details of a specific contract",

@@ -86,6 +86,7 @@ func (s *InscriptionService) CreateInscription(req models.InscribeRequest, file 
 	timestamp := time.Now().Unix()
 	var imagePath string
 
+	// Generate filename and handle file
 	if file != nil && filename != "" {
 		imageFilename := fmt.Sprintf("%d_%s", timestamp, filename)
 		imagePath = filepath.Join(uploadsDir, imageFilename)

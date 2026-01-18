@@ -34,7 +34,8 @@ CREATE TABLE IF NOT EXISTS mcp_contracts (
   goals_count INT,
   available_tasks_count INT,
   status TEXT,
-  skills TEXT[]
+  skills TEXT[],
+  stego_image_url TEXT
 );
 
 -- Tasks table
@@ -107,6 +108,9 @@ CREATE INDEX IF NOT EXISTS idx_mcp_tasks_contract_status ON mcp_tasks(contract_i
 ALTER TABLE mcp_submissions ADD COLUMN IF NOT EXISTS rejection_reason TEXT;
 ALTER TABLE mcp_submissions ADD COLUMN IF NOT EXISTS rejection_type TEXT;
 ALTER TABLE mcp_submissions ADD COLUMN IF NOT EXISTS rejected_at TIMESTAMPTZ;
+
+-- Add stego_image_url column to existing mcp_contracts tables
+ALTER TABLE mcp_contracts ADD COLUMN IF NOT EXISTS stego_image_url TEXT;
 `
 }
 

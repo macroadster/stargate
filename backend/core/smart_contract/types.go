@@ -11,6 +11,7 @@ type Contract struct {
 	AvailableTasksCount int      `json:"available_tasks_count"`
 	Status              string   `json:"status"` // created | active | funded | confirmed | expired
 	Skills              []string `json:"skills,omitempty"`
+	StegoImageURL       string   `json:"stego_image_url,omitempty"`
 }
 
 // Task describes a specific unit of work an AI can claim.

@@ -169,12 +169,17 @@ func (s *Server) ReconcileStegoWithAnnouncement(ctx context.Context, ann *stegoA
 		return fmt.Errorf("ipfs cat stego failed: %w", err)
 	}
 
-	// Write stego image to /data/uploads
+	// Write stego image to /data/uploads with hash-only filename for stealth
 	uploadsDir := strings.TrimSpace(os.Getenv("UPLOADS_DIR"))
 	if uploadsDir == "" {
 		uploadsDir = "/data/uploads"
 	}
-	uploadPath := filepath.Join(uploadsDir, "stego.png")
+	// Use the CID hash as filename (remove any extension for stealth)
+	filename := ann.StegoCID
+	if parts := strings.Split(ann.StegoCID, "."); len(parts) > 1 {
+		filename = parts[0] // Remove extension if present
+	}
+	uploadPath := filepath.Join(uploadsDir, filename)
 	if err := os.WriteFile(uploadPath, stegoBytes, 0644); err != nil {
 		return fmt.Errorf("failed to write stego image: %w", err)
 	}
