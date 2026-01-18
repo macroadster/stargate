@@ -5,7 +5,7 @@ import { Routes, Route, useParams, useNavigate } from 'react-router-dom';
 
 import BlockCard from './components/Block/BlockCard';
 import InscriptionCard from './components/Inscription/InscriptionCard';
-import PendingTransactionsView from './components/Block/PendingTransactionsView';
+import OpenContractsView from './components/Block/OpenContractsView';
 import InscribeModal from './components/Inscription/InscribeModal';
 import InscriptionModal from './components/Inscription/InscriptionModal';
 import DiscoverPage from './components/Discover/DiscoverPage';
@@ -599,7 +599,7 @@ function MainContent() {
             </div>
 
             {selectedBlock.isFuture ? (
-              <PendingTransactionsView
+              <OpenContractsView
                 setSelectedInscription={setSelectedInscription}
                 refreshKey={pendingRefreshKey}
               />

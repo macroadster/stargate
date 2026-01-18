@@ -376,7 +376,6 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 	// Inscription endpoints
 	mux.HandleFunc("/api/inscriptions", container.InscriptionHandler.HandleGetInscriptions)
 	mux.Handle("/api/inscribe", wrapWithAuth(container.InscriptionHandler.HandleCreateInscription))
-	mux.HandleFunc("/api/pending-transactions", container.InscriptionHandler.HandleGetInscriptions)
 	mux.HandleFunc("/api/open-contracts", container.SmartContractHandler.HandleGetContracts)
 
 	// Block endpoints

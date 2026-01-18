@@ -49,7 +49,8 @@ CREATE TABLE IF NOT EXISTS mcp_contracts (
   goals_count INT,
   available_tasks_count INT,
   status TEXT,
-  skills TEXT[]
+  skills TEXT[],
+  stego_image_url TEXT
 );
 CREATE TABLE IF NOT EXISTS mcp_tasks (
   task_id TEXT PRIMARY KEY,
@@ -141,10 +142,10 @@ func (s *PGStore) seedFixtures(ctx context.Context) error {
 	contracts, tasks := SeedData()
 	for _, c := range contracts {
 		_, err := s.pool.Exec(ctx, `
-INSERT INTO mcp_contracts (contract_id, title, total_budget_sats, goals_count, available_tasks_count, status, skills)
-VALUES ($1,$2,$3,$4,$5,$6,$7)
+INSERT INTO mcp_contracts (contract_id, title, total_budget_sats, goals_count, available_tasks_count, status, skills, stego_image_url)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
 ON CONFLICT (contract_id) DO NOTHING
-`, c.ContractID, c.Title, c.TotalBudgetSats, c.GoalsCount, c.AvailableTasksCount, c.Status, c.Skills)
+`, c.ContractID, c.Title, c.TotalBudgetSats, c.GoalsCount, c.AvailableTasksCount, c.Status, c.Skills, c.StegoImageURL)
 		if err != nil {
 			return err
 		}
@@ -180,7 +181,8 @@ func (s *PGStore) ListContracts(filter smart_contract.ContractFilter) ([]smart_c
 	ctx := context.Background()
 	rows, err := s.pool.Query(ctx, `
 	SELECT c.contract_id, c.title, c.total_budget_sats, c.goals_count,
-		c.status, c.skills
+		COALESCE((SELECT COUNT(*) FROM mcp_tasks t WHERE t.contract_id = c.contract_id AND t.status = 'available'), 0) AS available_tasks_count,
+		c.status, c.skills, c.stego_image_url
 	FROM mcp_contracts c
 	WHERE ($1 = '' OR c.status = $1)
 	`, filter.Status)
@@ -192,7 +194,7 @@ func (s *PGStore) ListContracts(filter smart_contract.ContractFilter) ([]smart_c
 	var out []smart_contract.Contract
 	for rows.Next() {
 		var c smart_contract.Contract
-		if err := rows.Scan(&c.ContractID, &c.Title, &c.TotalBudgetSats, &c.GoalsCount, &c.AvailableTasksCount, &c.Status, &c.Skills); err != nil {
+		if err := rows.Scan(&c.ContractID, &c.Title, &c.TotalBudgetSats, &c.GoalsCount, &c.AvailableTasksCount, &c.Status, &c.Skills, &c.StegoImageURL); err != nil {
 			return nil, err
 		}
 		if len(filter.Skills) > 0 && !containsSkill(c.Skills, filter.Skills) {
@@ -352,9 +354,9 @@ func (s *PGStore) GetContract(id string) (smart_contract.Contract, error) {
 	err := s.pool.QueryRow(ctx, `
 SELECT contract_id, title, total_budget_sats, goals_count,
        COALESCE((SELECT COUNT(*) FROM mcp_tasks t WHERE t.contract_id = mcp_contracts.contract_id AND t.status = 'available'), 0) AS available_tasks_count,
-       status, skills
+       status, skills, stego_image_url
 FROM mcp_contracts WHERE contract_id=$1
-`, id).Scan(&c.ContractID, &c.Title, &c.TotalBudgetSats, &c.GoalsCount, &c.AvailableTasksCount, &c.Status, &c.Skills)
+`, id).Scan(&c.ContractID, &c.Title, &c.TotalBudgetSats, &c.GoalsCount, &c.AvailableTasksCount, &c.Status, &c.Skills, &c.StegoImageURL)
 	if err != nil {
 		if strings.Contains(err.Error(), "no rows") {
 			return smart_contract.Contract{}, fmt.Errorf("contract %s not found", id)
@@ -804,16 +806,17 @@ func (s *PGStore) UpsertContractWithTasks(ctx context.Context, contract smart_co
 	defer tx.Rollback(ctx)
 
 	_, err = tx.Exec(ctx, `
-INSERT INTO mcp_contracts (contract_id, title, total_budget_sats, goals_count, available_tasks_count, status, skills)
-VALUES ($1,$2,$3,$4,$5,$6,$7)
+INSERT INTO mcp_contracts (contract_id, title, total_budget_sats, goals_count, available_tasks_count, status, skills, stego_image_url)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
 ON CONFLICT (contract_id) DO UPDATE SET
   title = EXCLUDED.title,
   total_budget_sats = EXCLUDED.total_budget_sats,
   goals_count = EXCLUDED.goals_count,
   available_tasks_count = EXCLUDED.available_tasks_count,
   status = EXCLUDED.status,
-  skills = EXCLUDED.skills
-`, contract.ContractID, contract.Title, contract.TotalBudgetSats, contract.GoalsCount, contract.AvailableTasksCount, contract.Status, contract.Skills)
+  skills = EXCLUDED.skills,
+  stego_image_url = EXCLUDED.stego_image_url
+ `, contract.ContractID, contract.Title, contract.TotalBudgetSats, contract.GoalsCount, contract.AvailableTasksCount, contract.Status, contract.Skills, contract.StegoImageURL)
 	if err != nil {
 		return err
 	}

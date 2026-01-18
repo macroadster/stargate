@@ -25,6 +25,7 @@ import (
 	"stargate-backend/security"
 	"stargate-backend/services"
 	"stargate-backend/storage"
+	storageSC "stargate-backend/storage/smart_contract"
 )
 
 // BaseHandler provides common functionality for all handlers
@@ -125,7 +126,6 @@ func placeholderPNG() []byte {
 // @Produce  json
 // @Success 200 {object} models.PendingTransactionsResponse
 // @Router /api/inscriptions [get]
-// @Router /api/pending-transactions [get]
 func (h *InscriptionHandler) HandleGetInscriptions(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		h.sendError(w, http.StatusMethodNotAllowed, "Method not allowed")
@@ -286,10 +286,23 @@ func (h *InscriptionHandler) fromContract(c sc.Contract) models.InscriptionReque
 	}
 	imagePath := ""
 	timestamp := int64(0)
-	if c.ContractID != "" {
+
+	// Use the stego_image_url from the contract if available, falls back to old pattern
+	if c.StegoImageURL != "" {
+		imagePath = c.StegoImageURL
+	} else if c.ContractID != "" {
+		// Extract hash from contract ID and try hash-only filename first
 		baseID := baseContractID(c.ContractID)
-		if matches, _ := filepath.Glob(filepath.Join(uploadsDir, baseID+"_*")); len(matches) > 0 {
-			imagePath = matches[0]
+		if baseID != "" {
+			hashPath := filepath.Join(uploadsDir, baseID)
+			if _, err := os.Stat(hashPath); err == nil {
+				imagePath = hashPath
+			} else {
+				// Fallback to old pattern with prefix
+				if matches, _ := filepath.Glob(filepath.Join(uploadsDir, baseID+"_*")); len(matches) > 0 {
+					imagePath = matches[0]
+				}
+			}
 		}
 	}
 	wishText := ""
@@ -357,8 +370,15 @@ func (h *InscriptionHandler) fromProposal(p sc.Proposal) models.InscriptionReque
 		}
 	}
 	if baseID != "" {
-		if matches, _ := filepath.Glob(filepath.Join(uploadsDir, baseID+"_*")); len(matches) > 0 {
-			imagePath = matches[0]
+		// First try hash-only filename (new stealth naming)
+		hashPath := filepath.Join(uploadsDir, baseID)
+		if _, err := os.Stat(hashPath); err == nil {
+			imagePath = hashPath
+		} else {
+			// Fallback to old pattern with prefix
+			if matches, _ := filepath.Glob(filepath.Join(uploadsDir, baseID+"_*")); len(matches) > 0 {
+				imagePath = matches[0]
+			}
 		}
 	}
 	wishText := ""
@@ -830,13 +850,8 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 							h.sendError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to create uploads directory: %v", err))
 							return
 						}
-						imageFilename := filename
-						if imageFilename == "" {
-							imageFilename = "inscription.png"
-						}
-						if !strings.HasPrefix(imageFilename, ingestionID+"_") {
-							imageFilename = fmt.Sprintf("%s_%s", ingestionID, imageFilename)
-						}
+						// Use hash-only filename for stealth
+						imageFilename := ingestionID // Just the hash, no original filename
 						imagePath := security.SafeFilePath(uploadsDir, imageFilename)
 						if err := os.WriteFile(imagePath, stegoImgBytes, 0644); err != nil {
 							h.sendError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to write image to %s: %v", imagePath, err))
@@ -970,6 +985,7 @@ type SmartContractHandler struct {
 	contractService *services.SmartContractService
 	store           scmiddleware.Store
 	ingestion       *services.IngestionService
+	contractCache   *storageSC.ContractCache
 }
 
 func includeConfirmedQuery(r *http.Request) bool {
@@ -1002,13 +1018,82 @@ func proofsConfirmed(proofs []sc.MerkleProof) bool {
 	return false
 }
 
+// computeStegoImageURL generates the stego image URL for a contract
+func computeStegoImageURL(contractID string) string {
+	// Strip "wish-" prefix to match actual filename
+	hash := contractID
+	if strings.HasPrefix(contractID, "wish-") {
+		hash = strings.TrimPrefix(contractID, "wish-")
+	}
+	return fmt.Sprintf("/uploads/%s", hash)
+}
+
+// contractToInscriptionRequest converts a smart_contract.Contract to models.InscriptionRequest
+func contractToInscriptionRequest(contract sc.Contract) models.InscriptionRequest {
+	// Use persisted stego image URL or compute fallback
+	imageURL := contract.StegoImageURL
+	if imageURL == "" {
+		imageURL = computeStegoImageURL(contract.ContractID)
+	}
+
+	// Convert timestamp to Unix if available
+	var timestamp int64
+	if contract.GoalsCount > 0 { // Contract has some data
+		timestamp = time.Now().Unix() // Use current time as fallback
+	}
+
+	return models.InscriptionRequest{
+		ID:        contract.ContractID,
+		Text:      contract.Title,
+		ImageData: imageURL,
+		Price:     0,  // No price in contract model
+		Address:   "", // No address in contract model
+		Timestamp: timestamp,
+		Status:    contract.Status,
+	}
+}
+
+// generateCacheKey creates a cache key for contract queries
+func generateCacheKey(r *http.Request) string {
+	params := r.URL.Query()
+	key := "contracts"
+
+	if status := params.Get("status"); status != "" {
+		key += ":status:" + status
+	}
+	if limit := params.Get("limit"); limit != "" {
+		key += ":limit:" + limit
+	}
+	if includeConfirmed := params.Get("include_confirmed"); includeConfirmed != "" {
+		key += ":confirmed:" + includeConfirmed
+	}
+
+	return key
+}
+
 // NewSmartContractHandler creates a new smart contract handler
-func NewSmartContractHandler(contractService *services.SmartContractService, store scmiddleware.Store, ingestion *services.IngestionService) *SmartContractHandler {
+func NewSmartContractHandler(store scmiddleware.Store, ingestion *services.IngestionService, contractCache *storageSC.ContractCache) *SmartContractHandler {
 	return &SmartContractHandler{
 		BaseHandler:     NewBaseHandler(),
-		contractService: contractService,
+		contractService: nil, // Not used - we query MCP store directly
 		store:           store,
 		ingestion:       ingestion,
+		contractCache:   contractCache,
+	}
+}
+
+// InvalidateContractCache clears ALL contract cache entries aggressively
+func (h *SmartContractHandler) InvalidateContractCache() {
+	if h.contractCache != nil {
+		// Clear ALL contracts cache entries to prevent stale data
+		h.contractCache.Invalidate("contracts")
+		h.contractCache.Invalidate("contracts:status:open")
+		h.contractCache.Invalidate("contracts:status:active")
+		h.contractCache.Invalidate("contracts:status:pending")
+		h.contractCache.Invalidate("contracts:status:")
+		h.contractCache.Invalidate("contracts:limit:")
+		h.contractCache.Invalidate("contracts:confirmed:")
+		log.Printf("Contract cache aggressively invalidated")
 	}
 }
 
@@ -1019,63 +1104,34 @@ func (h *SmartContractHandler) HandleGetContracts(w http.ResponseWriter, r *http
 		return
 	}
 
-	// Use the MCP store to get contracts instead of the service
-	contracts, err := h.store.ListContracts(sc.ContractFilter{})
+	// Skip cache - go directly to database for consistency
+	// Build filter from query parameters
+	filter := sc.ContractFilter{}
+	if status := r.URL.Query().Get("status"); status != "" {
+		filter.Status = status
+	}
+
+	// Query mcp_contracts table directly
+	contracts, err := h.store.ListContracts(filter)
 	if err != nil {
+		log.Printf("Failed to get contracts: %v", err)
 		h.sendError(w, http.StatusInternalServerError, "Failed to get contracts")
 		return
 	}
 
-	// Convert smart_contract.Contract to models.SmartContractImage for API compatibility
-	var results []models.SmartContractImage
-	includeConfirmed := includeConfirmedQuery(r)
+	// Convert results
+	var inscriptions []models.InscriptionRequest
 	for _, contract := range contracts {
-		if !includeConfirmed {
-			_, proofs, err := h.store.ContractFunding(contract.ContractID)
-			if err != nil {
-				log.Printf("contract funding lookup failed for %s: %v", contract.ContractID, err)
-			} else if proofsConfirmed(proofs) {
-				continue
-			}
-		}
-		result := models.SmartContractImage{
-			ContractID:   contract.ContractID,
-			BlockHeight:  0,  // Not available in Contract struct
-			StegoImage:   "", // Not available in Contract struct
-			ContractType: "smart_contract",
-			Metadata: map[string]interface{}{
-				"title":             contract.Title,
-				"total_budget_sats": contract.TotalBudgetSats,
-				"goals_count":       contract.GoalsCount,
-				"available_tasks":   contract.AvailableTasksCount,
-				"status":            contract.Status,
-			},
-		}
-
-		// Enrich with ingestion image (stego) if available.
-		if h.ingestion != nil {
-			if rec, err := h.ingestion.Get(contract.ContractID); err == nil {
-				if stegoPath, serr := ensureIngestionImageFile(*rec); serr == nil {
-					url := "/uploads/" + filepath.Base(stegoPath)
-					result.StegoImage = url
-					result.Metadata["stego_image_url"] = url
-					result.Metadata["ingestion_id"] = rec.ID
-				}
-				if v, ok := rec.Metadata["visible_pixel_hash"].(string); ok && strings.TrimSpace(v) != "" {
-					result.VisiblePixelHash = strings.TrimSpace(v)
-					result.Metadata["visible_pixel_hash"] = result.VisiblePixelHash
-				}
-			}
-		}
-
-		results = append(results, result)
+		inscription := contractToInscriptionRequest(contract)
+		inscriptions = append(inscriptions, inscription)
 	}
 
-	response := models.SmartContractsResponse{
-		Results: results,
-		Total:   len(results),
+	response := models.PendingTransactionsResponse{
+		Transactions: inscriptions,
+		Total:        len(inscriptions),
 	}
 	h.sendSuccess(w, response)
+
 }
 
 // HandleCreateContract handles creating a new smart contract

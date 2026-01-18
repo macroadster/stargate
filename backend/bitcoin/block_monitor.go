@@ -2484,10 +2484,17 @@ func (bm *BlockMonitor) moveIngestionImageWithFilename(blockDir string, rec *ser
 		}
 	}
 	if sourcePath == "" && rec.ID != "" {
-		matches, _ := filepath.Glob(filepath.Join(uploadsDir, rec.ID+"_*"))
-		if len(matches) > 0 {
-			sort.Strings(matches)
-			sourcePath = matches[0]
+		// First try hash-only filename (new stealth naming)
+		hashPath := filepath.Join(uploadsDir, rec.ID)
+		if _, err := os.Stat(hashPath); err == nil {
+			sourcePath = hashPath
+		} else {
+			// Fallback to old pattern with prefix
+			matches, _ := filepath.Glob(filepath.Join(uploadsDir, rec.ID+"_*"))
+			if len(matches) > 0 {
+				sort.Strings(matches)
+				sourcePath = matches[0]
+			}
 		}
 	}
 	if sourcePath == "" {
@@ -2528,6 +2535,12 @@ func (bm *BlockMonitor) stegoImagePath(rec *services.IngestionRecord) (string, b
 	if uploadsDir == "" {
 		uploadsDir = "/data/uploads"
 	}
+	// First try hash-only filename (new stealth naming)
+	hashPath := filepath.Join(uploadsDir, stegoCID)
+	if _, err := os.Stat(hashPath); err == nil {
+		return hashPath, true
+	}
+	// Fallback to old pattern with prefix
 	if matches, _ := filepath.Glob(filepath.Join(uploadsDir, stegoCID+"*")); len(matches) > 0 {
 		sort.Strings(matches)
 		return matches[0], true
@@ -2607,6 +2620,12 @@ func (bm *BlockMonitor) cleanupUploadArtifacts(rec *services.IngestionRecord) {
 	if uploadsDir == "" {
 		uploadsDir = "/data/uploads"
 	}
+	// First try hash-only filename (new stealth naming)
+	hashPath := filepath.Join(uploadsDir, id)
+	if _, err := os.Stat(hashPath); err == nil {
+		bm.unpinUploadPath(hashPath)
+	}
+	// Also cleanup old pattern files
 	pattern := filepath.Join(uploadsDir, id+"_*")
 	matches, _ := filepath.Glob(pattern)
 	for _, match := range matches {
