@@ -1386,12 +1386,8 @@ WHERE id<>$1 AND status='pending' AND (
 		return err
 	}
 
-	// HACK: temporarily set status to approved to trigger validation
-	originalStatus := proposal.Status
-	proposal.Status = "approved"
-	err = ValidateProposalInput(proposal)
-	proposal.Status = originalStatus // revert status
-	if err != nil {
+	// Validate proposal for approval without modifying status
+	if err := ValidateProposalForApproval(proposal); err != nil {
 		return fmt.Errorf("proposal validation failed: %v", err)
 	}
 	if len(proposal.Tasks) == 0 {

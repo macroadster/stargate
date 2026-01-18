@@ -11,7 +11,9 @@ import (
 	"stargate-backend/core/smart_contract"
 )
 
-// MemoryStore holds in-memory MCP data. It is intentionally simple for the MVP and can be swapped for persistent storage later.
+// MemoryStore holds in-memory MCP data with proper concurrency control.
+// The single RWMutex ensures atomic operations across multiple maps.
+// This prevents race conditions when operations need to modify related data.
 type MemoryStore struct {
 	mu           sync.RWMutex
 	contracts    map[string]smart_contract.Contract
@@ -587,7 +589,45 @@ func (s *MemoryStore) CreateProposal(ctx context.Context, p smart_contract.Propo
 
 // createMissingTasks creates tasks for contracts that have available_tasks_count > 0 but no actual tasks
 func (s *MemoryStore) createMissingTasks() {
-	// Temporarily disabled - contracts exist but tasks creation has issues
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for contractID, contract := range s.contracts {
+		if contract.AvailableTasksCount <= 0 {
+			continue
+		}
+
+		// Check if contract already has tasks
+		hasTasks := false
+		for _, task := range s.tasks {
+			if task.ContractID == contractID {
+				hasTasks = true
+				break
+			}
+		}
+
+		if hasTasks {
+			continue
+		}
+
+		// Create default tasks for the contract
+		for i := 0; i < contract.AvailableTasksCount; i++ {
+			taskID := fmt.Sprintf("%s-task-%d", contractID, i+1)
+			task := smart_contract.Task{
+				TaskID:         taskID,
+				ContractID:     contractID,
+				GoalID:         fmt.Sprintf("goal-%d", i+1),
+				Title:          fmt.Sprintf("Task %d for %s", i+1, contract.Title),
+				Description:    fmt.Sprintf("Default task %d for contract %s", i+1, contract.Title),
+				BudgetSats:     contract.TotalBudgetSats / int64(contract.AvailableTasksCount),
+				Status:         "available",
+				Difficulty:     "medium",
+				EstimatedHours: 8,
+				Skills:         contract.Skills,
+			}
+			s.tasks[taskID] = task
+		}
+	}
 }
 
 // UpsertContractWithTasks persists a contract and its tasks idempotently.
@@ -756,13 +796,9 @@ func (s *MemoryStore) ApproveProposal(ctx context.Context, id string) error {
 		return fmt.Errorf("proposal %s not found", id)
 	}
 
-	// HACK: temporarily set status to approved to trigger validation
-	originalStatus := p.Status
-	p.Status = "approved"
-	err := ValidateProposalInput(p)
-	p.Status = originalStatus // revert status
-	if err != nil {
-		return err
+	// Validate proposal for approval without modifying status
+	if err := ValidateProposalForApproval(p); err != nil {
+		return fmt.Errorf("proposal validation failed: %v", err)
 	}
 
 	// Check if proposal is already in final state
