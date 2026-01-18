@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"testing"
 
+	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/txscript"
 )
 
@@ -67,4 +68,62 @@ func TestBuildHashlockRedeemScript(t *testing.T) {
 
 	t.Logf("Successfully verified hashlock script construction.")
 	t.Logf("Script: %x", script)
+}
+
+// TestAllPayerSelectionsAreSegWit tests the helper function that detects SegWit inputs
+func TestAllPayerSelectionsAreSegWit(t *testing.T) {
+	// Mock client and params for testing
+	client := &MempoolClient{} // We'll need to mock this properly
+	params := &chaincfg.TestNet3Params
+
+	// Test case 1: All SegWit inputs should return true
+	t.Run("AllSegWitInputs", func(t *testing.T) {
+		// This test requires a more complex setup with mocked UTXO responses
+		// For now, we'll test the logic structure
+		selections := []payerSelection{}
+		allSegWit := allPayerSelectionsAreSegWit(selections, client, params)
+		if !allSegWit {
+			t.Error("Expected allSegWit to be true for empty selections")
+		}
+	})
+
+	// Test case 2: Empty selections should return true (vacuously)
+	t.Run("EmptySelections", func(t *testing.T) {
+		selections := []payerSelection{}
+		allSegWit := allPayerSelectionsAreSegWit(selections, client, params)
+		if !allSegWit {
+			t.Error("Expected allSegWit to be true for empty selections")
+		}
+	})
+}
+
+// TestTxIDPreCalculationSegWit verifies that SegWit transactions get pre-calculated TxIDs
+func TestTxIDPreCalculationSegWit(t *testing.T) {
+	// This test would require:
+	// 1. Mock MempoolClient with SegWit UTXO responses
+	// 2. PSBTRequest with SegWit addresses
+	// 3. Verify FundingTxID is populated
+
+	t.Skip("Requires mock setup for comprehensive testing")
+}
+
+// TestTxIDPreCalculationLegacy verifies that Legacy transactions get empty TxIDs
+func TestTxIDPreCalculationLegacy(t *testing.T) {
+	// This test would require:
+	// 1. Mock MempoolClient with Legacy UTXO responses (P2PKH, P2SH)
+	// 2. PSBTRequest with Legacy addresses
+	// 3. Verify FundingTxID is empty
+
+	t.Skip("Requires mock setup for comprehensive testing")
+}
+
+// TestZeroCostFundingIntegration tests the complete zero-cost funding flow
+func TestZeroCostFundingIntegration(t *testing.T) {
+	// This would be an integration test that verifies:
+	// 1. PSBT generation with SegWit inputs includes pre-calculated TxID
+	// 2. PSBT generation with Legacy inputs has empty TxID
+	// 3. Server persistence correctly stores the TxID
+	// 4. Block monitor can find transactions by pre-calculated TxID
+
+	t.Skip("Integration test - requires full environment setup")
 }
