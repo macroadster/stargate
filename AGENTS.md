@@ -1,24 +1,5 @@
 # Agent Instructions (Stargate)
 
-## Common Stuck Points
-
-**CRITICAL: Never assume deployment worked without verification.**
-
-1. **`make backend` doesn't deploy automatically**
-   - Only builds Docker image locally 
-   - Must follow "Deployment Workflow" to actually deploy
-   - Build ≠ Deploy
-
-2. **Never blame "image not deployed" without verification**
-   - Check actual pod image: `kubectl describe pod <name> | grep "Image:"`
-   - Compare with local build: `docker images | grep stargate-backend`
-   - Check code first before blaming deployment
-
-3. **Always verify deployment**
-   - Use kubectl commands to confirm changes are live
-   - Check backend logs for actual errors
-   - See "Deployment Verification" section
-
 ## Beads Workflow
 
 - Issue lifecycle: `bd ready` → `bd update <id> --status in_progress` → work → `bd close <id>`.
@@ -231,37 +212,44 @@ For more details, see README.md and QUICKSTART.md.
 
 ## Stargate Development Guide
 
-### Build & Deployment Workflow
+### Development Workflow
 
-**CRITICAL: Docker vs Local Images**
+**For code changes, follow this sequence:**
 
-This project uses TWO different build methods. Do NOT confuse them:
-
-1. **Docker builds (for deployment)**:
+1. **Compile and test locally**:
    ```bash
-   make backend  # Builds stargate-backend:latest Docker image
-   make frontend # Builds stargate-frontend:latest Docker image
+   # Frontend
+   cd frontend && npm install
+   npm test
+   
+   # Backend  
+   cd backend && go build
+   go test ./...
    ```
-   - Creates `stargate-backend:latest` and `stargate-frontend:latest` locally
-   - Used for Kubernetes deployment
-   - Images live in your local Docker daemon
 
-2. **Local dev builds (for local testing only)**:
+2. **Build Docker images**:
    ```bash
-   cd backend && go run stargate_backend.go  # Run Go locally
-   cd frontend && npm start                    # Run React locally
+   make frontend  # Build stargate-frontend:latest Docker image
+   make backend   # Build stargate-backend:latest Docker image
    ```
-   - No Docker involved
-   - Only for local development
-   - Does NOT affect deployed services
 
-**DEPLOYMENT RULES:**
+3. **Deploy to cluster** (see Deployment Workflow section)
 
-1. **NEVER assume `make backend` automatically deploys** - it only builds locally
-2. **NEVER blame "image not deployed" without verifying** - check actual pod image
-3. **ALWAYS verify deployment** with `kubectl get pods` and `kubectl describe pod <name>`
-4. **If deployment uses Docker Hub images**, you must push there first
-5. **If using local images**, set `imagePullPolicy: Never` in deployment
+### Testing Commands
+
+#### Frontend (React)
+```bash
+cd frontend
+npm test                          # Run Jest tests
+npm test -- --testNamePattern="SpecificTest"  # Run single test
+```
+
+#### Backend (Go)
+```bash
+cd backend
+go test ./...      # Run all tests (when implemented)
+go test -run TestSpecificFunction  # Run single test
+```
 
 ### Deployment Workflow
 
@@ -298,191 +286,15 @@ kubectl describe pod <pod-name> -n default | grep "Image ID:"
 docker images | grep stargate-backend  # Note the Image ID (SHA256)
 ```
 
-### When to Use Build Commands
+Use https://starlight.local for testing deployed changes
 
-**Use `make backend` / `make frontend` ONLY for deployment:**
-- When you need to deploy code changes to Kubernetes cluster
-- When testing deployment workflow
-- NOT for local development
+**DEPLOYMENT RULES:**
 
-**Use local dev builds for local testing:**
-- `cd backend && go run stargate_backend.go &`
-- `cd frontend && npm start &`
-
-### Build Commands
-
-#### Frontend (React)
-```bash
-cd frontend
-npm install
-npm start > frontend.log &        # Dev server on localhost:3000
-npm run build                     # Production build
-npm test                          # Run Jest tests
-npm test -- --testNamePattern="SpecificTest"  # Run single test
-```
-
-#### Backend (Go)
-```bash
-cd backend
-go mod tidy        # Install dependencies
-go run stargate_backend.go > backend.log & # Dev server on localhost:3001
-go build           # Build binary
-go test ./...      # Run all tests (when implemented)
-go test -run TestSpecificFunction  # Run single test
-```
-
-### Code Style Guidelines
-
-#### Frontend (React/JavaScript)
-- **Components**: PascalCase (BlockCard, InscriptionModal)
-- **Files**: PascalCase.js for components
-- **Hooks**: camelCase with use prefix (useBlocks, useInscriptions)
-- **Constants**: UPPER_SNAKE_CASE
-- **Functions**: camelCase
-- **Imports**: ES6 imports, React hooks first
-- **Error Handling**: Try-catch with user-friendly messages
-- **State Management**: React hooks (useState, useEffect, useCallback)
-
-#### Backend (Go)
-- **Packages**: lowercase, single word (handlers, services, models)
-- **Files**: snake_case.go (data_storage.go, block_handler.go)
-- **Structs**: PascalCase (BlockData, InscriptionService)
-- **Functions**: PascalCase for exported, camelCase for unexported
-- **Constants**: UPPER_SNAKE_CASE or PascalCase for exported
-- **Error Handling**: Explicit error returns, wrap errors with context
-- **Imports**: Grouped (stdlib, third-party, local packages)
-
-**SECURITY - File Operations (CRITICAL):**
-- **NEVER use `filepath.Join()` directly with user-controlled input**
-- **ALWAYS use `security.SafeFilePath(baseDir, filename)` for file writes**
-- **ALWAYS use `security.SanitizePath(baseDir, userPath)` for file reads**
-- **ALWAYS validate extensions**: `security.ValidateExtension(filename, allowed)`
-- **Valid examples**:
-  ```go
-  // File write:
-  path := security.SafeFilePath(uploadsDir, userFilename)
-  os.WriteFile(path, data, 0644)
-
-  // File read:
-  safePath, err := security.SanitizePath(baseDir, userPath)
-  if err != nil {
-      return fmt.Errorf("invalid path")
-  }
-  data, _ := os.ReadFile(safePath)
-  ```
-- **Invalid examples**:
-  ```go
-  // DON'T:
-  path := filepath.Join(baseDir, userFilename)  // VULNERABLE
-  path = baseDir + "/" + userFilename         // VULNERABLE
-  data, _ := os.ReadFile(userPath)             // VULNERABLE
-  ```
-
-### Testing
-
-#### Frontend
-- **Framework**: Jest with React Testing Library
-- **Test Files**: *.test.js alongside components
-- **Run Single**: `npm test -- --testNamePattern="TestName"`
-
-#### Backend
-- **Framework**: Go testing package
-- **Test Files**: *_test.go alongside source files
-- **Run Single**: `go test -run TestFunctionName`
-
-### Linting/Formatting
-
-#### Frontend
-- **ESLint**: Configured via package.json (react-app preset)
-- **Prettier**: Uses Create React App defaults
-- **Fix**: `npm run lint` (if configured)
-
-#### Backend
-- **Format**: `go fmt ./...`
-- **Lint**: `golint ./...` (if installed)
-- **Vet**: `go vet ./...`
-
-### Key Patterns
-
-#### Frontend
-- Use custom hooks for API calls and state management
-- Component composition over inheritance
-- Tailwind classes for styling (no inline styles)
-- Proper error boundaries and loading states
-
-#### Backend
-- Dependency injection via container pattern
-- Middleware chain for cross-cutting concerns
-- File-based storage with proper error handling
-- RESTful API design with JSON responses
-
-### Development Workflow
-
-**LOCAL DEVELOPMENT (testing code changes locally):**
-```bash
-# Start backend locally (no Docker)
-cd backend && go run stargate_backend.go > backend.log &
-
-# Start frontend locally (no Docker)
-cd frontend && npm start > frontend.log &
-```
-
-**DEPLOYMENT (pushing code changes to cluster):**
-```bash
-# 1. Build Docker images
-make backend
-make frontend
-
-# 2. Deploy using "Deployment Workflow" above
-
-# 3. Verify deployment using "Deployment Verification" section
-```
-
-### Deployment Verification
-
-**Before blaming deployment, check in this order:**
-
-1. **Did the code actually change?**
-   ```bash
-   git diff HEAD~1 <file-you-edited>
-   ```
-
-2. **Is the deployed code the new version?**
-   ```bash
-   kubectl describe pod <pod-name> -n default | grep -A 5 "Image:" | grep "Image ID:"
-   docker images | grep stargate-backend
-   # Compare Image ID values
-   ```
-
-3. **Is the bug actually in the code?**
-   - Read the file you edited
-   - Check logic and error handling
-   - Look for typos or missing imports
-   - Don't assume "deployment failed" when code might be wrong
-
-4. **Check backend logs for actual errors:**
-   ```bash
-   kubectl logs <pod-name> -n default --tail=50 | grep -i error
-   ```
-
-5. **Then consider deployment issues:**
-   - Image not found
-   - ImagePullBackOff
-   - CrashLoopBackOff
-   - Pods not rolling out
-
-**Common mistakes to avoid:**
-- Assuming `make backend` automatically deploys to cluster
-- Assuming `helm upgrade` always pulls latest local images
-- Assuming `kubectl rollout restart` uses newly built images
-- Not verifying actual pod image after deployment
-
-**If images don't match:**
-- Check deployment `imagePullPolicy` setting
-- Verify you're building to right image name
-- Check if Helm values override image settings
-
-**Rule of thumb:** Check code first, then verify deployment, only then blame deployment.
+1. **NEVER assume `make backend` automatically deploys** - it only builds locally
+2. **NEVER blame "image not deployed" without verifying** - check actual pod image
+3. **ALWAYS verify deployment** with `kubectl get pods` and `kubectl describe pod <name>`
+4. **If deployment uses Docker Hub images**, you must push there first
+5. **If using local images**, set `imagePullPolicy: Never` in deployment
 
 ### Troubleshooting Common Issues
 
