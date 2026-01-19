@@ -99,10 +99,13 @@ func Timeout(timeout time.Duration) func(http.Handler) http.Handler {
 
 			r = r.WithContext(ctx)
 
+			// Wrap response writer to track if data was sent
+			tracked := &timeoutTrackingWriter{ResponseWriter: w}
+
 			done := make(chan struct{})
 			go func() {
 				defer close(done)
-				next.ServeHTTP(w, r)
+				next.ServeHTTP(tracked, r)
 			}()
 
 			select {
@@ -110,22 +113,43 @@ func Timeout(timeout time.Duration) func(http.Handler) http.Handler {
 				// Request completed normally
 			case <-ctx.Done():
 				// Request timed out
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusRequestTimeout)
+				// Only write error if response hasn't been committed yet
+				if !tracked.committed {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusRequestTimeout)
 
-				errorResp := map[string]interface{}{
-					"success": false,
-					"error": map[string]interface{}{
-						"error":   "request_timeout",
-						"message": "Request timed out",
-						"code":    http.StatusRequestTimeout,
-					},
+					errorResp := map[string]interface{}{
+						"success": false,
+						"error": map[string]interface{}{
+							"error":   "request_timeout",
+							"message": "Request timed out",
+							"code":    http.StatusRequestTimeout,
+						},
+					}
+
+					json.NewEncoder(w).Encode(errorResp)
 				}
-
-				json.NewEncoder(w).Encode(errorResp)
 			}
 		})
 	}
+}
+
+type timeoutTrackingWriter struct {
+	http.ResponseWriter
+	committed bool
+}
+
+func (tw *timeoutTrackingWriter) WriteHeader(statusCode int) {
+	tw.committed = true
+	tw.ResponseWriter.WriteHeader(statusCode)
+}
+
+func (tw *timeoutTrackingWriter) Write(b []byte) (int, error) {
+	if !tw.committed {
+		tw.ResponseWriter.WriteHeader(http.StatusOK)
+		tw.committed = true
+	}
+	return tw.ResponseWriter.Write(b)
 }
 
 // ContentType middleware
