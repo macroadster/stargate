@@ -25,6 +25,7 @@ type HTTPMCPServer struct {
 	ingestionSvc     *services.IngestionService
 	scannerManager   *starlight.ScannerManager
 	smartContractSvc *services.SmartContractService
+	server           *scmiddleware.Server
 	httpClient       *http.Client
 	baseURL          string
 	rateLimiter      map[string][]time.Time // API key -> request timestamps
@@ -38,10 +39,16 @@ func NewHTTPMCPServer(store scmiddleware.Store, apiKeyStore auth.APIKeyValidator
 		ingestionSvc:     ingestionSvc,
 		scannerManager:   scannerManager,
 		smartContractSvc: smartContractSvc,
+		server:           nil,
 		httpClient:       &http.Client{Timeout: 10 * time.Second},
 		baseURL:          "http://localhost:3001", // Default backend URL
 		rateLimiter:      make(map[string][]time.Time),
 	}
+}
+
+// SetServer sets the smart_contract server reference
+func (h *HTTPMCPServer) SetServer(server *scmiddleware.Server) {
+	h.server = server
 }
 
 func (h *HTTPMCPServer) externalBaseURL(r *http.Request) string {
@@ -326,6 +333,12 @@ func (h *HTTPMCPServer) handleApproveProposal(ctx context.Context, args map[stri
 	err = h.store.ApproveProposal(ctx, proposalID)
 	if err != nil {
 		return nil, err
+	}
+
+	if h.server != nil {
+		if publishErr := h.server.PublishProposalTasks(ctx, proposalID); publishErr != nil {
+			log.Printf("failed to publish tasks for proposal %s: %v", proposalID, publishErr)
+		}
 	}
 
 	return map[string]interface{}{

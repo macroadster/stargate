@@ -286,13 +286,16 @@ func runHTTPServer() {
 	httpMCPServer.RegisterRoutes(mux)
 
 	// Apply middleware to all routes
+	routes, mcpRestServer := setupRoutes(mux, container, store, apiKeyIssuer, apiKeyValidator, challengeStore, ingestionSvc, &mirror, escort)
+
+	// Set smart_contract server reference on MCP server (must be done after mcpRestServer is created)
+	httpMCPServer.SetServer(mcpRestServer)
+
 	handler := middleware.Recovery(
 		middleware.Logging(
 			middleware.SecurityHeaders(
 				middleware.CORS(
-					middleware.Timeout(30 * time.Second)(
-						setupRoutes(mux, container, store, apiKeyIssuer, apiKeyValidator, challengeStore, ingestionSvc, &mirror, escort),
-					),
+					middleware.Timeout(30 * time.Second)(routes),
 				)),
 		),
 	)
@@ -316,7 +319,7 @@ func runHTTPServer() {
 	log.Fatal(http.ListenAndServe(":"+httpPort, handler))
 }
 
-func setupRoutes(mux *http.ServeMux, container *container.Container, store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, apiKeyValidator auth.APIKeyValidator, challengeStore *auth.ChallengeStore, ingestionSvc *services.IngestionService, mirror *mirrorState, escort *smart_contract.EscortService) http.Handler {
+func setupRoutes(mux *http.ServeMux, container *container.Container, store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, apiKeyValidator auth.APIKeyValidator, challengeStore *auth.ChallengeStore, ingestionSvc *services.IngestionService, mirror *mirrorState, escort *smart_contract.EscortService) (http.Handler, *scmiddleware.Server) {
 	// Initialize MCP REST server for HTTP routes
 	mcpRestServer := scmiddleware.NewServer(store, apiKeyValidator, ingestionSvc)
 	if escort != nil {
@@ -578,7 +581,7 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 	// MCP tools are available via HTTP endpoints at /mcp/
 
 	log.Printf("All routes registered, returning handler")
-	return mux
+	return mux, mcpRestServer
 }
 
 type mirrorState struct {

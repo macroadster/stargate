@@ -2267,7 +2267,7 @@ func (s *Server) ReconcileSyncAnnouncement(ctx context.Context, ann *syncAnnounc
 						log.Printf("sync: proposal %s already approved locally", ann.Proposal.ID)
 						err = nil
 						// Still publish tasks to ensure consistency
-						_ = s.publishProposalTasks(ctx, ann.Proposal.ID)
+						_ = s.PublishProposalTasks(ctx, ann.Proposal.ID)
 					} else if strings.Contains(err.Error(), "already") && strings.Contains(err.Error(), "published") {
 						log.Printf("sync: proposal %s already published locally", ann.Proposal.ID)
 						err = nil
@@ -2275,7 +2275,7 @@ func (s *Server) ReconcileSyncAnnouncement(ctx context.Context, ann *syncAnnounc
 				}
 				if err == nil {
 					// Publish tasks after approval
-					_ = s.publishProposalTasks(ctx, ann.Proposal.ID)
+					_ = s.PublishProposalTasks(ctx, ann.Proposal.ID)
 				}
 			} else if ann.Type == "publish" {
 				// For publish type, call PublishProposal
@@ -2430,7 +2430,7 @@ func (s *Server) tryPublishTasksForTaskID(ctx context.Context, taskID string) er
 	for _, p := range proposals {
 		for _, t := range p.Tasks {
 			if t.TaskID == taskID {
-				return s.publishProposalTasks(ctx, p.ID)
+				return s.PublishProposalTasks(ctx, p.ID)
 			}
 		}
 	}
@@ -2462,8 +2462,8 @@ func eventMatches(evt smart_contract.Event, t string, actor string, entity strin
 	return true
 }
 
-// publishProposalTasks publishes the tasks stored in a proposal into MCP tasks.
-func (s *Server) publishProposalTasks(ctx context.Context, proposalID string) error {
+// PublishProposalTasks publishes the tasks stored in a proposal into MCP tasks.
+func (s *Server) PublishProposalTasks(ctx context.Context, proposalID string) error {
 	p, err := s.store.GetProposal(ctx, proposalID)
 	if err != nil {
 		return err
@@ -2627,7 +2627,7 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			// Publish tasks for this proposal if available.
-			if err := s.publishProposalTasks(r.Context(), id); err != nil {
+			if err := s.PublishProposalTasks(r.Context(), id); err != nil {
 				log.Printf("failed to publish tasks for proposal %s: %v", id, err)
 			}
 			visibleHash := strings.TrimSpace(proposal.VisiblePixelHash)
