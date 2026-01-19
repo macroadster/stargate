@@ -807,6 +807,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 	if ingestionRec != nil && res.FundingTxID != "" {
 		scriptHashes, scriptHash160s := buildScriptHashes(res.PayoutScripts)
 		if err := s.ingestionSvc.UpdateMetadata(ingestionRec.ID, map[string]interface{}{
+			"funding_txids":           []string{res.FundingTxID},
 			"funding_txid":            res.FundingTxID,
 			"payout_scripts":          hexSlice(res.PayoutScripts),
 			"payout_script_hashes":    scriptHashes,
