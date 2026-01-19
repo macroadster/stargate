@@ -313,6 +313,10 @@ func (h *HTTPMCPServer) handleApproveProposal(ctx context.Context, args map[stri
 		return nil, fmt.Errorf("proposal not found")
 	}
 
+	if err := requireCreatorApproval(apiKey, *proposal); err != nil {
+		return nil, err
+	}
+
 	// Check if wish contract exists
 	wishID := "wish-" + proposal.VisiblePixelHash
 	contracts, err := h.store.ListContracts(smart_contract.ContractFilter{})

@@ -397,6 +397,68 @@ func TestProposalCreationRequiresWish(t *testing.T) {
 			t.Fatalf("expected success, got error: %s", resp.Error)
 		}
 	})
+
+	t.Run("approve_proposal_requires_creator", func(t *testing.T) {
+		creatorKey := "creator-key"
+		otherKey := "other-key"
+		visibleHash := strings.Repeat("b", 64)
+
+		proposal := smart_contract.Proposal{
+			ID:               "proposal-creator-test",
+			Title:            "Creator test proposal",
+			DescriptionMD:    "Test proposal for creator validation",
+			VisiblePixelHash: visibleHash,
+			BudgetSats:       1000,
+			Status:           "pending",
+			Metadata: map[string]interface{}{
+				"creator_api_key_hash": apiKeyHash(creatorKey),
+				"visible_pixel_hash":   visibleHash,
+			},
+		}
+		if err := store.CreateProposal(context.Background(), proposal); err != nil {
+			t.Fatalf("failed to seed proposal: %v", err)
+		}
+
+		wishID := "wish-" + visibleHash
+		wishContract := smart_contract.Contract{
+			ContractID: wishID,
+			Title:      "Wish",
+			Status:     "pending",
+		}
+		if err := store.UpsertContractWithTasks(context.Background(), wishContract, nil); err != nil {
+			t.Fatalf("failed to seed wish contract: %v", err)
+		}
+
+		req := MCPRequest{
+			Tool: "approve_proposal",
+			Arguments: map[string]interface{}{
+				"proposal_id": proposal.ID,
+			},
+		}
+		body, _ := json.Marshal(req)
+
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("POST", "/mcp/call", bytes.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("X-API-Key", otherKey)
+
+		server.handleToolCall(w, r)
+
+		if w.Code != http.StatusInternalServerError {
+			t.Fatalf("expected 500, got %d: %s", w.Code, w.Body.String())
+		}
+
+		var resp MCPResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to unmarshal response: %v", err)
+		}
+		if resp.Success {
+			t.Fatalf("expected failure when non-creator tries to approve")
+		}
+		if !strings.Contains(resp.Error, "approver does not match proposal creator") {
+			t.Fatalf("expected creator mismatch error, got: %s", resp.Error)
+		}
+	})
 }
 
 // For PostgreSQL testing with an in-memory simulation, you could use a test database.
