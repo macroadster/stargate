@@ -140,11 +140,10 @@ func extractTaskDescription(markdown string, startIndex int) string {
 		return markdown
 	}
 
-	// Look ahead for deliverables and skills within task section
+	// Skip the task header line and collect content
 	var descLines []string
-	inTaskSection := false
 
-	for i := startIndex; i < len(lines) && len(descLines) < 5; i++ {
+	for i := startIndex + 1; i < len(lines); i++ {
 		line := strings.TrimSpace(lines[i])
 
 		// Stop at next task or major section
@@ -152,19 +151,15 @@ func extractTaskDescription(markdown string, startIndex int) string {
 			break
 		}
 
-		// Start collecting after task header
-		if strings.HasPrefix(line, "### Task ") {
-			inTaskSection = true
-			continue
-		}
-
-		if inTaskSection && line != "" {
-			descLines = append(descLines, line)
+		// Collect non-empty lines
+		if line != "" {
+			descLines = append(descLines, lines[i])
 		}
 	}
 
 	if len(descLines) == 0 {
-		return markdown
+		// If no content found, return default description
+		return "Task implementation as described"
 	}
 
 	return strings.Join(descLines, "\n")

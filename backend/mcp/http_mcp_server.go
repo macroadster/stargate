@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -254,17 +255,24 @@ func (h *HTTPMCPServer) handleCreateProposal(ctx context.Context, args map[strin
 		}
 	}
 
+	proposalID := fmt.Sprintf("proposal-%d", time.Now().UnixNano())
+	contractID := "wish-" + visiblePixelHash
 	proposal := smart_contract.Proposal{
+		ID:               proposalID,
 		Title:            title,
 		DescriptionMD:    descriptionMD,
 		VisiblePixelHash: visiblePixelHash,
 		BudgetSats:       budgetSats,
 		Status:           "pending",
+		CreatedAt:        time.Now(),
 		Metadata: map[string]interface{}{
 			"creator_api_key_hash": apiKeyHash(apiKey),
+			"contract_id":          contractID,
+			"visible_pixel_hash":   visiblePixelHash,
 		},
 	}
 
+	log.Printf("MCP CREATE PROPOSAL DEBUG: ID=%s, metadata=%+v", proposal.ID, proposal.Metadata)
 	err = h.store.CreateProposal(ctx, proposal)
 	if err != nil {
 		return nil, err

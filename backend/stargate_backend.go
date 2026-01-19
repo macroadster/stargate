@@ -555,6 +555,7 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 							return
 						}
 						w.Header().Set("Content-Type", contentTypeForFormat(img.Format))
+						w.Header().Set("Content-Length", fmt.Sprintf("%d", len(img.Data)))
 						_, _ = w.Write(img.Data)
 						return
 					}

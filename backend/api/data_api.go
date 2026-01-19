@@ -1355,6 +1355,7 @@ func (api *DataAPI) handleContentRaw(w http.ResponseWriter, r *http.Request, txi
 		return content
 	}())
 	w.Header().Set("Content-Type", mimeType)
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(content)))
 	w.Header().Set("X-Inscription-Mime", mimeType)
 	w.Header().Set("X-Inscription-Size", fmt.Sprintf("%d", len(content)))
 	w.Header().Set("X-Inscription-Hash", sha256Hex(content))
@@ -1379,7 +1380,11 @@ func (api *DataAPI) serveBlockImage(w http.ResponseWriter, height int64, filePat
 		return
 	}
 	mimeType := inferMime("", data, filepath.Base(filePath))
+	if mimeType == "" {
+		mimeType = "application/octet-stream"
+	}
 	w.Header().Set("Content-Type", mimeType)
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
 	w.Header().Set("X-Inscription-Mime", mimeType)
 	w.Header().Set("X-Inscription-Size", fmt.Sprintf("%d", len(data)))
 	w.Header().Set("X-Inscription-Hash", sha256Hex(data))
@@ -1604,6 +1609,18 @@ func inferMime(current string, content []byte, fileName string) string {
 	if m == "image/svg" {
 		m = "image/svg+xml"
 	}
+
+	// Enhanced content detection for files without extensions
+	if len(content) > 0 && (m == "" || m == "application/octet-stream") {
+		sample := content
+		if len(sample) > 512 {
+			sample = sample[:512]
+		}
+		if detected := http.DetectContentType(sample); detected != "" && detected != "application/octet-stream" {
+			m = detected
+		}
+	}
+
 	// Prefer explicit image types by filename if type is missing or generic.
 	if m == "" || m == "application/octet-stream" {
 		lowerName := strings.ToLower(fileName)
@@ -1628,17 +1645,7 @@ func inferMime(current string, content []byte, fileName string) string {
 			m = "application/json"
 		}
 	}
-	if m == "" || m == "application/octet-stream" {
-		if len(content) > 0 {
-			sample := content
-			if len(sample) > 512 {
-				sample = sample[:512]
-			}
-			if detected := http.DetectContentType(sample); detected != "" && detected != "application/octet-stream" {
-				m = detected
-			}
-		}
-	}
+
 	if m == "" {
 		trim := strings.TrimSpace(string(content))
 		lower := strings.ToLower(trim)
@@ -1654,11 +1661,6 @@ func inferMime(current string, content []byte, fileName string) string {
 			m = "application/octet-stream"
 		}
 	}
-
-	if (m == "" || m == "application/octet-stream") && isAVIF(content) {
-		m = "image/avif"
-	}
-
 	return m
 }
 

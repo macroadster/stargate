@@ -1013,8 +1013,9 @@ func (s *PGStore) CreateProposal(ctx context.Context, p smart_contract.Proposal)
 		if metaContract != "" {
 			if metaHash, ok2 := p.Metadata["visible_pixel_hash"].(string); ok2 {
 				metaHash = strings.TrimSpace(metaHash)
-				if metaHash != "" && metaHash != metaContract {
-					return fmt.Errorf("visible_pixel_hash must match contract_id when both are set")
+				normalizedContract := strings.TrimPrefix(metaContract, "wish-")
+				if metaHash != "" && metaHash != normalizedContract {
+					return fmt.Errorf("visible_pixel_hash must match contract_id when both are set (normalized: %s)", normalizedContract)
 				}
 			}
 		}
