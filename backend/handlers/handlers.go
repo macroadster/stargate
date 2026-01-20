@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -25,6 +26,7 @@ import (
 	"stargate-backend/security"
 	"stargate-backend/services"
 	"stargate-backend/storage"
+	auth "stargate-backend/storage/auth"
 	storageSC "stargate-backend/storage/smart_contract"
 )
 
@@ -96,15 +98,17 @@ type InscriptionHandler struct {
 	ingestionService   *services.IngestionService
 	proxyBase          string
 	store              scmiddleware.Store
+	apiKeyIssuer       auth.APIKeyIssuer
 }
 
 // NewInscriptionHandler creates a new inscription handler
-func NewInscriptionHandler(inscriptionService *services.InscriptionService, ingestionService *services.IngestionService) *InscriptionHandler {
+func NewInscriptionHandler(inscriptionService *services.InscriptionService, ingestionService *services.IngestionService, apiKeyIssuer auth.APIKeyIssuer) *InscriptionHandler {
 	return &InscriptionHandler{
 		BaseHandler:        NewBaseHandler(),
 		inscriptionService: inscriptionService,
 		ingestionService:   ingestionService,
 		proxyBase:          os.Getenv("STARGATE_PROXY_BASE"),
+		apiKeyIssuer:       apiKeyIssuer,
 	}
 }
 
@@ -114,7 +118,8 @@ func (h *InscriptionHandler) SetStore(store scmiddleware.Store) {
 }
 
 func placeholderPNG() []byte {
-	b64 := "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/Ptq4YQAAAABJRU5ErkJggg=="
+	// 64x64 PNG with enough space for steganographic data
+	b64 := "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAfklEQVR4nNXOQREAIADDsFL/wiYLETy4RkHONsokTuIkTuIkTuIkTuIkTuIkTuIkTuIkTuIkTuIkTuIkTuIkTuIkTuIkTuIkTuIkTuIkTuIkTuIkTuIkTuIkTuIkTuIkTuIkTuIkTuIkTuL8HXh1AVjjAtjgr6lpAAAAAElFTkSuQmCC"
 	data, _ := io.ReadAll(base64.NewDecoder(base64.StdEncoding, strings.NewReader(b64)))
 	return data
 }
@@ -670,6 +675,7 @@ func parsePriceSats(raw string) int64 {
 
 // HandleCreateInscription handles creating a new inscription
 func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *http.Request) {
+	log.Printf("DEBUG: CreateInscription handler called with method: %s, apiKeyIssuer: %v", r.Method, h.apiKeyIssuer != nil)
 	if r.Method != http.MethodPost {
 		h.sendError(w, http.StatusMethodNotAllowed, "Method not allowed")
 		return
@@ -702,15 +708,16 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 	)
 
 	var payload struct {
-		Message     string `json:"message"`
-		Text        string `json:"text"`
-		Method      string `json:"method"`
-		Price       string `json:"price"`
-		PriceUnit   string `json:"price_unit"`
-		Address     string `json:"address"`
-		FundingMode string `json:"funding_mode"`
-		ImageBase64 string `json:"image_base64"`
-		Filename    string `json:"filename"`
+		Message      string `json:"message"`
+		Text         string `json:"text"`
+		Method       string `json:"method"`
+		Price        string `json:"price"`
+		PriceUnit    string `json:"price_unit"`
+		Address      string `json:"address"`
+		FundingMode  string `json:"funding_mode"`
+		ImageBase64  string `json:"image_base64"`
+		Filename     string `json:"filename"`
+		SkipProposal bool   `json:"skip_proposal"`
 	}
 	if err := json.Unmarshal(bodyBytes, &payload); err != nil {
 		h.sendError(w, http.StatusBadRequest, "Invalid JSON")
@@ -758,11 +765,6 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 		if filename == "" {
 			filename = "image.png"
 		}
-	}
-
-	if text == "" {
-		h.sendError(w, http.StatusBadRequest, "Message is required for inscription")
-		return
 	}
 
 	// Ensure we have image bytes & filename for downstream hashing/storage
@@ -819,6 +821,34 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 				if err := json.Unmarshal(body, &starlightResponse); err == nil && starlightResponse.ImageSHA256 != "" {
 					ingestionID := starlightResponse.ImageSHA256
 
+					// Record the wish creator
+					creatorKey := strings.TrimSpace(r.Header.Get("X-API-Key"))
+					if creatorKey == "" {
+						auth := r.Header.Get("Authorization")
+						if strings.HasPrefix(auth, "Bearer ") {
+							creatorKey = strings.TrimPrefix(auth, "Bearer ")
+						}
+					}
+					var creatorHash string
+					if creatorKey != "" {
+						hashBytes := sha256.Sum256([]byte(creatorKey))
+						creatorHash = hex.EncodeToString(hashBytes[:])
+
+						log.Printf("DEBUG: Storing creator API key with hash: %s", creatorHash)
+						// Store the API key in the database for future validation
+						if h.apiKeyIssuer != nil {
+							// The Seed method stores an existing key in the database
+							if seedIssuer, ok := h.apiKeyIssuer.(interface{ Seed(string, string, string) }); ok {
+								seedIssuer.Seed(creatorKey, "", "wish-creator")
+								log.Printf("DEBUG: Successfully stored creator API key in database")
+							} else {
+								log.Printf("Warning: apiKeyIssuer does not support Seed method for storing existing API key")
+							}
+						} else {
+							log.Printf("DEBUG: apiKeyIssuer is nil - cannot store API key")
+						}
+					}
+
 					meta := map[string]interface{}{
 						"embedded_message":     embeddedMessage,
 						"message":              text,
@@ -828,6 +858,7 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 						"address":              address,
 						"funding_mode":         fundingMode,
 						"starlight_request_id": starlightResponse.RequestID,
+						"creator_api_key_hash": creatorHash,
 					}
 					if strings.EqualFold(priceUnit, "sats") {
 						meta["budget_sats"] = parsePriceSats(price)
@@ -878,7 +909,7 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 					}
 
 					if h.store != nil {
-						// Create proposal first
+						// Determine title for both proposal and contract
 						proposalTitle := strings.TrimSpace(text)
 						if strings.HasPrefix(proposalTitle, "#") {
 							proposalTitle = strings.TrimSpace(strings.TrimLeft(proposalTitle, "#"))
@@ -887,39 +918,45 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 							proposalTitle = "Wish " + starlightResponse.ImageSHA256
 						}
 
-						proposal := sc.Proposal{
-							ID:               starlightResponse.ImageSHA256,
-							Title:            proposalTitle,
-							DescriptionMD:    text,
-							VisiblePixelHash: starlightResponse.ImageSHA256,
-							BudgetSats:       parsePriceSats(price),
-							Status:           "pending",
-							CreatedAt:        time.Now(),
-							Metadata: map[string]any{
-								"starlight_request_id": starlightResponse.RequestID,
-								"funding_mode":         fundingMode,
-								"address":              address,
-								"price_unit":           priceUnit,
-							},
+						// 1. Create Proposal (Optional, default TRUE unless skipped)
+						if !payload.SkipProposal {
+							proposal := sc.Proposal{
+								ID:               starlightResponse.ImageSHA256,
+								Title:            proposalTitle,
+								DescriptionMD:    text,
+								VisiblePixelHash: starlightResponse.ImageSHA256,
+								BudgetSats:       parsePriceSats(price),
+								Status:           "pending",
+								CreatedAt:        time.Now(),
+								Metadata: map[string]any{
+									"starlight_request_id": starlightResponse.RequestID,
+									"funding_mode":         fundingMode,
+									"address":              address,
+									"price_unit":           priceUnit,
+								},
+							}
+
+							if err := h.store.CreateProposal(context.Background(), proposal); err != nil {
+								fmt.Printf("Failed to create proposal for wish %s: %v\n", starlightResponse.ImageSHA256, err)
+							}
 						}
 
-						if err := h.store.CreateProposal(context.Background(), proposal); err != nil {
-							fmt.Printf("Failed to create proposal for wish %s: %v\n", starlightResponse.ImageSHA256, err)
-						} else {
-							// Also create contract for wishes so they show up in contracts list
-							// Use wish- prefix for compatibility with PSBT building
-							wishContract := sc.Contract{
-								ContractID:      "wish-" + proposal.ID,
-								Title:           proposal.Title,
-								TotalBudgetSats: proposal.BudgetSats,
-								GoalsCount:      0,
-								Status:          proposal.Status,
-							}
-							type upserter interface {
-								UpsertContractWithTasks(ctx context.Context, contract sc.Contract, tasks []sc.Task) error
-							}
-							if u, ok := h.store.(upserter); ok {
-								_ = u.UpsertContractWithTasks(context.Background(), wishContract, nil)
+						// 2. Create the "Wish Contract" so it appears in the marketplace
+						// This ensures the wish exists even if no proposal is created immediately
+						wishContract := sc.Contract{
+							ContractID:      "wish-" + starlightResponse.ImageSHA256,
+							Title:           proposalTitle,
+							TotalBudgetSats: parsePriceSats(price),
+							GoalsCount:      0,
+							Status:          "pending",
+						}
+
+						type upserter interface {
+							UpsertContractWithTasks(ctx context.Context, contract sc.Contract, tasks []sc.Task) error
+						}
+						if u, ok := h.store.(upserter); ok {
+							if err := u.UpsertContractWithTasks(context.Background(), wishContract, nil); err != nil {
+								fmt.Printf("Failed to create wish contract %s: %v\n", wishContract.ContractID, err)
 							}
 						}
 					}

@@ -8,6 +8,7 @@ import (
 	scmiddleware "stargate-backend/middleware/smart_contract"
 	"stargate-backend/services"
 	"stargate-backend/storage"
+	"stargate-backend/storage/auth"
 	"stargate-backend/storage/smart_contract"
 	"strconv"
 	"time"
@@ -39,7 +40,7 @@ type Container struct {
 }
 
 // NewContainer creates a new dependency container
-func NewContainer() *Container {
+func NewContainer(apiKeyIssuer auth.APIKeyIssuer) *Container {
 	storageType := os.Getenv("STARGATE_STORAGE")
 	pgDSN := os.Getenv("STARGATE_PG_DSN")
 	if pgDSN == "" {
@@ -99,7 +100,7 @@ func NewContainer() *Container {
 
 	// Initialize handlers
 	healthHandler := handlers.NewHealthHandler(healthService)
-	inscriptionHandler := handlers.NewInscriptionHandler(inscriptionService, ingestionService)
+	inscriptionHandler := handlers.NewInscriptionHandler(inscriptionService, ingestionService, apiKeyIssuer)
 	blockHandler := handlers.NewBlockHandler(blockService)
 	// contractHandler will be set later with store
 	searchHandler := handlers.NewSearchHandler(inscriptionService, blockService, dataStorage)
