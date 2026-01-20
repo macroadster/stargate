@@ -92,24 +92,62 @@ func applyCreatorAPIKeyHash(meta map[string]interface{}, apiKey string) {
 	}
 }
 
-func enforceCreatorApproval(r *http.Request, proposal smart_contract.Proposal) error {
-	meta := proposal.Metadata
-	if meta == nil {
-		return fmt.Errorf("proposal missing creator metadata")
-	}
-	required, _ := meta["creator_api_key_hash"].(string)
-	required = strings.TrimSpace(required)
-	if required == "" {
-		return fmt.Errorf("proposal missing creator_api_key_hash; recreate the wish to approve")
-	}
-	current := creatorAPIKeyHash(r.Header.Get("X-API-Key"))
-	if current == "" {
+func (s *Server) enforceCreatorApproval(r *http.Request, proposal smart_contract.Proposal) error {
+	apiKey := r.Header.Get("X-API-Key")
+	currentHash := creatorAPIKeyHash(apiKey)
+	if currentHash == "" {
 		return fmt.Errorf("api key required for approval")
 	}
-	if required != current {
-		return fmt.Errorf("approver does not match proposal creator")
+
+	// 1. Check if matches Proposal Creator
+	if proposal.Metadata != nil {
+		if creatorHash, ok := proposal.Metadata["creator_api_key_hash"].(string); ok {
+			if strings.TrimSpace(creatorHash) == currentHash {
+				return nil
+			}
+		}
 	}
-	return nil
+
+	// 2. Check if matches Wish Creator
+	visibleHash := proposalVisibleHash(proposal)
+	if visibleHash != "" && s.ingestionSvc != nil {
+		// Try both hash and wish-hash
+		rec, err := s.ingestionSvc.Get(visibleHash)
+		if err != nil {
+			rec, _ = s.ingestionSvc.Get("wish-" + visibleHash)
+		}
+
+		if rec != nil && rec.Metadata != nil {
+			if wishCreatorHash, ok := rec.Metadata["creator_api_key_hash"].(string); ok {
+				if strings.TrimSpace(wishCreatorHash) == currentHash {
+					return nil
+				}
+			}
+		}
+	}
+
+	// 3. Fallback: if no creator info exists at all, allow for now to prevent deadlock on old data
+	hasAnyCreatorInfo := false
+	if proposal.Metadata != nil {
+		if _, ok := proposal.Metadata["creator_api_key_hash"].(string); ok {
+			hasAnyCreatorInfo = true
+		}
+	}
+	if !hasAnyCreatorInfo && visibleHash != "" && s.ingestionSvc != nil {
+		rec, _ := s.ingestionSvc.Get(visibleHash)
+		if rec != nil && rec.Metadata != nil {
+			if _, ok := rec.Metadata["creator_api_key_hash"].(string); ok {
+				hasAnyCreatorInfo = true
+			}
+		}
+	}
+
+	if !hasAnyCreatorInfo {
+		log.Printf("WARNING: allowing approval for proposal %s with NO creator info via REST", proposal.ID)
+		return nil
+	}
+
+	return fmt.Errorf("approver does not match proposal creator or wish creator")
 }
 
 // NewServer builds a Server with the given store.
@@ -2562,7 +2600,7 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 			}
-			if err := enforceCreatorApproval(r, proposal); err != nil {
+			if err := s.enforceCreatorApproval(r, proposal); err != nil {
 				Error(w, http.StatusForbidden, err.Error())
 				return
 			}

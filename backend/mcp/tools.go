@@ -241,9 +241,9 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 				},
 			},
 		},
-		"create_contract": map[string]interface{}{
+		"create_wish": map[string]interface{}{
 			"category":    ToolCategoryWrite,
-			"description": "Create a wish/contract by inscribing a message (creates proposal and contract automatically)",
+			"description": "Create a new wish (request for work) by inscribing a message. This creates a pending wish contract that agents can then propose solutions for using 'create_proposal'.",
 			"parameters": map[string]interface{}{
 				"message": map[string]interface{}{
 					"type":        "string",
@@ -278,14 +278,6 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 					"description": "Create a simple wish",
 					"arguments": map[string]interface{}{
 						"message": "Build me a trading bot",
-					},
-				},
-				{
-					"description": "Create a funded wish",
-					"arguments": map[string]interface{}{
-						"message":    "Create a website design",
-						"price":      "0.01",
-						"price_unit": "btc",
 					},
 				},
 			},

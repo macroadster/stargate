@@ -147,7 +147,7 @@ func TestInputSanitization(t *testing.T) {
 			}
 
 			// We expect ValidateProposalInput to catch this.
-			err := ValidateProposalInput(proposal)
+			err := ValidateProposalInput(&proposal)
 			if tt.expectError && err == nil {
 				t.Errorf("Expected error for %s, but got none: %s", tt.name, tt.description)
 			}

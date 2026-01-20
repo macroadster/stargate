@@ -1022,7 +1022,7 @@ func (s *PGStore) CreateProposal(ctx context.Context, p smart_contract.Proposal)
 	}
 
 	// Comprehensive security validation - this sanitizes inputs in-place
-	if err := ValidateProposalInput(p); err != nil {
+	if err := ValidateProposalInput(&p); err != nil {
 		return fmt.Errorf("proposal validation failed: %v", err)
 	}
 
@@ -1239,7 +1239,7 @@ FROM mcp_proposals WHERE id=$1 FOR UPDATE
 		}
 	}
 
-	if err := ValidateProposalInput(p); err != nil {
+	if err := ValidateProposalInput(&p); err != nil {
 		return fmt.Errorf("proposal validation failed: %v", err)
 	}
 
@@ -1387,7 +1387,7 @@ WHERE id<>$1 AND status='pending' AND (
 	}
 
 	// Validate proposal for approval without modifying status
-	if err := ValidateProposalForApproval(proposal); err != nil {
+	if err := ValidateProposalForApproval(&proposal); err != nil {
 		return fmt.Errorf("proposal validation failed: %v", err)
 	}
 	if len(proposal.Tasks) == 0 {

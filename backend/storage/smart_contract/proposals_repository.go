@@ -127,7 +127,7 @@ func (r *ProposalsRepository) Create(ctx context.Context, p smart_contract.Propo
 	}
 
 	// Comprehensive security validation
-	if err := ValidateProposalInput(p); err != nil {
+	if err := ValidateProposalInput(&p); err != nil {
 		return fmt.Errorf("proposal validation failed: %v", err)
 	}
 

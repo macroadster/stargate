@@ -82,7 +82,7 @@ const (
 	ToolPrefixCreateProposal  = "CREATE_PROPOSAL"
 	ToolPrefixSubmitWork      = "SUBMIT_WORK"
 	ToolPrefixApproveProposal = "APPROVE_PROPOSAL"
-	ToolPrefixCreateContract  = "CREATE_CONTRACT"
+	ToolPrefixCreateWish      = "CREATE_WISH"
 )
 
 // Helper functions to create common error types
@@ -274,12 +274,12 @@ func NewSubmitWorkError(baseCode, message, field string) *ToolError {
 	}
 }
 
-// NewCreateContractError creates a create_contract specific error
-func NewCreateContractError(baseCode, message, field string) *ToolError {
+// NewCreateWishError creates a create_wish specific error
+func NewCreateWishError(baseCode, message, field string) *ToolError {
 	return &ToolError{
-		Code:       fmt.Sprintf("%s_%s", ToolPrefixCreateContract, baseCode),
+		Code:       fmt.Sprintf("%s_%s", ToolPrefixCreateWish, baseCode),
 		Message:    message,
-		Tool:       "create_contract",
+		Tool:       "create_wish",
 		Field:      field,
 		HttpStatus: 400,
 	}

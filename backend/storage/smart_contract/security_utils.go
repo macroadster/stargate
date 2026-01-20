@@ -256,7 +256,7 @@ func ValidateBitcoinAddress(addr string) error {
 }
 
 // ValidateProposalInput validates all proposal input fields
-func ValidateProposalInput(proposal smart_contract.Proposal) error {
+func ValidateProposalInput(proposal *smart_contract.Proposal) error {
 	// Validate title
 	if proposal.Title != "" {
 		if len(proposal.Title) > MaxProposalTitle {
@@ -357,7 +357,7 @@ func ValidateProposalInput(proposal smart_contract.Proposal) error {
 }
 
 // ValidateProposalForApproval validates a proposal for approval without requiring status change
-func ValidateProposalForApproval(proposal smart_contract.Proposal) error {
+func ValidateProposalForApproval(proposal *smart_contract.Proposal) error {
 	// Use the same validation as ValidateProposalInput but without status dependency
 	if err := ValidateProposalInput(proposal); err != nil {
 		return err
