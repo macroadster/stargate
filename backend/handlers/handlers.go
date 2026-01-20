@@ -810,6 +810,34 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 			defer resp.Body.Close()
 			body, _ := io.ReadAll(resp.Body)
 			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				// First check if the response contains an error despite successful HTTP status
+				var errorResponse struct {
+					Success bool `json:"success"`
+					Error   struct {
+						Code    int    `json:"code"`
+						Error   string `json:"error"`
+						Message string `json:"message"`
+					} `json:"error"`
+				}
+
+				if err := json.Unmarshal(body, &errorResponse); err == nil && !errorResponse.Success {
+					// Response contains an error despite 200 status - forward it as proper error
+					errorCode := errorResponse.Error.Code
+					errorMessage := errorResponse.Error.Message
+
+					// If no error code provided, use generic 400 error
+					if errorCode == 0 {
+						errorCode = http.StatusBadRequest
+					}
+					// If no error message provided, use generic message
+					if errorMessage == "" {
+						errorMessage = "Request failed"
+					}
+
+					h.sendError(w, errorCode, errorMessage)
+					return
+				}
+
 				// Parse Starlight response to extract stego hash and image
 				var starlightResponse struct {
 					RequestID   string `json:"request_id"`
@@ -969,12 +997,37 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 					})
 					return
 				}
+
+				// If we got a 200 response but it doesn't match expected formats, treat it as an error
+				h.sendError(w, http.StatusInternalServerError, "Unexpected response format from inscription service")
+				return
 			}
 
-			// Starlight-api returned an error - forward the error to client
+			// Starlight-api returned an error - forward the error to client with consistent JSON format
 			// Don't fall back to local inscription - that causes duplicate proposal creation
-			w.WriteHeader(resp.StatusCode)
-			w.Write(body)
+			if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+				// For client errors, try to extract message from JSON response
+				var errorResp struct {
+					Error   string `json:"error"`
+					Message string `json:"message"`
+				}
+				if json.Unmarshal(body, &errorResp) == nil {
+					message := errorResp.Error
+					if message == "" {
+						message = errorResp.Message
+					}
+					if message == "" {
+						message = "Proxy request failed"
+					}
+					h.sendError(w, resp.StatusCode, message)
+				} else {
+					h.sendError(w, resp.StatusCode, "Proxy request failed")
+				}
+			} else {
+				// For server errors, forward as-is
+				w.WriteHeader(resp.StatusCode)
+				w.Write(body)
+			}
 			return
 		}
 	}
