@@ -397,9 +397,6 @@ func main() {
 func runHTTPServer() {
 	log.Println("=== STARTING STARGATE HTTP SERVER ===")
 
-	// Initialize dependency container
-	container := container.NewContainer()
-
 	var mirror mirrorState
 	ipfsCfg := ipfs.LoadMirrorConfig()
 	if ipfsCfg.Enabled {
@@ -408,6 +405,9 @@ func runHTTPServer() {
 
 	// Initialize MCP components (for HTTP routes)
 	store, apiKeyIssuer, apiKeyValidator, ingestionSvc, challengeStore := initializeMCPComponents()
+
+	// Initialize dependency container
+	container := container.NewContainer(apiKeyIssuer)
 
 	// Initialize EscortService
 	rpcURL := bitcoin.GetNetworkConfig(bitcoin.GetCurrentNetwork()).BaseURL
