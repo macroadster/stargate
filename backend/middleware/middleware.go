@@ -33,7 +33,7 @@ func Logging(next http.Handler) http.Handler {
 		start := time.Now()
 
 		// Create a response writer wrapper to capture status code
-		wrapped := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+		wrapped := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK, headersWritten: false}
 
 		next.ServeHTTP(wrapped, r)
 
@@ -136,16 +136,19 @@ func Timeout(timeout time.Duration) func(http.Handler) http.Handler {
 
 type timeoutTrackingWriter struct {
 	http.ResponseWriter
-	committed bool
+	committed  bool
+	statusCode int
 }
 
 func (tw *timeoutTrackingWriter) WriteHeader(statusCode int) {
 	tw.committed = true
+	tw.statusCode = statusCode
 	tw.ResponseWriter.WriteHeader(statusCode)
 }
 
 func (tw *timeoutTrackingWriter) Write(b []byte) (int, error) {
 	if !tw.committed {
+		tw.statusCode = http.StatusOK
 		tw.ResponseWriter.WriteHeader(http.StatusOK)
 		tw.committed = true
 	}
@@ -232,16 +235,18 @@ func RateLimit(requests int, window time.Duration) func(http.Handler) http.Handl
 // responseWriter wraps http.ResponseWriter to capture status code
 type responseWriter struct {
 	http.ResponseWriter
-	statusCode int
+	statusCode     int
+	headersWritten bool
 }
 
 func (rw *responseWriter) WriteHeader(code int) {
-	if rw.statusCode != 0 {
+	if rw.headersWritten {
 		// Headers already written, ignore superfluous calls
 		return
 	}
 	rw.statusCode = code
 	rw.ResponseWriter.WriteHeader(code)
+	rw.headersWritten = true
 }
 
 // APIAuth validates API keys against the validator
