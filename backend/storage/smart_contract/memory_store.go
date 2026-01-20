@@ -555,7 +555,7 @@ func (s *MemoryStore) CreateProposal(ctx context.Context, p smart_contract.Propo
 	}
 
 	// Comprehensive security validation
-	if err := ValidateProposalInput(p); err != nil {
+	if err := ValidateProposalInput(&p); err != nil {
 		return fmt.Errorf("proposal validation failed: %v", err)
 	}
 
@@ -686,6 +686,9 @@ func (s *MemoryStore) ListProposals(ctx context.Context, filter smart_contract.P
 		if len(filter.Skills) > 0 && !proposalHasSkills(p, filter.Skills) {
 			continue
 		}
+		
+		// Hydrate tasks
+		populateProposalTasks(&p)
 		out = append(out, p)
 	}
 	if filter.Offset > 0 && filter.Offset < len(out) {
@@ -704,6 +707,10 @@ func (s *MemoryStore) GetProposal(ctx context.Context, id string) (smart_contrac
 	if !ok {
 		return smart_contract.Proposal{}, fmt.Errorf("proposal %s not found", id)
 	}
+	
+	// Hydrate tasks
+	populateProposalTasks(&p)
+	
 	return p, nil
 }
 
@@ -752,7 +759,7 @@ func (s *MemoryStore) UpdateProposal(ctx context.Context, p smart_contract.Propo
 		}
 	}
 
-	if err := ValidateProposalInput(p); err != nil {
+	if err := ValidateProposalInput(&p); err != nil {
 		return fmt.Errorf("proposal validation failed: %v", err)
 	}
 
@@ -799,8 +806,11 @@ func (s *MemoryStore) ApproveProposal(ctx context.Context, id string) error {
 		return fmt.Errorf("proposal %s not found", id)
 	}
 
+	// Derive tasks from markdown if not already populated
+	populateProposalTasks(&p)
+
 	// Validate proposal for approval without modifying status
-	if err := ValidateProposalForApproval(p); err != nil {
+	if err := ValidateProposalForApproval(&p); err != nil {
 		return fmt.Errorf("proposal validation failed: %v", err)
 	}
 

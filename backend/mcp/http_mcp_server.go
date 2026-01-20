@@ -199,8 +199,8 @@ func (h *HTTPMCPServer) statusFromError(err error) int {
 
 func (h *HTTPMCPServer) toolRequiresAuth(toolName string) bool {
 	authenticatedTools := map[string]bool{
-		"create_contract":       true,
 		"create_proposal":       true,
+		"create_wish":           true,
 		"claim_task":            true,
 		"submit_work":           true,
 		"approve_proposal":      true,
@@ -226,8 +226,8 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 		return h.handleListEvents(ctx, args)
 	case "events_stream":
 		return h.handleEventsStream(ctx, args)
-	case "create_contract":
-		return h.handleCreateContract(ctx, args, apiKey)
+	case "create_wish":
+		return h.handleCreateWish(ctx, args, apiKey)
 	case "claim_task":
 		return h.handleClaimTask(ctx, args, apiKey)
 	case "create_proposal":
@@ -438,7 +438,7 @@ func (h *HTTPMCPServer) handleApproveProposal(ctx context.Context, args map[stri
 		return nil, NewNotFoundError("approve_proposal", "proposal", proposalID)
 	}
 
-	if err := requireCreatorApproval(apiKey, *proposal); err != nil {
+	if err := h.requireAuthorizedApprover(apiKey, *proposal); err != nil {
 		return nil, NewUnauthorizedError("approve_proposal", fmt.Sprintf("Not authorized to approve this proposal: %v", err))
 	}
 
@@ -474,6 +474,70 @@ func (h *HTTPMCPServer) handleApproveProposal(ctx context.Context, args map[stri
 		"message":     "proposal approved",
 		"proposal_id": proposalID,
 	}, nil
+}
+
+func (h *HTTPMCPServer) requireAuthorizedApprover(apiKey string, proposal smart_contract.Proposal) error {
+	currentHash := apiKeyHash(apiKey)
+	if currentHash == "" {
+		return fmt.Errorf("api key required for approval")
+	}
+
+	// 1. Check if matches Proposal Creator
+	if proposal.Metadata != nil {
+		if creatorHash, ok := proposal.Metadata["creator_api_key_hash"].(string); ok {
+			if strings.TrimSpace(creatorHash) == currentHash {
+				return nil
+			}
+		}
+	}
+
+	// 2. Check if matches Wish Creator
+	visibleHash := strings.TrimSpace(proposal.VisiblePixelHash)
+	if visibleHash == "" {
+		if v, ok := proposal.Metadata["visible_pixel_hash"].(string); ok {
+			visibleHash = strings.TrimSpace(v)
+		}
+	}
+
+	if visibleHash != "" && h.ingestionSvc != nil {
+		// Try both hash and wish-hash
+		rec, err := h.ingestionSvc.Get(visibleHash)
+		if err != nil {
+			rec, _ = h.ingestionSvc.Get("wish-" + visibleHash)
+		}
+
+		if rec != nil && rec.Metadata != nil {
+			if wishCreatorHash, ok := rec.Metadata["creator_api_key_hash"].(string); ok {
+				if strings.TrimSpace(wishCreatorHash) == currentHash {
+					return nil
+				}
+			}
+		}
+	}
+
+	// 3. Fallback: if no creator info exists at all, allow for now to prevent deadlock on old data
+	// (But if it exists and doesn't match, we reject)
+	hasAnyCreatorInfo := false
+	if proposal.Metadata != nil {
+		if _, ok := proposal.Metadata["creator_api_key_hash"].(string); ok {
+			hasAnyCreatorInfo = true
+		}
+	}
+	if !hasAnyCreatorInfo && visibleHash != "" && h.ingestionSvc != nil {
+		rec, _ := h.ingestionSvc.Get(visibleHash)
+		if rec != nil && rec.Metadata != nil {
+			if _, ok := rec.Metadata["creator_api_key_hash"].(string); ok {
+				hasAnyCreatorInfo = true
+			}
+		}
+	}
+
+	if !hasAnyCreatorInfo {
+		log.Printf("WARNING: allowing approval for proposal %s with NO creator info", proposal.ID)
+		return nil
+	}
+
+	return fmt.Errorf("approver does not match proposal creator or wish creator")
 }
 
 func (h *HTTPMCPServer) handleScanImage(ctx context.Context, args map[string]interface{}) (interface{}, error) {
@@ -564,8 +628,8 @@ func (h *HTTPMCPServer) handleEventsStream(ctx context.Context, args map[string]
 	}, nil
 }
 
-func (h *HTTPMCPServer) handleCreateContract(ctx context.Context, args map[string]interface{}, apiKey string) (interface{}, error) {
-	validation := NewValidationError("create_contract", "Invalid request parameters")
+func (h *HTTPMCPServer) handleCreateWish(ctx context.Context, args map[string]interface{}, apiKey string) (interface{}, error) {
+	validation := NewValidationError("create_wish", "Invalid request parameters")
 
 	message, ok := args["message"].(string)
 	if !ok || message == "" {
@@ -595,7 +659,8 @@ func (h *HTTPMCPServer) handleCreateContract(ctx context.Context, args map[strin
 	}
 
 	reqBody := map[string]interface{}{
-		"message": message,
+		"message":       message,
+		"skip_proposal": true,
 	}
 
 	if imageBase64 != "" {
@@ -616,26 +681,26 @@ func (h *HTTPMCPServer) handleCreateContract(ctx context.Context, args map[strin
 
 	jsonBody, err := json.Marshal(reqBody)
 	if err != nil {
-		return nil, NewInternalError("create_contract", fmt.Sprintf("Failed to marshal request: %v", err))
+		return nil, NewInternalError("create_wish", fmt.Sprintf("Failed to marshal request: %v", err))
 	}
 
 	inscribeURL := h.baseURL + "/api/inscribe"
 	req, err := http.NewRequestWithContext(ctx, "POST", inscribeURL, bytes.NewReader(jsonBody))
 	if err != nil {
-		return nil, NewInternalError("create_contract", fmt.Sprintf("Failed to create request: %v", err))
+		return nil, NewInternalError("create_wish", fmt.Sprintf("Failed to create request: %v", err))
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 
 	resp, err := h.httpClient.Do(req)
 	if err != nil {
-		return nil, NewServiceUnavailableError("create_contract", "inscribe API")
+		return nil, NewServiceUnavailableError("create_wish", "inscribe API")
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, NewInternalError("create_contract", "Failed to read response from inscribe API")
+		return nil, NewInternalError("create_wish", "Failed to read response from inscribe API")
 	}
 
 	if resp.StatusCode >= 400 {
@@ -650,7 +715,7 @@ func (h *HTTPMCPServer) handleCreateContract(ctx context.Context, args map[strin
 			} `json:"error"`
 		}
 		if err := json.Unmarshal(body, &errObjResp); err == nil {
-			return nil, NewCreateContractError("INSCRIBE_ERROR", fmt.Sprintf("Inscribe API error: %s", errObjResp.Error.Message), "")
+			return nil, NewCreateWishError("INSCRIBE_ERROR", fmt.Sprintf("Inscribe API error: %s", errObjResp.Error.Message), "")
 		}
 
 		// Fallback to string error
@@ -660,10 +725,10 @@ func (h *HTTPMCPServer) handleCreateContract(ctx context.Context, args map[strin
 			Message string `json:"message"`
 		}
 		if err := json.Unmarshal(body, &errStrResp); err == nil {
-			return nil, NewCreateContractError("INSCRIBE_ERROR", fmt.Sprintf("Inscribe API error: %s", errStrResp.Error), "")
+			return nil, NewCreateWishError("INSCRIBE_ERROR", fmt.Sprintf("Inscribe API error: %s", errStrResp.Error), "")
 		}
 
-		return nil, NewCreateContractError("INSCRIBE_ERROR", fmt.Sprintf("Inscribe API error (%d)", resp.StatusCode), "")
+		return nil, NewCreateWishError("INSCRIBE_ERROR", fmt.Sprintf("Inscribe API error (%d)", resp.StatusCode), "")
 	}
 
 	var successResp struct {
@@ -672,7 +737,7 @@ func (h *HTTPMCPServer) handleCreateContract(ctx context.Context, args map[strin
 		Error   any  `json:"error"` // Changed from string to any to handle both formats
 	}
 	if err := json.Unmarshal(body, &successResp); err != nil {
-		return nil, NewInternalError("create_contract", "Failed to parse inscribe API response")
+		return nil, NewInternalError("create_wish", "Failed to parse inscribe API response")
 	}
 
 	if !successResp.Success {
@@ -689,7 +754,7 @@ func (h *HTTPMCPServer) handleCreateContract(ctx context.Context, args map[strin
 		} else {
 			errorMsg = fmt.Sprintf("Unknown error: %v", successResp.Error)
 		}
-		return nil, NewCreateContractError("INSCRIBE_FAILED", errorMsg, "")
+		return nil, NewCreateWishError("INSCRIBE_FAILED", errorMsg, "")
 	}
 
 	return successResp.Data, nil

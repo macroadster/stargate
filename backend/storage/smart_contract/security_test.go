@@ -363,7 +363,7 @@ func TestInputValidationBypasses(t *testing.T) {
 	for _, tt := range bypassTests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Call ValidateProposalInput directly to test validation logic
-			err := ValidateProposalInput(tt.proposal)
+			err := ValidateProposalInput(&tt.proposal)
 			if tt.expectError && err == nil {
 				t.Errorf("Expected error for %s, but got none: %s", tt.name, tt.description)
 			}
@@ -459,7 +459,7 @@ func TestDenialOfServicePrevention(t *testing.T) {
 					Metadata: largeData,
 				}
 				// We expect ValidateProposalInput to catch this.
-				return ValidateProposalInput(proposal)
+				return ValidateProposalInput(&proposal)
 			},
 			expectError: true, // Expect an error now for oversized metadata
 			description: "Should reject large metadata to prevent DoS",

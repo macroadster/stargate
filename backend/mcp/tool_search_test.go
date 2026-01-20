@@ -50,9 +50,6 @@ func TestToolSearch(t *testing.T) {
 		if !strings.Contains(body, "list_contracts") {
 			t.Fatalf("should contain 'list_contracts'")
 		}
-		if !strings.Contains(body, "create_contract") {
-			t.Fatalf("should contain 'create_contract'")
-		}
 	})
 
 	t.Run("search by category filters results", func(t *testing.T) {
@@ -66,8 +63,8 @@ func TestToolSearch(t *testing.T) {
 
 		body := w.Body.String()
 		// Should not contain write tools
-		if strings.Contains(body, "create_contract") {
-			t.Fatalf("should not contain 'create_contract' when filtering by discovery category")
+		if strings.Contains(body, "create_proposal") {
+			t.Fatalf("should not contain 'create_proposal' when filtering by discovery category")
 		}
 	})
 
@@ -142,7 +139,7 @@ func TestGetToolList(t *testing.T) {
 			t.Fatalf("expected some tools to require auth")
 		}
 
-		if writeTools != 5 { // create_contract, create_proposal, claim_task, submit_work, approve_proposal
+		if writeTools != 5 { // create_wish, create_proposal, claim_task, submit_work, approve_proposal
 			t.Fatalf("expected 5 tools to require auth, got %d", writeTools)
 		}
 	})

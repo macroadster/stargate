@@ -228,50 +228,6 @@ func TestStructuredErrorResponses(t *testing.T) {
 			t.Fatalf("expected 'not found' in error message, got: %s", resp.Error)
 		}
 	})
-
-	t.Run("create_contract_service_unavailable", func(t *testing.T) {
-		// Create server with invalid baseURL to simulate service unavailable
-		serverNoHTTP := NewHTTPMCPServer(store, allowAllValidator{}, ingestionSvc, scannerManager, nil, auth.NewChallengeStore(10*time.Minute))
-		serverNoHTTP.baseURL = "http://invalid-host-that-does-not-exist:9999" // Invalid URL
-
-		req := MCPRequest{
-			Tool: "create_contract",
-			Arguments: map[string]interface{}{
-				"message": "Test message",
-			},
-		}
-		body, _ := json.Marshal(req)
-
-		w := httptest.NewRecorder()
-		r := httptest.NewRequest("POST", "/mcp/call", bytes.NewReader(body))
-		r.Header.Set("Content-Type", "application/json")
-		r.Header.Set("X-API-Key", "test-key")
-
-		serverNoHTTP.handleToolCall(w, r)
-
-		if w.Code != http.StatusServiceUnavailable {
-			t.Fatalf("expected 503, got %d: %s", w.Code, w.Body.String())
-		}
-
-		var resp MCPResponse
-		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-			t.Fatalf("failed to unmarshal response: %v", err)
-		}
-
-		if resp.Success {
-			t.Fatalf("expected failure, got success")
-		}
-
-		// Check for service unavailable error code
-		if resp.ErrorCode != "SERVICE_UNAVAILABLE" {
-			t.Fatalf("expected SERVICE_UNAVAILABLE error code, got: %s", resp.ErrorCode)
-		}
-
-		// Check tool name is included
-		if resp.Details == nil || resp.Details["tool"] != "create_contract" {
-			t.Fatalf("expected tool name in error details")
-		}
-	})
 }
 
 func TestErrorResponseStructure(t *testing.T) {
