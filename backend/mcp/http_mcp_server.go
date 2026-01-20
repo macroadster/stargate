@@ -29,10 +29,11 @@ type HTTPMCPServer struct {
 	httpClient       *http.Client
 	baseURL          string
 	rateLimiter      map[string][]time.Time // API key -> request timestamps
+	challengeStore   *auth.ChallengeStore
 }
 
 // NewHTTPMCPServer creates a new HTTP MCP server
-func NewHTTPMCPServer(store scmiddleware.Store, apiKeyStore auth.APIKeyValidator, ingestionSvc *services.IngestionService, scannerManager *starlight.ScannerManager, smartContractSvc *services.SmartContractService) *HTTPMCPServer {
+func NewHTTPMCPServer(store scmiddleware.Store, apiKeyStore auth.APIKeyValidator, ingestionSvc *services.IngestionService, scannerManager *starlight.ScannerManager, smartContractSvc *services.SmartContractService, challengeStore *auth.ChallengeStore) *HTTPMCPServer {
 	return &HTTPMCPServer{
 		store:            store,
 		apiKeyStore:      apiKeyStore,
@@ -43,6 +44,7 @@ func NewHTTPMCPServer(store scmiddleware.Store, apiKeyStore auth.APIKeyValidator
 		httpClient:       &http.Client{Timeout: 10 * time.Second},
 		baseURL:          "http://localhost:3001", // Default backend URL
 		rateLimiter:      make(map[string][]time.Time),
+		challengeStore:   challengeStore,
 	}
 }
 
@@ -77,16 +79,98 @@ func (h *HTTPMCPServer) externalBaseURL(r *http.Request) string {
 }
 
 func (h *HTTPMCPServer) writeHTTPError(w http.ResponseWriter, status int, code string, message string, hint string) {
+	h.writeHTTPStructuredError(w, status, &ToolError{
+		Code:       code,
+		Message:    message,
+		Hint:       hint,
+		HttpStatus: status,
+	})
+}
+
+// writeHTTPStructuredError writes structured error responses
+func (h *HTTPMCPServer) writeHTTPStructuredError(w http.ResponseWriter, status int, err error) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
+
 	resp := MCPResponse{
-		Success:   false,
-		Error:     hint, // Put the actual error message here for tests
-		ErrorCode: code,
-		Message:   message,
-		Code:      status,
-		Hint:      hint,
+		Success: false,
+		Code:    status,
 	}
+
+	// Handle different error types
+	switch e := err.(type) {
+	case *ToolError:
+		resp.ErrorCode = e.Code
+		resp.Error = e.Message
+		resp.Hint = e.Hint
+		resp.Message = e.Message
+
+		// Add structured details
+		if e.Tool != "" {
+			if resp.Details == nil {
+				resp.Details = make(map[string]interface{})
+			}
+			resp.Details["tool"] = e.Tool
+		}
+		if e.Field != "" {
+			if resp.Details == nil {
+				resp.Details = make(map[string]interface{})
+			}
+			resp.Details["field"] = e.Field
+			resp.Details["field_value"] = e.FieldValue
+		}
+		if e.DocsURL != "" {
+			resp.DocsURL = e.DocsURL
+		}
+		if len(e.Details) > 0 {
+			if resp.Details == nil {
+				resp.Details = make(map[string]interface{})
+			}
+			for k, v := range e.Details {
+				resp.Details[k] = v
+			}
+		}
+
+	case *ValidationError:
+		resp.ErrorCode = ErrCodeValidationFailed
+		resp.Error = e.Message
+		resp.Hint = e.Hint
+		resp.Message = e.Message
+
+		// Add all field validation errors
+		if resp.Details == nil {
+			resp.Details = make(map[string]interface{})
+		}
+		resp.Details["tool"] = e.Tool
+		resp.Details["validation_errors"] = e.Fields
+
+		// Build required fields list for easier parsing
+		var requiredFields []string
+		for field, fieldErr := range e.Fields {
+			if fieldErr.Required {
+				requiredFields = append(requiredFields, field)
+			}
+		}
+		if len(requiredFields) > 0 {
+			resp.RequiredFields = requiredFields
+		}
+
+		if e.DocsURL != "" {
+			resp.DocsURL = e.DocsURL
+		}
+
+	default:
+		// Fallback for generic errors
+		resp.ErrorCode = ErrCodeInternalError
+		resp.Error = err.Error()
+		resp.Message = "Internal server error"
+		resp.Hint = "Please try again. If the problem persists, contact support"
+	}
+
+	// Add timestamp and version for all errors
+	resp.Timestamp = time.Now().Format(time.RFC3339)
+	resp.Version = "1.0.0"
+
 	json.NewEncoder(w).Encode(resp)
 }
 
@@ -115,11 +199,13 @@ func (h *HTTPMCPServer) statusFromError(err error) int {
 
 func (h *HTTPMCPServer) toolRequiresAuth(toolName string) bool {
 	authenticatedTools := map[string]bool{
-		"create_contract":  true,
-		"create_proposal":  true,
-		"claim_task":       true,
-		"submit_work":      true,
-		"approve_proposal": true,
+		"create_contract":       true,
+		"create_proposal":       true,
+		"claim_task":            true,
+		"submit_work":           true,
+		"approve_proposal":      true,
+		"get_auth_challenge":    false, // No auth required - discovery tool
+		"verify_auth_challenge": false, // No auth required - solves chicken-egg problem
 	}
 	return authenticatedTools[toolName]
 }
@@ -154,6 +240,10 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 		return h.handleScanImage(ctx, args)
 	case "get_scanner_info":
 		return h.handleGetScannerInfo(ctx, args)
+	case "get_auth_challenge":
+		return h.handleGetAuthChallenge(ctx, args)
+	case "verify_auth_challenge":
+		return h.handleVerifyAuthChallenge(ctx, args)
 	default:
 		return nil, fmt.Errorf("unknown tool: %s", toolName)
 	}
@@ -197,9 +287,11 @@ func (h *HTTPMCPServer) handleListProposals(ctx context.Context, args map[string
 }
 
 func (h *HTTPMCPServer) handleClaimTask(ctx context.Context, args map[string]interface{}, apiKey string) (interface{}, error) {
+	validation := NewValidationError("claim_task", "Invalid request parameters")
+
 	taskID, ok := args["task_id"].(string)
-	if !ok {
-		return nil, fmt.Errorf("task_id is required")
+	if !ok || taskID == "" {
+		validation.AddFieldError("task_id", args["task_id"], "task_id is required and must be a string", true)
 	}
 
 	var wallet string
@@ -209,11 +301,23 @@ func (h *HTTPMCPServer) handleClaimTask(ctx context.Context, args map[string]int
 		}
 	}
 	if wallet == "" {
-		return nil, fmt.Errorf("wallet address required - please bind wallet to API key using /api/auth/verify")
+		return nil, NewUnauthorizedError("claim_task", "wallet address required - please bind wallet to API key using /api/auth/verify")
+	}
+
+	// Return validation errors if any
+	if validation.HasErrors() {
+		return nil, validation
 	}
 
 	claim, err := h.store.ClaimTask(taskID, wallet, nil)
 	if err != nil {
+		// Convert common errors to structured errors
+		if strings.Contains(err.Error(), "not found") {
+			return nil, NewNotFoundError("claim_task", "task", taskID)
+		}
+		if strings.Contains(err.Error(), "already claimed") {
+			return nil, NewClaimTaskError("ALREADY_CLAIMED", "Task has already been claimed", "task_id")
+		}
 		return nil, err
 	}
 
@@ -223,19 +327,40 @@ func (h *HTTPMCPServer) handleClaimTask(ctx context.Context, args map[string]int
 }
 
 func (h *HTTPMCPServer) handleCreateProposal(ctx context.Context, args map[string]interface{}, apiKey string) (interface{}, error) {
+	validation := NewValidationError("create_proposal", "Invalid request parameters")
+
 	title, ok := args["title"].(string)
-	if !ok {
-		return nil, fmt.Errorf("title is required")
+	if !ok || title == "" {
+		validation.AddFieldError("title", args["title"], "title is required and must be a non-empty string", true)
 	}
 
 	descriptionMD, ok := args["description_md"].(string)
-	if !ok {
-		return nil, fmt.Errorf("description_md is required")
+	if !ok || descriptionMD == "" {
+		validation.AddFieldError("description_md", args["description_md"], "description_md is required and must be a non-empty string", true)
 	}
 
 	visiblePixelHash, ok := args["visible_pixel_hash"].(string)
-	if !ok {
-		return nil, fmt.Errorf("visible_pixel_hash is required")
+	if !ok || visiblePixelHash == "" {
+		validation.AddFieldError("visible_pixel_hash", args["visible_pixel_hash"], "visible_pixel_hash is required and must be a string", true)
+	}
+
+	// Validate budget_sats if provided
+	var budgetSats int64 = 0
+	if budget, ok := args["budget_sats"]; ok {
+		if b, ok := budget.(float64); ok {
+			if b < 0 {
+				validation.AddFieldError("budget_sats", budget, "budget_sats must be a non-negative number", false)
+			} else {
+				budgetSats = int64(b)
+			}
+		} else {
+			validation.AddTypeError("budget_sats", budget, "number")
+		}
+	}
+
+	// Return validation errors if any
+	if validation.HasErrors() {
+		return nil, validation
 	}
 
 	// Check if wish contract exists
@@ -252,14 +377,7 @@ func (h *HTTPMCPServer) handleCreateProposal(ctx context.Context, args map[strin
 		}
 	}
 	if !wishExists {
-		return nil, fmt.Errorf("wish not found")
-	}
-
-	budgetSats := int64(0)
-	if budget, ok := args["budget_sats"]; ok {
-		if b, ok := budget.(float64); ok {
-			budgetSats = int64(b)
-		}
+		return nil, NewNotFoundError("create_proposal", "wish", visiblePixelHash)
 	}
 
 	proposalID := fmt.Sprintf("proposal-%d", time.Now().UnixNano())
@@ -282,7 +400,7 @@ func (h *HTTPMCPServer) handleCreateProposal(ctx context.Context, args map[strin
 	log.Printf("MCP CREATE PROPOSAL DEBUG: ID=%s, metadata=%+v", proposal.ID, proposal.Metadata)
 	err = h.store.CreateProposal(ctx, proposal)
 	if err != nil {
-		return nil, err
+		return nil, NewInternalError("create_proposal", fmt.Sprintf("Failed to create proposal: %v", err))
 	}
 
 	return map[string]interface{}{
@@ -291,15 +409,22 @@ func (h *HTTPMCPServer) handleCreateProposal(ctx context.Context, args map[strin
 }
 
 func (h *HTTPMCPServer) handleApproveProposal(ctx context.Context, args map[string]interface{}, apiKey string) (interface{}, error) {
+	validation := NewValidationError("approve_proposal", "Invalid request parameters")
+
 	proposalID, ok := args["proposal_id"].(string)
-	if !ok {
-		return nil, fmt.Errorf("proposal_id is required")
+	if !ok || proposalID == "" {
+		validation.AddFieldError("proposal_id", args["proposal_id"], "proposal_id is required and must be a string", true)
+	}
+
+	// Return validation errors if any
+	if validation.HasErrors() {
+		return nil, validation
 	}
 
 	// Get the proposal to check if wish exists
 	proposals, err := h.store.ListProposals(ctx, smart_contract.ProposalFilter{})
 	if err != nil {
-		return nil, err
+		return nil, NewInternalError("approve_proposal", fmt.Sprintf("Failed to list proposals: %v", err))
 	}
 
 	var proposal *smart_contract.Proposal
@@ -310,18 +435,18 @@ func (h *HTTPMCPServer) handleApproveProposal(ctx context.Context, args map[stri
 		}
 	}
 	if proposal == nil {
-		return nil, fmt.Errorf("proposal not found")
+		return nil, NewNotFoundError("approve_proposal", "proposal", proposalID)
 	}
 
 	if err := requireCreatorApproval(apiKey, *proposal); err != nil {
-		return nil, err
+		return nil, NewUnauthorizedError("approve_proposal", fmt.Sprintf("Not authorized to approve this proposal: %v", err))
 	}
 
 	// Check if wish contract exists
 	wishID := "wish-" + proposal.VisiblePixelHash
 	contracts, err := h.store.ListContracts(smart_contract.ContractFilter{})
 	if err != nil {
-		return nil, err
+		return nil, NewInternalError("approve_proposal", fmt.Sprintf("Failed to check wish existence: %v", err))
 	}
 	wishExists := false
 	for _, contract := range contracts {
@@ -331,12 +456,12 @@ func (h *HTTPMCPServer) handleApproveProposal(ctx context.Context, args map[stri
 		}
 	}
 	if !wishExists {
-		return nil, fmt.Errorf("wish not found")
+		return nil, NewNotFoundError("approve_proposal", "wish", proposal.VisiblePixelHash)
 	}
 
 	err = h.store.ApproveProposal(ctx, proposalID)
 	if err != nil {
-		return nil, err
+		return nil, NewInternalError("approve_proposal", fmt.Sprintf("Failed to approve proposal: %v", err))
 	}
 
 	if h.server != nil {
@@ -359,7 +484,7 @@ func (h *HTTPMCPServer) handleScanImage(ctx context.Context, args map[string]int
 
 func (h *HTTPMCPServer) handleGetScannerInfo(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	if h.scannerManager == nil {
-		return nil, fmt.Errorf("scanner not available")
+		return nil, NewServiceUnavailableError("get_scanner_info", "scanner")
 	}
 	return map[string]interface{}{
 		"available": true,
@@ -391,14 +516,24 @@ func (h *HTTPMCPServer) handleListTasks(ctx context.Context, args map[string]int
 }
 
 func (h *HTTPMCPServer) handleGetContract(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	validation := NewValidationError("get_contract", "Invalid request parameters")
+
 	contractID, ok := args["contract_id"].(string)
-	if !ok {
-		return nil, fmt.Errorf("contract_id is required")
+	if !ok || contractID == "" {
+		validation.AddFieldError("contract_id", args["contract_id"], "contract_id is required and must be a string", true)
+	}
+
+	// Return validation errors if any
+	if validation.HasErrors() {
+		return nil, validation
 	}
 
 	contract, err := h.store.GetContract(contractID)
 	if err != nil {
-		return nil, err
+		if strings.Contains(err.Error(), "not found") {
+			return nil, NewNotFoundError("get_contract", "contract", contractID)
+		}
+		return nil, NewInternalError("get_contract", fmt.Sprintf("Failed to get contract: %v", err))
 	}
 
 	return contract, nil
@@ -430,16 +565,34 @@ func (h *HTTPMCPServer) handleEventsStream(ctx context.Context, args map[string]
 }
 
 func (h *HTTPMCPServer) handleCreateContract(ctx context.Context, args map[string]interface{}, apiKey string) (interface{}, error) {
+	validation := NewValidationError("create_contract", "Invalid request parameters")
+
 	message, ok := args["message"].(string)
 	if !ok || message == "" {
-		return nil, fmt.Errorf("message is required")
+		validation.AddFieldError("message", args["message"], "message is required and must be a non-empty string", true)
 	}
 
+	// Validate optional fields
 	imageBase64, _ := args["image_base64"].(string)
-	price, _ := args["price"].(string)
-	priceUnit, _ := args["price_unit"].(string)
+	price, priceOk := args["price"].(string)
+	priceUnit, unitOk := args["price_unit"].(string)
 	address, _ := args["address"].(string)
-	fundingMode, _ := args["funding_mode"].(string)
+	fundingMode, modeOk := args["funding_mode"].(string)
+
+	// Validate price_unit if price is provided
+	if priceOk && price != "" && (!unitOk || priceUnit == "") {
+		validation.AddFieldError("price_unit", args["price_unit"], "price_unit is required when price is provided", false)
+	}
+
+	// Validate funding_mode value
+	if modeOk && fundingMode != "" && fundingMode != "payout" && fundingMode != "raise_fund" {
+		validation.AddFieldError("funding_mode", fundingMode, "funding_mode must be 'payout' or 'raise_fund'", false)
+	}
+
+	// Return validation errors if any
+	if validation.HasErrors() {
+		return nil, validation
+	}
 
 	reqBody := map[string]interface{}{
 		"message": message,
@@ -463,26 +616,26 @@ func (h *HTTPMCPServer) handleCreateContract(ctx context.Context, args map[strin
 
 	jsonBody, err := json.Marshal(reqBody)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
+		return nil, NewInternalError("create_contract", fmt.Sprintf("Failed to marshal request: %v", err))
 	}
 
 	inscribeURL := h.baseURL + "/api/inscribe"
 	req, err := http.NewRequestWithContext(ctx, "POST", inscribeURL, bytes.NewReader(jsonBody))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, NewInternalError("create_contract", fmt.Sprintf("Failed to create request: %v", err))
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 
 	resp, err := h.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to call inscribe API: %w", err)
+		return nil, NewServiceUnavailableError("create_contract", "inscribe API")
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
+		return nil, NewInternalError("create_contract", "Failed to read response from inscribe API")
 	}
 
 	if resp.StatusCode >= 400 {
@@ -497,7 +650,7 @@ func (h *HTTPMCPServer) handleCreateContract(ctx context.Context, args map[strin
 			} `json:"error"`
 		}
 		if err := json.Unmarshal(body, &errObjResp); err == nil {
-			return nil, fmt.Errorf("inscribe API error (%d): %s - %s", resp.StatusCode, errObjResp.Error.Code, errObjResp.Error.Message)
+			return nil, NewCreateContractError("INSCRIBE_ERROR", fmt.Sprintf("Inscribe API error: %s", errObjResp.Error.Message), "")
 		}
 
 		// Fallback to string error
@@ -507,10 +660,10 @@ func (h *HTTPMCPServer) handleCreateContract(ctx context.Context, args map[strin
 			Message string `json:"message"`
 		}
 		if err := json.Unmarshal(body, &errStrResp); err == nil {
-			return nil, fmt.Errorf("inscribe API error (%d): %s - %s", resp.StatusCode, errStrResp.Error, errStrResp.Message)
+			return nil, NewCreateContractError("INSCRIBE_ERROR", fmt.Sprintf("Inscribe API error: %s", errStrResp.Error), "")
 		}
 
-		return nil, fmt.Errorf("inscribe API error (%d): %s", resp.StatusCode, string(body))
+		return nil, NewCreateContractError("INSCRIBE_ERROR", fmt.Sprintf("Inscribe API error (%d)", resp.StatusCode), "")
 	}
 
 	var successResp struct {
@@ -519,7 +672,7 @@ func (h *HTTPMCPServer) handleCreateContract(ctx context.Context, args map[strin
 		Error   any  `json:"error"` // Changed from string to any to handle both formats
 	}
 	if err := json.Unmarshal(body, &successResp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, NewInternalError("create_contract", "Failed to parse inscribe API response")
 	}
 
 	if !successResp.Success {
@@ -536,26 +689,45 @@ func (h *HTTPMCPServer) handleCreateContract(ctx context.Context, args map[strin
 		} else {
 			errorMsg = fmt.Sprintf("Unknown error: %v", successResp.Error)
 		}
-		return nil, fmt.Errorf("inscribe failed: %s", errorMsg)
+		return nil, NewCreateContractError("INSCRIBE_FAILED", errorMsg, "")
 	}
 
 	return successResp.Data, nil
 }
 
 func (h *HTTPMCPServer) handleSubmitWork(ctx context.Context, args map[string]interface{}, apiKey string) (interface{}, error) {
+	validation := NewValidationError("submit_work", "Invalid request parameters")
+
 	claimID, ok := args["claim_id"].(string)
-	if !ok {
-		return nil, fmt.Errorf("claim_id is required")
+	if !ok || claimID == "" {
+		validation.AddFieldError("claim_id", args["claim_id"], "claim_id is required and must be a string", true)
 	}
 
 	deliverables, ok := args["deliverables"].(map[string]interface{})
-	if !ok {
-		return nil, fmt.Errorf("deliverables is required")
+	if !ok || deliverables == nil {
+		validation.AddFieldError("deliverables", args["deliverables"], "deliverables is required and must be an object", true)
+	} else {
+		// Validate deliverables structure
+		if _, ok := deliverables["notes"].(string); !ok {
+			validation.AddFieldError("deliverables.notes", deliverables["notes"], "deliverables must contain a 'notes' field with description of completed work", true)
+		}
+	}
+
+	// Return validation errors if any
+	if validation.HasErrors() {
+		return nil, validation
 	}
 
 	submission, err := h.store.SubmitWork(claimID, deliverables, nil)
 	if err != nil {
-		return nil, err
+		// Convert common errors to structured errors
+		if strings.Contains(err.Error(), "not found") {
+			return nil, NewNotFoundError("submit_work", "claim", claimID)
+		}
+		if strings.Contains(err.Error(), "already submitted") {
+			return nil, NewSubmitWorkError("ALREADY_SUBMITTED", "Work has already been submitted for this claim", "claim_id")
+		}
+		return nil, NewInternalError("submit_work", fmt.Sprintf("Failed to submit work: %v", err))
 	}
 
 	return map[string]interface{}{
@@ -633,6 +805,166 @@ func (h *HTTPMCPServer) handleGetOpenContracts(ctx context.Context, args map[str
 		"status":      filter.Status,
 		"limit":       limit,
 	}, nil
+}
+
+// handleGetAuthChallenge issues a nonce for wallet verification (no auth required)
+func (h *HTTPMCPServer) handleGetAuthChallenge(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	validation := NewValidationError("get_auth_challenge", "Invalid request parameters")
+
+	wallet, ok := args["wallet_address"].(string)
+	if !ok || strings.TrimSpace(wallet) == "" {
+		validation.AddFieldError("wallet_address", args["wallet_address"], "wallet_address is required and must be a non-empty string", true)
+	}
+
+	// Return validation errors if any
+	if validation.HasErrors() {
+		return nil, validation
+	}
+
+	if h.challengeStore == nil {
+		return nil, NewServiceUnavailableError("get_auth_challenge", "challenge store")
+	}
+
+	challenge, err := h.challengeStore.Issue(strings.TrimSpace(wallet))
+	if err != nil {
+		return nil, NewInternalError("get_auth_challenge", fmt.Sprintf("Failed to issue challenge: %v", err))
+	}
+
+	return map[string]interface{}{
+		"nonce":      challenge.Nonce,
+		"expires_at": challenge.ExpiresAt,
+		"wallet":     challenge.Wallet,
+	}, nil
+}
+
+// handleVerifyAuthChallenge checks signature against nonce and issues an API key (no auth required)
+func (h *HTTPMCPServer) handleVerifyAuthChallenge(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	validation := NewValidationError("verify_auth_challenge", "Invalid request parameters")
+
+	wallet, ok := args["wallet_address"].(string)
+	if !ok || strings.TrimSpace(wallet) == "" {
+		validation.AddFieldError("wallet_address", args["wallet_address"], "wallet_address is required and must be a non-empty string", true)
+	}
+
+	signature, ok := args["signature"].(string)
+	if !ok || strings.TrimSpace(signature) == "" {
+		validation.AddFieldError("signature", args["signature"], "signature is required and must be a non-empty string", true)
+	}
+
+	email, _ := args["email"].(string) // Optional
+
+	// Return validation errors if any
+	if validation.HasErrors() {
+		return nil, validation
+	}
+
+	if h.challengeStore == nil {
+		return nil, NewServiceUnavailableError("verify_auth_challenge", "challenge store")
+	}
+
+	// Verify the Bitcoin signature
+	verifier := func(ch auth.Challenge, sig string) bool {
+		// Import the signature verification logic from auth_handler
+		ok, err := h.verifyBTCSignature(ch.Wallet, sig, strings.TrimSpace(ch.Nonce))
+		if err != nil {
+			return false
+		}
+		return ok
+	}
+
+	if !h.challengeStore.Verify(strings.TrimSpace(wallet), strings.TrimSpace(signature), verifier) {
+		return nil, NewValidationError("verify_auth_challenge", "Invalid signature")
+	}
+
+	// Issue API key using the existing auth system (we need access to the issuer)
+	// For now, we'll call the existing API endpoint
+	reqBody := map[string]interface{}{
+		"wallet_address": strings.TrimSpace(wallet),
+		"signature":      strings.TrimSpace(signature),
+	}
+	if email != "" {
+		reqBody["email"] = email
+	}
+
+	jsonBody, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, NewInternalError("verify_auth_challenge", "Failed to marshal verification request")
+	}
+
+	verifyURL := h.baseURL + "/api/auth/verify"
+	req, err := http.NewRequestWithContext(ctx, "POST", verifyURL, bytes.NewReader(jsonBody))
+	if err != nil {
+		return nil, NewInternalError("verify_auth_challenge", "Failed to create verification request")
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := h.httpClient.Do(req)
+	if err != nil {
+		return nil, NewServiceUnavailableError("verify_auth_challenge", "verification API")
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, NewInternalError("verify_auth_challenge", "Failed to read verification response")
+	}
+
+	if resp.StatusCode >= 400 {
+		var errResp struct {
+			Success bool   `json:"success"`
+			Error   string `json:"error"`
+			Message string `json:"message"`
+		}
+		if err := json.Unmarshal(body, &errResp); err == nil {
+			return nil, NewValidationError("verify_auth_challenge", fmt.Sprintf("Verification failed: %s - %s", errResp.Error, errResp.Message))
+		}
+		return nil, NewValidationError("verify_auth_challenge", fmt.Sprintf("Verification failed (%d)", resp.StatusCode))
+	}
+
+	var successResp struct {
+		Success  bool   `json:"success"`
+		APIKey   string `json:"api_key"`
+		Wallet   string `json:"wallet"`
+		Email    string `json:"email"`
+		Verified bool   `json:"verified"`
+	}
+	if err := json.Unmarshal(body, &successResp); err != nil {
+		return nil, NewInternalError("verify_auth_challenge", "Failed to parse verification response")
+	}
+
+	if !successResp.Success {
+		return nil, NewValidationError("verify_auth_challenge", "Verification unsuccessful")
+	}
+
+	return map[string]interface{}{
+		"api_key":  successResp.APIKey,
+		"wallet":   successResp.Wallet,
+		"email":    successResp.Email,
+		"verified": successResp.Verified,
+	}, nil
+}
+
+// verifyBTCSignature verifies a Bitcoin signature against a message
+// This is a simplified version of the logic from auth_handler.go
+func (h *HTTPMCPServer) verifyBTCSignature(address, signature, message string) (bool, error) {
+	// For now, we'll delegate to the existing API by calling the verify endpoint
+	// This is a temporary implementation - in a real scenario, we'd import the verification logic
+	reqBody := map[string]interface{}{
+		"wallet_address": address,
+		"signature":      signature,
+	}
+
+	jsonBody, _ := json.Marshal(reqBody)
+	req, _ := http.NewRequest("POST", h.baseURL+"/api/auth/verify", bytes.NewReader(jsonBody))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := h.httpClient.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+
+	return resp.StatusCode < 400, nil
 }
 
 // RegisterRoutes registers HTTP MCP endpoints

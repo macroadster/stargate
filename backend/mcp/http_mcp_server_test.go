@@ -38,7 +38,7 @@ func TestHTTPMCPServer(t *testing.T) {
 	store := scstore.NewMemoryStore(72 * time.Hour)
 	ingestionSvc := &services.IngestionService{}  // nil for memory mode
 	scannerManager := &starlight.ScannerManager{} // mock scanner manager
-	server := NewHTTPMCPServer(store, allowAllValidator{}, ingestionSvc, scannerManager, nil)
+	server := NewHTTPMCPServer(store, allowAllValidator{}, ingestionSvc, scannerManager, nil, auth.NewChallengeStore(10*time.Minute))
 
 	// Test list_contracts
 	t.Run("list_contracts", func(t *testing.T) {
@@ -101,7 +101,7 @@ func TestClaimTaskUsesAPIKeyWallet(t *testing.T) {
 	scannerManager := &starlight.ScannerManager{}
 	apiKey := "test-api-key"
 	wallet := "tb1qwallettest000000000000000000000000000000000"
-	server := NewHTTPMCPServer(store, walletValidator{wallet: wallet}, ingestionSvc, scannerManager, nil)
+	server := NewHTTPMCPServer(store, walletValidator{wallet: wallet}, ingestionSvc, scannerManager, nil, auth.NewChallengeStore(10*time.Minute))
 
 	contract := smart_contract.Contract{
 		ContractID:          "contract-claim-wallet",
@@ -158,7 +158,7 @@ func TestProposalCreationRequiresWish(t *testing.T) {
 	store := scstore.NewMemoryStore(72 * time.Hour)
 	ingestionSvc := &services.IngestionService{}  // nil for memory mode
 	scannerManager := &starlight.ScannerManager{} // mock scanner manager
-	server := NewHTTPMCPServer(store, allowAllValidator{}, ingestionSvc, scannerManager, nil)
+	server := NewHTTPMCPServer(store, allowAllValidator{}, ingestionSvc, scannerManager, nil, auth.NewChallengeStore(10*time.Minute))
 
 	// Test that proposals require a wish hash.
 	t.Run("create_proposal_requires_visible_pixel_hash", func(t *testing.T) {
@@ -192,8 +192,20 @@ func TestProposalCreationRequiresWish(t *testing.T) {
 			t.Fatalf("expected failure due to missing visible_pixel_hash, but got success")
 		}
 
-		if !strings.Contains(resp.Error, "visible_pixel_hash is required") {
-			t.Fatalf("expected error about visible_pixel_hash requirement, got: %s", resp.Error)
+		if resp.ErrorCode != "VALIDATION_FAILED" {
+			t.Fatalf("expected VALIDATION_FAILED error code, got: %s", resp.ErrorCode)
+		}
+
+		// Check that visible_pixel_hash is in validation errors
+		if resp.Details == nil {
+			t.Fatalf("expected validation details in error response")
+		}
+		validationErrors, ok := resp.Details["validation_errors"].(map[string]interface{})
+		if !ok {
+			t.Fatalf("expected validation_errors in details")
+		}
+		if _, ok := validationErrors["visible_pixel_hash"]; !ok {
+			t.Fatalf("expected visible_pixel_hash in validation errors")
 		}
 	})
 
@@ -262,7 +274,11 @@ func TestProposalCreationRequiresWish(t *testing.T) {
 			t.Fatalf("expected failure due to missing wish, but got success")
 		}
 
-		if !strings.Contains(resp.Error, "wish not found") {
+		if resp.ErrorCode != "RESOURCE_NOT_FOUND" {
+			t.Fatalf("expected RESOURCE_NOT_FOUND error code, got: %s", resp.ErrorCode)
+		}
+
+		if !strings.Contains(resp.Error, "wish") || !strings.Contains(resp.Error, "not found") {
 			t.Fatalf("expected error about missing wish, got: %s", resp.Error)
 		}
 	})
@@ -365,7 +381,10 @@ func TestProposalCreationRequiresWish(t *testing.T) {
 		if resp.Success {
 			t.Fatalf("expected failure due to missing wish, but got success")
 		}
-		if !strings.Contains(resp.Error, "wish not found") {
+		if resp.ErrorCode != "RESOURCE_NOT_FOUND" {
+			t.Fatalf("expected RESOURCE_NOT_FOUND error code, got: %s", resp.ErrorCode)
+		}
+		if !strings.Contains(resp.Error, "wish") || !strings.Contains(resp.Error, "not found") {
 			t.Fatalf("expected error about missing wish, got: %s", resp.Error)
 		}
 
@@ -444,8 +463,8 @@ func TestProposalCreationRequiresWish(t *testing.T) {
 
 		server.handleToolCall(w, r)
 
-		if w.Code != http.StatusInternalServerError {
-			t.Fatalf("expected 500, got %d: %s", w.Code, w.Body.String())
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("expected 401, got %d: %s", w.Code, w.Body.String())
 		}
 
 		var resp MCPResponse
@@ -454,6 +473,9 @@ func TestProposalCreationRequiresWish(t *testing.T) {
 		}
 		if resp.Success {
 			t.Fatalf("expected failure when non-creator tries to approve")
+		}
+		if resp.ErrorCode != "UNAUTHORIZED" {
+			t.Fatalf("expected UNAUTHORIZED error code, got: %s", resp.ErrorCode)
 		}
 		if !strings.Contains(resp.Error, "approver does not match proposal creator") {
 			t.Fatalf("expected creator mismatch error, got: %s", resp.Error)

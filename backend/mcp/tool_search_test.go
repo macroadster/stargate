@@ -5,15 +5,17 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"stargate-backend/services"
 	"stargate-backend/starlight"
+	auth "stargate-backend/storage/auth"
 )
 
 func TestToolSearch(t *testing.T) {
 	ingestionSvc := &services.IngestionService{}
 	scannerManager := &starlight.ScannerManager{}
-	server := NewHTTPMCPServer(nil, nil, ingestionSvc, scannerManager, nil)
+	server := NewHTTPMCPServer(nil, nil, ingestionSvc, scannerManager, nil, auth.NewChallengeStore(10*time.Minute))
 
 	t.Run("search without filters returns all", func(t *testing.T) {
 		w := httptest.NewRecorder()
@@ -104,7 +106,7 @@ func TestToolSearch(t *testing.T) {
 func TestGetToolList(t *testing.T) {
 	ingestionSvc := &services.IngestionService{}
 	scannerManager := &starlight.ScannerManager{}
-	server := NewHTTPMCPServer(nil, nil, ingestionSvc, scannerManager, nil)
+	server := NewHTTPMCPServer(nil, nil, ingestionSvc, scannerManager, nil, auth.NewChallengeStore(10*time.Minute))
 
 	t.Run("getToolList returns all tools with metadata", func(t *testing.T) {
 		tools := server.getToolList()

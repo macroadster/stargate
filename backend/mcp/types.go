@@ -8,18 +8,19 @@ type MCPRequest struct {
 
 // MCPResponse represents response from an MCP tool call
 type MCPResponse struct {
-	Success        bool        `json:"success"`
-	Result         interface{} `json:"result,omitempty"`
-	Error          string      `json:"error,omitempty"`
-	ErrorCode      string      `json:"error_code,omitempty"`
-	Message        string      `json:"message,omitempty"`
-	Code           int         `json:"code,omitempty"`
-	Hint           string      `json:"hint,omitempty"`
-	Timestamp      string      `json:"timestamp,omitempty"`
-	RequiredFields []string    `json:"required_fields,omitempty"`
-	DocsURL        string      `json:"docs_url,omitempty"`
-	RequestID      string      `json:"request_id,omitempty"`
-	Version        string      `json:"version,omitempty"`
+	Success        bool                   `json:"success"`
+	Result         interface{}            `json:"result,omitempty"`
+	Error          string                 `json:"error,omitempty"`
+	ErrorCode      string                 `json:"error_code,omitempty"`
+	Message        string                 `json:"message,omitempty"`
+	Code           int                    `json:"code,omitempty"`
+	Hint           string                 `json:"hint,omitempty"`
+	Timestamp      string                 `json:"timestamp,omitempty"`
+	RequiredFields []string               `json:"required_fields,omitempty"`
+	DocsURL        string                 `json:"docs_url,omitempty"`
+	RequestID      string                 `json:"request_id,omitempty"`
+	Version        string                 `json:"version,omitempty"`
+	Details        map[string]interface{} `json:"details,omitempty"`
 }
 
 type jsonRPCRequest struct {
