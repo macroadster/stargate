@@ -486,26 +486,57 @@ func (h *HTTPMCPServer) handleCreateContract(ctx context.Context, args map[strin
 	}
 
 	if resp.StatusCode >= 400 {
-		var errResp struct {
+		// Try to parse error as object first
+		var errObjResp struct {
+			Success bool `json:"success"`
+			Error   struct {
+				Code      string `json:"code"`
+				Message   string `json:"message"`
+				Timestamp string `json:"timestamp"`
+				RequestID string `json:"request_id"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal(body, &errObjResp); err == nil {
+			return nil, fmt.Errorf("inscribe API error (%d): %s - %s", resp.StatusCode, errObjResp.Error.Code, errObjResp.Error.Message)
+		}
+
+		// Fallback to string error
+		var errStrResp struct {
 			Success bool   `json:"success"`
 			Error   string `json:"error"`
 			Message string `json:"message"`
 		}
-		json.Unmarshal(body, &errResp)
-		return nil, fmt.Errorf("inscribe API error (%d): %s - %s", resp.StatusCode, errResp.Error, errResp.Message)
+		if err := json.Unmarshal(body, &errStrResp); err == nil {
+			return nil, fmt.Errorf("inscribe API error (%d): %s - %s", resp.StatusCode, errStrResp.Error, errStrResp.Message)
+		}
+
+		return nil, fmt.Errorf("inscribe API error (%d): %s", resp.StatusCode, string(body))
 	}
 
 	var successResp struct {
-		Success bool   `json:"success"`
-		Data    any    `json:"data"`
-		Error   string `json:"error"`
+		Success bool `json:"success"`
+		Data    any  `json:"data"`
+		Error   any  `json:"error"` // Changed from string to any to handle both formats
 	}
 	if err := json.Unmarshal(body, &successResp); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 
 	if !successResp.Success {
-		return nil, fmt.Errorf("inscribe failed: %s", successResp.Error)
+		// Handle error as both string and object
+		var errorMsg string
+		if errorStr, ok := successResp.Error.(string); ok {
+			errorMsg = errorStr
+		} else if errorObj, ok := successResp.Error.(map[string]interface{}); ok {
+			if msg, ok := errorObj["message"].(string); ok {
+				errorMsg = msg
+			} else {
+				errorMsg = fmt.Sprintf("%v", errorObj)
+			}
+		} else {
+			errorMsg = fmt.Sprintf("Unknown error: %v", successResp.Error)
+		}
+		return nil, fmt.Errorf("inscribe failed: %s", errorMsg)
 	}
 
 	return successResp.Data, nil
