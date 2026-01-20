@@ -367,7 +367,7 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 			"parameters": map[string]interface{}{
 				"proposal_id": map[string]interface{}{
 					"type":        "string",
-					"description": "The ID of the proposal to approve",
+					"description": "The ID of proposal to approve",
 					"required":    true,
 				},
 			},
@@ -375,6 +375,53 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 				{
 					"description": "Approve a proposal",
 					"arguments":   map[string]interface{}{"proposal_id": "proposal-123"},
+				},
+			},
+		},
+		"get_auth_challenge": map[string]interface{}{
+			"category":    ToolCategoryDiscovery,
+			"description": "Get a cryptographic challenge for wallet verification",
+			"parameters": map[string]interface{}{
+				"wallet_address": map[string]interface{}{
+					"type":        "string",
+					"description": "Bitcoin wallet address to verify",
+					"required":    true,
+				},
+			},
+			"examples": []map[string]interface{}{
+				{
+					"description": "Get challenge for wallet verification",
+					"arguments":   map[string]interface{}{"wallet_address": "tb1qexample..."},
+				},
+			},
+		},
+		"verify_auth_challenge": map[string]interface{}{
+			"category":    ToolCategoryWrite,
+			"description": "Verify wallet signature and receive API key",
+			"parameters": map[string]interface{}{
+				"wallet_address": map[string]interface{}{
+					"type":        "string",
+					"description": "Bitcoin wallet address",
+					"required":    true,
+				},
+				"signature": map[string]interface{}{
+					"type":        "string",
+					"description": "Bitcoin signature of the challenge nonce",
+					"required":    true,
+				},
+				"email": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional email address for account recovery",
+				},
+			},
+			"examples": []map[string]interface{}{
+				{
+					"description": "Complete wallet verification",
+					"arguments": map[string]interface{}{
+						"wallet_address": "tb1qexample...",
+						"signature":      "base64_or_hex_signature...",
+						"email":          "user@example.com",
+					},
 				},
 			},
 		},

@@ -243,8 +243,9 @@ func (h *HTTPMCPServer) handleToolCall(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.callToolDirect(r.Context(), req.Tool, req.Arguments, apiKey)
 	if err != nil {
-		status := h.statusFromError(err)
-		h.writeHTTPError(w, status, "TOOL_ERROR", "Tool execution failed", err.Error())
+		// Handle structured errors
+		status := GetHTTPStatusFromError(err)
+		h.writeHTTPStructuredError(w, status, err)
 		return
 	}
 
