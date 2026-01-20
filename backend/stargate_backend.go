@@ -420,7 +420,7 @@ func runHTTPServer() {
 
 	// Initialize HTTP MCP server (always enabled)
 	scannerManager := starlight.GetScannerManager()
-	httpMCPServer := mcp.NewHTTPMCPServer(store, apiKeyValidator, ingestionSvc, scannerManager, container.SmartContractService)
+	httpMCPServer := mcp.NewHTTPMCPServer(store, apiKeyValidator, ingestionSvc, scannerManager, container.SmartContractService, challengeStore)
 
 	// Set the smart contract handler with the store
 	container.SetSmartContractHandler(store)
