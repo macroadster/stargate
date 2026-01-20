@@ -118,9 +118,26 @@ func (h *InscriptionHandler) SetStore(store scmiddleware.Store) {
 }
 
 func placeholderPNG() []byte {
-	// 64x64 PNG with enough space for steganographic data
-	b64 := "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAfklEQVR4nNXOQREAIADDsFL/wiYLETy4RkHONsokTuIkTuIkTuIkTuIkTuIkTuIkTuIkTuIkTuIkTuIkTuIkTuIkTuIkTuIkTuIkTuIkTuIkTuIkTuIkTuIkTuIkTuIkTuIkTuIkTuIkTuL8HXh1AVjjAtjgr6lpAAAAAElFTkSuQmCC"
-	data, _ := io.ReadAll(base64.NewDecoder(base64.StdEncoding, strings.NewReader(b64)))
+	// Try multiple paths for the real placeholder image
+	paths := []string{
+		"assets/quantum_lattice.png",
+		"/app/assets/quantum_lattice.png",
+		"./assets/quantum_lattice.png",
+	}
+
+	var data []byte
+	var err error
+
+	for _, path := range paths {
+		data, err = os.ReadFile(path)
+		if err == nil {
+			return data
+		}
+	}
+
+	// Fallback to a simple base64 PNG if file not found
+	b64 := "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAfklEQVR4nNXOQREAIADDsFL/wiYLETy4RkHONsokTuIkTuIkTuIkTuIkTuIkTuIkTuIkTuIkTuIkTuIkTuIkTuIkTuIkTuIkTuIkTuIkTuIkTuIkTuIkTuIkTuIkTuIkTuIkTuL8HXh1AVjjAtjgr6lpAAAAAElFTkSuQmCC"
+	data, _ = io.ReadAll(base64.NewDecoder(base64.StdEncoding, strings.NewReader(b64)))
 	return data
 }
 
@@ -820,10 +837,13 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 					} `json:"error"`
 				}
 
-				if err := json.Unmarshal(body, &errorResponse); err == nil && !errorResponse.Success {
-					// Response contains an error despite 200 status - forward it as proper error
+				if err := json.Unmarshal(body, &errorResponse); err == nil && (errorResponse.Error.Code != 0 || errorResponse.Error.Error != "" || errorResponse.Error.Message != "") {
+					// Response contains error fields despite 200 status - forward it as proper error
 					errorCode := errorResponse.Error.Code
 					errorMessage := errorResponse.Error.Message
+					if errorMessage == "" {
+						errorMessage = errorResponse.Error.Error
+					}
 
 					// If no error code provided, use generic 400 error
 					if errorCode == 0 {
