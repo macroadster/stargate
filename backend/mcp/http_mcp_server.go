@@ -174,6 +174,92 @@ func (h *HTTPMCPServer) writeHTTPStructuredError(w http.ResponseWriter, status i
 	json.NewEncoder(w).Encode(resp)
 }
 
+// writeStructuredErrorJSONRPC writes a structured error response without setting HTTP status (always 200 OK for JSON-RPC)
+func (h *HTTPMCPServer) writeStructuredErrorJSONRPC(w http.ResponseWriter, err error) {
+	w.Header().Set("Content-Type", "application/json")
+	// Do NOT set HTTP status - always return 200 OK for JSON-RPC
+
+	resp := MCPResponse{
+		Success: false,
+	}
+
+	// Handle different error types (same logic as writeHTTPStructuredError but without status)
+	switch e := err.(type) {
+	case *ToolError:
+		resp.ErrorCode = e.Code
+		resp.Error = e.Message
+		resp.Hint = e.Hint
+		resp.Message = e.Message
+
+		// Add structured details
+		if e.Tool != "" {
+			if resp.Details == nil {
+				resp.Details = make(map[string]interface{})
+			}
+			resp.Details["tool"] = e.Tool
+		}
+		if e.Field != "" {
+			if resp.Details == nil {
+				resp.Details = make(map[string]interface{})
+			}
+			resp.Details["field"] = e.Field
+			resp.Details["field_value"] = e.FieldValue
+		}
+		if e.DocsURL != "" {
+			resp.DocsURL = e.DocsURL
+		}
+		if len(e.Details) > 0 {
+			if resp.Details == nil {
+				resp.Details = make(map[string]interface{})
+			}
+			for k, v := range e.Details {
+				resp.Details[k] = v
+			}
+		}
+
+	case *ValidationError:
+		resp.ErrorCode = ErrCodeValidationFailed
+		resp.Error = e.Message
+		resp.Hint = e.Hint
+		resp.Message = e.Message
+
+		// Add all field validation errors
+		if resp.Details == nil {
+			resp.Details = make(map[string]interface{})
+		}
+		resp.Details["tool"] = e.Tool
+		resp.Details["validation_errors"] = e.Fields
+
+		// Build required fields list for easier parsing
+		var requiredFields []string
+		for field, fieldErr := range e.Fields {
+			if fieldErr.Required {
+				requiredFields = append(requiredFields, field)
+			}
+		}
+		if len(requiredFields) > 0 {
+			resp.RequiredFields = requiredFields
+		}
+
+		if e.DocsURL != "" {
+			resp.DocsURL = e.DocsURL
+		}
+
+	default:
+		// Fallback for generic errors
+		resp.ErrorCode = ErrCodeInternalError
+		resp.Error = err.Error()
+		resp.Message = "Internal server error"
+		resp.Hint = "Please try again. If the problem persists, contact support"
+	}
+
+	// Add timestamp and version for all errors
+	resp.Timestamp = time.Now().Format(time.RFC3339)
+	resp.Version = "1.0.0"
+
+	json.NewEncoder(w).Encode(resp)
+}
+
 func (h *HTTPMCPServer) statusFromError(err error) int {
 	if err == nil {
 		return http.StatusInternalServerError
