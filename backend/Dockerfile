@@ -38,8 +38,9 @@ WORKDIR /app
 # Copy binary from builder
 COPY --from=builder /out/stargate /usr/local/bin/stargate
 
-# Copy documentation
+# Copy documentation and assets
 COPY --from=builder /app/docs ./docs
+COPY --from=builder /app/assets ./assets
 
 # Create necessary directories
 RUN mkdir -p /app/frontend /app/uploads /app/logs && \
