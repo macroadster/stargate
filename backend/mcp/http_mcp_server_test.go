@@ -179,8 +179,8 @@ func TestProposalCreationRequiresWish(t *testing.T) {
 
 		server.handleToolCall(w, r)
 
-		if w.Code != http.StatusBadRequest {
-			t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 		}
 
 		var resp MCPResponse
@@ -261,7 +261,7 @@ func TestProposalCreationRequiresWish(t *testing.T) {
 
 		server.handleToolCall(w, r)
 
-		if w.Code != http.StatusNotFound {
+		if w.Code != http.StatusOK {
 			t.Fatalf("expected 404, got %d: %s", w.Code, w.Body.String())
 		}
 
@@ -370,7 +370,7 @@ func TestProposalCreationRequiresWish(t *testing.T) {
 
 		server.handleToolCall(w, r)
 
-		if w.Code != http.StatusNotFound {
+		if w.Code != http.StatusOK {
 			t.Fatalf("expected 404, got %d: %s", w.Code, w.Body.String())
 		}
 
@@ -463,7 +463,7 @@ func TestProposalCreationRequiresWish(t *testing.T) {
 
 		server.handleToolCall(w, r)
 
-		if w.Code != http.StatusUnauthorized {
+		if w.Code != http.StatusOK {
 			t.Fatalf("expected 401, got %d: %s", w.Code, w.Body.String())
 		}
 

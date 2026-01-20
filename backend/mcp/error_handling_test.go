@@ -38,8 +38,8 @@ func TestStructuredErrorResponses(t *testing.T) {
 
 		server.handleToolCall(w, r)
 
-		if w.Code != http.StatusBadRequest {
-			t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 		}
 
 		var resp MCPResponse
@@ -106,8 +106,8 @@ func TestStructuredErrorResponses(t *testing.T) {
 
 		server.handleToolCall(w, r)
 
-		if w.Code != http.StatusBadRequest {
-			t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 		}
 
 		var resp MCPResponse
@@ -158,8 +158,8 @@ func TestStructuredErrorResponses(t *testing.T) {
 
 		server.handleToolCall(w, r)
 
-		if w.Code != http.StatusBadRequest {
-			t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 		}
 
 		var resp MCPResponse
@@ -200,8 +200,8 @@ func TestStructuredErrorResponses(t *testing.T) {
 
 		server.handleToolCall(w, r)
 
-		if w.Code != http.StatusNotFound {
-			t.Fatalf("expected 404, got %d: %s", w.Code, w.Body.String())
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 		}
 
 		var resp MCPResponse
@@ -272,9 +272,7 @@ func TestErrorResponseStructure(t *testing.T) {
 			t.Fatalf("expected message field")
 		}
 
-		if resp.Code == 0 {
-			t.Fatalf("expected code field (HTTP status)")
-		}
+		// For JSON-RPC, Code field is not set for errors (always 200 OK)
 
 		if resp.Timestamp == "" {
 			t.Fatalf("expected timestamp field")

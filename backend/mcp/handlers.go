@@ -243,9 +243,8 @@ func (h *HTTPMCPServer) handleToolCall(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.callToolDirect(r.Context(), req.Tool, req.Arguments, apiKey)
 	if err != nil {
-		// Handle structured errors
-		status := GetHTTPStatusFromError(err)
-		h.writeHTTPStructuredError(w, status, err)
+		// Handle structured errors - always return 200 OK with error in JSON-RPC format
+		h.writeStructuredErrorJSONRPC(w, err)
 		return
 	}
 
