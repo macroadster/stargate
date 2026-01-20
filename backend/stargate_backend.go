@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -45,6 +46,160 @@ func contentTypeForFormat(format string) string {
 		return "text/plain"
 	default:
 		return "application/octet-stream"
+	}
+}
+
+// detectMimeType determines the MIME type based on file content and filename
+// This is a simplified version of the inferMime function from api/data_api.go
+func detectMimeType(content []byte, filename string) string {
+	// First, try to detect from content
+	if len(content) > 0 {
+		sample := content
+		if len(sample) > 512 {
+			sample = sample[:512]
+		}
+		if detected := http.DetectContentType(sample); detected != "" && detected != "application/octet-stream" {
+			return detected
+		}
+	}
+
+	// Fallback to filename-based detection
+	lowerName := strings.ToLower(filename)
+	switch {
+	case strings.HasSuffix(lowerName, ".jpg"), strings.HasSuffix(lowerName, ".jpeg"):
+		return "image/jpeg"
+	case strings.HasSuffix(lowerName, ".png"):
+		return "image/png"
+	case strings.HasSuffix(lowerName, ".gif"):
+		return "image/gif"
+	case strings.HasSuffix(lowerName, ".webp"):
+		return "image/webp"
+	case strings.HasSuffix(lowerName, ".svg"):
+		return "image/svg+xml"
+	case strings.HasSuffix(lowerName, ".bmp"):
+		return "image/bmp"
+	case strings.HasSuffix(lowerName, ".html"), strings.HasSuffix(lowerName, ".htm"):
+		return "text/html"
+	case strings.HasSuffix(lowerName, ".json"):
+		return "application/json"
+	case strings.HasSuffix(lowerName, ".txt"):
+		return "text/plain"
+	}
+
+	// Final content-based detection for common patterns
+	if len(content) > 0 {
+		trim := strings.TrimSpace(string(content))
+		lower := strings.ToLower(trim)
+		if strings.HasPrefix(lower, "<!doctype") || strings.HasPrefix(lower, "<html") {
+			return "text/html"
+		} else if strings.HasPrefix(lower, "<svg") {
+			return "image/svg+xml"
+		} else if strings.HasPrefix(lower, "{") || strings.HasPrefix(lower, "[") {
+			// Simple JSON detection
+			return "application/json"
+		} else if isMostlyPrintable(trim) {
+			return "text/plain"
+		}
+	}
+
+	return "application/octet-stream"
+}
+
+// isMostlyPrintable checks if content is mostly printable text
+func isMostlyPrintable(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+	printable := 0
+	for _, r := range s {
+		if r >= 32 && r <= 126 || r == '\n' || r == '\r' || r == '\t' {
+			printable++
+		}
+	}
+	return float64(printable)/float64(len(s)) > 0.8
+}
+
+// customUploadsHandler serves uploaded files with proper MIME type detection
+// instead of relying on file extensions (hash-based filenames have no extensions)
+func customUploadsHandler(uploadsDir string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Extract filename from URL path
+		filename := filepath.Base(r.URL.Path)
+		if filename == "." || filename == "/" || filename == "" {
+			http.NotFound(w, r)
+			return
+		}
+
+		// Construct full file path
+		filePath := filepath.Join(uploadsDir, filename)
+
+		// Security check: ensure the file is within uploads directory
+		if !strings.HasPrefix(filepath.Clean(filePath), uploadsDir) {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+
+		// Check if file exists
+		fileInfo, err := os.Stat(filePath)
+		if os.IsNotExist(err) {
+			http.NotFound(w, r)
+			return
+		}
+		if err != nil {
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+
+		// Don't serve directories
+		if fileInfo.IsDir() {
+			http.NotFound(w, r)
+			return
+		}
+
+		// Read file content for MIME type detection
+		file, err := os.Open(filePath)
+		if err != nil {
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+		defer file.Close()
+
+		// Read first 512 bytes for MIME detection
+		buffer := make([]byte, 512)
+		n, err := file.Read(buffer)
+		if err != nil && err != io.EOF {
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+
+		// Detect MIME type using content-based detection
+		mimeType := detectMimeType(buffer[:n], filename)
+		if mimeType == "" {
+			mimeType = "application/octet-stream"
+		}
+
+		// Set Content-Type header
+		w.Header().Set("Content-Type", mimeType)
+
+		// Set cache headers for better performance
+		w.Header().Set("Cache-Control", "public, max-age=3600") // 1 hour cache
+
+		// Set content length
+		w.Header().Set("Content-Length", strconv.FormatInt(fileInfo.Size(), 10))
+
+		// Reset file pointer to beginning
+		_, err = file.Seek(0, 0)
+		if err != nil {
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+
+		// Copy file content to response
+		_, err = io.Copy(w, file)
+		if err != nil {
+			// Too late to set status code, but we can log it
+			log.Printf("Error serving file %s: %v", filename, err)
+		}
 	}
 }
 
@@ -405,13 +560,13 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 	mux.Handle("/analyze/", wrapWithAuth(container.ProxyHandler.HandleProxy))
 	mux.Handle("/generate/", wrapWithAuth(container.ProxyHandler.HandleProxy))
 
-	// Serve uploaded files
+	// Serve uploaded files with proper MIME type detection
 	uploadsDir := os.Getenv("UPLOADS_DIR")
 	if uploadsDir == "" {
 		uploadsDir = "/data/uploads"
 	}
 	_ = os.MkdirAll(uploadsDir, 0755)
-	mux.Handle("/uploads/", http.StripPrefix("/uploads/", http.FileServer(http.Dir(uploadsDir))))
+	mux.HandleFunc("/uploads/", customUploadsHandler(uploadsDir))
 
 	// Serve frontend files
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
