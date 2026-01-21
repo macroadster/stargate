@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, X, Moon, Sun, Menu, MoreVertical, Check, HelpCircle } from 'lucide-react';
+import { Search, X, Moon, Sun, Menu, MoreVertical, Check } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
+import { useTheme } from '../../context/ThemeContext';
 
 const AppHeader = ({
   onInscribe,
@@ -13,12 +14,25 @@ const AppHeader = ({
   showBrcToggle = false,
   hideBrc20 = true,
   onToggleBrc20,
-  showThemeToggle = false,
-  isDarkMode = false,
-  onToggleTheme
+  showThemeToggle = true, // Default to true now that we have context
+  // Deprecated props (kept for backward compat but overridden by context)
+  isDarkMode: propIsDarkMode,
+  onToggleTheme: propOnToggleTheme
 }) => {
   const navigate = useNavigate();
   const { auth, signOut } = useAuth();
+  
+  // Try to use theme context, fail gracefully if not available (though it should be)
+  let themeContext;
+  try {
+    themeContext = useTheme();
+  } catch (e) {
+    // Context not available
+  }
+  
+  const isDarkMode = themeContext ? themeContext.isDarkMode : (propIsDarkMode || false);
+  const onToggleTheme = themeContext ? themeContext.toggleTheme : (propOnToggleTheme || (() => {}));
+
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const dropdownRef = useRef(null);
@@ -40,7 +54,7 @@ const AppHeader = ({
   }, [isDropdownOpen]);
 
   return (
-    <header className="bg-gray-100 dark:bg-gray-900 border-b border-gray-300 dark:border-gray-800">
+    <header className="bg-gray-100 dark:bg-gray-900 border-b border-gray-300 dark:border-gray-800 transition-colors duration-200">
       <div className="container mx-auto px-6 py-4">
         <div className="flex items-center justify-between gap-4">
           <div className="flex items-center gap-8">
@@ -103,7 +117,7 @@ const AppHeader = ({
                   placeholder="Search..."
                   value={searchQuery}
                   onChange={(e) => onSearchChange?.(e.target.value)}
-                  className="bg-gray-200 dark:bg-gray-800 text-black dark:text-white pl-10 pr-10 py-2 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 w-64"
+                  className="bg-gray-200 dark:bg-gray-800 text-black dark:text-white pl-10 pr-10 py-2 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 w-64 transition-colors"
                 />
                 {searchQuery && (
                   <button
@@ -119,7 +133,8 @@ const AppHeader = ({
             {showThemeToggle && (
               <button
                 onClick={onToggleTheme}
-                className="text-gray-600 dark:text-gray-400 hover:text-black dark:hover:text-white"
+                className="p-2 rounded-full text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-800 hover:text-black dark:hover:text-white transition-colors"
+                title={isDarkMode ? "Switch to light mode" : "Switch to dark mode"}
               >
                 {isDarkMode ? <Moon className="w-5 h-5" /> : <Sun className="w-5 h-5" />}
               </button>
@@ -128,7 +143,7 @@ const AppHeader = ({
               <div className="relative" ref={dropdownRef}>
                 <button
                   onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-                  className="text-gray-600 dark:text-gray-400 hover:text-black dark:hover:text-white p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-800"
+                  className="text-gray-600 dark:text-gray-400 hover:text-black dark:hover:text-white p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors"
                   title="More options"
                 >
                   <MoreVertical className="w-5 h-5" />
@@ -168,7 +183,7 @@ const AppHeader = ({
             ) : (
               <button
                 onClick={() => navigate('/auth')}
-                className="text-sm px-3 py-1 rounded-full border border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:text-black dark:hover:text-white"
+                className="text-sm px-3 py-1 rounded-full border border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:text-black dark:hover:text-white transition-colors"
               >
                 Sign In
               </button>

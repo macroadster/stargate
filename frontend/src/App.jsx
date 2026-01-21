@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Check, Copy } from 'lucide-react';
+import { Check, Copy, Github, Linkedin } from 'lucide-react';
 import { Routes, Route, useParams, useNavigate } from 'react-router-dom';
 
 
@@ -15,6 +15,7 @@ import McpDocsPage from './pages/McpDocsPage';
 import DocsPage from './pages/DocsPage';
 import AppHeader from './components/Common/AppHeader';
 import { AuthProvider } from './context/AuthContext';
+import { ThemeProvider } from './context/ThemeContext';
 
 import { useBlocks } from './hooks/useBlocks';
 import { useInscriptions } from './hooks/useInscriptions';
@@ -46,7 +47,6 @@ function MainContent() {
   const [showInscribeModal, setShowInscribeModal] = useState(false);
   const [selectedInscription, setSelectedInscription] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [isDarkMode, setIsDarkMode] = useState(true);
   const [searchResults, setSearchResults] = useState(null);
   const [copiedText, setCopiedText] = useState('');
   const sentinelRef = useRef(null);
@@ -91,16 +91,6 @@ function MainContent() {
   });
 
   useEffect(() => {
-    const savedTheme = localStorage.getItem('theme');
-    if (savedTheme) {
-      setIsDarkMode(savedTheme === 'dark');
-    } else {
-      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-      setIsDarkMode(prefersDark);
-    }
-  }, []);
-
-  useEffect(() => {
     const targetHeight = height !== undefined ? parseInt(height, 10) : null;
     // Only hydrate selection from the route when we don't already have one.
     if (!selectedBlock && targetHeight !== null && !Number.isNaN(targetHeight) && blocks.length > 0) {
@@ -137,15 +127,6 @@ function MainContent() {
   }, [blocks, selectedBlock, setSelectedBlock, setIsUserNavigating]);
 
   useEffect(() => {
-    if (isDarkMode) {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
-    localStorage.setItem('theme', isDarkMode ? 'dark' : 'light');
-  }, [isDarkMode]);
-
-  useEffect(() => {
     if (!hasMoreImages || !sentinelRef.current) return;
 
     const sentinel = sentinelRef.current;
@@ -173,12 +154,6 @@ function MainContent() {
       setIsUserNavigating(false);
     }
   }, [selectedBlock, isUserNavigating, setIsUserNavigating]);
-
-
-
-  const toggleTheme = () => {
-    setIsDarkMode(!isDarkMode);
-  };
 
   const handleSearch = async (query) => {
     if (query.trim() === '') {
@@ -376,9 +351,7 @@ function MainContent() {
         showBrcToggle
         hideBrc20={hideBrc20}
         onToggleBrc20={() => setHideBrc20(!hideBrc20)}
-        showThemeToggle
-        isDarkMode={isDarkMode}
-        onToggleTheme={toggleTheme}
+        // Theme props no longer needed here as AppHeader uses context
       />
 
       <div className="bg-gray-100 dark:bg-gray-900 border-b border-gray-300 dark:border-gray-800 relative">
@@ -683,6 +656,37 @@ function MainContent() {
                </div>
                <span className="text-gray-400">Starlight</span>
              </div>
+             
+             <div className="flex items-center gap-6">
+               <a 
+                 href="https://github.com/macroadster" 
+                 target="_blank" 
+                 rel="noopener noreferrer"
+                 className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
+                 title="GitHub"
+               >
+                 <Github className="w-5 h-5" />
+               </a>
+               <a 
+                 href="https://x.com/howssatoshi" 
+                 target="_blank" 
+                 rel="noopener noreferrer"
+                 className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
+                 title="X (Twitter)"
+               >
+                 <span className="text-lg font-bold leading-none">𝕏</span>
+               </a>
+               <a 
+                 href="https://www.linkedin.com/in/eric-yang-182a377/" 
+                 target="_blank" 
+                 rel="noopener noreferrer"
+                 className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
+                 title="LinkedIn"
+               >
+                 <Linkedin className="w-5 h-5" />
+               </a>
+             </div>
+
               <a href="/mcp/docs" className="text-gray-400 text-sm hover:text-gray-600 dark:hover:text-gray-200 transition-colors whitespace-nowrap">
                 💡 Are you a builder? Try our API!
               </a>
@@ -695,29 +699,20 @@ function MainContent() {
 }
 
 export default function App() {
-  useEffect(() => {
-    const savedTheme = localStorage.getItem('theme');
-    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    const isDark = savedTheme ? savedTheme === 'dark' : prefersDark;
-    if (isDark) {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
-  }, []);
-
   return (
     <AuthProvider>
-      <Routes>
-        <Route path="/" element={<MainContent />} />
-        <Route path="/block/:height" element={<MainContent />} />
-        <Route path="/pending" element={<MainContent />} />
-        <Route path="/contracts" element={<ContractsPage />} />
-        <Route path="/discover" element={<DiscoverPage />} />
-        <Route path="/auth" element={<AuthPage />} />
-        <Route path="/mcp/docs" element={<McpDocsPage />} />
-        <Route path="/docs/*" element={<DocsPage />} />
-      </Routes>
+      <ThemeProvider>
+        <Routes>
+          <Route path="/" element={<MainContent />} />
+          <Route path="/block/:height" element={<MainContent />} />
+          <Route path="/pending" element={<MainContent />} />
+          <Route path="/contracts" element={<ContractsPage />} />
+          <Route path="/discover" element={<DiscoverPage />} />
+          <Route path="/auth" element={<AuthPage />} />
+          <Route path="/mcp/docs" element={<McpDocsPage />} />
+          <Route path="/docs/*" element={<DocsPage />} />
+        </Routes>
+      </ThemeProvider>
     </AuthProvider>
   );
 }
