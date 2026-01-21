@@ -19,7 +19,8 @@ FROM nginx:stable-alpine
 # Copy built assets from build stage
 COPY --from=build /app/build /usr/share/nginx/html
 
-# nginx configuration handled by Kubernetes ingress
+# Copy nginx configuration
+COPY nginx.conf /etc/nginx/conf.d/default.conf
 
 # Security best practices
 RUN addgroup -g 1001 -S nodejs && \
