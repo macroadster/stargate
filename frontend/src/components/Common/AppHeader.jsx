@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Search, X, Moon, Sun, Menu } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Search, X, Moon, Sun, Menu, MoreVertical, Check } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 
@@ -20,6 +20,24 @@ const AppHeader = ({
   const navigate = useNavigate();
   const { auth, signOut } = useAuth();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const dropdownRef = useRef(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setIsDropdownOpen(false);
+      }
+    };
+
+    if (isDropdownOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isDropdownOpen]);
 
   return (
     <header className="bg-gray-100 dark:bg-gray-900 border-b border-gray-300 dark:border-gray-800">
@@ -61,15 +79,6 @@ const AppHeader = ({
               >
                 Discover
               </button>
-              {showBrcToggle && (
-                <button
-                  onClick={onToggleBrc20}
-                  className={`text-sm px-3 py-1 rounded-full border ${hideBrc20 ? 'border-indigo-500 text-indigo-600 dark:text-indigo-300' : 'border-gray-400 text-gray-600 dark:text-gray-300'} bg-transparent cursor-pointer`}
-                  title="Toggle BRC-20 visibility"
-                >
-                  {hideBrc20 ? 'Hide BRC-20' : 'Show BRC-20'}
-                </button>
-              )}
             </nav>
           </div>
 
@@ -101,17 +110,54 @@ const AppHeader = ({
                 {renderInlineSearch && renderInlineSearch()}
               </div>
             )}
+            {showThemeToggle && (
+              <button
+                onClick={onToggleTheme}
+                className="text-gray-600 dark:text-gray-400 hover:text-black dark:hover:text-white"
+              >
+                {isDarkMode ? <Moon className="w-5 h-5" /> : <Sun className="w-5 h-5" />}
+              </button>
+            )}
             {auth?.apiKey ? (
-              <div className="flex items-center gap-2">
-                <div className="px-3 py-1 rounded-full bg-emerald-600 text-white text-sm">
-                  {auth.wallet || auth.email || `Key …${auth.apiKey.slice(-6)}`}
-                </div>
+              <div className="relative" ref={dropdownRef}>
                 <button
-                  onClick={signOut}
-                  className="text-xs text-gray-500 dark:text-gray-400 hover:text-black dark:hover:text-white"
+                  onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+                  className="text-gray-600 dark:text-gray-400 hover:text-black dark:hover:text-white p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-800"
+                  title="More options"
                 >
-                  Sign out
+                  <MoreVertical className="w-5 h-5" />
                 </button>
+                {isDropdownOpen && (
+                  <div className="absolute right-0 top-full mt-2 w-64 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-300 dark:border-gray-700 py-2 z-50">
+                    {showBrcToggle && (
+                      <button
+                        onClick={() => {
+                          onToggleBrc20();
+                          setIsDropdownOpen(false);
+                        }}
+                        className="w-full px-4 py-2 text-left flex items-center justify-between hover:bg-gray-100 dark:hover:bg-gray-700 text-sm"
+                      >
+                        <span className="text-gray-700 dark:text-gray-300">Hide BRC-20</span>
+                        {hideBrc20 && <Check className="w-4 h-4 text-indigo-500" />}
+                      </button>
+                    )}
+                    <div className="px-4 py-2 border-t border-gray-200 dark:border-gray-700">
+                      <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">Wallet</div>
+                      <div className="px-3 py-1 rounded-full bg-emerald-600 text-white text-sm truncate">
+                        {auth.wallet || auth.email || `Key …${auth.apiKey.slice(-6)}`}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => {
+                        signOut();
+                        setIsDropdownOpen(false);
+                      }}
+                      className="w-full px-4 py-2 text-left text-red-600 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-700 text-sm border-t border-gray-200 dark:border-gray-700"
+                    >
+                      Sign out
+                    </button>
+                  </div>
+                )}
               </div>
             ) : (
               <button
@@ -119,14 +165,6 @@ const AppHeader = ({
                 className="text-sm px-3 py-1 rounded-full border border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:text-black dark:hover:text-white"
               >
                 Sign In
-              </button>
-            )}
-            {showThemeToggle && (
-              <button
-                onClick={onToggleTheme}
-                className="text-gray-600 dark:text-gray-400 hover:text-black dark:hover:text-white"
-              >
-                {isDarkMode ? <Moon className="w-5 h-5" /> : <Sun className="w-5 h-5" />}
               </button>
             )}
           </div>
