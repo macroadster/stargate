@@ -12,6 +12,7 @@ import DiscoverPage from './components/Discover/DiscoverPage';
 import AuthPage from './pages/AuthPage';
 import ContractsPage from './pages/ContractsPage';
 import McpDocsPage from './pages/McpDocsPage';
+import DocsPage from './pages/DocsPage';
 import AppHeader from './components/Common/AppHeader';
 import { AuthProvider } from './context/AuthContext';
 
@@ -715,6 +716,7 @@ export default function App() {
         <Route path="/discover" element={<DiscoverPage />} />
         <Route path="/auth" element={<AuthPage />} />
         <Route path="/mcp/docs" element={<McpDocsPage />} />
+        <Route path="/docs/*" element={<DocsPage />} />
       </Routes>
     </AuthProvider>
   );
