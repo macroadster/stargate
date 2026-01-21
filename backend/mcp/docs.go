@@ -394,20 +394,24 @@ curl "` + base + `/mcp/search?q=task&limit=5"</pre>
   }
 }</pre>
  
-    <h4>Scan Image for Steganographic Content (No Auth Required)</h4>
-    <pre>curl -X POST -H "Content-Type: application/json" \
-  -d '{
-    "tool": "scan_image",
-    "arguments": {
-      "image_data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
-    }
-  }' \
-  ` + base + `/mcp/call</pre>
-    <p><strong>Response Example:</strong></p>
-    <pre>{
-  "found": true,
-  "embedded_data": "hidden message extracted from image",
-  "extraction_method": "lsb_steganography"
+     <h4>Scan Image for Steganographic Content (No Auth Required)</h4>
+     <pre>curl -X POST -H "Content-Type: application/json" \
+   -d '{
+     "tool": "scan_image",
+     "arguments": {
+       "image_data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
+     }
+   }' \
+   ` + base + `/mcp/call</pre>
+     <p><strong>Response Example:</strong></p>
+     <pre>{
+   "is_stego": true,
+   "stego_probability": 1.0,
+   "confidence": 1.0,
+   "prediction": "stego",
+   "stego_type": "alpha",
+   "extracted_message": "hidden message extracted from image",
+   "extraction_error": ""
 }</pre>
 
     <h4>List Proposals (No Auth Required)</h4>
