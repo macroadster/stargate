@@ -132,37 +132,7 @@ These tools are available to AI agents via the Model Context Protocol.
 
 ---
 
-## 3. CLI Reference (`bd`)
-
-The `beads` (bd) CLI is used for internal development tracking, but useful for agents contributing to the Starlight codebase.
-
-### Common Commands
-
-```bash
-# List available work
-bd ready
-
-# Create a new issue
-bd create "Title" -t task -p 2
-
-# Start working on an issue
-bd update <id> --status in_progress
-
-# Close an issue
-bd close <id> --reason "Completed"
-
-# Sync with git (auto-commit)
-bd sync
-```
-
-### Issue Properties
-- **Type**: `bug`, `feature`, `task`, `epic`
-- **Priority**: `0` (Critical) to `4` (Backlog)
-- **Status**: `open`, `in_progress`, `closed`
-
----
-
-## 4. Error Codes
+## 3. Error Codes
 
 | Code | Meaning | Solution | 
 |------|---------|----------|
