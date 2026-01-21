@@ -19,3 +19,5 @@ backend/stargate_backend_new
 test-results/
 *.swp
 *.swp
+
+opencode.json

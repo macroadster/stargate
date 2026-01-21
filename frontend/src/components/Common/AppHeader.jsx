@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, X, Moon, Sun, Menu, MoreVertical, Check } from 'lucide-react';
+import { Search, X, Moon, Sun, Menu, MoreVertical, Check, HelpCircle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 
@@ -74,12 +74,18 @@ const AppHeader = ({
                 Contracts
               </button>
               <button
-                onClick={() => navigate('/discover')}
-                className="text-gray-600 dark:text-gray-400 hover:text-black dark:hover:text-white bg-transparent border-none cursor-pointer"
-              >
-                Discover
-              </button>
-            </nav>
+                 onClick={() => navigate('/discover')}
+                 className="text-gray-600 dark:text-gray-400 hover:text-black dark:hover:text-white bg-transparent border-none cursor-pointer"
+               >
+                 Discover
+               </button>
+               <button
+                 onClick={() => navigate('/docs')}
+                 className="text-gray-600 dark:text-gray-400 hover:text-black dark:hover:text-white bg-transparent border-none cursor-pointer"
+               >
+                 Help
+               </button>
+             </nav>
           </div>
 
           <div className="flex items-center md:hidden">
@@ -212,12 +218,18 @@ const AppHeader = ({
                 Contracts
               </button>
               <button
-                onClick={() => navigate('/discover')}
-                className="text-gray-600 dark:text-gray-400 hover:text-black dark:hover:text-white bg-transparent border-none cursor-pointer text-left"
-              >
-                Discover
-              </button>
-              {showBrcToggle && (
+                 onClick={() => navigate('/discover')}
+                 className="text-gray-600 dark:text-gray-400 hover:text-black dark:hover:text-white bg-transparent border-none cursor-pointer text-left"
+               >
+                 Discover
+               </button>
+               <button
+                 onClick={() => navigate('/docs')}
+                 className="text-gray-600 dark:text-gray-400 hover:text-black dark:hover:text-white bg-transparent border-none cursor-pointer text-left"
+               >
+                 Help
+               </button>
+               {showBrcToggle && (
                 <button
                   onClick={onToggleBrc20}
                   className={`text-sm px-3 py-1 rounded-full border ${hideBrc20 ? 'border-indigo-500 text-indigo-600 dark:text-indigo-300' : 'border-gray-400 text-gray-600 dark:text-gray-300'} bg-transparent cursor-pointer`}
