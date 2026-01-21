@@ -76,6 +76,40 @@ type payerSelection struct {
 	changeAllowed bool
 }
 
+// allPayerSelectionsAreSegWit checks if all selected UTXOs are SegWit types (P2WPKH, P2WSH, Taproot).
+// Returns true only if all inputs are SegWit, which means the TxID is non-malleable.
+func allPayerSelectionsAreSegWit(selections []payerSelection, client *MempoolClient, params *chaincfg.Params) bool {
+	for _, sel := range selections {
+		for _, u := range sel.utxos {
+			_, prevOut, err := client.FetchTxOutput(u.TxID, u.Vout)
+			if err != nil {
+				return false // If we can't fetch, assume not safe
+			}
+
+			_, addrs, _, err := txscript.ExtractPkScriptAddrs(prevOut.PkScript, params)
+			if err != nil {
+				return false // If we can't extract addresses, assume not safe
+			}
+
+			// Check each address from the script
+			for _, addr := range addrs {
+				switch addr.(type) {
+				case *btcutil.AddressWitnessPubKeyHash:
+					// P2WPKH - SegWit native
+				case *btcutil.AddressWitnessScriptHash:
+					// P2WSH - SegWit native
+				case *btcutil.AddressTaproot:
+					// Taproot - SegWit v1
+				default:
+					// Any other type (P2PKH, P2SH, etc.) makes TxID malleable
+					return false
+				}
+			}
+		}
+	}
+	return true
+}
+
 // BuildFundingPSBT selects confirmed UTXOs, estimates fees at the provided feerate, and builds a PSBT.
 // When a pixel hash is provided, a small commitment output is added alongside the contractor payout.
 func BuildFundingPSBT(client *MempoolClient, params *chaincfg.Params, req PSBTRequest) (*PSBTResult, error) {
@@ -149,18 +183,16 @@ func BuildFundingPSBT(client *MempoolClient, params *chaincfg.Params, req PSBTRe
 	var redeemScript []byte
 	var redeemScriptHash []byte
 	var commitmentAddr string
-	if len(req.PixelHash) > 0 {
+	// Only create commitment when BOTH pixelHash is provided AND commitmentSats > 0
+	if len(req.PixelHash) > 0 && req.CommitmentSats > 0 {
 		commitmentScript, redeemScript, redeemScriptHash, commitmentAddr, err = buildCommitmentScript(params, req.PixelHash, req.CommitmentAddress)
 		if err != nil {
 			return nil, err
 		}
 		commitmentSats = req.CommitmentSats
-		// Only apply minimums for donations (non-zero commitment)
-		// Allow 0 commitment when user skips donation
-		if commitmentSats > 0 {
-			if commitmentSats < 546 {
-				commitmentSats = 546
-			}
+		// Apply minimum for donations (must be > 0 to reach here)
+		if commitmentSats < 546 {
+			commitmentSats = 546
 		}
 	}
 
@@ -266,6 +298,48 @@ func BuildFundingPSBT(client *MempoolClient, params *chaincfg.Params, req PSBTRe
 		return nil, fmt.Errorf("serialize psbt: %w", err)
 	}
 
+	// Check if all inputs are SegWit to determine if we can pre-calculate TxID
+	allSegWit := true
+	for _, u := range selected {
+		_, prevOut, err := client.FetchTxOutput(u.utxo.TxID, u.utxo.Vout)
+		if err != nil {
+			allSegWit = false
+			break
+		}
+
+		_, addrs, _, err := txscript.ExtractPkScriptAddrs(prevOut.PkScript, params)
+		if err != nil {
+			allSegWit = false
+			break
+		}
+
+		// Check each address from the script
+		isSegWitInput := false
+		for _, addr := range addrs {
+			switch addr.(type) {
+			case *btcutil.AddressWitnessPubKeyHash:
+				// P2WPKH - SegWit native
+				isSegWitInput = true
+			case *btcutil.AddressWitnessScriptHash:
+				// P2WSH - SegWit native
+				isSegWitInput = true
+			case *btcutil.AddressTaproot:
+				// Taproot - SegWit v1
+				isSegWitInput = true
+			}
+		}
+		if !isSegWitInput {
+			allSegWit = false
+			break
+		}
+	}
+
+	var fundingTxID string
+	if allSegWit {
+		// All inputs are SegWit, so TxID is non-malleable and can be pre-calculated
+		fundingTxID = tx.TxHash().String()
+	}
+
 	return &PSBTResult{
 		EncodedBase64:    base64.StdEncoding.EncodeToString(psbtBytes),
 		EncodedHex:       hex.EncodeToString(psbtBytes),
@@ -283,7 +357,7 @@ func BuildFundingPSBT(client *MempoolClient, params *chaincfg.Params, req PSBTRe
 		RedeemScript:     redeemScript,
 		RedeemScriptHash: redeemScriptHash,
 		CommitmentAddr:   commitmentAddr,
-		FundingTxID:      "", // Don't set until transaction is actually broadcast
+		FundingTxID:      fundingTxID,
 	}, nil
 }
 
@@ -518,6 +592,15 @@ func BuildRaiseFundPSBT(client *MempoolClient, params *chaincfg.Params, payers [
 		return nil, fmt.Errorf("serialize psbt: %w", err)
 	}
 
+	// Check if all inputs are SegWit to determine if we can pre-calculate TxID
+	allSegWit := allPayerSelectionsAreSegWit(selections, client, params)
+
+	var fundingTxID string
+	if allSegWit {
+		// All inputs are SegWit, so TxID is non-malleable and can be pre-calculated
+		fundingTxID = tx.TxHash().String()
+	}
+
 	outputTotal := sumAmounts(payoutAmounts) + commitmentSats + totalChange
 	actualFee := totalSelected - outputTotal
 	if actualFee < 0 {
@@ -541,7 +624,7 @@ func BuildRaiseFundPSBT(client *MempoolClient, params *chaincfg.Params, payers [
 		RedeemScript:     redeemScript,
 		RedeemScriptHash: redeemScriptHash,
 		CommitmentAddr:   commitmentAddr,
-		FundingTxID:      "", // Don't set until transaction is actually broadcast
+		FundingTxID:      fundingTxID,
 	}, nil
 }
 
@@ -609,16 +692,17 @@ func buildCommitmentScript(params *chaincfg.Params, pixelHash []byte, commitment
 }
 
 func buildHashlockRedeemScript(pixelHash []byte) ([]byte, error) {
-	lockHash := sha256.Sum256(pixelHash)
 	builder := txscript.NewScriptBuilder()
 	builder.AddOp(txscript.OP_SHA256)
-	builder.AddData(lockHash[:])
+	// The pixelHash passed in is actually the preimage (visible pixel hash or stego hash).
+	// We must hash it so the script becomes OP_SHA256 <SHA256(preimage)> OP_EQUAL.
+	hash := sha256.Sum256(pixelHash)
+	builder.AddData(hash[:])
 	builder.AddOp(txscript.OP_EQUAL)
 	return builder.Script()
 }
 
 func buildHashlockP2PKHRedeemScript(pixelHash []byte, addr btcutil.Address) ([]byte, error) {
-	lockHash := sha256.Sum256(pixelHash)
 	if addr == nil {
 		return nil, fmt.Errorf("commitment address required")
 	}
@@ -628,7 +712,7 @@ func buildHashlockP2PKHRedeemScript(pixelHash []byte, addr btcutil.Address) ([]b
 	}
 	builder := txscript.NewScriptBuilder()
 	builder.AddOp(txscript.OP_SHA256)
-	builder.AddData(lockHash[:])
+	builder.AddData(pixelHash[:])
 	builder.AddOp(txscript.OP_EQUALVERIFY)
 	builder.AddOp(txscript.OP_DUP)
 	builder.AddOp(txscript.OP_HASH160)

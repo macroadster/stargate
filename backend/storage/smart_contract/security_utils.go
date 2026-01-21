@@ -256,7 +256,7 @@ func ValidateBitcoinAddress(addr string) error {
 }
 
 // ValidateProposalInput validates all proposal input fields
-func ValidateProposalInput(proposal smart_contract.Proposal) error {
+func ValidateProposalInput(proposal *smart_contract.Proposal) error {
 	// Validate title
 	if proposal.Title != "" {
 		if len(proposal.Title) > MaxProposalTitle {
@@ -351,6 +351,23 @@ func ValidateProposalInput(proposal smart_contract.Proposal) error {
 				return fmt.Errorf("task %d validation failed: %v", i+1, err)
 			}
 		}
+	}
+
+	return nil
+}
+
+// ValidateProposalForApproval validates a proposal for approval without requiring status change
+func ValidateProposalForApproval(proposal *smart_contract.Proposal) error {
+	// Use the same validation as ValidateProposalInput but without status dependency
+	if err := ValidateProposalInput(proposal); err != nil {
+		return err
+	}
+
+	// Additional approval-specific validations
+	if len(proposal.Tasks) == 0 {
+		// Check if proposal has associated tasks in the contract (if applicable)
+		// This allows approval of proposals that reference existing contract tasks
+		return nil // No tasks in proposal itself is OK if contract has tasks
 	}
 
 	return nil

@@ -2,40 +2,100 @@
 @tailwind components;
 @tailwind utilities;
 
-body, html {
-  background: white;
-}
-
-.dark body, html {
-  background: rgb(3 7 18); /* gray-950 */
-}
-
-body {
+/* Root theme backgrounds for html and body */
+html, body {
+  background-color: white;
+  color: black;
   margin: 0;
-  overflow: auto;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+  padding: 0;
 }
 
-code {
-  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
-    monospace;
+/* Explicit dark mode for root elements */
+html.dark, html.dark body {
+  background-color: #030712 !important; /* Tailwind gray-950 */
+  color: white !important;
 }
 
-@keyframes block-slide-in {
-  0% {
-    transform: translateX(-14px);
-    opacity: 0.65;
-  }
-  100% {
-    transform: translateX(0);
-    opacity: 1;
-  }
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
 }
 
-.block-slide-in {
-  animation: block-slide-in 0.65s ease-out;
+/* Documentation prose styling */
+.prose {
+  max-width: none;
+}
+
+.prose h1 {
+  @apply text-3xl font-bold mb-6 text-black dark:text-white;
+}
+
+.prose h2 {
+  @apply text-2xl font-semibold mb-4 text-black dark:text-white mt-6;
+}
+
+.prose h3 {
+  @apply text-xl font-medium mb-3 text-black dark:text-white mt-4;
+}
+
+.prose p {
+  @apply mb-4 text-black dark:text-white;
+}
+
+.prose strong {
+  @apply font-bold text-black dark:text-white;
+}
+
+.prose em {
+  @apply italic text-black dark:text-white;
+}
+
+.prose code {
+  @apply bg-gray-200 dark:bg-gray-800 px-2 py-1 rounded text-sm font-mono text-black dark:text-white;
+}
+
+.prose pre {
+  @apply bg-gray-100 dark:bg-gray-900 p-4 rounded-lg overflow-x-auto mb-4;
+}
+
+.prose pre code {
+  @apply text-sm font-mono text-black dark:text-white bg-transparent;
+}
+
+.prose a {
+  @apply text-indigo-600 dark:text-indigo-400 hover:underline;
+}
+
+.prose ul {
+  @apply list-disc pl-6 mb-4 text-black dark:text-white;
+}
+
+.prose li {
+  @apply mb-2 text-black dark:text-white;
+}
+
+.prose blockquote {
+  @apply border-l-4 border-gray-300 dark:border-gray-600 pl-4 italic text-gray-600 dark:text-gray-400;
+}
+
+.prose table {
+  @apply w-full border-collapse border border-gray-300 dark:border-gray-700 mb-4;
+}
+
+.prose th,
+.prose td {
+  @apply border border-gray-300 dark:border-gray-700 px-4 py-2 text-left text-black dark:text-white;
+}
+
+.prose th {
+  @apply bg-gray-50 dark:bg-gray-800 font-semibold;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.dragging {
+  cursor: grabbing;
+  user-select: none;
 }

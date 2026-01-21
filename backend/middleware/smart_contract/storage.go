@@ -25,13 +25,20 @@ type Store interface {
 	ListTasks(filter smart_contract.TaskFilter) ([]smart_contract.Task, error)
 	GetTask(id string) (smart_contract.Task, error)
 	GetContract(id string) (smart_contract.Contract, error)
-	ClaimTask(taskID, aiID, contractorWallet string, estimatedCompletion *time.Time) (smart_contract.Claim, error)
+	ClaimTask(taskID, walletAddress string, estimatedCompletion *time.Time) (smart_contract.Claim, error)
 	SubmitWork(claimID string, deliverables map[string]interface{}, proof map[string]interface{}) (smart_contract.Submission, error)
 	TaskStatus(taskID string) (map[string]interface{}, error)
 	GetTaskProof(taskID string) (*smart_contract.MerkleProof, error)
 	ContractFunding(contractID string) (smart_contract.Contract, []smart_contract.MerkleProof, error)
 	Close()
 	UpdateTaskProof(ctx context.Context, taskID string, proof *smart_contract.MerkleProof) error
+	UpdateContractStatus(ctx context.Context, contractID, status string) error
+	// Sync operations for distributed deployments
+	SyncClaim(ctx context.Context, claim smart_contract.Claim) error
+	SyncSubmission(ctx context.Context, submission smart_contract.Submission) error
+	UpsertTask(ctx context.Context, task smart_contract.Task) error
+	SyncEscortStatus(ctx context.Context, status smart_contract.EscortStatus) error
+	GetSubmission(ctx context.Context, submissionID string) (smart_contract.Submission, error)
 	// Proposal operations
 	CreateProposal(ctx context.Context, p smart_contract.Proposal) error
 	ListProposals(ctx context.Context, filter smart_contract.ProposalFilter) ([]smart_contract.Proposal, error)

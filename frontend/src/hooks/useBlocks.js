@@ -46,13 +46,15 @@ export const useBlocks = () => {
   const [isUserNavigating, setIsUserNavigating] = useState(false);
   const [nextCursor, setNextCursor] = useState(null);
   const [hasMore, setHasMore] = useState(true);
-  const [showHistorical, setShowHistorical] = useState(true);
+  const [showHistorical, setShowHistorical] = useState(null);
   const loadingRef = useRef(false);
   const blocksRef = useRef([]);
   const latestHeightRef = useRef(null);
   const newBlockTimeoutRef = useRef(null);
   const selectedBlockRef = useRef(null);
   const manualSelectedHeight = useRef(null);
+  const networkBlockHeightRef = useRef(null);
+  const networkCheckedRef = useRef(false);
   const pinnedMilestones = useRef([
     0, // genesis
     174923, // Pizza Day
@@ -66,6 +68,11 @@ export const useBlocks = () => {
 
   const fetchBlocks = useCallback(async (cursor = null, isPolling = false) => {
     if (loadingRef.current) return;
+    if (showHistorical === null) {
+      console.log('Waiting for network check (showHistorical is null)');
+      return;
+    }
+    console.log('fetchBlocks called, showHistorical:', showHistorical, 'networkChecked:', networkCheckedRef.current, 'isPolling:', isPolling);
     loadingRef.current = true;
     try {
       const url = new URL(`${API_BASE}/api/data/block-summaries`);
@@ -79,6 +86,24 @@ export const useBlocks = () => {
         throw new Error(`HTTP ${response.status}`);
       }
 
+      let networkHeight = networkBlockHeightRef.current;
+
+      if (!networkHeight || isPolling) {
+        try {
+          const healthRes = await fetch(`${API_BASE}/bitcoin/v1/health`);
+          if (healthRes.ok) {
+            const healthData = await healthRes.json();
+            networkHeight = healthData?.bitcoin?.block_height || healthData?.bitcoin?.blockHeight;
+            if (networkHeight) {
+              networkBlockHeightRef.current = networkHeight;
+              console.log('Network height set to:', networkHeight);
+            }
+          }
+        } catch (healthError) {
+          console.error('Failed to fetch network height:', healthError);
+        }
+      }
+
       const blocksData = data.blocks || [];
 
       const recentBlocks = Array.isArray(blocksData)
@@ -86,13 +111,6 @@ export const useBlocks = () => {
             .map(generateBlock)
             .filter(b => b.height)
         : [];
-      const milestoneSet = new Set(pinnedMilestones.current);
-      const maxHeight = recentBlocks
-        .filter((b) => !milestoneSet.has(b.height))
-        .reduce((max, b) => Math.max(max, b.height || 0), 0);
-      if (showHistorical && maxHeight > 0 && maxHeight < 200000) {
-        setShowHistorical(false);
-      }
 
       const combined = [...blocksRef.current, ...recentBlocks];
       const seenFinal = new Set();
@@ -126,7 +144,7 @@ export const useBlocks = () => {
         840000: { hash: 'halving-4', tx_count: 3100, timestamp: new Date('2024-04-20T00:00:00Z').getTime() / 1000 }
       };
 
-      if (showHistorical) {
+      if (showHistorical === true) {
         pinnedMilestones.current.forEach((height) => {
           if (!deduped.some((b) => b.height === height)) {
             const meta = milestoneMeta[height] || {};
@@ -148,17 +166,9 @@ export const useBlocks = () => {
           }
         });
       }
-      if (!showHistorical) {
-        deduped = deduped.filter((b) => !milestoneSet.has(b.height));
-      }
 
-      // Add pending/future placeholder one above the highest real block
-      const realMaxHeight = deduped
-        .filter((b) => !b.isFuture && typeof b.height === 'number' && b.height > 0)
-        .reduce((max, b) => Math.max(max, b.height || 0), 0);
-
-      if (realMaxHeight > 0) {
-        const futureHeight = realMaxHeight + 1;
+      if (networkHeight && networkHeight > 0) {
+        const futureHeight = networkHeight + 1;
         const existingFuture = deduped.find((b) => b.isFuture);
         const futureTimestamp = existingFuture?.timestamp || Math.floor(Date.now() / 1000) + 600;
         deduped = deduped.filter((b) => !b.isFuture);
@@ -242,20 +252,30 @@ export const useBlocks = () => {
         if (!res.ok) return;
         const data = await res.json();
         const network = String(data?.network || '').toLowerCase();
-        if (network && network !== 'mainnet') {
-          setShowHistorical(false);
-        }
+        console.log('Network detected:', network);
+        const isMainnet = network === 'mainnet';
+        setShowHistorical(isMainnet);
+        networkCheckedRef.current = true;
+        fetchBlocks(null, false);
       } catch (error) {
         console.error('Failed to fetch network info:', error);
+        setShowHistorical(false);
+        networkCheckedRef.current = true;
+        fetchBlocks(null, false);
       }
     };
     fetchNetwork();
-  }, []);
+  }, [fetchBlocks]);
 
   useEffect(() => {
     let intervalId = null;
-    const poll = () => fetchBlocks(null, true);
-    fetchBlocks(null, false);
+    const poll = () => {
+      if (!networkCheckedRef.current) {
+        console.log('Skipping poll: network check not complete');
+        return;
+      }
+      fetchBlocks(null, true);
+    };
     const startPolling = () => {
       if (intervalId) return;
       intervalId = setInterval(poll, 120000);
@@ -284,7 +304,7 @@ export const useBlocks = () => {
       }
       document.removeEventListener('visibilitychange', handleVisibility);
     };
-  }, [fetchBlocks]);
+  }, [fetchBlocks, showHistorical]);
 
   useEffect(() => {
     selectedBlockRef.current = selectedBlock;

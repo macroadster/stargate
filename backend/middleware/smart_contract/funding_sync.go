@@ -5,26 +5,101 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"stargate-backend/bitcoin"
-	"stargate-backend/core/smart_contract"
 	scstore "stargate-backend/storage/smart_contract"
+
+	"stargate-backend/core/smart_contract"
 )
 
-// FundingProvider fetches up-to-date funding proofs for a task.
 type FundingProvider interface {
 	FetchProof(ctx context.Context, task smart_contract.Task) (*smart_contract.MerkleProof, error)
 }
 
-// NewFundingProvider selects a provider based on name.
 func NewFundingProvider(name, base string) FundingProvider {
 	switch name {
+	case "blockcypher":
+		return NewCachedFundingProvider(NewBlockcypherProvider(base))
 	case "blockstream":
-		return NewBlockstreamFundingProvider(base)
+		return NewCachedFundingProvider(NewBlockstreamFundingProvider(base))
 	default:
-		return NewMockFundingProvider()
+		return NewCachedFundingProvider(NewMockFundingProvider())
 	}
+}
+
+// cachedFundingProvider wraps a funding provider with caching
+type cachedFundingProvider struct {
+	provider FundingProvider
+
+	// Cache for proof results
+	cache      map[string]*proofCacheEntry
+	cacheTime  time.Time
+	cacheMutex sync.RWMutex
+	ttl        time.Duration
+}
+
+type proofCacheEntry struct {
+	proof    *smart_contract.MerkleProof
+	cachedAt time.Time
+}
+
+// NewCachedFundingProvider creates a funding provider with caching
+func NewCachedFundingProvider(provider FundingProvider) FundingProvider {
+	return &cachedFundingProvider{
+		provider:   provider,
+		cache:      make(map[string]*proofCacheEntry),
+		cacheTime:  time.Time{},
+		cacheMutex: sync.RWMutex{},
+		ttl:        60 * time.Second, // Cache proofs for 1 minute
+	}
+}
+
+func (p *cachedFundingProvider) FetchProof(ctx context.Context, task smart_contract.Task) (*smart_contract.MerkleProof, error) {
+	// Check cache first - always prefer transaction ID as cache key
+	cacheKey := ""
+	if task.MerkleProof != nil && task.MerkleProof.TxID != "" {
+		cacheKey = task.MerkleProof.TxID
+	} else if task.TaskID != "" {
+		cacheKey = task.TaskID
+	}
+
+	if cacheKey == "" {
+		return p.provider.FetchProof(ctx, task)
+	}
+
+	// Check cache
+	p.cacheMutex.RLock()
+	entry, exists := p.cache[cacheKey]
+	p.cacheMutex.RUnlock()
+
+	if exists && time.Since(entry.cachedAt) < p.ttl {
+		log.Printf("Funding sync cache hit for task %s", cacheKey)
+		return entry.proof, nil
+	}
+
+	// Cache miss - fetch from underlying provider
+	log.Printf("Funding sync cache miss for task %s", cacheKey)
+	proof, err := p.provider.FetchProof(ctx, task)
+	if err != nil {
+		return nil, err
+	}
+
+	// Update cache with transaction ID as key when available
+	finalCacheKey := cacheKey
+	if proof != nil && proof.TxID != "" {
+		finalCacheKey = proof.TxID
+	}
+
+	p.cacheMutex.Lock()
+	p.cache[finalCacheKey] = &proofCacheEntry{
+		proof:    proof,
+		cachedAt: time.Now(),
+	}
+	p.cacheMutex.Unlock()
+
+	return proof, nil
 }
 
 // mockFundingProvider confirms provisional proofs without external calls.
@@ -62,7 +137,7 @@ func (m *mockFundingProvider) FetchProof(ctx context.Context, task smart_contrac
 }
 
 // StartFundingSync periodically refreshes provisional proofs using the provider.
-func StartFundingSync(ctx context.Context, store Store, provider FundingProvider, interval time.Duration) error {
+func StartFundingSync(ctx context.Context, store Store, provider FundingProvider, escort *smart_contract.EscortService, interval time.Duration) error {
 	pgStore, ok := store.(*scstore.PGStore)
 	if !ok {
 		return errors.New("funding sync requires Postgres store")
@@ -76,7 +151,7 @@ func StartFundingSync(ctx context.Context, store Store, provider FundingProvider
 			case <-ctx.Done():
 				return
 			case <-t.C:
-				if err := refreshProofs(ctx, pgStore, provider, mempool); err != nil {
+				if err := refreshProofs(ctx, pgStore, provider, escort, mempool); err != nil {
 					log.Printf("funding sync error: %v", err)
 				}
 			}
@@ -85,7 +160,7 @@ func StartFundingSync(ctx context.Context, store Store, provider FundingProvider
 	return nil
 }
 
-func refreshProofs(ctx context.Context, store *scstore.PGStore, provider FundingProvider, mempool *bitcoin.MempoolClient) error {
+func refreshProofs(ctx context.Context, store *scstore.PGStore, provider FundingProvider, escort *smart_contract.EscortService, mempool *bitcoin.MempoolClient) error {
 	tasks, err := store.ListTasks(smart_contract.TaskFilter{Status: ""})
 	if err != nil {
 		return err
@@ -104,16 +179,49 @@ func refreshProofs(ctx context.Context, store *scstore.PGStore, provider Funding
 			proof = fetched
 			if err := store.UpdateTaskProof(ctx, t.TaskID, proof); err != nil {
 				log.Printf("failed to update proof for %s: %v", t.TaskID, err)
-			} else if prevStatus != "confirmed" && proof.ConfirmationStatus == "confirmed" {
+			} else {
+				// Always publish proof update to sync across instances
 				PublishEvent(smart_contract.Event{
-					Type:      "contract_confirmed",
-					EntityID:  t.ContractID,
+					Type:      "task_proof_update",
+					EntityID:  t.TaskID,
 					Actor:     "oracle",
-					Message:   fmt.Sprintf("contract confirmed on-chain via task %s", t.TaskID),
+					Message:   fmt.Sprintf("task proof updated (status=%s)", proof.ConfirmationStatus),
+					CreatedAt: time.Now(),
+				})
+
+				if prevStatus != "confirmed" && proof.ConfirmationStatus == "confirmed" {
+					PublishEvent(smart_contract.Event{
+						Type:      "contract_confirmed",
+						EntityID:  t.ContractID,
+						Actor:     "oracle",
+						Message:   fmt.Sprintf("contract confirmed on-chain via task %s", t.TaskID),
+						CreatedAt: time.Now(),
+					})
+				}
+			}
+		}
+
+		// Use EscortService to validate proof and publish results
+		if escort != nil {
+			escortStatus, err := escort.ValidateProof(proof)
+			if err == nil && escortStatus != nil {
+				// We need TaskID in EscortStatus for sync
+				escortStatus.TaskID = t.TaskID
+
+				// Persist locally
+				_ = store.SyncEscortStatus(ctx, *escortStatus)
+
+				// Publish for other instances
+				PublishEvent(smart_contract.Event{
+					Type:      "escort_validation",
+					EntityID:  t.TaskID,
+					Actor:     "escort",
+					Message:   fmt.Sprintf("escort validation result: %s", escortStatus.ProofStatus),
 					CreatedAt: time.Now(),
 				})
 			}
 		}
+
 		if err := bitcoin.SweepCommitmentIfReady(ctx, store, mempool, t, proof); err != nil {
 			log.Printf("commitment sweep error for %s: %v", t.TaskID, err)
 		}

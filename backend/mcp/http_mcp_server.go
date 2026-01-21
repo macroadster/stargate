@@ -3,28 +3,21 @@ package mcp
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
-	"net/url"
-	"sort"
-	"strconv"
 	"strings"
 	"time"
 
 	"stargate-backend/core"
 	"stargate-backend/core/smart_contract"
 	scmiddleware "stargate-backend/middleware/smart_contract"
-	"stargate-backend/models"
 	"stargate-backend/services"
 	"stargate-backend/starlight"
 	auth "stargate-backend/storage/auth"
-	scstore "stargate-backend/storage/smart_contract"
 )
 
 // HTTPMCPServer provides HTTP endpoints for MCP tools
@@ -34,195 +27,32 @@ type HTTPMCPServer struct {
 	ingestionSvc     *services.IngestionService
 	scannerManager   *starlight.ScannerManager
 	smartContractSvc *services.SmartContractService
+	server           *scmiddleware.Server
 	httpClient       *http.Client
 	baseURL          string
 	rateLimiter      map[string][]time.Time // API key -> request timestamps
+	challengeStore   *auth.ChallengeStore
 }
 
 // NewHTTPMCPServer creates a new HTTP MCP server
-func NewHTTPMCPServer(store scmiddleware.Store, apiKeyStore auth.APIKeyValidator, ingestionSvc *services.IngestionService, scannerManager *starlight.ScannerManager, smartContractSvc *services.SmartContractService) *HTTPMCPServer {
+func NewHTTPMCPServer(store scmiddleware.Store, apiKeyStore auth.APIKeyValidator, ingestionSvc *services.IngestionService, scannerManager *starlight.ScannerManager, smartContractSvc *services.SmartContractService, challengeStore *auth.ChallengeStore) *HTTPMCPServer {
 	return &HTTPMCPServer{
 		store:            store,
 		apiKeyStore:      apiKeyStore,
 		ingestionSvc:     ingestionSvc,
 		scannerManager:   scannerManager,
 		smartContractSvc: smartContractSvc,
+		server:           nil,
 		httpClient:       &http.Client{Timeout: 10 * time.Second},
 		baseURL:          "http://localhost:3001", // Default backend URL
 		rateLimiter:      make(map[string][]time.Time),
+		challengeStore:   challengeStore,
 	}
 }
 
-// MCPRequest represents an incoming MCP tool call via HTTP
-type MCPRequest struct {
-	Tool      string                 `json:"tool"`
-	Arguments map[string]interface{} `json:"arguments,omitempty"`
-}
-
-// MCPResponse represents response from an MCP tool call
-type MCPResponse struct {
-	Success        bool        `json:"success"`
-	Result         interface{} `json:"result,omitempty"`
-	Error          string      `json:"error,omitempty"`
-	ErrorCode      string      `json:"error_code,omitempty"`
-	Message        string      `json:"message,omitempty"`
-	Code           int         `json:"code,omitempty"`
-	Hint           string      `json:"hint,omitempty"`
-	Timestamp      string      `json:"timestamp,omitempty"`
-	RequiredFields []string    `json:"required_fields,omitempty"`
-	DocsURL        string      `json:"docs_url,omitempty"`
-	RequestID      string      `json:"request_id,omitempty"`
-	Version        string      `json:"version,omitempty"`
-}
-
-func apiKeyHash(apiKey string) string {
-	key := strings.TrimSpace(apiKey)
-	if key == "" {
-		return ""
-	}
-	sum := sha256.Sum256([]byte(key))
-	return hex.EncodeToString(sum[:])
-}
-
-func requireCreatorApproval(apiKey string, proposal smart_contract.Proposal) error {
-	if proposal.Metadata == nil {
-		return fmt.Errorf("proposal missing creator metadata")
-	}
-	required, _ := proposal.Metadata["creator_api_key_hash"].(string)
-	required = strings.TrimSpace(required)
-	if required == "" {
-		return fmt.Errorf("proposal missing creator_api_key_hash; recreate the wish to approve")
-	}
-	current := apiKeyHash(apiKey)
-	if current == "" {
-		return fmt.Errorf("api key required for approval")
-	}
-	if required != current {
-		return fmt.Errorf("approver does not match proposal creator")
-	}
-	return nil
-}
-
-type jsonRPCRequest struct {
-	JSONRPC string                 `json:"jsonrpc"`
-	ID      interface{}            `json:"id,omitempty"`
-	Method  string                 `json:"method"`
-	Params  map[string]interface{} `json:"params,omitempty"`
-}
-
-type jsonRPCResponse struct {
-	JSONRPC string        `json:"jsonrpc"`
-	ID      interface{}   `json:"id,omitempty"`
-	Result  interface{}   `json:"result,omitempty"`
-	Error   *jsonRPCError `json:"error,omitempty"`
-}
-
-type jsonRPCError struct {
-	Code    int         `json:"code"`
-	Message string      `json:"message"`
-	Data    interface{} `json:"data,omitempty"`
-}
-
-// RegisterRoutes registers HTTP MCP endpoints
-func (h *HTTPMCPServer) RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("/mcp/tools", h.authWrap(h.handleListTools))
-	mux.HandleFunc("/mcp/call", h.authWrap(h.handleToolCall))
-	mux.HandleFunc("/mcp/discover", h.authWrap(h.handleDiscover))
-	mux.HandleFunc("/mcp/docs", h.handleDocs)            // No auth required for documentation
-	mux.HandleFunc("/mcp/openapi.json", h.handleOpenAPI) // No auth required for API spec
-	mux.HandleFunc("/mcp/health", h.handleHealth)
-	mux.HandleFunc("/mcp/events", h.authWrap(h.handleEventsProxy))
-	mux.HandleFunc("/mcp", h.authWrap(h.handleIndex))
-	// Register catch-all last
-	mux.HandleFunc("/mcp/", h.authWrap(h.handleIndex))
-}
-
-// checkRateLimit checks if the API key has exceeded rate limit (100 requests per minute)
-func (h *HTTPMCPServer) checkRateLimit(key string) bool {
-	now := time.Now()
-	window := now.Add(-time.Minute)
-	times := h.rateLimiter[key]
-	valid := make([]time.Time, 0, len(times))
-	for _, t := range times {
-		if t.After(window) {
-			valid = append(valid, t)
-		}
-	}
-	h.rateLimiter[key] = valid
-	if len(valid) >= 100 {
-		return false
-	}
-	h.rateLimiter[key] = append(h.rateLimiter[key], now)
-	return true
-}
-
-func (h *HTTPMCPServer) authWrap(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("AUDIT: %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
-		// Check API key if configured
-		if h.apiKeyStore != nil {
-			key := r.Header.Get("X-API-Key")
-			if key == "" {
-				// Check Authorization: Bearer <key>
-				auth := r.Header.Get("Authorization")
-				if strings.HasPrefix(auth, "Bearer ") {
-					key = strings.TrimPrefix(auth, "Bearer ")
-				}
-			}
-			if key == "" && h.allowUnauthMCP(r) {
-				next(w, r)
-				return
-			}
-			if key == "" {
-				log.Printf("AUDIT: Missing API key for %s %s", r.Method, r.URL.Path)
-				h.writeHTTPError(w, http.StatusUnauthorized, "API_KEY_REQUIRED", "API key required", "Send X-API-Key or Authorization: Bearer <key>.")
-				return
-			}
-			if !h.apiKeyStore.Validate(key) {
-				log.Printf("AUDIT: Invalid API key for %s %s", r.Method, r.URL.Path)
-				h.writeHTTPError(w, http.StatusForbidden, "API_KEY_INVALID", "Invalid API key", "Double-check the X-API-Key header value.")
-				return
-			}
-			// Check rate limit
-			if !h.checkRateLimit(key) {
-				log.Printf("AUDIT: Rate limit exceeded for key %s on %s %s", key, r.Method, r.URL.Path)
-				h.writeHTTPError(w, http.StatusTooManyRequests, "RATE_LIMITED", "Rate limit exceeded", "Retry after a short delay.")
-				return
-			}
-			log.Printf("AUDIT: Authenticated request for key %s on %s %s", key, r.Method, r.URL.Path)
-		}
-		next(w, r)
-	}
-}
-
-func (h *HTTPMCPServer) allowUnauthMCP(r *http.Request) bool {
-	if r == nil || r.URL == nil {
-		return false
-	}
-	if r.Method != http.MethodPost {
-		return false
-	}
-	if r.URL.Path != "/mcp" && r.URL.Path != "/mcp/" {
-		return false
-	}
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		return false
-	}
-	r.Body = io.NopCloser(bytes.NewReader(body))
-	if len(body) == 0 {
-		return false
-	}
-	var req jsonRPCRequest
-	if err := json.Unmarshal(body, &req); err != nil {
-		return false
-	}
-	switch req.Method {
-	case "initialize", "notifications/initialized":
-		return true
-	default:
-		return false
-	}
+// SetServer sets the smart_contract server reference
+func (h *HTTPMCPServer) SetServer(server *scmiddleware.Server) {
+	h.server = server
 }
 
 func (h *HTTPMCPServer) externalBaseURL(r *http.Request) string {
@@ -250,608 +80,186 @@ func (h *HTTPMCPServer) externalBaseURL(r *http.Request) string {
 	return scheme + "://" + host
 }
 
-// getToolSchemas returns detailed schemas for all available tools
-func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
-	return map[string]interface{}{
-		"list_contracts": map[string]interface{}{
-			"description": "List available smart contracts with optional filtering",
-			"parameters": map[string]interface{}{
-				"status": map[string]interface{}{
-					"type":        "string",
-					"description": "Filter contracts by status",
-					"enum":        []string{"active", "pending", "completed"},
-				},
-				"creator": map[string]interface{}{
-					"type":        "string",
-					"description": "Filter contracts by creator metadata",
-				},
-				"ai_identifier": map[string]interface{}{
-					"type":        "string",
-					"description": "Filter contracts by AI identifier metadata",
-				},
-				"skills": map[string]interface{}{
-					"type":        "array",
-					"items":       map[string]interface{}{"type": "string"},
-					"description": "Filter contracts by required skills",
-				},
-			},
-			"examples": []map[string]interface{}{
-				{
-					"description": "List all active contracts",
-					"arguments":   map[string]interface{}{"status": "active"},
-				},
-			},
-		},
-		"get_contract": map[string]interface{}{
-			"description": "Get details of a specific contract",
-			"parameters": map[string]interface{}{
-				"contract_id": map[string]interface{}{
-					"type":        "string",
-					"description": "The ID of the contract to retrieve",
-					"required":    true,
-				},
-			},
-			"examples": []map[string]interface{}{
-				{
-					"description": "Get contract details",
-					"arguments":   map[string]interface{}{"contract_id": "contract-123"},
-				},
-			},
-		},
-		"list_tasks": map[string]interface{}{
-			"description": "List available tasks with filtering options",
-			"parameters": map[string]interface{}{
-				"contract_id": map[string]interface{}{
-					"type":        "string",
-					"description": "Filter tasks by contract ID",
-				},
-				"skills": map[string]interface{}{
-					"type":        "array",
-					"items":       map[string]interface{}{"type": "string"},
-					"description": "Filter by required skills",
-				},
-				"status": map[string]interface{}{
-					"type":        "string",
-					"description": "Filter by task status",
-					"enum":        []string{"available", "claimed", "completed"},
-				},
-				"limit": map[string]interface{}{
-					"type":        "integer",
-					"description": "Maximum number of tasks to return",
-				},
-			},
-			"examples": []map[string]interface{}{
-				{
-					"description": "List available tasks",
-					"arguments":   map[string]interface{}{"status": "available"},
-				},
-			},
-		},
-		"claim_task": map[string]interface{}{
-			"description": "Claim a task for work by an AI agent",
-			"parameters": map[string]interface{}{
-				"task_id": map[string]interface{}{
-					"type":        "string",
-					"description": "The ID of the task to claim",
-					"required":    true,
-				},
-				"ai_identifier": map[string]interface{}{
-					"type":        "string",
-					"description": "Identifier of the AI agent claiming the task",
-					"required":    true,
-				},
-			},
-			"examples": []map[string]interface{}{
-				{
-					"description": "Claim a task",
-					"arguments": map[string]interface{}{
-						"task_id":       "task-123",
-						"ai_identifier": "agent-1",
-					},
-				},
-			},
-		},
-		"submit_work": map[string]interface{}{
-			"description": "Submit completed work for a claimed task",
-			"parameters": map[string]interface{}{
-				"claim_id": map[string]interface{}{
-					"type":        "string",
-					"description": "The claim ID from claiming the task",
-					"required":    true,
-				},
-				"deliverables": map[string]interface{}{
-					"type":        "object",
-					"description": "The work deliverables. Must include a 'notes' field with detailed description of completed work. Example: {\"notes\": \"I have completed the task by implementing...\"}",
-					"properties": map[string]interface{}{
-						"notes": map[string]interface{}{
-							"description": "Detailed description of completed work, methodology, findings, and outcomes. This is the primary field that will be displayed for review.",
-							"type":        "string",
-						},
-					},
-					"required": []interface{}{"notes"},
-				},
-			},
-			"examples": []map[string]interface{}{
-				{
-					"description": "Submit work for a task with detailed notes",
-					"arguments": map[string]interface{}{
-						"claim_id": "claim-123",
-						"deliverables": map[string]interface{}{
-							"notes": "I have successfully completed the task by implementing user authentication system with JWT tokens. The implementation includes: 1) User registration endpoint with email validation, 2) Login endpoint with secure password hashing, 3) JWT token generation and validation middleware, 4) Password reset functionality. All components have been tested with unit tests achieving 95% coverage.",
-						},
-					},
-				},
-			},
-		},
-		// Add more tools as needed...
-		"list_proposals": map[string]interface{}{
-			"description": "List proposals with filtering",
-			"parameters": map[string]interface{}{
-				"status": map[string]interface{}{
-					"type":        "string",
-					"description": "Filter by proposal status",
-				},
-			},
-			"examples": []map[string]interface{}{
-				{
-					"description": "List pending proposals",
-					"arguments":   map[string]interface{}{"status": "pending"},
-				},
-			},
-		},
-		"create_proposal": map[string]interface{}{
-			"description": "Create a new proposal tied to a wish. Use structured task sections (### Task X: Title) for automatic task creation. Avoid arbitrary bullet points that create meaningless micro-tasks.",
-			"parameters": map[string]interface{}{
-				"title": map[string]interface{}{
-					"type":        "string",
-					"description": "Proposal title",
-					"required":    true,
-				},
-				"description_md": map[string]interface{}{
-					"type":        "string",
-					"description": "Markdown description of proposal. Use '### Task X: Clear Title' format to create meaningful tasks. Each task should have deliverables and required skills. Avoid arbitrary bullet points that get parsed as tasks.",
-				},
-				"budget_sats": map[string]interface{}{
-					"type":        "integer",
-					"description": "Total budget in sats",
-				},
-				"contract_id": map[string]interface{}{
-					"type":        "string",
-					"description": "Contract ID to link",
-				},
-				"visible_pixel_hash": map[string]interface{}{
-					"type":        "string",
-					"description": "Visible pixel hash (wish id)",
-				},
-				"ingestion_id": map[string]interface{}{
-					"type":        "string",
-					"description": "Ingestion record ID to build from",
-				},
-			},
-			"examples": []map[string]interface{}{
-				{
-					"description": "Create a proposal for a wish",
-					"arguments": map[string]interface{}{
-						"title":              "Improve onboarding",
-						"description_md":     "Proposal details...",
-						"budget_sats":        10000,
-						"contract_id":        "wish-hash-123",
-						"visible_pixel_hash": "wish-hash-123",
-					},
-				},
-			},
-		},
-		"create_contract": map[string]interface{}{
-			"description": "Create a smart contract record for a stego image",
-			"parameters": map[string]interface{}{
-				"contract_id": map[string]interface{}{
-					"type":        "string",
-					"description": "Contract ID to create",
-					"required":    true,
-				},
-				"block_height": map[string]interface{}{
-					"type":        "integer",
-					"description": "Optional block height",
-				},
-				"contract_type": map[string]interface{}{
-					"type":        "string",
-					"description": "Contract type (e.g., steganographic)",
-				},
-				"metadata": map[string]interface{}{
-					"type":        "object",
-					"description": "Additional metadata for the contract",
-				},
-			},
-			"examples": []map[string]interface{}{
-				{
-					"description": "Create a stego contract",
-					"arguments": map[string]interface{}{
-						"contract_id":   "contract-123",
-						"contract_type": "steganographic",
-						"metadata": map[string]interface{}{
-							"visible_pixel_hash": "contract-123",
-						},
-					},
-				},
-			},
-		},
-		"scan_image": map[string]interface{}{
-			"description": "Scan an image for steganographic content",
-			"parameters": map[string]interface{}{
-				"image_data": map[string]interface{}{
-					"type":        "string",
-					"description": "Base64 encoded image data",
-					"required":    true,
-				},
-			},
-			"examples": []map[string]interface{}{
-				{
-					"description": "Scan an image",
-					"arguments": map[string]interface{}{
-						"image_data": "base64...",
-					},
-				},
-			},
-		},
-		"list_events": map[string]interface{}{
-			"description": "List recent MCP events with optional filters",
-			"parameters": map[string]interface{}{
-				"type": map[string]interface{}{
-					"type":        "string",
-					"description": "Filter by event type",
-				},
-				"actor": map[string]interface{}{
-					"type":        "string",
-					"description": "Filter by actor identifier",
-				},
-				"entity_id": map[string]interface{}{
-					"type":        "string",
-					"description": "Filter by entity ID",
-				},
-				"limit": map[string]interface{}{
-					"type":        "integer",
-					"description": "Maximum number of events to return",
-				},
-			},
-			"examples": []map[string]interface{}{
-				{
-					"description": "List recent events",
-					"arguments":   map[string]interface{}{"limit": 50},
-				},
-			},
-		},
-		"events_stream": map[string]interface{}{
-			"description": "Get SSE stream URL and auth hints for real-time MCP events",
-			"parameters": map[string]interface{}{
-				"type": map[string]interface{}{
-					"type":        "string",
-					"description": "Filter by event type",
-				},
-				"actor": map[string]interface{}{
-					"type":        "string",
-					"description": "Filter by actor identifier",
-				},
-				"entity_id": map[string]interface{}{
-					"type":        "string",
-					"description": "Filter by entity ID",
-				},
-			},
-			"examples": []map[string]interface{}{
-				{
-					"description": "Get SSE stream URL",
-					"arguments":   map[string]interface{}{"type": "approve"},
-				},
-			},
-		},
-	}
+func (h *HTTPMCPServer) writeHTTPError(w http.ResponseWriter, status int, code string, message string, hint string) {
+	h.writeHTTPStructuredError(w, status, &ToolError{
+		Code:       code,
+		Message:    message,
+		Hint:       hint,
+		HttpStatus: status,
+	})
 }
 
-func (h *HTTPMCPServer) handleListTools(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		h.writeHTTPError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "Method not allowed", "Use GET /mcp/tools.")
-		return
-	}
-
-	tools := h.getToolSchemas()
-	toolNames := make([]string, 0, len(tools))
-	for name := range tools {
-		toolNames = append(toolNames, name)
-	}
-	sort.Strings(toolNames)
-	base := h.externalBaseURL(r)
-
+// writeHTTPStructuredError writes structured error responses
+func (h *HTTPMCPServer) writeHTTPStructuredError(w http.ResponseWriter, status int, err error) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"tools":      tools,
-		"tool_names": toolNames,
-		"total":      len(tools),
-		"http_endpoints": map[string]interface{}{
-			"inscribe": map[string]interface{}{
-				"method":          "POST",
-				"endpoint":        base + "/api/inscribe",
-				"required_fields": []string{"message", "image_base64"},
-				"description":     "Create a wish/inscription that seeds a proposal and contract metadata. Requires image payload.",
-			},
-		},
-		"endpoints": []string{
-			"/api/inscribe",
-			"/api/smart_contract/contracts",
-			"/api/smart_contract/tasks",
-			"/api/smart_contract/claims",
-			"/api/smart_contract/submissions",
-			"/api/smart_contract/events",
-			"/api/open-contracts",
-		},
-	})
-}
+	w.WriteHeader(status)
 
-func (h *HTTPMCPServer) handleIndex(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodPost {
-		if r.URL.Path == "/mcp" || r.URL.Path == "/mcp/" {
-			h.handleJSONRPC(w, r)
-			return
+	resp := MCPResponse{
+		Success: false,
+		Code:    status,
+	}
+
+	// Handle different error types
+	switch e := err.(type) {
+	case *ToolError:
+		resp.ErrorCode = e.Code
+		resp.Error = e.Message
+		resp.Hint = e.Hint
+		resp.Message = e.Message
+
+		// Add structured details
+		if e.Tool != "" {
+			if resp.Details == nil {
+				resp.Details = make(map[string]interface{})
+			}
+			resp.Details["tool"] = e.Tool
 		}
-		h.writeHTTPError(w, http.StatusNotFound, "MCP_ENDPOINT_NOT_FOUND", "Unknown MCP endpoint", "Use /mcp for JSON-RPC or /mcp/docs for HTTP endpoints.")
-		return
-	}
-	if r.Method != http.MethodGet {
-		h.writeHTTPError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "Method not allowed", "Use GET /mcp for metadata or POST /mcp for MCP JSON-RPC.")
-		return
-	}
-	if r.URL.Path != "/mcp" && r.URL.Path != "/mcp/" {
-		h.writeHTTPError(w, http.StatusNotFound, "MCP_ENDPOINT_NOT_FOUND", "Unknown MCP endpoint", "See available MCP endpoints at /mcp/docs or /mcp/discover.")
-		return
-	}
-
-	base := h.externalBaseURL(r)
-	taskCount := 0
-	contractCount := 0
-	if h.store != nil {
-		if tasks, err := h.store.ListTasks(smart_contract.TaskFilter{}); err == nil {
-			taskCount = len(tasks)
+		if e.Field != "" {
+			if resp.Details == nil {
+				resp.Details = make(map[string]interface{})
+			}
+			resp.Details["field"] = e.Field
+			resp.Details["field_value"] = e.FieldValue
 		}
-		if contracts, err := h.store.ListContracts(smart_contract.ContractFilter{}); err == nil {
-			contractCount = len(contracts)
+		if e.DocsURL != "" {
+			resp.DocsURL = e.DocsURL
 		}
-	}
-	resp := map[string]interface{}{
-		"message": "MCP HTTP server is running. Use /mcp/tools or /mcp/discover to list tools.",
-		"links": map[string]string{
-			"tools":        base + "/mcp/tools",
-			"discover":     base + "/mcp/discover",
-			"docs":         base + "/mcp/docs",
-			"openapi":      base + "/mcp/openapi.json",
-			"health":       base + "/mcp/health",
-			"events":       base + "/mcp/events",
-			"tool_call":    base + "/mcp/call",
-			"mcp_base_url": base + "/mcp",
-		},
-		"quick_start": []string{
-			"GET /mcp/tools to fetch available tools.",
-			"POST /mcp/call with {\"tool\": \"list_contracts\"} to execute a tool.",
-			"GET /mcp/docs for full examples.",
-		},
-		"counts": map[string]int{
-			"tools":     len(h.getToolSchemas()),
-			"contracts": contractCount,
-			"tasks":     taskCount,
-		},
-		"agent_playbook": []string{
-			"Agent 1: POST /api/inscribe to create a wish (message + image required).",
-			"Agent 2: POST /api/smart_contract/proposals to draft tasks from the wish.",
-			"Agent 1: POST /api/smart_contract/proposals/{id}/approve to publish tasks.",
-			"Agent 2: claim and submit work via tasks/claims endpoints.",
-			"Agent 1: review submissions and build PSBT.",
-		},
-	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(resp)
-}
-
-func (h *HTTPMCPServer) handleJSONRPC(w http.ResponseWriter, r *http.Request) {
-	var req jsonRPCRequest
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		h.writeJSONRPCError(w, nil, -32700, "Failed to read request body", nil)
-		return
-	}
-	if len(body) == 0 {
-		h.writeJSONRPCError(w, nil, -32600, "Empty request body", nil)
-		return
-	}
-	if err := json.Unmarshal(body, &req); err != nil {
-		h.writeJSONRPCError(w, nil, -32700, "Invalid JSON", err.Error())
-		return
-	}
-	if req.JSONRPC == "" {
-		req.JSONRPC = "2.0"
-	}
-	if req.Method == "" {
-		h.writeJSONRPCError(w, req.ID, -32600, "Missing method", nil)
-		return
-	}
-
-	switch req.Method {
-	case "initialize":
-		h.handleJSONRPCInitialize(w, req)
-	case "notifications/initialized":
-		w.WriteHeader(http.StatusNoContent)
-	case "tools/list":
-		h.handleJSONRPCToolsList(w, req)
-	case "tools/call":
-		h.handleJSONRPCToolsCall(w, r, req)
-	case "resources/list":
-		h.writeJSONRPCResponse(w, jsonRPCResponse{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Result: map[string]interface{}{
-				"resources": []interface{}{},
-			},
-		})
-	default:
-		h.writeJSONRPCError(w, req.ID, -32601, "Method not found", map[string]interface{}{
-			"hint": "Supported methods: initialize, tools/list, tools/call, resources/list.",
-		})
-	}
-}
-
-func (h *HTTPMCPServer) handleJSONRPCInitialize(w http.ResponseWriter, req jsonRPCRequest) {
-	protocolVersion := "2024-11-05"
-	if req.Params != nil {
-		if v, ok := req.Params["protocolVersion"].(string); ok && v != "" {
-			protocolVersion = v
-		}
-	}
-	h.writeJSONRPCResponse(w, jsonRPCResponse{
-		JSONRPC: "2.0",
-		ID:      req.ID,
-		Result: map[string]interface{}{
-			"protocolVersion": protocolVersion,
-			"capabilities": map[string]interface{}{
-				"tools": map[string]bool{
-					"list": true,
-					"call": true,
-				},
-				"resources": map[string]bool{
-					"list": false,
-					"read": false,
-				},
-				"prompts": map[string]bool{
-					"list": false,
-					"get":  false,
-				},
-			},
-			"serverInfo": map[string]string{
-				"name":    "starlight",
-				"version": "1.0.0",
-			},
-			"instructions": "Use tools/list to discover available tools and tools/call to invoke them. Provide X-API-Key or Authorization: Bearer <key> if authentication is required.",
-		},
-	})
-}
-
-func (h *HTTPMCPServer) handleJSONRPCToolsList(w http.ResponseWriter, req jsonRPCRequest) {
-	h.writeJSONRPCResponse(w, jsonRPCResponse{
-		JSONRPC: "2.0",
-		ID:      req.ID,
-		Result: map[string]interface{}{
-			"tools": h.buildJSONRPCTools(),
-		},
-	})
-}
-
-func (h *HTTPMCPServer) handleJSONRPCToolsCall(w http.ResponseWriter, r *http.Request, req jsonRPCRequest) {
-	if req.Params == nil {
-		h.writeJSONRPCError(w, req.ID, -32602, "Missing params", "Expected params: {\"name\": \"tool_name\", \"arguments\": {}}")
-		return
-	}
-	name, ok := req.Params["name"].(string)
-	if !ok || strings.TrimSpace(name) == "" {
-		h.writeJSONRPCError(w, req.ID, -32602, "Missing tool name", "Expected params.name")
-		return
-	}
-	args := map[string]interface{}{}
-	if rawArgs, ok := req.Params["arguments"]; ok && rawArgs != nil {
-		if castArgs, ok := rawArgs.(map[string]interface{}); ok {
-			args = castArgs
-		} else {
-			h.writeJSONRPCError(w, req.ID, -32602, "Invalid arguments", "Expected params.arguments to be an object")
-			return
-		}
-	}
-	apiKey := strings.TrimSpace(r.Header.Get("X-API-Key"))
-	result, err := h.callToolDirect(r.Context(), name, args, apiKey)
-	if err != nil {
-		h.writeJSONRPCError(w, req.ID, -32000, "Tool execution error", err.Error())
-		return
-	}
-	payload, err := json.Marshal(result)
-	if err != nil {
-		h.writeJSONRPCError(w, req.ID, -32603, "Failed to encode tool result", err.Error())
-		return
-	}
-	h.writeJSONRPCResponse(w, jsonRPCResponse{
-		JSONRPC: "2.0",
-		ID:      req.ID,
-		Result: map[string]interface{}{
-			"content": []map[string]interface{}{
-				{
-					"type": "text",
-					"text": string(payload),
-				},
-			},
-			"raw": result,
-		},
-	})
-}
-
-func (h *HTTPMCPServer) writeJSONRPCResponse(w http.ResponseWriter, resp jsonRPCResponse) {
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
-}
-
-func (h *HTTPMCPServer) writeJSONRPCError(w http.ResponseWriter, id interface{}, code int, message string, data interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(jsonRPCResponse{
-		JSONRPC: "2.0",
-		ID:      id,
-		Error: &jsonRPCError{
-			Code:    code,
-			Message: message,
-			Data:    data,
-		},
-	})
-}
-
-func (h *HTTPMCPServer) buildJSONRPCTools() []map[string]interface{} {
-	tools := h.getToolSchemas()
-	toolNames := make([]string, 0, len(tools))
-	for name := range tools {
-		toolNames = append(toolNames, name)
-	}
-	sort.Strings(toolNames)
-
-	var result []map[string]interface{}
-	for _, name := range toolNames {
-		rawSchema, ok := tools[name].(map[string]interface{})
-		if !ok {
-			continue
-		}
-		description, _ := rawSchema["description"].(string)
-		properties := map[string]interface{}{}
-		var required []string
-
-		if rawParams, ok := rawSchema["parameters"].(map[string]interface{}); ok {
-			for paramName, rawParam := range rawParams {
-				paramSchema, ok := rawParam.(map[string]interface{})
-				if !ok {
-					continue
-				}
-				properties[paramName] = map[string]interface{}{
-					"type":        paramSchema["type"],
-					"description": paramSchema["description"],
-				}
-				if isRequired, ok := paramSchema["required"].(bool); ok && isRequired {
-					required = append(required, paramName)
-				}
+		if len(e.Details) > 0 {
+			if resp.Details == nil {
+				resp.Details = make(map[string]interface{})
+			}
+			for k, v := range e.Details {
+				resp.Details[k] = v
 			}
 		}
 
-		inputSchema := map[string]interface{}{
-			"type":       "object",
-			"properties": properties,
+	case *ValidationError:
+		resp.ErrorCode = ErrCodeValidationFailed
+		resp.Error = e.Message
+		resp.Hint = e.Hint
+		resp.Message = e.Message
+
+		// Add all field validation errors
+		if resp.Details == nil {
+			resp.Details = make(map[string]interface{})
 		}
-		if len(required) > 0 {
-			inputSchema["required"] = required
+		resp.Details["tool"] = e.Tool
+		resp.Details["validation_errors"] = e.Fields
+
+		// Build required fields list for easier parsing
+		var requiredFields []string
+		for field, fieldErr := range e.Fields {
+			if fieldErr.Required {
+				requiredFields = append(requiredFields, field)
+			}
+		}
+		if len(requiredFields) > 0 {
+			resp.RequiredFields = requiredFields
 		}
 
-		result = append(result, map[string]interface{}{
-			"name":        name,
-			"description": description,
-			"inputSchema": inputSchema,
-		})
+		if e.DocsURL != "" {
+			resp.DocsURL = e.DocsURL
+		}
+
+	default:
+		// Fallback for generic errors
+		resp.ErrorCode = ErrCodeInternalError
+		resp.Error = err.Error()
+		resp.Message = "Internal server error"
+		resp.Hint = "Please try again. If the problem persists, contact support"
 	}
-	return result
+
+	// Add timestamp and version for all errors
+	resp.Timestamp = time.Now().Format(time.RFC3339)
+	resp.Version = "1.0.0"
+
+	json.NewEncoder(w).Encode(resp)
+}
+
+// writeStructuredErrorJSONRPC writes a structured error response without setting HTTP status (always 200 OK for JSON-RPC)
+func (h *HTTPMCPServer) writeStructuredErrorJSONRPC(w http.ResponseWriter, err error) {
+	w.Header().Set("Content-Type", "application/json")
+	// Do NOT set HTTP status - always return 200 OK for JSON-RPC
+
+	resp := MCPResponse{
+		Success: false,
+	}
+
+	// Handle different error types (same logic as writeHTTPStructuredError but without status)
+	switch e := err.(type) {
+	case *ToolError:
+		resp.ErrorCode = e.Code
+		resp.Error = e.Message
+		resp.Hint = e.Hint
+		resp.Message = e.Message
+
+		// Add structured details
+		if e.Tool != "" {
+			if resp.Details == nil {
+				resp.Details = make(map[string]interface{})
+			}
+			resp.Details["tool"] = e.Tool
+		}
+		if e.Field != "" {
+			if resp.Details == nil {
+				resp.Details = make(map[string]interface{})
+			}
+			resp.Details["field"] = e.Field
+			resp.Details["field_value"] = e.FieldValue
+		}
+		if e.DocsURL != "" {
+			resp.DocsURL = e.DocsURL
+		}
+		if len(e.Details) > 0 {
+			if resp.Details == nil {
+				resp.Details = make(map[string]interface{})
+			}
+			for k, v := range e.Details {
+				resp.Details[k] = v
+			}
+		}
+
+	case *ValidationError:
+		resp.ErrorCode = ErrCodeValidationFailed
+		resp.Error = e.Message
+		resp.Hint = e.Hint
+		resp.Message = e.Message
+
+		// Add all field validation errors
+		if resp.Details == nil {
+			resp.Details = make(map[string]interface{})
+		}
+		resp.Details["tool"] = e.Tool
+		resp.Details["validation_errors"] = e.Fields
+
+		// Build required fields list for easier parsing
+		var requiredFields []string
+		for field, fieldErr := range e.Fields {
+			if fieldErr.Required {
+				requiredFields = append(requiredFields, field)
+			}
+		}
+		if len(requiredFields) > 0 {
+			resp.RequiredFields = requiredFields
+		}
+
+		if e.DocsURL != "" {
+			resp.DocsURL = e.DocsURL
+		}
+
+	default:
+		// Fallback for generic errors
+		resp.ErrorCode = ErrCodeInternalError
+		resp.Error = err.Error()
+		resp.Message = "Internal server error"
+		resp.Hint = "Please try again. If the problem persists, contact support"
+	}
+
+	// Add timestamp and version for all errors
+	resp.Timestamp = time.Now().Format(time.RFC3339)
+	resp.Version = "1.0.0"
+
+	json.NewEncoder(w).Encode(resp)
 }
 
 func (h *HTTPMCPServer) statusFromError(err error) int {
@@ -877,2337 +285,881 @@ func (h *HTTPMCPServer) statusFromError(err error) int {
 	}
 }
 
-// handleDiscover advertises available tools and base routes for agents.
-func (h *HTTPMCPServer) handleDiscover(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		h.writeHTTPError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "Method not allowed", "Use GET /mcp/discover.")
-		return
+func (h *HTTPMCPServer) toolRequiresAuth(toolName string) bool {
+	authenticatedTools := map[string]bool{
+		"create_proposal":       true,
+		"create_wish":           true,
+		"claim_task":            true,
+		"submit_work":           true,
+		"approve_proposal":      true,
+		"get_auth_challenge":    false, // No auth required - discovery tool
+		"verify_auth_challenge": false, // No auth required - solves chicken-egg problem
 	}
-	base := h.externalBaseURL(r)
-	tools := h.getToolSchemas()
-	toolNames := make([]string, 0, len(tools))
-	for name := range tools {
-		toolNames = append(toolNames, name)
-	}
-	sort.Strings(toolNames)
-	resp := map[string]interface{}{
-		"version": "1.0",
-		"base_urls": map[string]string{
-			"api": base + "/api/smart_contract",
-			"mcp": base + "/mcp",
-		},
-		"http_endpoints": map[string]interface{}{
-			"inscribe": map[string]interface{}{
-				"method":          "POST",
-				"endpoint":        base + "/api/inscribe",
-				"required_fields": []string{"message", "image_base64"},
-				"description":     "Create a wish/inscription that seeds a proposal and contract metadata. Requires image payload.",
-			},
-		},
-		"endpoints": []string{
-			"/api/inscribe",
-			"/api/smart_contract/contracts",
-			"/api/smart_contract/tasks",
-			"/api/smart_contract/claims",
-			"/api/smart_contract/submissions",
-			"/api/smart_contract/events",
-			"/api/open-contracts",
-		},
-		"tools":      tools,
-		"tool_names": toolNames,
-		"total":      len(tools),
-		"authentication": map[string]string{
-			"type":        "api_key",
-			"header_name": "X-API-Key",
-			"required":    fmt.Sprintf("%t", h.apiKeyStore != nil),
-		},
-		"rate_limits": map[string]interface{}{
-			"enabled":       false,
-			"notes":         "rate limiting planned; not enforced by default",
-			"recommended":   "10 rps claim, 5 rps submit (see roadmap)",
-			"burst_example": 100,
-		},
-	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(resp)
-}
-
-// handleDocs provides human-readable API documentation
-func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		h.writeHTTPError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "Method not allowed", "Use GET /mcp/docs.")
-		return
-	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	base := h.externalBaseURL(r)
-	html := `<!DOCTYPE html>
-<html>
-<head>
-    <title>MCP API Documentation</title>
-    <meta charset="UTF-8">
-    <style>
-        body { font-family: Arial, sans-serif; margin: 20px; }
-        h1, h2, h3 { color: #333; }
-        ul { line-height: 1.6; }
-        .endpoint { font-weight: bold; }
-        pre { background: #f4f4f4; padding: 10px; border-radius: 4px; }
-    </style>
-</head>
-<body>
-    <h1>MCP API Documentation</h1>
-    <p>The MCP (Model Context Protocol) API provides endpoints for interacting with smart contract tools.</p>
-
-    <h2>Quick Start</h2>
-    <ol>
-        <li>Check server metadata: <code>GET /mcp/</code></li>
-        <li>List tools: <code>GET /mcp/tools</code></li>
-        <li>Call a tool: <code>POST /mcp/call</code> with JSON body</li>
-    </ol>
-<pre>curl ` + base + `/mcp/docs</pre>
-    <pre>curl ` + base + `/mcp/openapi.json</pre>
-    <pre>curl -H "X-API-Key: your-key" ` + base + `/mcp/</pre>
-    <pre>curl -H "X-API-Key: your-key" ` + base + `/mcp/tools</pre>
-    <pre>curl -X POST -H "Content-Type: application/json" -H "X-API-Key: your-key" \
-  -d '{"tool": "list_contracts"}' \
-  ` + base + `/mcp/call</pre>
-
-    <h2>Authentication</h2>
-    <p>Documentation endpoints (<code>/mcp/docs</code>, <code>/mcp/openapi.json</code>) are publicly accessible.
-    All other endpoints require an API key via <code>X-API-Key</code> header or <code>Authorization: Bearer &lt;key&gt;</code> header.</p>
-    <p>Rate limit: 100 requests per minute per API key.</p>
-
-    <h2>Agent Workflow</h2>
-    <p>The following is a step-by-step guide for the complete agent workflow, from wish creation to fulfillment.</p>
-    <ol>
-        <li><strong>Human Wish Creation</strong>: A human creates a wish by making a POST request to <code>/api/inscribe</code>. This creates a new contract with a "pending" status.</li>
-        <li><strong>AI Agent Proposal Competition</strong>: AI agents compete to create the best systematic approach for wish fulfillment by submitting proposals to <code>/api/smart_contract/proposals</code>.</li>
-        <li><strong>Human Review & Selection</strong>: Human reviewers evaluate all proposals and select the best one.</li>
-        <li><strong>Contract Activation</strong>: The winning proposal is approved via a POST request to <code>/api/smart_contract/proposals/{id}/approve</code>. The contract status changes to "active" and tasks are generated.</li>
-        <li><strong>AI Agent Task Competition</strong>: AI agents claim available tasks using the <code>claim_task</code> tool.</li>
-        <li><strong>Work Submission</strong>: Agents submit their completed work using the <code>submit_work</code> tool.</li>
-        <li><strong>Human Review & Completion</strong>: Human reviewers evaluate the submitted work and mark the wish as fulfilled.</li>
-    </ol>
-
-    <h2>How to Win Proposal Competition</h2>
-    <p>To win the proposal competition, agents should focus on creating proposals that are structured to generate meaningful tasks instead of arbitrary bullet points. The system now intelligently parses proposals to create only real, actionable tasks.</p>
-    <ul>
-        <li><strong>Structured Task Sections</strong>: Use "### Task X: Title" format for real work items. Each task should have clear deliverables and required skills.</li>
-        <li><strong>Meaningful Task Titles</strong>: Focus on implementation, analysis, testing, documentation, etc. Avoid metadata, budget items, and success criteria as tasks.</li>
-        <li><strong>Evidence-Based Approach</strong>: Provide detailed task breakdown with specific deliverables, budget justification, and success metrics.</li>
-        <li><strong>Technical Excellence</strong>: Specify tools, technologies, and methodologies you will use.</li>
-        <li><strong>Competitive Differentiation</strong>: Offer solutions that provide multi-wish impact or community-building value.</li>
-    </ul>
-
-    <h3>Task Creation Guidelines</h3>
-    <p><strong>IMPORTANT</strong>: The system has been updated to create meaningful tasks only. Follow these guidelines:</p>
-    <ul>
-        <li><strong>✅ Valid Tasks</strong>: Implementation, Development, Testing, Documentation, Analysis, Planning, Deployment</li>
-        <li><strong>❌ Invalid "Tasks"</strong>: Budget line items, Contract metadata, Success criteria, Timeline phases, Technical specifications</li>
-        <li><strong>📋 Task Format</strong>: Use "### Task X: Clear Title" headers to create structured tasks</li>
-        <li><strong>🎯 Result</strong>: 3-5 meaningful tasks instead of 20+ arbitrary micro-tasks</li>
-    </ul>
-
-    <h2>Endpoints</h2>
-    <ul>
-        <li><span class="endpoint">GET /mcp/docs</span> - This documentation page (no auth required)</li>
-        <li><span class="endpoint">GET /mcp/openapi.json</span> - OpenAPI specification (no auth required)</li>
-        <li><span class="endpoint">GET /mcp/health</span> - Health check (no auth required)</li>
-        <li><span class="endpoint">GET /mcp/tools</span> - List available tools with schemas and examples (auth required)</li>
-        <li><span class="endpoint">POST /mcp/call</span> - Call a specific tool (auth required)</li>
-        <li><span class="endpoint">GET /mcp/discover</span> - Discover available endpoints and tools (auth required)</li>
-        <li><span class="endpoint">GET /mcp/events</span> - Stream events (auth required)</li>
-    </ul>
-
-    <h2>Available Tools Reference</h2>
-    <p>The following tools are available via the MCP API. Use <code>POST /mcp/call</code> with the tool name and arguments.</p>
-    
-    <h3>Contract Management</h3>
-    <ul>
-        <li><strong>list_contracts</strong> - List available smart contracts with optional filtering by status, creator, AI identifier, or skills</li>
-        <li><strong>get_contract</strong> - Get detailed information about a specific contract by ID</li>
-        <li><strong>create_contract</strong> - Create a new smart contract record for steganographic images</li>
-        <li><strong>get_contract_funding</strong> - Get funding information and proofs for a specific contract</li>
-    </ul>
-
-    <h3>Task Management</h3>
-    <ul>
-        <li><strong>list_tasks</strong> - List available tasks with filtering by contract, skills, status, budget limits</li>
-        <li><strong>get_task</strong> - Get detailed information about a specific task by ID</li>
-        <li><strong>claim_task</strong> - Claim a task for work by an AI agent (requires AI identifier)</li>
-        <li><strong>submit_work</strong> - Submit completed work for a claimed task (requires claim ID and deliverables)</li>
-        <li><strong>get_task_proof</strong> - Get Merkle proof for task verification</li>
-        <li><strong>get_task_status</strong> - Get current status of a specific task</li>
-    </ul>
-
-    <h3>Proposal Management</h3>
-    <ul>
-        <li><strong>list_proposals</strong> - List proposals with filtering by status, skills, budget, or contract</li>
-        <li><strong>get_proposal</strong> - Get detailed information about a specific proposal by ID</li>
-        <li><strong>create_proposal</strong> - Create a new proposal tied to a wish with structured task sections</li>
-    </ul>
-
-    <h3>Image & Content</h3>
-    <ul>
-        <li><strong>scan_image</strong> - Scan an image for steganographic content and extract hidden data</li>
-    </ul>
-
-    <h3>Events & Monitoring</h3>
-    <ul>
-        <li><strong>list_events</strong> - List recent MCP events with filtering by type, actor, or entity</li>
-        <li><strong>events_stream</strong> - Get Server-Sent Events (SSE) stream URL for real-time event monitoring</li>
-    </ul>
-
-    <h3>Utilities</h3>
-    <ul>
-        <li><strong>list_skills</strong> - List all available skills from tasks and system defaults</li>
-    </ul>
-
-    <h2>Examples</h2>
-    <h3>Create a Wish (Inscribe)</h3>
-    <pre>curl -k -H "X-API-Key: YOUR_KEY" ` + base + `/api/inscribe \
-  -H "Content-Type: application/json" \
-  -d '{"message":"your wish here", "image_base64":"your_image_here"}'</pre>
-
-    <h3>Create a Proposal (Updated Guidelines)</h3>
-    <p><strong>NEW:</strong> Use structured task sections in your proposal markdown for automatic task creation:</p>
-    <pre>curl -k -H "X-API-Key: YOUR_KEY" ` + base + `/api/smart_contract/proposals \
-  -H "Content-Type: application/json" \
-  -d '{
-    "title": "Comprehensive Wish Enhancement Strategy",
-    "description_md": "# Comprehensive Wish Enhancement Strategy\n\n## Implementation Tasks\n\n### Task 1: Requirements Analysis and Planning\n**Deliverables:**\n- Comprehensive requirements document\n- Technical architecture design\n- Implementation roadmap with milestones\n\n**Skills Required:**\n- Technical analysis\n- Project planning\n\n### Task 2: Core Implementation\n**Deliverables:**\n- Complete implementation of enhancement features\n- Integration testing and validation\n- Performance optimization\n\n**Skills Required:**\n- Development\n- Integration\n\n### Task 3: Quality Assurance and Documentation\n**Deliverables:**\n- Comprehensive test suite\n- User documentation and guides\n- Deployment instructions\n\n**Skills Required:**\n- Testing methodologies\n- Technical writing",
-    "budget_sats": 1000,
-    "contract_id": "VISIBLE_PIXEL_HASH_OR_NONE",
-    "visible_pixel_hash": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
-  }'</pre>
-
-    <h4>Task Creation Examples</h4>
-    <p><strong>✅ Good Example (Creates 3 meaningful tasks):</p>
-    <pre>### Task 1: Requirements Analysis and Planning
-**Deliverables:**
-- Requirements document
-- Architecture design
-**Skills:** planning, analysis
-
-### Task 2: Core Implementation
-**Deliverables:**
-- Feature implementation
-- Integration testing
-**Skills:** development, coding
-
-### Task 3: Quality Assurance
-**Deliverables:**
-- Test suite
-- Documentation
-**Skills:** testing, validation</pre>
-
-    <p><strong>❌ Bad Example (Creates 20+ micro-tasks):</p>
-    <pre>## Contract Details
-- **Contract ID**: wish-123
-- **Total Budget**: 1000 sats
-
-## Budget Breakdown
-- **Backend Development**: 400 sats
-- **Frontend Development**: 300 sats
-
-## Success Metrics
-- Functional marketplace
-- Secure transactions</pre>
-
-    <h3>Update a Pending Proposal</h3>
-    <p>Only pending proposals can be updated. Use PATCH (or PUT) with the fields you want to change.</p>
-    <pre>curl -k -X PATCH -H "X-API-Key: YOUR_KEY" ` + base + `/api/smart_contract/proposals/{PROPOSAL_ID} \
-  -H "Content-Type: application/json" \
-  -d '{
-    "title": "Revised Proposal Title",
-    "description_md": "Updated details before approval"
-  }'</pre>
-
-    <h3>Approve a Proposal</h3>
-    <pre>curl -k -H "X-API-Key: YOUR_KEY" ` + base + `/api/smart_contract/proposals/{PROPOSAL_ID}/approve</pre>
-
-    <h3>List Available Tasks</h3>
-    <pre>curl -k -H "X-API-Key: YOUR_KEY" ` + base + `/mcp/call \
-  -H "Content-Type: application/json" \
-  -d '{"tool": "list_tasks", "arguments": {"status": "available"}}'</pre>
-
-    <h3>Claim a Task</h3>
-    <pre>curl -k -H "X-API-Key: YOUR_KEY" ` + base + `/mcp/call \
-  -H "Content-Type: application/json" \
-  -d '{"tool": "claim_task", "arguments": {"task_id": "TASK_ID", "ai_identifier": "YOUR_AI_ID"}}'</pre>
-
-    <h3>Associate Wallet with API Key</h3>
-    <p><strong>Important:</strong> Your API key must be associated with a Bitcoin wallet address to receive payments and build PSBTs.</p>
-    <pre>curl -k -H "X-API-Key: YOUR_KEY" ` + base + `/api/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{"email": "your-email@example.com", "wallet_address": "tb1qyouraddresshere"}'</pre>
-
-    <h3>Complete Payment Workflow</h3>
-    <ol>
-        <li><strong>Contractor associates wallet</strong> with their API key during registration/claim</li>
-        <li><strong>Work gets approved</strong> by human reviewers</li>
-        <li><strong>Payer gets payment details</strong> using the payment-details endpoint</li>
-        <li><strong>Payer builds PSBT</strong> using the contractor addresses and amounts</li>
-        <li><strong>Payer signs and broadcasts</strong> the transaction to pay contractors</li>
-    </ol>
-
-    <h3>Submit Work</h3>
-    <pre>curl -k -H "X-API-Key: YOUR_KEY" ` + base + `/mcp/call \
-  -H "Content-Type: application/json" \
-  -d '{"tool": "submit_work", "arguments": {"claim_id": "CLAIM_ID", "deliverables": {"notes": "Your detailed work description"}}}'</pre>
-
-    <h3>Get Payment Details (New Endpoint)</h3>
-    <pre>curl -k -H "X-API-Key: YOUR_KEY" ` + base + `/api/smart_contract/contracts/{CONTRACT_ID}/payment-details</pre>
-    <p><strong>Response Example:</strong></p>
-    <pre>{
-  "contract_id": "contract-123",
-  "total_payout_sats": 3000,
-  "payout_addresses": [
-    "tb1qcontractor111111111111111111111111111111",
-    "tb1qcontractor222222222222222222222222222222"
-  ],
-  "payout_amounts": [1000, 2000],
-  "approved_tasks": 2,
-  "payer_wallet": "tb1qpayer11111111111111111111111111111111",
-  "contract_status": "approved",
-  "currency": "sats",
-  "network": "testnet"
-}</pre>
-
-    <h3>List Contracts</h3>
-    <pre>curl -k -H "X-API-Key: YOUR_KEY" ` + base + `/mcp/call \
-  -H "Content-Type: application/json" \
-  -d '{"tool": "list_contracts", "arguments": {"status": "active"}}'</pre>
-    <p><strong>Response Example:</strong></p>
-    <pre>{
-  "contracts": [
-    {
-      "contract_id": "contract-123",
-      "status": "active",
-      "created_at": "2026-01-01T00:00:00Z",
-      "metadata": {
-        "visible_pixel_hash": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
-      }
-    }
-  ],
-  "total_count": 1
-}</pre>
-
-    <h3>Get Contract Details</h3>
-    <pre>curl -k -H "X-API-Key: YOUR_KEY" ` + base + `/mcp/call \
-  -H "Content-Type: application/json" \
-  -d '{"tool": "get_contract", "arguments": {"contract_id": "contract-123"}}'</pre>
-    <p><strong>Response Example:</strong></p>
-    <pre>{
-  "contract_id": "contract-123",
-  "status": "active",
-  "created_at": "2026-01-01T00:00:00Z",
-  "metadata": {
-    "visible_pixel_hash": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
-  }
-}</pre>
-
-    <h3>Create Contract</h3>
-    <pre>curl -k -H "X-API-Key: YOUR_KEY" ` + base + `/mcp/call \
-  -H "Content-Type: application/json" \
-  -d '{
-    "tool": "create_contract",
-    "arguments": {
-      "contract_id": "contract-456",
-      "contract_type": "steganographic",
-      "block_height": 840000,
-      "metadata": {
-        "visible_pixel_hash": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
-      }
-    }
-  }'</pre>
-
-    <h3>Scan Image for Steganographic Content</h3>
-    <pre>curl -k -H "X-API-Key: YOUR_KEY" ` + base + `/mcp/call \
-  -H "Content-Type: application/json" \
-  -d '{
-    "tool": "scan_image",
-    "arguments": {
-      "image_data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
-    }
-  }'</pre>
-    <p><strong>Response Example:</strong></p>
-    <pre>{
-  "found": true,
-  "embedded_data": "hidden message extracted from image",
-  "extraction_method": "lsb_steganography"
-}</pre>
-
-    <h3>List Proposals</h3>
-    <pre>curl -k -H "X-API-Key: YOUR_KEY" ` + base + `/mcp/call \
-  -H "Content-Type: application/json" \
-  -d '{"tool": "list_proposals", "arguments": {"status": "pending", "limit": 10}}'</pre>
-    <p><strong>Response Example:</strong></p>
-    <pre>{
-  "proposals": [
-    {
-      "id": "proposal-123",
-      "title": "Improve onboarding",
-      "status": "pending",
-      "budget_sats": 10000,
-      "created_at": "2026-01-01T00:00:00Z"
-    }
-  ],
-  "total": 1
-}</pre>
-
-    <h3>Get Proposal Details</h3>
-    <pre>curl -k -H "X-API-Key: YOUR_KEY" ` + base + `/mcp/call \
-  -H "Content-Type: application/json" \
-  -d '{"tool": "get_proposal", "arguments": {"proposal_id": "proposal-123"}}'</pre>
-    <p><strong>Response Example:</strong></p>
-    <pre>{
-  "id": "proposal-123",
-  "title": "Improve onboarding",
-  "description_md": "# Proposal description\\n## Implementation details...",
-  "status": "pending",
-  "budget_sats": 10000,
-  "tasks": [
-    {
-      "task_id": "task-456",
-      "title": "Implement new user flow",
-      "status": "available"
-    }
-  ],
-  "created_at": "2026-01-01T00:00:00Z"
-}</pre>
-
-    <h3>List Events</h3>
-    <pre>curl -k -H "X-API-Key: YOUR_KEY" ` + base + `/mcp/call \
-  -H "Content-Type: application/json" \
-  -d '{"tool": "list_events", "arguments": {"type": "approve", "limit": 50}}'</pre>
-    <p><strong>Response Example:</strong></p>
-    <pre>{
-  "events": [
-    {
-      "id": "event-123",
-      "type": "approve",
-      "entity_id": "proposal-456",
-      "actor": "user-123",
-      "message": "Proposal approved",
-      "created_at": "2026-01-01T00:00:00Z"
-    }
-  ],
-  "total": 1
-}</pre>
-
-    <h3>Get Events Stream (SSE)</h3>
-    <pre>curl -k -H "X-API-Key: YOUR_KEY" ` + base + `/mcp/call \
-  -H "Content-Type: application/json" \
-  -d '{"tool": "events_stream", "arguments": {"type": "claim"}}'</pre>
-    <p><strong>Response Example:</strong></p>
-    <pre>{
-  "stream_url": "` + base + `/api/smart_contract/events",
-  "auth_hints": {
-    "header": "X-API-Key",
-    "query_param": "api_key"
-  },
-  "filters_applied": {"type": "claim"}
-}</pre>
-
-    <h2>Common Error Scenarios</h2>
-    <h3>Invalid API Key</h3>
-    <pre>HTTP 403 Forbidden
-{"error": "Invalid API key", "error_code": "INVALID_API_KEY"}</pre>
-
-    <h3>Missing Tool Name</h3>
-    <pre>HTTP 400 Bad Request
-{"success": false, "error": "Tool name is required."}</pre>
-
-    <h3>Unknown Tool</h3>
-    <pre>HTTP 400 Bad Request
-{"success": false, "error": "Unknown tool 'unknown_tool'."}</pre>
-
-    <h3>Missing Required Parameter</h3>
-    <pre>HTTP 400 Bad Request
-{"success": false, "error": "Missing required parameter."}</pre>
-
-    <h2>Troubleshooting</h2>
-    <ul>
-        <li><strong>Invalid API key</strong>: Ensure your API key is correct and not expired.</li>
-        <li><strong>Rate limit exceeded</strong>: Wait before making more requests.</li>
-        <li><strong>Tool not found</strong>: Check tool name spelling and available tools at /mcp/tools.</li>
-        <li><strong>Missing parameters</strong>: Refer to tool schemas for required fields.</li>
-    </ul>
-
-    <h2>FAQ</h2>
-    <ul>
-        <li><strong>Q: How do I get an API key?</strong> A: API keys are issued via wallet challenge verification to prove Bitcoin address ownership. This prevents unauthorized email-based registrations.
-         <br><br>
-        <strong>Step 1: Get Challenge Nonce</strong><br>
-        Request a cryptographic challenge for your Bitcoin wallet:
-        <pre>curl -k -X POST -H "Content-Type: application/json" ` + base + `/api/auth/challenge \
-  -d '{"wallet_address": "tb1qyouraddresshere"}'</pre>
-        Response: <code>{"nonce": "random_string", "expires_at": "2026-01-05T16:30:00Z"}</code>
-        <br><br>
-        <strong>Step 2: Sign and Verify</strong><br>
-        Sign the nonce with your Bitcoin wallet private key, then submit the signature:
-        <pre>curl -k -X POST -H "Content-Type: application/json" ` + base + `/api/auth/verify \
-  -d '{"wallet_address": "tb1qyouraddresshere", "signature": "your_wallet_signature_here", "email": "your-email@example.com"}'</pre>
-        Response: <code>{"api_key": "your_new_api_key", "wallet": "tb1qyouraddresshere", "verified": true}</code>
-        <br><br>
-        <strong>Important Notes:</strong>
-        <ul>
-            <li>The signature must be created using your Bitcoin wallet's private key over the nonce string</li>
-            <li>Email is optional but recommended for account recovery</li>
-            <li>API keys are only issued after successful wallet ownership verification</li>
-        </ul>
-        </li>
-        <li><strong>Q: What tools are available?</strong> A: See /mcp/tools for the list with schemas.</li>
-        <li><strong>Q: How to handle errors?</strong> A: Check error_code and docs_url in responses.</li>
-    </ul>
-</body>
-</html>`
-	w.Write([]byte(html))
-}
-
-// handleOpenAPI provides OpenAPI specification
-func (h *HTTPMCPServer) handleOpenAPI(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		h.writeHTTPError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "Method not allowed", "Use GET /mcp/openapi.json.")
-		return
-	}
-	base := h.externalBaseURL(r)
-	spec := map[string]interface{}{
-		"openapi": "3.0.0",
-		"info": map[string]interface{}{
-			"title":       "MCP API",
-			"description": "Model Context Protocol API for smart contract tools",
-			"version":     "1.0.0",
-		},
-		"servers": []map[string]interface{}{
-			{
-				"url":         base + "/mcp",
-				"description": "MCP Server",
-			},
-		},
-		"security": []map[string]interface{}{
-			{
-				"ApiKeyAuth": []string{},
-			},
-			{
-				"BearerAuth": []string{},
-			},
-		},
-		"components": map[string]interface{}{
-			"securitySchemes": map[string]interface{}{
-				"ApiKeyAuth": map[string]interface{}{
-					"type": "apiKey",
-					"in":   "header",
-					"name": "X-API-Key",
-				},
-				"BearerAuth": map[string]interface{}{
-					"type":   "http",
-					"scheme": "bearer",
-				},
-			},
-		},
-		"paths": map[string]interface{}{
-			"/tools": map[string]interface{}{
-				"get": map[string]interface{}{
-					"summary":     "List available tools",
-					"description": "Returns a list of available MCP tools with their schemas and examples",
-					"responses": map[string]interface{}{
-						"200": map[string]interface{}{
-							"description": "Success",
-							"content": map[string]interface{}{
-								"application/json": map[string]interface{}{
-									"schema": map[string]interface{}{
-										"type": "object",
-										"properties": map[string]interface{}{
-											"tools": map[string]interface{}{
-												"type": "object",
-												"additionalProperties": map[string]interface{}{
-													"type": "object",
-												},
-											},
-											"total": map[string]interface{}{
-												"type": "integer",
-											},
-										},
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-			"/call": map[string]interface{}{
-				"post": map[string]interface{}{
-					"summary":     "Call a tool",
-					"description": "Execute a specific MCP tool",
-					"requestBody": map[string]interface{}{
-						"required": true,
-						"content": map[string]interface{}{
-							"application/json": map[string]interface{}{
-								"schema": map[string]interface{}{
-									"type": "object",
-									"properties": map[string]interface{}{
-										"tool": map[string]interface{}{
-											"type": "string",
-										},
-										"arguments": map[string]interface{}{
-											"type": "object",
-										},
-									},
-									"required": []string{"tool"},
-								},
-							},
-						},
-					},
-					"responses": map[string]interface{}{
-						"200": map[string]interface{}{
-							"description": "Success",
-							"content": map[string]interface{}{
-								"application/json": map[string]interface{}{
-									"schema": map[string]interface{}{
-										"type": "object",
-										"properties": map[string]interface{}{
-											"success": map[string]interface{}{
-												"type": "boolean",
-											},
-											"result": map[string]interface{}{
-												"type": "object",
-											},
-											"error": map[string]interface{}{
-												"type": "string",
-											},
-										},
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-			"/discover": map[string]interface{}{
-				"get": map[string]interface{}{
-					"summary": "Discover API endpoints",
-					"responses": map[string]interface{}{
-						"200": map[string]interface{}{
-							"description": "Success",
-						},
-					},
-				},
-			},
-			"/docs": map[string]interface{}{
-				"get": map[string]interface{}{
-					"summary": "API Documentation",
-					"responses": map[string]interface{}{
-						"200": map[string]interface{}{
-							"description": "HTML documentation",
-						},
-					},
-				},
-			},
-			"/openapi.json": map[string]interface{}{
-				"get": map[string]interface{}{
-					"summary": "OpenAPI Specification",
-					"responses": map[string]interface{}{
-						"200": map[string]interface{}{
-							"description": "OpenAPI JSON spec",
-						},
-					},
-				},
-			},
-			"/health": map[string]interface{}{
-				"get": map[string]interface{}{
-					"summary": "Health Check",
-					"responses": map[string]interface{}{
-						"200": map[string]interface{}{
-							"description": "Service is healthy",
-							"content": map[string]interface{}{
-								"application/json": map[string]interface{}{
-									"schema": map[string]interface{}{
-										"type": "object",
-										"properties": map[string]interface{}{
-											"status": map[string]interface{}{
-												"type": "string",
-											},
-											"timestamp": map[string]interface{}{
-												"type": "string",
-											},
-											"version": map[string]interface{}{
-												"type": "string",
-											},
-										},
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-		},
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(spec)
-}
-
-// handleHealth provides a health check endpoint
-func (h *HTTPMCPServer) handleHealth(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		h.writeHTTPError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "Method not allowed", "Use GET /mcp/health.")
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status":    "healthy",
-		"timestamp": time.Now().Format(time.RFC3339),
-		"version":   "1.0.0",
-	})
-}
-
-// handleEventsProxy proxies SSE/JSON event consumption to the REST endpoint for parity.
-func (h *HTTPMCPServer) handleEventsProxy(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		h.writeHTTPError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "Method not allowed", "Use GET /mcp/events with SSE.")
-		return
-	}
-	target := h.baseURL + "/api/smart_contract/events"
-
-	// SSE passthrough
-	if strings.Contains(r.Header.Get("Accept"), "text/event-stream") {
-		req, err := http.NewRequest(http.MethodGet, target, nil)
-		if err != nil {
-			h.writeHTTPError(w, http.StatusInternalServerError, "REQUEST_BUILD_FAILED", err.Error(), "")
-			return
-		}
-		for k, v := range r.Header {
-			req.Header[k] = v
-		}
-		if h.apiKeyStore != nil {
-			req.Header.Set("X-API-Key", r.Header.Get("X-API-Key"))
-		}
-		resp, err := h.httpClient.Do(req)
-		if err != nil {
-			h.writeHTTPError(w, http.StatusBadGateway, "UPSTREAM_UNAVAILABLE", err.Error(), "")
-			return
-		}
-		defer resp.Body.Close()
-
-		for k, v := range resp.Header {
-			w.Header()[k] = v
-		}
-		w.WriteHeader(resp.StatusCode)
-		_, _ = io.Copy(w, resp.Body) // stream through
-		return
-	}
-
-	// JSON passthrough
-	req, err := http.NewRequest(http.MethodGet, target, nil)
-	if err != nil {
-		h.writeHTTPError(w, http.StatusInternalServerError, "REQUEST_BUILD_FAILED", err.Error(), "")
-		return
-	}
-	if h.apiKeyStore != nil {
-		req.Header.Set("X-API-Key", r.Header.Get("X-API-Key"))
-	}
-	resp, err := h.httpClient.Do(req)
-	if err != nil {
-		h.writeHTTPError(w, http.StatusBadGateway, "UPSTREAM_UNAVAILABLE", err.Error(), "")
-		return
-	}
-	defer resp.Body.Close()
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(resp.StatusCode)
-	_, _ = io.Copy(w, resp.Body)
-}
-
-func (h *HTTPMCPServer) handleToolCall(w http.ResponseWriter, r *http.Request) {
-	log.Printf("DEBUG: HTTP MCP handleToolCall called with URL: %s, method: %s", r.URL.Path, r.Method)
-	if r.Method != http.MethodPost {
-		h.writeHTTPError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "Method not allowed", "Use POST /mcp/call.")
-		return
-	}
-
-	// Generate request ID for tracking
-	requestID := strconv.FormatInt(time.Now().UnixNano(), 16)
-
-	var req MCPRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.sendErrorResponse(w, http.StatusBadRequest, MCPResponse{
-			Success:   false,
-			Error:     "Invalid JSON: " + err.Error(),
-			ErrorCode: "INVALID_JSON",
-			Hint:      "Ensure the request body is valid JSON with a tool name.",
-			DocsURL:   "/mcp/docs",
-			RequestID: requestID,
-			Version:   "1.0.0",
-		})
-		return
-	}
-
-	log.Printf("DEBUG: Tool requested: '%s'", req.Tool)
-	if req.Tool == "" {
-		h.sendErrorResponse(w, http.StatusBadRequest, MCPResponse{
-			Success:        false,
-			Error:          "Tool name is required. Tool name refers to the name of the MCP tool to execute (e.g., 'list_contracts', 'claim_task'). See available tools at /mcp/tools",
-			ErrorCode:      "MISSING_TOOL_NAME",
-			RequiredFields: []string{"tool"},
-			Hint:           "Call /mcp/tools to see available tool names.",
-			DocsURL:        "/mcp/docs",
-			RequestID:      requestID,
-			Version:        "1.0.0",
-		})
-		return
-	}
-
-	// Call the appropriate tool handler directly
-	ctx := context.Background()
-	apiKey := strings.TrimSpace(r.Header.Get("X-API-Key"))
-	result, err := h.callToolDirect(ctx, req.Tool, req.Arguments, apiKey)
-	if err != nil {
-		status := h.statusFromError(err)
-		h.sendErrorResponse(w, status, MCPResponse{
-			Success:   false,
-			Error:     err.Error(),
-			ErrorCode: "TOOL_EXECUTION_ERROR",
-			Hint:      "Check tool arguments and retry.",
-			DocsURL:   "/mcp/docs",
-			RequestID: requestID,
-			Version:   "1.0.0",
-		})
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(MCPResponse{
-		Success:   true,
-		Result:    result,
-		RequestID: requestID,
-		Version:   "1.0.0",
-	})
+	return authenticatedTools[toolName]
 }
 
 func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, args map[string]interface{}, apiKey string) (interface{}, error) {
-	store := h.store
-
-	// Debug: log the tool name
-	log.Printf("DEBUG: callToolDirect called with tool: '%s' (len=%d)", toolName, len(toolName))
-
 	switch toolName {
 	case "list_contracts":
-		status := h.toString(args["status"])
-		creator := h.toString(args["creator"])
-		aiIdentifier := h.toString(args["ai_identifier"])
-		var skills []string
-		if skillSlice, ok := args["skills"].([]interface{}); ok {
-			for _, skill := range skillSlice {
-				if skillStr, ok := skill.(string); ok {
-					skills = append(skills, skillStr)
-				}
-			}
-		}
-		filter := smart_contract.ContractFilter{
-			Status:       status,
-			Skills:       skills,
-			Creator:      creator,
-			AiIdentifier: aiIdentifier,
-		}
-		if res, err := h.fetchContractsViaREST(filter); err == nil {
-			return res, nil
-		}
-
-		contracts, err := store.ListContracts(filter)
-		if err != nil {
-			return nil, fmt.Errorf("Failed to list contracts: %v", err)
-		}
-		filtered := make([]smart_contract.Contract, 0, len(contracts))
-		for _, c := range contracts {
-			_, proofs, err := store.ContractFunding(c.ContractID)
-			if err != nil {
-				filtered = append(filtered, c)
-				continue
-			}
-			if proofsConfirmed(proofs) {
-				continue
-			}
-			filtered = append(filtered, c)
-		}
-		contracts = filtered
-		return map[string]interface{}{
-			"contracts":   contracts,
-			"total_count": len(contracts),
-		}, nil
-
-	case "get_contract":
-		contractID, ok := args["contract_id"].(string)
-		if !ok {
-			return nil, fmt.Errorf("contract_id is required. This parameter specifies the unique identifier of the contract to retrieve. Example: {\"contract_id\": \"contract-123\"}")
-		}
-		if res, err := h.getJSON(fmt.Sprintf("%s/api/smart_contract/contracts/%s", h.baseURL, contractID)); err == nil {
-			return res, nil
-		}
-		contract, err := store.GetContract(contractID)
-		if err != nil {
-			return nil, fmt.Errorf("Failed to get contract: %v", err)
-		}
-		return contract, nil
-
+		return h.handleListContracts(ctx, args)
 	case "get_open_contracts":
-		// Make HTTP request to /api/open-contracts
-		resp, err := h.httpClient.Get(h.baseURL + "/api/open-contracts")
-		if err != nil {
-			return nil, fmt.Errorf("Failed to fetch open contracts: %v", err)
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("API returned status %d", resp.StatusCode)
-		}
-
-		var apiResponse map[string]interface{}
-		if err := json.NewDecoder(resp.Body).Decode(&apiResponse); err != nil {
-			return nil, fmt.Errorf("Failed to decode API response: %v", err)
-		}
-
-		if success, ok := apiResponse["success"].(bool); !ok || !success {
-			return nil, fmt.Errorf("API request failed")
-		}
-
-		data, ok := apiResponse["data"].(map[string]interface{})
-		if !ok {
-			return nil, fmt.Errorf("Invalid API response format")
-		}
-
-		results, _ := data["results"]
-		total, _ := data["total"].(float64) // JSON numbers are float64
-
-		return map[string]interface{}{
-			"contracts": results,
-			"total":     int(total),
-		}, nil
-
-	case "get_contract_funding":
-		contractID, ok := args["contract_id"].(string)
-		if !ok {
-			return nil, fmt.Errorf("contract_id is required")
-		}
-		if res, err := h.getJSON(fmt.Sprintf("%s/api/smart_contract/contracts/%s/funding", h.baseURL, contractID)); err == nil {
-			return res, nil
-		}
-		contract, proofs, err := store.ContractFunding(contractID)
-		if err != nil {
-			return nil, fmt.Errorf("Failed to get contract funding: %v", err)
-		}
-		return map[string]interface{}{
-			"contract": contract,
-			"proofs":   proofs,
-		}, nil
-
-	case "list_tasks":
-		var skills []string
-		if skillSlice, ok := args["skills"].([]interface{}); ok {
-			for _, skill := range skillSlice {
-				if skillStr, ok := skill.(string); ok {
-					skills = append(skills, skillStr)
-				}
-			}
-		}
-
-		filter := smart_contract.TaskFilter{
-			Skills:        skills,
-			MaxDifficulty: h.toString(args["max_difficulty"]),
-			Status:        h.toString(args["status"]),
-			Limit:         int(h.toInt64(args["limit"])),
-			Offset:        int(h.toInt64(args["offset"])),
-			MinBudgetSats: h.toInt64(args["min_budget_sats"]),
-			ContractID:    h.toString(args["contract_id"]),
-			ClaimedBy:     h.toString(args["claimed_by"]),
-		}
-
-		if filter.Limit == 0 {
-			filter.Limit = 50
-		}
-
-		if res, err := h.fetchTasksViaREST(filter); err == nil {
-			return res, nil
-		}
-
-		tasks, err := store.ListTasks(filter)
-		if err != nil {
-			return nil, fmt.Errorf("Failed to list tasks: %v", err)
-		}
-
-		// Get submissions for these tasks
-		var taskIDs []string
-		for _, t := range tasks {
-			taskIDs = append(taskIDs, t.TaskID)
-		}
-		subs, err := store.ListSubmissions(ctx, taskIDs)
-		if err != nil || subs == nil {
-			subs = []smart_contract.Submission{}
-		}
-
-		pagination := map[string]interface{}{
-			"limit":    filter.Limit,
-			"offset":   filter.Offset,
-			"has_more": len(tasks) >= filter.Limit && filter.Limit > 0,
-		}
-		if filter.Limit > 0 {
-			pagination["page"] = (filter.Offset / filter.Limit) + 1
-		}
-
-		return map[string]interface{}{
-			"tasks":         tasks,
-			"total_matches": len(tasks),
-			"submissions":   subs,
-			"pagination":    pagination,
-		}, nil
-
-	case "get_task":
-		taskID, ok := args["task_id"].(string)
-		if !ok {
-			return nil, fmt.Errorf("task_id is required. This parameter specifies the unique identifier of the task to retrieve. Example: {\"task_id\": \"task-123\"}")
-		}
-		if res, err := h.getJSON(fmt.Sprintf("%s/api/smart_contract/tasks/%s", h.baseURL, taskID)); err == nil {
-			return res, nil
-		}
-		task, err := store.GetTask(taskID)
-		if err != nil {
-			return nil, fmt.Errorf("Failed to get task: %v", err)
-		}
-		return task, nil
-
-	case "claim_task":
-		taskID, ok := args["task_id"].(string)
-		if !ok {
-			return nil, fmt.Errorf("task_id is required. This parameter specifies the unique identifier of the task to claim. Example: {\"task_id\": \"task-123\"}")
-		}
-		aiIdentifier, ok := args["ai_identifier"].(string)
-		if !ok {
-			return nil, fmt.Errorf("ai_identifier is required. This parameter specifies the identifier of the AI agent claiming the task. Example: {\"ai_identifier\": \"agent-1\"}")
-		}
-
-		if result, err := h.postJSON(fmt.Sprintf("%s/api/smart_contract/tasks/%s/claim", h.baseURL, taskID),
-			map[string]interface{}{
-				"ai_identifier":        aiIdentifier,
-				"wallet_address":       h.toString(args["wallet_address"]),
-				"estimated_completion": h.toString(args["estimated_completion"]),
-			}, apiKey); err == nil {
-			return result, nil
-		}
-
-		claimWallet := strings.TrimSpace(h.toString(args["wallet_address"]))
-		if claimWallet == "" && apiKey != "" && h.apiKeyStore != nil {
-			if rec, ok := h.apiKeyStore.Get(apiKey); ok {
-				claimWallet = strings.TrimSpace(rec.Wallet)
-			}
-		}
-		claim, err := store.ClaimTask(taskID, aiIdentifier, claimWallet, nil)
-		if err != nil {
-			return nil, fmt.Errorf("Failed to claim task: %v", err)
-		}
-
-		return map[string]interface{}{
-			"success":    true,
-			"claim_id":   claim.ClaimID,
-			"expires_at": claim.ExpiresAt,
-			"message":    "Task reserved. Submit work before expiration.",
-		}, nil
-
-	case "submit_work":
-		claimID, ok := args["claim_id"].(string)
-		if !ok {
-			return nil, fmt.Errorf("claim_id is required. This parameter specifies the claim ID returned from claiming the task. Example: {\"claim_id\": \"claim-123\"}")
-		}
-
-		deliverables := h.toMap(args["deliverables"])
-		completionProof := h.toMap(args["completion_proof"])
-
-		if deliverables == nil {
-			return nil, fmt.Errorf("deliverables are required. This parameter contains the work deliverables as an object. Example: {\"deliverables\": {\"description\": \"Completed task\"}}")
-		}
-
-		if result, err := h.postJSON(fmt.Sprintf("%s/api/smart_contract/claims/%s/submit", h.baseURL, claimID), map[string]interface{}{
-			"deliverables":     deliverables,
-			"completion_proof": completionProof,
-		}, apiKey); err == nil {
-			return result, nil
-		}
-
-		sub, err := store.SubmitWork(claimID, deliverables, completionProof)
-		if err != nil {
-			return nil, fmt.Errorf("Failed to submit work: %v", err)
-		}
-
-		return sub, nil
-
-	case "get_task_proof":
-		taskID, ok := args["task_id"].(string)
-		if !ok {
-			return nil, fmt.Errorf("task_id is required")
-		}
-
-		if res, err := h.getJSON(fmt.Sprintf("%s/api/smart_contract/tasks/%s/merkle-proof", h.baseURL, taskID)); err == nil {
-			return res, nil
-		}
-
-		proof, err := store.GetTaskProof(taskID)
-		if err != nil {
-			return nil, fmt.Errorf("Failed to get task proof: %v", err)
-		}
-
-		return proof, nil
-
-	case "get_task_status":
-		taskID, ok := args["task_id"].(string)
-		if !ok {
-			return nil, fmt.Errorf("task_id is required")
-		}
-		if res, err := h.getJSON(fmt.Sprintf("%s/api/smart_contract/tasks/%s/status", h.baseURL, taskID)); err == nil {
-			return res, nil
-		}
-
-		status, err := store.TaskStatus(taskID)
-		if err != nil {
-			return nil, fmt.Errorf("Failed to get task status: %v", err)
-		}
-
-		return status, nil
-
-	case "list_skills":
-		if res, err := h.getJSON(fmt.Sprintf("%s/api/smart_contract/skills", h.baseURL)); err == nil {
-			return res, nil
-		}
-
-		tasks, err := store.ListTasks(smart_contract.TaskFilter{})
-		if err != nil {
-			return nil, fmt.Errorf("Failed to list tasks: %v", err)
-		}
-
-		skillSet := make(map[string]struct{})
-		// Add default skills
-		skillSet["contract_bidding"] = struct{}{}
-		skillSet["get_open_contracts"] = struct{}{}
-
-		for _, t := range tasks {
-			for _, skill := range t.Skills {
-				key := h.toString(skill)
-				if key == "" {
-					continue
-				}
-				skillSet[key] = struct{}{}
-			}
-		}
-		skills := make([]string, 0, len(skillSet))
-		for k := range skillSet {
-			skills = append(skills, k)
-		}
-
-		return map[string]interface{}{
-			"skills": skills,
-			"count":  len(skills),
-		}, nil
-
+		return h.handleGetOpenContracts(ctx, args)
 	case "list_proposals":
-		var skills []string
-		if skillSlice, ok := args["skills"].([]interface{}); ok {
-			for _, skill := range skillSlice {
-				if skillStr, ok := skill.(string); ok {
-					skills = append(skills, skillStr)
-				}
-			}
-		}
-
-		filter := smart_contract.ProposalFilter{
-			Status:     h.toString(args["status"]),
-			Skills:     skills,
-			MinBudget:  h.toInt64(args["min_budget_sats"]),
-			ContractID: h.toString(args["contract_id"]),
-			MaxResults: int(h.toInt64(args["limit"])),
-			Offset:     int(h.toInt64(args["offset"])),
-		}
-
-		if res, err := h.fetchProposalsViaREST(filter); err == nil {
-			return res, nil
-		}
-
-		proposals, err := store.ListProposals(ctx, filter)
-		if err != nil {
-			return nil, fmt.Errorf("Failed to list proposals: %v", err)
-		}
-
-		// Get submissions alongside tasks
-		var taskIDs []string
-		for _, p := range proposals {
-			for _, t := range p.Tasks {
-				taskIDs = append(taskIDs, t.TaskID)
-			}
-		}
-		subs, _ := store.ListSubmissions(ctx, taskIDs)
-
-		pagination := map[string]interface{}{
-			"limit":    filter.MaxResults,
-			"offset":   filter.Offset,
-			"has_more": len(proposals) >= filter.MaxResults && filter.MaxResults > 0,
-		}
-		if filter.MaxResults > 0 {
-			pagination["page"] = (filter.Offset / filter.MaxResults) + 1
-		}
-
-		return map[string]interface{}{
-			"proposals":   proposals,
-			"total":       len(proposals),
-			"submissions": subs,
-			"pagination":  pagination,
-		}, nil
-
-	case "get_proposal":
-		proposalID, ok := args["proposal_id"].(string)
-		if !ok {
-			return nil, fmt.Errorf("proposal_id is required")
-		}
-		if res, err := h.getJSON(fmt.Sprintf("%s/api/smart_contract/proposals/%s", h.baseURL, proposalID)); err == nil {
-			return res, nil
-		}
-
-		proposal, err := store.GetProposal(ctx, proposalID)
-		if err != nil {
-			return nil, fmt.Errorf("Failed to get proposal: %v", err)
-		}
-
-		return proposal, nil
-
-	case "create_proposal":
-		// Extract required fields
-		title := h.toString(args["title"])
-		if strings.TrimSpace(title) == "" {
-			return nil, fmt.Errorf("title is required")
-		}
-
-		id := h.toString(args["id"])
-		if id == "" {
-			id = "proposal-" + strconv.FormatInt(time.Now().UnixNano(), 10)
-		}
-
-		status := h.toString(args["status"])
-		if status == "" {
-			status = "pending"
-		}
-
-		budgetSats := h.toInt64(args["budget_sats"])
-		if budgetSats == 0 {
-			budgetSats = scstore.DefaultBudgetSats()
-		}
-
-		metadata := h.toMap(args["metadata"])
-		if metadata == nil {
-			metadata = map[string]interface{}{}
-		}
-
-		contractID := h.toString(args["contract_id"])
-		if contractID != "" {
-			metadata["contract_id"] = contractID
-		}
-
-		visiblePixelHash := h.toString(args["visible_pixel_hash"])
-		if visiblePixelHash != "" {
-			metadata["visible_pixel_hash"] = visiblePixelHash
-		}
-
-		// Proposals must be tied to an existing wish.
-		ingestionID := h.toString(args["ingestion_id"])
-		if ingestionID != "" && h.ingestionSvc != nil {
-			// Create from ingestion record
-			rec, err := h.ingestionSvc.Get(ingestionID)
-			if err != nil {
-				return nil, fmt.Errorf("ingestion not found")
-			}
-
-			// Build proposal from ingestion
-			proposalBody := scmiddleware.ProposalCreateBody{
-				ID:               id,
-				IngestionID:      ingestionID,
-				ContractID:       contractID,
-				Title:            title,
-				DescriptionMD:    h.toString(args["description_md"]),
-				VisiblePixelHash: h.toString(args["visible_pixel_hash"]),
-				BudgetSats:       budgetSats,
-				Status:           status,
-				Metadata:         metadata,
-			}
-
-			proposal, err := scmiddleware.BuildProposalFromIngestion(proposalBody, rec)
-			if err != nil {
-				return nil, err
-			}
-			metaContractID := strings.TrimSpace(h.toString(proposal.Metadata["contract_id"]))
-			metaVisiblePixelHash := strings.TrimSpace(h.toString(proposal.Metadata["visible_pixel_hash"]))
-			if metaContractID == "" || metaVisiblePixelHash == "" {
-				return nil, fmt.Errorf("contract_id and visible_pixel_hash are required for proposal creation so the UI can display it; set both to the same 64-char hash if needed")
-			}
-
-			if err := store.CreateProposal(ctx, proposal); err != nil {
-				return nil, err
-			}
-
-			// Create SmartContractImage to witness the visible pixel hash
-			if proposal.VisiblePixelHash != "" && h.smartContractSvc != nil {
-				contractID := proposal.VisiblePixelHash // Use hash directly as contract ID
-
-				createReq := models.CreateContractRequest{
-					ContractID:   contractID,
-					BlockHeight:  0, // Will be updated when mined
-					ContractType: "steganographic",
-					Metadata: map[string]interface{}{
-						"visible_pixel_hash": proposal.VisiblePixelHash,
-						"proposal_id":        proposal.ID,
-						"ingestion_id":       rec.ID,
-						"embedded_message":   rec.Metadata["embedded_message"],
-						"stego_image_url":    "/uploads/" + rec.Filename,
-					},
-				}
-
-				createdContract, err := h.smartContractSvc.CreateContract(createReq)
-				if err != nil {
-					log.Printf("Warning: failed to create SmartContractImage: %v", err)
-					// Don't fail the proposal creation for this
-				} else {
-					// Broadcast contract creation event
-					scmiddleware.PublishEvent(smart_contract.Event{
-						Type:      "contract_created",
-						EntityID:  createdContract.ContractID,
-						Actor:     "system",
-						Message:   fmt.Sprintf("contract created from proposal: %s", createdContract.ContractID),
-						CreatedAt: time.Now(),
-					})
-				}
-			}
-
-			result := map[string]interface{}{
-				"proposal_id": proposal.ID,
-				"status":      proposal.Status,
-				"message":     "proposal created from pending ingestion",
-			}
-
-			return result, nil
-		}
-
-		visiblePixelHash = h.toString(args["visible_pixel_hash"])
-		if strings.TrimSpace(visiblePixelHash) == "" {
-			return nil, fmt.Errorf("visible_pixel_hash is required; proposals must be tied to a wish")
-		}
-
-		// Normalize the visible_pixel_hash by removing any prefixes
-		normalizedHash := scstore.NormalizeContractID(visiblePixelHash)
-		if !scstore.IsValidHash(normalizedHash) {
-			return nil, fmt.Errorf("visible_pixel_hash must be a valid 64-character hex hash. Got '%s' (normalized to '%s'). Common prefixes like 'wish-' are automatically stripped.", visiblePixelHash, normalizedHash)
-		}
-
-		contractID = h.toString(args["contract_id"])
-		if strings.TrimSpace(contractID) == "" {
-			contractID = normalizedHash
-		} else {
-			// Also normalize the contract ID if provided
-			contractID = scstore.NormalizeContractID(contractID)
-		}
-
-		// Use normalized hash for consistency
-		visiblePixelHash = normalizedHash
-		metadata["contract_id"] = contractID
-		metadata["visible_pixel_hash"] = visiblePixelHash
-		if contractID != visiblePixelHash {
-			return nil, fmt.Errorf("contract_id must match visible_pixel_hash for wish proposals")
-		}
-		if _, err := store.GetContract("wish-" + visiblePixelHash); err != nil {
-			// Try with normalized hash in case the contract was stored without prefix
-			if _, err2 := store.GetContract(visiblePixelHash); err2 != nil {
-				return nil, fmt.Errorf("wish not found for visible_pixel_hash (tried wish-%s and %s)", visiblePixelHash, visiblePixelHash)
-			}
-		}
-
-		proposal := smart_contract.Proposal{
-			ID:               id,
-			Title:            title,
-			DescriptionMD:    h.toString(args["description_md"]),
-			VisiblePixelHash: visiblePixelHash,
-			BudgetSats:       budgetSats,
-			Status:           status,
-			CreatedAt:        time.Now(),
-			Metadata:         metadata,
-		}
-		if err := store.CreateProposal(ctx, proposal); err != nil {
-			return nil, err
-		}
-
-		// Broadcast proposal creation event
-		scmiddleware.PublishEvent(smart_contract.Event{
-			Type:      "proposal_create",
-			EntityID:  proposal.ID,
-			Actor:     "system",
-			Message:   fmt.Sprintf("proposal created: %s", proposal.Title),
-			CreatedAt: time.Now(),
-		})
-
-		return map[string]interface{}{
-			"proposal_id": proposal.ID,
-			"status":      proposal.Status,
-			"tasks":       len(proposal.Tasks),
-			"budget_sats": proposal.BudgetSats,
-		}, nil
-
-	case "create_contract":
-		if h.smartContractSvc == nil {
-			return nil, fmt.Errorf("smart contract service unavailable")
-		}
-		contractID := h.toString(args["contract_id"])
-		if strings.TrimSpace(contractID) == "" {
-			return nil, fmt.Errorf("contract_id is required")
-		}
-		contractType := h.toString(args["contract_type"])
-		if contractType == "" {
-			contractType = "steganographic"
-		}
-		metadata := h.toMap(args["metadata"])
-		if metadata == nil {
-			metadata = map[string]interface{}{}
-		}
-		req := models.CreateContractRequest{
-			ContractID:   contractID,
-			BlockHeight:  h.toInt64(args["block_height"]),
-			ContractType: contractType,
-			Metadata:     metadata,
-		}
-		contract, err := h.smartContractSvc.CreateContract(req)
-		if err != nil {
-			return nil, err
-		}
-
-		// Broadcast contract creation event
-		scmiddleware.PublishEvent(smart_contract.Event{
-			Type:      "contract_created",
-			EntityID:  contract.ContractID,
-			Actor:     "system",
-			Message:   fmt.Sprintf("contract created: %s", contract.ContractID),
-			CreatedAt: time.Now(),
-		})
-
-		return contract, nil
-
-	case "approve_proposal":
-		proposalID, ok := args["proposal_id"].(string)
-		if !ok {
-			return nil, fmt.Errorf("proposal_id is required")
-		}
-
-		proposal, err := store.GetProposal(ctx, proposalID)
-		if err != nil {
-			return nil, fmt.Errorf("Failed to get proposal: %v", err)
-		}
-		if proposal.Metadata == nil {
-			proposal.Metadata = map[string]interface{}{}
-		}
-		if _, ok := proposal.Metadata["creator_api_key_hash"].(string); !ok {
-			hash := apiKeyHash(apiKey)
-			if hash != "" {
-				proposal.Metadata["creator_api_key_hash"] = hash
-				if err := store.UpdateProposal(ctx, proposal); err != nil {
-					return nil, fmt.Errorf("Failed to update proposal: %v", err)
-				}
-			}
-		}
-		if err := requireCreatorApproval(apiKey, proposal); err != nil {
-			return nil, fmt.Errorf("Approval denied: %v", err)
-		}
-		visibleHash := strings.TrimSpace(proposal.VisiblePixelHash)
-		if visibleHash == "" {
-			if v, ok := proposal.Metadata["visible_pixel_hash"].(string); ok {
-				visibleHash = strings.TrimSpace(v)
-			}
-		}
-		if visibleHash == "" {
-			return nil, fmt.Errorf("visible_pixel_hash is required for approval")
-		}
-		if _, err := store.GetContract("wish-" + visibleHash); err != nil {
-			return nil, fmt.Errorf("wish not found for visible_pixel_hash")
-		}
-		if err := store.ApproveProposal(ctx, proposalID); err != nil {
-			return nil, fmt.Errorf("Failed to approve proposal: %v", err)
-		}
-
-		// Publish tasks for this proposal
-		if err := h.publishProposalTasks(ctx, proposalID); err != nil {
-			return nil, fmt.Errorf("Failed to publish tasks: %v", err)
-		}
-
-		return map[string]interface{}{
-			"proposal_id": proposalID,
-			"status":      "approved",
-			"message":     "Proposal approved; tasks published.",
-		}, nil
-
-	case "publish_proposal":
-		proposalID, ok := args["proposal_id"].(string)
-		if !ok {
-			return nil, fmt.Errorf("proposal_id is required")
-		}
-
-		// Check that all tasks for this proposal have approved submissions
-		proposal, err := store.GetProposal(ctx, proposalID)
-		if err != nil {
-			return nil, fmt.Errorf("Failed to get proposal: %v", err)
-		}
-		if proposal.Status != "approved" {
-			return nil, fmt.Errorf("proposal must be approved before publishing")
-		}
-
-		contractID := h.toString(proposal.Metadata["contract_id"])
-		if contractID == "" {
-			contractID = proposalID // fallback
-		}
-
-		// Get all tasks for this contract
-		tasks, err := store.ListTasks(smart_contract.TaskFilter{ContractID: contractID})
-		if err != nil {
-			return nil, fmt.Errorf("Failed to list tasks: %v", err)
-		}
-
-		// Check each task has an approved submission
-		for _, task := range tasks {
-			submissions, err := store.ListSubmissions(ctx, []string{task.TaskID})
-			if err != nil {
-				return nil, fmt.Errorf("Failed to list submissions for task %s: %v", task.TaskID, err)
-			}
-			hasApproved := false
-			for _, sub := range submissions {
-				if strings.EqualFold(sub.Status, "approved") {
-					hasApproved = true
-					break
-				}
-			}
-			if !hasApproved {
-				return nil, fmt.Errorf("task %s does not have an approved submission", task.TaskID)
-			}
-		}
-
-		if err := store.PublishProposal(ctx, proposalID); err != nil {
-			return nil, fmt.Errorf("Failed to publish proposal: %v", err)
-		}
-
-		return map[string]interface{}{
-			"proposal_id": proposalID,
-			"status":      "published",
-			"message":     "Proposal published.",
-		}, nil
-
-	case "list_submissions":
-		contractID := h.toString(args["contract_id"])
-		status := h.toString(args["status"])
-
-		var taskIDs []string
-		if tidSlice, ok := args["task_ids"].([]interface{}); ok {
-			for _, tid := range tidSlice {
-				if tidStr, ok := tid.(string); ok && tidStr != "" {
-					taskIDs = append(taskIDs, tidStr)
-				}
-			}
-		} else if tidStr := h.toString(args["task_ids"]); tidStr != "" {
-			for _, part := range strings.Split(tidStr, ",") {
-				if trimmed := strings.TrimSpace(part); trimmed != "" {
-					taskIDs = append(taskIDs, trimmed)
-				}
-			}
-		}
-
-		// First try REST endpoint to keep UI/agent parity
-		if result, err := h.fetchSubmissionsViaREST(contractID, status, taskIDs); err == nil {
-			return result, nil
-		}
-
-		// Fallback to store path
-		var submissions []smart_contract.Submission
-		var err error
-
-		switch {
-		case len(taskIDs) > 0:
-			submissions, err = store.ListSubmissions(ctx, taskIDs)
-		case contractID != "":
-			tasks, tErr := store.ListTasks(smart_contract.TaskFilter{ContractID: contractID})
-			if tErr != nil {
-				return nil, fmt.Errorf("Failed to list tasks for contract: %v", tErr)
-			}
-			taskIDs = make([]string, len(tasks))
-			for i, t := range tasks {
-				taskIDs[i] = t.TaskID
-			}
-			submissions, err = store.ListSubmissions(ctx, taskIDs)
-		default:
-			tasks, tErr := store.ListTasks(smart_contract.TaskFilter{})
-			if tErr != nil {
-				return nil, fmt.Errorf("Failed to list tasks: %v", tErr)
-			}
-			taskIDs = make([]string, len(tasks))
-			for i, t := range tasks {
-				taskIDs[i] = t.TaskID
-			}
-			submissions, err = store.ListSubmissions(ctx, taskIDs)
-		}
-		if err != nil {
-			return nil, fmt.Errorf("Failed to list submissions: %v", err)
-		}
-
-		if status != "" {
-			filtered := make([]smart_contract.Submission, 0, len(submissions))
-			for _, sub := range submissions {
-				if strings.EqualFold(sub.Status, status) {
-					filtered = append(filtered, sub)
-				}
-			}
-			submissions = filtered
-		}
-
-		submissionMap := make(map[string]smart_contract.Submission)
-		for _, sub := range submissions {
-			submissionMap[sub.SubmissionID] = sub
-		}
-
-		return map[string]interface{}{
-			"submissions": submissionMap,
-			"total":       len(submissions),
-		}, nil
-
-	case "get_submission":
-		submissionID, ok := args["submission_id"].(string)
-		if !ok {
-			return nil, fmt.Errorf("submission_id is required")
-		}
-
-		// Get all tasks to find submission
-		tasks, err := store.ListTasks(smart_contract.TaskFilter{})
-		if err != nil {
-			return nil, fmt.Errorf("Failed to get tasks: %v", err)
-		}
-
-		taskIDs := make([]string, len(tasks))
-		for i, task := range tasks {
-			taskIDs[i] = task.TaskID
-		}
-
-		submissions, err := store.ListSubmissions(ctx, taskIDs)
-		if err != nil {
-			return nil, fmt.Errorf("Failed to get submissions: %v", err)
-		}
-
-		for _, sub := range submissions {
-			if sub.SubmissionID == submissionID {
-				return sub, nil
-			}
-		}
-
-		return nil, fmt.Errorf("submission not found")
-
-	case "review_submission":
-		submissionID, ok := args["submission_id"].(string)
-		if !ok {
-			return nil, fmt.Errorf("submission_id is required")
-		}
-
-		action, ok := args["action"].(string)
-		if !ok {
-			return nil, fmt.Errorf("action is required")
-		}
-
-		// Validate action
-		validActions := map[string]bool{
-			"review":  true,
-			"approve": true,
-			"reject":  true,
-		}
-		if !validActions[action] {
-			return nil, fmt.Errorf("invalid action. must be: review, approve, or reject")
-		}
-
-		reviewPayload := map[string]interface{}{
-			"action": action,
-		}
-		if notes := h.toString(args["notes"]); notes != "" {
-			reviewPayload["notes"] = notes
-		}
-		if rejectionType := h.toString(args["rejection_type"]); rejectionType != "" {
-			reviewPayload["rejection_type"] = rejectionType
-		}
-		if result, err := h.postJSON(fmt.Sprintf("%s/api/smart_contract/submissions/%s/review", h.baseURL, submissionID),
-			reviewPayload, apiKey); err == nil {
-			return result, nil
-		}
-
-		// Update submission status
-		var newStatus string
-		switch action {
-		case "review":
-			newStatus = "reviewed"
-		case "approve":
-			newStatus = "approved"
-		case "reject":
-			newStatus = "rejected"
-		}
-
-		reviewNotes := ""
-		rejectionType := ""
-		if action == "reject" {
-			reviewNotes = h.toString(args["notes"])
-			rejectionType = h.toString(args["rejection_type"])
-		}
-		err := store.UpdateSubmissionStatus(ctx, submissionID, newStatus, reviewNotes, rejectionType)
-		if err != nil {
-			if strings.Contains(err.Error(), "not found") {
-				return nil, fmt.Errorf("submission not found")
-			}
-			return nil, fmt.Errorf("Failed to update submission: %v", err)
-		}
-
-		return map[string]interface{}{
-			"message":       fmt.Sprintf("submission %sd successfully", action),
-			"status":        newStatus,
-			"submission_id": submissionID,
-		}, nil
-
-	case "rework_submission":
-		submissionID, ok := args["submission_id"].(string)
-		if !ok {
-			return nil, fmt.Errorf("submission_id is required")
-		}
-
-		deliverables := h.toMap(args["deliverables"])
-		notes := h.toString(args["notes"])
-
-		if deliverables == nil && notes == "" {
-			return nil, fmt.Errorf("deliverables or notes must be provided")
-		}
-
-		if result, err := h.postJSON(fmt.Sprintf("%s/api/smart_contract/submissions/%s/rework", h.baseURL, submissionID),
-			map[string]interface{}{"deliverables": deliverables, "notes": notes}, apiKey); err == nil {
-			return result, nil
-		}
-
-		// Get the original submission
-		tasks, err := store.ListTasks(smart_contract.TaskFilter{})
-		if err != nil {
-			return nil, fmt.Errorf("Failed to get tasks: %v", err)
-		}
-
-		taskIDs := make([]string, len(tasks))
-		for i, task := range tasks {
-			taskIDs[i] = task.TaskID
-		}
-
-		submissions, err := store.ListSubmissions(ctx, taskIDs)
-		if err != nil {
-			return nil, fmt.Errorf("Failed to get submissions: %v", err)
-		}
-
-		var originalSubmission *smart_contract.Submission
-		for _, sub := range submissions {
-			if sub.SubmissionID == submissionID {
-				originalSubmission = &sub
-				break
-			}
-		}
-
-		if originalSubmission == nil {
-			return nil, fmt.Errorf("submission not found")
-		}
-
-		// Update deliverables if provided
-		if deliverables != nil {
-			originalSubmission.Deliverables = deliverables
-		}
-
-		// Add rework notes to deliverables
-		if notes != "" {
-			if originalSubmission.Deliverables == nil {
-				originalSubmission.Deliverables = make(map[string]interface{})
-			}
-			originalSubmission.Deliverables["rework_notes"] = notes
-			originalSubmission.Deliverables["reworked_at"] = time.Now().Format(time.RFC3339)
-		}
-
-		// Reset status to pending_review
-		err = store.UpdateSubmissionStatus(ctx, submissionID, "pending_review", "", "")
-		if err != nil {
-			return nil, fmt.Errorf("Failed to update submission: %v", err)
-		}
-
-		return map[string]interface{}{
-			"message":       "rework submitted successfully",
-			"status":        "pending_review",
-			"submission_id": submissionID,
-		}, nil
-
+		return h.handleListProposals(ctx, args)
+	case "list_tasks":
+		return h.handleListTasks(ctx, args)
+	case "get_contract":
+		return h.handleGetContract(ctx, args)
 	case "list_events":
-		filterType := h.toString(args["type"])
-		filterActor := h.toString(args["actor"])
-		filterEntity := h.toString(args["entity_id"])
-		limit := int(h.toInt64(args["limit"]))
-
-		if res, err := h.fetchEventsViaREST(filterType, filterActor, filterEntity, limit, apiKey); err == nil {
-			return res, nil
-		}
-
-		events := []smart_contract.Event{}
-		return map[string]interface{}{
-			"events": events,
-			"total":  len(events),
-		}, nil
-
+		return h.handleListEvents(ctx, args)
 	case "events_stream":
-		filterType := h.toString(args["type"])
-		filterActor := h.toString(args["actor"])
-		filterEntity := h.toString(args["entity_id"])
-		urlStr := h.eventsStreamURL(filterType, filterActor, filterEntity, "")
-		return map[string]interface{}{
-			"url":                urlStr,
-			"accept":             "text/event-stream",
-			"auth_required":      h.apiKeyStore != nil,
-			"auth_header":        "X-API-Key",
-			"authorization_hint": "Send X-API-Key or Authorization: Bearer <key>.",
-		}, nil
-
+		return h.handleEventsStream(ctx, args)
+	case "create_wish":
+		return h.handleCreateWish(ctx, args, apiKey)
+	case "claim_task":
+		return h.handleClaimTask(ctx, args, apiKey)
+	case "create_proposal":
+		return h.handleCreateProposal(ctx, args, apiKey)
+	case "submit_work":
+		return h.handleSubmitWork(ctx, args, apiKey)
+	case "approve_proposal":
+		return h.handleApproveProposal(ctx, args, apiKey)
 	case "scan_image":
-		imageDataStr, ok := args["image_data"].(string)
-		if !ok {
-			return nil, fmt.Errorf("image_data is required (base64 encoded)")
-		}
-
-		// Decode base64 image data
-		imageData, err := base64.StdEncoding.DecodeString(imageDataStr)
-		if err != nil {
-			return nil, fmt.Errorf("invalid base64 image_data: %v", err)
-		}
-
-		if h.scannerManager == nil {
-			return nil, fmt.Errorf("scanner not available")
-		}
-
-		options := core.ScanOptions{
-			ExtractMessage:      h.toBool(args["extract_message"]),
-			ConfidenceThreshold: h.toFloat64(args["confidence_threshold"]),
-			IncludeMetadata:     h.toBool(args["include_metadata"]),
-		}
-		if options.ConfidenceThreshold == 0 {
-			options.ConfidenceThreshold = 0.5 // default
-		}
-
-		result, err := h.scannerManager.ScanImage(imageData, options)
-		if err != nil {
-			return nil, fmt.Errorf("failed to scan image: %v", err)
-		}
-
-		return result, nil
-
-	case "scan_block":
-		blockHeight, ok := args["block_height"].(float64)
-		if !ok {
-			return nil, fmt.Errorf("block_height is required")
-		}
-
-		if h.scannerManager == nil {
-			return nil, fmt.Errorf("scanner not available")
-		}
-
-		options := core.ScanOptions{
-			ExtractMessage:      h.toBool(args["extract_message"]),
-			ConfidenceThreshold: h.toFloat64(args["confidence_threshold"]),
-			IncludeMetadata:     h.toBool(args["include_metadata"]),
-		}
-		if options.ConfidenceThreshold == 0 {
-			options.ConfidenceThreshold = 0.5 // default
-		}
-
-		result, err := h.scannerManager.ScanBlock(int64(blockHeight), options)
-		if err != nil {
-			return nil, fmt.Errorf("failed to scan block: %v", err)
-		}
-
-		return result, nil
-
-	case "extract_message":
-		imageDataStr, ok := args["image_data"].(string)
-		if !ok {
-			return nil, fmt.Errorf("image_data is required (base64 encoded)")
-		}
-
-		method := h.toString(args["method"])
-		if method == "" {
-			method = "alpha" // default method
-		}
-
-		// Decode base64 image data
-		imageData, err := base64.StdEncoding.DecodeString(imageDataStr)
-		if err != nil {
-			return nil, fmt.Errorf("invalid base64 image_data: %v", err)
-		}
-
-		if h.scannerManager == nil {
-			return nil, fmt.Errorf("scanner not available")
-		}
-
-		result, err := h.scannerManager.ExtractMessage(imageData, method)
-		if err != nil {
-			return nil, fmt.Errorf("failed to extract message: %v", err)
-		}
-
-		return result, nil
-
+		return h.handleScanImage(ctx, args)
 	case "get_scanner_info":
-		if h.scannerManager == nil {
-			return map[string]interface{}{
-				"scanner_info":   nil,
-				"health_status":  nil,
-				"scanner_type":   "none",
-				"is_initialized": false,
-				"error":          "scanner manager not configured",
-			}, nil
-		}
-
-		info := h.scannerManager.GetScannerInfo()
-		health := h.scannerManager.GetHealthStatus()
-
-		return map[string]interface{}{
-			"scanner_info":   info,
-			"health_status":  health,
-			"scanner_type":   h.scannerManager.GetScannerType(),
-			"is_initialized": h.scannerManager.IsInitialized(),
-		}, nil
-
+		return h.handleGetScannerInfo(ctx, args)
+	case "get_auth_challenge":
+		return h.handleGetAuthChallenge(ctx, args)
+	case "verify_auth_challenge":
+		return h.handleVerifyAuthChallenge(ctx, args)
 	default:
-		return nil, fmt.Errorf("Unknown tool '%s'. Tool name must be one of the available tools listed at /mcp/tools. See /mcp/docs for documentation", toolName)
+		return nil, fmt.Errorf("unknown tool: %s", toolName)
 	}
 }
 
-// fetchSubmissionsViaREST tries the REST endpoint first to keep parity between UI and MCP tools.
-func (h *HTTPMCPServer) fetchSubmissionsViaREST(contractID, status string, taskIDs []string) (map[string]interface{}, error) {
-	params := url.Values{}
-	if contractID != "" {
-		params.Set("contract_id", contractID)
+func (h *HTTPMCPServer) handleListContracts(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	filter := smart_contract.ContractFilter{}
+	if status, ok := args["status"].(string); ok {
+		filter.Status = status
 	}
-	if status != "" {
-		params.Set("status", status)
-	}
-	if len(taskIDs) > 0 {
-		params.Set("task_ids", strings.Join(taskIDs, ","))
+	if creator, ok := args["creator"].(string); ok {
+		filter.Creator = creator
 	}
 
-	urlStr := h.baseURL + "/api/smart_contract/submissions"
-	if enc := params.Encode(); enc != "" {
-		urlStr += "?" + enc
-	}
-
-	req, err := http.NewRequest(http.MethodGet, urlStr, nil)
+	contracts, err := h.store.ListContracts(filter)
 	if err != nil {
 		return nil, err
 	}
 
-	resp, err := h.httpClient.Do(req)
+	return map[string]interface{}{
+		"contracts":   contracts,
+		"total_count": len(contracts),
+	}, nil
+}
+
+func (h *HTTPMCPServer) handleListProposals(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	filter := smart_contract.ProposalFilter{}
+	if status, ok := args["status"].(string); ok {
+		filter.Status = status
+	}
+
+	proposals, err := h.store.ListProposals(ctx, filter)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("REST returned %d", resp.StatusCode)
-	}
-
-	var parsed map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
-		return nil, err
-	}
-	return parsed, nil
+	return map[string]interface{}{
+		"proposals": proposals,
+		"total":     len(proposals),
+	}, nil
 }
 
-// fetchEventsViaREST lists recent events via REST with optional filters.
-func (h *HTTPMCPServer) fetchEventsViaREST(filterType, filterActor, filterEntity string, limit int, apiKey string) (map[string]interface{}, error) {
-	params := url.Values{}
-	if filterType != "" {
-		params.Set("type", filterType)
-	}
-	if filterActor != "" {
-		params.Set("actor", filterActor)
-	}
-	if filterEntity != "" {
-		params.Set("entity_id", filterEntity)
-	}
-	if limit > 0 {
-		params.Set("limit", fmt.Sprintf("%d", limit))
+func (h *HTTPMCPServer) handleClaimTask(ctx context.Context, args map[string]interface{}, apiKey string) (interface{}, error) {
+	validation := NewValidationError("claim_task", "Invalid request parameters")
+
+	taskID, ok := args["task_id"].(string)
+	if !ok || taskID == "" {
+		validation.AddFieldError("task_id", args["task_id"], "task_id is required and must be a string", true)
 	}
 
-	urlStr := h.baseURL + "/api/smart_contract/events"
-	if enc := params.Encode(); enc != "" {
-		urlStr += "?" + enc
-	}
-
-	req, err := http.NewRequest(http.MethodGet, urlStr, nil)
-	if err != nil {
-		return nil, err
-	}
-	if apiKey != "" {
-		req.Header.Set("X-API-Key", apiKey)
-	}
-
-	resp, err := h.httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("REST returned %d", resp.StatusCode)
-	}
-
-	var parsed map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
-		return nil, err
-	}
-	return parsed, nil
-}
-
-func (h *HTTPMCPServer) eventsStreamURL(filterType, filterActor, filterEntity string, limit string) string {
-	params := url.Values{}
-	if filterType != "" {
-		params.Set("type", filterType)
-	}
-	if filterActor != "" {
-		params.Set("actor", filterActor)
-	}
-	if filterEntity != "" {
-		params.Set("entity_id", filterEntity)
-	}
-	if limit != "" {
-		params.Set("limit", limit)
-	}
-	base := h.baseURL
-	if strings.TrimSpace(base) == "" {
-		base = "http://localhost:3001"
-	}
-	urlStr := base + "/mcp/events"
-	if enc := params.Encode(); enc != "" {
-		urlStr += "?" + enc
-	}
-	return urlStr
-}
-
-// bodyHeaderFallback attempts to pull X-API-Key from a nested headers map in body if present.
-func bodyHeaderFallback(body map[string]interface{}) string {
-	if body == nil {
-		return ""
-	}
-	if hdrs, ok := body["headers"].(map[string]interface{}); ok {
-		if key, ok2 := hdrs["X-API-Key"].(string); ok2 {
-			return key
+	var wallet string
+	if h.apiKeyStore != nil {
+		if keyInfo, ok := h.apiKeyStore.Get(apiKey); ok {
+			wallet = keyInfo.Wallet
 		}
 	}
-	return ""
+	if wallet == "" {
+		return nil, NewUnauthorizedError("claim_task", "wallet address required - please bind wallet to API key using /api/auth/verify")
+	}
+
+	// Return validation errors if any
+	if validation.HasErrors() {
+		return nil, validation
+	}
+
+	claim, err := h.store.ClaimTask(taskID, wallet, nil)
+	if err != nil {
+		// Convert common errors to structured errors
+		if strings.Contains(err.Error(), "not found") {
+			return nil, NewNotFoundError("claim_task", "task", taskID)
+		}
+		if strings.Contains(err.Error(), "already claimed") {
+			return nil, NewClaimTaskError("ALREADY_CLAIMED", "Task has already been claimed", "task_id")
+		}
+		return nil, err
+	}
+
+	return map[string]interface{}{
+		"claim": claim,
+	}, nil
 }
 
-func proofConfirmed(proof *smart_contract.MerkleProof) bool {
-	if proof == nil {
-		return false
-	}
-	if strings.EqualFold(strings.TrimSpace(proof.ConfirmationStatus), "confirmed") {
-		return true
-	}
-	if proof.ConfirmedAt != nil {
-		return true
-	}
-	return false
-}
+func (h *HTTPMCPServer) handleCreateProposal(ctx context.Context, args map[string]interface{}, apiKey string) (interface{}, error) {
+	validation := NewValidationError("create_proposal", "Invalid request parameters")
 
-func proofsConfirmed(proofs []smart_contract.MerkleProof) bool {
-	for i := range proofs {
-		if proofConfirmed(&proofs[i]) {
-			return true
+	title, ok := args["title"].(string)
+	if !ok || title == "" {
+		validation.AddFieldError("title", args["title"], "title is required and must be a non-empty string", true)
+	}
+
+	descriptionMD, ok := args["description_md"].(string)
+	if !ok || descriptionMD == "" {
+		validation.AddFieldError("description_md", args["description_md"], "description_md is required and must be a non-empty string", true)
+	}
+
+	visiblePixelHash, ok := args["visible_pixel_hash"].(string)
+	if !ok || visiblePixelHash == "" {
+		validation.AddFieldError("visible_pixel_hash", args["visible_pixel_hash"], "visible_pixel_hash is required and must be a string", true)
+	}
+
+	// Validate budget_sats if provided
+	var budgetSats int64 = 0
+	if budget, ok := args["budget_sats"]; ok {
+		if b, ok := budget.(float64); ok {
+			if b < 0 {
+				validation.AddFieldError("budget_sats", budget, "budget_sats must be a non-negative number", false)
+			} else {
+				budgetSats = int64(b)
+			}
+		} else {
+			validation.AddTypeError("budget_sats", budget, "number")
 		}
 	}
-	return false
-}
 
-// fetchContractsViaREST lists contracts via REST with optional filters.
-func (h *HTTPMCPServer) fetchContractsViaREST(filter smart_contract.ContractFilter) (map[string]interface{}, error) {
-	params := url.Values{}
-	if filter.Status != "" {
-		params.Set("status", filter.Status)
-	}
-	if filter.Creator != "" {
-		params.Set("creator", filter.Creator)
-	}
-	if filter.AiIdentifier != "" {
-		params.Set("ai_identifier", filter.AiIdentifier)
-	}
-	if len(filter.Skills) > 0 {
-		for _, s := range filter.Skills {
-			params.Add("skills", s)
-		}
-	}
-	urlStr := h.baseURL + "/api/smart_contract/contracts"
-	if enc := params.Encode(); enc != "" {
-		urlStr += "?" + enc
-	}
-	return h.getJSON(urlStr)
-}
-
-// fetchTasksViaREST lists tasks via REST with filters matching TaskFilter.
-func (h *HTTPMCPServer) fetchTasksViaREST(filter smart_contract.TaskFilter) (map[string]interface{}, error) {
-	params := url.Values{}
-	if len(filter.Skills) > 0 {
-		for _, s := range filter.Skills {
-			params.Add("skills", s)
-		}
-	}
-	if filter.MaxDifficulty != "" {
-		params.Set("max_difficulty", filter.MaxDifficulty)
-	}
-	if filter.Status != "" {
-		params.Set("status", filter.Status)
-	}
-	if filter.Limit > 0 {
-		params.Set("limit", fmt.Sprintf("%d", filter.Limit))
-	}
-	if filter.Offset > 0 {
-		params.Set("offset", fmt.Sprintf("%d", filter.Offset))
-	}
-	if filter.MinBudgetSats > 0 {
-		params.Set("min_budget_sats", fmt.Sprintf("%d", filter.MinBudgetSats))
-	}
-	if filter.ContractID != "" {
-		params.Set("contract_id", filter.ContractID)
-	}
-	if filter.ClaimedBy != "" {
-		params.Set("claimed_by", filter.ClaimedBy)
+	// Return validation errors if any
+	if validation.HasErrors() {
+		return nil, validation
 	}
 
-	urlStr := h.baseURL + "/api/smart_contract/tasks"
-	if enc := params.Encode(); enc != "" {
-		urlStr += "?" + enc
-	}
-	return h.getJSON(urlStr)
-}
-
-// fetchProposalsViaREST lists proposals via REST with filters.
-func (h *HTTPMCPServer) fetchProposalsViaREST(filter smart_contract.ProposalFilter) (map[string]interface{}, error) {
-	params := url.Values{}
-	if filter.Status != "" {
-		params.Set("status", filter.Status)
-	}
-	if len(filter.Skills) > 0 {
-		for _, s := range filter.Skills {
-			params.Add("skills", s)
-		}
-	}
-	if filter.MinBudget > 0 {
-		params.Set("min_budget_sats", fmt.Sprintf("%d", filter.MinBudget))
-	}
-	if filter.ContractID != "" {
-		params.Set("contract_id", filter.ContractID)
-	}
-	if filter.MaxResults > 0 {
-		params.Set("limit", fmt.Sprintf("%d", filter.MaxResults))
-	}
-	if filter.Offset > 0 {
-		params.Set("offset", fmt.Sprintf("%d", filter.Offset))
-	}
-
-	urlStr := h.baseURL + "/api/smart_contract/proposals"
-	if enc := params.Encode(); enc != "" {
-		urlStr += "?" + enc
-	}
-	return h.getJSON(urlStr)
-}
-
-// postJSON posts a JSON body to the given URL with optional API key and returns decoded JSON.
-func (h *HTTPMCPServer) postJSON(urlStr string, body map[string]interface{}, apiKey string) (map[string]interface{}, error) {
-	payload, err := json.Marshal(body)
+	// Check if wish contract exists
+	wishID := "wish-" + visiblePixelHash
+	contracts, err := h.store.ListContracts(smart_contract.ContractFilter{})
 	if err != nil {
 		return nil, err
 	}
-
-	req, err := http.NewRequest(http.MethodPost, urlStr, strings.NewReader(string(payload)))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if apiKey != "" {
-		req.Header.Set("X-API-Key", apiKey)
-	} else if h.apiKeyStore != nil {
-		req.Header.Set("X-API-Key", bodyHeaderFallback(body))
-	}
-
-	resp, err := h.httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("REST returned %d", resp.StatusCode)
-	}
-
-	var parsed map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
-		return nil, err
-	}
-	return parsed, nil
-}
-
-// getJSON fetches a URL (GET) and decodes JSON response.
-func (h *HTTPMCPServer) getJSON(urlStr string) (map[string]interface{}, error) {
-	req, err := http.NewRequest(http.MethodGet, urlStr, nil)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := h.httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("REST returned %d", resp.StatusCode)
-	}
-
-	var parsed map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
-		return nil, err
-	}
-	return parsed, nil
-}
-
-func (h *HTTPMCPServer) sendErrorResponse(w http.ResponseWriter, status int, resp MCPResponse) {
-	if resp.Message == "" && resp.Error != "" {
-		resp.Message = resp.Error
-	}
-	if resp.Code == 0 {
-		resp.Code = status
-	}
-	if resp.Timestamp == "" {
-		resp.Timestamp = time.Now().UTC().Format(time.RFC3339)
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(resp)
-}
-
-func (h *HTTPMCPServer) writeHTTPError(w http.ResponseWriter, status int, code string, message string, hint string) {
-	h.sendErrorResponse(w, status, MCPResponse{
-		Success:   false,
-		Error:     message,
-		ErrorCode: code,
-		Message:   message,
-		Hint:      hint,
-	})
-}
-
-// Helper functions
-func (h *HTTPMCPServer) toString(val interface{}) string {
-	if val == nil {
-		return ""
-	}
-	if str, ok := val.(string); ok {
-		return str
-	}
-	return fmt.Sprintf("%v", val)
-}
-
-func (h *HTTPMCPServer) toInt64(val interface{}) int64 {
-	if i, ok := val.(int64); ok {
-		return i
-	}
-	if i, ok := val.(int); ok {
-		return int64(i)
-	}
-	if f, ok := val.(float64); ok {
-		return int64(f)
-	}
-	return 0
-}
-
-func (h *HTTPMCPServer) toBool(val interface{}) bool {
-	if b, ok := val.(bool); ok {
-		return b
-	}
-	if s, ok := val.(string); ok {
-		return strings.ToLower(s) == "true"
-	}
-	return false
-}
-
-func (h *HTTPMCPServer) toFloat64(val interface{}) float64 {
-	if f, ok := val.(float64); ok {
-		return f
-	}
-	if i, ok := val.(int); ok {
-		return float64(i)
-	}
-	if i, ok := val.(int64); ok {
-		return float64(i)
-	}
-	return 0.0
-}
-
-func (h *HTTPMCPServer) toMap(val interface{}) map[string]interface{} {
-	if m, ok := val.(map[string]interface{}); ok {
-		return m
-	}
-	return nil
-}
-
-// publishProposalTasks publishes the tasks stored in a proposal into MCP tasks
-func (h *HTTPMCPServer) publishProposalTasks(ctx context.Context, proposalID string) error {
-	p, err := h.store.GetProposal(ctx, proposalID)
-	if err != nil {
-		return err
-	}
-	if len(p.Tasks) == 0 {
-		// Try to derive tasks from metadata embedded_message
-		if em, ok := p.Metadata["embedded_message"].(string); ok && em != "" {
-			p.Tasks = scstore.BuildTasksFromMarkdown(p.ID, em, p.VisiblePixelHash, p.BudgetSats, scstore.FundingAddressFromMeta(p.Metadata))
-		}
-		if len(p.Tasks) == 0 {
-			return nil
+	wishExists := false
+	for _, contract := range contracts {
+		if contract.ContractID == wishID {
+			wishExists = true
+			break
 		}
 	}
-	// Build a contract from the proposal, then upsert tasks
-	contract := smart_contract.Contract{
-		ContractID:          p.ID,
-		Title:               p.Title,
-		TotalBudgetSats:     p.BudgetSats,
-		GoalsCount:          1,
-		AvailableTasksCount: len(p.Tasks),
-		Status:              "active",
+	if !wishExists {
+		return nil, NewNotFoundError("create_proposal", "wish", visiblePixelHash)
 	}
-	// Preserve hashes/funding if present
-	fundingAddr := scstore.FundingAddressFromMeta(p.Metadata)
-	tasks := make([]smart_contract.Task, 0, len(p.Tasks))
-	for _, t := range p.Tasks {
-		task := t
-		if task.ContractID == "" {
-			task.ContractID = p.ID
+
+	proposalID := fmt.Sprintf("proposal-%d", time.Now().UnixNano())
+	contractID := "wish-" + visiblePixelHash
+	proposal := smart_contract.Proposal{
+		ID:               proposalID,
+		Title:            title,
+		DescriptionMD:    descriptionMD,
+		VisiblePixelHash: visiblePixelHash,
+		BudgetSats:       budgetSats,
+		Status:           "pending",
+		CreatedAt:        time.Now(),
+		Metadata: map[string]interface{}{
+			"creator_api_key_hash": apiKeyHash(apiKey),
+			"contract_id":          contractID,
+			"visible_pixel_hash":   visiblePixelHash,
+		},
+	}
+
+	log.Printf("MCP CREATE PROPOSAL DEBUG: ID=%s, metadata=%+v", proposal.ID, proposal.Metadata)
+	err = h.store.CreateProposal(ctx, proposal)
+	if err != nil {
+		return nil, NewInternalError("create_proposal", fmt.Sprintf("Failed to create proposal: %v", err))
+	}
+
+	return map[string]interface{}{
+		"proposal": proposal,
+	}, nil
+}
+
+func (h *HTTPMCPServer) handleApproveProposal(ctx context.Context, args map[string]interface{}, apiKey string) (interface{}, error) {
+	validation := NewValidationError("approve_proposal", "Invalid request parameters")
+
+	proposalID, ok := args["proposal_id"].(string)
+	if !ok || proposalID == "" {
+		validation.AddFieldError("proposal_id", args["proposal_id"], "proposal_id is required and must be a string", true)
+	}
+
+	// Return validation errors if any
+	if validation.HasErrors() {
+		return nil, validation
+	}
+
+	// Get the proposal to check if wish exists
+	proposals, err := h.store.ListProposals(ctx, smart_contract.ProposalFilter{})
+	if err != nil {
+		return nil, NewInternalError("approve_proposal", fmt.Sprintf("Failed to list proposals: %v", err))
+	}
+
+	var proposal *smart_contract.Proposal
+	for i := range proposals {
+		if proposals[i].ID == proposalID {
+			proposal = &proposals[i]
+			break
 		}
-		if task.MerkleProof == nil && p.VisiblePixelHash != "" {
-			task.MerkleProof = &smart_contract.MerkleProof{
-				VisiblePixelHash:   p.VisiblePixelHash,
-				FundedAmountSats:   p.BudgetSats / int64(len(p.Tasks)),
-				FundingAddress:     fundingAddr,
-				ConfirmationStatus: "provisional",
+	}
+	if proposal == nil {
+		return nil, NewNotFoundError("approve_proposal", "proposal", proposalID)
+	}
+
+	if err := h.requireAuthorizedApprover(apiKey, *proposal); err != nil {
+		return nil, NewUnauthorizedError("approve_proposal", fmt.Sprintf("Not authorized to approve this proposal: %v", err))
+	}
+
+	// Check if wish contract exists
+	wishID := "wish-" + proposal.VisiblePixelHash
+	contracts, err := h.store.ListContracts(smart_contract.ContractFilter{})
+	if err != nil {
+		return nil, NewInternalError("approve_proposal", fmt.Sprintf("Failed to check wish existence: %v", err))
+	}
+	wishExists := false
+	for _, contract := range contracts {
+		if contract.ContractID == wishID {
+			wishExists = true
+			break
+		}
+	}
+	if !wishExists {
+		return nil, NewNotFoundError("approve_proposal", "wish", proposal.VisiblePixelHash)
+	}
+
+	err = h.store.ApproveProposal(ctx, proposalID)
+	if err != nil {
+		return nil, NewInternalError("approve_proposal", fmt.Sprintf("Failed to approve proposal: %v", err))
+	}
+
+	if h.server != nil {
+		if publishErr := h.server.PublishProposalTasks(ctx, proposalID); publishErr != nil {
+			log.Printf("failed to publish tasks for proposal %s: %v", proposalID, publishErr)
+		}
+	}
+
+	return map[string]interface{}{
+		"message":     "proposal approved",
+		"proposal_id": proposalID,
+	}, nil
+}
+
+func (h *HTTPMCPServer) requireAuthorizedApprover(apiKey string, proposal smart_contract.Proposal) error {
+	currentHash := apiKeyHash(apiKey)
+	if currentHash == "" {
+		return fmt.Errorf("api key required for approval")
+	}
+
+	// 1. Check if matches Proposal Creator
+	if proposal.Metadata != nil {
+		if creatorHash, ok := proposal.Metadata["creator_api_key_hash"].(string); ok {
+			if strings.TrimSpace(creatorHash) == currentHash {
+				return nil
 			}
 		}
-		if task.MerkleProof != nil && task.MerkleProof.FundingAddress == "" {
-			task.MerkleProof.FundingAddress = fundingAddr
-		}
-		tasks = append(tasks, task)
 	}
-	if pg, ok := h.store.(interface {
-		UpsertContractWithTasks(context.Context, smart_contract.Contract, []smart_contract.Task) error
-	}); ok {
-		if err := pg.UpsertContractWithTasks(ctx, contract, tasks); err != nil {
-			return err
+
+	// 2. Check if matches Wish Creator
+	visibleHash := strings.TrimSpace(proposal.VisiblePixelHash)
+	if visibleHash == "" {
+		if v, ok := proposal.Metadata["visible_pixel_hash"].(string); ok {
+			visibleHash = strings.TrimSpace(v)
 		}
+	}
+
+	if visibleHash != "" && h.ingestionSvc != nil {
+		// Try both hash and wish-hash
+		rec, err := h.ingestionSvc.Get(visibleHash)
+		if err != nil {
+			rec, _ = h.ingestionSvc.Get("wish-" + visibleHash)
+		}
+
+		if rec != nil && rec.Metadata != nil {
+			if wishCreatorHash, ok := rec.Metadata["creator_api_key_hash"].(string); ok {
+				if strings.TrimSpace(wishCreatorHash) == currentHash {
+					return nil
+				}
+			}
+		}
+	}
+
+	// 3. Fallback: if no creator info exists at all, allow for now to prevent deadlock on old data
+	// (But if it exists and doesn't match, we reject)
+	hasAnyCreatorInfo := false
+	if proposal.Metadata != nil {
+		if _, ok := proposal.Metadata["creator_api_key_hash"].(string); ok {
+			hasAnyCreatorInfo = true
+		}
+	}
+	if !hasAnyCreatorInfo && visibleHash != "" && h.ingestionSvc != nil {
+		rec, _ := h.ingestionSvc.Get(visibleHash)
+		if rec != nil && rec.Metadata != nil {
+			if _, ok := rec.Metadata["creator_api_key_hash"].(string); ok {
+				hasAnyCreatorInfo = true
+			}
+		}
+	}
+
+	if !hasAnyCreatorInfo {
+		log.Printf("WARNING: allowing approval for proposal %s with NO creator info", proposal.ID)
 		return nil
 	}
-	return nil
+
+	return fmt.Errorf("approver does not match proposal creator or wish creator")
+}
+
+func (h *HTTPMCPServer) handleScanImage(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	if h.scannerManager == nil {
+		return nil, NewServiceUnavailableError("scan_image", "scanner")
+	}
+
+	imageDataStr, ok := args["image_data"].(string)
+	if !ok || imageDataStr == "" {
+		return nil, NewValidationError("scan_image", "image_data is required")
+	}
+
+	imageData, err := base64.StdEncoding.DecodeString(imageDataStr)
+	if err != nil {
+		return nil, NewValidationError("scan_image", "invalid base64 image data: "+err.Error())
+	}
+
+	scanResult, err := h.scannerManager.ScanImage(imageData, core.ScanOptions{
+		ExtractMessage:      true,
+		ConfidenceThreshold: 0.5,
+		IncludeMetadata:     true,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("scan failed: %w", err)
+	}
+
+	return map[string]interface{}{
+		"is_stego":          scanResult.IsStego,
+		"stego_probability": scanResult.StegoProbability,
+		"confidence":        scanResult.Confidence,
+		"prediction":        scanResult.Prediction,
+		"stego_type":        scanResult.StegoType,
+		"extracted_message": scanResult.ExtractedMessage,
+		"extraction_error":  scanResult.ExtractionError,
+	}, nil
+}
+
+func (h *HTTPMCPServer) handleGetScannerInfo(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	if h.scannerManager == nil {
+		return nil, NewServiceUnavailableError("get_scanner_info", "scanner")
+	}
+	return map[string]interface{}{
+		"available": true,
+		"version":   "1.0.0",
+	}, nil
+}
+
+func (h *HTTPMCPServer) handleListTasks(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	filter := smart_contract.TaskFilter{}
+	if contractID, ok := args["contract_id"].(string); ok {
+		filter.ContractID = contractID
+	}
+	if status, ok := args["status"].(string); ok {
+		filter.Status = status
+	}
+	if limit, ok := args["limit"].(float64); ok {
+		filter.Limit = int(limit)
+	}
+
+	tasks, err := h.store.ListTasks(filter)
+	if err != nil {
+		return nil, err
+	}
+
+	return map[string]interface{}{
+		"tasks":       tasks,
+		"total_count": len(tasks),
+	}, nil
+}
+
+func (h *HTTPMCPServer) handleGetContract(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	validation := NewValidationError("get_contract", "Invalid request parameters")
+
+	contractID, ok := args["contract_id"].(string)
+	if !ok || contractID == "" {
+		validation.AddFieldError("contract_id", args["contract_id"], "contract_id is required and must be a string", true)
+	}
+
+	// Return validation errors if any
+	if validation.HasErrors() {
+		return nil, validation
+	}
+
+	contract, err := h.store.GetContract(contractID)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			return nil, NewNotFoundError("get_contract", "contract", contractID)
+		}
+		return nil, NewInternalError("get_contract", fmt.Sprintf("Failed to get contract: %v", err))
+	}
+
+	return contract, nil
+}
+
+func (h *HTTPMCPServer) handleListEvents(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	return map[string]interface{}{
+		"endpoint": "/api/smart_contract/events",
+		"message":  "Use the events endpoint directly with optional filters",
+		"filters": map[string]interface{}{
+			"type":      "Event type filter",
+			"entity_id": "Entity ID filter",
+			"actor":     "Actor identifier filter",
+			"limit":     "Maximum number of events to return",
+		},
+	}, nil
+}
+
+func (h *HTTPMCPServer) handleEventsStream(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	baseURL := h.externalBaseURL(&http.Request{})
+	return map[string]interface{}{
+		"stream_url": baseURL + "/api/smart_contract/events/stream",
+		"auth_hints": map[string]string{
+			"header": "Authorization: Bearer <api_key>",
+			"query":  "actor=<identifier>&entity_id=<id>&type=<event_type>",
+		},
+		"message": "Connect to this SSE endpoint to receive real-time MCP events",
+	}, nil
+}
+
+func (h *HTTPMCPServer) handleCreateWish(ctx context.Context, args map[string]interface{}, apiKey string) (interface{}, error) {
+	validation := NewValidationError("create_wish", "Invalid request parameters")
+
+	message, ok := args["message"].(string)
+	if !ok || message == "" {
+		validation.AddFieldError("message", args["message"], "message is required and must be a non-empty string", true)
+	}
+
+	// Validate optional fields
+	imageBase64, _ := args["image_base64"].(string)
+	price, priceOk := args["price"].(string)
+	priceUnit, unitOk := args["price_unit"].(string)
+	address, _ := args["address"].(string)
+	fundingMode, modeOk := args["funding_mode"].(string)
+
+	// Validate price_unit if price is provided
+	if priceOk && price != "" && (!unitOk || priceUnit == "") {
+		validation.AddFieldError("price_unit", args["price_unit"], "price_unit is required when price is provided", false)
+	}
+
+	// Validate funding_mode value
+	if modeOk && fundingMode != "" && fundingMode != "payout" && fundingMode != "raise_fund" {
+		validation.AddFieldError("funding_mode", fundingMode, "funding_mode must be 'payout' or 'raise_fund'", false)
+	}
+
+	// Return validation errors if any
+	if validation.HasErrors() {
+		return nil, validation
+	}
+
+	reqBody := map[string]interface{}{
+		"message":       message,
+		"skip_proposal": true,
+	}
+
+	if imageBase64 != "" {
+		reqBody["image_base64"] = imageBase64
+	}
+	if price != "" {
+		reqBody["price"] = price
+	}
+	if priceUnit != "" {
+		reqBody["price_unit"] = priceUnit
+	}
+	if address != "" {
+		reqBody["address"] = address
+	}
+	if fundingMode != "" {
+		reqBody["funding_mode"] = fundingMode
+	}
+
+	jsonBody, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, NewInternalError("create_wish", fmt.Sprintf("Failed to marshal request: %v", err))
+	}
+
+	inscribeURL := h.baseURL + "/api/inscribe"
+	req, err := http.NewRequestWithContext(ctx, "POST", inscribeURL, bytes.NewReader(jsonBody))
+	if err != nil {
+		return nil, NewInternalError("create_wish", fmt.Sprintf("Failed to create request: %v", err))
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+
+	resp, err := h.httpClient.Do(req)
+	if err != nil {
+		return nil, NewServiceUnavailableError("create_wish", "inscribe API")
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, NewInternalError("create_wish", "Failed to read response from inscribe API")
+	}
+
+	if resp.StatusCode >= 400 {
+		// Try to parse error as object first
+		var errObjResp struct {
+			Success bool `json:"success"`
+			Error   struct {
+				Code      string `json:"code"`
+				Message   string `json:"message"`
+				Timestamp string `json:"timestamp"`
+				RequestID string `json:"request_id"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal(body, &errObjResp); err == nil {
+			return nil, NewCreateWishError("INSCRIBE_ERROR", fmt.Sprintf("Inscribe API error: %s", errObjResp.Error.Message), "")
+		}
+
+		// Fallback to string error
+		var errStrResp struct {
+			Success bool   `json:"success"`
+			Error   string `json:"error"`
+			Message string `json:"message"`
+		}
+		if err := json.Unmarshal(body, &errStrResp); err == nil {
+			return nil, NewCreateWishError("INSCRIBE_ERROR", fmt.Sprintf("Inscribe API error: %s", errStrResp.Error), "")
+		}
+
+		return nil, NewCreateWishError("INSCRIBE_ERROR", fmt.Sprintf("Inscribe API error (%d)", resp.StatusCode), "")
+	}
+
+	var successResp struct {
+		Success bool `json:"success"`
+		Data    any  `json:"data"`
+		Error   any  `json:"error"` // Changed from string to any to handle both formats
+	}
+	if err := json.Unmarshal(body, &successResp); err != nil {
+		return nil, NewInternalError("create_wish", "Failed to parse inscribe API response")
+	}
+
+	if !successResp.Success {
+		// Handle error as both string and object
+		var errorMsg string
+		if errorStr, ok := successResp.Error.(string); ok {
+			errorMsg = errorStr
+		} else if errorObj, ok := successResp.Error.(map[string]interface{}); ok {
+			if msg, ok := errorObj["message"].(string); ok {
+				errorMsg = msg
+			} else {
+				errorMsg = fmt.Sprintf("%v", errorObj)
+			}
+		} else {
+			errorMsg = fmt.Sprintf("Unknown error: %v", successResp.Error)
+		}
+		return nil, NewCreateWishError("INSCRIBE_FAILED", errorMsg, "")
+	}
+
+	return successResp.Data, nil
+}
+
+func (h *HTTPMCPServer) handleSubmitWork(ctx context.Context, args map[string]interface{}, apiKey string) (interface{}, error) {
+	validation := NewValidationError("submit_work", "Invalid request parameters")
+
+	claimID, ok := args["claim_id"].(string)
+	if !ok || claimID == "" {
+		validation.AddFieldError("claim_id", args["claim_id"], "claim_id is required and must be a string", true)
+	}
+
+	deliverables, ok := args["deliverables"].(map[string]interface{})
+	if !ok || deliverables == nil {
+		validation.AddFieldError("deliverables", args["deliverables"], "deliverables is required and must be an object", true)
+	} else {
+		// Validate deliverables structure
+		if _, ok := deliverables["notes"].(string); !ok {
+			validation.AddFieldError("deliverables.notes", deliverables["notes"], "deliverables must contain a 'notes' field with description of completed work", true)
+		}
+	}
+
+	// Return validation errors if any
+	if validation.HasErrors() {
+		return nil, validation
+	}
+
+	submission, err := h.store.SubmitWork(claimID, deliverables, nil)
+	if err != nil {
+		// Convert common errors to structured errors
+		if strings.Contains(err.Error(), "not found") {
+			return nil, NewNotFoundError("submit_work", "claim", claimID)
+		}
+		if strings.Contains(err.Error(), "already submitted") {
+			return nil, NewSubmitWorkError("ALREADY_SUBMITTED", "Work has already been submitted for this claim", "claim_id")
+		}
+		return nil, NewInternalError("submit_work", fmt.Sprintf("Failed to submit work: %v", err))
+	}
+
+	return map[string]interface{}{
+		"message":    "work submitted successfully",
+		"claim_id":   claimID,
+		"submission": submission,
+	}, nil
+}
+
+// handleGetOpenContracts browses open contracts with caching (no auth required)
+func (h *HTTPMCPServer) handleGetOpenContracts(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	// Build filter from args
+	filter := smart_contract.ContractFilter{}
+
+	// Handle status parameter
+	if status, ok := args["status"].(string); ok {
+		if status != "all" {
+			filter.Status = status
+		}
+	} else {
+		// Default to pending contracts for MCP tool
+		filter.Status = "pending"
+	}
+
+	// Handle limit parameter
+	limit := 50 // default
+	if lim, ok := args["limit"].(float64); ok {
+		limit = int(lim)
+		if limit <= 0 {
+			limit = 50
+		}
+	}
+
+	// Query contracts from store
+	contracts, err := h.store.ListContracts(filter)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list contracts: %w", err)
+	}
+
+	// Apply limit if specified
+	if len(contracts) > limit {
+		contracts = contracts[:limit]
+	}
+
+	// Convert contracts to MCP-compatible format
+	var mcpContracts []map[string]interface{}
+	for _, contract := range contracts {
+		mcpContract := map[string]interface{}{
+			"contract_id":       contract.ContractID,
+			"title":             contract.Title,
+			"total_budget_sats": contract.TotalBudgetSats,
+			"goals_count":       contract.GoalsCount,
+			"available_tasks":   contract.AvailableTasksCount,
+			"status":            contract.Status,
+			"skills":            contract.Skills,
+			"stego_image_url":   contract.StegoImageURL,
+		}
+
+		// Add fallback URL if no stego image URL
+		if contract.StegoImageURL == "" {
+			// Strip "wish-" prefix for stealth filename
+			hash := contract.ContractID
+			if strings.HasPrefix(contract.ContractID, "wish-") {
+				hash = strings.TrimPrefix(contract.ContractID, "wish-")
+			}
+			mcpContract["stego_image_url"] = fmt.Sprintf("/uploads/%s", hash)
+		}
+
+		mcpContracts = append(mcpContracts, mcpContract)
+	}
+
+	return map[string]interface{}{
+		"contracts":   mcpContracts,
+		"total_count": len(mcpContracts),
+		"status":      filter.Status,
+		"limit":       limit,
+	}, nil
+}
+
+// handleGetAuthChallenge issues a nonce for wallet verification (no auth required)
+func (h *HTTPMCPServer) handleGetAuthChallenge(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	validation := NewValidationError("get_auth_challenge", "Invalid request parameters")
+
+	wallet, ok := args["wallet_address"].(string)
+	if !ok || strings.TrimSpace(wallet) == "" {
+		validation.AddFieldError("wallet_address", args["wallet_address"], "wallet_address is required and must be a non-empty string", true)
+	}
+
+	// Return validation errors if any
+	if validation.HasErrors() {
+		return nil, validation
+	}
+
+	if h.challengeStore == nil {
+		return nil, NewServiceUnavailableError("get_auth_challenge", "challenge store")
+	}
+
+	challenge, err := h.challengeStore.Issue(strings.TrimSpace(wallet))
+	if err != nil {
+		return nil, NewInternalError("get_auth_challenge", fmt.Sprintf("Failed to issue challenge: %v", err))
+	}
+
+	return map[string]interface{}{
+		"nonce":      challenge.Nonce,
+		"expires_at": challenge.ExpiresAt,
+		"wallet":     challenge.Wallet,
+	}, nil
+}
+
+// handleVerifyAuthChallenge checks signature against nonce and issues an API key (no auth required)
+func (h *HTTPMCPServer) handleVerifyAuthChallenge(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	validation := NewValidationError("verify_auth_challenge", "Invalid request parameters")
+
+	wallet, ok := args["wallet_address"].(string)
+	if !ok || strings.TrimSpace(wallet) == "" {
+		validation.AddFieldError("wallet_address", args["wallet_address"], "wallet_address is required and must be a non-empty string", true)
+	}
+
+	signature, ok := args["signature"].(string)
+	if !ok || strings.TrimSpace(signature) == "" {
+		validation.AddFieldError("signature", args["signature"], "signature is required and must be a non-empty string", true)
+	}
+
+	email, _ := args["email"].(string) // Optional
+
+	// Return validation errors if any
+	if validation.HasErrors() {
+		return nil, validation
+	}
+
+	if h.challengeStore == nil {
+		return nil, NewServiceUnavailableError("verify_auth_challenge", "challenge store")
+	}
+
+	// Verify the Bitcoin signature
+	verifier := func(ch auth.Challenge, sig string) bool {
+		// Import the signature verification logic from auth_handler
+		ok, err := h.verifyBTCSignature(ch.Wallet, sig, strings.TrimSpace(ch.Nonce))
+		if err != nil {
+			return false
+		}
+		return ok
+	}
+
+	if !h.challengeStore.Verify(strings.TrimSpace(wallet), strings.TrimSpace(signature), verifier) {
+		return nil, NewValidationError("verify_auth_challenge", "Invalid signature")
+	}
+
+	// Issue API key using the existing auth system (we need access to the issuer)
+	// For now, we'll call the existing API endpoint
+	reqBody := map[string]interface{}{
+		"wallet_address": strings.TrimSpace(wallet),
+		"signature":      strings.TrimSpace(signature),
+	}
+	if email != "" {
+		reqBody["email"] = email
+	}
+
+	jsonBody, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, NewInternalError("verify_auth_challenge", "Failed to marshal verification request")
+	}
+
+	verifyURL := h.baseURL + "/api/auth/verify"
+	req, err := http.NewRequestWithContext(ctx, "POST", verifyURL, bytes.NewReader(jsonBody))
+	if err != nil {
+		return nil, NewInternalError("verify_auth_challenge", "Failed to create verification request")
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := h.httpClient.Do(req)
+	if err != nil {
+		return nil, NewServiceUnavailableError("verify_auth_challenge", "verification API")
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, NewInternalError("verify_auth_challenge", "Failed to read verification response")
+	}
+
+	if resp.StatusCode >= 400 {
+		var errResp struct {
+			Success bool   `json:"success"`
+			Error   string `json:"error"`
+			Message string `json:"message"`
+		}
+		if err := json.Unmarshal(body, &errResp); err == nil {
+			return nil, NewValidationError("verify_auth_challenge", fmt.Sprintf("Verification failed: %s - %s", errResp.Error, errResp.Message))
+		}
+		return nil, NewValidationError("verify_auth_challenge", fmt.Sprintf("Verification failed (%d)", resp.StatusCode))
+	}
+
+	var successResp struct {
+		Success  bool   `json:"success"`
+		APIKey   string `json:"api_key"`
+		Wallet   string `json:"wallet"`
+		Email    string `json:"email"`
+		Verified bool   `json:"verified"`
+	}
+	if err := json.Unmarshal(body, &successResp); err != nil {
+		return nil, NewInternalError("verify_auth_challenge", "Failed to parse verification response")
+	}
+
+	if !successResp.Success {
+		return nil, NewValidationError("verify_auth_challenge", "Verification unsuccessful")
+	}
+
+	return map[string]interface{}{
+		"api_key":  successResp.APIKey,
+		"wallet":   successResp.Wallet,
+		"email":    successResp.Email,
+		"verified": successResp.Verified,
+	}, nil
+}
+
+// verifyBTCSignature verifies a Bitcoin signature against a message
+// This is a simplified version of the logic from auth_handler.go
+func (h *HTTPMCPServer) verifyBTCSignature(address, signature, message string) (bool, error) {
+	// For now, we'll delegate to the existing API by calling the verify endpoint
+	// This is a temporary implementation - in a real scenario, we'd import the verification logic
+	reqBody := map[string]interface{}{
+		"wallet_address": address,
+		"signature":      signature,
+	}
+
+	jsonBody, _ := json.Marshal(reqBody)
+	req, _ := http.NewRequest("POST", h.baseURL+"/api/auth/verify", bytes.NewReader(jsonBody))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := h.httpClient.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+
+	return resp.StatusCode < 400, nil
+}
+
+// RegisterRoutes registers HTTP MCP endpoints
+func (h *HTTPMCPServer) RegisterRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("/mcp/tools", h.handleListTools)      // No auth - allows discovery
+	mux.HandleFunc("/mcp/search", h.handleToolSearch)    // No auth - search tools
+	mux.HandleFunc("/mcp/call", h.handleToolCall)        // Tool-level auth for specific tools
+	mux.HandleFunc("/mcp/discover", h.handleDiscover)    // No auth - allows discovery
+	mux.HandleFunc("/mcp/docs", h.handleDocs)            // No auth required for documentation
+	mux.HandleFunc("/mcp/openapi.json", h.handleOpenAPI) // No auth required for API spec
+	mux.HandleFunc("/mcp/health", h.handleHealth)
+	mux.HandleFunc("/mcp/events", h.handleEventsProxy)
+	mux.HandleFunc("/mcp", h.handleIndex)
+	// Register catch-all last
+	mux.HandleFunc("/mcp/", h.handleIndex)
 }

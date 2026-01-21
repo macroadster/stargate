@@ -11,15 +11,18 @@ import (
 	"stargate-backend/core/smart_contract"
 )
 
-// MemoryStore holds in-memory MCP data. It is intentionally simple for the MVP and can be swapped for persistent storage later.
+// MemoryStore holds in-memory MCP data with proper concurrency control.
+// The single RWMutex ensures atomic operations across multiple maps.
+// This prevents race conditions when operations need to modify related data.
 type MemoryStore struct {
-	mu          sync.RWMutex
-	contracts   map[string]smart_contract.Contract
-	tasks       map[string]smart_contract.Task
-	claims      map[string]smart_contract.Claim
-	submissions map[string]smart_contract.Submission
-	proposals   map[string]smart_contract.Proposal
-	claimTTL    time.Duration
+	mu           sync.RWMutex
+	contracts    map[string]smart_contract.Contract
+	tasks        map[string]smart_contract.Task
+	claims       map[string]smart_contract.Claim
+	submissions  map[string]smart_contract.Submission
+	proposals    map[string]smart_contract.Proposal
+	escortStatus map[string]smart_contract.EscortStatus
+	claimTTL     time.Duration
 }
 
 // NewMemoryStore seeds fixtures and returns a MemoryStore.
@@ -34,12 +37,13 @@ func NewMemoryStore(claimTTL time.Duration) *MemoryStore {
 		tMap[t.TaskID] = t
 	}
 	store := &MemoryStore{
-		contracts:   cMap,
-		tasks:       tMap,
-		claims:      make(map[string]smart_contract.Claim),
-		submissions: make(map[string]smart_contract.Submission),
-		proposals:   make(map[string]smart_contract.Proposal),
-		claimTTL:    claimTTL,
+		contracts:    cMap,
+		tasks:        tMap,
+		claims:       make(map[string]smart_contract.Claim),
+		submissions:  make(map[string]smart_contract.Submission),
+		proposals:    make(map[string]smart_contract.Proposal),
+		escortStatus: make(map[string]smart_contract.EscortStatus),
+		claimTTL:     claimTTL,
 	}
 
 	// Create missing tasks for contracts that should have them
@@ -227,7 +231,7 @@ func (s *MemoryStore) GetContract(id string) (smart_contract.Contract, error) {
 }
 
 // ClaimTask reserves a task for an AI. It is idempotent if the same AI reclaims before expiry.
-func (s *MemoryStore) ClaimTask(taskID, aiID, contractorWallet string, estimatedCompletion *time.Time) (smart_contract.Claim, error) {
+func (s *MemoryStore) ClaimTask(taskID, walletAddress string, estimatedCompletion *time.Time) (smart_contract.Claim, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -238,13 +242,16 @@ func (s *MemoryStore) ClaimTask(taskID, aiID, contractorWallet string, estimated
 	if strings.EqualFold(task.Status, "approved") || strings.EqualFold(task.Status, "completed") || strings.EqualFold(task.Status, "published") || strings.EqualFold(task.Status, "claimed") || strings.EqualFold(task.Status, "submitted") {
 		return smart_contract.Claim{}, ErrTaskUnavailable
 	}
-	normalizedWallet := strings.TrimSpace(contractorWallet)
+	normalizedWallet := strings.TrimSpace(walletAddress)
+	if normalizedWallet == "" {
+		return smart_contract.Claim{}, fmt.Errorf("wallet address required")
+	}
 
 	// Existing claim?
 	for _, c := range s.claims {
 		if c.TaskID == taskID {
-			if c.AiIdentifier == aiID && c.Status == "active" && time.Now().Before(c.ExpiresAt) {
-				if normalizedWallet != "" && task.ContractorWallet == "" {
+			if c.AiIdentifier == walletAddress && c.Status == "active" && time.Now().Before(c.ExpiresAt) {
+				if task.ContractorWallet == "" {
 					task.ContractorWallet = normalizedWallet
 					if task.MerkleProof == nil {
 						task.MerkleProof = &smart_contract.MerkleProof{}
@@ -265,26 +272,26 @@ func (s *MemoryStore) ClaimTask(taskID, aiID, contractorWallet string, estimated
 	claim := smart_contract.Claim{
 		ClaimID:      claimID,
 		TaskID:       taskID,
-		AiIdentifier: aiID,
+		AiIdentifier: walletAddress,
 		Status:       "active",
 		ExpiresAt:    expires,
 		CreatedAt:    time.Now(),
 	}
 	task.Status = "claimed"
-	task.ClaimedBy = aiID
+	task.ClaimedBy = walletAddress
 	task.ClaimedAt = &claim.CreatedAt
 	task.ClaimExpires = &expires
 	task.ActiveClaimID = claimID
-	if normalizedWallet != "" {
+	if task.ContractorWallet == "" {
 		task.ContractorWallet = normalizedWallet
 		if task.MerkleProof == nil {
 			task.MerkleProof = &smart_contract.MerkleProof{}
 		}
 		task.MerkleProof.ContractorWallet = normalizedWallet
 	}
+	s.tasks[taskID] = task
 
 	s.claims[claimID] = claim
-	s.tasks[taskID] = task
 
 	_ = estimatedCompletion // placeholder until persisted in model
 	return claim, nil
@@ -329,6 +336,7 @@ SubmitWork:
 	sub := smart_contract.Submission{
 		SubmissionID:    subID,
 		ClaimID:         claimID,
+		TaskID:          claim.TaskID,
 		Status:          "pending_review",
 		Deliverables:    deliverables,
 		CompletionProof: proof,
@@ -471,19 +479,21 @@ func (s *MemoryStore) UpdateTaskProof(ctx context.Context, taskID string, proof 
 	if !ok {
 		return ErrTaskNotFound
 	}
-	existingWallet := strings.TrimSpace(t.ContractorWallet)
-	if existingWallet == "" && t.MerkleProof != nil {
-		existingWallet = strings.TrimSpace(t.MerkleProof.ContractorWallet)
+	if proof != nil {
+		existingWallet := strings.TrimSpace(t.ContractorWallet)
+		if existingWallet == "" && t.MerkleProof != nil {
+			existingWallet = strings.TrimSpace(t.MerkleProof.ContractorWallet)
+		}
+		if existingWallet != "" && strings.TrimSpace(proof.ContractorWallet) == "" {
+			cp := *proof
+			cp.ContractorWallet = existingWallet
+			proof = &cp
+		}
+		if strings.TrimSpace(t.ContractorWallet) == "" && strings.TrimSpace(proof.ContractorWallet) != "" {
+			t.ContractorWallet = strings.TrimSpace(proof.ContractorWallet)
+		}
+		t.MerkleProof = proof
 	}
-	if proof != nil && existingWallet != "" && strings.TrimSpace(proof.ContractorWallet) == "" {
-		cp := *proof
-		cp.ContractorWallet = existingWallet
-		proof = &cp
-	}
-	if proof != nil && strings.TrimSpace(t.ContractorWallet) == "" && strings.TrimSpace(proof.ContractorWallet) != "" {
-		t.ContractorWallet = strings.TrimSpace(proof.ContractorWallet)
-	}
-	t.MerkleProof = proof
 	s.tasks[taskID] = t
 	return nil
 }
@@ -535,14 +545,17 @@ func (s *MemoryStore) CreateProposal(ctx context.Context, p smart_contract.Propo
 			if metaHash, ok2 := p.Metadata["visible_pixel_hash"].(string); ok2 {
 				metaHash = strings.TrimSpace(metaHash)
 				if metaHash != "" && metaHash != metaContract {
-					return fmt.Errorf("visible_pixel_hash must match contract_id when both are set")
+					normalizedContract := strings.TrimPrefix(metaContract, "wish-")
+					if metaHash != normalizedContract {
+						return fmt.Errorf("visible_pixel_hash must match contract_id when both are set (normalized: %s)", normalizedContract)
+					}
 				}
 			}
 		}
 	}
 
 	// Comprehensive security validation
-	if err := ValidateProposalInput(p); err != nil {
+	if err := ValidateProposalInput(&p); err != nil {
 		return fmt.Errorf("proposal validation failed: %v", err)
 	}
 
@@ -579,7 +592,45 @@ func (s *MemoryStore) CreateProposal(ctx context.Context, p smart_contract.Propo
 
 // createMissingTasks creates tasks for contracts that have available_tasks_count > 0 but no actual tasks
 func (s *MemoryStore) createMissingTasks() {
-	// Temporarily disabled - contracts exist but tasks creation has issues
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for contractID, contract := range s.contracts {
+		if contract.AvailableTasksCount <= 0 {
+			continue
+		}
+
+		// Check if contract already has tasks
+		hasTasks := false
+		for _, task := range s.tasks {
+			if task.ContractID == contractID {
+				hasTasks = true
+				break
+			}
+		}
+
+		if hasTasks {
+			continue
+		}
+
+		// Create default tasks for the contract
+		for i := 0; i < contract.AvailableTasksCount; i++ {
+			taskID := fmt.Sprintf("%s-task-%d", contractID, i+1)
+			task := smart_contract.Task{
+				TaskID:         taskID,
+				ContractID:     contractID,
+				GoalID:         fmt.Sprintf("goal-%d", i+1),
+				Title:          fmt.Sprintf("Task %d for %s", i+1, contract.Title),
+				Description:    fmt.Sprintf("Default task %d for contract %s", i+1, contract.Title),
+				BudgetSats:     contract.TotalBudgetSats / int64(contract.AvailableTasksCount),
+				Status:         "available",
+				Difficulty:     "medium",
+				EstimatedHours: 8,
+				Skills:         contract.Skills,
+			}
+			s.tasks[taskID] = task
+		}
+	}
 }
 
 // UpsertContractWithTasks persists a contract and its tasks idempotently.
@@ -635,6 +686,9 @@ func (s *MemoryStore) ListProposals(ctx context.Context, filter smart_contract.P
 		if len(filter.Skills) > 0 && !proposalHasSkills(p, filter.Skills) {
 			continue
 		}
+		
+		// Hydrate tasks
+		populateProposalTasks(&p)
 		out = append(out, p)
 	}
 	if filter.Offset > 0 && filter.Offset < len(out) {
@@ -653,6 +707,10 @@ func (s *MemoryStore) GetProposal(ctx context.Context, id string) (smart_contrac
 	if !ok {
 		return smart_contract.Proposal{}, fmt.Errorf("proposal %s not found", id)
 	}
+	
+	// Hydrate tasks
+	populateProposalTasks(&p)
+	
 	return p, nil
 }
 
@@ -701,7 +759,7 @@ func (s *MemoryStore) UpdateProposal(ctx context.Context, p smart_contract.Propo
 		}
 	}
 
-	if err := ValidateProposalInput(p); err != nil {
+	if err := ValidateProposalInput(&p); err != nil {
 		return fmt.Errorf("proposal validation failed: %v", err)
 	}
 
@@ -748,13 +806,12 @@ func (s *MemoryStore) ApproveProposal(ctx context.Context, id string) error {
 		return fmt.Errorf("proposal %s not found", id)
 	}
 
-	// HACK: temporarily set status to approved to trigger validation
-	originalStatus := p.Status
-	p.Status = "approved"
-	err := ValidateProposalInput(p)
-	p.Status = originalStatus // revert status
-	if err != nil {
-		return err
+	// Derive tasks from markdown if not already populated
+	populateProposalTasks(&p)
+
+	// Validate proposal for approval without modifying status
+	if err := ValidateProposalForApproval(&p); err != nil {
+		return fmt.Errorf("proposal validation failed: %v", err)
 	}
 
 	// Check if proposal is already in final state
@@ -867,6 +924,80 @@ func (s *MemoryStore) PublishProposal(ctx context.Context, id string) error {
 	p.Status = "published"
 	s.proposals[id] = p
 	return nil
+}
+
+// SyncClaim persists a claim from another instance.
+func (s *MemoryStore) SyncClaim(ctx context.Context, claim smart_contract.Claim) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.claims[claim.ClaimID] = claim
+	if t, ok := s.tasks[claim.TaskID]; ok {
+		if claim.Status == "active" || claim.Status == "submitted" {
+			// Check for conflicting claim: if task already claimed by different user, reject sync
+			if t.ClaimedBy != "" && t.ClaimedBy != claim.AiIdentifier {
+				return fmt.Errorf("sync conflict: task %s already claimed by %s, cannot overwrite with claim from %s", claim.TaskID, t.ClaimedBy, claim.AiIdentifier)
+			}
+
+			if claim.Status == "active" {
+				t.Status = "claimed"
+			} else {
+				t.Status = "submitted"
+			}
+			t.ClaimedBy = claim.AiIdentifier
+			cc := claim.CreatedAt
+			t.ClaimedAt = &cc
+			ex := claim.ExpiresAt
+			t.ClaimExpires = &ex
+			t.ActiveClaimID = claim.ClaimID
+			s.tasks[claim.TaskID] = t
+		}
+	}
+	return nil
+}
+
+// SyncSubmission persists a submission from another instance.
+func (s *MemoryStore) SyncSubmission(ctx context.Context, sub smart_contract.Submission) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.submissions[sub.SubmissionID] = sub
+	return nil
+}
+
+// UpsertTask persists a single task update.
+func (s *MemoryStore) UpsertTask(ctx context.Context, task smart_contract.Task) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Prevent overwriting claimed tasks with different claim information
+	if existing, ok := s.tasks[task.TaskID]; ok {
+		if strings.EqualFold(task.Status, "claimed") && task.ClaimedBy != "" {
+			if existing.ClaimedBy != "" && existing.ClaimedBy != task.ClaimedBy {
+				return fmt.Errorf("task %s already claimed by %s, cannot overwrite with claim from %s", task.TaskID, existing.ClaimedBy, task.ClaimedBy)
+			}
+		}
+	}
+
+	s.tasks[task.TaskID] = task
+	return nil
+}
+
+// SyncEscortStatus persists escort validation results from another instance.
+func (s *MemoryStore) SyncEscortStatus(ctx context.Context, status smart_contract.EscortStatus) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.escortStatus[status.TaskID] = status
+	return nil
+}
+
+// GetSubmission returns a submission by ID.
+func (s *MemoryStore) GetSubmission(ctx context.Context, id string) (smart_contract.Submission, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	sub, ok := s.submissions[id]
+	if !ok {
+		return smart_contract.Submission{}, fmt.Errorf("submission %s not found", id)
+	}
+	return sub, nil
 }
 
 // UpdateSubmissionStatus updates the status of a submission and related entities.

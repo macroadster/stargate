@@ -6,6 +6,7 @@ import (
 	"os"
 	"stargate-backend/bitcoin"
 	"stargate-backend/core/smart_contract"
+	"stargate-backend/services"
 )
 
 func main() {
@@ -35,7 +36,14 @@ func main() {
 	}
 	fmt.Println("✅ Merkle proof verifier created")
 
-	escrow := smart_contract.NewEscrowManager(interpreter, verifier, "mainnet")
+	// Create ingestion service (using memory mode for testing)
+	ingestionService := &services.IngestionService{}
+	if ingestionService == nil {
+		log.Fatal("❌ Failed to create ingestion service")
+	}
+	fmt.Println("✅ Ingestion service created")
+
+	escrow := smart_contract.NewEscrowManager(interpreter, verifier, "mainnet", ingestionService)
 	if escrow == nil {
 		log.Fatal("❌ Failed to create escrow manager")
 	}

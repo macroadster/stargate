@@ -4,13 +4,30 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"stargate-backend/services"
 )
+
+// createMockIngestionService creates a mock IngestionService for testing
+func createMockIngestionService(t *testing.T) *services.IngestionService {
+	// Create a mock service using an in-memory SQLite DB or just return nil for testing
+	// For now, we'll create a service with a dummy DSN that won't actually be used in tests
+	service, err := services.NewIngestionService("postgres://user:pass@localhost/testdb?sslmode=disable")
+	if err != nil {
+		// If we can't connect to a test DB, we'll skip using the service in tests
+		// The EscrowManager should handle nil ingestion service gracefully
+		t.Logf("Warning: Could not create mock ingestion service: %v", err)
+		return nil
+	}
+	return service
+}
 
 func TestNewEscrowManager(t *testing.T) {
 	scriptInterpreter := NewScriptInterpreter()
 	verifier := NewMerkleProofVerifier("mainnet")
+	mockIngestionService := createMockIngestionService(t)
 
-	manager := NewEscrowManager(scriptInterpreter, verifier, "mainnet")
+	manager := NewEscrowManager(scriptInterpreter, verifier, "mainnet", mockIngestionService)
 	if manager == nil {
 		t.Fatal("NewEscrowManager() returned nil")
 	}
@@ -32,7 +49,8 @@ func TestNewEscrowManager(t *testing.T) {
 func TestCreateEscrow(t *testing.T) {
 	scriptInterpreter := NewScriptInterpreter()
 	verifier := NewMerkleProofVerifier("mainnet")
-	manager := NewEscrowManager(scriptInterpreter, verifier, "mainnet")
+	mockIngestionService := createMockIngestionService(t)
+	manager := NewEscrowManager(scriptInterpreter, verifier, "mainnet", mockIngestionService)
 
 	ctx := context.Background()
 
@@ -197,7 +215,8 @@ func TestCreateEscrow(t *testing.T) {
 func TestFundEscrow(t *testing.T) {
 	scriptInterpreter := NewScriptInterpreter()
 	verifier := NewMerkleProofVerifier("mainnet")
-	manager := NewEscrowManager(scriptInterpreter, verifier, "mainnet")
+	mockIngestionService := createMockIngestionService(t)
+	manager := NewEscrowManager(scriptInterpreter, verifier, "mainnet", mockIngestionService)
 
 	ctx := context.Background()
 
@@ -268,7 +287,8 @@ func TestFundEscrow(t *testing.T) {
 func TestClaimEscrow(t *testing.T) {
 	scriptInterpreter := NewScriptInterpreter()
 	verifier := NewMerkleProofVerifier("mainnet")
-	manager := NewEscrowManager(scriptInterpreter, verifier, "mainnet")
+	mockIngestionService := createMockIngestionService(t)
+	manager := NewEscrowManager(scriptInterpreter, verifier, "mainnet", mockIngestionService)
 
 	ctx := context.Background()
 
@@ -362,7 +382,8 @@ func TestClaimEscrow(t *testing.T) {
 func TestEscrowManagerEdgeCases(t *testing.T) {
 	scriptInterpreter := NewScriptInterpreter()
 	verifier := NewMerkleProofVerifier("mainnet")
-	manager := NewEscrowManager(scriptInterpreter, verifier, "mainnet")
+	mockIngestionService := createMockIngestionService(t)
+	manager := NewEscrowManager(scriptInterpreter, verifier, "mainnet", mockIngestionService)
 
 	ctx := context.Background()
 

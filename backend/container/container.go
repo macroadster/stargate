@@ -8,6 +8,9 @@ import (
 	scmiddleware "stargate-backend/middleware/smart_contract"
 	"stargate-backend/services"
 	"stargate-backend/storage"
+	"stargate-backend/storage/auth"
+	"stargate-backend/storage/smart_contract"
+	"strconv"
 	"time"
 )
 
@@ -22,6 +25,9 @@ type Container struct {
 	DataStorage          storage.ExtendedDataStorage
 	IngestionService     *services.IngestionService
 
+	// Caches
+	ContractCache *smart_contract.ContractCache
+
 	// Handlers
 	HealthHandler        *handlers.HealthHandler
 	InscriptionHandler   *handlers.InscriptionHandler
@@ -34,12 +40,27 @@ type Container struct {
 }
 
 // NewContainer creates a new dependency container
-func NewContainer() *Container {
+func NewContainer(apiKeyIssuer auth.APIKeyIssuer) *Container {
 	storageType := os.Getenv("STARGATE_STORAGE")
 	pgDSN := os.Getenv("STARGATE_PG_DSN")
 	if pgDSN == "" {
 		pgDSN = os.Getenv("DATABASE_URL") // fallback env name
 	}
+
+	// Initialize cache
+	contractCacheTTL := 2 * time.Minute
+	contractCacheSize := 1000
+	if env := os.Getenv("CONTRACT_CACHE_TTL"); env != "" {
+		if duration, err := time.ParseDuration(env); err == nil {
+			contractCacheTTL = duration
+		}
+	}
+	if env := os.Getenv("CONTRACT_CACHE_SIZE"); env != "" {
+		if size, err := strconv.Atoi(env); err == nil && size > 0 {
+			contractCacheSize = size
+		}
+	}
+	contractCache := smart_contract.NewContractCache(contractCacheTTL, contractCacheSize)
 
 	// Initialize services
 	dataDir := "blocks"
@@ -79,7 +100,7 @@ func NewContainer() *Container {
 
 	// Initialize handlers
 	healthHandler := handlers.NewHealthHandler(healthService)
-	inscriptionHandler := handlers.NewInscriptionHandler(inscriptionService, ingestionService)
+	inscriptionHandler := handlers.NewInscriptionHandler(inscriptionService, ingestionService, apiKeyIssuer)
 	blockHandler := handlers.NewBlockHandler(blockService)
 	// contractHandler will be set later with store
 	searchHandler := handlers.NewSearchHandler(inscriptionService, blockService, dataStorage)
@@ -101,6 +122,9 @@ func NewContainer() *Container {
 		DataStorage:          dataStorage,
 		IngestionService:     ingestionService,
 
+		// Caches
+		ContractCache: contractCache,
+
 		// Handlers
 		HealthHandler:      healthHandler,
 		InscriptionHandler: inscriptionHandler,
@@ -115,7 +139,7 @@ func NewContainer() *Container {
 
 // SetSmartContractHandler sets the smart contract handler with the MCP store
 func (c *Container) SetSmartContractHandler(store scmiddleware.Store) {
-	c.SmartContractHandler = handlers.NewSmartContractHandler(c.SmartContractService, store, c.IngestionService)
+	c.SmartContractHandler = handlers.NewSmartContractHandler(store, c.IngestionService, c.ContractCache)
 }
 
 // initIngestionService retries connecting to Postgres a few times to avoid startup races.

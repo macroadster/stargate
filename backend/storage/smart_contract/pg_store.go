@@ -49,7 +49,8 @@ CREATE TABLE IF NOT EXISTS mcp_contracts (
   goals_count INT,
   available_tasks_count INT,
   status TEXT,
-  skills TEXT[]
+  skills TEXT[],
+  stego_image_url TEXT
 );
 CREATE TABLE IF NOT EXISTS mcp_tasks (
   task_id TEXT PRIMARY KEY,
@@ -103,8 +104,29 @@ CREATE INDEX IF NOT EXISTS idx_mcp_tasks_contract_status ON mcp_tasks(contract_i
 ALTER TABLE mcp_submissions ADD COLUMN IF NOT EXISTS rejection_reason TEXT;
 ALTER TABLE mcp_submissions ADD COLUMN IF NOT EXISTS rejection_type TEXT;
 ALTER TABLE mcp_submissions ADD COLUMN IF NOT EXISTS rejected_at TIMESTAMPTZ;
+
+CREATE TABLE IF NOT EXISTS mcp_escort_status (
+  task_id TEXT PRIMARY KEY,
+  proof_status TEXT,
+  last_checked TIMESTAMPTZ,
+  payload JSONB
+);
 `
 	_, err := s.pool.Exec(ctx, schema)
+	return err
+}
+
+// SyncEscortStatus persists escort validation results from another instance.
+func (s *PGStore) SyncEscortStatus(ctx context.Context, status smart_contract.EscortStatus) error {
+	payload, _ := json.Marshal(status)
+	_, err := s.pool.Exec(ctx, `
+INSERT INTO mcp_escort_status (task_id, proof_status, last_checked, payload)
+VALUES ($1,$2,$3,$4)
+ON CONFLICT (task_id) DO UPDATE SET
+  proof_status = EXCLUDED.proof_status,
+  last_checked = EXCLUDED.last_checked,
+  payload = EXCLUDED.payload
+`, status.TaskID, status.ProofStatus, status.LastChecked, string(payload))
 	return err
 }
 
@@ -120,10 +142,10 @@ func (s *PGStore) seedFixtures(ctx context.Context) error {
 	contracts, tasks := SeedData()
 	for _, c := range contracts {
 		_, err := s.pool.Exec(ctx, `
-INSERT INTO mcp_contracts (contract_id, title, total_budget_sats, goals_count, available_tasks_count, status, skills)
-VALUES ($1,$2,$3,$4,$5,$6,$7)
+INSERT INTO mcp_contracts (contract_id, title, total_budget_sats, goals_count, available_tasks_count, status, skills, stego_image_url)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
 ON CONFLICT (contract_id) DO NOTHING
-`, c.ContractID, c.Title, c.TotalBudgetSats, c.GoalsCount, c.AvailableTasksCount, c.Status, c.Skills)
+`, c.ContractID, c.Title, c.TotalBudgetSats, c.GoalsCount, c.AvailableTasksCount, c.Status, c.Skills, c.StegoImageURL)
 		if err != nil {
 			return err
 		}
@@ -158,15 +180,12 @@ func (s *PGStore) Close() {
 func (s *PGStore) ListContracts(filter smart_contract.ContractFilter) ([]smart_contract.Contract, error) {
 	ctx := context.Background()
 	rows, err := s.pool.Query(ctx, `
-SELECT c.contract_id, c.title, c.total_budget_sats, c.goals_count,
-       COALESCE((SELECT COUNT(*) FROM mcp_tasks t WHERE t.contract_id = c.contract_id AND t.status = 'available'), 0) AS available_tasks_count,
-       c.status, c.skills
-FROM mcp_contracts c
-LEFT JOIN mcp_proposals p ON p.id = c.contract_id
-WHERE ($1 = '' OR c.status = $1)
-  AND ($2 = '' OR LOWER(COALESCE(p.metadata->>'creator','')) = LOWER($2))
-  AND ($3 = '' OR LOWER(COALESCE(p.metadata->>'ai_identifier','')) = LOWER($3))
-`, filter.Status, filter.Creator, filter.AiIdentifier)
+	SELECT c.contract_id, c.title, c.total_budget_sats, c.goals_count,
+		COALESCE((SELECT COUNT(*) FROM mcp_tasks t WHERE t.contract_id = c.contract_id AND t.status = 'available'), 0) AS available_tasks_count,
+		c.status, c.skills, c.stego_image_url
+	FROM mcp_contracts c
+	WHERE ($1 = '' OR c.status = $1)
+	`, filter.Status)
 	if err != nil {
 		return nil, err
 	}
@@ -175,7 +194,7 @@ WHERE ($1 = '' OR c.status = $1)
 	var out []smart_contract.Contract
 	for rows.Next() {
 		var c smart_contract.Contract
-		if err := rows.Scan(&c.ContractID, &c.Title, &c.TotalBudgetSats, &c.GoalsCount, &c.AvailableTasksCount, &c.Status, &c.Skills); err != nil {
+		if err := rows.Scan(&c.ContractID, &c.Title, &c.TotalBudgetSats, &c.GoalsCount, &c.AvailableTasksCount, &c.Status, &c.Skills, &c.StegoImageURL); err != nil {
 			return nil, err
 		}
 		if len(filter.Skills) > 0 && !containsSkill(c.Skills, filter.Skills) {
@@ -335,9 +354,9 @@ func (s *PGStore) GetContract(id string) (smart_contract.Contract, error) {
 	err := s.pool.QueryRow(ctx, `
 SELECT contract_id, title, total_budget_sats, goals_count,
        COALESCE((SELECT COUNT(*) FROM mcp_tasks t WHERE t.contract_id = mcp_contracts.contract_id AND t.status = 'available'), 0) AS available_tasks_count,
-       status, skills
+       status, skills, stego_image_url
 FROM mcp_contracts WHERE contract_id=$1
-`, id).Scan(&c.ContractID, &c.Title, &c.TotalBudgetSats, &c.GoalsCount, &c.AvailableTasksCount, &c.Status, &c.Skills)
+`, id).Scan(&c.ContractID, &c.Title, &c.TotalBudgetSats, &c.GoalsCount, &c.AvailableTasksCount, &c.Status, &c.Skills, &c.StegoImageURL)
 	if err != nil {
 		if strings.Contains(err.Error(), "no rows") {
 			return smart_contract.Contract{}, fmt.Errorf("contract %s not found", id)
@@ -348,7 +367,7 @@ FROM mcp_contracts WHERE contract_id=$1
 }
 
 // ClaimTask reserves a task for an AI. It is idempotent if the same AI reclaims before expiry.
-func (s *PGStore) ClaimTask(taskID, aiID, contractorWallet string, estimatedCompletion *time.Time) (smart_contract.Claim, error) {
+func (s *PGStore) ClaimTask(taskID, walletAddress string, estimatedCompletion *time.Time) (smart_contract.Claim, error) {
 	ctx := context.Background()
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -363,15 +382,16 @@ FROM mcp_tasks WHERE task_id=$1 FOR UPDATE
 	if err != nil {
 		return smart_contract.Claim{}, ErrTaskNotFound
 	}
-	if strings.EqualFold(task.Status, "approved") || strings.EqualFold(task.Status, "completed") || strings.EqualFold(task.Status, "published") || strings.EqualFold(task.Status, "claimed") || strings.EqualFold(task.Status, "submitted") {
+	if strings.EqualFold(task.Status, "approved") || strings.EqualFold(task.Status, "completed") || strings.EqualFold(task.Status, "claimed") || strings.EqualFold(task.Status, "submitted") {
 		return smart_contract.Claim{}, ErrTaskUnavailable
 	}
 
-	normalizedWallet := strings.TrimSpace(contractorWallet)
-	if normalizedWallet != "" {
-		if err := ValidateBitcoinAddress(normalizedWallet); err != nil {
-			return smart_contract.Claim{}, fmt.Errorf("contractor wallet validation failed: %v", err)
-		}
+	normalizedWallet := strings.TrimSpace(walletAddress)
+	if normalizedWallet == "" {
+		return smart_contract.Claim{}, fmt.Errorf("wallet address required")
+	}
+	if err := ValidateBitcoinAddress(normalizedWallet); err != nil {
+		return smart_contract.Claim{}, fmt.Errorf("wallet address validation failed: %v", err)
 	}
 	persistWallet := func(wallet string) error {
 		wallet = strings.TrimSpace(wallet)
@@ -403,7 +423,7 @@ FROM mcp_tasks WHERE task_id=$1 FOR UPDATE
 			return smart_contract.Claim{}, err
 		}
 		if c.Status == "active" && now.Before(c.ExpiresAt) {
-			if c.AiIdentifier == aiID {
+			if c.AiIdentifier == walletAddress {
 				if err := persistWallet(normalizedWallet); err != nil {
 					return smart_contract.Claim{}, err
 				}
@@ -418,7 +438,7 @@ FROM mcp_tasks WHERE task_id=$1 FOR UPDATE
 	claim := smart_contract.Claim{
 		ClaimID:      claimID,
 		TaskID:       taskID,
-		AiIdentifier: aiID,
+		AiIdentifier: walletAddress,
 		Status:       "active",
 		ExpiresAt:    expires,
 		CreatedAt:    now,
@@ -433,7 +453,7 @@ VALUES ($1,$2,$3,$4,$5,$6)
 
 	_, err = tx.Exec(ctx, `
 UPDATE mcp_tasks SET status='claimed', claimed_by=$2, claimed_at=$3, claim_expires_at=$4 WHERE task_id=$1
-`, taskID, aiID, claim.CreatedAt, claim.ExpiresAt)
+`, taskID, claim.AiIdentifier, claim.CreatedAt, claim.ExpiresAt)
 	if err != nil {
 		return smart_contract.Claim{}, err
 	}
@@ -578,7 +598,50 @@ func (s *PGStore) SubmitWork(claimID string, deliverables map[string]interface{}
 	return sub, nil
 }
 
+// GetSubmission returns a submission by ID.
+func (s *PGStore) GetSubmission(ctx context.Context, id string) (smart_contract.Submission, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT s.submission_id, s.claim_id, c.task_id, s.status, s.deliverables, s.completion_proof, s.rejection_reason, s.rejection_type, s.rejected_at, s.created_at
+FROM mcp_submissions s
+JOIN mcp_claims c ON c.claim_id = s.claim_id
+WHERE s.submission_id = $1
+`, id)
+	if err != nil {
+		return smart_contract.Submission{}, err
+	}
+	defer rows.Close()
+	if rows.Next() {
+		var sub smart_contract.Submission
+		var delivJSON, proofJSON []byte
+		var rejectionReason sql.NullString
+		var rejectionType sql.NullString
+		var rejectedAt sql.NullTime
+		if err := rows.Scan(&sub.SubmissionID, &sub.ClaimID, &sub.TaskID, &sub.Status, &delivJSON, &proofJSON, &rejectionReason, &rejectionType, &rejectedAt, &sub.CreatedAt); err != nil {
+			return smart_contract.Submission{}, err
+		}
+		if rejectionReason.Valid {
+			sub.RejectionReason = rejectionReason.String
+		}
+		if rejectionType.Valid {
+			sub.RejectionType = rejectionType.String
+		}
+		if rejectedAt.Valid {
+			t := rejectedAt.Time
+			sub.RejectedAt = &t
+		}
+		if len(delivJSON) > 0 {
+			_ = json.Unmarshal(delivJSON, &sub.Deliverables)
+		}
+		if len(proofJSON) > 0 {
+			_ = json.Unmarshal(proofJSON, &sub.CompletionProof)
+		}
+		return sub, nil
+	}
+	return smart_contract.Submission{}, fmt.Errorf("submission %s not found", id)
+}
+
 // ListSubmissions returns submissions for the given task IDs by joining claims.
+
 func (s *PGStore) ListSubmissions(ctx context.Context, taskIDs []string) ([]smart_contract.Submission, error) {
 	if len(taskIDs) == 0 {
 		return nil, nil
@@ -743,16 +806,17 @@ func (s *PGStore) UpsertContractWithTasks(ctx context.Context, contract smart_co
 	defer tx.Rollback(ctx)
 
 	_, err = tx.Exec(ctx, `
-INSERT INTO mcp_contracts (contract_id, title, total_budget_sats, goals_count, available_tasks_count, status, skills)
-VALUES ($1,$2,$3,$4,$5,$6,$7)
+INSERT INTO mcp_contracts (contract_id, title, total_budget_sats, goals_count, available_tasks_count, status, skills, stego_image_url)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
 ON CONFLICT (contract_id) DO UPDATE SET
   title = EXCLUDED.title,
   total_budget_sats = EXCLUDED.total_budget_sats,
   goals_count = EXCLUDED.goals_count,
   available_tasks_count = EXCLUDED.available_tasks_count,
   status = EXCLUDED.status,
-  skills = EXCLUDED.skills
-`, contract.ContractID, contract.Title, contract.TotalBudgetSats, contract.GoalsCount, contract.AvailableTasksCount, contract.Status, contract.Skills)
+  skills = EXCLUDED.skills,
+  stego_image_url = EXCLUDED.stego_image_url
+ `, contract.ContractID, contract.Title, contract.TotalBudgetSats, contract.GoalsCount, contract.AvailableTasksCount, contract.Status, contract.Skills, contract.StegoImageURL)
 	if err != nil {
 		return err
 	}
@@ -775,7 +839,10 @@ ON CONFLICT (task_id) DO UPDATE SET
   description = EXCLUDED.description,
   budget_sats = EXCLUDED.budget_sats,
   skills = EXCLUDED.skills,
-  status = EXCLUDED.status,
+  status = CASE 
+    WHEN EXCLUDED.status = 'available' THEN 'available'
+    ELSE mcp_tasks.status
+  END,
   claimed_by = COALESCE(EXCLUDED.claimed_by, mcp_tasks.claimed_by),
   claimed_at = COALESCE(EXCLUDED.claimed_at, mcp_tasks.claimed_at),
   claim_expires_at = COALESCE(EXCLUDED.claim_expires_at, mcp_tasks.claim_expires_at),
@@ -790,6 +857,101 @@ ON CONFLICT (task_id) DO UPDATE SET
 	}
 
 	return tx.Commit(ctx)
+}
+
+// SyncClaim persists a claim from another instance.
+func (s *PGStore) SyncClaim(ctx context.Context, claim smart_contract.Claim) error {
+	_, err := s.pool.Exec(ctx, `
+INSERT INTO mcp_claims (claim_id, task_id, ai_identifier, status, expires_at, created_at)
+VALUES ($1,$2,$3,$4,$5,$6)
+ON CONFLICT (claim_id) DO UPDATE SET
+  status = EXCLUDED.status,
+  expires_at = EXCLUDED.expires_at
+`, claim.ClaimID, claim.TaskID, claim.AiIdentifier, claim.Status, claim.ExpiresAt, claim.CreatedAt)
+	if err != nil {
+		return err
+	}
+
+	// Also update task if this is the active claim
+	if claim.Status == "active" || claim.Status == "submitted" {
+		// Check for conflicting claim: if task already claimed by different user, reject sync
+		var currentClaimedBy string
+		err = s.pool.QueryRow(ctx, `
+SELECT claimed_by FROM mcp_tasks
+WHERE task_id=$1 AND claimed_by IS NOT NULL
+`, claim.TaskID).Scan(&currentClaimedBy)
+		if err == nil && currentClaimedBy != "" && currentClaimedBy != claim.AiIdentifier {
+			return fmt.Errorf("sync conflict: task %s already claimed by %s, cannot overwrite with claim from %s", claim.TaskID, currentClaimedBy, claim.AiIdentifier)
+		}
+
+		_, err = s.pool.Exec(ctx, `
+UPDATE mcp_tasks SET 
+  status = CASE WHEN $2 = 'active' THEN 'claimed' ELSE 'submitted' END,
+  claimed_by = $3,
+  claimed_at = $4,
+  claim_expires_at = $5
+WHERE task_id = $1 AND (status = 'available' OR status = 'claimed' OR status = 'submitted')
+`, claim.TaskID, claim.Status, claim.AiIdentifier, claim.CreatedAt, claim.ExpiresAt)
+	}
+	return err
+}
+
+// SyncSubmission persists a submission from another instance.
+func (s *PGStore) SyncSubmission(ctx context.Context, sub smart_contract.Submission) error {
+	delivJSON, _ := json.Marshal(sub.Deliverables)
+	proofJSON, _ := json.Marshal(sub.CompletionProof)
+	_, err := s.pool.Exec(ctx, `
+INSERT INTO mcp_submissions (submission_id, claim_id, status, deliverables, completion_proof, rejection_reason, rejection_type, rejected_at, created_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+ON CONFLICT (submission_id) DO UPDATE SET
+  status = EXCLUDED.status,
+  deliverables = EXCLUDED.deliverables,
+  completion_proof = EXCLUDED.completion_proof,
+  rejection_reason = EXCLUDED.rejection_reason,
+  rejection_type = EXCLUDED.rejection_type,
+  rejected_at = EXCLUDED.rejected_at
+`, sub.SubmissionID, sub.ClaimID, sub.Status, string(delivJSON), string(proofJSON), sub.RejectionReason, sub.RejectionType, sub.RejectedAt, sub.CreatedAt)
+	return err
+}
+
+// UpsertTask persists a single task, useful for syncing individual task updates.
+func (s *PGStore) UpsertTask(ctx context.Context, t smart_contract.Task) error {
+	// Prevent overwriting claimed tasks with different claim information
+	if strings.EqualFold(t.Status, "claimed") && t.ClaimedBy != "" {
+		var currentClaimedBy string
+		var currentClaimedAt time.Time
+		err := s.pool.QueryRow(ctx, `
+SELECT claimed_by, claimed_at FROM mcp_tasks
+WHERE task_id=$1 AND claimed_by IS NOT NULL
+`, t.TaskID).Scan(&currentClaimedBy, &currentClaimedAt)
+		if err == nil && currentClaimedBy != "" && currentClaimedBy != t.ClaimedBy {
+			// Different user has claimed this task
+			if !currentClaimedAt.IsZero() && t.ClaimedAt != nil && t.ClaimedAt.After(currentClaimedAt) {
+				// New claim is more recent, allow overwrite but log it
+				log.Printf("task sync: overwriting claim from %s with newer claim from %s for task %s", currentClaimedBy, t.ClaimedBy, t.TaskID)
+			} else {
+				// Keep existing claim (older or same time)
+				return fmt.Errorf("task %s already claimed by %s, cannot overwrite with claim from %s", t.TaskID, currentClaimedBy, t.ClaimedBy)
+			}
+		}
+	}
+
+	reqJSON, _ := json.Marshal(t.Requirements)
+	var proofJSON []byte
+	if t.MerkleProof != nil {
+		proofJSON, _ = json.Marshal(t.MerkleProof)
+	}
+	_, err := s.pool.Exec(ctx, `
+INSERT INTO mcp_tasks (task_id, contract_id, goal_id, title, description, budget_sats, skills, status, claimed_by, claimed_at, claim_expires_at, difficulty, estimated_hours, requirements, merkle_proof)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+ON CONFLICT (task_id) DO UPDATE SET
+  status = EXCLUDED.status,
+  claimed_by = COALESCE(EXCLUDED.claimed_by, mcp_tasks.claimed_by),
+  claimed_at = COALESCE(EXCLUDED.claimed_at, mcp_tasks.claimed_at),
+  claim_expires_at = COALESCE(EXCLUDED.claim_expires_at, mcp_tasks.claim_expires_at),
+  merkle_proof = COALESCE(EXCLUDED.merkle_proof, mcp_tasks.merkle_proof)
+ `, t.TaskID, t.ContractID, t.GoalID, t.Title, t.Description, t.BudgetSats, t.Skills, t.Status, t.ClaimedBy, t.ClaimedAt, t.ClaimExpires, t.Difficulty, t.EstimatedHours, string(reqJSON), string(proofJSON))
+	return err
 }
 
 // UpdateTaskProof replaces the merkle_proof for a task.
@@ -851,15 +1013,16 @@ func (s *PGStore) CreateProposal(ctx context.Context, p smart_contract.Proposal)
 		if metaContract != "" {
 			if metaHash, ok2 := p.Metadata["visible_pixel_hash"].(string); ok2 {
 				metaHash = strings.TrimSpace(metaHash)
-				if metaHash != "" && metaHash != metaContract {
-					return fmt.Errorf("visible_pixel_hash must match contract_id when both are set")
+				normalizedContract := strings.TrimPrefix(metaContract, "wish-")
+				if metaHash != "" && metaHash != normalizedContract {
+					return fmt.Errorf("visible_pixel_hash must match contract_id when both are set (normalized: %s)", normalizedContract)
 				}
 			}
 		}
 	}
 
 	// Comprehensive security validation - this sanitizes inputs in-place
-	if err := ValidateProposalInput(p); err != nil {
+	if err := ValidateProposalInput(&p); err != nil {
 		return fmt.Errorf("proposal validation failed: %v", err)
 	}
 
@@ -868,6 +1031,26 @@ func (s *PGStore) CreateProposal(ctx context.Context, p smart_contract.Proposal)
 		p.Status = "pending" // Default to pending
 	} else if !isValidProposalStatus(p.Status) {
 		return fmt.Errorf("invalid proposal status: %s (must be one of: pending, approved, rejected, published)", p.Status)
+	}
+
+	// Check for duplicate visible_pixel_hash with approved/published status
+	visibleHash := strings.TrimSpace(p.VisiblePixelHash)
+	if visibleHash == "" {
+		if v, ok := p.Metadata["visible_pixel_hash"].(string); ok {
+			visibleHash = strings.TrimSpace(v)
+		}
+	}
+	if visibleHash != "" {
+		var conflictID string
+		err := s.pool.QueryRow(ctx, `
+		SELECT id FROM mcp_proposals
+		WHERE visible_pixel_hash=$1 AND id<>$2
+		AND status IN ('approved','published')
+		LIMIT 1
+		`, visibleHash, p.ID).Scan(&conflictID)
+		if err == nil && conflictID != "" {
+			return fmt.Errorf("a proposal with visible_pixel_hash=%s is already approved/published (id=%s)", visibleHash, conflictID)
+		}
 	}
 
 	metaMap := p.Metadata
@@ -881,7 +1064,13 @@ func (s *PGStore) CreateProposal(ctx context.Context, p smart_contract.Proposal)
 	_, err := s.pool.Exec(ctx, `
 INSERT INTO mcp_proposals (id, title, description_md, visible_pixel_hash, budget_sats, status, metadata, created_at)
 VALUES ($1,$2,$3,$4,$5,$6,$7,COALESCE($8, now()))
-ON CONFLICT (id) DO NOTHING
+ON CONFLICT (id) DO UPDATE SET
+  status = EXCLUDED.status,
+  metadata = EXCLUDED.metadata,
+  title = EXCLUDED.title,
+  description_md = EXCLUDED.description_md,
+  visible_pixel_hash = EXCLUDED.visible_pixel_hash,
+  budget_sats = EXCLUDED.budget_sats
 `, p.ID, p.Title, p.DescriptionMD, p.VisiblePixelHash, p.BudgetSats, p.Status, string(meta), p.CreatedAt)
 	if err != nil {
 		return err
@@ -1050,7 +1239,7 @@ FROM mcp_proposals WHERE id=$1 FOR UPDATE
 		}
 	}
 
-	if err := ValidateProposalInput(p); err != nil {
+	if err := ValidateProposalInput(&p); err != nil {
 		return fmt.Errorf("proposal validation failed: %v", err)
 	}
 
@@ -1197,12 +1386,8 @@ WHERE id<>$1 AND status='pending' AND (
 		return err
 	}
 
-	// HACK: temporarily set status to approved to trigger validation
-	originalStatus := proposal.Status
-	proposal.Status = "approved"
-	err = ValidateProposalInput(proposal)
-	proposal.Status = originalStatus // revert status
-	if err != nil {
+	// Validate proposal for approval without modifying status
+	if err := ValidateProposalForApproval(&proposal); err != nil {
 		return fmt.Errorf("proposal validation failed: %v", err)
 	}
 	if len(proposal.Tasks) == 0 {
@@ -1256,6 +1441,8 @@ func (s *PGStore) PublishProposal(ctx context.Context, id string) error {
 	if _, err := tx.Exec(ctx, `UPDATE mcp_tasks SET status='published' WHERE contract_id=$1 AND status IN ('submitted','pending_review','claimed','approved')`, contractID); err != nil {
 		return err
 	}
+	// Keep "available" tasks as "available" - only publish when contract is actually funded
+	// Do NOT update available tasks to published
 	if _, err := tx.Exec(ctx, `UPDATE mcp_claims SET status='complete' WHERE task_id IN (SELECT task_id FROM mcp_tasks WHERE contract_id=$1) AND status IN ('submitted','pending_review','active','approved')`, contractID); err != nil {
 		return err
 	}

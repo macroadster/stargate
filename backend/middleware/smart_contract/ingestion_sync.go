@@ -8,14 +8,51 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"stargate-backend/core/smart_contract"
+	"stargate-backend/ipfs"
 	"stargate-backend/services"
 	scstore "stargate-backend/storage/smart_contract"
 )
+
+// publishProposalEvent publishes a proposal creation event via IPFS for cross-instance sync
+func publishProposalEvent(ctx context.Context, proposal smart_contract.Proposal) error {
+	// Check if sync is enabled
+	if os.Getenv("STARGATE_SYNC_ENABLE") == "false" {
+		return nil
+	}
+
+	// Get sync configuration
+	topic := "stargate-stego" // Default topic
+	if envTopic := os.Getenv("STARGATE_SYNC_TOPIC"); envTopic != "" {
+		topic = envTopic
+	}
+
+	// Create sync announcement for proposal creation
+	ann := map[string]interface{}{
+		"type":     "proposal_create",
+		"proposal": &proposal,
+		"issuer":   os.Getenv("STARGATE_SYNC_ISSUER"),
+	}
+
+	if ann["issuer"] == "" {
+		ann["issuer"] = "stargate-backend"
+	}
+	ann["timestamp"] = time.Now().Unix()
+
+	data, err := json.Marshal(ann)
+	if err != nil {
+		return err
+	}
+
+	// Use IPFS client for publishing
+	client := ipfs.NewClientFromEnv()
+	return client.PubsubPublish(ctx, topic, data)
+}
 
 // StartIngestionSync polls starlight_ingestions for pending records, validates embedded payloads,
 // and upserts contracts/tasks into the MCP store. It requires a Postgres-backed store.
@@ -125,15 +162,7 @@ func processRecord(ctx context.Context, rec services.IngestionRecord, ingest *se
 	// Try JSON contract first.
 	contract, tasks, err := parseEmbeddedContract(raw)
 	if err != nil || contract.ContractID == "" || len(tasks) == 0 {
-		if store != nil {
-			visible := strings.TrimSpace(metaString(meta["visible_pixel_hash"]))
-			if visible != "" {
-				if _, err := store.GetContract("wish-" + visible); err != nil {
-					return ingest.UpdateStatusWithNote(rec.ID, "ignored", "wish not found for visible hash")
-				}
-			}
-		}
-		// Fallback: treat embedded_message as markdown wish -> create proposal only.
+		// Fallback: treat embedded_message as markdown wish -> create proposal AND contract.
 		proposal, err := parseMarkdownProposal(rec.ID, raw, meta, rec.ImageBase64)
 		if err != nil {
 			return ingest.UpdateStatusWithNote(rec.ID, "invalid", fmt.Sprintf("parse error: %v", err))
@@ -141,7 +170,26 @@ func processRecord(ctx context.Context, rec services.IngestionRecord, ingest *se
 		if err := store.CreateProposal(ctx, proposal); err != nil {
 			return ingest.UpdateStatusWithNote(rec.ID, "invalid", fmt.Sprintf("proposal upsert failed: %v", err))
 		}
-		return ingest.UpdateStatusWithNote(rec.ID, "verified", "proposal created; awaiting approval")
+		// Publish proposal creation event to sync across instances
+		if err := publishProposalEvent(ctx, proposal); err != nil {
+			log.Printf("failed to publish proposal create event for %s: %v", proposal.ID, err)
+		}
+		// Also create contract for wishes so they show up in contracts list
+		if proposal.ID != "" {
+			wishContract := smart_contract.Contract{
+				ContractID:          proposal.ID,
+				Title:               proposal.Title,
+				TotalBudgetSats:     proposal.BudgetSats,
+				GoalsCount:          len(proposal.Tasks),
+				AvailableTasksCount: len(proposal.Tasks),
+				Status:              proposal.Status,
+				Skills:              proposal.Tasks[0].Skills,
+			}
+			if err := store.UpsertContractWithTasks(ctx, wishContract, proposal.Tasks); err != nil {
+				log.Printf("wish contract creation failed for %s: %v", proposal.ID, err)
+			}
+		}
+		return ingest.UpdateStatusWithNote(rec.ID, "verified", "proposal and contract created; awaiting approval")
 	}
 
 	// If no visible_pixel_hash provided, derive from image for each task.
@@ -234,20 +282,27 @@ func parseMarkdownProposal(ingestionID, markdown string, meta map[string]interfa
 
 	// Prefer visible pixel hash (from image scan) or the ingestionID directly to avoid duplicate wish-* wrappers.
 	contractIDBase := strings.TrimSpace(ingestionID)
+	var visibleHash string
 	if meta != nil {
 		if v, ok := meta["visible_pixel_hash"].(string); ok && strings.TrimSpace(v) != "" {
-			contractIDBase = strings.TrimSpace(v)
+			visibleHash = strings.TrimSpace(v)
+			contractIDBase = visibleHash
 		}
 	}
 	contractID := contractIDBase
 	if contractID == "" {
 		contractID = fmt.Sprintf("wish-%s", ingestionID)
 	}
+	// Always use wish- prefix for contract ID when visible hash is available
+	if visibleHash != "" && !strings.HasPrefix(contractID, "wish-") {
+		contractID = fmt.Sprintf("wish-%s", visibleHash)
+	}
 	budget := budgetFromMeta(meta)
 	fundingAddr := scstore.FundingAddressFromMeta(meta)
 
 	// Default proof placeholder with funding info (provisional).
 	defaultProof := &smart_contract.MerkleProof{
+		VisiblePixelHash:   visibleHash,
 		FundedAmountSats:   budget,
 		FundingAddress:     fundingAddr,
 		ConfirmationStatus: "provisional",
@@ -274,6 +329,10 @@ func parseMarkdownProposal(ingestionID, markdown string, meta map[string]interfa
 	}
 	meta["budget_sats"] = budget
 	meta["funding_address"] = fundingAddr
+	if visibleHash != "" {
+		meta["visible_pixel_hash"] = visibleHash
+		meta["stego_contract_id"] = visibleHash
+	}
 
 	return smart_contract.Proposal{
 		ID:               contractID,
@@ -282,6 +341,7 @@ func parseMarkdownProposal(ingestionID, markdown string, meta map[string]interfa
 		VisiblePixelHash: defaultProof.VisiblePixelHash,
 		BudgetSats:       budget,
 		Status:           "pending",
+		CreatedAt:        time.Now(),
 		Tasks:            tasks,
 		Metadata:         meta,
 	}, nil

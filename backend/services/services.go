@@ -86,6 +86,7 @@ func (s *InscriptionService) CreateInscription(req models.InscribeRequest, file 
 	timestamp := time.Now().Unix()
 	var imagePath string
 
+	// Generate filename and handle file
 	if file != nil && filename != "" {
 		imageFilename := fmt.Sprintf("%d_%s", timestamp, filename)
 		imagePath = filepath.Join(uploadsDir, imageFilename)
@@ -233,11 +234,8 @@ func NewSmartContractService(contractsFile string) *SmartContractService {
 	}
 }
 
-// GetAllContracts retrieves all smart contracts
-func (s *SmartContractService) GetAllContracts() ([]models.SmartContractImage, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
+// loadContracts loads contracts from file without locking
+func (s *SmartContractService) loadContracts() ([]models.SmartContractImage, error) {
 	var contracts []models.SmartContractImage
 
 	file, err := os.Open(s.contractsFile)
@@ -256,13 +254,20 @@ func (s *SmartContractService) GetAllContracts() ([]models.SmartContractImage, e
 	return contracts, nil
 }
 
+// GetAllContracts retrieves all smart contracts
+func (s *SmartContractService) GetAllContracts() ([]models.SmartContractImage, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.loadContracts()
+}
+
 // CreateContract creates a new smart contract
 func (s *SmartContractService) CreateContract(req models.CreateContractRequest) (*models.SmartContractImage, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	// Load existing contracts
-	contracts, err := s.GetAllContracts()
+	contracts, err := s.loadContracts()
 	if err != nil {
 		return nil, err
 	}
@@ -310,6 +315,9 @@ func (s *SmartContractService) GetContractByID(contractID string) (*models.Smart
 
 // saveContracts saves contracts to file
 func (s *SmartContractService) saveContracts(contracts []models.SmartContractImage) error {
+	if err := os.MkdirAll(filepath.Dir(s.contractsFile), 0755); err != nil {
+		return fmt.Errorf("failed to create contracts directory: %w", err)
+	}
 	file, err := os.Create(s.contractsFile)
 	if err != nil {
 		return fmt.Errorf("failed to create contracts file: %w", err)

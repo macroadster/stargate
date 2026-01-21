@@ -38,7 +38,7 @@ func TestHTTPMCPServer(t *testing.T) {
 	store := scstore.NewMemoryStore(72 * time.Hour)
 	ingestionSvc := &services.IngestionService{}  // nil for memory mode
 	scannerManager := &starlight.ScannerManager{} // mock scanner manager
-	server := NewHTTPMCPServer(store, allowAllValidator{}, ingestionSvc, scannerManager, nil)
+	server := NewHTTPMCPServer(store, allowAllValidator{}, ingestionSvc, scannerManager, nil, auth.NewChallengeStore(10*time.Minute))
 
 	// Test list_contracts
 	t.Run("list_contracts", func(t *testing.T) {
@@ -101,7 +101,7 @@ func TestClaimTaskUsesAPIKeyWallet(t *testing.T) {
 	scannerManager := &starlight.ScannerManager{}
 	apiKey := "test-api-key"
 	wallet := "tb1qwallettest000000000000000000000000000000000"
-	server := NewHTTPMCPServer(store, walletValidator{wallet: wallet}, ingestionSvc, scannerManager, nil)
+	server := NewHTTPMCPServer(store, walletValidator{wallet: wallet}, ingestionSvc, scannerManager, nil, auth.NewChallengeStore(10*time.Minute))
 
 	contract := smart_contract.Contract{
 		ContractID:          "contract-claim-wallet",
@@ -126,8 +126,7 @@ func TestClaimTaskUsesAPIKeyWallet(t *testing.T) {
 	req := MCPRequest{
 		Tool: "claim_task",
 		Arguments: map[string]interface{}{
-			"task_id":       task.TaskID,
-			"ai_identifier": "agent-claim-wallet",
+			"task_id": task.TaskID,
 		},
 	}
 	body, _ := json.Marshal(req)
@@ -159,7 +158,7 @@ func TestProposalCreationRequiresWish(t *testing.T) {
 	store := scstore.NewMemoryStore(72 * time.Hour)
 	ingestionSvc := &services.IngestionService{}  // nil for memory mode
 	scannerManager := &starlight.ScannerManager{} // mock scanner manager
-	server := NewHTTPMCPServer(store, allowAllValidator{}, ingestionSvc, scannerManager, nil)
+	server := NewHTTPMCPServer(store, allowAllValidator{}, ingestionSvc, scannerManager, nil, auth.NewChallengeStore(10*time.Minute))
 
 	// Test that proposals require a wish hash.
 	t.Run("create_proposal_requires_visible_pixel_hash", func(t *testing.T) {
@@ -176,11 +175,12 @@ func TestProposalCreationRequiresWish(t *testing.T) {
 		w := httptest.NewRecorder()
 		r := httptest.NewRequest("POST", "/mcp/call", bytes.NewReader(body))
 		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("X-API-Key", "test-key")
 
 		server.handleToolCall(w, r)
 
-		if w.Code != http.StatusBadRequest {
-			t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 		}
 
 		var resp MCPResponse
@@ -189,11 +189,23 @@ func TestProposalCreationRequiresWish(t *testing.T) {
 		}
 
 		if resp.Success {
-			t.Fatalf("expected failure due to missing scan metadata, but got success")
+			t.Fatalf("expected failure due to missing visible_pixel_hash, but got success")
 		}
 
-		if !strings.Contains(resp.Error, "visible_pixel_hash is required") {
-			t.Fatalf("expected error about visible_pixel_hash requirement, got: %s", resp.Error)
+		if resp.ErrorCode != "VALIDATION_FAILED" {
+			t.Fatalf("expected VALIDATION_FAILED error code, got: %s", resp.ErrorCode)
+		}
+
+		// Check that visible_pixel_hash is in validation errors
+		if resp.Details == nil {
+			t.Fatalf("expected validation details in error response")
+		}
+		validationErrors, ok := resp.Details["validation_errors"].(map[string]interface{})
+		if !ok {
+			t.Fatalf("expected validation_errors in details")
+		}
+		if _, ok := validationErrors["visible_pixel_hash"]; !ok {
+			t.Fatalf("expected visible_pixel_hash in validation errors")
 		}
 	})
 
@@ -245,10 +257,11 @@ func TestProposalCreationRequiresWish(t *testing.T) {
 		w := httptest.NewRecorder()
 		r := httptest.NewRequest("POST", "/mcp/call", bytes.NewReader(body))
 		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("X-API-Key", "test-key")
 
 		server.handleToolCall(w, r)
 
-		if w.Code != http.StatusNotFound {
+		if w.Code != http.StatusOK {
 			t.Fatalf("expected 404, got %d: %s", w.Code, w.Body.String())
 		}
 
@@ -261,14 +274,19 @@ func TestProposalCreationRequiresWish(t *testing.T) {
 			t.Fatalf("expected failure due to missing wish, but got success")
 		}
 
-		if !strings.Contains(resp.Error, "wish not found") {
+		if resp.ErrorCode != "RESOURCE_NOT_FOUND" {
+			t.Fatalf("expected RESOURCE_NOT_FOUND error code, got: %s", resp.ErrorCode)
+		}
+
+		if !strings.Contains(resp.Error, "wish") || !strings.Contains(resp.Error, "not found") {
 			t.Fatalf("expected error about missing wish, got: %s", resp.Error)
 		}
 	})
 
 	// Test that proposal creation succeeds when wish exists
 	t.Run("create_proposal_with_wish", func(t *testing.T) {
-		wishID := "wish-1111111111111111111111111111111111111111111111111111111111111111"
+		visibleHash := strings.Repeat("1", 64)
+		wishID := "wish-" + visibleHash
 		storeContract := smart_contract.Contract{
 			ContractID: wishID,
 			Title:      "Wish",
@@ -284,15 +302,14 @@ func TestProposalCreationRequiresWish(t *testing.T) {
 				"title":              "Wish Proposal",
 				"description_md":     "Proposal for wish",
 				"budget_sats":        1000,
-				"contract_id":        "1111111111111111111111111111111111111111111111111111111111111111",
-				"visible_pixel_hash": "1111111111111111111111111111111111111111111111111111111111111111",
+				"visible_pixel_hash": visibleHash,
 			},
 		}
 		body, _ := json.Marshal(req)
-
 		w := httptest.NewRecorder()
 		r := httptest.NewRequest("POST", "/mcp/call", bytes.NewReader(body))
 		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("X-API-Key", "test-key")
 
 		server.handleToolCall(w, r)
 
@@ -353,7 +370,7 @@ func TestProposalCreationRequiresWish(t *testing.T) {
 
 		server.handleToolCall(w, r)
 
-		if w.Code != http.StatusNotFound {
+		if w.Code != http.StatusOK {
 			t.Fatalf("expected 404, got %d: %s", w.Code, w.Body.String())
 		}
 
@@ -364,7 +381,10 @@ func TestProposalCreationRequiresWish(t *testing.T) {
 		if resp.Success {
 			t.Fatalf("expected failure due to missing wish, but got success")
 		}
-		if !strings.Contains(resp.Error, "wish not found") {
+		if resp.ErrorCode != "RESOURCE_NOT_FOUND" {
+			t.Fatalf("expected RESOURCE_NOT_FOUND error code, got: %s", resp.ErrorCode)
+		}
+		if !strings.Contains(resp.Error, "wish") || !strings.Contains(resp.Error, "not found") {
 			t.Fatalf("expected error about missing wish, got: %s", resp.Error)
 		}
 
@@ -394,6 +414,71 @@ func TestProposalCreationRequiresWish(t *testing.T) {
 		}
 		if !resp.Success {
 			t.Fatalf("expected success, got error: %s", resp.Error)
+		}
+	})
+
+	t.Run("approve_proposal_requires_creator", func(t *testing.T) {
+		creatorKey := "creator-key"
+		otherKey := "other-key"
+		visibleHash := strings.Repeat("b", 64)
+
+		proposal := smart_contract.Proposal{
+			ID:               "proposal-creator-test",
+			Title:            "Creator test proposal",
+			DescriptionMD:    "Test proposal for creator validation",
+			VisiblePixelHash: visibleHash,
+			BudgetSats:       1000,
+			Status:           "pending",
+			Metadata: map[string]interface{}{
+				"creator_api_key_hash": apiKeyHash(creatorKey),
+				"visible_pixel_hash":   visibleHash,
+			},
+		}
+		if err := store.CreateProposal(context.Background(), proposal); err != nil {
+			t.Fatalf("failed to seed proposal: %v", err)
+		}
+
+		wishID := "wish-" + visibleHash
+		wishContract := smart_contract.Contract{
+			ContractID: wishID,
+			Title:      "Wish",
+			Status:     "pending",
+		}
+		if err := store.UpsertContractWithTasks(context.Background(), wishContract, nil); err != nil {
+			t.Fatalf("failed to seed wish contract: %v", err)
+		}
+
+		req := MCPRequest{
+			Tool: "approve_proposal",
+			Arguments: map[string]interface{}{
+				"proposal_id": proposal.ID,
+			},
+		}
+		body, _ := json.Marshal(req)
+
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("POST", "/mcp/call", bytes.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("X-API-Key", otherKey)
+
+		server.handleToolCall(w, r)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 401, got %d: %s", w.Code, w.Body.String())
+		}
+
+		var resp MCPResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to unmarshal response: %v", err)
+		}
+		if resp.Success {
+			t.Fatalf("expected failure when non-creator tries to approve")
+		}
+		if resp.ErrorCode != "UNAUTHORIZED" {
+			t.Fatalf("expected UNAUTHORIZED error code, got: %s", resp.ErrorCode)
+		}
+		if !strings.Contains(resp.Error, "approver does not match proposal creator") {
+			t.Fatalf("expected creator mismatch error, got: %s", resp.Error)
 		}
 	})
 }

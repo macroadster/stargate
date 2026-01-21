@@ -108,6 +108,9 @@ ON CONFLICT (id) DO NOTHING;
 }
 
 func (s *IngestionService) Get(id string) (*IngestionRecord, error) {
+	if s.db == nil {
+		return nil, fmt.Errorf("ingestion service is in memory-only mode (no database)")
+	}
 	query := fmt.Sprintf(`SELECT id, filename, method, message_length, image_base64, metadata, status, created_at FROM %s WHERE id=$1`, s.tableName)
 	var rec IngestionRecord
 	var metadataRaw []byte

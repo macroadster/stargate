@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"stargate-backend/api"
 	"stargate-backend/bitcoin"
 	"stargate-backend/container"
+	"stargate-backend/core/smart_contract"
 	"stargate-backend/handlers"
 	"stargate-backend/ipfs"
 	"stargate-backend/mcp"
@@ -44,6 +46,160 @@ func contentTypeForFormat(format string) string {
 		return "text/plain"
 	default:
 		return "application/octet-stream"
+	}
+}
+
+// detectMimeType determines the MIME type based on file content and filename
+// This is a simplified version of the inferMime function from api/data_api.go
+func detectMimeType(content []byte, filename string) string {
+	// First, try to detect from content
+	if len(content) > 0 {
+		sample := content
+		if len(sample) > 512 {
+			sample = sample[:512]
+		}
+		if detected := http.DetectContentType(sample); detected != "" && detected != "application/octet-stream" {
+			return detected
+		}
+	}
+
+	// Fallback to filename-based detection
+	lowerName := strings.ToLower(filename)
+	switch {
+	case strings.HasSuffix(lowerName, ".jpg"), strings.HasSuffix(lowerName, ".jpeg"):
+		return "image/jpeg"
+	case strings.HasSuffix(lowerName, ".png"):
+		return "image/png"
+	case strings.HasSuffix(lowerName, ".gif"):
+		return "image/gif"
+	case strings.HasSuffix(lowerName, ".webp"):
+		return "image/webp"
+	case strings.HasSuffix(lowerName, ".svg"):
+		return "image/svg+xml"
+	case strings.HasSuffix(lowerName, ".bmp"):
+		return "image/bmp"
+	case strings.HasSuffix(lowerName, ".html"), strings.HasSuffix(lowerName, ".htm"):
+		return "text/html"
+	case strings.HasSuffix(lowerName, ".json"):
+		return "application/json"
+	case strings.HasSuffix(lowerName, ".txt"):
+		return "text/plain"
+	}
+
+	// Final content-based detection for common patterns
+	if len(content) > 0 {
+		trim := strings.TrimSpace(string(content))
+		lower := strings.ToLower(trim)
+		if strings.HasPrefix(lower, "<!doctype") || strings.HasPrefix(lower, "<html") {
+			return "text/html"
+		} else if strings.HasPrefix(lower, "<svg") {
+			return "image/svg+xml"
+		} else if strings.HasPrefix(lower, "{") || strings.HasPrefix(lower, "[") {
+			// Simple JSON detection
+			return "application/json"
+		} else if isMostlyPrintable(trim) {
+			return "text/plain"
+		}
+	}
+
+	return "application/octet-stream"
+}
+
+// isMostlyPrintable checks if content is mostly printable text
+func isMostlyPrintable(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+	printable := 0
+	for _, r := range s {
+		if r >= 32 && r <= 126 || r == '\n' || r == '\r' || r == '\t' {
+			printable++
+		}
+	}
+	return float64(printable)/float64(len(s)) > 0.8
+}
+
+// customUploadsHandler serves uploaded files with proper MIME type detection
+// instead of relying on file extensions (hash-based filenames have no extensions)
+func customUploadsHandler(uploadsDir string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Extract filename from URL path
+		filename := filepath.Base(r.URL.Path)
+		if filename == "." || filename == "/" || filename == "" {
+			http.NotFound(w, r)
+			return
+		}
+
+		// Construct full file path
+		filePath := filepath.Join(uploadsDir, filename)
+
+		// Security check: ensure the file is within uploads directory
+		if !strings.HasPrefix(filepath.Clean(filePath), uploadsDir) {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+
+		// Check if file exists
+		fileInfo, err := os.Stat(filePath)
+		if os.IsNotExist(err) {
+			http.NotFound(w, r)
+			return
+		}
+		if err != nil {
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+
+		// Don't serve directories
+		if fileInfo.IsDir() {
+			http.NotFound(w, r)
+			return
+		}
+
+		// Read file content for MIME type detection
+		file, err := os.Open(filePath)
+		if err != nil {
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+		defer file.Close()
+
+		// Read first 512 bytes for MIME detection
+		buffer := make([]byte, 512)
+		n, err := file.Read(buffer)
+		if err != nil && err != io.EOF {
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+
+		// Detect MIME type using content-based detection
+		mimeType := detectMimeType(buffer[:n], filename)
+		if mimeType == "" {
+			mimeType = "application/octet-stream"
+		}
+
+		// Set Content-Type header
+		w.Header().Set("Content-Type", mimeType)
+
+		// Set cache headers for better performance
+		w.Header().Set("Cache-Control", "public, max-age=3600") // 1 hour cache
+
+		// Set content length
+		w.Header().Set("Content-Length", strconv.FormatInt(fileInfo.Size(), 10))
+
+		// Reset file pointer to beginning
+		_, err = file.Seek(0, 0)
+		if err != nil {
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+
+		// Copy file content to response
+		_, err = io.Copy(w, file)
+		if err != nil {
+			// Too late to set status code, but we can log it
+			log.Printf("Error serving file %s: %v", filename, err)
+		}
 	}
 }
 
@@ -158,7 +314,7 @@ func initializeMCPComponents() (scmiddleware.Store, auth.APIKeyIssuer, auth.APIK
 }
 
 // startMCPServices starts background services for MCP when using PostgreSQL
-func startMCPServices() {
+func startMCPServices(escort *smart_contract.EscortService) {
 	storeDriver := os.Getenv("MCP_STORE_DRIVER")
 	if storeDriver != "postgres" {
 		return
@@ -220,10 +376,10 @@ func startMCPServices() {
 		}
 
 		provider := scmiddleware.NewFundingProvider(fundingProvider, fundingAPIBase)
-		if err := scmiddleware.StartFundingSync(context.Background(), store, provider, fundingInterval); err != nil {
+		if err := scmiddleware.StartFundingSync(context.Background(), store, provider, escort, fundingInterval); err != nil {
 			log.Printf("funding sync disabled (init error): %v", err)
 		} else {
-			log.Printf("funding sync enabled (interval=%s)", fundingInterval)
+			log.Printf("funding sync enabled (interval=%s, provider=%s)", fundingInterval, fundingProvider)
 		}
 	}
 }
@@ -241,9 +397,6 @@ func main() {
 func runHTTPServer() {
 	log.Println("=== STARTING STARGATE HTTP SERVER ===")
 
-	// Initialize dependency container
-	container := container.NewContainer()
-
 	var mirror mirrorState
 	ipfsCfg := ipfs.LoadMirrorConfig()
 	if ipfsCfg.Enabled {
@@ -253,9 +406,21 @@ func runHTTPServer() {
 	// Initialize MCP components (for HTTP routes)
 	store, apiKeyIssuer, apiKeyValidator, ingestionSvc, challengeStore := initializeMCPComponents()
 
+	// Initialize dependency container
+	container := container.NewContainer(apiKeyIssuer)
+
+	// Initialize EscortService
+	rpcURL := bitcoin.GetNetworkConfig(bitcoin.GetCurrentNetwork()).BaseURL
+	if env := os.Getenv("MCP_FUNDING_API_BASE"); env != "" {
+		rpcURL = env
+	}
+	verifier := smart_contract.NewMerkleProofVerifier(rpcURL)
+	interpreter := smart_contract.NewScriptInterpreter()
+	escort := smart_contract.NewEscortService(verifier, interpreter)
+
 	// Initialize HTTP MCP server (always enabled)
 	scannerManager := starlight.GetScannerManager()
-	httpMCPServer := mcp.NewHTTPMCPServer(store, apiKeyValidator, ingestionSvc, scannerManager, container.SmartContractService)
+	httpMCPServer := mcp.NewHTTPMCPServer(store, apiKeyValidator, ingestionSvc, scannerManager, container.SmartContractService, challengeStore)
 
 	// Set the smart contract handler with the store
 	container.SetSmartContractHandler(store)
@@ -264,7 +429,7 @@ func runHTTPServer() {
 
 	// Start MCP background services if using PostgreSQL AND MCP server is not running separately
 	if os.Getenv("STARGATE_MODE") != "mcp-only" && os.Getenv("STARGATE_MODE") != "both" {
-		startMCPServices()
+		startMCPServices(escort)
 	} else {
 		log.Println("MCP background services skipped (will be handled by separate MCP process)")
 	}
@@ -276,13 +441,16 @@ func runHTTPServer() {
 	httpMCPServer.RegisterRoutes(mux)
 
 	// Apply middleware to all routes
+	routes, mcpRestServer := setupRoutes(mux, container, store, apiKeyIssuer, apiKeyValidator, challengeStore, ingestionSvc, &mirror, escort)
+
+	// Set smart_contract server reference on MCP server (must be done after mcpRestServer is created)
+	httpMCPServer.SetServer(mcpRestServer)
+
 	handler := middleware.Recovery(
 		middleware.Logging(
 			middleware.SecurityHeaders(
 				middleware.CORS(
-					middleware.Timeout(30 * time.Second)(
-						setupRoutes(mux, container, store, apiKeyIssuer, apiKeyValidator, challengeStore, ingestionSvc, &mirror),
-					),
+					middleware.Timeout(30 * time.Second)(routes),
 				)),
 		),
 	)
@@ -306,12 +474,18 @@ func runHTTPServer() {
 	log.Fatal(http.ListenAndServe(":"+httpPort, handler))
 }
 
-func setupRoutes(mux *http.ServeMux, container *container.Container, store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, apiKeyValidator auth.APIKeyValidator, challengeStore *auth.ChallengeStore, ingestionSvc *services.IngestionService, mirror *mirrorState) http.Handler {
+func setupRoutes(mux *http.ServeMux, container *container.Container, store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, apiKeyValidator auth.APIKeyValidator, challengeStore *auth.ChallengeStore, ingestionSvc *services.IngestionService, mirror *mirrorState, escort *smart_contract.EscortService) (http.Handler, *scmiddleware.Server) {
 	// Initialize MCP REST server for HTTP routes
 	mcpRestServer := scmiddleware.NewServer(store, apiKeyValidator, ingestionSvc)
+	if escort != nil {
+		mcpRestServer.SetEscortService(escort)
+	}
 	mcpRestServer.RegisterRoutes(mux)
 	if err := scmiddleware.StartStegoPubsubSync(context.Background(), mcpRestServer); err != nil {
 		log.Printf("stego pubsub sync disabled: %v", err)
+	}
+	if err := scmiddleware.StartSyncPubsubSync(context.Background(), mcpRestServer); err != nil {
+		log.Printf("mcp event sync disabled: %v", err)
 	}
 	// Health endpoints
 	mux.HandleFunc("/api/health", container.HealthHandler.HandleHealth)
@@ -336,6 +510,11 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 	mux.HandleFunc("/api/auth/challenge", keyHandler.HandleChallenge)
 	mux.HandleFunc("/api/auth/verify", keyHandler.HandleVerify)
 
+	// Helper function to wrap handlers with auth
+	wrapWithAuth := func(h http.HandlerFunc) http.Handler {
+		return middleware.APIAuth(apiKeyValidator)(h)
+	}
+
 	// API Documentation - includes Swagger UI
 	mux.HandleFunc("/api/docs", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/api/docs/", http.StatusFound)
@@ -354,8 +533,7 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 
 	// Inscription endpoints
 	mux.HandleFunc("/api/inscriptions", container.InscriptionHandler.HandleGetInscriptions)
-	mux.HandleFunc("/api/inscribe", container.InscriptionHandler.HandleCreateInscription)
-	mux.HandleFunc("/api/pending-transactions", container.InscriptionHandler.HandleGetInscriptions)
+	mux.Handle("/api/inscribe", wrapWithAuth(container.InscriptionHandler.HandleCreateInscription))
 	mux.HandleFunc("/api/open-contracts", container.SmartContractHandler.HandleGetContracts)
 
 	// Block endpoints
@@ -364,10 +542,10 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 	// Smart contract endpoints
 	mux.HandleFunc("/api/smart-contracts", container.SmartContractHandler.HandleGetContracts)
 	mux.HandleFunc("/api/contract-stego", container.SmartContractHandler.HandleGetContract)
-	mux.HandleFunc("/api/contract-stego/create", container.SmartContractHandler.HandleCreateContract)
+	mux.Handle("/api/contract-stego/create", wrapWithAuth(container.SmartContractHandler.HandleCreateContract))
 
 	// Ingestion endpoints
-	mux.HandleFunc("/api/ingest-inscription", container.IngestionHandler.HandleIngest)
+	mux.Handle("/api/ingest-inscription", wrapWithAuth(container.IngestionHandler.HandleIngest))
 	mux.HandleFunc("/api/ingest-inscription/", container.IngestionHandler.HandleGetIngestion)
 	mux.HandleFunc("/api/ingest-hash", container.IngestionHandler.HandleHashImage)
 
@@ -378,17 +556,17 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 	mux.HandleFunc("/api/qrcode", container.QRCodeHandler.HandleGenerateQRCode)
 
 	// Proxy endpoints
-	mux.HandleFunc("/stego/", container.ProxyHandler.HandleProxy)
-	mux.HandleFunc("/analyze/", container.ProxyHandler.HandleProxy)
-	mux.HandleFunc("/generate/", container.ProxyHandler.HandleProxy)
+	mux.Handle("/stego/", wrapWithAuth(container.ProxyHandler.HandleProxy))
+	mux.Handle("/analyze/", wrapWithAuth(container.ProxyHandler.HandleProxy))
+	mux.Handle("/generate/", wrapWithAuth(container.ProxyHandler.HandleProxy))
 
-	// Serve uploaded files
+	// Serve uploaded files with proper MIME type detection
 	uploadsDir := os.Getenv("UPLOADS_DIR")
 	if uploadsDir == "" {
 		uploadsDir = "/data/uploads"
 	}
 	_ = os.MkdirAll(uploadsDir, 0755)
-	mux.Handle("/uploads/", http.StripPrefix("/uploads/", http.FileServer(http.Dir(uploadsDir))))
+	mux.HandleFunc("/uploads/", customUploadsHandler(uploadsDir))
 
 	// Serve frontend files
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -535,6 +713,7 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 							return
 						}
 						w.Header().Set("Content-Type", contentTypeForFormat(img.Format))
+						w.Header().Set("Content-Length", fmt.Sprintf("%d", len(img.Data)))
 						_, _ = w.Write(img.Data)
 						return
 					}
@@ -557,7 +736,7 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 	// MCP tools are available via HTTP endpoints at /mcp/
 
 	log.Printf("All routes registered, returning handler")
-	return mux
+	return mux, mcpRestServer
 }
 
 type mirrorState struct {

@@ -86,19 +86,23 @@ type pendingIngestAnnouncement struct {
 }
 
 type ingestUpdateAnnouncement struct {
-	Type               string   `json:"type"`
-	IngestionID        string   `json:"ingestion_id"`
-	ProposalID         string   `json:"proposal_id,omitempty"`
-	VisiblePixelHash   string   `json:"visible_pixel_hash,omitempty"`
-	FundingTxID        string   `json:"funding_txid,omitempty"`
-	FundingTxIDs       []string `json:"funding_txids,omitempty"`
-	CommitmentLockAddr string   `json:"commitment_lock_address,omitempty"`
-	CommitmentTarget   string   `json:"commitment_target,omitempty"`
-	CommitmentAddress  string   `json:"commitment_address,omitempty"`
-	CommitmentScript   string   `json:"commitment_script,omitempty"`
-	CommitmentVout     uint32   `json:"commitment_vout,omitempty"`
-	CommitmentSats     int64    `json:"commitment_sats,omitempty"`
-	Timestamp          int64    `json:"timestamp"`
+	Type                 string   `json:"type"`
+	IngestionID          string   `json:"ingestion_id"`
+	ProposalID           string   `json:"proposal_id,omitempty"`
+	VisiblePixelHash     string   `json:"visible_pixel_hash,omitempty"`
+	FundingTxID          string   `json:"funding_txid,omitempty"`
+	FundingTxIDs         []string `json:"funding_txids,omitempty"`
+	CommitmentLockAddr   string   `json:"commitment_lock_address,omitempty"`
+	CommitmentTarget     string   `json:"commitment_target,omitempty"`
+	CommitmentAddress    string   `json:"commitment_address,omitempty"`
+	CommitmentScript     string   `json:"commitment_script,omitempty"`
+	CommitmentVout       uint32   `json:"commitment_vout,omitempty"`
+	CommitmentSats       int64    `json:"commitment_sats,omitempty"`
+	PayoutScript         string   `json:"payout_script,omitempty"`
+	PayoutScripts        []string `json:"payout_scripts,omitempty"`
+	PayoutScriptHashes   []string `json:"payout_script_hashes,omitempty"`
+	PayoutScriptHash160s []string `json:"payout_script_hash160s,omitempty"`
+	Timestamp            int64    `json:"timestamp"`
 }
 
 // StartIPFSIngestionSync subscribes to IPFS mirror announcements and creates ingestion records for stego images.
@@ -737,6 +741,18 @@ func applyIngestUpdate(ctx context.Context, ingest *services.IngestionService, s
 	}
 	if ann.CommitmentSats > 0 {
 		meta["commitment_sats"] = ann.CommitmentSats
+	}
+	if v := strings.TrimSpace(ann.PayoutScript); v != "" {
+		meta["payout_script"] = v
+	}
+	if len(ann.PayoutScripts) > 0 {
+		meta["payout_scripts"] = ann.PayoutScripts
+	}
+	if len(ann.PayoutScriptHashes) > 0 {
+		meta["payout_script_hashes"] = ann.PayoutScriptHashes
+	}
+	if len(ann.PayoutScriptHash160s) > 0 {
+		meta["payout_script_hash160s"] = ann.PayoutScriptHash160s
 	}
 	if len(meta) == 0 {
 		return false, fmt.Errorf("empty ingest update")
