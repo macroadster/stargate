@@ -3,6 +3,7 @@ package mcp
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"stargate-backend/core"
 	"stargate-backend/core/smart_contract"
 	scmiddleware "stargate-backend/middleware/smart_contract"
 	"stargate-backend/services"
@@ -627,8 +629,37 @@ func (h *HTTPMCPServer) requireAuthorizedApprover(apiKey string, proposal smart_
 }
 
 func (h *HTTPMCPServer) handleScanImage(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	if h.scannerManager == nil {
+		return nil, NewServiceUnavailableError("scan_image", "scanner")
+	}
+
+	imageDataStr, ok := args["image_data"].(string)
+	if !ok || imageDataStr == "" {
+		return nil, NewValidationError("scan_image", "image_data is required")
+	}
+
+	imageData, err := base64.StdEncoding.DecodeString(imageDataStr)
+	if err != nil {
+		return nil, NewValidationError("scan_image", "invalid base64 image data: "+err.Error())
+	}
+
+	scanResult, err := h.scannerManager.ScanImage(imageData, core.ScanOptions{
+		ExtractMessage:      true,
+		ConfidenceThreshold: 0.5,
+		IncludeMetadata:     true,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("scan failed: %w", err)
+	}
+
 	return map[string]interface{}{
-		"error": "scanner not implemented in test environment",
+		"is_stego":          scanResult.IsStego,
+		"stego_probability": scanResult.StegoProbability,
+		"confidence":        scanResult.Confidence,
+		"prediction":        scanResult.Prediction,
+		"stego_type":        scanResult.StegoType,
+		"extracted_message": scanResult.ExtractedMessage,
+		"extraction_error":  scanResult.ExtractionError,
 	}, nil
 }
 
