@@ -16,8 +16,10 @@ type blockstreamProvider struct {
 }
 
 // NewBlockstreamFundingProvider builds a provider that fetches merkle proofs from a Blockstream-compatible API.
+// Only works with blockstream.info or blockcypher.com APIs.
 func NewBlockstreamFundingProvider(baseURL string) FundingProvider {
 	if baseURL == "" {
+		// Use mainnet as default
 		baseURL = "https://blockstream.info/api"
 	}
 	return &blockstreamProvider{

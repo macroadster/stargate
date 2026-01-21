@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strings"
 	"time"
+
+	auth "stargate-backend/storage/auth"
 )
 
 // CORS middleware
@@ -13,7 +16,7 @@ func CORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key")
 
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
@@ -30,7 +33,7 @@ func Logging(next http.Handler) http.Handler {
 		start := time.Now()
 
 		// Create a response writer wrapper to capture status code
-		wrapped := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+		wrapped := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK, headersWritten: false}
 
 		next.ServeHTTP(wrapped, r)
 
@@ -96,10 +99,13 @@ func Timeout(timeout time.Duration) func(http.Handler) http.Handler {
 
 			r = r.WithContext(ctx)
 
+			// Wrap response writer to track if data was sent
+			tracked := &timeoutTrackingWriter{ResponseWriter: w}
+
 			done := make(chan struct{})
 			go func() {
 				defer close(done)
-				next.ServeHTTP(w, r)
+				next.ServeHTTP(tracked, r)
 			}()
 
 			select {
@@ -107,22 +113,46 @@ func Timeout(timeout time.Duration) func(http.Handler) http.Handler {
 				// Request completed normally
 			case <-ctx.Done():
 				// Request timed out
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusRequestTimeout)
+				// Only write error if response hasn't been committed yet
+				if !tracked.committed {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusRequestTimeout)
 
-				errorResp := map[string]interface{}{
-					"success": false,
-					"error": map[string]interface{}{
-						"error":   "request_timeout",
-						"message": "Request timed out",
-						"code":    http.StatusRequestTimeout,
-					},
+					errorResp := map[string]interface{}{
+						"success": false,
+						"error": map[string]interface{}{
+							"error":   "request_timeout",
+							"message": "Request timed out",
+							"code":    http.StatusRequestTimeout,
+						},
+					}
+
+					json.NewEncoder(w).Encode(errorResp)
 				}
-
-				json.NewEncoder(w).Encode(errorResp)
 			}
 		})
 	}
+}
+
+type timeoutTrackingWriter struct {
+	http.ResponseWriter
+	committed  bool
+	statusCode int
+}
+
+func (tw *timeoutTrackingWriter) WriteHeader(statusCode int) {
+	tw.committed = true
+	tw.statusCode = statusCode
+	tw.ResponseWriter.WriteHeader(statusCode)
+}
+
+func (tw *timeoutTrackingWriter) Write(b []byte) (int, error) {
+	if !tw.committed {
+		tw.statusCode = http.StatusOK
+		tw.ResponseWriter.WriteHeader(http.StatusOK)
+		tw.committed = true
+	}
+	return tw.ResponseWriter.Write(b)
 }
 
 // ContentType middleware
@@ -205,10 +235,61 @@ func RateLimit(requests int, window time.Duration) func(http.Handler) http.Handl
 // responseWriter wraps http.ResponseWriter to capture status code
 type responseWriter struct {
 	http.ResponseWriter
-	statusCode int
+	statusCode     int
+	headersWritten bool
 }
 
 func (rw *responseWriter) WriteHeader(code int) {
+	if rw.headersWritten {
+		// Headers already written, ignore superfluous calls
+		return
+	}
 	rw.statusCode = code
 	rw.ResponseWriter.WriteHeader(code)
+	rw.headersWritten = true
+}
+
+// APIAuth validates API keys against the validator
+func APIAuth(validator auth.APIKeyValidator) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			apiKey := r.Header.Get("X-API-Key")
+			if apiKey == "" {
+				auth := r.Header.Get("Authorization")
+				if strings.HasPrefix(auth, "Bearer ") {
+					apiKey = strings.TrimPrefix(auth, "Bearer ")
+				}
+			}
+
+			if apiKey == "" {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"success": false,
+					"error": map[string]interface{}{
+						"error":   "api_key_required",
+						"message": "API key required",
+						"code":    http.StatusUnauthorized,
+					},
+				})
+				return
+			}
+
+			if validator != nil && !validator.Validate(apiKey) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusForbidden)
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"success": false,
+					"error": map[string]interface{}{
+						"error":   "api_key_invalid",
+						"message": "Invalid API key",
+						"code":    http.StatusForbidden,
+					},
+				})
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
 }

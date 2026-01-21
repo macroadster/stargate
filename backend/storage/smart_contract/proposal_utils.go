@@ -3,6 +3,7 @@ package smart_contract
 import (
 	"fmt"
 	"strings"
+	"unicode"
 
 	"stargate-backend/core/smart_contract"
 )
@@ -13,6 +14,13 @@ func BuildTasksFromMarkdown(proposalID, markdown string, visibleHash string, bud
 	md := strings.TrimSpace(markdown)
 	lines := strings.Split(md, "\n")
 
+	// Determine the canonical contract ID for these tasks
+	// Priority: wish-prefix hash > visible hash > proposal ID
+	canonicalContractID := proposalID
+	if visibleHash != "" {
+		canonicalContractID = "wish-" + strings.TrimPrefix(visibleHash, "wish-")
+	}
+
 	// Extract structured tasks from proper task sections
 	var tasks []smart_contract.Task
 	var currentTask *smart_contract.Task
@@ -22,7 +30,7 @@ func BuildTasksFromMarkdown(proposalID, markdown string, visibleHash string, bud
 		trim := strings.TrimSpace(line)
 
 		// Look for proper task headers: "### Task X:" or "### Task X "
-		if strings.HasPrefix(trim, "### Task ") && (strings.Contains(trim, ":") || strings.HasSuffix(trim, ":")) {
+		if strings.HasPrefix(trim, "### Task ") {
 			// Save previous task if exists
 			if currentTask != nil {
 				tasks = append(tasks, *currentTask)
@@ -30,9 +38,23 @@ func BuildTasksFromMarkdown(proposalID, markdown string, visibleHash string, bud
 
 			// Start new task
 			title := strings.TrimSpace(strings.TrimPrefix(trim, "### Task "))
+			
 			// Remove numbering and colon if present
 			if colonIdx := strings.Index(title, ":"); colonIdx > 0 {
 				title = strings.TrimSpace(title[colonIdx+1:])
+			} else if spaceIdx := strings.Index(title, " "); spaceIdx > 0 {
+				// Also handle "### Task 1 Title"
+				firstWord := title[:spaceIdx]
+				isNumeric := true
+				for _, r := range firstWord {
+					if !unicode.IsDigit(r) && !unicode.IsPunct(r) {
+						isNumeric = false
+						break
+					}
+				}
+				if isNumeric {
+					title = strings.TrimSpace(title[spaceIdx+1:])
+				}
 			}
 
 			// Skip if title looks like metadata/budget/success criteria
@@ -40,7 +62,7 @@ func BuildTasksFromMarkdown(proposalID, markdown string, visibleHash string, bud
 				taskID := fmt.Sprintf("%s-task-%d", proposalID, taskCounter)
 				currentTask = &smart_contract.Task{
 					TaskID:      taskID,
-					ContractID:  proposalID,
+					ContractID:  canonicalContractID,
 					GoalID:      "wish",
 					Title:       title,
 					Description: extractTaskDescription(md, i),
@@ -69,7 +91,7 @@ func BuildTasksFromMarkdown(proposalID, markdown string, visibleHash string, bud
 		taskID := fmt.Sprintf("%s-task-1", proposalID)
 		tasks = append(tasks, smart_contract.Task{
 			TaskID:      taskID,
-			ContractID:  proposalID,
+			ContractID:  canonicalContractID,
 			GoalID:      "wish",
 			Title:       "Comprehensive Implementation",
 			Description: md,
@@ -91,6 +113,9 @@ func BuildTasksFromMarkdown(proposalID, markdown string, visibleHash string, bud
 // isTaskTitle determines if a title represents a real task vs metadata/budget/success criteria
 func isTaskTitle(title string) bool {
 	title = strings.ToLower(strings.TrimSpace(title))
+	if title == "" {
+		return false
+	}
 
 	// Exclude metadata and information sections
 	nonTaskPatterns := []string{
@@ -121,6 +146,7 @@ func isTaskTitle(title string) bool {
 		"database", "schema", "migration", "setup", "optimization",
 		"frontend", "ui", "interface", "user experience", "design",
 		"backend", "api", "service", "server", "architecture",
+		"work", "fix", "update", "add", "remove", "move",
 	}
 
 	for _, pattern := range taskPatterns {
@@ -129,8 +155,8 @@ func isTaskTitle(title string) bool {
 		}
 	}
 
-	// Default: treat as non-task if unclear
-	return len(title) > 10 && !strings.Contains(title, ":") && !strings.Contains(title, "-")
+	// Default: treat as task if long enough and doesn't match non-task patterns
+	return len(title) > 5
 }
 
 // extractTaskDescription extracts relevant description for a task from markdown
@@ -140,11 +166,10 @@ func extractTaskDescription(markdown string, startIndex int) string {
 		return markdown
 	}
 
-	// Look ahead for deliverables and skills within task section
+	// Skip the task header line and collect content
 	var descLines []string
-	inTaskSection := false
 
-	for i := startIndex; i < len(lines) && len(descLines) < 5; i++ {
+	for i := startIndex + 1; i < len(lines); i++ {
 		line := strings.TrimSpace(lines[i])
 
 		// Stop at next task or major section
@@ -152,19 +177,15 @@ func extractTaskDescription(markdown string, startIndex int) string {
 			break
 		}
 
-		// Start collecting after task header
-		if strings.HasPrefix(line, "### Task ") {
-			inTaskSection = true
-			continue
-		}
-
-		if inTaskSection && line != "" {
-			descLines = append(descLines, line)
+		// Collect non-empty lines
+		if line != "" {
+			descLines = append(descLines, lines[i])
 		}
 	}
 
 	if len(descLines) == 0 {
-		return markdown
+		// If no content found, return default description
+		return "Task implementation as described"
 	}
 
 	return strings.Join(descLines, "\n")

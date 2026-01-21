@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"stargate-backend/bitcoin"
+	"stargate-backend/security"
 	"stargate-backend/storage"
 )
 
@@ -855,9 +856,11 @@ func (api *DataAPI) HandleGetBlockInscriptionsPaginated(w http.ResponseWriter, r
 			looksPlaceholder := inscriptionContent == "" || strings.HasPrefix(inscriptionContent, "Extracted from transaction")
 			if looksPlaceholder {
 				blockDir := fmt.Sprintf("%s/%d_00000000", strings.TrimRight(api.resolveBlocksDir(), "/"), height)
-				textPath := filepath.Join(blockDir, ins.FilePath)
-				if data, err := os.ReadFile(textPath); err == nil {
-					inscriptionContent = string(data)
+				safePath, err := security.SanitizePath(blockDir, ins.FilePath)
+				if err == nil {
+					if data, err := os.ReadFile(safePath); err == nil {
+						inscriptionContent = string(data)
+					}
 				}
 			}
 		}
@@ -1352,6 +1355,7 @@ func (api *DataAPI) handleContentRaw(w http.ResponseWriter, r *http.Request, txi
 		return content
 	}())
 	w.Header().Set("Content-Type", mimeType)
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(content)))
 	w.Header().Set("X-Inscription-Mime", mimeType)
 	w.Header().Set("X-Inscription-Size", fmt.Sprintf("%d", len(content)))
 	w.Header().Set("X-Inscription-Hash", sha256Hex(content))
@@ -1364,14 +1368,23 @@ func (api *DataAPI) serveBlockImage(w http.ResponseWriter, height int64, filePat
 		return
 	}
 	base := strings.TrimRight(api.resolveBlocksDir(), "/")
-	fsPath := filepath.Join(fmt.Sprintf("%s/%d_00000000", base, height), filePath)
-	data, err := os.ReadFile(fsPath)
+	baseDir := fmt.Sprintf("%s/%d_00000000", base, height)
+	safePath, err := security.SanitizePath(baseDir, filePath)
+	if err != nil {
+		http.Error(w, "inscription not found", http.StatusNotFound)
+		return
+	}
+	data, err := os.ReadFile(safePath)
 	if err != nil {
 		http.Error(w, "inscription not found", http.StatusNotFound)
 		return
 	}
 	mimeType := inferMime("", data, filepath.Base(filePath))
+	if mimeType == "" {
+		mimeType = "application/octet-stream"
+	}
 	w.Header().Set("Content-Type", mimeType)
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
 	w.Header().Set("X-Inscription-Mime", mimeType)
 	w.Header().Set("X-Inscription-Size", fmt.Sprintf("%d", len(data)))
 	w.Header().Set("X-Inscription-Hash", sha256Hex(data))
@@ -1520,21 +1533,12 @@ func (api *DataAPI) loadInscriptionContent(height int64, ins bitcoin.Inscription
 
 	base := strings.TrimRight(api.resolveBlocksDir(), "/")
 	blockDir := fmt.Sprintf("%s/%d_00000000", base, height)
-	fsPath := filepath.Join(blockDir, ins.FilePath)
-	if data, err := os.ReadFile(fsPath); err == nil {
-		// Prefer filesystem copy whenever it exists; it's the source of truth.
-		content = data
-		mimeType = inferMime(ins.ContentType, content, ins.FileName)
-	} else {
-		log.Printf("content fallback to cached: tx=%s height=%d path=%s err=%v", ins.TxID, height, fsPath, err)
-		// Attempt to regenerate the block on-demand if the file is missing.
-		if api.blockMonitor != nil {
-			if scanErr := api.blockMonitor.ProcessBlock(height); scanErr == nil {
-				if data, err2 := os.ReadFile(fsPath); err2 == nil {
-					content = data
-					mimeType = inferMime(ins.ContentType, content, ins.FileName)
-				}
-			}
+	safePath, err := security.SanitizePath(blockDir, ins.FilePath)
+	if err == nil {
+		if data, err := os.ReadFile(safePath); err == nil {
+			// Prefer filesystem copy whenever it exists; it's the source of truth.
+			content = data
+			mimeType = inferMime(ins.ContentType, content, ins.FileName)
 		}
 	}
 
@@ -1605,6 +1609,18 @@ func inferMime(current string, content []byte, fileName string) string {
 	if m == "image/svg" {
 		m = "image/svg+xml"
 	}
+
+	// Enhanced content detection for files without extensions
+	if len(content) > 0 && (m == "" || m == "application/octet-stream") {
+		sample := content
+		if len(sample) > 512 {
+			sample = sample[:512]
+		}
+		if detected := http.DetectContentType(sample); detected != "" && detected != "application/octet-stream" {
+			m = detected
+		}
+	}
+
 	// Prefer explicit image types by filename if type is missing or generic.
 	if m == "" || m == "application/octet-stream" {
 		lowerName := strings.ToLower(fileName)
@@ -1629,17 +1645,7 @@ func inferMime(current string, content []byte, fileName string) string {
 			m = "application/json"
 		}
 	}
-	if m == "" || m == "application/octet-stream" {
-		if len(content) > 0 {
-			sample := content
-			if len(sample) > 512 {
-				sample = sample[:512]
-			}
-			if detected := http.DetectContentType(sample); detected != "" && detected != "application/octet-stream" {
-				m = detected
-			}
-		}
-	}
+
 	if m == "" {
 		trim := strings.TrimSpace(string(content))
 		lower := strings.ToLower(trim)
@@ -1655,11 +1661,6 @@ func inferMime(current string, content []byte, fileName string) string {
 			m = "application/octet-stream"
 		}
 	}
-
-	if (m == "" || m == "application/octet-stream") && isAVIF(content) {
-		m = "image/avif"
-	}
-
 	return m
 }
 

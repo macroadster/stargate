@@ -1,0 +1,13 @@
+// Simple fix for contract-proposal hash mismatch
+// After starlight processing, update contract to use stego hash
+
+// Add this after starlight success response:
+if stegoID != "" && stegoID != ingestionID {
+	// Update existing contract to use stego hash
+	contractID := wishContractID(stegoID)
+	h.store.UpdateContract(context.Background(), sc.Contract{
+		ContractID: contractID,
+		Title:      text,
+		Status:     "pending",
+	})
+}

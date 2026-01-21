@@ -159,6 +159,12 @@ func (tm *TransactionMonitor) checkTransactions(ctx context.Context) error {
 
 // checkTransactionStatus checks the current status of a transaction
 func (tm *TransactionMonitor) checkTransactionStatus(_ context.Context, tx *MonitoredTransaction) (*MonitoredTransaction, error) {
+	// Skip API calls for already confirmed transactions
+	if tx.Status == "confirmed" && tx.CurrentConfs >= tx.RequiredConfs {
+		// Transaction is fully confirmed, no need to check again
+		return tx, nil
+	}
+
 	// Get transaction data from blockchain APIs
 	txData, err := tm.getTransactionData(tx.TxID)
 	if err != nil {

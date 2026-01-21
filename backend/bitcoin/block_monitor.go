@@ -26,6 +26,7 @@ import (
 	"stargate-backend/core"
 	"stargate-backend/core/smart_contract"
 	"stargate-backend/ipfs"
+	"stargate-backend/security"
 	"stargate-backend/services"
 )
 
@@ -909,7 +910,7 @@ func (bm *BlockMonitor) saveImages(blockDir string, images []ExtractedImageData)
 
 	for _, image := range images {
 		cleaned := sanitizeExtractedImage(image)
-		imageFile := filepath.Join(imagesDir, cleaned.FileName)
+		imageFile := security.SafeFilePath(imagesDir, cleaned.FileName)
 		// Save the actual image data
 		if err := os.WriteFile(imageFile, cleaned.Data, 0644); err != nil {
 			log.Printf("Failed to save image %s: %v", cleaned.FileName, err)
@@ -1670,10 +1671,23 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 		for _, txid := range fundingTxIDsFromMeta(recCopy.Metadata) {
 			txidMatches[txid] = &recCopy
 		}
+
+		// Debug: check metadata for specific ingestion
+		if strings.Contains(recCopy.ID, "092fe0f6") {
+			var keys []string
+			for k := range recCopy.Metadata {
+				keys = append(keys, k)
+			}
+			log.Printf("DEBUG: ingestion %s metadata keys: %v", recCopy.ID, keys)
+			log.Printf("DEBUG: ingestion %s funding_txid: %v", recCopy.ID, recCopy.Metadata["funding_txid"])
+			log.Printf("DEBUG: ingestion %s funding_txids: %v", recCopy.ID, recCopy.Metadata["funding_txids"])
+			log.Printf("DEBUG: ingestion %s all funding txids: %v", recCopy.ID, fundingTxIDsFromMeta(recCopy.Metadata))
+		}
 	}
 	if len(primaryCandidates) == 0 && len(fallbackCandidates) == 0 && len(txidMatches) == 0 {
 		return smartContracts
 	}
+
 	log.Printf("oracle reconcile: %d primary hashes, %d fallback hashes, %d funding txids across %d ingestions", len(primaryCandidates), len(fallbackCandidates), len(txidMatches), len(recs))
 
 	for _, tx := range parsedBlock.Transactions {
@@ -1839,9 +1853,7 @@ func fundingTxIDsFromMeta(meta map[string]any) []string {
 	if meta == nil {
 		return txids
 	}
-	if txid, ok := meta["funding_txid"].(string); ok {
-		add(txid)
-	}
+
 	switch v := meta["funding_txids"].(type) {
 	case []string:
 		for _, txid := range v {
@@ -2156,6 +2168,7 @@ func matchOracleOutput(script []byte, params *chaincfg.Params, candidates map[st
 		return nil, "", ""
 	}
 
+	// Try script hash matching first
 	for _, hash := range []string{scriptHashHex(script), scriptHash160Hex(script)} {
 		if match, ok := candidates[hash]; ok {
 			return match, "script_hash", hash
@@ -2163,9 +2176,38 @@ func matchOracleOutput(script []byte, params *chaincfg.Params, candidates map[st
 	}
 
 	if len(candidates) > 0 {
+		// Try script address hashes (P2SH, WitnessV0ScriptHash)
 		for _, addrHash := range scriptAddressHashes(script, params) {
 			if match, ok := candidates[addrHash]; ok {
 				return match, "script_address", addrHash
+			}
+		}
+
+		// Fallback: try direct address hashes for simple outputs (P2WPKH, P2PKH)
+		class, addrs, _, err := txscript.ExtractPkScriptAddrs(script, params)
+		if err == nil {
+			for _, addr := range addrs {
+				// For simple addresses (P2WPKH, P2PKH), try multiple hash formats
+				if class == txscript.PubKeyHashTy || class == txscript.WitnessV0PubKeyHashTy {
+					addrStr := addr.String()
+					scriptAddrHash := hex.EncodeToString(addr.ScriptAddress())
+					addrHash1 := scriptHashHex([]byte(addrStr))
+					addrHash2 := scriptHashHex([]byte(scriptAddrHash))
+					addrHash3 := scriptHash160Hex([]byte(addrStr))
+
+					// Try hash of address string
+					if match, ok := candidates[addrHash1]; ok {
+						return match, "address_hash", addrHash1
+					}
+					// Try hash of script address
+					if match, ok := candidates[addrHash2]; ok {
+						return match, "script_address_hash", addrHash2
+					}
+					// Try 160 hash of address string
+					if match, ok := candidates[addrHash3]; ok {
+						return match, "address_160_hash", addrHash3
+					}
+				}
 			}
 		}
 	}
@@ -2405,7 +2447,7 @@ func (bm *BlockMonitor) moveIngestionImageWithFilename(blockDir string, rec *ser
 	if err := os.MkdirAll(destDir, 0755); err != nil {
 		return "", fmt.Errorf("failed to create images dir: %w", err)
 	}
-	destPath := filepath.Join(destDir, destFilename)
+	destPath := security.SafeFilePath(destDir, destFilename)
 	if _, err := os.Stat(destPath); err == nil {
 		bm.cleanupUploadArtifacts(rec)
 		return destPath, nil
@@ -2442,10 +2484,17 @@ func (bm *BlockMonitor) moveIngestionImageWithFilename(blockDir string, rec *ser
 		}
 	}
 	if sourcePath == "" && rec.ID != "" {
-		matches, _ := filepath.Glob(filepath.Join(uploadsDir, rec.ID+"_*"))
-		if len(matches) > 0 {
-			sort.Strings(matches)
-			sourcePath = matches[0]
+		// First try hash-only filename (new stealth naming)
+		hashPath := filepath.Join(uploadsDir, rec.ID)
+		if _, err := os.Stat(hashPath); err == nil {
+			sourcePath = hashPath
+		} else {
+			// Fallback to old pattern with prefix
+			matches, _ := filepath.Glob(filepath.Join(uploadsDir, rec.ID+"_*"))
+			if len(matches) > 0 {
+				sort.Strings(matches)
+				sourcePath = matches[0]
+			}
 		}
 	}
 	if sourcePath == "" {
@@ -2486,6 +2535,12 @@ func (bm *BlockMonitor) stegoImagePath(rec *services.IngestionRecord) (string, b
 	if uploadsDir == "" {
 		uploadsDir = "/data/uploads"
 	}
+	// First try hash-only filename (new stealth naming)
+	hashPath := filepath.Join(uploadsDir, stegoCID)
+	if _, err := os.Stat(hashPath); err == nil {
+		return hashPath, true
+	}
+	// Fallback to old pattern with prefix
 	if matches, _ := filepath.Glob(filepath.Join(uploadsDir, stegoCID+"*")); len(matches) > 0 {
 		sort.Strings(matches)
 		return matches[0], true
@@ -2565,6 +2620,12 @@ func (bm *BlockMonitor) cleanupUploadArtifacts(rec *services.IngestionRecord) {
 	if uploadsDir == "" {
 		uploadsDir = "/data/uploads"
 	}
+	// First try hash-only filename (new stealth naming)
+	hashPath := filepath.Join(uploadsDir, id)
+	if _, err := os.Stat(hashPath); err == nil {
+		bm.unpinUploadPath(hashPath)
+	}
+	// Also cleanup old pattern files
 	pattern := filepath.Join(uploadsDir, id+"_*")
 	matches, _ := filepath.Glob(pattern)
 	for _, match := range matches {
@@ -2772,7 +2833,7 @@ func visiblePixelHash(imageBytes []byte, message string) string {
 	if len(imageBytes) == 0 || message == "" {
 		return ""
 	}
-	sum := sha256.Sum256(append(imageBytes, []byte(message)...))
+	sum := sha256.Sum256(imageBytes)
 	return fmt.Sprintf("%x", sum[:8])
 }
 

@@ -1029,12 +1029,12 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white dark:bg-gray-800 rounded-lg max-w-7xl w-[95vw] mx-4 min-h-[80vh] max-h-[85vh] overflow-hidden flex flex-col shadow-2xl">
-        <div className="sticky top-0 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 p-4 flex-shrink-0">
+      <div className="bg-white dark:bg-gray-800 rounded-lg lg:max-w-7xl w-full h-full lg:w-[95vw] lg:mx-4 lg:min-h-[80vh] lg:max-h-[85vh] overflow-hidden flex flex-col shadow-2xl">
+        <div className="sticky top-0 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 p-4 lg:p-6 flex-shrink-0">
           <div className="flex justify-between items-center">
-            <h2 className="text-xl font-bold text-black dark:text-white">Smart Contract Details</h2>
+            <h2 className="text-lg lg:text-xl font-bold text-black dark:text-white">Smart Contract Details</h2>
             <button onClick={onClose} className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200">
-              <X className="w-5 h-5" />
+              <X className="w-6 h-6" />
             </button>
           </div>
         </div>
@@ -1044,7 +1044,7 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
           data-deliverables-scroll
           ref={scrollContainerRef}
         >
-            <div className="flex flex-col lg:flex-row gap-6 mb-6">
+            <div className="flex flex-col items-center lg:flex-row lg:items-start gap-6 mb-6">
               <div className="flex-shrink-0">
                 {modalImageSource ? (
                   <div className="relative">
@@ -1070,9 +1070,9 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                 )}
               </div>
 
-              <div className="flex-1">
+              <div className="flex-1 w-full">
               <div className="border-b border-gray-200 dark:border-gray-700 mb-6">
-                <div className="flex gap-6 relative">
+                <div className="flex gap-6 overflow-x-auto no-scrollbar">
 {[
   { id: 'overview', label: 'Details', icon: '📋' },
   { id: 'content', label: 'Content', icon: '📄' },
@@ -2272,7 +2272,7 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                       <div className="grid grid-cols-2 gap-4">
                         <div className="bg-white dark:bg-gray-800 rounded-lg p-3">
                           <div className="text-blue-700 dark:text-blue-300 text-xs mb-1">File Name</div>
-                          <div className="text-blue-900 dark:text-blue-100 font-semibold">{inscription.file_name || 'N/A'}</div>
+                          <div className="text-blue-900 dark:text-blue-100 font-semibold break-all">{inscription.file_name || 'N/A'}</div>
                         </div>
                         <div className="bg-white dark:bg-gray-800 rounded-lg p-3">
                           <div className="text-blue-700 dark:text-blue-300 text-xs mb-1">File Size</div>

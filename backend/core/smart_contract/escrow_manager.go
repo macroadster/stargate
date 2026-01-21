@@ -8,6 +8,8 @@ import (
 	"log"
 	"net/http"
 	"time"
+
+	"stargate-backend/services"
 )
 
 // EscrowManager manages Bitcoin escrow contracts for smart contracts
@@ -16,17 +18,19 @@ type EscrowManager struct {
 	verifier          *MerkleProofVerifier
 	httpClient        *http.Client
 	bitcoinRPC        string // Bitcoin RPC endpoint
+	ingestionService  *services.IngestionService
 }
 
 // NewEscrowManager creates a new escrow manager
-func NewEscrowManager(scriptInterpreter *ScriptInterpreter, verifier *MerkleProofVerifier, bitcoinRPC string) *EscrowManager {
+func NewEscrowManager(scriptInterpreter *ScriptInterpreter, verifier *MerkleProofVerifier, bitcoinRPC string, ingestionService *services.IngestionService) *EscrowManager {
 	return &EscrowManager{
 		scriptInterpreter: scriptInterpreter,
 		verifier:          verifier,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
-		bitcoinRPC: bitcoinRPC,
+		bitcoinRPC:       bitcoinRPC,
+		ingestionService: ingestionService,
 	}
 }
 

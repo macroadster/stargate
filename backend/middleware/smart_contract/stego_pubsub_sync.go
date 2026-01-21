@@ -33,17 +33,30 @@ func StartStegoPubsubSync(ctx context.Context, server *Server) error {
 	}
 	cfg := loadStegoPubsubConfig()
 	if !cfg.Enabled {
+		log.Printf("stego pubsub sync disabled")
 		return nil
 	}
+	log.Printf("stego pubsub sync enabled: topic=%s, api_url=%s", cfg.Topic, cfg.APIURL)
 	state := &stegoPubsubState{lastSeen: make(map[string]int64)}
-	streamClient := &http.Client{}
+	// Configure HTTP client for long-lived streaming connections
+	streamClient := &http.Client{
+		Timeout: 0, // No timeout for streaming connections
+		Transport: &http.Transport{
+			IdleConnTimeout:       90 * time.Second,
+			DisableKeepAlives:     false,
+			MaxIdleConnsPerHost:   1,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ResponseHeaderTimeout: 10 * time.Second,
+		},
+	}
 	go func() {
 		for {
 			if err := stegoPubsubSubscribe(ctx, server, cfg, state, streamClient); err != nil {
 				if ctx.Err() != nil {
+					log.Printf("stego pubsub sync stopped: %v", err)
 					return
 				}
-				log.Printf("stego pubsub sync error: %v", err)
+				log.Printf("stego pubsub sync error: %v, retrying in %v", err, cfg.Interval)
 				time.Sleep(cfg.Interval)
 			}
 		}
@@ -80,13 +93,16 @@ func loadStegoPubsubConfig() stegoPubsubConfig {
 
 func stegoPubsubSubscribe(ctx context.Context, server *Server, cfg stegoPubsubConfig, state *stegoPubsubState, streamClient *http.Client) error {
 	reqURL := fmt.Sprintf("%s/api/v0/pubsub/sub?arg=%s", strings.TrimRight(cfg.APIURL, "/"), url.QueryEscape(multibaseEncodeString(cfg.Topic)))
+	log.Printf("stego pubsub subscribing to: %s", reqURL)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, nil)
 	if err != nil {
+		log.Printf("stego pubsub request creation failed: %v", err)
 		return err
 	}
 
 	resp, err := streamClient.Do(req)
 	if err != nil {
+		log.Printf("stego pubsub HTTP request failed: %v", err)
 		return err
 	}
 	defer resp.Body.Close()
@@ -94,15 +110,19 @@ func stegoPubsubSubscribe(ctx context.Context, server *Server, cfg stegoPubsubCo
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		if len(body) == 0 {
+			log.Printf("stego pubsub subscribe failed (no body): %s", resp.Status)
 			return fmt.Errorf("pubsub subscribe failed: %s", resp.Status)
 		}
+		log.Printf("stego pubsub subscribe failed: %s: %s", resp.Status, strings.TrimSpace(string(body)))
 		return fmt.Errorf("pubsub subscribe failed: %s: %s", resp.Status, strings.TrimSpace(string(body)))
 	}
 
+	log.Printf("stego pubsub subscribe successful, waiting for messages...")
 	decoder := json.NewDecoder(resp.Body)
 	for {
 		var msg pubsubMessage
 		if err := decoder.Decode(&msg); err != nil {
+			log.Printf("stego pubsub decoder error: %v", err)
 			return err
 		}
 		announcement, err := parseStegoAnnouncement(msg.Data)
@@ -120,7 +140,7 @@ func stegoPubsubSubscribe(ctx context.Context, server *Server, cfg stegoPubsubCo
 		if last, ok := state.lastSeen[announcement.StegoCID]; ok && seenAt <= last {
 			continue
 		}
-		if err := server.ReconcileStego(ctx, announcement.StegoCID, announcement.ExpectedHash); err != nil {
+		if err := server.ReconcileStegoWithAnnouncement(ctx, announcement); err != nil {
 			log.Printf("stego pubsub reconcile failed for %s: %v", announcement.StegoCID, err)
 			continue
 		}

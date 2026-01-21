@@ -1,23 +1,27 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Check, Copy } from 'lucide-react';
-import { Routes, Route, useParams, useNavigate, useLocation } from 'react-router-dom';
+import { Check, Copy, Github, Linkedin } from 'lucide-react';
+import { Routes, Route, useParams, useNavigate } from 'react-router-dom';
 
 
 import BlockCard from './components/Block/BlockCard';
 import InscriptionCard from './components/Inscription/InscriptionCard';
-import PendingTransactionsView from './components/Block/PendingTransactionsView';
+import OpenContractsView from './components/Block/OpenContractsView';
 import InscribeModal from './components/Inscription/InscribeModal';
 import InscriptionModal from './components/Inscription/InscriptionModal';
 import DiscoverPage from './components/Discover/DiscoverPage';
 import AuthPage from './pages/AuthPage';
 import ContractsPage from './pages/ContractsPage';
 import McpDocsPage from './pages/McpDocsPage';
+import DocsPage from './pages/DocsPage';
 import AppHeader from './components/Common/AppHeader';
 import { AuthProvider } from './context/AuthContext';
+import { ThemeProvider } from './context/ThemeContext';
 
 import { useBlocks } from './hooks/useBlocks';
 import { useInscriptions } from './hooks/useInscriptions';
 import { API_BASE, CONTENT_BASE } from './apiBase';
+
+import { useHorizontalScroll } from './hooks/useHorizontalScroll';
 
 const formatTimeAgo = (timestamp) => {
   const now = Date.now();
@@ -40,16 +44,15 @@ const formatTimeAgo = (timestamp) => {
 function MainContent() {
   const { height } = useParams();
   const navigate = useNavigate();
-  const location = useLocation();
   const [showInscribeModal, setShowInscribeModal] = useState(false);
   const [selectedInscription, setSelectedInscription] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [isDarkMode, setIsDarkMode] = useState(true);
   const [searchResults, setSearchResults] = useState(null);
   const [copiedText, setCopiedText] = useState('');
   const sentinelRef = useRef(null);
   const [hideBrc20, setHideBrc20] = useState(true);
   const [pendingRefreshKey, setPendingRefreshKey] = useState(0);
+  const { elRef: scrollRef, isDragging } = useHorizontalScroll();
   // MCP proposal management handled in inscription modal.
 
   const {
@@ -64,6 +67,7 @@ function MainContent() {
   } = useBlocks();
 
   const handleBlockSelect = (block) => {
+    if (isDragging) return; // Prevent click if a drag occurred
     originalHandleBlockSelect(block);
     navigate(`/block/${block.height}`);
   };
@@ -76,7 +80,7 @@ function MainContent() {
     error: inscriptionsError
   } = useInscriptions(selectedBlock);
 
-  const isPendingRoute = location.pathname === '/pending';
+
 
   const filteredInscriptions = inscriptions.filter((inscription) => {
     if (!hideBrc20) return true;
@@ -85,16 +89,6 @@ function MainContent() {
     const isBrc = text.toLowerCase().includes('brc-20') || text.toLowerCase().includes('brc20') || name.toLowerCase().includes('brc-20') || name.toLowerCase().includes('brc20');
     return !isBrc;
   });
-
-  useEffect(() => {
-    const savedTheme = localStorage.getItem('theme');
-    if (savedTheme) {
-      setIsDarkMode(savedTheme === 'dark');
-    } else {
-      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-      setIsDarkMode(prefersDark);
-    }
-  }, []);
 
   useEffect(() => {
     const targetHeight = height !== undefined ? parseInt(height, 10) : null;
@@ -121,24 +115,16 @@ function MainContent() {
   }, [selectedBlock, height, navigate, setIsUserNavigating]);
 
   useEffect(() => {
-    if (!isPendingRoute || !blocks.length) return;
+    if (!blocks.length) return;
 
-    // Only auto-select pending once when nothing is selected; avoid overriding user selection on this page.
+    // Auto-select pending block on initial load (both root and /pending routes)
+    // Only do this once when nothing is selected yet
     const pendingBlock = blocks.find((b) => b.isFuture);
     if (pendingBlock && !selectedBlock) {
       setSelectedBlock(pendingBlock);
       setIsUserNavigating(true);
     }
-  }, [blocks, isPendingRoute, selectedBlock, setSelectedBlock, setIsUserNavigating]);
-
-  useEffect(() => {
-    if (isDarkMode) {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
-    localStorage.setItem('theme', isDarkMode ? 'dark' : 'light');
-  }, [isDarkMode]);
+  }, [blocks, selectedBlock, setSelectedBlock, setIsUserNavigating]);
 
   useEffect(() => {
     if (!hasMoreImages || !sentinelRef.current) return;
@@ -168,12 +154,6 @@ function MainContent() {
       setIsUserNavigating(false);
     }
   }, [selectedBlock, isUserNavigating, setIsUserNavigating]);
-
-
-
-  const toggleTheme = () => {
-    setIsDarkMode(!isDarkMode);
-  };
 
   const handleSearch = async (query) => {
     if (query.trim() === '') {
@@ -371,9 +351,7 @@ function MainContent() {
         showBrcToggle
         hideBrc20={hideBrc20}
         onToggleBrc20={() => setHideBrc20(!hideBrc20)}
-        showThemeToggle
-        isDarkMode={isDarkMode}
-        onToggleTheme={toggleTheme}
+        // Theme props no longer needed here as AppHeader uses context
       />
 
       <div className="bg-gray-100 dark:bg-gray-900 border-b border-gray-300 dark:border-gray-800 relative">
@@ -381,7 +359,8 @@ function MainContent() {
           <div className="relative pt-6">
                         <div
               id="block-scroll"
-              className="flex gap-4 overflow-x-auto whitespace-nowrap pb-4 px-12"
+              ref={scrollRef}
+              className="flex gap-4 overflow-x-auto whitespace-nowrap pb-4 px-12 no-scrollbar"
               onScroll={(e) => {
                 const el = e.currentTarget;
                 if (el.scrollLeft + el.clientWidth >= el.scrollWidth - 50) {
@@ -576,13 +555,13 @@ function MainContent() {
             <div className="mb-8">
               <h2 className="text-4xl font-bold mb-4 text-black dark:text-white">Block {selectedBlock.height}</h2>
               <div className="flex items-center gap-4 text-sm">
-                <div className="flex items-center gap-2">
-                  <span className="text-gray-600 dark:text-gray-400">{selectedBlock.hash}</span>
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-gray-600 dark:text-gray-400 truncate max-w-[200px] sm:max-w-none">{selectedBlock.hash}</span>
                   {copiedText === selectedBlock.hash ? (
-                    <Check className="w-4 h-4 text-green-600 dark:text-green-400" />
+                    <Check className="w-4 h-4 text-green-600 dark:text-green-400 flex-shrink-0" />
                   ) : (
                     <Copy
-                      className="w-4 h-4 text-gray-600 dark:text-gray-400 hover:text-black dark:hover:text-white cursor-pointer"
+                      className="w-4 h-4 text-gray-600 dark:text-gray-400 hover:text-black dark:hover:text-white cursor-pointer flex-shrink-0"
                       onClick={() => copyToClipboard(selectedBlock.hash)}
                     />
                   )}
@@ -594,7 +573,7 @@ function MainContent() {
             </div>
 
             {selectedBlock.isFuture ? (
-              <PendingTransactionsView
+              <OpenContractsView
                 setSelectedInscription={setSelectedInscription}
                 refreshKey={pendingRefreshKey}
               />
@@ -670,14 +649,45 @@ function MainContent() {
 
        <footer className="bg-gray-100 dark:bg-gray-900 border-t border-gray-300 dark:border-gray-800 mt-12">
          <div className="container mx-auto px-6 py-6">
-           <div className="flex items-center justify-between">
+           <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
              <div className="flex items-center gap-2">
                <div className="flex items-center justify-center w-6 h-6 bg-gradient-to-br from-indigo-500 to-purple-600 rounded">
                  <span className="text-white text-sm">✦</span>
                </div>
                <span className="text-gray-400">Starlight</span>
              </div>
-              <a href="/mcp/docs" className="text-gray-400 text-sm hover:text-gray-600 dark:hover:text-gray-200 transition-colors">
+             
+             <div className="flex items-center gap-6">
+               <a 
+                 href="https://github.com/macroadster" 
+                 target="_blank" 
+                 rel="noopener noreferrer"
+                 className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
+                 title="GitHub"
+               >
+                 <Github className="w-5 h-5" />
+               </a>
+               <a 
+                 href="https://x.com/howssatoshi" 
+                 target="_blank" 
+                 rel="noopener noreferrer"
+                 className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
+                 title="X (Twitter)"
+               >
+                 <span className="text-lg font-bold leading-none">𝕏</span>
+               </a>
+               <a 
+                 href="https://www.linkedin.com/in/eric-yang-182a377/" 
+                 target="_blank" 
+                 rel="noopener noreferrer"
+                 className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
+                 title="LinkedIn"
+               >
+                 <Linkedin className="w-5 h-5" />
+               </a>
+             </div>
+
+              <a href="/mcp/docs" className="text-gray-400 text-sm hover:text-gray-600 dark:hover:text-gray-200 transition-colors whitespace-nowrap">
                 💡 Are you a builder? Try our API!
               </a>
            </div>
@@ -689,28 +699,20 @@ function MainContent() {
 }
 
 export default function App() {
-  useEffect(() => {
-    const savedTheme = localStorage.getItem('theme');
-    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    const isDark = savedTheme ? savedTheme === 'dark' : prefersDark;
-    if (isDark) {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
-  }, []);
-
   return (
     <AuthProvider>
-      <Routes>
-        <Route path="/" element={<MainContent />} />
-        <Route path="/block/:height" element={<MainContent />} />
-        <Route path="/pending" element={<MainContent />} />
-        <Route path="/contracts" element={<ContractsPage />} />
-        <Route path="/discover" element={<DiscoverPage />} />
-        <Route path="/auth" element={<AuthPage />} />
-        <Route path="/mcp/docs" element={<McpDocsPage />} />
-      </Routes>
+      <ThemeProvider>
+        <Routes>
+          <Route path="/" element={<MainContent />} />
+          <Route path="/block/:height" element={<MainContent />} />
+          <Route path="/pending" element={<MainContent />} />
+          <Route path="/contracts" element={<ContractsPage />} />
+          <Route path="/discover" element={<DiscoverPage />} />
+          <Route path="/auth" element={<AuthPage />} />
+          <Route path="/mcp/docs" element={<McpDocsPage />} />
+          <Route path="/docs/*" element={<DocsPage />} />
+        </Routes>
+      </ThemeProvider>
     </AuthProvider>
   );
 }

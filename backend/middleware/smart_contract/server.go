@@ -38,6 +38,12 @@ type Server struct {
 	listenersMu  sync.Mutex
 	listeners    []chan smart_contract.Event
 	mempool      *bitcoin.MempoolClient
+	escort       *smart_contract.EscortService
+}
+
+// SetEscortService sets the escort service for the server.
+func (s *Server) SetEscortService(escort *smart_contract.EscortService) {
+	s.escort = escort
 }
 
 // proposalCreateBody captures POST payload for creating proposals.
@@ -86,24 +92,62 @@ func applyCreatorAPIKeyHash(meta map[string]interface{}, apiKey string) {
 	}
 }
 
-func enforceCreatorApproval(r *http.Request, proposal smart_contract.Proposal) error {
-	meta := proposal.Metadata
-	if meta == nil {
-		return fmt.Errorf("proposal missing creator metadata")
-	}
-	required, _ := meta["creator_api_key_hash"].(string)
-	required = strings.TrimSpace(required)
-	if required == "" {
-		return fmt.Errorf("proposal missing creator_api_key_hash; recreate the wish to approve")
-	}
-	current := creatorAPIKeyHash(r.Header.Get("X-API-Key"))
-	if current == "" {
+func (s *Server) enforceCreatorApproval(r *http.Request, proposal smart_contract.Proposal) error {
+	apiKey := r.Header.Get("X-API-Key")
+	currentHash := creatorAPIKeyHash(apiKey)
+	if currentHash == "" {
 		return fmt.Errorf("api key required for approval")
 	}
-	if required != current {
-		return fmt.Errorf("approver does not match proposal creator")
+
+	// 1. Check if matches Proposal Creator
+	if proposal.Metadata != nil {
+		if creatorHash, ok := proposal.Metadata["creator_api_key_hash"].(string); ok {
+			if strings.TrimSpace(creatorHash) == currentHash {
+				return nil
+			}
+		}
 	}
-	return nil
+
+	// 2. Check if matches Wish Creator
+	visibleHash := proposalVisibleHash(proposal)
+	if visibleHash != "" && s.ingestionSvc != nil {
+		// Try both hash and wish-hash
+		rec, err := s.ingestionSvc.Get(visibleHash)
+		if err != nil {
+			rec, _ = s.ingestionSvc.Get("wish-" + visibleHash)
+		}
+
+		if rec != nil && rec.Metadata != nil {
+			if wishCreatorHash, ok := rec.Metadata["creator_api_key_hash"].(string); ok {
+				if strings.TrimSpace(wishCreatorHash) == currentHash {
+					return nil
+				}
+			}
+		}
+	}
+
+	// 3. Fallback: if no creator info exists at all, allow for now to prevent deadlock on old data
+	hasAnyCreatorInfo := false
+	if proposal.Metadata != nil {
+		if _, ok := proposal.Metadata["creator_api_key_hash"].(string); ok {
+			hasAnyCreatorInfo = true
+		}
+	}
+	if !hasAnyCreatorInfo && visibleHash != "" && s.ingestionSvc != nil {
+		rec, _ := s.ingestionSvc.Get(visibleHash)
+		if rec != nil && rec.Metadata != nil {
+			if _, ok := rec.Metadata["creator_api_key_hash"].(string); ok {
+				hasAnyCreatorInfo = true
+			}
+		}
+	}
+
+	if !hasAnyCreatorInfo {
+		log.Printf("WARNING: allowing approval for proposal %s with NO creator info via REST", proposal.ID)
+		return nil
+	}
+
+	return fmt.Errorf("approver does not match proposal creator or wish creator")
 }
 
 // NewServer builds a Server with the given store.
@@ -120,20 +164,37 @@ func NewServer(store Store, apiKeys auth.APIKeyValidator, ingest *services.Inges
 
 // RegisterRoutes attaches handlers to the mux.
 func (s *Server) RegisterRoutes(mux *http.ServeMux) {
+	// Health and config endpoints
 	mux.HandleFunc("/healthz", s.handleHealth)
+	mux.HandleFunc("/api/smart_contract/config", s.authWrap(s.handleConfig))
+
+	// Contract endpoints
 	mux.HandleFunc("/api/smart_contract/contracts", s.authWrap(s.handleContracts))
 	mux.HandleFunc("/api/smart_contract/contracts/", s.authWrap(s.handleContracts))
+
+	// Task endpoints
 	mux.HandleFunc("/api/smart_contract/tasks", s.authWrap(s.handleTasks))
 	mux.HandleFunc("/api/smart_contract/tasks/", s.authWrap(s.handleTasks))
+
+	// Claim endpoints
 	mux.HandleFunc("/api/smart_contract/claims/", s.authWrap(s.handleClaims))
+
+	// Skill and discovery endpoints
 	mux.HandleFunc("/api/smart_contract/skills", s.authWrap(s.handleSkills))
 	mux.HandleFunc("/api/smart_contract/discover", s.authWrap(s.handleDiscover))
+
+	// Proposal endpoints
 	mux.HandleFunc("/api/smart_contract/proposals", s.authWrap(s.handleProposals))
 	mux.HandleFunc("/api/smart_contract/proposals/", s.authWrap(s.handleProposals))
+
+	// Submission endpoints
 	mux.HandleFunc("/api/smart_contract/submissions", s.authWrap(s.handleSubmissions))
 	mux.HandleFunc("/api/smart_contract/submissions/", s.authWrap(s.handleSubmissions))
+
+	// Event endpoints
 	mux.HandleFunc("/api/smart_contract/events", s.authWrap(s.handleEvents))
-	mux.HandleFunc("/api/smart_contract/config", s.authWrap(s.handleConfig))
+
+	// Stego endpoints (still using original handlers for now)
 	mux.HandleFunc("/api/smart_contract/stego/reconcile", s.authWrap(s.handleStegoReconcile))
 	mux.HandleFunc("/api/smart_contract/stego/payload/", s.authWrap(s.handleStegoPayload))
 }
@@ -200,10 +261,9 @@ func (s *Server) handleContracts(w http.ResponseWriter, r *http.Request) {
 			status := r.URL.Query().Get("status")
 			skills := splitCSV(r.URL.Query().Get("skills"))
 			filter := smart_contract.ContractFilter{
-				Status:       status,
-				Skills:       skills,
-				Creator:      r.URL.Query().Get("creator"),
-				AiIdentifier: r.URL.Query().Get("ai_identifier"),
+				Status:  status,
+				Skills:  skills,
+				Creator: r.URL.Query().Get("creator"),
 			}
 			contracts, err := s.store.ListContracts(filter)
 			if err != nil {
@@ -732,7 +792,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 			if err := s.ingestionSvc.UpdateMetadata(ingestionRec.ID, metadata); err != nil {
 				log.Printf("psbt: failed to store funding_txids for %s: %v", ingestionRec.ID, err)
 			}
-			s.publishIngestUpdate(r.Context(), proposalID, ingestionRec.ID, strings.TrimSpace(body.PixelHash), fundingTxIDs, commitmentInfo, commitmentLockAddr, commitmentTarget)
+			s.publishIngestUpdate(r.Context(), proposalID, ingestionRec.ID, strings.TrimSpace(body.PixelHash), fundingTxIDs, commitmentInfo, commitmentLockAddr, commitmentTarget, payoutScripts, payoutScriptHashes, payoutScriptHash160s)
 		}
 		if proposalID != "" {
 			s.updateProposalMetadataBestEffort(r.Context(), proposalID, commitmentMeta)
@@ -785,6 +845,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 	if ingestionRec != nil && res.FundingTxID != "" {
 		scriptHashes, scriptHash160s := buildScriptHashes(res.PayoutScripts)
 		if err := s.ingestionSvc.UpdateMetadata(ingestionRec.ID, map[string]interface{}{
+			"funding_txids":           []string{res.FundingTxID},
 			"funding_txid":            res.FundingTxID,
 			"payout_scripts":          hexSlice(res.PayoutScripts),
 			"payout_script_hashes":    scriptHashes,
@@ -794,16 +855,21 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		}); err != nil {
 			log.Printf("psbt: failed to store funding_txid for %s: %v", ingestionRec.ID, err)
 		}
-		s.publishIngestUpdate(r.Context(), proposalID, ingestionRec.ID, strings.TrimSpace(body.PixelHash), []string{res.FundingTxID}, res, commitmentLockAddr, commitmentTarget)
+		s.publishIngestUpdate(r.Context(), proposalID, ingestionRec.ID, strings.TrimSpace(body.PixelHash), []string{res.FundingTxID}, res, commitmentLockAddr, commitmentTarget, res.PayoutScripts, nil, nil)
 	}
 	if proposalID != "" {
 		s.updateProposalMetadataBestEffort(r.Context(), proposalID, commitmentMeta)
 	}
 	if proposalID != "" {
-		if err := s.maybePublishStegoForProposal(r.Context(), proposalID); err != nil {
-			log.Printf("stego publish on psbt failed for proposal %s: %v", proposalID, err)
-		}
-		s.publishPendingStegoIngest(r.Context(), proposalID, strings.TrimSpace(body.PixelHash))
+		publishPixelHash := strings.TrimSpace(body.PixelHash)
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+			defer cancel()
+			if err := s.maybePublishStegoForProposal(ctx, proposalID); err != nil {
+				log.Printf("stego publish on psbt failed for proposal %s: %v", proposalID, err)
+			}
+			s.publishPendingStegoIngest(ctx, proposalID, publishPixelHash)
+		}()
 	}
 	if taskID := strings.TrimSpace(body.TaskID); taskID != "" {
 		if err := s.updateTaskCommitmentProof(r.Context(), taskID, res, pixelBytes); err != nil {
@@ -835,7 +901,8 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		"redeem_script_hash":      hex.EncodeToString(res.RedeemScriptHash),
 		"commitment_address":      res.CommitmentAddr,
 		"commitment_lock_address": addressOrEmpty(commitmentLockAddr),
-		"pixel_hash":              strings.TrimSpace(body.PixelHash),
+		"pixel_hash":              hex.EncodeToString(pixelBytes),
+		"pixel_source":            pixelSource,
 		"payer_address":           primaryPayer.EncodeAddress(),
 		"payer_addresses":         addressSlice(payerAddresses),
 		"change_address":          addressOrEmpty(changeAddr),
@@ -843,7 +910,6 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		"change_amounts":          res.ChangeAmounts,
 		"funding_mode":            fundingMode,
 		"contract_id":             contractID,
-		"pixel_source":            defaultPixelSource(pixelSource, pixelBytes),
 		"budget_sats":             target,
 		"contractor":              contractorAddressFor(contractorAddr),
 		"network_params":          params.Name,
@@ -857,7 +923,7 @@ func contractorAddressFor(addr btcutil.Address) string {
 	return addr.EncodeAddress()
 }
 
-func (s *Server) publishIngestUpdate(ctx context.Context, proposalID, ingestionID, visiblePixelHash string, fundingTxIDs []string, res *bitcoin.PSBTResult, commitmentLockAddr btcutil.Address, commitmentTarget string) {
+func (s *Server) publishIngestUpdate(ctx context.Context, proposalID, ingestionID, visiblePixelHash string, fundingTxIDs []string, res *bitcoin.PSBTResult, commitmentLockAddr btcutil.Address, commitmentTarget string, payoutScripts [][]byte, payoutScriptHashes, payoutScriptHash160s []string) {
 	topic := strings.TrimSpace(os.Getenv("IPFS_MIRROR_TOPIC"))
 	if topic == "" {
 		return
@@ -890,6 +956,12 @@ func (s *Server) publishIngestUpdate(ctx context.Context, proposalID, ingestionI
 		}
 		if res.CommitmentSats > 0 {
 			announcement.CommitmentSats = res.CommitmentSats
+		}
+		if len(res.PayoutScript) > 0 {
+			announcement.PayoutScript = hex.EncodeToString(res.PayoutScript)
+		}
+		if len(res.PayoutScripts) > 0 {
+			announcement.PayoutScripts = hexSlice(res.PayoutScripts)
 		}
 	}
 	payload, err := json.Marshal(announcement)
@@ -1059,6 +1131,14 @@ func (s *Server) resolveProposalIDForContract(ctx context.Context, contractID st
 		}
 		if stored, err := s.store.GetProposal(ctx, contractID); err == nil && strings.TrimSpace(stored.ID) != "" {
 			return strings.TrimSpace(stored.ID)
+		}
+		// Handle wish-<hash> contracts by stripping the prefix and looking for proposal
+		candidateID := strings.TrimSpace(contractID)
+		if strings.HasPrefix(candidateID, "wish-") {
+			stripped := strings.TrimPrefix(candidateID, "wish-")
+			if stored, err := s.store.GetProposal(ctx, stripped); err == nil && strings.TrimSpace(stored.ID) != "" {
+				return strings.TrimSpace(stored.ID)
+			}
 		}
 	}
 	if rec != nil && rec.Metadata != nil {
@@ -1316,11 +1396,6 @@ func resolvePixelHashFromIngestion(rec *services.IngestionRecord, normalize func
 		return nil
 	}
 
-	if message != "" {
-		sum := sha256.Sum256(append(imageBytes, []byte(message)...))
-		return normalize(sum[:])
-	}
-
 	sum := sha256.Sum256(imageBytes)
 	return normalize(sum[:])
 }
@@ -1421,6 +1496,9 @@ func (s *Server) updateTaskCommitmentProof(ctx context.Context, taskID string, r
 	if res.CommitmentSats > 0 {
 		proof.CommitmentSats = res.CommitmentSats
 	}
+	if len(pixelBytes) == 32 {
+		proof.CommitmentPixelHash = hex.EncodeToString(pixelBytes)
+	}
 	return s.store.UpdateTaskProof(ctx, taskID, proof)
 }
 
@@ -1469,7 +1547,7 @@ func (s *Server) handleCommitmentPSBT(w http.ResponseWriter, r *http.Request, co
 
 	preimageHex := strings.TrimSpace(body.Preimage)
 	if preimageHex == "" {
-		preimageHex = strings.TrimSpace(proof.VisiblePixelHash)
+		preimageHex = strings.TrimSpace(proof.CommitmentPixelHash)
 	}
 	preimage, err := hex.DecodeString(preimageHex)
 	if err != nil {
@@ -1679,16 +1757,10 @@ func (s *Server) handleClaimTask(w http.ResponseWriter, r *http.Request, taskID 
 		return
 	}
 	var body struct {
-		AiIdentifier        string     `json:"ai_identifier"`
-		Wallet              string     `json:"wallet_address,omitempty"`
 		EstimatedCompletion *time.Time `json:"estimated_completion,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		Error(w, http.StatusBadRequest, "invalid json")
-		return
-	}
-	if body.AiIdentifier == "" {
-		Error(w, http.StatusBadRequest, "ai_identifier required")
 		return
 	}
 
@@ -1712,38 +1784,24 @@ func (s *Server) handleClaimTask(w http.ResponseWriter, r *http.Request, taskID 
 		}
 	}
 
-	contractorWallet := strings.TrimSpace(body.Wallet)
+	walletAddress := ""
 	if s.apiKeys != nil {
 		key := r.Header.Get("X-API-Key")
-		if contractorWallet != "" {
-			if getter, ok := s.apiKeys.(interface {
-				Get(string) (auth.APIKey, bool)
-			}); ok {
-				if rec, ok := getter.Get(key); ok {
-					if strings.TrimSpace(rec.Wallet) != "" && rec.Wallet != contractorWallet {
-						Error(w, http.StatusForbidden, "wallet already bound; rebind requires verification")
-						return
-					}
-				}
-			}
-			if updater, ok := s.apiKeys.(auth.APIKeyWalletUpdater); ok {
-				if _, err := updater.UpdateWallet(key, contractorWallet); err != nil {
-					Error(w, http.StatusBadRequest, "failed to bind wallet to api key")
-					return
-				}
-			}
-		}
-		if rec, ok := s.apiKeys.Get(key); ok && strings.TrimSpace(rec.Wallet) != "" {
-			contractorWallet = strings.TrimSpace(rec.Wallet)
+		if rec, ok := s.apiKeys.Get(key); ok {
+			walletAddress = strings.TrimSpace(rec.Wallet)
 		}
 	}
+	if walletAddress == "" {
+		Error(w, http.StatusBadRequest, "wallet address required - please bind wallet to API key using /api/auth/verify")
+		return
+	}
 
-	claim, err := s.store.ClaimTask(taskID, body.AiIdentifier, contractorWallet, body.EstimatedCompletion)
+	claim, err := s.store.ClaimTask(taskID, walletAddress, body.EstimatedCompletion)
 	if err != nil {
 		if err == ErrTaskNotFound {
 			// Attempt to publish tasks lazily from proposals that reference this task id, then retry.
 			if s.tryPublishTasksForTaskID(r.Context(), taskID) == nil {
-				if retry, retryErr := s.store.ClaimTask(taskID, body.AiIdentifier, contractorWallet, body.EstimatedCompletion); retryErr == nil {
+				if retry, retryErr := s.store.ClaimTask(taskID, walletAddress, body.EstimatedCompletion); retryErr == nil {
 					claim = retry
 					err = nil
 				} else {
@@ -1777,7 +1835,7 @@ claim_success:
 	s.recordEvent(smart_contract.Event{
 		Type:      "claim",
 		EntityID:  taskID,
-		Actor:     body.AiIdentifier,
+		Actor:     walletAddress,
 		Message:   "task claimed",
 		CreatedAt: time.Now(),
 	})
@@ -2102,17 +2160,209 @@ func proposalMetaConfirmed(meta map[string]interface{}) bool {
 
 // recordEvent appends an event to the in-memory log with a small bounded buffer.
 func (s *Server) recordEvent(evt smart_contract.Event) {
+	s.processEvent(evt, true)
+}
+
+func (s *Server) processEvent(evt smart_contract.Event, shouldPublish bool) {
 	const maxEvents = 200
 	if evt.CreatedAt.IsZero() {
 		evt.CreatedAt = time.Now()
 	}
 	s.eventsMu.Lock()
-	defer s.eventsMu.Unlock()
 	s.events = append([]smart_contract.Event{evt}, s.events...)
 	if len(s.events) > maxEvents {
 		s.events = s.events[:maxEvents]
 	}
+	s.eventsMu.Unlock()
 	s.broadcastEvent(evt)
+
+	if shouldPublish {
+		go s.publishSyncEvent(evt)
+	}
+}
+
+func (s *Server) publishSyncEvent(evt smart_contract.Event) {
+	// TEMPORARY FIX: Add basic rate limiting to prevent sync storms
+	if evt.Type == "contract_upsert" || evt.Type == "publish" {
+		// Add small delay to reduce rapid firing
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	ann := &syncAnnouncement{
+		Type:  evt.Type,
+		Event: &evt,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	switch evt.Type {
+	case "claim", "task_proof_update":
+		// EntityID is TaskID
+		task, err := s.store.GetTask(evt.EntityID)
+		if err == nil {
+			ann.Task = &task
+		} else {
+			// For claim events, log error but still publish to maintain sync flow
+			// The receiving instance will retry getting task data during reconciliation
+			if evt.Type == "claim" {
+				log.Printf("WARNING: Failed to get task %s for claim sync: %v", evt.EntityID, err)
+			}
+		}
+	case "contract_confirmed":
+		// EntityID is ContractID
+		contract, err := s.store.GetContract(evt.EntityID)
+		if err == nil {
+			ann.Contract = &contract
+		}
+	case "submit":
+		// EntityID is ClaimID. Wait, handleSubmissions says parts[0] is claimID but EntityID recorded is claimID.
+		// Let's find the submission that was just created.
+		// Actually, recordEvent is called after SubmitWork returns.
+		// If EntityID is claimID, we might need to find the latest submission for it.
+		// But in handleSubmissions:
+		// s.recordEvent(smart_contract.Event{ Type: "submit", EntityID: claimID, ... })
+		// We should probably find the latest submission for this claim.
+		tasks, _ := s.store.ListTasks(smart_contract.TaskFilter{})
+		taskIDs := make([]string, len(tasks))
+		for i, t := range tasks {
+			taskIDs[i] = t.TaskID
+		}
+		subs, _ := s.store.ListSubmissions(ctx, taskIDs)
+		var latest *smart_contract.Submission
+		for _, sub := range subs {
+			if sub.ClaimID == evt.EntityID {
+				if latest == nil || sub.CreatedAt.After(latest.CreatedAt) {
+					s := sub
+					latest = &s
+				}
+			}
+		}
+		if latest != nil {
+			ann.Submission = latest
+			// Also include the task because its status changed to "submitted"
+			task, err := s.store.GetTask(latest.TaskID)
+			if err == nil {
+				ann.Task = &task
+			}
+		}
+	case "review", "rework":
+		// EntityID is submissionID
+		sub, err := s.store.GetSubmission(ctx, evt.EntityID)
+		if err == nil {
+			ann.Submission = &sub
+			// Also include the task because its status might have changed
+			task, err := s.store.GetTask(sub.TaskID)
+			if err == nil {
+				ann.Task = &task
+			}
+		}
+	case "approve", "publish", "update", "proposal_create":
+		p, err := s.store.GetProposal(ctx, evt.EntityID)
+		if err == nil {
+			ann.Proposal = &p
+		}
+	}
+
+	if err := s.PublishSyncAnnouncement(ctx, ann); err != nil {
+		log.Printf("failed to publish sync announcement: %v", err)
+	}
+}
+
+func (s *Server) ReconcileSyncAnnouncement(ctx context.Context, ann *syncAnnouncement) error {
+	if ann == nil {
+		return nil
+	}
+
+	log.Printf("Reconciling sync announcement: type=%s from issuer=%s", ann.Type, ann.Issuer)
+
+	var err error
+	switch ann.Type {
+	case "approve", "publish", "update", "proposal_create":
+		if ann.Proposal != nil {
+			// Normalize proposal ID for sync: find by visible_pixel_hash to handle wish- prefix changes
+			originalID := ann.Proposal.ID
+			if ann.Proposal.VisiblePixelHash != "" {
+				// Try to find existing proposal by visible_pixel_hash
+				filter := smart_contract.ProposalFilter{
+					ContractID: ann.Proposal.VisiblePixelHash,
+					MaxResults: 1,
+				}
+				existing, findErr := s.store.ListProposals(ctx, filter)
+				if findErr == nil && len(existing) > 0 {
+					// Found existing proposal with same visible_pixel_hash, use local ID
+					ann.Proposal.ID = existing[0].ID
+					log.Printf("sync: normalizing proposal ID from %s to %s (visible_pixel_hash=%s)", originalID, ann.Proposal.ID, ann.Proposal.VisiblePixelHash)
+				}
+			}
+
+			if ann.Type == "approve" {
+				// For approve type, call ApproveProposal to ensure all validation and side effects
+				err = s.store.ApproveProposal(ctx, ann.Proposal.ID)
+				if err != nil {
+					// If already approved or published, treat as success (idempotent sync)
+					if strings.Contains(err.Error(), "already") && strings.Contains(err.Error(), "approved") {
+						log.Printf("sync: proposal %s already approved locally", ann.Proposal.ID)
+						err = nil
+						// Still publish tasks to ensure consistency
+						_ = s.PublishProposalTasks(ctx, ann.Proposal.ID)
+					} else if strings.Contains(err.Error(), "already") && strings.Contains(err.Error(), "published") {
+						log.Printf("sync: proposal %s already published locally", ann.Proposal.ID)
+						err = nil
+					}
+				}
+				if err == nil {
+					// Publish tasks after approval
+					_ = s.PublishProposalTasks(ctx, ann.Proposal.ID)
+				}
+			} else if ann.Type == "publish" {
+				// For publish type, call PublishProposal
+				err = s.store.PublishProposal(ctx, ann.Proposal.ID)
+				if err != nil && strings.Contains(err.Error(), "must be approved") {
+					// If proposal needs approval first, try to approve it
+					if approveErr := s.store.ApproveProposal(ctx, ann.Proposal.ID); approveErr == nil {
+						// Retry publish after approval
+						err = s.store.PublishProposal(ctx, ann.Proposal.ID)
+					}
+				}
+			} else {
+				// For update and proposal_create, use CreateProposal (upsert)
+				err = s.store.CreateProposal(ctx, *ann.Proposal)
+			}
+		}
+	case "claim", "task_proof_update", "task_update":
+		if ann.Task != nil {
+			err = s.store.UpsertTask(ctx, *ann.Task)
+		}
+	case "contract_confirmed":
+		if ann.Contract != nil {
+			err = s.store.UpdateContractStatus(ctx, ann.Contract.ContractID, "confirmed")
+		}
+	case "submit":
+		if ann.Submission != nil {
+			err = s.store.SyncSubmission(ctx, *ann.Submission)
+		}
+		if ann.Task != nil {
+			err = s.store.UpsertTask(ctx, *ann.Task)
+		}
+	case "contract_upsert":
+		if ann.Contract != nil {
+			// BUG FIX: Skip contract_upsert sync that has empty tasks, as this can reset task statuses to available
+			// This prevents PSBT build from inadvertently resetting task status
+			log.Printf("Skipping contract_upsert sync for contract %s (would reset task statuses)", ann.Contract.ContractID)
+			err = nil
+		}
+	case "escort_validation":
+		if ann.EscortStatus != nil {
+			err = s.store.SyncEscortStatus(ctx, *ann.EscortStatus)
+		}
+	}
+
+	if ann.Event != nil {
+		s.processEvent(*ann.Event, false)
+	}
+
+	return err
 }
 
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
@@ -2218,7 +2468,7 @@ func (s *Server) tryPublishTasksForTaskID(ctx context.Context, taskID string) er
 	for _, p := range proposals {
 		for _, t := range p.Tasks {
 			if t.TaskID == taskID {
-				return s.publishProposalTasks(ctx, p.ID)
+				return s.PublishProposalTasks(ctx, p.ID)
 			}
 		}
 	}
@@ -2250,8 +2500,8 @@ func eventMatches(evt smart_contract.Event, t string, actor string, entity strin
 	return true
 }
 
-// publishProposalTasks publishes the tasks stored in a proposal into MCP tasks.
-func (s *Server) publishProposalTasks(ctx context.Context, proposalID string) error {
+// PublishProposalTasks publishes the tasks stored in a proposal into MCP tasks.
+func (s *Server) PublishProposalTasks(ctx context.Context, proposalID string) error {
 	p, err := s.store.GetProposal(ctx, proposalID)
 	if err != nil {
 		return err
@@ -2350,7 +2600,7 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 			}
-			if err := enforceCreatorApproval(r, proposal); err != nil {
+			if err := s.enforceCreatorApproval(r, proposal); err != nil {
 				Error(w, http.StatusForbidden, err.Error())
 				return
 			}
@@ -2415,7 +2665,7 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			// Publish tasks for this proposal if available.
-			if err := s.publishProposalTasks(r.Context(), id); err != nil {
+			if err := s.PublishProposalTasks(r.Context(), id); err != nil {
 				log.Printf("failed to publish tasks for proposal %s: %v", id, err)
 			}
 			visibleHash := strings.TrimSpace(proposal.VisiblePixelHash)
@@ -2425,9 +2675,10 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 			if visibleHash != "" {
 				s.archiveWishContract(r.Context(), visibleHash)
 			}
-			if err := s.maybePublishStegoForProposal(r.Context(), id); err != nil {
-				log.Printf("stego publish on approval failed for proposal %s: %v", id, err)
-			}
+
+			stegoAlreadyPublished := strings.TrimSpace(toString(proposal.Metadata["stego_contract_id"])) != ""
+
+			// Approve the proposal first - IPFS announcement is async
 			s.recordEvent(smart_contract.Event{
 				Type:      "approve",
 				EntityID:  id,
@@ -2435,10 +2686,23 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 				Message:   "proposal approved",
 				CreatedAt: time.Now(),
 			})
+
+			// Async stego publishing - doesn't block approval
+			if !stegoAlreadyPublished {
+				go func() {
+					ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+					defer cancel()
+					if err := s.maybePublishStegoForProposal(ctx, id); err != nil {
+						log.Printf("stego publish failed async for proposal %s: %v", id, err)
+					} else {
+						log.Printf("stego publish succeeded async for proposal %s", id)
+					}
+				}()
+			}
 			JSON(w, http.StatusOK, map[string]interface{}{
 				"proposal_id": id,
 				"status":      "approved",
-				"message":     "Proposal approved; tasks published.",
+				"message":     "Proposal approved; stego publishing in progress.",
 			})
 			return
 		}
@@ -2468,6 +2732,10 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 			Error(w, http.StatusUnsupportedMediaType, "Content-Type must be application/json")
 			return
 		}
+
+		// CRITICAL: Log entry for every request
+		log.Printf("CRITICAL: HandleCreateProposal called at %s from %s, User-Agent: %s", time.Now().Format(time.RFC3339), r.RemoteAddr, r.Header.Get("User-Agent"))
+
 		var body ProposalCreateBody
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			Error(w, http.StatusBadRequest, "invalid json")
@@ -2501,10 +2769,13 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			// Generate stego payload immediately for wish creation.
+			log.Printf("CRITICAL: About to call maybePublishStegoForProposal for proposal %s, ingestion %s", proposal.ID, body.IngestionID)
 			if err := s.maybePublishStegoForProposal(r.Context(), proposal.ID); err != nil {
+				log.Printf("CRITICAL: maybePublishStegoForProposal failed for proposal %s: %v", proposal.ID, err)
 				Error(w, http.StatusBadRequest, err.Error())
 				return
 			}
+			log.Printf("CRITICAL: maybePublishStegoForProposal succeeded for proposal %s", proposal.ID)
 			s.recordEvent(smart_contract.Event{
 				Type:      "proposal_create",
 				EntityID:  proposal.ID,
@@ -2769,14 +3040,27 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 				}
 				proposals = filtered
 			}
-			// hydrate submissions alongside tasks
+			// hydrate tasks and submissions with current state from task store
 			var taskIDs []string
 			for _, p := range proposals {
 				for _, t := range p.Tasks {
 					taskIDs = append(taskIDs, t.TaskID)
 				}
 			}
+			tasks, _ := s.store.ListTasks(smart_contract.TaskFilter{})
+			taskByID := make(map[string]smart_contract.Task)
+			for _, t := range tasks {
+				taskByID[t.TaskID] = t
+			}
 			subs, _ := s.store.ListSubmissions(r.Context(), taskIDs)
+			// Hydrate proposal tasks with current task state
+			for i := range proposals {
+				for j := range proposals[i].Tasks {
+					if currentTask, ok := taskByID[proposals[i].Tasks[j].TaskID]; ok {
+						proposals[i].Tasks[j] = currentTask
+					}
+				}
+			}
 			JSON(w, http.StatusOK, map[string]interface{}{
 				"proposals":   proposals,
 				"total":       len(proposals),
@@ -2859,9 +3143,14 @@ func BuildProposalFromIngestion(body ProposalCreateBody, rec *services.Ingestion
 		budget = budgetFromMeta(meta)
 	}
 	visible := body.VisiblePixelHash
-	if visible == "" && rec.ImageBase64 != "" {
-		if h, err := hashBase64(rec.ImageBase64); err == nil {
-			visible = h
+	if visible == "" {
+		// Use stego hash from metadata if available
+		if stegoHash, ok := meta["visible_pixel_hash"].(string); ok && strings.TrimSpace(stegoHash) != "" {
+			visible = stegoHash
+		} else if rec.ImageBase64 != "" {
+			if h, err := hashBase64(rec.ImageBase64); err == nil {
+				visible = h
+			}
 		}
 	}
 	if strings.TrimSpace(visible) != "" {

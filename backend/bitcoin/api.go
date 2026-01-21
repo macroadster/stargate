@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"stargate-backend/core"
@@ -19,6 +20,11 @@ import (
 type BitcoinAPI struct {
 	bitcoinClient  *BitcoinNodeClient
 	scannerManager *starlight.ScannerManager
+
+	// Caching for health endpoint
+	healthCache      map[string]any
+	healthCacheTime  time.Time
+	healthCacheMutex sync.RWMutex
 }
 
 // NewBitcoinAPI creates a new Bitcoin API instance
@@ -41,8 +47,11 @@ func NewBitcoinAPIWithClient(client *BitcoinNodeClient) *BitcoinAPI {
 	}
 
 	return &BitcoinAPI{
-		bitcoinClient:  bitcoinClient,
-		scannerManager: scannerManager,
+		bitcoinClient:    bitcoinClient,
+		scannerManager:   scannerManager,
+		healthCache:      make(map[string]any),
+		healthCacheTime:  time.Time{},
+		healthCacheMutex: sync.RWMutex{},
 	}
 }
 
@@ -57,6 +66,28 @@ func (api *BitcoinAPI) HandleHealth(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+
+	// Check cache first (30 second TTL)
+	api.healthCacheMutex.RLock()
+	cacheValid := !api.healthCacheTime.IsZero() && time.Since(api.healthCacheTime) < 30*time.Second
+	var cachedResponse map[string]any
+	if cacheValid {
+		cachedResponse = make(map[string]any)
+		for k, v := range api.healthCache {
+			cachedResponse[k] = v
+		}
+	}
+	api.healthCacheMutex.RUnlock()
+
+	if cacheValid {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Cache", "HIT")
+		json.NewEncoder(w).Encode(cachedResponse)
+		return
+	}
+
+	// Cache miss - fetch fresh data
+	log.Println("Health cache miss - fetching fresh data")
 
 	// Test Bitcoin connection
 	bitcoinConnected := api.bitcoinClient.TestConnection()
@@ -80,7 +111,7 @@ func (api *BitcoinAPI) HandleHealth(w http.ResponseWriter, r *http.Request) {
 		status = "degraded"
 	}
 
-	// Add scanner manager health to response
+	// Build response
 	response := map[string]any{
 		"status":          status,
 		"scanner":         scannerInfo,
@@ -94,7 +125,14 @@ func (api *BitcoinAPI) HandleHealth(w http.ResponseWriter, r *http.Request) {
 		"timestamp": time.Now().Format(time.RFC3339),
 	}
 
+	// Update cache
+	api.healthCacheMutex.Lock()
+	api.healthCache = response
+	api.healthCacheTime = time.Now()
+	api.healthCacheMutex.Unlock()
+
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Cache", "MISS")
 	json.NewEncoder(w).Encode(response)
 }
 

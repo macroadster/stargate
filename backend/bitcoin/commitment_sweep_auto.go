@@ -91,8 +91,8 @@ func SweepCommitmentIfReady(ctx context.Context, store SweepStore, mempool *Memp
 			task.TaskID, proof.CommitmentRedeemScript == "", proof.CommitmentVout == 0, proof.TxID == "")
 		return nil
 	}
-	if strings.TrimSpace(proof.VisiblePixelHash) == "" {
-		log.Printf("commitment sweep: missing visible pixel hash for task %s", task.TaskID)
+	if strings.TrimSpace(proof.CommitmentPixelHash) == "" {
+		log.Printf("commitment sweep: missing commitment pixel hash for task %s", task.TaskID)
 		return nil
 	}
 	donation := strings.TrimSpace(os.Getenv("STARLIGHT_DONATION_ADDRESS"))
@@ -115,10 +115,11 @@ func SweepCommitmentIfReady(ctx context.Context, store SweepStore, mempool *Memp
 	if !isHashlockOnlyRedeemScript(redeemScript) {
 		return markSweepStatus(ctx, store, task.TaskID, proof, "skipped", "commitment redeem script requires signature")
 	}
-	preimage, err := hex.DecodeString(strings.TrimSpace(proof.VisiblePixelHash))
+	preimage, err := hex.DecodeString(strings.TrimSpace(proof.CommitmentPixelHash))
 	if err != nil {
 		return markSweepStatus(ctx, store, task.TaskID, proof, "failed", "invalid preimage")
 	}
+	log.Printf("commitment sweep DEBUG: task %s using preimage from CommitmentPixelHash: %s (length=%d)", task.TaskID, strings.TrimSpace(proof.CommitmentPixelHash)[:10]+"...", len(preimage))
 
 	params := sweepNetworkParamsFromEnv()
 
@@ -153,10 +154,15 @@ func SweepCommitmentIfReady(ctx context.Context, store SweepStore, mempool *Memp
 	}
 	log.Printf("commitment sweep DEBUG: task %s built sweep tx successfully - raw_tx_length=%d", task.TaskID, len(res.RawTxHex))
 
+	log.Printf("commitment sweep DEBUG: Broadcasting sweep tx, raw_hex_length=%d", len(res.RawTxHex))
+	log.Printf("commitment sweep DEBUG: Broadcasting sweep tx, raw_hex_length=%d", len(res.RawTxHex))
+	log.Printf("commitment sweep DEBUG: Raw tx hex for manual broadcast: %s", res.RawTxHex)
 	txid, err := mempool.BroadcastTx(res.RawTxHex)
 	if err != nil {
+		log.Printf("commitment sweep ERROR: Failed to broadcast tx for task %s: %v", task.TaskID, err)
 		return markSweepStatus(ctx, store, task.TaskID, proof, "failed", err.Error())
 	}
+	log.Printf("commitment sweep DEBUG: Successfully broadcast tx=%s for task %s", txid, task.TaskID)
 
 	proof.SweepTxID = txid
 	proof.SweepStatus = "broadcast"

@@ -144,14 +144,14 @@ IPFS_API_URL=http://127.0.0.1:5001
 
 ```
 starlight/
-├── frontend/                 # React application
+├── frontend/                # React application
 │   ├── src/
 │   │   ├── App.js           # Main application component
 │   │   ├── index.js         # React entry point
 │   │   └── index.css        # Global styles
 │   └── public/
-├── backend/                  # Go server
-│   ├── main.go              # Server implementation
+├── backend/                 # Go server
+│   ├── stargate_backend.go  # Server implementation
 │   ├── go.mod               # Go modules
 │   └── uploads/             # Stored inscription images
 └── README.md

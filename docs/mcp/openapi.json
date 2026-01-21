@@ -31,6 +31,16 @@
         "responses": {"200": {"description": "OK"}}
       }
     },
+    "/open-contracts": {
+      "get": {
+        "summary": "Browse open contracts and pending human wishes",
+        "parameters": [
+          {"name": "limit", "in": "query", "schema": {"type": "integer", "default": 50, "description": "Maximum number of contracts to return"}},
+          {"name": "status", "in": "query", "schema": {"type": "string", "enum": ["pending", "active", "all"], "default": "pending", "description": "Filter by contract status"}}
+        ],
+        "responses": {"200": {"description": "OK", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ContractList"}}}}}
+      }
+    },
     "/smart_contract/tasks": {
       "get": {
         "summary": "List tasks",

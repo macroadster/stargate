@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"stargate-backend/bitcoin"
+	"stargate-backend/security"
 )
 
 // DataStorage handles centralized storage and retrieval of block monitoring data
@@ -453,13 +454,15 @@ func (ds *DataStorage) cleanOldCache() {
 
 // ReadTextContent reads the content of a text file
 func (ds *DataStorage) ReadTextContent(height int64, filePath string) (string, error) {
-	// Construct the full path to the text file
-	fullPath := filepath.Join("blocks", fmt.Sprintf("%d_00000000", height), filePath)
-
-	// Read the file content
-	content, err := os.ReadFile(fullPath)
+	blockDir := filepath.Join(ds.dataDir, fmt.Sprintf("%d_00000000", height))
+	safePath, err := security.SanitizePath(blockDir, filePath)
 	if err != nil {
-		return "", fmt.Errorf("failed to read text file %s: %w", fullPath, err)
+		return "", fmt.Errorf("invalid file path: %w", err)
+	}
+
+	content, err := os.ReadFile(safePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read text file %s: %w", safePath, err)
 	}
 
 	return string(content), nil

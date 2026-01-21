@@ -10,6 +10,9 @@ RUN npm ci && npm cache clean --force
 # Copy source code after dependencies are installed
 COPY . .
 
+# Copy documentation files
+COPY docs/ ./docs/
+
 # Build the application
 RUN npm run build
 
@@ -18,6 +21,9 @@ FROM nginx:stable-alpine
 
 # Copy built assets from build stage
 COPY --from=build /app/build /usr/share/nginx/html
+
+# Copy documentation files
+COPY --from=build /app/docs /usr/share/nginx/html/docs
 
 # Copy nginx configuration
 COPY nginx.conf /etc/nginx/conf.d/default.conf

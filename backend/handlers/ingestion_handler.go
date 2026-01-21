@@ -89,7 +89,7 @@ func (h *IngestionHandler) HandleIngest(w http.ResponseWriter, r *http.Request) 
 	}
 	imgBytes, _ := base64.StdEncoding.DecodeString(req.ImageBase64)
 	if len(imgBytes) > 0 && message != "" {
-		sum := sha256.Sum256(append(imgBytes, []byte(message)...))
+		sum := sha256.Sum256(imgBytes)
 		req.Metadata["visible_pixel_hash"] = hex.EncodeToString(sum[:])
 	}
 
