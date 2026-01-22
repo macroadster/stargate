@@ -1965,7 +1965,7 @@ func (s *Server) handleDiscover(w http.ResponseWriter, r *http.Request) {
 			"list_proposals", "get_proposal", "create_proposal", "approve_proposal", "publish_proposal",
 			"list_submissions", "get_submission", "review_submission", "rework_submission",
 			"list_events",
-			"scan_image", "scan_block", "extract_message", "get_scanner_info",
+			"scan_image", "scan_transaction", "scan_block", "extract_message", "get_scanner_info",
 		},
 		"authentication": map[string]string{
 			"type":        "api_key",

@@ -9,9 +9,12 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
+	"stargate-backend/bitcoin"
 	"stargate-backend/core"
 	"stargate-backend/core/smart_contract"
 	scmiddleware "stargate-backend/middleware/smart_contract"
@@ -27,24 +30,32 @@ type HTTPMCPServer struct {
 	ingestionSvc     *services.IngestionService
 	scannerManager   *starlight.ScannerManager
 	smartContractSvc *services.SmartContractService
+	bitcoinClient    *bitcoin.BitcoinNodeClient
 	server           *scmiddleware.Server
 	httpClient       *http.Client
 	baseURL          string
-	rateLimiter      map[string][]time.Time // API key -> request timestamps
+	rateLimiter      map[string][]time.Time
 	challengeStore   *auth.ChallengeStore
 }
 
 // NewHTTPMCPServer creates a new HTTP MCP server
 func NewHTTPMCPServer(store scmiddleware.Store, apiKeyStore auth.APIKeyValidator, ingestionSvc *services.IngestionService, scannerManager *starlight.ScannerManager, smartContractSvc *services.SmartContractService, challengeStore *auth.ChallengeStore) *HTTPMCPServer {
+	network := "mainnet"
+	if strings.Contains(os.Getenv("BITCOIN_NETWORK"), "testnet") {
+		network = "testnet4"
+	}
+	config := bitcoin.GetNetworkConfig(network)
+
 	return &HTTPMCPServer{
 		store:            store,
 		apiKeyStore:      apiKeyStore,
 		ingestionSvc:     ingestionSvc,
 		scannerManager:   scannerManager,
 		smartContractSvc: smartContractSvc,
+		bitcoinClient:    bitcoin.NewBitcoinNodeClient(config.BaseURL),
 		server:           nil,
-		httpClient:       &http.Client{Timeout: 10 * time.Second},
-		baseURL:          "http://localhost:3001", // Default backend URL
+		httpClient:       &http.Client{Timeout: 30 * time.Second},
+		baseURL:          "http://localhost:3001",
 		rateLimiter:      make(map[string][]time.Time),
 		challengeStore:   challengeStore,
 	}
@@ -326,6 +337,8 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 		return h.handleApproveProposal(ctx, args, apiKey)
 	case "scan_image":
 		return h.handleScanImage(ctx, args)
+	case "scan_transaction":
+		return h.handleScanTransaction(ctx, args)
 	case "get_scanner_info":
 		return h.handleGetScannerInfo(ctx, args)
 	case "get_auth_challenge":
@@ -661,6 +674,138 @@ func (h *HTTPMCPServer) handleScanImage(ctx context.Context, args map[string]int
 		"extracted_message": scanResult.ExtractedMessage,
 		"extraction_error":  scanResult.ExtractionError,
 	}, nil
+}
+
+func (h *HTTPMCPServer) handleScanTransaction(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	if h.bitcoinClient == nil {
+		return nil, NewServiceUnavailableError("scan_transaction", "bitcoin client")
+	}
+
+	if h.scannerManager == nil {
+		return nil, NewServiceUnavailableError("scan_transaction", "scanner")
+	}
+
+	txID, ok := args["transaction_id"].(string)
+	if !ok || txID == "" {
+		return nil, NewValidationError("scan_transaction", "transaction_id is required and must be a string")
+	}
+
+	if len(txID) != 64 {
+		return nil, NewValidationError("scan_transaction", "transaction_id must be 64 characters")
+	}
+
+	txInfo, err := h.bitcoinClient.GetTransactionInfo(txID, false, "")
+	if err != nil {
+		return nil, fmt.Errorf("transaction not found: %w", err)
+	}
+
+	blockHeight := txInfo.BlockHeight
+	if blockHeight == 0 {
+		return nil, fmt.Errorf("could not determine block height for transaction")
+	}
+
+	baseDir := os.Getenv("BLOCKS_DIR")
+	if baseDir == "" {
+		baseDir = "blocks"
+	}
+
+	blockDirPattern := filepath.Join(baseDir, fmt.Sprintf("%d_*", blockHeight))
+	matches, err := filepath.Glob(blockDirPattern)
+	if err != nil || len(matches) == 0 {
+		legacyDir := filepath.Join(baseDir, fmt.Sprintf("%d_00000000", blockHeight))
+		if _, err := os.Stat(legacyDir); err == nil {
+			matches = []string{legacyDir}
+		}
+	}
+
+	if len(matches) == 0 {
+		return map[string]interface{}{
+			"transaction_id": txID,
+			"block_height":   blockHeight,
+			"status":         "block_not_cached",
+			"message":        "Block data not available in blocks directory",
+		}, nil
+	}
+
+	blockDir := matches[0]
+	inscriptionsPath := filepath.Join(blockDir, "inscriptions.json")
+
+	inscriptionsData, err := os.ReadFile(inscriptionsPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read inscriptions.json: %w", err)
+	}
+
+	var inscriptionsDoc struct {
+		Images []struct {
+			TxID     string `json:"tx_id"`
+			FileName string `json:"file_name"`
+			FilePath string `json:"file_path"`
+			Format   string `json:"format"`
+		} `json:"images"`
+	}
+
+	if err := json.Unmarshal(inscriptionsData, &inscriptionsDoc); err != nil {
+		return nil, fmt.Errorf("failed to parse inscriptions.json: %w", err)
+	}
+
+	var imageFile string
+	for _, img := range inscriptionsDoc.Images {
+		if strings.HasPrefix(img.TxID, txID) {
+			imageFile = img.FileName
+			break
+		}
+	}
+
+	if imageFile == "" {
+		return map[string]interface{}{
+			"transaction_id": txID,
+			"block_height":   blockHeight,
+			"status":         "no_image",
+			"message":        "No image found for this transaction in block data",
+		}, nil
+	}
+
+	imagePath := filepath.Join(blockDir, "images", imageFile)
+	imageData, err := os.ReadFile(imagePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read image file: %w", err)
+	}
+
+	scanResult, err := h.scannerManager.ScanImage(imageData, core.ScanOptions{
+		ExtractMessage:      true,
+		ConfidenceThreshold: 0.5,
+		IncludeMetadata:     true,
+	})
+
+	result := map[string]interface{}{
+		"transaction_id": txID,
+		"block_height":   blockHeight,
+		"block_dir":      filepath.Base(blockDir),
+		"image_file":     imageFile,
+		"image_size":     len(imageData),
+		"is_stego":       false,
+		"confidence":     0.0,
+		"prediction":     "no_stego",
+	}
+
+	if err != nil {
+		log.Printf("Failed to scan image: %v", err)
+		result["scan_error"] = err.Error()
+	} else {
+		result["is_stego"] = scanResult.IsStego
+		result["confidence"] = scanResult.Confidence
+		result["prediction"] = scanResult.Prediction
+		result["stego_type"] = scanResult.StegoType
+		result["extraction_error"] = scanResult.ExtractionError
+
+		if scanResult.IsStego && scanResult.ExtractedMessage != "" {
+			result["extracted_message"] = scanResult.ExtractedMessage
+			result["skill"] = scanResult.ExtractedMessage
+			result["context"] = scanResult.ExtractedMessage
+		}
+	}
+
+	return result, nil
 }
 
 func (h *HTTPMCPServer) handleGetScannerInfo(ctx context.Context, args map[string]interface{}) (interface{}, error) {

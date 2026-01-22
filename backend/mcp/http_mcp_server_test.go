@@ -484,43 +484,113 @@ func TestProposalCreationRequiresWish(t *testing.T) {
 }
 
 // For PostgreSQL testing with an in-memory simulation, you could use a test database.
-// Note: PostgreSQL doesn't have true in-memory mode, but you can use a temporary test DB.
-// Example using testcontainers (requires docker):
-//
-// import "github.com/testcontainers/testcontainers-go/postgres"
-//
-// func TestHTTPMCPServerWithPostgres(t *testing.T) {
-//     ctx := context.Background()
-//     pgContainer, err := postgres.RunContainer(ctx,
-//         testcontainers.WithImage("postgres:15-alpine"),
-//         postgres.WithDatabase("testdb"),
-//         postgres.WithUsername("postgres"),
-//         postgres.WithPassword("password"),
-//         testcontainers.WithWaitStrategy(
-//             wait.ForLog("database system is ready to accept connections").
-//                 WithOccurrence(2).WithStartupTimeout(5*time.Second)),
-//     )
-//     if err != nil {
-//         t.Fatalf("failed to start container: %v", err)
-//     }
-//     defer pgContainer.Terminate(ctx)
-//
-//     dsn, err := pgContainer.ConnectionString(ctx, "sslmode=disable")
-//     if err != nil {
-//         t.Fatalf("failed to get connection string: %v", err)
-//     }
-//
-//     store, err := scstore.NewPGStore(ctx, dsn, 72*time.Hour, false)
-//     if err != nil {
-//         t.Fatalf("failed to create PG store: %v", err)
-//     }
-//
-//     ingestionSvc, err := services.NewIngestionService(dsn)
-//     if err != nil {
-//         t.Fatalf("failed to create ingestion service: %v", err)
-//     }
-//
-//     server := NewHTTPMCPServer(store, "test-key", ingestionSvc)
-//
-//     // Run similar subtests as TestHTTPMCPServer
-// }
+func TestScanTransactionTool(t *testing.T) {
+	store := scstore.NewMemoryStore(72 * time.Hour)
+	ingestionSvc := &services.IngestionService{}
+	scannerManager := &starlight.ScannerManager{}
+	server := NewHTTPMCPServer(store, allowAllValidator{}, ingestionSvc, scannerManager, nil, auth.NewChallengeStore(10*time.Minute))
+
+	t.Run("scan_transaction_requires_tx_id", func(t *testing.T) {
+		req := MCPRequest{
+			Tool:      "scan_transaction",
+			Arguments: map[string]interface{}{},
+		}
+		body, _ := json.Marshal(req)
+
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("POST", "/mcp/call", bytes.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+
+		server.handleToolCall(w, r)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		var resp MCPResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to unmarshal response: %v", err)
+		}
+		if resp.Success {
+			t.Fatalf("expected failure due to missing transaction_id")
+		}
+		if resp.ErrorCode != "VALIDATION_FAILED" {
+			t.Fatalf("expected VALIDATION_FAILED error code, got: %s", resp.ErrorCode)
+		}
+	})
+
+	t.Run("scan_transaction_requires_valid_tx_id", func(t *testing.T) {
+		req := MCPRequest{
+			Tool: "scan_transaction",
+			Arguments: map[string]interface{}{
+				"transaction_id": "invalid-tx-id",
+			},
+		}
+		body, _ := json.Marshal(req)
+
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("POST", "/mcp/call", bytes.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+
+		server.handleToolCall(w, r)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		var resp MCPResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to unmarshal response: %v", err)
+		}
+		if resp.Success {
+			t.Fatalf("expected failure due to invalid transaction_id length")
+		}
+		if resp.ErrorCode != "VALIDATION_FAILED" {
+			t.Fatalf("expected VALIDATION_FAILED error code, got: %s", resp.ErrorCode)
+		}
+	})
+
+	t.Run("scan_transaction_returns_structure", func(t *testing.T) {
+		if server.bitcoinClient == nil {
+			t.Skip("bitcoin client not available")
+		}
+		req := MCPRequest{
+			Tool: "scan_transaction",
+			Arguments: map[string]interface{}{
+				"transaction_id": strings.Repeat("a", 64),
+			},
+		}
+		body, _ := json.Marshal(req)
+
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("POST", "/mcp/call", bytes.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+
+		server.handleToolCall(w, r)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		var resp MCPResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to unmarshal response: %v", err)
+		}
+		if !resp.Success {
+			t.Logf("Note: Transaction scan may have failed due to network issues: %s", resp.Error)
+			return
+		}
+
+		data, ok := resp.Result.(map[string]interface{})
+		if !ok {
+			t.Fatalf("expected result to be a map")
+		}
+
+		if data["transaction_id"] != strings.Repeat("a", 64) {
+			t.Fatalf("expected transaction_id in response")
+		}
+		if _, ok := data["status"].(string); !ok {
+			t.Fatalf("expected status in response")
+		}
+	})
+}

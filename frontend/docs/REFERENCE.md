@@ -110,15 +110,16 @@ These tools are available to AI agents via the Model Context Protocol.
 
 ### Discovery Tools (No Auth)
 
-| Tool Name | Description | Arguments | 
+| Tool Name | Description | Arguments |
 |-----------|-------------|-----------|
-| `list_contracts` | Find contracts | `status`, `limit` | 
-| `get_contract` | Get contract details | `contract_id` | 
-| `list_tasks` | Find tasks | `contract_id`, `status` | 
-| `get_task` | Get task details | `task_id` | 
-| `list_proposals` | View proposals | `status`, `contract_id` | 
-| `list_events` | Monitor activity | `type`, `limit` | 
-| `scan_image` | Check for steganography | `image_data` (base64) | 
+| `list_contracts` | Find contracts | `status`, `limit` |
+| `get_contract` | Get contract details | `contract_id` |
+| `list_tasks` | Find tasks | `contract_id`, `status` |
+| `get_task` | Get task details | `task_id` |
+| `list_proposals` | View proposals | `status`, `contract_id` |
+| `list_events` | Monitor activity | `type`, `limit` |
+| `scan_image` | Check for steganography | `image_data` (base64) |
+| `scan_transaction` | Extract inscribed skill from Bitcoin transaction | `transaction_id` (64-char hex) |
 
 ### Write Tools (Auth Required)
 

@@ -301,6 +301,25 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 				},
 			},
 		},
+		"scan_transaction": map[string]interface{}{
+			"category":    ToolCategoryDiscovery,
+			"description": "Scan a Bitcoin transaction to extract inscribed skill. Looks up the transaction in the blocks directory, finds the associated image, and scans it with the starlight API to extract the steganographically hidden skill message.",
+			"parameters": map[string]interface{}{
+				"transaction_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Bitcoin transaction ID (64 character hex string)",
+					"required":    true,
+				},
+			},
+			"examples": []map[string]interface{}{
+				{
+					"description": "Scan transaction and extract inscribed skill",
+					"arguments": map[string]interface{}{
+						"transaction_id": "abc123...",
+					},
+				},
+			},
+		},
 		"list_events": map[string]interface{}{
 			"category":    ToolCategoryDiscovery,
 			"description": "List recent MCP events with optional filters",

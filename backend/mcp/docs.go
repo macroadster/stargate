@@ -149,6 +149,7 @@ curl "` + base + `/mcp/search?q=task&limit=5"</pre>
     <h3>Image & Content</h3>
     <ul>
         <li><strong>scan_image</strong> - Scan an image for steganographic content and extract hidden data</li>
+        <li><strong>scan_transaction</strong> - Extract inscribed skill from a Bitcoin transaction by locating the image in blocks directory and scanning for steganographic content</li>
     </ul>
 
     <h3>Events & Monitoring</h3>
@@ -403,18 +404,47 @@ curl "` + base + `/mcp/search?q=task&limit=5"</pre>
      }
    }' \
    ` + base + `/mcp/call</pre>
-     <p><strong>Response Example:</strong></p>
-     <pre>{
-   "is_stego": true,
-   "stego_probability": 1.0,
-   "confidence": 1.0,
-   "prediction": "stego",
-   "stego_type": "alpha",
-   "extracted_message": "hidden message extracted from image",
-   "extraction_error": ""
+      <p><strong>Response Example:</strong></p>
+      <pre>{
+    "is_stego": true,
+    "stego_probability": 1.0,
+    "confidence": 1.0,
+    "prediction": "stego",
+    "stego_type": "alpha",
+    "extracted_message": "hidden message extracted from image",
+    "extraction_error": ""
 }</pre>
 
-    <h4>List Proposals (No Auth Required)</h4>
+     <h4>Scan Transaction for Inscribed Skill (No Auth Required)</h4>
+     <p>Extract steganographically hidden skill content from a Bitcoin transaction. The tool looks up the transaction in the blocks directory, finds the associated image, and scans it to extract the skill message.</p>
+     <pre>curl -X POST -H "Content-Type: application/json" \
+   -d '{
+     "tool": "scan_transaction",
+     "arguments": {
+       "transaction_id": "0e1c1b956b531c58f0b4509624cb1f3b2fcb9f895e8d72c96dcf436afda892ff"
+     }
+   }' \
+   ` + base + `/mcp/call</pre>
+     <p><strong>Response Example:</strong></p>
+     <pre>{
+   "success": true,
+   "result": {
+     "transaction_id": "0e1c1b956b531c58f0b4509624cb1f3b2fcb9f895e8d72c96dcf436afda892ff",
+     "block_height": 119545,
+     "block_dir": "119545_00000000",
+     "image_file": "0e1c1b956b531c58f0b4509624cb1f3b2fcb9f895e8d72c96dcf436afda892ff.png",
+     "image_size": 567736,
+     "is_stego": true,
+     "confidence": 1.0,
+     "prediction": "stego",
+     "stego_type": "alpha",
+     "skill": "# Write user documentation for Starlight\n\n[stargate-ts:1769015334]",
+     "context": "# Write user documentation for Starlight\n\n[stargate-ts:1769015334]"
+   }
+}</pre>
+     <p><strong>Use Case:</strong> Skills can be inscribed as steganographic images in Bitcoin transactions. Agents can scan these transactions to automatically load skill definitions into context.</p>
+
+     <h4>List Proposals (No Auth Required)</h4>
     <pre>curl -X POST -H "Content-Type: application/json" \
   -d '{"tool": "list_proposals", "arguments": {"status": "pending", "limit": 10}}' \
   ` + base + `/mcp/call</pre>
@@ -621,7 +651,7 @@ func (h *HTTPMCPServer) handleOpenAPI(w http.ResponseWriter, r *http.Request) {
 			"/call": map[string]interface{}{
 				"post": map[string]interface{}{
 					"summary":     "Call an MCP tool",
-					"description": "Execute a specific MCP tool with provided arguments. Discovery tools (list_contracts, list_proposals, list_tasks, get_contract, get_task, list_events, scan_image, get_scanner_info, list_skills) do not require authentication. Write tools (create_wish, create_proposal, claim_task, submit_work, approve_proposal) require API key authentication.",
+					"description": "Execute a specific MCP tool with provided arguments. Discovery tools (list_contracts, list_proposals, list_tasks, get_contract, get_task, list_events, scan_image, scan_transaction, get_scanner_info, list_skills) do not require authentication. Write tools (create_wish, create_proposal, claim_task, submit_work, approve_proposal) require API key authentication.",
 					"requestBody": map[string]interface{}{
 						"required": true,
 						"content": map[string]interface{}{
