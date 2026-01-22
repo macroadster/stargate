@@ -50,9 +50,10 @@ const InscriptionCard = ({ inscription, onClick }) => {
   const isTextMime = mime.startsWith('text/');
   const isHtmlContent = mime.includes('text/html') || mime.includes('application/xhtml');
   const isSvgContent = mime === 'image/svg+xml' || (mime.includes('svg') && mime.includes('xml'));
+  const isInlineHtml = isHtmlContent && textContent.trim().startsWith('<');
   const imageSource = isActuallyImageFile ? (inscription.thumbnail || inscription.image_url) : null;
-  const sandboxSrc = inscription.thumbnail || inscription.image_url;
-  const sandboxDoc = (isHtmlContent || isSvgContent) ? (inscription.text || '') : '';
+  const sandboxSrc = inscription.image_url || inscription.thumbnail;
+  const sandboxDoc = (isHtmlContent || isSvgContent) ? (textContent || '') : '';
   const headline = (() => {
     if (textContent) {
       const line = textContent.split('\n').map((l) => l.trim()).find((l) => l);
@@ -67,7 +68,7 @@ const InscriptionCard = ({ inscription, onClick }) => {
   const detectionScore = Math.max(confidenceScore, stegoProbability);
   const detectionPercent = Math.round(detectionScore * 100);
   const shouldLoadMedia = isVisible;
-  const showImage = shouldLoadMedia && imageSource && isActuallyImageFile;
+  const showImage = shouldLoadMedia && imageSource && isActuallyImageFile && !isInlineHtml;
   const showSandbox = shouldLoadMedia && (isHtmlContent || isSvgContent) && (sandboxSrc || sandboxDoc);
 
   const handleTextPreviewToggle = (e) => {
@@ -82,7 +83,7 @@ const InscriptionCard = ({ inscription, onClick }) => {
       className="relative group cursor-pointer break-inside-avoid mb-6"
     >
       <div className="relative overflow-hidden rounded-2xl border border-gray-200 dark:border-gray-800 hover:border-indigo-400 transition-all duration-200 bg-white dark:bg-gray-900 shadow-sm">
-        <div className={`${hasTextContent && !imageSource ? '' : 'max-h-[460px]'} flex items-start justify-center bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-700 dark:to-gray-800 relative overflow-hidden`}
+        <div className={`${hasTextContent && !imageSource ? '' : 'max-h-[460px] min-h-[200px]'} flex items-start justify-center bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-700 dark:to-gray-800 relative overflow-hidden`}
              style={hasTextContent && !imageSource ? { minHeight: `${calculateTextHeight(textContent, false)}px` } : {}}>
           {showTextPreview && hasTextContent ? (
             <div className="absolute inset-0 p-3 bg-white dark:bg-gray-900 rounded-lg overflow-hidden">
@@ -92,7 +93,7 @@ const InscriptionCard = ({ inscription, onClick }) => {
               </div>
             </div>
           ) : showSandbox ? (
-            <div className="absolute inset-0">
+            <div className="absolute inset-0 min-h-[200px]">
               <iframe
                 title={`inscription-${inscription.id}`}
                 src={sandboxSrc || undefined}
@@ -119,8 +120,8 @@ const InscriptionCard = ({ inscription, onClick }) => {
                 />
               ) : null}
               <div className={`text-${hasTextContent && !imageSource ? 'base' : 'lg'} font-bold text-center px-3 text-gray-800 dark:text-gray-200 ${hasTextContent && !imageSource ? 'py-4' : ''}`} 
-                 style={{display: imageSource && isActuallyImageFile ? 'none' : 'flex', wordBreak: 'break-word'}}>
-                {hasTextContent ? (
+                  style={{display: (imageSource && isActuallyImageFile && !isInlineHtml) ? 'none' : 'flex', wordBreak: 'break-word'}}>
+                {hasTextContent && !isInlineHtml ? (
                   !imageSource ? (
                     <div className="space-y-2">
                       <div className="text-sm font-normal text-gray-600 dark:text-gray-400 leading-relaxed max-h-[200px] overflow-hidden">
@@ -134,7 +135,7 @@ const InscriptionCard = ({ inscription, onClick }) => {
                     </div>
                   ) : textContent.slice(0, 80) + (textContent.length > 80 ? '...' : '')
                 ) : 
-                 inscription.contract_type === 'Steganographic Contract' ? '🎨' : '📦'}
+                  inscription.contract_type === 'Steganographic Contract' ? '🎨' : '📦'}
               </div>
             </>
           )}
