@@ -838,7 +838,9 @@ func dedupImage(img *ExtractedImageData, seen map[string]bool) bool {
 	}
 
 	// If the payload looks like an image but has leading metadata, trim to the first valid signature.
-	if strings.HasPrefix(img.ContentType, "image/") || strings.HasPrefix(img.Format, "png") || strings.HasPrefix(img.Format, "webp") || strings.HasPrefix(img.Format, "jpeg") {
+	// Skip SVG as it's text-based and doesn't have a binary signature we track.
+	isSVG := strings.Contains(strings.ToLower(img.ContentType), "svg") || img.Format == "svg"
+	if !isSVG && (strings.HasPrefix(img.ContentType, "image/") || strings.HasPrefix(img.Format, "png") || strings.HasPrefix(img.Format, "webp") || strings.HasPrefix(img.Format, "jpeg")) {
 		if trimmed := trimToImageSignatureLocal(img.Data); len(trimmed) > 0 {
 			img.Data = trimmed
 			img.SizeBytes = len(trimmed)
