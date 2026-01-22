@@ -11,9 +11,9 @@ import { useAuth } from '../../context/AuthContext';
 // QR version 40-L max byte capacity (base64 uses byte mode).
 const QR_BYTE_LIMIT = 2953;
 
-const InscriptionModal = ({ inscription, onClose }) => {
+const InscriptionModal = ({ inscription, onClose, initialTab = 'overview' }) => {
   const { auth } = useAuth();
-  const [activeTab, setActiveTab] = useState('overview');
+  const [activeTab, setActiveTab] = useState(initialTab);
   const [monoContent, setMonoContent] = useState(true);
   const [network, setNetwork] = useState(
     inscription?.metadata?.network ||

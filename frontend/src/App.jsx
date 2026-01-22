@@ -14,7 +14,7 @@ import ContractsPage from './pages/ContractsPage';
 import McpDocsPage from './pages/McpDocsPage';
 import DocsPage from './pages/DocsPage';
 import AppHeader from './components/Common/AppHeader';
-import { AuthProvider } from './context/AuthContext';
+import { AuthProvider, useAuth } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
 
 import { useBlocks } from './hooks/useBlocks';
@@ -42,8 +42,9 @@ const formatTimeAgo = (timestamp) => {
 };
 
 function MainContent() {
-  const { height } = useParams();
+  const { height, wishId, contractId, proposalId } = useParams();
   const navigate = useNavigate();
+  const { auth } = useAuth();
   const [showInscribeModal, setShowInscribeModal] = useState(false);
   const [selectedInscription, setSelectedInscription] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -90,6 +91,143 @@ function MainContent() {
     return !isBrc;
   });
 
+  // Handle deep linking for wishes, contracts, and proposals
+  useEffect(() => {
+    const deepLinkId = wishId || contractId || proposalId;
+    if (!deepLinkId) return;
+
+    const fetchDeepLink = async () => {
+      try {
+        let searchId = deepLinkId;
+        const headers = {};
+        if (auth.apiKey) {
+          headers['X-API-Key'] = auth.apiKey;
+        }
+        
+        let proposalData = null;
+
+        // If it's a proposal ID, we might need to find the associated contract first
+        if (proposalId) {
+          try {
+            const propRes = await fetch(`${API_BASE}/api/smart_contract/proposals/${proposalId}`, { headers });
+            if (propRes.ok) {
+              proposalData = await propRes.json();
+              searchId = proposalData.visible_pixel_hash || 
+                         proposalData.metadata?.visible_pixel_hash || 
+                         proposalData.metadata?.contract_id || 
+                         proposalData.id;
+            }
+          } catch (e) {
+            console.error("Failed to fetch proposal details", e);
+          }
+        }
+
+        const response = await fetch(`${API_BASE}/api/search?q=${encodeURIComponent(searchId)}`, { headers });
+        const data = await response.json();
+        const payload = data?.data || data;
+        
+        // Prioritize contracts, then inscriptions.
+        const contract = payload?.contracts?.[0];
+        const inscription = payload?.inscriptions?.[0];
+        
+        if (contract) {
+             const rawUrl = contract.stego_image_url || contract.stegoImageUrl || '';
+             const imageUrl = rawUrl && !rawUrl.startsWith('http') ? `${CONTENT_BASE}${rawUrl}` : rawUrl;
+             const metadata = contract.metadata || {};
+             const wishText = metadata.wish_text || metadata.embedded_message || metadata.message || '';
+             const item = {
+               id: contract.contract_id || contract.contractId || contract.id,
+               contract_type: contract.contract_type || 'Smart Contract',
+               metadata,
+               image_url: imageUrl,
+               mime_type: metadata.content_type || 'image/png',
+               text: wishText,
+               genesis_block_height: contract.block_height || 0,
+               block_height: contract.block_height || 0,
+               status: metadata.confirmation_status || 'open',
+             };
+             setSelectedInscription(item);
+        } else if (inscription) {
+            const item = {
+                id: inscription.id,
+                contractType: 'Custom Contract',
+                capability: 'Data Storage',
+                protocol: 'BRC-20',
+                apiEndpoints: 0,
+                interactions: 0,
+                reputation: 'N/A',
+                isActive: inscription.status === 'confirmed',
+                number: parseInt(inscription.id?.split('_')[1]) || 0,
+                address: 'bc1q...',
+                genesis_block_height: inscription.blockHeight || 0,
+                mime_type: 'text/plain',
+                text: inscription.text || '',
+                metadata: inscription.metadata || {},
+            };
+             setSelectedInscription(item);
+        } else if (proposalData) {
+            // Fallback: If search failed but we have proposal data, create a synthetic item
+            const meta = proposalData.metadata || {};
+            const stegoId = proposalData.visible_pixel_hash || meta.visible_pixel_hash || meta.contract_id;
+            
+            // Determine image source:
+            // 1. If ID looks like an inscription ID (has 'i'), it's definitely content.
+            // 2. If status is pending/approved, it's likely in uploads (pre-chain).
+            // 3. Otherwise (published/confirmed), assume content.
+            const isInscriptionId = stegoId && stegoId.includes('i');
+            const isPending = ['pending', 'approved'].includes((proposalData.status || '').toLowerCase());
+            const imageBase = (isInscriptionId || !isPending) ? 'content' : 'uploads';
+
+            const item = {
+                id: stegoId || proposalData.id,
+                contract_type: 'Steganographic Contract', // Ensure it looks like a contract
+                metadata: {
+                    ...meta,
+                    visible_pixel_hash: proposalData.visible_pixel_hash,
+                    contract_id: meta.contract_id,
+                    wish_text: proposalData.description_md,
+                    is_stego: true, // Hint to modal to show stego analysis sections
+                    stego_type: 'alpha' // Default assumption if missing
+                },
+                image_url: stegoId ? `${CONTENT_BASE}/${imageBase}/${stegoId}` : null,
+                mime_type: stegoId ? 'image/png' : 'application/json',
+                text: proposalData.description_md || proposalData.title || '',
+                status: proposalData.status,
+                genesis_block_height: 0 // Unknown without search
+            };
+            setSelectedInscription(item);
+        } else if (wishId || contractId) {
+            // Fallback: Try direct inscription fetch
+            try {
+                const directRes = await fetch(`${API_BASE}/api/data/inscriptions/${wishId || contractId}`);
+                if (directRes.ok) {
+                    const directData = await directRes.json();
+                    const ins = directData.inscription || directData;
+                    if (ins) {
+                         const item = {
+                            id: ins.tx_id || ins.id,
+                            contractType: ins.is_stego ? 'Smart Contract' : 'Inscription',
+                            mime_type: ins.content_type,
+                            text: ins.content,
+                            metadata: ins.metadata || {},
+                            image_url: `${CONTENT_BASE}/content/${ins.tx_id || ins.id}`,
+                            genesis_block_height: ins.genesis_height || 0
+                        };
+                        setSelectedInscription(item);
+                    }
+                }
+            } catch (e) {
+                console.error("Direct fetch failed", e);
+            }
+        }
+      } catch (error) {
+        console.error("Deep link fetch failed", error);
+      }
+    };
+    
+    fetchDeepLink();
+  }, [wishId, contractId, proposalId, auth.apiKey]);
+
   useEffect(() => {
     const targetHeight = height !== undefined ? parseInt(height, 10) : null;
     // Only hydrate selection from the route when we don't already have one.
@@ -103,18 +241,10 @@ function MainContent() {
     }
   }, [height, blocks, selectedBlock, setSelectedBlock, setIsUserNavigating, navigate]);
 
-  // If selection and route diverge (race between click and router), force the route to the selected block.
   useEffect(() => {
-    if (!selectedBlock) return;
-    const currentHeight = height !== undefined ? parseInt(height, 10) : null;
-    if (currentHeight !== selectedBlock.height) {
-      navigate(`/block/${selectedBlock.height}`, { replace: true });
-      // Clear the user navigation flag once the route is synced
-      setIsUserNavigating(false);
-    }
-  }, [selectedBlock, height, navigate, setIsUserNavigating]);
+    // If we are deep-linking to an item, do not auto-select the pending block
+    if (wishId || contractId || proposalId) return;
 
-  useEffect(() => {
     if (!blocks.length) return;
 
     // Auto-select pending block on initial load (both root and /pending routes)
@@ -124,7 +254,21 @@ function MainContent() {
       setSelectedBlock(pendingBlock);
       setIsUserNavigating(true);
     }
-  }, [blocks, selectedBlock, setSelectedBlock, setIsUserNavigating]);
+  }, [blocks, selectedBlock, setSelectedBlock, setIsUserNavigating, wishId, contractId, proposalId]);
+
+  // If selection and route diverge (race between click and router), force the route to the selected block.
+  // But strictly AVOID this if we are on a deep-link route.
+  useEffect(() => {
+    if (wishId || contractId || proposalId) return;
+
+    if (!selectedBlock) return;
+    const currentHeight = height !== undefined ? parseInt(height, 10) : null;
+    if (currentHeight !== selectedBlock.height) {
+      navigate(`/block/${selectedBlock.height}`, { replace: true });
+      // Clear the user navigation flag once the route is synced
+      setIsUserNavigating(false);
+    }
+  }, [selectedBlock, height, navigate, setIsUserNavigating, wishId, contractId, proposalId]);
 
   useEffect(() => {
     if (!hasMoreImages || !sentinelRef.current) return;
@@ -644,6 +788,7 @@ function MainContent() {
          <InscriptionModal
            inscription={selectedInscription}
            onClose={() => setSelectedInscription(null)}
+           initialTab={proposalId ? 'proposals' : 'overview'}
          />
        )}
 
@@ -704,13 +849,21 @@ export default function App() {
       <ThemeProvider>
         <Routes>
           <Route path="/" element={<MainContent />} />
-          <Route path="/block/:height" element={<MainContent />} />
           <Route path="/pending" element={<MainContent />} />
           <Route path="/contracts" element={<ContractsPage />} />
           <Route path="/discover" element={<DiscoverPage />} />
           <Route path="/auth" element={<AuthPage />} />
           <Route path="/mcp/docs" element={<McpDocsPage />} />
           <Route path="/docs/*" element={<DocsPage />} />
+          
+          {/* Dynamic routes */}
+          <Route path="/block/:height" element={<MainContent />} />
+          <Route path="/wish/:wishId" element={<MainContent />} />
+          <Route path="/contract/:contractId" element={<MainContent />} />
+          <Route path="/proposal/:proposalId" element={<MainContent />} />
+
+          {/* Fallback */}
+          <Route path="*" element={<MainContent />} />
         </Routes>
       </ThemeProvider>
     </AuthProvider>
