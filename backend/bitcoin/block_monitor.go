@@ -1057,13 +1057,7 @@ func sanitizeExtractedImage(img ExtractedImageData) ExtractedImageData {
 
 	if strings.HasPrefix(mime, "image/") {
 		if strings.HasPrefix(mime, "image/svg") {
-			// Treat SVG as text-like for cleanup.
-			if cleanedData := stripPushdataPrefixLocal(data); len(cleanedData) > 0 {
-				data = cleanedData
-			}
-			if cleanedData := stripNonPrintablePrefixLocal(data); len(cleanedData) > 0 {
-				data = cleanedData
-			}
+			// Treat SVG as text-like for cleanup: trim to first tag.
 			if idx := bytes.IndexByte(data, '<'); idx >= 0 {
 				data = data[idx:]
 			}
@@ -1071,14 +1065,8 @@ func sanitizeExtractedImage(img ExtractedImageData) ExtractedImageData {
 			data = trimmed
 		}
 	} else {
-		if cleanedData := stripPushdataPrefixLocal(data); len(cleanedData) > 0 {
-			data = cleanedData
-		}
-		if cleanedData := stripNonPrintablePrefixLocal(data); len(cleanedData) > 0 {
-			data = cleanedData
-		}
-		// HTML bodies may have leading metadata/prefix bytes before the first tag.
-		if strings.HasPrefix(mime, "text/html") || strings.HasSuffix(strings.ToLower(img.FileName), ".html") {
+		// HTML and other text-like bodies may have leading metadata/prefix bytes before the first tag.
+		if strings.HasPrefix(mime, "text/html") || strings.HasSuffix(strings.ToLower(img.FileName), ".html") || strings.HasPrefix(mime, "image/svg") {
 			if idx := bytes.IndexByte(data, '<'); idx >= 0 {
 				data = data[idx:]
 			}
@@ -1099,13 +1087,7 @@ func sanitizeInscriptionsForDisk(inscriptions []InscriptionData) []InscriptionDa
 		mime := strings.ToLower(strings.TrimSpace(ins.ContentType))
 
 		if strings.HasPrefix(mime, "image/svg") {
-			// Treat SVG as text-ish.
-			if cleanedData := stripPushdataPrefixLocal(data); len(cleanedData) > 0 {
-				data = cleanedData
-			}
-			if cleanedData := stripNonPrintablePrefixLocal(data); len(cleanedData) > 0 {
-				data = cleanedData
-			}
+			// Treat SVG as text-ish: trim to first tag.
 			if idx := bytes.IndexByte(data, '<'); idx >= 0 {
 				data = data[idx:]
 			}
@@ -1114,12 +1096,6 @@ func sanitizeInscriptionsForDisk(inscriptions []InscriptionData) []InscriptionDa
 				data = trimmed
 			}
 		} else {
-			if cleanedData := stripPushdataPrefixLocal(data); len(cleanedData) > 0 {
-				data = cleanedData
-			}
-			if cleanedData := stripNonPrintablePrefixLocal(data); len(cleanedData) > 0 {
-				data = cleanedData
-			}
 			if strings.HasPrefix(mime, "text/html") || strings.HasSuffix(strings.ToLower(ins.FileName), ".html") {
 				if idx := bytes.IndexByte(data, '<'); idx >= 0 {
 					data = data[idx:]
