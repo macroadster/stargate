@@ -34,7 +34,7 @@ func NewProxyScanner(apiURL string, apiKey string) *ProxyScanner {
 	return &ProxyScanner{
 		apiURL:      apiURL,
 		apiKey:      apiKey,
-		client:      &http.Client{Timeout: 30 * time.Second},
+		client:      &http.Client{Timeout: 120 * time.Second},
 		initialized: false,
 		maxRetries:  3,
 		retryDelay:  1 * time.Second,
