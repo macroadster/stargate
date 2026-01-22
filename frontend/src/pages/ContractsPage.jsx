@@ -143,7 +143,7 @@ export default function ContractsPage() {
               className="group text-left"
             >
               <div className="relative overflow-hidden rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 shadow-sm">
-                <div className={`relative ${contract.image_url ? 'aspect-[3/4]' : 'min-h-[320px]'} bg-gray-100 dark:bg-gray-800`}>
+                <div className={`relative ${contract.image_url ? 'aspect-[3/4] min-h-[200px]' : 'min-h-[320px]'} bg-gray-100 dark:bg-gray-800`}>
                   {contract.image_url ? (
                     <img
                       src={contract.image_url}
