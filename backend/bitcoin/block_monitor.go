@@ -1098,11 +1098,7 @@ func sanitizeInscriptionsForDisk(inscriptions []InscriptionData) []InscriptionDa
 		data := []byte(ins.Content)
 		mime := strings.ToLower(strings.TrimSpace(ins.ContentType))
 
-		if strings.HasPrefix(mime, "image/") {
-			if trimmed := trimToImageSignatureLocal(data); len(trimmed) > 0 {
-				data = trimmed
-			}
-		} else if strings.HasPrefix(mime, "image/svg") {
+		if strings.HasPrefix(mime, "image/svg") {
 			// Treat SVG as text-ish.
 			if cleanedData := stripPushdataPrefixLocal(data); len(cleanedData) > 0 {
 				data = cleanedData
@@ -1112,6 +1108,10 @@ func sanitizeInscriptionsForDisk(inscriptions []InscriptionData) []InscriptionDa
 			}
 			if idx := bytes.IndexByte(data, '<'); idx >= 0 {
 				data = data[idx:]
+			}
+		} else if strings.HasPrefix(mime, "image/") {
+			if trimmed := trimToImageSignatureLocal(data); len(trimmed) > 0 {
+				data = trimmed
 			}
 		} else {
 			if cleanedData := stripPushdataPrefixLocal(data); len(cleanedData) > 0 {
