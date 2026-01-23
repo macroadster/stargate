@@ -533,7 +533,8 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'overview' }) => 
     }
     setProposalError('');
     try {
-      const res = await fetchWithTimeout(`${API_BASE}/api/smart_contract/proposals`, {}, 6000);
+      const contractId = contractCandidates[0]; // Use first available contract ID
+      const res = await fetchWithTimeout(`${API_BASE}/api/smart_contract/proposals?contract_id=${encodeURIComponent(contractId)}`, {}, 6000);
       if (res.status === 401 || res.status === 403) {
         setAuthBlocked(true);
         setProposalItems([]);
