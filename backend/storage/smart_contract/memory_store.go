@@ -115,7 +115,7 @@ func matchesContractMeta(contractID string, proposals map[string]smart_contract.
 	return false
 }
 
-// ListContracts returns all contracts filtered by status and skill.
+// ListContracts returns all contracts filtered by status and skill with pagination.
 func (s *MemoryStore) ListContracts(filter smart_contract.ContractFilter) ([]smart_contract.Contract, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -143,6 +143,15 @@ func (s *MemoryStore) ListContracts(filter smart_contract.ContractFilter) ([]sma
 		c.AvailableTasksCount = availableCounts[c.ContractID]
 		out = append(out, c)
 	}
+
+	// Apply pagination
+	if filter.Offset > 0 && filter.Offset < len(out) {
+		out = out[filter.Offset:]
+	}
+	if filter.Limit > 0 && filter.Limit < len(out) {
+		out = out[:filter.Limit]
+	}
+
 	return out, nil
 }
 
@@ -686,7 +695,7 @@ func (s *MemoryStore) ListProposals(ctx context.Context, filter smart_contract.P
 		if len(filter.Skills) > 0 && !proposalHasSkills(p, filter.Skills) {
 			continue
 		}
-		
+
 		// Hydrate tasks
 		populateProposalTasks(&p)
 		out = append(out, p)
@@ -707,10 +716,10 @@ func (s *MemoryStore) GetProposal(ctx context.Context, id string) (smart_contrac
 	if !ok {
 		return smart_contract.Proposal{}, fmt.Errorf("proposal %s not found", id)
 	}
-	
+
 	// Hydrate tasks
 	populateProposalTasks(&p)
-	
+
 	return p, nil
 }
 

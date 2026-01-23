@@ -358,15 +358,57 @@ func (h *HTTPMCPServer) handleListContracts(ctx context.Context, args map[string
 	if creator, ok := args["creator"].(string); ok {
 		filter.Creator = creator
 	}
+	if aiIdentifier, ok := args["ai_identifier"].(string); ok {
+		filter.AiIdentifier = aiIdentifier
+	}
+	if skills, ok := args["skills"].([]interface{}); ok {
+		for _, skill := range skills {
+			if skillStr, ok := skill.(string); ok {
+				filter.Skills = append(filter.Skills, skillStr)
+			}
+		}
+	}
+
+	// Handle pagination parameters
+	if limit, ok := args["limit"].(int); ok && limit > 0 {
+		filter.Limit = limit
+	} else if limitFloat, ok := args["limit"].(float64); ok && limitFloat > 0 {
+		filter.Limit = int(limitFloat)
+	} else {
+		filter.Limit = 50 // Default limit
+	}
+
+	if offset, ok := args["offset"].(int); ok && offset >= 0 {
+		filter.Offset = offset
+	} else if offsetFloat, ok := args["offset"].(float64); ok && offsetFloat >= 0 {
+		filter.Offset = int(offsetFloat)
+	} else {
+		filter.Offset = 0 // Default offset
+	}
 
 	contracts, err := h.store.ListContracts(filter)
 	if err != nil {
 		return nil, err
 	}
 
+	// Check if there are more results by requesting one more item
+	hasMore := false
+	if len(contracts) == filter.Limit {
+		checkFilter := filter
+		checkFilter.Offset = filter.Offset + filter.Limit
+		checkFilter.Limit = 1
+		moreResults, err := h.store.ListContracts(checkFilter)
+		if err == nil && len(moreResults) > 0 {
+			hasMore = true
+		}
+	}
+
 	return map[string]interface{}{
-		"contracts":   contracts,
-		"total_count": len(contracts),
+		"contracts": contracts,
+		"total":     len(contracts),
+		"limit":     filter.Limit,
+		"offset":    filter.Offset,
+		"has_more":  hasMore,
 	}, nil
 }
 
@@ -376,14 +418,46 @@ func (h *HTTPMCPServer) handleListProposals(ctx context.Context, args map[string
 		filter.Status = status
 	}
 
+	// Handle pagination parameters
+	if limit, ok := args["limit"].(int); ok && limit > 0 {
+		filter.MaxResults = limit
+	} else if limitFloat, ok := args["limit"].(float64); ok && limitFloat > 0 {
+		filter.MaxResults = int(limitFloat)
+	} else {
+		filter.MaxResults = 50 // Default limit
+	}
+
+	if offset, ok := args["offset"].(int); ok && offset >= 0 {
+		filter.Offset = offset
+	} else if offsetFloat, ok := args["offset"].(float64); ok && offsetFloat >= 0 {
+		filter.Offset = int(offsetFloat)
+	} else {
+		filter.Offset = 0 // Default offset
+	}
+
 	proposals, err := h.store.ListProposals(ctx, filter)
 	if err != nil {
 		return nil, err
 	}
 
+	// Check if there are more results by requesting one more item
+	hasMore := false
+	if len(proposals) == filter.MaxResults {
+		checkFilter := filter
+		checkFilter.Offset = filter.Offset + filter.MaxResults
+		checkFilter.MaxResults = 1
+		moreResults, err := h.store.ListProposals(ctx, checkFilter)
+		if err == nil && len(moreResults) > 0 {
+			hasMore = true
+		}
+	}
+
 	return map[string]interface{}{
 		"proposals": proposals,
 		"total":     len(proposals),
+		"limit":     filter.MaxResults,
+		"offset":    filter.Offset,
+		"has_more":  hasMore,
 	}, nil
 }
 
@@ -826,8 +900,29 @@ func (h *HTTPMCPServer) handleListTasks(ctx context.Context, args map[string]int
 	if status, ok := args["status"].(string); ok {
 		filter.Status = status
 	}
-	if limit, ok := args["limit"].(float64); ok {
-		filter.Limit = int(limit)
+	if skills, ok := args["skills"].([]interface{}); ok {
+		for _, skill := range skills {
+			if skillStr, ok := skill.(string); ok {
+				filter.Skills = append(filter.Skills, skillStr)
+			}
+		}
+	}
+
+	// Handle pagination parameters
+	if limit, ok := args["limit"].(int); ok && limit > 0 {
+		filter.Limit = limit
+	} else if limitFloat, ok := args["limit"].(float64); ok && limitFloat > 0 {
+		filter.Limit = int(limitFloat)
+	} else {
+		filter.Limit = 50 // Default limit
+	}
+
+	if offset, ok := args["offset"].(int); ok && offset >= 0 {
+		filter.Offset = offset
+	} else if offsetFloat, ok := args["offset"].(float64); ok && offsetFloat >= 0 {
+		filter.Offset = int(offsetFloat)
+	} else {
+		filter.Offset = 0 // Default offset
 	}
 
 	tasks, err := h.store.ListTasks(filter)
@@ -835,9 +930,24 @@ func (h *HTTPMCPServer) handleListTasks(ctx context.Context, args map[string]int
 		return nil, err
 	}
 
+	// Check if there are more results by requesting one more item
+	hasMore := false
+	if len(tasks) == filter.Limit {
+		checkFilter := filter
+		checkFilter.Offset = filter.Offset + filter.Limit
+		checkFilter.Limit = 1
+		moreResults, err := h.store.ListTasks(checkFilter)
+		if err == nil && len(moreResults) > 0 {
+			hasMore = true
+		}
+	}
+
 	return map[string]interface{}{
-		"tasks":       tasks,
-		"total_count": len(tasks),
+		"tasks":    tasks,
+		"total":    len(tasks),
+		"limit":    filter.Limit,
+		"offset":   filter.Offset,
+		"has_more": hasMore,
 	}, nil
 }
 

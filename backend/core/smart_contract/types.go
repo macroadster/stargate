@@ -96,6 +96,8 @@ type ContractFilter struct {
 	Skills       []string
 	Creator      string
 	AiIdentifier string
+	Limit        int
+	Offset       int
 }
 
 // TaskFilter captures simple query params for listing tasks.

@@ -176,22 +176,43 @@ func (s *PGStore) Close() {
 	}
 }
 
-// ListContracts returns all contracts filtered by status, skill, and metadata fields.
+// ListContracts returns all contracts filtered by status, skill, and metadata fields with pagination.
 func (s *PGStore) ListContracts(filter smart_contract.ContractFilter) ([]smart_contract.Contract, error) {
 	ctx := context.Background()
-	rows, err := s.pool.Query(ctx, `
+
+	// Build WHERE clause for creator and ai_identifier filtering
+	whereClause := "WHERE ($1 = '' OR c.status = $1)"
+	args := []interface{}{filter.Status}
+	argIndex := 2
+
+	if filter.Creator != "" {
+		whereClause += fmt.Sprintf(" AND c.metadata->>'creator' = $%d", argIndex)
+		args = append(args, filter.Creator)
+		argIndex++
+	}
+
+	if filter.AiIdentifier != "" {
+		whereClause += fmt.Sprintf(" AND c.metadata->>'ai_identifier' = $%d", argIndex)
+		args = append(args, filter.AiIdentifier)
+		argIndex++
+	}
+
+	// Build base query
+	query := fmt.Sprintf(`
 	SELECT c.contract_id, c.title, c.total_budget_sats, c.goals_count,
 		COALESCE((SELECT COUNT(*) FROM mcp_tasks t WHERE t.contract_id = c.contract_id AND t.status = 'available'), 0) AS available_tasks_count,
 		c.status, c.skills, c.stego_image_url
 	FROM mcp_contracts c
-	WHERE ($1 = '' OR c.status = $1)
-	`, filter.Status)
+	%s
+	`, whereClause)
+
+	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var out []smart_contract.Contract
+	var allContracts []smart_contract.Contract
 	for rows.Next() {
 		var c smart_contract.Contract
 		if err := rows.Scan(&c.ContractID, &c.Title, &c.TotalBudgetSats, &c.GoalsCount, &c.AvailableTasksCount, &c.Status, &c.Skills, &c.StegoImageURL); err != nil {
@@ -200,9 +221,22 @@ func (s *PGStore) ListContracts(filter smart_contract.ContractFilter) ([]smart_c
 		if len(filter.Skills) > 0 && !containsSkill(c.Skills, filter.Skills) {
 			continue
 		}
-		out = append(out, c)
+		allContracts = append(allContracts, c)
 	}
-	return out, rows.Err()
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Apply pagination in memory (simple approach since we need to filter by skills after query)
+	if filter.Offset > 0 && filter.Offset < len(allContracts) {
+		allContracts = allContracts[filter.Offset:]
+	}
+	if filter.Limit > 0 && filter.Limit < len(allContracts) {
+		allContracts = allContracts[:filter.Limit]
+	}
+
+	return allContracts, nil
 }
 
 // hydrateProposalTasks updates proposal tasks with live task statuses from the DB.

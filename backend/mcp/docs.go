@@ -141,7 +141,9 @@ curl "` + base + `/mcp/search?q=task&limit=5"</pre>
 
     <h3>Proposal Management</h3>
     <ul>
-        <li><strong>list_proposals</strong> - List proposals with filtering by status, skills, budget, or contract</li>
+        <li><strong>list_proposals</strong> - List proposals with filtering by status, skills, budget, or contract, with pagination support (limit/offset)</li>
+        <li><strong>list_contracts</strong> - List available smart contracts with filtering by status, creator, AI identifier, or skills, with pagination support (limit/offset)</li>
+        <li><strong>list_tasks</strong> - List available tasks with filtering by status, contract ID, or skills, with pagination support (limit/offset)</li>
         <li><strong>get_proposal</strong> - Get detailed information about a specific proposal by ID</li>
         <li><strong><span style="color: #d9534f;">🔒</span> create_proposal</strong> - Create a new proposal tied to a wish with structured task sections</li>
     </ul>
