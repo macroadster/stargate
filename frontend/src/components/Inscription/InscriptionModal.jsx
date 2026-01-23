@@ -533,17 +533,57 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'overview' }) => 
     }
     setProposalError('');
     try {
-      const contractId = contractCandidates[0]; // Use first available contract ID
-      const res = await fetchWithTimeout(`${API_BASE}/api/smart_contract/proposals?contract_id=${encodeURIComponent(contractId)}`, {}, 6000);
-      if (res.status === 401 || res.status === 403) {
+      const results = await Promise.all(
+        contractCandidates.map(async (contractId) => {
+          try {
+            const res = await fetchWithTimeout(
+              `${API_BASE}/api/smart_contract/proposals?contract_id=${encodeURIComponent(contractId)}`,
+              {},
+              6000
+            );
+            if (res.status === 401 || res.status === 403) return { status: res.status };
+            if (!res.ok) return { error: res.status };
+            return await res.json();
+          } catch (e) {
+            return { error: e.message };
+          }
+        })
+      );
+
+      // Check for auth blocks
+      if (results.some((r) => r.status === 401 || r.status === 403)) {
         setAuthBlocked(true);
         setProposalItems([]);
         setSubmissions({});
         return;
       }
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      let items = (data?.proposals || []).filter((p) => {
+
+      // Merge results
+      const allProposals = [];
+      const allSubmissionsList = [];
+
+      results.forEach((data) => {
+        if (data && !data.error && !data.status) {
+          if (Array.isArray(data.proposals)) {
+            allProposals.push(...data.proposals);
+          }
+          if (Array.isArray(data.submissions)) {
+            allSubmissionsList.push(...data.submissions);
+          } else if (data.submissions) {
+            allSubmissionsList.push(...Object.values(data.submissions));
+          }
+        }
+      });
+
+      // Deduplicate proposals
+      const uniqueProposals = new Map();
+      allProposals.forEach((p) => {
+        if (!uniqueProposals.has(p.id)) {
+          uniqueProposals.set(p.id, p);
+        }
+      });
+
+      let items = Array.from(uniqueProposals.values()).filter((p) => {
         const tasks = Array.isArray(p.tasks) ? p.tasks : [];
         const suggested = Array.isArray(p.metadata?.suggested_tasks) ? p.metadata.suggested_tasks : [];
         const hasMatchingTasks = [...tasks, ...suggested].some((t) => contractCandidates.includes(t.contract_id));
@@ -552,11 +592,17 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'overview' }) => 
         const ingestMatch = p.metadata?.ingestion_id && contractCandidates.includes(p.metadata.ingestion_id);
         return idMatch || hasMatchingTasks || metaContract || ingestMatch;
       });
+
       // Create comprehensive submission mapping with all IDs
       const submissionsByKey = {};
-      const submissionList = Array.isArray(data?.submissions)
-        ? data.submissions
-        : Object.values(data?.submissions || {});
+      const uniqueSubmissions = new Map();
+      allSubmissionsList.forEach((s) => {
+        if (!uniqueSubmissions.has(s.submission_id)) {
+          uniqueSubmissions.set(s.submission_id, s);
+        }
+      });
+      const submissionList = Array.from(uniqueSubmissions.values());
+
       const submissionTime = (submission) => {
         const raw = submission?.submitted_at || submission?.created_at;
         const parsed = Date.parse(raw || '');
