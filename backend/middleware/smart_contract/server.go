@@ -184,8 +184,8 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/smart_contract/discover", s.authWrap(s.handleDiscover))
 
 	// Proposal endpoints
-	mux.HandleFunc("/api/smart_contract/proposals", s.authWrap(s.handleProposals))
-	mux.HandleFunc("/api/smart_contract/proposals/", s.authWrap(s.handleProposals))
+	mux.HandleFunc("/api/smart_contract/proposals", s.authWrapReadOnly(s.handleProposals))
+	mux.HandleFunc("/api/smart_contract/proposals/", s.authWrapReadOnly(s.handleProposals))
 
 	// Submission endpoints
 	mux.HandleFunc("/api/smart_contract/submissions", s.authWrap(s.handleSubmissions))
@@ -201,6 +201,27 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 
 func (s *Server) authWrap(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if s.apiKeys != nil {
+			key := r.Header.Get("X-API-Key")
+			if key == "" || !s.apiKeys.Validate(key) {
+				Error(w, http.StatusForbidden, "invalid api key")
+				return
+			}
+		}
+		next(w, r)
+	}
+}
+
+// authWrapReadOnly allows GET requests without authentication but requires auth for other methods
+func (s *Server) authWrapReadOnly(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			// Allow GET requests without authentication
+			next(w, r)
+			return
+		}
+
+		// Require authentication for non-GET methods
 		if s.apiKeys != nil {
 			key := r.Header.Get("X-API-Key")
 			if key == "" || !s.apiKeys.Validate(key) {
@@ -3022,6 +3043,7 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if !includeConfirmed(r) {
+				// Filter out rejected and stego manifest proposals, but keep confirmed ones
 				filtered := make([]smart_contract.Proposal, 0, len(proposals))
 				for _, p := range proposals {
 					if looksLikeStegoManifestText(p.DescriptionMD) {
@@ -3030,12 +3052,7 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 					if strings.EqualFold(strings.TrimSpace(p.Status), "rejected") {
 						continue
 					}
-					if strings.EqualFold(strings.TrimSpace(p.Status), "confirmed") {
-						continue
-					}
-					if proposalMetaConfirmed(p.Metadata) || proposalHasConfirmedProof(p) {
-						continue
-					}
+					// Note: Confirmed proposals are now included by default
 					filtered = append(filtered, p)
 				}
 				proposals = filtered

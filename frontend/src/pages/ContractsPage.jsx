@@ -123,7 +123,7 @@ export default function ContractsPage() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-50 via-white to-slate-100 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950 text-gray-900 dark:text-gray-100">
       <AppHeader onInscribe={() => navigate('/')} />
-      <div className="container mx-auto px-6 py-10">
+      <div className="container mx-auto px-4 sm:px-6 py-8 sm:py-10">
         <div className="mb-8">
           <h1 className="text-3xl font-bold">Contracts</h1>
           <p className="text-gray-600 dark:text-gray-400">Newest contracts first, with infinite scroll.</p>
@@ -135,7 +135,7 @@ export default function ContractsPage() {
           </div>
         )}
 
-        <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="grid gap-4 sm:gap-6 sm:grid-cols-2 xl:grid-cols-3">
           {displayContracts.map((contract) => (
             <button
               key={`${contract.id}-${contract.block_height}`}
@@ -170,8 +170,8 @@ export default function ContractsPage() {
                   </div>
                 </div>
                 <div className="p-4">
-                  <div className="text-xs text-gray-500 dark:text-gray-400 font-mono truncate">
-                    {contract.id}
+                  <div className="text-xs text-gray-500 dark:text-gray-400 font-mono break-all">
+                    {contract.id.slice(0, 10)}...{contract.id.slice(-6)}
                   </div>
                   <div className="mt-2 text-sm text-gray-700 dark:text-gray-300">
                     {contract.headline}
