@@ -21,7 +21,7 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 	return map[string]interface{}{
 		"list_contracts": map[string]interface{}{
 			"category":    ToolCategoryDiscovery,
-			"description": "List available smart contracts with optional filtering",
+			"description": "List available smart contracts with optional filtering and pagination",
 			"parameters": map[string]interface{}{
 				"status": map[string]interface{}{
 					"type":        "string",
@@ -41,11 +41,25 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 					"items":       map[string]interface{}{"type": "string"},
 					"description": "Filter contracts by required skills",
 				},
+				"limit": map[string]interface{}{
+					"type":        "integer",
+					"description": "Maximum number of contracts to return (default: 50)",
+					"default":     50,
+				},
+				"offset": map[string]interface{}{
+					"type":        "integer",
+					"description": "Number of contracts to skip for pagination (default: 0)",
+					"default":     0,
+				},
 			},
 			"examples": []map[string]interface{}{
 				{
-					"description": "List all active contracts",
-					"arguments":   map[string]interface{}{"status": "active"},
+					"description": "List active contracts with pagination",
+					"arguments":   map[string]interface{}{"status": "active", "limit": 10},
+				},
+				{
+					"description": "List all contracts with custom pagination",
+					"arguments":   map[string]interface{}{"limit": 20, "offset": 100},
 				},
 			},
 		},
@@ -95,7 +109,7 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 		},
 		"list_tasks": map[string]interface{}{
 			"category":    ToolCategoryDiscovery,
-			"description": "List available tasks with filtering options",
+			"description": "List available tasks with filtering options and pagination",
 			"parameters": map[string]interface{}{
 				"contract_id": map[string]interface{}{
 					"type":        "string",
@@ -113,13 +127,23 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 				},
 				"limit": map[string]interface{}{
 					"type":        "integer",
-					"description": "Maximum number of tasks to return",
+					"description": "Maximum number of tasks to return (default: 50)",
+					"default":     50,
+				},
+				"offset": map[string]interface{}{
+					"type":        "integer",
+					"description": "Number of tasks to skip for pagination (default: 0)",
+					"default":     0,
 				},
 			},
 			"examples": []map[string]interface{}{
 				{
-					"description": "List available tasks",
-					"arguments":   map[string]interface{}{"status": "available"},
+					"description": "List available tasks with pagination",
+					"arguments":   map[string]interface{}{"status": "available", "limit": 10},
+				},
+				{
+					"description": "List tasks for specific contract",
+					"arguments":   map[string]interface{}{"contract_id": "contract-123", "limit": 20, "offset": 0},
 				},
 			},
 		},
@@ -184,17 +208,31 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 		// Add more tools as needed...
 		"list_proposals": map[string]interface{}{
 			"category":    ToolCategoryDiscovery,
-			"description": "List proposals with filtering",
+			"description": "List proposals with filtering and pagination",
 			"parameters": map[string]interface{}{
 				"status": map[string]interface{}{
 					"type":        "string",
 					"description": "Filter by proposal status",
 				},
+				"limit": map[string]interface{}{
+					"type":        "integer",
+					"description": "Maximum number of proposals to return (default: 50)",
+					"default":     50,
+				},
+				"offset": map[string]interface{}{
+					"type":        "integer",
+					"description": "Number of proposals to skip for pagination (default: 0)",
+					"default":     0,
+				},
 			},
 			"examples": []map[string]interface{}{
 				{
-					"description": "List pending proposals",
-					"arguments":   map[string]interface{}{"status": "pending"},
+					"description": "List pending proposals with pagination",
+					"arguments":   map[string]interface{}{"status": "pending", "limit": 10, "offset": 0},
+				},
+				{
+					"description": "List all proposals with custom pagination",
+					"arguments":   map[string]interface{}{"limit": 20, "offset": 100},
 				},
 			},
 		},
