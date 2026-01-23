@@ -526,7 +526,7 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'overview' }) => 
 
   const loadProposals = React.useCallback(async (options = {}) => {
     const { showLoading = false } = options;
-    if (!auth.apiKey || authBlocked || !contractCandidates.length) return;
+    if (authBlocked || !contractCandidates.length) return;
     lastFetchedKeyRef.current = contractKey;
     if (showLoading) {
       setIsLoadingProposals(true);
@@ -693,7 +693,7 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'overview' }) => 
   ]);
 
   const loadSubmissions = React.useCallback(async () => {
-    if (!auth.apiKey || authBlocked || !contractCandidates.length) return;
+    if (authBlocked || !contractCandidates.length) return;
     try {
       const submissionsPromises = contractCandidates.map(async (contractId) => {
         const res = await fetchWithTimeout(`${API_BASE}/api/smart_contract/submissions?contract_id=${contractId}`, {}, 6000);
@@ -751,7 +751,7 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'overview' }) => 
   }, [auth.apiKey, authBlocked, contractCandidates, fetchWithTimeout]);
 
   useEffect(() => {
-    if (!auth.apiKey || authBlocked) {
+    if (authBlocked) {
       setProposalItems([]);
       setSubmissions({});
       return undefined;
