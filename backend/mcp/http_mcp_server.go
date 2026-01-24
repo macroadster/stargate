@@ -816,6 +816,15 @@ func (h *HTTPMCPServer) handleScanTransaction(ctx context.Context, args map[stri
 			FilePath string `json:"file_path"`
 			Format   string `json:"format"`
 		} `json:"images"`
+		SmartContracts []struct {
+			ContractID string `json:"contract_id"`
+			ImagePath  string `json:"image_path"`
+			Metadata   struct {
+				TxID        string `json:"tx_id"`
+				FundingTxID string `json:"funding_txid"`
+				ImageFile   string `json:"image_file"`
+			} `json:"metadata"`
+		} `json:"smart_contracts"`
 	}
 
 	if err := json.Unmarshal(inscriptionsData, &inscriptionsDoc); err != nil {
@@ -827,6 +836,18 @@ func (h *HTTPMCPServer) handleScanTransaction(ctx context.Context, args map[stri
 		if strings.HasPrefix(img.TxID, txID) {
 			imageFile = img.FileName
 			break
+		}
+	}
+
+	if imageFile == "" {
+		for _, sc := range inscriptionsDoc.SmartContracts {
+			if strings.HasPrefix(sc.Metadata.TxID, txID) || strings.HasPrefix(sc.Metadata.FundingTxID, txID) {
+				imageFile = sc.Metadata.ImageFile
+				if imageFile == "" && sc.ImagePath != "" {
+					imageFile = filepath.Base(sc.ImagePath)
+				}
+				break
+			}
 		}
 	}
 
@@ -966,10 +987,35 @@ func (h *HTTPMCPServer) handleGetContract(ctx context.Context, args map[string]i
 
 	contract, err := h.store.GetContract(contractID)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			return nil, NewNotFoundError("get_contract", "contract", contractID)
+		// Try to find by normalized ID or with wish- prefix
+		normalized := strings.TrimSpace(contractID)
+		prefixes := []string{"wish-", "proposal-", "task-"}
+		for _, prefix := range prefixes {
+			if strings.HasPrefix(normalized, prefix) {
+				normalized = strings.TrimPrefix(normalized, prefix)
+				break
+			}
 		}
-		return nil, NewInternalError("get_contract", fmt.Sprintf("Failed to get contract: %v", err))
+
+		// Try normalized if different
+		if normalized != contractID {
+			contract, err = h.store.GetContract(normalized)
+		}
+
+		// Try with wish- prefix if still not found
+		if err != nil {
+			wishID := "wish-" + normalized
+			if wishID != contractID {
+				contract, err = h.store.GetContract(wishID)
+			}
+		}
+
+		if err != nil {
+			if strings.Contains(err.Error(), "not found") {
+				return nil, NewNotFoundError("get_contract", "contract", contractID)
+			}
+			return nil, NewInternalError("get_contract", fmt.Sprintf("Failed to get contract: %v", err))
+		}
 	}
 
 	return contract, nil
