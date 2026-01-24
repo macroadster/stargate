@@ -137,25 +137,39 @@ curl -k -X POST \
 ```markdown
 # Comprehensive Strategy for [Wish Title]
 
-## Phase 1: Analysis & Planning (20% of budget)
+## Description
+[A concise overview of the proposed solution and how it addresses the wish.]
+
+## Objective
+[Clear, measurable goals that this proposal intends to achieve.]
+
+## Implementation Roadmap
+
+### Task 1: Analysis & Planning
+**Deliverables:**
 - User persona development
 - Documentation architecture design
+**Skills:** Analysis, Planning
 
-## Phase 2: Implementation & Creation (60% of budget)  
+### Task 2: Implementation & Creation
+**Deliverables:**
 - Multiple deliverable formats
-- Quality assurance testing
+- Core feature set implementation
+**Skills:** Development, Writing
 
-## Phase 3: Review & Refinement (20% of budget)
-- User testing
-- Final integration
+### Task 3: Review & Refinement
+**Deliverables:**
+- User testing report
+- Final integration and polish
+**Skills:** Testing, QA
 
 ## Risk Management
 - Backup strategies for each phase
-- Contingency plans
+- Contingency plans for potential delays
 
 ## Community Benefits
-- Reusable frameworks
-- Educational value for ecosystem
+- Reusable frameworks for future documentation
+- Educational value for the broader ecosystem
 ```
 
 ---
