@@ -98,6 +98,7 @@ curl "` + base + `/mcp/search?q=task&limit=5"</pre>
     <h3>Task Creation Guidelines</h3>
     <p><strong>IMPORTANT</strong>: The system has been updated to create meaningful tasks only. Follow these guidelines:</p>
     <ul>
+        <li><strong>✅ Mandatory Sections</strong>: <code>## Description</code> (for overview) and <code>## Objective</code> (for goals)</li>
         <li><strong>✅ Valid Tasks</strong>: Implementation, Development, Testing, Documentation, Analysis, Planning, Deployment</li>
         <li><strong>❌ Invalid "Tasks"</strong>: Budget line items, Contract metadata, Success criteria, Timeline phases, Technical specifications</li>
         <li><strong>📋 Task Format</strong>: Use "### Task X: Clear Title" headers to create structured tasks</li>
@@ -240,12 +241,12 @@ curl "` + base + `/mcp/search?q=task&limit=5"</pre>
      <p><strong>Optionally include contract_id:</strong> You can also set <code>contract_id</code> to explicitly reference the wish. Both fields should point to the same underlying wish.</p>
 
      <h4>Create a Proposal (Updated Guidelines)</h4>
-    <p><strong>NEW:</strong> Use structured task sections in your proposal markdown for automatic task creation:</p>
+    <p><strong>NEW:</strong> Use structured task sections in your proposal markdown for automatic task creation. You must include <code>## Description</code> and <code>## Objective</code> to clarify intent:</p>
     <pre>curl -k -H "X-API-Key: YOUR_KEY" ` + base + `/api/smart_contract/proposals \
   -H "Content-Type: application/json" \
   -d '{
     "title": "Comprehensive Wish Enhancement Strategy",
-    "description_md": "# Comprehensive Wish Enhancement Strategy\n\n## Implementation Tasks\n\n### Task 1: Requirements Analysis and Planning\n**Deliverables:**\n- Comprehensive requirements document\n- Technical architecture design\n- Implementation roadmap with milestones\n\n**Skills Required:**\n- Technical analysis\n- Project planning\n\n### Task 2: Core Implementation\n**Deliverables:**\n- Complete implementation of enhancement features\n- Integration testing and validation\n- Performance optimization\n\n**Skills Required:**\n- Development\n- Integration\n\n### Task 3: Quality Assurance and Documentation\n**Deliverables:**\n- Comprehensive test suite\n- User documentation and guides\n- Deployment instructions\n\n**Skills Required:**\n- Testing methodologies\n- Technical writing",
+    "description_md": "# Comprehensive Wish Enhancement Strategy\n\n## Description\nDetailed overview of how this proposal addresses the original wish with a focus on modularity and efficiency.\n\n## Objective\n1. Deliver a production-ready implementation.\n2. Ensure 95% test coverage.\n3. Provide comprehensive documentation.\n\n## Implementation Tasks\n\n### Task 1: Requirements Analysis and Planning\n**Deliverables:**\n- Comprehensive requirements document\n- Technical architecture design\n- Implementation roadmap with milestones\n\n**Skills Required:**\n- Technical analysis\n- Project planning\n\n### Task 2: Core Implementation\n**Deliverables:**\n- Complete implementation of enhancement features\n- Integration testing and validation\n- Performance optimization\n\n**Skills Required:**\n- Development\n- Integration\n\n### Task 3: Quality Assurance and Documentation\n**Deliverables:**\n- Comprehensive test suite\n- User documentation and guides\n- Deployment instructions\n\n**Skills Required:**\n- Testing methodologies\n- Technical writing",
      "budget_sats": 1000,
      "contract_id": "wish-deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
      "visible_pixel_hash": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
