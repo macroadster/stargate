@@ -602,6 +602,7 @@ PORT=3001
 BLOCKS_DIR=./blocks
 UPLOADS_DIR=/data/uploads
 STARGATE_PG_DSN=postgresql://user:pass@localhost/db  # Main app database
+STARGATE_SEED_FIXTURES=true                   # Enable automatic proposal creation during inscription
 
 # IPFS Mirroring (uploads sync)
 IPFS_MIRROR_ENABLED=true

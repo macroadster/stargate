@@ -163,19 +163,34 @@ func processRecord(ctx context.Context, rec services.IngestionRecord, ingest *se
 	contract, tasks, err := parseEmbeddedContract(raw)
 	if err != nil || contract.ContractID == "" || len(tasks) == 0 {
 		// Fallback: treat embedded_message as markdown wish -> create proposal AND contract.
+		// Skip automatic proposal creation if STARGATE_SEED_FIXTURES=false
+		seedFixtures := true
+		if raw := os.Getenv("STARGATE_SEED_FIXTURES"); raw != "" {
+			if v, err := strconv.ParseBool(raw); err == nil {
+				seedFixtures = v
+			}
+		}
+
 		proposal, err := parseMarkdownProposal(rec.ID, raw, meta, rec.ImageBase64)
 		if err != nil {
 			return ingest.UpdateStatusWithNote(rec.ID, "invalid", fmt.Sprintf("parse error: %v", err))
 		}
-		if err := store.CreateProposal(ctx, proposal); err != nil {
-			return ingest.UpdateStatusWithNote(rec.ID, "invalid", fmt.Sprintf("proposal upsert failed: %v", err))
+		if seedFixtures {
+			if err := store.CreateProposal(ctx, proposal); err != nil {
+				return ingest.UpdateStatusWithNote(rec.ID, "invalid", fmt.Sprintf("proposal upsert failed: %v", err))
+			}
+		} else {
+			// Still log that proposal creation was skipped
+			log.Printf("skipping proposal creation for %s due to STARGATE_SEED_FIXTURES=false", proposal.ID)
 		}
 		// Publish proposal creation event to sync across instances
-		if err := publishProposalEvent(ctx, proposal); err != nil {
-			log.Printf("failed to publish proposal create event for %s: %v", proposal.ID, err)
+		if seedFixtures {
+			if err := publishProposalEvent(ctx, proposal); err != nil {
+				log.Printf("failed to publish proposal create event for %s: %v", proposal.ID, err)
+			}
 		}
 		// Also create contract for wishes so they show up in contracts list
-		if proposal.ID != "" {
+		if proposal.ID != "" && seedFixtures {
 			wishContract := smart_contract.Contract{
 				ContractID:          proposal.ID,
 				Title:               proposal.Title,
