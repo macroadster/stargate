@@ -192,14 +192,43 @@ func (s *PGAPIKeyStore) Seed(key, email, source string) {
 	if key == "" {
 		return
 	}
-	// key_hash is PRIMARY KEY and NOT NULL, must be provided. 
+	// key_hash is PRIMARY KEY and NOT NULL, must be provided.
 	// We MUST use the same SHA256 hashing as creatorAPIKeyHash in server.go
 	sum := sha256.Sum256([]byte(strings.TrimSpace(key)))
 	hash := hex.EncodeToString(sum[:])
 
-	wallet := strings.TrimSpace(os.Getenv("STARLIGHT_DONATION_ADDRESS"))
-
 	_, _ = s.pool.Exec(context.Background(),
-		"INSERT INTO api_keys (key_hash, key, email, wallet_address, source, created_at) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO UPDATE SET wallet_address=EXCLUDED.wallet_address",
-		hash, key, email, wallet, source, time.Now())
+		"INSERT INTO api_keys (key_hash, key, email, source, created_at) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING",
+		hash, key, email, source, time.Now())
+}
+
+// SeedEnvironmentVariables seeds STARGATE_API_KEY and STARLIGHT_DONATION_ADDRESS from environment variables.
+func (s *PGAPIKeyStore) SeedEnvironmentVariables() {
+	stargateKey := strings.TrimSpace(os.Getenv("STARGATE_API_KEY"))
+	donationAddr := strings.TrimSpace(os.Getenv("STARLIGHT_DONATION_ADDRESS"))
+
+	// If both are available, bind them together
+	if stargateKey != "" && donationAddr != "" {
+		// key_hash is PRIMARY KEY and NOT NULL, must be provided.
+		// We MUST use the same SHA256 hashing as creatorAPIKeyHash in server.go
+		sum := sha256.Sum256([]byte(stargateKey))
+		hash := hex.EncodeToString(sum[:])
+
+		_, _ = s.pool.Exec(context.Background(),
+			"INSERT INTO api_keys (key_hash, key, email, wallet_address, source, created_at) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING",
+			hash, stargateKey, "", donationAddr, "seed", time.Now())
+		return
+	}
+
+	// If only STARGATE_API_KEY is available, seed it without wallet
+	if stargateKey != "" {
+		s.Seed(stargateKey, "", "seed")
+	}
+
+	// If only STARLIGHT_DONATION_ADDRESS is available, seed it as its own API key
+	if donationAddr != "" {
+		// Use the donation address as both the key and wallet for simplicity
+		// This allows the donation address to be used as an API key
+		s.Seed(donationAddr, "donation@starlight", "donation_seed")
+	}
 }
