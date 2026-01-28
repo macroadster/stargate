@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -53,6 +54,38 @@ func (s *APIKeyStore) Seed(key, email, source string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.keys[key] = APIKey{Key: key, Email: email, Source: source, CreatedAt: time.Now()}
+}
+
+// SeedEnvironmentVariables seeds STARGATE_API_KEY and STARLIGHT_DONATION_ADDRESS from environment variables.
+func (s *APIKeyStore) SeedEnvironmentVariables() {
+	stargateKey := strings.TrimSpace(os.Getenv("STARGATE_API_KEY"))
+	donationAddr := strings.TrimSpace(os.Getenv("STARLIGHT_DONATION_ADDRESS"))
+
+	// If both are available, bind them together
+	if stargateKey != "" && donationAddr != "" {
+		s.mu.Lock()
+		s.keys[stargateKey] = APIKey{
+			Key:       stargateKey,
+			Email:     "",
+			Wallet:    donationAddr,
+			Source:    "seed",
+			CreatedAt: time.Now(),
+		}
+		s.mu.Unlock()
+		return
+	}
+
+	// If only STARGATE_API_KEY is available, seed it without wallet
+	if stargateKey != "" {
+		s.Seed(stargateKey, "", "seed")
+	}
+
+	// If only STARLIGHT_DONATION_ADDRESS is available, seed it as its own API key
+	if donationAddr != "" {
+		// Use the donation address as both the key and wallet for simplicity
+		// This allows the donation address to be used as an API key
+		s.Seed(donationAddr, "donation@starlight", "donation_seed")
+	}
 }
 
 // Validate returns true if the key exists.
