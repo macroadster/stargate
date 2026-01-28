@@ -8,7 +8,7 @@ import (
 
 // DefaultBudgetSats returns a default budget for proposals/tasks.
 func DefaultBudgetSats() int64 {
-	if raw := os.Getenv("MCP_DEFAULT_BUDGET_SATS"); raw != "" {
+	if raw := os.Getenv("STARGATE_DEFAULT_BUDGET_SATS"); raw != "" {
 		if v, err := strconv.ParseInt(raw, 10, 64); err == nil && v > 0 {
 			return v
 		}
@@ -27,7 +27,7 @@ func FundingAddressFromMeta(meta map[string]interface{}) string {
 			return v
 		}
 	}
-	if v := os.Getenv("MCP_DEFAULT_FUNDING_ADDRESS"); strings.TrimSpace(v) != "" {
+	if v := os.Getenv("STARGATE_DEFAULT_FUNDING_ADDRESS"); strings.TrimSpace(v) != "" {
 		return v
 	}
 	return ""
