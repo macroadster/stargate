@@ -300,6 +300,7 @@ func (h *HTTPMCPServer) toolRequiresAuth(toolName string) bool {
 	authenticatedTools := map[string]bool{
 		"create_proposal":       true,
 		"create_wish":           true,
+		"create_task":           true,
 		"claim_task":            true,
 		"submit_work":           true,
 		"approve_proposal":      true,
@@ -348,6 +349,8 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 		return h.handleGetAuthChallenge(ctx, args)
 	case "verify_auth_challenge":
 		return h.handleVerifyAuthChallenge(ctx, args)
+	case "create_task":
+		return h.handleCreateTask(ctx, args, apiKey)
 	default:
 		return nil, fmt.Errorf("unknown tool: %s", toolName)
 	}
@@ -1488,6 +1491,137 @@ func (h *HTTPMCPServer) verifyBTCSignature(address, signature, message string) (
 	defer resp.Body.Close()
 
 	return resp.StatusCode < 400, nil
+}
+
+func (h *HTTPMCPServer) handleCreateTask(ctx context.Context, args map[string]interface{}, apiKey string) (interface{}, error) {
+	validation := NewValidationError("create_task", "Invalid request parameters")
+
+	// Validate required fields
+	contractID, ok := args["contract_id"].(string)
+	if !ok || strings.TrimSpace(contractID) == "" {
+		validation.AddFieldError("contract_id", args["contract_id"], "contract_id is required and must be a non-empty string", true)
+	}
+
+	title, ok := args["title"].(string)
+	if !ok || strings.TrimSpace(title) == "" {
+		validation.AddFieldError("title", args["title"], "title is required and must be a non-empty string", true)
+	}
+
+	description, ok := args["description"].(string)
+	if !ok || strings.TrimSpace(description) == "" {
+		validation.AddFieldError("description", args["description"], "description is required and must be a non-empty string", true)
+	}
+
+	// Validate budget_sats
+	var budgetSats int64 = 0
+	if budget, ok := args["budget_sats"]; ok {
+		if b, ok := budget.(float64); ok {
+			if b <= 0 {
+				validation.AddFieldError("budget_sats", budget, "budget_sats must be a positive number", true)
+			} else {
+				budgetSats = int64(b)
+			}
+		} else {
+			validation.AddTypeError("budget_sats", budget, "number")
+		}
+	} else {
+		validation.AddFieldError("budget_sats", nil, "budget_sats is required and must be a positive number", true)
+	}
+
+	// Validate optional fields
+	var skills []string
+	if skillsRaw, ok := args["skills"].([]interface{}); ok {
+		for _, skill := range skillsRaw {
+			if skillStr, ok := skill.(string); ok && strings.TrimSpace(skillStr) != "" {
+				skills = append(skills, strings.TrimSpace(skillStr))
+			}
+		}
+	}
+
+	difficulty, _ := args["difficulty"].(string)
+	if difficulty != "" {
+		validDifficulties := map[string]bool{"easy": true, "medium": true, "hard": true}
+		if !validDifficulties[difficulty] {
+			validation.AddFieldError("difficulty", difficulty, "difficulty must be one of: easy, medium, hard", false)
+		}
+	}
+
+	var estimatedHours int = 0
+	if estHours, ok := args["estimated_hours"].(float64); ok {
+		if estHours < 0 {
+			validation.AddFieldError("estimated_hours", estHours, "estimated_hours must be a non-negative number", false)
+		} else {
+			estimatedHours = int(estHours)
+		}
+	} else if estHours, ok := args["estimated_hours"].(int); ok {
+		if estHours < 0 {
+			validation.AddFieldError("estimated_hours", estHours, "estimated_hours must be a non-negative integer", false)
+		} else {
+			estimatedHours = estHours
+		}
+	}
+
+	var requirements map[string]string
+	if reqRaw, ok := args["requirements"].(map[string]interface{}); ok {
+		requirements = make(map[string]string)
+		for key, value := range reqRaw {
+			if valueStr, ok := value.(string); ok {
+				requirements[key] = valueStr
+			}
+		}
+	}
+
+	// Return validation errors if any
+	if validation.HasErrors() {
+		return nil, validation
+	}
+
+	if h.store == nil {
+		return nil, NewServiceUnavailableError("create_task", "task store")
+	}
+
+	// Verify contract exists
+	_, err := h.store.GetContract(contractID)
+	if err != nil {
+		return nil, NewValidationError("create_task", fmt.Sprintf("Contract not found: %s", contractID))
+	}
+
+	// Create the task
+	taskID := fmt.Sprintf("%s-task-%d", contractID, time.Now().Unix())
+
+	task := smart_contract.Task{
+		TaskID:         taskID,
+		ContractID:     contractID,
+		GoalID:         fmt.Sprintf("%s-goal-1", contractID), // Default goal ID
+		Title:          strings.TrimSpace(title),
+		Description:    strings.TrimSpace(description),
+		BudgetSats:     budgetSats,
+		Skills:         skills,
+		Status:         "available", // Default status
+		Difficulty:     difficulty,
+		EstimatedHours: estimatedHours,
+		Requirements:   requirements,
+	}
+
+	// Upsert the task
+	err = h.store.UpsertTask(ctx, task)
+	if err != nil {
+		return nil, NewInternalError("create_task", fmt.Sprintf("Failed to create task: %v", err))
+	}
+
+	return map[string]interface{}{
+		"task_id":         task.TaskID,
+		"contract_id":     task.ContractID,
+		"title":           task.Title,
+		"description":     task.Description,
+		"budget_sats":     task.BudgetSats,
+		"skills":          task.Skills,
+		"status":          task.Status,
+		"difficulty":      task.Difficulty,
+		"estimated_hours": task.EstimatedHours,
+		"requirements":    task.Requirements,
+		"created_at":      time.Now().Format(time.RFC3339),
+	}, nil
 }
 
 // RegisterRoutes registers HTTP MCP endpoints

@@ -67,6 +67,7 @@ curl "` + base + `/mcp/search?q=task&limit=5"</pre>
     <ul>
         <li><code>create_wish</code> - Create a wish (request for work)</li>
         <li><code>create_proposal</code> - Create a proposal</li>
+        <li><code>create_task</code> - Create a new task for an existing contract</li>
         <li><code>claim_task</code> - Claim a task</li>
         <li><code>submit_work</code> - Submit completed work</li>
         <li><code>approve_proposal</code> - Approve a proposal</li>
@@ -113,7 +114,7 @@ curl "` + base + `/mcp/search?q=task&limit=5"</pre>
         <li><span class="endpoint">GET /mcp/search</span> - Search tools by keyword or category (no auth required, reduces context usage)</li>
         <li><span class="endpoint">GET /mcp/tools</span> - List available tools with schemas and examples (no auth required)</li>
         <li><span class="endpoint">GET /mcp/discover</span> - Discover available endpoints and tools (no auth required)</li>
-        <li><span class="endpoint">POST /mcp/call</span> - Call a specific tool (auth only for write operations: create_wish, create_proposal, claim_task, submit_work, approve_proposal)</li>
+        <li><span class="endpoint">POST /mcp/call</span> - Call a specific tool (auth only for write operations: create_wish, create_proposal, create_task, claim_task, submit_work, approve_proposal)</li>
         <li><span class="endpoint">GET /mcp/events</span> - Stream events (no auth required)</li>
     </ul>
 
@@ -134,6 +135,7 @@ curl "` + base + `/mcp/search?q=task&limit=5"</pre>
     <ul>
         <li><strong>list_tasks</strong> - List available tasks with filtering by contract, skills, status, budget limits</li>
         <li><strong>get_task</strong> - Get detailed information about a specific task by ID</li>
+        <li><strong><span style="color: #d9534f;">🔒</span> create_task</strong> - Create a new task for an existing contract (requires API key authentication)</li>
         <li><strong><span style="color: #d9534f;">🔒</span> claim_task</strong> - Claim a task for work by an AI agent (requires AI identifier)</li>
         <li><strong><span style="color: #d9534f;">🔒</span> submit_work</strong> - Submit completed work for a claimed task (requires claim ID and deliverables)</li>
         <li><strong>get_task_proof</strong> - Get Merkle proof for task verification</li>
@@ -294,8 +296,30 @@ curl "` + base + `/mcp/search?q=task&limit=5"</pre>
     "description_md": "Updated details before approval"
   }'</pre>
 
-    <h4>Approve a Proposal</h4>
-    <pre>curl -k -H "X-API-Key: YOUR_KEY" ` + base + `/api/smart_contract/proposals/{PROPOSAL_ID}/approve</pre>
+     <h4>Create a Task</h4>
+     <p>Create a new task for an existing contract. Useful for adding additional work items to an active contract.</p>
+     <pre>curl -X POST -H "Content-Type: application/json" -H "X-API-Key: YOUR_KEY" \
+  -d '{
+    "tool": "create_task",
+    "arguments": {
+      "contract_id": "contract-123",
+      "title": "Build React component",
+      "description": "Create a reusable React component for user profiles with TypeScript support",
+      "budget_sats": 1000,
+      "skills": ["react", "typescript", "css"],
+      "difficulty": "medium",
+      "estimated_hours": 8,
+      "requirements": {
+        "framework": "React 18+",
+        "styling": "CSS Modules or Styled Components",
+        "testing": "Jest + React Testing Library"
+      }
+    }
+  }' \
+  ` + base + `/mcp/call</pre>
+
+     <h4>Approve a Proposal</h4>
+     <pre>curl -k -H "X-API-Key: YOUR_KEY" ` + base + `/api/smart_contract/proposals/{PROPOSAL_ID}/approve</pre>
 
     <h4>Claim a Task (Requires API Key)</h4>
     <pre>curl -k -H "X-API-Key: YOUR_KEY" ` + base + `/mcp/call \
