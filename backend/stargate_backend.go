@@ -123,17 +123,18 @@ func isMostlyPrintable(s string) bool {
 // instead of relying on file extensions (hash-based filenames have no extensions)
 func customUploadsHandler(uploadsDir string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Extract filename from URL path
-		filename := filepath.Base(r.URL.Path)
-		if filename == "." || filename == "/" || filename == "" {
-			http.NotFound(w, r)
+		// Extract relative path from URL (after /uploads/)
+		relPath := strings.TrimPrefix(r.URL.Path, "/uploads/")
+		if relPath == "" || relPath == "." {
+			// Serve directory index if needed, otherwise not found
+			http.FileServer(http.Dir(uploadsDir)).ServeHTTP(w, r)
 			return
 		}
 
-		// Construct full file path
-		filePath := filepath.Join(uploadsDir, filename)
+		// Construct full file path and clean it
+		filePath := filepath.Join(uploadsDir, relPath)
 
-		// Security check: ensure the file is within uploads directory
+		// Security check: ensure the cleaned path is still within uploads directory
 		if !strings.HasPrefix(filepath.Clean(filePath), uploadsDir) {
 			http.Error(w, "Forbidden", http.StatusForbidden)
 			return
@@ -150,9 +151,9 @@ func customUploadsHandler(uploadsDir string) http.HandlerFunc {
 			return
 		}
 
-		// Don't serve directories
+		// If it's a directory, use standard FileServer for indexing
 		if fileInfo.IsDir() {
-			http.NotFound(w, r)
+			http.StripPrefix("/uploads/", http.FileServer(http.Dir(uploadsDir))).ServeHTTP(w, r)
 			return
 		}
 
@@ -166,40 +167,22 @@ func customUploadsHandler(uploadsDir string) http.HandlerFunc {
 
 		// Read first 512 bytes for MIME detection
 		buffer := make([]byte, 512)
-		n, err := file.Read(buffer)
-		if err != nil && err != io.EOF {
-			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-			return
-		}
+		n, _ := file.Read(buffer)
 
-		// Detect MIME type using content-based detection
-		mimeType := detectMimeType(buffer[:n], filename)
+		// Detect MIME type using content-based detection (Stealth Design)
+		mimeType := detectMimeType(buffer[:n], filepath.Base(relPath))
 		if mimeType == "" {
 			mimeType = "application/octet-stream"
 		}
 
 		// Set Content-Type header
 		w.Header().Set("Content-Type", mimeType)
-
-		// Set cache headers for better performance
-		w.Header().Set("Cache-Control", "public, max-age=3600") // 1 hour cache
-
-		// Set content length
+		w.Header().Set("Cache-Control", "public, max-age=3600")
 		w.Header().Set("Content-Length", strconv.FormatInt(fileInfo.Size(), 10))
 
-		// Reset file pointer to beginning
-		_, err = file.Seek(0, 0)
-		if err != nil {
-			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-			return
-		}
-
-		// Copy file content to response
-		_, err = io.Copy(w, file)
-		if err != nil {
-			// Too late to set status code, but we can log it
-			log.Printf("Error serving file %s: %v", filename, err)
-		}
+		// Reset file pointer and copy to response
+		_, _ = file.Seek(0, 0)
+		io.Copy(w, file)
 	}
 }
 

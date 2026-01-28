@@ -248,18 +248,15 @@ func (s *MemoryStore) ClaimTask(taskID, walletAddress string, estimatedCompletio
 	if !ok {
 		return smart_contract.Claim{}, ErrTaskNotFound
 	}
-	if strings.EqualFold(task.Status, "approved") || strings.EqualFold(task.Status, "completed") || strings.EqualFold(task.Status, "published") || strings.EqualFold(task.Status, "claimed") || strings.EqualFold(task.Status, "submitted") {
-		return smart_contract.Claim{}, ErrTaskUnavailable
-	}
 	normalizedWallet := strings.TrimSpace(walletAddress)
 	if normalizedWallet == "" {
 		return smart_contract.Claim{}, fmt.Errorf("wallet address required")
 	}
 
-	// Existing claim?
+	// Existing claim by this user? (IDEMPOTENCY)
 	for _, c := range s.claims {
 		if c.TaskID == taskID {
-			if c.AiIdentifier == walletAddress && c.Status == "active" && time.Now().Before(c.ExpiresAt) {
+			if strings.EqualFold(c.AiIdentifier, normalizedWallet) && c.Status == "active" && time.Now().Before(c.ExpiresAt) {
 				if task.ContractorWallet == "" {
 					task.ContractorWallet = normalizedWallet
 					if task.MerkleProof == nil {
@@ -274,6 +271,11 @@ func (s *MemoryStore) ClaimTask(taskID, walletAddress string, estimatedCompletio
 				return smart_contract.Claim{}, ErrTaskTaken
 			}
 		}
+	}
+
+	// New claim checks
+	if strings.EqualFold(task.Status, "approved") || strings.EqualFold(task.Status, "completed") || strings.EqualFold(task.Status, "published") || strings.EqualFold(task.Status, "claimed") || strings.EqualFold(task.Status, "submitted") {
+		return smart_contract.Claim{}, ErrTaskUnavailable
 	}
 
 	claimID := fmt.Sprintf("CLAIM-%d", time.Now().UnixNano())

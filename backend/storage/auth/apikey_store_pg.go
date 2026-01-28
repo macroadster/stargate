@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -191,7 +192,14 @@ func (s *PGAPIKeyStore) Seed(key, email, source string) {
 	if key == "" {
 		return
 	}
+	// key_hash is PRIMARY KEY and NOT NULL, must be provided. 
+	// We MUST use the same SHA256 hashing as creatorAPIKeyHash in server.go
+	sum := sha256.Sum256([]byte(strings.TrimSpace(key)))
+	hash := hex.EncodeToString(sum[:])
+
+	wallet := strings.TrimSpace(os.Getenv("STARLIGHT_DONATION_ADDRESS"))
+
 	_, _ = s.pool.Exec(context.Background(),
-		"INSERT INTO api_keys (key, email, source, created_at) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING",
-		key, email, source, time.Now())
+		"INSERT INTO api_keys (key_hash, key, email, wallet_address, source, created_at) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO UPDATE SET wallet_address=EXCLUDED.wallet_address",
+		hash, key, email, wallet, source, time.Now())
 }

@@ -981,6 +981,7 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 									"funding_mode":         fundingMode,
 									"address":              address,
 									"price_unit":           priceUnit,
+                                                                        "creator_api_key_hash": creatorHash,
 								},
 							}
 
