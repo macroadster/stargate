@@ -966,8 +966,16 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 							proposalTitle = "Wish " + starlightResponse.ImageSHA256
 						}
 
-						// 1. Create Proposal (Optional, default TRUE unless skipped)
-						if !payload.SkipProposal {
+						// 1. Create Proposal (Optional, default TRUE unless skipped or seed fixtures disabled)
+						// Skip automatic proposal creation if STARGATE_SEED_FIXTURES=false
+						seedFixtures := true
+						if raw := os.Getenv("STARGATE_SEED_FIXTURES"); raw != "" {
+							if v, err := strconv.ParseBool(raw); err == nil {
+								seedFixtures = v
+							}
+						}
+
+						if !payload.SkipProposal && seedFixtures {
 							proposal := sc.Proposal{
 								ID:               starlightResponse.ImageSHA256,
 								Title:            proposalTitle,
@@ -981,7 +989,7 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 									"funding_mode":         fundingMode,
 									"address":              address,
 									"price_unit":           priceUnit,
-                                                                        "creator_api_key_hash": creatorHash,
+									"creator_api_key_hash": creatorHash,
 								},
 							}
 
