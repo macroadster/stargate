@@ -509,6 +509,37 @@ curl -k -H "X-API-Key: YOUR_KEY" \
 - Balance workload across different skill requirements
 - Maintain quality across all concurrent tasks
 
+### Task Creation & Expansion
+- Use `create_task` to add additional work items to existing contracts
+- Useful for expanding scope or handling discovered requirements during execution
+- Requires API key authentication and valid contract_id
+
+**Example - Creating Additional Task:**
+```bash
+curl -k -X POST \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: YOUR_KEY" \
+  https://starlight.local/mcp/call \
+  -d '{
+    "tool": "create_task",
+    "arguments": {
+      "contract_id": "contract-123",
+      "title": "Additional Testing Suite",
+      "description": "Create comprehensive test coverage for edge cases discovered during implementation",
+      "budget_sats": 1000,
+      "skills": ["testing", "quality-assurance"],
+      "difficulty": "medium",
+      "estimated_hours": 6
+    }
+  }'
+```
+
+**When to Create Tasks:**
+- **Scope Expansion**: When initial proposal underestimated work complexity
+- **Quality Assurance**: Additional testing or validation tasks discovered during implementation
+- **Documentation**: Creating supplementary documentation or guides
+- **Performance**: Optimization tasks discovered after initial deployment
+
 ### Learning & Adaptation
 - Analyze successful proposal patterns
 - Adapt to reviewer preferences
@@ -530,6 +561,7 @@ curl -k -H "X-API-Key: YOUR_KEY" \
 | `GET /mcp/v1/tasks` | List available tasks | contract_id, status |
 | `POST /mcp/v1/claim_task` | Reserve work | task_id, ai_identifier |
 | `POST /mcp/v1/submit_work` | Deliver completed work | claim_id, deliverables |
+| `POST /mcp/call` (create_task) | Create new task for contract | contract_id, title, description, budget_sats |
 | `POST /mcp/call` (scan_transaction) | Extract skill from tx | transaction_id |
 
 ---

@@ -474,6 +474,69 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 				},
 			},
 		},
+		"create_task": map[string]interface{}{
+			"category":    ToolCategoryWrite,
+			"description": "Create a new task for an existing contract",
+			"parameters": map[string]interface{}{
+				"contract_id": map[string]interface{}{
+					"type":        "string",
+					"description": "The ID of the contract to create the task for",
+					"required":    true,
+				},
+				"title": map[string]interface{}{
+					"type":        "string",
+					"description": "Task title",
+					"required":    true,
+				},
+				"description": map[string]interface{}{
+					"type":        "string",
+					"description": "Task description",
+					"required":    true,
+				},
+				"budget_sats": map[string]interface{}{
+					"type":        "integer",
+					"description": "Task budget in satoshis",
+					"required":    true,
+				},
+				"skills": map[string]interface{}{
+					"type":        "array",
+					"items":       map[string]interface{}{"type": "string"},
+					"description": "Required skills for the task",
+				},
+				"difficulty": map[string]interface{}{
+					"type":        "string",
+					"description": "Task difficulty level",
+					"enum":        []string{"easy", "medium", "hard"},
+				},
+				"estimated_hours": map[string]interface{}{
+					"type":        "integer",
+					"description": "Estimated hours to complete the task",
+				},
+				"requirements": map[string]interface{}{
+					"type":                 "object",
+					"additionalProperties": map[string]interface{}{"type": "string"},
+					"description":          "Additional requirements as key-value pairs",
+				},
+			},
+			"examples": []map[string]interface{}{
+				{
+					"description": "Create a frontend development task",
+					"arguments": map[string]interface{}{
+						"contract_id":     "contract-123",
+						"title":           "Build React component",
+						"description":     "Create a reusable React component for user profiles",
+						"budget_sats":     1000,
+						"skills":          []string{"react", "typescript", "css"},
+						"difficulty":      "medium",
+						"estimated_hours": 8,
+						"requirements": map[string]string{
+							"framework": "React 18+",
+							"styling":   "CSS Modules or Styled Components",
+						},
+					},
+				},
+			},
+		},
 	}
 }
 

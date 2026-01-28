@@ -139,8 +139,8 @@ func TestGetToolList(t *testing.T) {
 			t.Fatalf("expected some tools to require auth")
 		}
 
-		if writeTools != 5 { // create_wish, create_proposal, claim_task, submit_work, approve_proposal
-			t.Fatalf("expected 5 tools to require auth, got %d", writeTools)
+		if writeTools != 6 { // create_wish, create_proposal, create_task, claim_task, submit_work, approve_proposal
+			t.Fatalf("expected 6 tools to require auth, got %d", writeTools)
 		}
 	})
 }
