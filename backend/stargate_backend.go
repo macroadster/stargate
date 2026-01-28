@@ -211,18 +211,12 @@ func findImagePath(height string, filename string) (string, bool) {
 
 // initializeMCPComponents sets up the MCP components needed for HTTP access
 func initializeMCPComponents() (scmiddleware.Store, auth.APIKeyIssuer, auth.APIKeyValidator, *services.IngestionService, *auth.ChallengeStore) {
-	// Load MCP configuration
-	storeDriver := os.Getenv("MCP_STORE_DRIVER")
-	if storeDriver == "" {
-		storeDriver = "memory"
-	}
-
+	// Configuration
 	pgDsn := os.Getenv("STARGATE_PG_DSN")
-	seedKey := os.Getenv("STARGATE_API_KEY")
 
 	// TTL configuration
 	ttlHours := 72
-	if raw := os.Getenv("MCP_DEFAULT_CLAIM_TTL_HOURS"); raw != "" {
+	if raw := os.Getenv("STARGATE_DEFAULT_CLAIM_TTL_HOURS"); raw != "" {
 		if v, err := strconv.Atoi(raw); err == nil && v > 0 {
 			ttlHours = v
 		}
@@ -231,63 +225,56 @@ func initializeMCPComponents() (scmiddleware.Store, auth.APIKeyIssuer, auth.APIK
 
 	// Seed configuration
 	seed := true
-	if raw := os.Getenv("MCP_SEED_FIXTURES"); raw != "" {
+	if raw := os.Getenv("STARGATE_SEED_FIXTURES"); raw != "" {
 		if v, err := strconv.ParseBool(raw); err == nil {
 			seed = v
 		}
 	}
 
-	// Initialize store based on driver
+	// Initialize store
 	var store scmiddleware.Store
 	var err error
 	var ingestionSvc *services.IngestionService
 
-	switch storeDriver {
-	case "postgres":
-		if pgDsn == "" {
-			log.Printf("MCP_PG_DSN not set, falling back to memory store")
-			store = scstore.NewMemoryStore(claimTTL)
-		} else {
-			store, err = scstore.NewPGStore(context.Background(), pgDsn, claimTTL, seed)
-			if err != nil {
-				log.Printf("failed to connect to PostgreSQL (%v), falling back to memory store", err)
-				store = scstore.NewMemoryStore(claimTTL)
-			} else {
-				// PostgreSQL connected successfully, try to create ingestion service
-				if svc, serr := services.NewIngestionService(pgDsn); serr != nil {
-					log.Printf("ingestion service unavailable for proposal creation: %v", serr)
-				} else {
-					ingestionSvc = svc
-				}
-			}
+	if pgDsn != "" {
+		// Use PostgreSQL store
+		store, err = scstore.NewPGStore(context.Background(), pgDsn, claimTTL, seed)
+		if err != nil {
+			log.Fatalf("failed to connect to PostgreSQL (%v). Exiting to prevent data loss.", err)
 		}
-	default:
+		// PostgreSQL connected successfully, try to create ingestion service
+		if svc, serr := services.NewIngestionService(pgDsn); serr != nil {
+			log.Printf("ingestion service unavailable for proposal creation: %v", serr)
+		} else {
+			ingestionSvc = svc
+		}
+	} else {
+		// Use memory store
 		store = scstore.NewMemoryStore(claimTTL)
 	}
 
 	// Log the actual store type being used
 	actualStoreType := "memory"
-	if err == nil && pgDsn != "" {
+	if pgDsn != "" {
 		actualStoreType = "postgres"
 	}
-	log.Printf("MCP components initialized with %s store (requested: %s)", actualStoreType, storeDriver)
+	log.Printf("Components initialized with %s store", actualStoreType)
 
 	var apiIssuer auth.APIKeyIssuer
 	var apiValidator auth.APIKeyValidator
 
-	// Prefer Postgres-backed key store when DSN available
+	// Use Postgres-backed key store when DSN available
 	if pgDsn != "" {
-		if pgKeys, err := auth.NewPGAPIKeyStore(context.Background(), pgDsn); err == nil {
-			pgKeys.Seed(seedKey, "", "seed")
-			apiIssuer, apiValidator = pgKeys, pgKeys
-		} else {
-			log.Printf("api key pg store unavailable, falling back to memory: %v", err)
+		pgKeys, err := auth.NewPGAPIKeyStore(context.Background(), pgDsn)
+		if err != nil {
+			log.Fatalf("failed to initialize PostgreSQL API key store (%v). Exiting to prevent data loss.", err)
 		}
-	}
-
-	if apiIssuer == nil || apiValidator == nil {
+		pgKeys.SeedEnvironmentVariables()
+		apiIssuer, apiValidator = pgKeys, pgKeys
+	} else {
+		// Only use memory store if explicitly requested or no PostgreSQL DSN
 		mem := auth.NewAPIKeyStore()
-		mem.Seed(seedKey, "", "seed")
+		mem.SeedEnvironmentVariables()
 		apiIssuer, apiValidator = mem, mem
 	}
 
@@ -296,22 +283,17 @@ func initializeMCPComponents() (scmiddleware.Store, auth.APIKeyIssuer, auth.APIK
 	return store, apiIssuer, apiValidator, ingestionSvc, challengeStore
 }
 
-// startMCPServices starts background services for MCP when using PostgreSQL
+// startMCPServices starts background services when using PostgreSQL
 func startMCPServices(escort *smart_contract.EscortService) {
-	storeDriver := os.Getenv("MCP_STORE_DRIVER")
-	if storeDriver != "postgres" {
-		return
-	}
-
-	pgDsn := os.Getenv("MCP_PG_DSN")
+	pgDsn := os.Getenv("STARGATE_PG_DSN")
 	if pgDsn == "" {
-		log.Printf("MCP_PG_DSN not set, skipping MCP background services")
+		log.Printf("STARGATE_PG_DSN not set, skipping background services")
 		return
 	}
 
 	// Create a temporary store for sync services
 	ttlHours := 72
-	if raw := os.Getenv("MCP_DEFAULT_CLAIM_TTL_HOURS"); raw != "" {
+	if raw := os.Getenv("STARGATE_DEFAULT_CLAIM_TTL_HOURS"); raw != "" {
 		if v, err := strconv.Atoi(raw); err == nil && v > 0 {
 			ttlHours = v
 		}
@@ -325,9 +307,9 @@ func startMCPServices(escort *smart_contract.EscortService) {
 	}
 
 	// Start ingestion -> MCP sync
-	if os.Getenv("MCP_ENABLE_INGEST_SYNC") != "false" {
+	if os.Getenv("STARGATE_ENABLE_INGEST_SYNC") != "false" {
 		syncInterval := 30 * time.Second
-		if raw := os.Getenv("MCP_INGEST_SYNC_INTERVAL_SEC"); raw != "" {
+		if raw := os.Getenv("STARGATE_INGEST_SYNC_INTERVAL_SEC"); raw != "" {
 			if v, err := strconv.Atoi(raw); err == nil && v > 0 {
 				syncInterval = time.Duration(v) * time.Second
 			}
@@ -341,20 +323,20 @@ func startMCPServices(escort *smart_contract.EscortService) {
 	}
 
 	// Start funding proof refresher
-	if os.Getenv("MCP_ENABLE_FUNDING_SYNC") != "false" {
+	if os.Getenv("STARGATE_ENABLE_FUNDING_SYNC") != "false" {
 		fundingInterval := 60 * time.Second
-		if raw := os.Getenv("MCP_FUNDING_SYNC_INTERVAL_SEC"); raw != "" {
+		if raw := os.Getenv("STARGATE_FUNDING_SYNC_INTERVAL_SEC"); raw != "" {
 			if v, err := strconv.Atoi(raw); err == nil && v > 0 {
 				fundingInterval = time.Duration(v) * time.Second
 			}
 		}
 
 		fundingProvider := "mock"
-		if env := os.Getenv("MCP_FUNDING_PROVIDER"); env != "" {
+		if env := os.Getenv("STARGATE_FUNDING_PROVIDER"); env != "" {
 			fundingProvider = env
 		}
 		fundingAPIBase := bitcoin.GetNetworkConfig(bitcoin.GetCurrentNetwork()).BaseURL
-		if env := os.Getenv("MCP_FUNDING_API_BASE"); env != "" {
+		if env := os.Getenv("STARGATE_FUNDING_API_BASE"); env != "" {
 			fundingAPIBase = env
 		}
 
@@ -394,7 +376,7 @@ func runHTTPServer() {
 
 	// Initialize EscortService
 	rpcURL := bitcoin.GetNetworkConfig(bitcoin.GetCurrentNetwork()).BaseURL
-	if env := os.Getenv("MCP_FUNDING_API_BASE"); env != "" {
+	if env := os.Getenv("STARGATE_FUNDING_API_BASE"); env != "" {
 		rpcURL = env
 	}
 	verifier := smart_contract.NewMerkleProofVerifier(rpcURL)
