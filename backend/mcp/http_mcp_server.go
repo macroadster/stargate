@@ -305,6 +305,7 @@ func (h *HTTPMCPServer) toolRequiresAuth(toolName string) bool {
 		"approve_proposal":      true,
 		"get_auth_challenge":    false, // No auth required - discovery tool
 		"verify_auth_challenge": false, // No auth required - solves chicken-egg problem
+		"get_task":              false, // No auth required - discovery tool
 	}
 	return authenticatedTools[toolName]
 }
@@ -321,6 +322,8 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 		return h.handleListTasks(ctx, args)
 	case "get_contract":
 		return h.handleGetContract(ctx, args)
+	case "get_task":
+		return h.handleGetTask(ctx, args)
 	case "list_events":
 		return h.handleListEvents(ctx, args)
 	case "events_stream":
@@ -655,6 +658,18 @@ func (h *HTTPMCPServer) requireAuthorizedApprover(apiKey string, proposal smart_
 	currentHash := apiKeyHash(apiKey)
 	if currentHash == "" {
 		return fmt.Errorf("api key required for approval")
+	}
+
+	// 0. GLOBAL AUDITOR: Check if the bound wallet is the donation address
+	donationAddr := strings.TrimSpace(os.Getenv("STARLIGHT_DONATION_ADDRESS"))
+	if donationAddr != "" && h.apiKeyStore != nil {
+		if approverRec, ok := h.apiKeyStore.Get(apiKey); ok {
+			approverWallet := strings.TrimSpace(approverRec.Wallet)
+			if approverWallet != "" && strings.EqualFold(approverWallet, donationAddr) {
+				log.Printf("AUTHORIZATION: Allowing approval for proposal %s based on Global Auditor status (%s)", proposal.ID, approverWallet)
+				return nil
+			}
+		}
 	}
 
 	// 1. Check if matches Proposal Creator
@@ -1019,6 +1034,31 @@ func (h *HTTPMCPServer) handleGetContract(ctx context.Context, args map[string]i
 	}
 
 	return contract, nil
+}
+
+func (h *HTTPMCPServer) handleGetTask(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	validation := NewValidationError("get_task", "Invalid request parameters")
+
+	taskID, ok := args["task_id"].(string)
+	if !ok || taskID == "" {
+		validation.AddFieldError("task_id", args["task_id"], "task_id is required and must be a string", true)
+	}
+
+	// Return validation errors if any
+	if validation.HasErrors() {
+		return nil, validation
+	}
+
+	// Fetch task from store
+	task, err := h.store.GetTask(taskID)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			return nil, NewNotFoundError("get_task", "task", taskID)
+		}
+		return nil, NewInternalError("get_task", fmt.Sprintf("Failed to get task: %v", err))
+	}
+
+	return task, nil
 }
 
 func (h *HTTPMCPServer) handleListEvents(ctx context.Context, args map[string]interface{}) (interface{}, error) {

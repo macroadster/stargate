@@ -99,6 +99,18 @@ func (s *Server) enforceCreatorApproval(r *http.Request, proposal smart_contract
 		return fmt.Errorf("api key required for approval")
 	}
 
+	// 0. GLOBAL AUDITOR: Check if the bound wallet is the donation address
+	donationAddr := strings.TrimSpace(os.Getenv("STARLIGHT_DONATION_ADDRESS"))
+	if donationAddr != "" && s.apiKeys != nil {
+		if approverRec, ok := s.apiKeys.Get(apiKey); ok {
+			approverWallet := strings.TrimSpace(approverRec.Wallet)
+			if approverWallet != "" && strings.EqualFold(approverWallet, donationAddr) {
+				log.Printf("AUTHORIZATION: Allowing approval for proposal %s based on Global Auditor status (%s)", proposal.ID, approverWallet)
+				return nil
+			}
+		}
+	}
+
 	// 1. Check if matches Proposal Creator
 	if proposal.Metadata != nil {
 		if creatorHash, ok := proposal.Metadata["creator_api_key_hash"].(string); ok {
@@ -118,9 +130,28 @@ func (s *Server) enforceCreatorApproval(r *http.Request, proposal smart_contract
 		}
 
 		if rec != nil && rec.Metadata != nil {
+			// A. Match by API Key Hash
 			if wishCreatorHash, ok := rec.Metadata["creator_api_key_hash"].(string); ok {
 				if strings.TrimSpace(wishCreatorHash) == currentHash {
 					return nil
+				}
+			}
+
+			// B. Match by Wallet Address (IDENTITY MATCH)
+			// This allows a user with a personal key to approve wishes handled by agents using a seed key,
+			// provided both keys are bound to the same wallet.
+			wishWallet := strings.TrimSpace(toString(rec.Metadata["address"]))
+			if wishWallet == "" {
+				wishWallet = strings.TrimSpace(toString(rec.Metadata["payout_address"]))
+			}
+
+			if wishWallet != "" && s.apiKeys != nil {
+				if approverRec, ok := s.apiKeys.Get(apiKey); ok {
+					approverWallet := strings.TrimSpace(approverRec.Wallet)
+					if approverWallet != "" && strings.EqualFold(approverWallet, wishWallet) {
+						log.Printf("AUTHORIZATION: Allowing approval for proposal %s based on wallet identity match (%s)", proposal.ID, approverWallet)
+						return nil
+					}
 				}
 			}
 		}

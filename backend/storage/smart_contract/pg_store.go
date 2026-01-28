@@ -416,17 +416,45 @@ FROM mcp_tasks WHERE task_id=$1 FOR UPDATE
 	if err != nil {
 		return smart_contract.Claim{}, ErrTaskNotFound
 	}
-	if strings.EqualFold(task.Status, "approved") || strings.EqualFold(task.Status, "completed") || strings.EqualFold(task.Status, "claimed") || strings.EqualFold(task.Status, "submitted") {
-		return smart_contract.Claim{}, ErrTaskUnavailable
-	}
 
 	normalizedWallet := strings.TrimSpace(walletAddress)
 	if normalizedWallet == "" {
 		return smart_contract.Claim{}, fmt.Errorf("wallet address required")
 	}
+
+	// Check for existing active claim by this wallet
+	rows, err := tx.Query(ctx, `SELECT claim_id, task_id, ai_identifier, status, expires_at, created_at FROM mcp_claims WHERE task_id=$1`, taskID)
+	if err != nil {
+		return smart_contract.Claim{}, err
+	}
+	defer rows.Close()
+	now := time.Now()
+	for rows.Next() {
+		var c smart_contract.Claim
+		if err := rows.Scan(&c.ClaimID, &c.TaskID, &c.AiIdentifier, &c.Status, &c.ExpiresAt, &c.CreatedAt); err != nil {
+			return smart_contract.Claim{}, err
+		}
+		if c.Status == "active" && now.Before(c.ExpiresAt) {
+			if strings.EqualFold(c.AiIdentifier, normalizedWallet) {
+				// IDEMPOTENT: Same user re-claiming active task.
+				// Ensure task table matches.
+				_, _ = tx.Exec(ctx, `UPDATE mcp_tasks SET status='claimed', claimed_by=$2 WHERE task_id=$1`, taskID, c.AiIdentifier)
+				return c, tx.Commit(ctx)
+			}
+			return smart_contract.Claim{}, ErrTaskTaken
+		}
+	}
+	rows.Close()
+
+	// New claim logic: task must be available
+	if strings.EqualFold(task.Status, "approved") || strings.EqualFold(task.Status, "completed") || strings.EqualFold(task.Status, "published") || strings.EqualFold(task.Status, "claimed") || strings.EqualFold(task.Status, "submitted") {
+		return smart_contract.Claim{}, ErrTaskUnavailable
+	}
+
 	if err := ValidateBitcoinAddress(normalizedWallet); err != nil {
 		return smart_contract.Claim{}, fmt.Errorf("wallet address validation failed: %v", err)
 	}
+
 	persistWallet := func(wallet string) error {
 		wallet = strings.TrimSpace(wallet)
 		if wallet == "" {
@@ -443,28 +471,6 @@ FROM mcp_tasks WHERE task_id=$1 FOR UPDATE
 		proofJSON, _ := json.Marshal(task.MerkleProof)
 		_, err := tx.Exec(ctx, `UPDATE mcp_tasks SET merkle_proof=$2 WHERE task_id=$1`, taskID, string(proofJSON))
 		return err
-	}
-
-	rows, err := tx.Query(ctx, `SELECT claim_id, task_id, ai_identifier, status, expires_at, created_at FROM mcp_claims WHERE task_id=$1`, taskID)
-	if err != nil {
-		return smart_contract.Claim{}, err
-	}
-	defer rows.Close()
-	now := time.Now()
-	for rows.Next() {
-		var c smart_contract.Claim
-		if err := rows.Scan(&c.ClaimID, &c.TaskID, &c.AiIdentifier, &c.Status, &c.ExpiresAt, &c.CreatedAt); err != nil {
-			return smart_contract.Claim{}, err
-		}
-		if c.Status == "active" && now.Before(c.ExpiresAt) {
-			if c.AiIdentifier == walletAddress {
-				if err := persistWallet(normalizedWallet); err != nil {
-					return smart_contract.Claim{}, err
-				}
-				return c, tx.Commit(ctx)
-			}
-			return smart_contract.Claim{}, ErrTaskTaken
-		}
 	}
 
 	claimID := fmt.Sprintf("CLAIM-%d", time.Now().UnixNano())
