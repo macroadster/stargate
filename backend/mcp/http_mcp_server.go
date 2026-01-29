@@ -1282,8 +1282,17 @@ func (h *HTTPMCPServer) handleSubmitWork(ctx context.Context, args map[string]in
 			}
 
 			// Create results directory: UPLOADS_DIR/results/[visible_pixel_hash]
-			// Use visible_pixel_hash from the wish instead of claimID for consistent file organization
-			resultsDir := filepath.Join(uploadsDir, "results", claimID)
+			// Look up the contract/task relationship to get visible_pixel_hash for file organization
+			var resultsDir string
+			if task, err := h.store.GetTask(claimID); err == nil {
+				// For wish contracts, the contract_id IS the visible_pixel_hash
+				// This allows organizing all work for a contract/wish under one directory
+				resultsDir = filepath.Join(uploadsDir, "results", task.ContractID)
+			} else {
+				// Fallback to claim ID if task lookup fails
+				resultsDir = filepath.Join(uploadsDir, "results", claimID)
+			}
+
 			if err := os.MkdirAll(resultsDir, 0755); err != nil {
 				return nil, NewInternalError("submit_work", fmt.Sprintf("Failed to create results directory: %v", err))
 			}
