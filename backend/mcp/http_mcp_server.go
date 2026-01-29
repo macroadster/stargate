@@ -1237,11 +1237,110 @@ func (h *HTTPMCPServer) handleSubmitWork(ctx context.Context, args map[string]in
 		if _, ok := deliverables["notes"].(string); !ok {
 			validation.AddFieldError("deliverables.notes", deliverables["notes"], "deliverables must contain a 'notes' field with description of completed work", true)
 		}
+
+		// Validate and process artifacts if present
+		if artifacts, exists := deliverables["artifacts"]; exists {
+			artifactsList, ok := artifacts.([]interface{})
+			if !ok {
+				validation.AddFieldError("deliverables.artifacts", artifacts, "artifacts must be an array", true)
+			} else {
+				for i, artifact := range artifactsList {
+					artifactMap, ok := artifact.(map[string]interface{})
+					if !ok {
+						validation.AddFieldError(fmt.Sprintf("deliverables.artifacts[%d]", i), artifact, "each artifact must be an object", true)
+						continue
+					}
+
+					// Validate filename
+					if filename, ok := artifactMap["filename"].(string); !ok || filename == "" {
+						validation.AddFieldError(fmt.Sprintf("deliverables.artifacts[%d].filename", i), artifactMap["filename"], "artifact filename is required and must be a string", true)
+					}
+
+					// Validate content
+					if content, ok := artifactMap["content"].(string); !ok || content == "" {
+						validation.AddFieldError(fmt.Sprintf("deliverables.artifacts[%d].content", i), artifactMap["content"], "artifact content is required and must be a base64-encoded string", true)
+					}
+				}
+			}
+		}
 	}
 
 	// Return validation errors if any
 	if validation.HasErrors() {
 		return nil, validation
+	}
+
+	// Process file artifacts if present
+	var processedArtifacts []map[string]interface{}
+	if artifacts, exists := deliverables["artifacts"]; exists {
+		artifactsList, ok := artifacts.([]interface{})
+		if ok {
+			// Get uploads directory
+			uploadsDir := os.Getenv("UPLOADS_DIR")
+			if uploadsDir == "" {
+				uploadsDir = "/data/uploads"
+			}
+
+			// Create results directory: UPLOADS_DIR/results/[visible_pixel_hash]
+			// Use visible_pixel_hash from the wish instead of claimID for consistent file organization
+			resultsDir := filepath.Join(uploadsDir, "results", claimID)
+			if err := os.MkdirAll(resultsDir, 0755); err != nil {
+				return nil, NewInternalError("submit_work", fmt.Sprintf("Failed to create results directory: %v", err))
+			}
+
+			for i, artifact := range artifactsList {
+				artifactMap, ok := artifact.(map[string]interface{})
+				if !ok {
+					continue // Skip invalid artifacts (already validated above)
+				}
+
+				filename, _ := artifactMap["filename"].(string)
+				content, _ := artifactMap["content"].(string)
+				contentType, _ := artifactMap["content_type"].(string)
+
+				// Decode base64 content
+				fileData, err := base64.StdEncoding.DecodeString(content)
+				if err != nil {
+					return nil, NewInternalError("submit_work", fmt.Sprintf("Failed to decode artifact %d (%s): %v", i, filename, err))
+				}
+
+				// Create secure file path
+				safeFilename := filepath.Base(filename)
+				if safeFilename == "" || safeFilename == "." || safeFilename == ".." {
+					safeFilename = fmt.Sprintf("artifact_%d", i)
+				}
+
+				// Sanitize filename
+				safeFilename = strings.ReplaceAll(safeFilename, "..", "")
+				safeFilename = strings.ReplaceAll(safeFilename, "/", "_")
+				safeFilename = strings.ReplaceAll(safeFilename, "\\", "_")
+
+				filePath := filepath.Join(resultsDir, safeFilename)
+
+				// Write file
+				if err := os.WriteFile(filePath, fileData, 0644); err != nil {
+					return nil, NewInternalError("submit_work", fmt.Sprintf("Failed to write artifact %d (%s): %v", i, filename, err))
+				}
+
+				// Detect content type if not provided
+				if contentType == "" {
+					contentType = http.DetectContentType(fileData)
+				}
+
+				// Create file info for response
+				fileInfo := map[string]interface{}{
+					"filename":      safeFilename,
+					"original_name": filename,
+					"size":          len(fileData),
+					"content_type":  contentType,
+					"path":          fmt.Sprintf("/uploads/results/%s/%s", claimID, safeFilename),
+				}
+				processedArtifacts = append(processedArtifacts, fileInfo)
+			}
+
+			// Update deliverables with processed artifact info
+			deliverables["artifacts_uploaded"] = processedArtifacts
+		}
 	}
 
 	submission, err := h.store.SubmitWork(claimID, deliverables, nil)
@@ -1256,11 +1355,19 @@ func (h *HTTPMCPServer) handleSubmitWork(ctx context.Context, args map[string]in
 		return nil, NewInternalError("submit_work", fmt.Sprintf("Failed to submit work: %v", err))
 	}
 
-	return map[string]interface{}{
+	result := map[string]interface{}{
 		"message":    "work submitted successfully",
 		"claim_id":   claimID,
 		"submission": submission,
-	}, nil
+	}
+
+	// Include artifact information in response
+	if len(processedArtifacts) > 0 {
+		result["artifacts"] = processedArtifacts
+		result["artifacts_count"] = len(processedArtifacts)
+	}
+
+	return result, nil
 }
 
 // handleGetOpenContracts browses open contracts with caching (no auth required)

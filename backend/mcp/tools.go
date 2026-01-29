@@ -174,7 +174,7 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 		},
 		"submit_work": map[string]interface{}{
 			"category":    ToolCategoryWrite,
-			"description": "Submit completed work for a claimed task",
+			"description": "Submit completed work for a claimed task with optional file attachments",
 			"parameters": map[string]interface{}{
 				"claim_id": map[string]interface{}{
 					"type":        "string",
@@ -189,6 +189,28 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 							"description": "Detailed description of completed work, methodology, findings, and outcomes. This is the primary field that will be displayed for review.",
 							"type":        "string",
 						},
+						"artifacts": map[string]interface{}{
+							"description": "Optional array of file artifacts to include with submission. Each artifact should have 'filename' and 'content' (base64-encoded) fields.",
+							"type":        "array",
+							"items": map[string]interface{}{
+								"type": "object",
+								"properties": map[string]interface{}{
+									"filename": map[string]interface{}{
+										"description": "Name of the file",
+										"type":        "string",
+									},
+									"content": map[string]interface{}{
+										"description": "Base64-encoded file content",
+										"type":        "string",
+									},
+									"content_type": map[string]interface{}{
+										"description": "MIME type of the file (optional, auto-detected if not provided)",
+										"type":        "string",
+									},
+								},
+								"required": []interface{}{"filename", "content"},
+							},
+						},
 					},
 					"required": []interface{}{"notes"},
 				},
@@ -200,6 +222,27 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 						"claim_id": "claim-123",
 						"deliverables": map[string]interface{}{
 							"notes": "I have successfully completed the task by implementing user authentication system with JWT tokens. The implementation includes: 1) User registration endpoint with email validation, 2) Login endpoint with secure password hashing, 3) JWT token generation and validation middleware, 4) Password reset functionality. All components have been tested with unit tests achieving 95% coverage.",
+						},
+					},
+				},
+				{
+					"description": "Submit work with file attachments",
+					"arguments": map[string]interface{}{
+						"claim_id": "claim-456",
+						"deliverables": map[string]interface{}{
+							"notes": "Completed blog template with responsive design and interactive features. The template includes a working demo and comprehensive documentation.",
+							"artifacts": []map[string]interface{}{
+								{
+									"filename":     "blog-template.html",
+									"content":      "PCFET0NUWVBFIGh0bWw+PGh0bWw+...",
+									"content_type": "text/html",
+								},
+								{
+									"filename":     "screenshot.png",
+									"content":      "iVBORw0KGgoAAAANSUhEUgAA...",
+									"content_type": "image/png",
+								},
+							},
 						},
 					},
 				},
