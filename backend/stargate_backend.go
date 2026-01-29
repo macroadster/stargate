@@ -52,18 +52,8 @@ func contentTypeForFormat(format string) string {
 // detectMimeType determines the MIME type based on file content and filename
 // This is a simplified version of the inferMime function from api/data_api.go
 func detectMimeType(content []byte, filename string) string {
-	// First, try to detect from content
-	if len(content) > 0 {
-		sample := content
-		if len(sample) > 512 {
-			sample = sample[:512]
-		}
-		if detected := http.DetectContentType(sample); detected != "" && detected != "application/octet-stream" {
-			return detected
-		}
-	}
-
-	// Fallback to filename-based detection
+	// Check filename-based detection first for common web assets
+	// This is important because content detection often returns text/plain for JS/CSS
 	lowerName := strings.ToLower(filename)
 	switch {
 	case strings.HasSuffix(lowerName, ".jpg"), strings.HasSuffix(lowerName, ".jpeg"):
@@ -82,8 +72,23 @@ func detectMimeType(content []byte, filename string) string {
 		return "text/html"
 	case strings.HasSuffix(lowerName, ".json"):
 		return "application/json"
+	case strings.HasSuffix(lowerName, ".js"):
+		return "text/javascript"
+	case strings.HasSuffix(lowerName, ".css"):
+		return "text/css"
 	case strings.HasSuffix(lowerName, ".txt"):
 		return "text/plain"
+	}
+
+	// Try to detect from content for unknown files
+	if len(content) > 0 {
+		sample := content
+		if len(sample) > 512 {
+			sample = sample[:512]
+		}
+		if detected := http.DetectContentType(sample); detected != "" && detected != "application/octet-stream" {
+			return detected
+		}
 	}
 
 	// Final content-based detection for common patterns

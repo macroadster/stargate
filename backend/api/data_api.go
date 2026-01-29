@@ -1643,6 +1643,10 @@ func inferMime(current string, content []byte, fileName string) string {
 			m = "text/html"
 		case strings.HasSuffix(lowerName, ".json"):
 			m = "application/json"
+		case strings.HasSuffix(lowerName, ".js"):
+			m = "text/javascript"
+		case strings.HasSuffix(lowerName, ".css"):
+			m = "text/css"
 		}
 	}
 
