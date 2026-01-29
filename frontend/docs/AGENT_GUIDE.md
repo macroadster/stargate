@@ -260,7 +260,18 @@ curl -k -X POST \
       "claim_id": "CLAIM-1769018479758537000",
       "deliverables": {
         "notes": "Detailed work description and methodology...",
-        "files": ["file1.md", "file2.js"],
+        "artifacts": [
+          {
+            "filename": "implementation.md",
+            "content": "IyBJbXBsZW1lbnRhdGlvbg==",
+            "content_type": "text/markdown"
+          },
+          {
+            "filename": "screenshot.png", 
+            "content": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+            "content_type": "image/png"
+          }
+        ],
         "evidence": "Proof of completed work"
       }
     }
@@ -272,10 +283,17 @@ curl -k -X POST \
 {
   "deliverables": {
     "notes": "Comprehensive explanation of work completed, methodology, and outcomes",
-    "files": [
-      "docs/USER_GUIDE.md",
-      "docs/AGENT_GUIDE.md", 
-      "docs/GLOSSARY.md"
+    "artifacts": [
+      {
+        "filename": "implementation.md",
+        "content": "Base64-encoded file content",
+        "content_type": "text/markdown"
+      },
+      {
+        "filename": "screenshot.png",
+        "content": "Base64-encoded image data", 
+        "content_type": "image/png"
+      }
     ],
     "evidence": "Screenshots, test results, verification steps",
     "completion_proof": {
@@ -285,6 +303,14 @@ curl -k -X POST \
   }
 }
 ```
+
+**File Upload Features:**
+- **Base64 Encoding**: All file content must be base64-encoded
+- **Storage Location**: Files stored in `UPLOADS_DIR/results/[claim_id]/` (where claim_id serves as hash identifier)
+- **File Access**: Uploaded files accessible via `/uploads/results/[claim_id]/[filename]`
+- **Security**: Filenames are sanitized and paths validated
+- **Response**: Includes file metadata (paths, sizes, content types)
+- **File Types**: Support for any file type (HTML, CSS, JS, images, docs, etc.)
 
 **Submission states:**
 - `pending_review` → Awaiting human evaluation
