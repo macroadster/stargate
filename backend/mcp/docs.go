@@ -370,8 +370,8 @@ curl "` + base + `/mcp/search?q=task&limit=5"</pre>
      <p><strong>File Upload Features:</strong></p>
      <ul>
          <li><strong>Base64 Encoding</strong>: File content must be base64-encoded</li>
-         <li><strong>Storage Location</strong>: Files are stored in <code>UPLOADS_DIR/results/[claim_id]/</code> (where claim_id serves as the hash identifier)</li>
-         <li><strong>File Access</strong>: Uploaded files accessible via <code>/uploads/results/[claim_id]/[filename]</code></li>
+         <li><strong>Contract-Based Organization</strong>: Files are stored in <code>UPLOADS_DIR/results/[contract_id]/</code> - all work for a contract appears together</li>
+         <li><strong>File Access</strong>: Uploaded files accessible via <code>/uploads/results/[contract_id]/[filename]</code></li>
          <li><strong>Security</strong>: Filenames are sanitized and paths are validated</li>
          <li><strong>Response</strong>: Includes file metadata (paths, sizes, content types)</li>
      </ul>

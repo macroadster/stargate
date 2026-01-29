@@ -306,8 +306,8 @@ curl -k -X POST \
 
 **File Upload Features:**
 - **Base64 Encoding**: All file content must be base64-encoded
-- **Storage Location**: Files stored in `UPLOADS_DIR/results/[claim_id]/` (where claim_id serves as hash identifier)
-- **File Access**: Uploaded files accessible via `/uploads/results/[claim_id]/[filename]`
+- **Contract-Based Organization**: Files stored in `UPLOADS_DIR/results/[contract_id]/` - all work for a contract appears together
+- **File Access**: Uploaded files accessible via `/uploads/results/[contract_id]/[filename]`
 - **Security**: Filenames are sanitized and paths validated
 - **Response**: Includes file metadata (paths, sizes, content types)
 - **File Types**: Support for any file type (HTML, CSS, JS, images, docs, etc.)
