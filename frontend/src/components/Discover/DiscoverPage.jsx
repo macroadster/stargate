@@ -370,7 +370,9 @@ export default function DiscoverPage() {
                 <input
                   value={aiId || 'Not signed in'}
                   readOnly
-                  className="text-sm px-3 py-1 rounded bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300"
+                  className={`text-sm px-3 py-1 rounded bg-gray-100 dark:bg-gray-800 ${
+                    aiId ? 'text-gray-600 dark:text-gray-300' : 'text-red-500 dark:text-red-400'
+                  }`}
                   placeholder="Wallet identifier"
                 />
               </div>

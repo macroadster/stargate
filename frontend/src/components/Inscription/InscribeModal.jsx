@@ -191,7 +191,9 @@ const InscribeModal = ({ onClose, onSuccess }) => {
                 type="text"
                 value={address}
                 readOnly
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300"
+                className={`w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-gray-100 dark:bg-gray-700 ${
+                  address ? 'text-gray-700 dark:text-gray-300' : 'text-red-500 dark:text-red-400 placeholder-red-500 dark:placeholder-red-400'
+                }`}
                 placeholder="Not signed in"
               />
             </div>

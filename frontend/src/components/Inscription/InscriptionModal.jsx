@@ -1645,7 +1645,12 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                       return (
                         <div className="mt-3 space-y-2 bg-gray-50 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700 rounded-lg p-3">
                           <div className="flex gap-2 text-[11px] text-gray-600 dark:text-gray-300 flex-wrap">
-                            <span>{effectiveRaiseFund ? 'Contributors' : 'Payer'}: {payerDisplay}</span>
+                            <span>
+                              {effectiveRaiseFund ? 'Contributors' : 'Payer'}:{' '}
+                              <span className={payerDisplay === 'Not signed in' ? 'text-red-500 font-medium' : ''}>
+                                {payerDisplay}
+                              </span>
+                            </span>
                             <span>Network: {psbtResult.network_params || 'testnet4'}</span>
                           </div>
                           <div className="text-xs text-gray-600 dark:text-gray-300 break-all">
