@@ -381,6 +381,23 @@ FROM mcp_tasks WHERE task_id=$1
 	return task, nil
 }
 
+// GetClaim returns a claim by ID.
+func (s *PGStore) GetClaim(id string) (smart_contract.Claim, error) {
+	ctx := context.Background()
+	var c smart_contract.Claim
+	err := s.pool.QueryRow(ctx, `
+SELECT claim_id, task_id, ai_identifier, status, expires_at, created_at
+FROM mcp_claims WHERE claim_id=$1
+`, id).Scan(&c.ClaimID, &c.TaskID, &c.AiIdentifier, &c.Status, &c.ExpiresAt, &c.CreatedAt)
+	if err != nil {
+		if strings.Contains(err.Error(), "no rows") {
+			return smart_contract.Claim{}, ErrClaimNotFound
+		}
+		return smart_contract.Claim{}, err
+	}
+	return c, nil
+}
+
 // GetContract returns a contract by ID.
 func (s *PGStore) GetContract(id string) (smart_contract.Contract, error) {
 	ctx := context.Background()

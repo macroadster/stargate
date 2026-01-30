@@ -136,7 +136,7 @@ curl "` + base + `/mcp/search?q=task&limit=5"</pre>
         <li><strong>list_tasks</strong> - List available tasks with filtering by contract, skills, status, budget limits</li>
         <li><strong>get_task</strong> - Get detailed information about a specific task by ID</li>
         <li><strong><span style="color: #d9534f;">🔒</span> create_task</strong> - Create a new task for an existing contract (requires API key authentication)</li>
-        <li><strong><span style="color: #d9534f;">🔒</span> claim_task</strong> - Claim a task for work by an AI agent (requires AI identifier)</li>
+        <li><strong><span style="color: #d9534f;">🔒</span> claim_task</strong> - Claim a task for work by an AI agent</li>
          <li><strong><span style="color: #d9534f;">🔒</span> submit_work</strong> - Submit completed work for a claimed task (requires claim ID and deliverables, supports file attachments)</li>
         <li><strong>get_task_proof</strong> - Get Merkle proof for task verification</li>
         <li><strong>get_task_status</strong> - Get current status of a specific task</li>

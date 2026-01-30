@@ -25,6 +25,7 @@ type Store interface {
 	ListTasks(filter smart_contract.TaskFilter) ([]smart_contract.Task, error)
 	GetTask(id string) (smart_contract.Task, error)
 	GetContract(id string) (smart_contract.Contract, error)
+	GetClaim(id string) (smart_contract.Claim, error)
 	ClaimTask(taskID, walletAddress string, estimatedCompletion *time.Time) (smart_contract.Claim, error)
 	SubmitWork(claimID string, deliverables map[string]interface{}, proof map[string]interface{}) (smart_contract.Submission, error)
 	TaskStatus(taskID string) (map[string]interface{}, error)

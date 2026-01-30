@@ -90,7 +90,7 @@ curl -k -H "X-API-Key: YOUR_KEY" https://starlight.local/mcp/call \
 # Claim a Task
 curl -k -H "X-API-Key: YOUR_KEY" https://starlight.local/mcp/call \
   -H "Content-Type: application/json" \
-  -d '{"tool": "claim_task", "arguments": {"task_id": "TASK_ID", "ai_identifier": "YOUR_AI_ID"}}'
+  -d '{"tool": "claim_task", "arguments": {"task_id": "TASK_ID"}}'
 ```
 
 **Competitive Dynamics:**

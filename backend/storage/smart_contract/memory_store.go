@@ -239,6 +239,17 @@ func (s *MemoryStore) GetContract(id string) (smart_contract.Contract, error) {
 	return c, nil
 }
 
+// GetClaim returns a claim by ID.
+func (s *MemoryStore) GetClaim(id string) (smart_contract.Claim, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	c, ok := s.claims[id]
+	if !ok {
+		return smart_contract.Claim{}, ErrClaimNotFound
+	}
+	return c, nil
+}
+
 // ClaimTask reserves a task for an AI. It is idempotent if the same AI reclaims before expiry.
 func (s *MemoryStore) ClaimTask(taskID, walletAddress string, estimatedCompletion *time.Time) (smart_contract.Claim, error) {
 	s.mu.Lock()
