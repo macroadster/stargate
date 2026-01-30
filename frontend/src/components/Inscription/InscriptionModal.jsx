@@ -387,6 +387,9 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'overview' }) => 
     fundDepositAddress,
   ]);
   const textContent = inscriptionMessage || '';
+  const pixelHash = inscription.metadata?.visible_pixel_hash || 
+                   selectedTask?.merkle_proof?.visible_pixel_hash || 
+                   '';
   const confidenceValue = Number(inscription.metadata?.confidence || 0);
   const confidencePercent = Math.round(confidenceValue * 100);
   const confirmationStatus = (inscription.metadata?.confirmation_status || inscription.confirmation_status || '').toLowerCase();
@@ -1093,27 +1096,60 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
         >
             <div className="flex flex-col items-center lg:flex-row lg:items-start gap-6 mb-6">
               <div className="flex-shrink-0">
-                {modalImageSource ? (
-                  <div className="relative">
-                    <img
-                      src={modalImageSource}
-                      alt={inscription.file_name || inscription.id}
-                      className="w-48 h-48 object-cover rounded-lg border-2 border-gray-300 dark:border-gray-700"
-                    />
-                    {confidencePercent > 0 && (
-                      <div className="absolute top-2 right-2 bg-green-500 text-white text-xs px-2 py-1 rounded-md font-bold">
-                        {confidencePercent}%
+                {pixelHash ? (
+                  <a 
+                    href={`/uploads/results/wish-${pixelHash}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block hover:opacity-80 transition-opacity cursor-pointer"
+                    title="View details in separate page"
+                  >
+                    {modalImageSource ? (
+                      <div className="relative">
+                        <img
+                          src={modalImageSource}
+                          alt={inscription.file_name || inscription.id}
+                          className="w-48 h-48 object-cover rounded-lg border-2 border-gray-300 dark:border-gray-700"
+                        />
+                        {confidencePercent > 0 && (
+                          <div className="absolute top-2 right-2 bg-green-500 text-white text-xs px-2 py-1 rounded-md font-bold">
+                            {confidencePercent}%
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="w-48 h-48 bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-700 dark:to-gray-800 rounded-lg flex items-center justify-center border-2 border-gray-300 dark:border-gray-700">
+                        <div className="text-6xl text-center">
+                          {inscription.contract_type === 'Steganographic Contract' ? '🎨' :
+                           inscription.mime_type?.includes('text') ? '📄' :
+                           inscription.mime_type?.includes('image') ? '🖼️' : '📦'}
+                        </div>
                       </div>
                     )}
-                  </div>
+                  </a>
                 ) : (
-                  <div className="w-48 h-48 bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-700 dark:to-gray-800 rounded-lg flex items-center justify-center border-2 border-gray-300 dark:border-gray-700">
-                    <div className="text-6xl text-center">
-                      {inscription.contract_type === 'Steganographic Contract' ? '🎨' :
-                       inscription.mime_type?.includes('text') ? '📄' :
-                       inscription.mime_type?.includes('image') ? '🖼️' : '📦'}
+                  modalImageSource ? (
+                    <div className="relative">
+                      <img
+                        src={modalImageSource}
+                        alt={inscription.file_name || inscription.id}
+                        className="w-48 h-48 object-cover rounded-lg border-2 border-gray-300 dark:border-gray-700"
+                      />
+                      {confidencePercent > 0 && (
+                        <div className="absolute top-2 right-2 bg-green-500 text-white text-xs px-2 py-1 rounded-md font-bold">
+                          {confidencePercent}%
+                        </div>
+                      )}
                     </div>
-                  </div>
+                  ) : (
+                    <div className="w-48 h-48 bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-700 dark:to-gray-800 rounded-lg flex items-center justify-center border-2 border-gray-300 dark:border-gray-700">
+                      <div className="text-6xl text-center">
+                        {inscription.contract_type === 'Steganographic Contract' ? '🎨' :
+                         inscription.mime_type?.includes('text') ? '📄' :
+                         inscription.mime_type?.includes('image') ? '🖼️' : '📦'}
+                      </div>
+                    </div>
+                  )
                 )}
               </div>
 
