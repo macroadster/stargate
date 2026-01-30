@@ -34,6 +34,7 @@ func BuildTasksFromMarkdown(proposalID, markdown string, visibleHash string, bud
 			// Save previous task if exists
 			if currentTask != nil {
 				tasks = append(tasks, *currentTask)
+				currentTask = nil
 			}
 
 			// Start new task

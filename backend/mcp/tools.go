@@ -156,18 +156,12 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 					"description": "The ID of the task to claim",
 					"required":    true,
 				},
-				"ai_identifier": map[string]interface{}{
-					"type":        "string",
-					"description": "Identifier of the AI agent claiming the task",
-					"required":    true,
-				},
 			},
 			"examples": []map[string]interface{}{
 				{
 					"description": "Claim a task",
 					"arguments": map[string]interface{}{
-						"task_id":       "task-123",
-						"ai_identifier": "agent-1",
+						"task_id": "task-123",
 					},
 				},
 			},

@@ -1281,17 +1281,18 @@ func (h *HTTPMCPServer) handleSubmitWork(ctx context.Context, args map[string]in
 				uploadsDir = "/data/uploads"
 			}
 
-			// Create results directory: UPLOADS_DIR/results/[visible_pixel_hash]
-			// Look up the contract/task relationship to get visible_pixel_hash for file organization
+			// Create results directory: UPLOADS_DIR/results/[contract_id]
+			// Look up the contract/task relationship to get contract_id for file organization
 			var resultsDir string
-			if task, err := h.store.GetTask(claimID); err == nil {
-				// For wish contracts, the contract_id IS the visible_pixel_hash
-				// This allows organizing all work for a contract/wish under one directory
-				resultsDir = filepath.Join(uploadsDir, "results", task.ContractID)
-			} else {
-				// Fallback to claim ID if task lookup fails
-				resultsDir = filepath.Join(uploadsDir, "results", claimID)
+			subDir := claimID // Fallback to claim ID
+			if claim, err := h.store.GetClaim(claimID); err == nil {
+				if task, err := h.store.GetTask(claim.TaskID); err == nil {
+					// For wish contracts, the contract_id IS the visible_pixel_hash
+					// This allows organizing all work for a contract/wish under one directory
+					subDir = task.ContractID
+				}
 			}
+			resultsDir = filepath.Join(uploadsDir, "results", subDir)
 
 			if err := os.MkdirAll(resultsDir, 0755); err != nil {
 				return nil, NewInternalError("submit_work", fmt.Sprintf("Failed to create results directory: %v", err))
@@ -1342,7 +1343,7 @@ func (h *HTTPMCPServer) handleSubmitWork(ctx context.Context, args map[string]in
 					"original_name": filename,
 					"size":          len(fileData),
 					"content_type":  contentType,
-					"path":          fmt.Sprintf("/uploads/results/%s/%s", claimID, safeFilename),
+					"path":          fmt.Sprintf("/uploads/results/%s/%s", subDir, safeFilename),
 				}
 				processedArtifacts = append(processedArtifacts, fileInfo)
 			}

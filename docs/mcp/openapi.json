@@ -298,10 +298,8 @@
       "ClaimRequest": {
         "type": "object",
         "properties": {
-          "ai_identifier": {"type": "string"},
           "estimated_completion": {"type": "string"}
-        },
-        "required": ["ai_identifier"]
+        }
       },
       "SubmissionRequest": {
         "type": "object",
