@@ -21,7 +21,21 @@ type PGStore struct {
 
 // NewPGStore connects, initializes schema, and optionally seeds fixtures.
 func NewPGStore(ctx context.Context, dsn string, claimTTL time.Duration, seed bool) (*PGStore, error) {
-	pool, err := pgxpool.New(ctx, dsn)
+	config, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("parse postgres config: %w", err)
+	}
+
+	if config.MaxConns < 20 {
+		config.MaxConns = 20
+	}
+
+	config.MinConns = 5
+	config.HealthCheckPeriod = 1 * time.Minute
+	config.MaxConnLifetime = 1 * time.Hour
+	config.MaxConnIdleTime = 30 * time.Minute
+
+	pool, err := pgxpool.NewWithConfig(ctx, config)
 	if err != nil {
 		return nil, fmt.Errorf("connect postgres: %w", err)
 	}
@@ -444,24 +458,38 @@ FROM mcp_tasks WHERE task_id=$1 FOR UPDATE
 	if err != nil {
 		return smart_contract.Claim{}, err
 	}
-	defer rows.Close()
+	
+	var activeClaim *smart_contract.Claim
+	var activeClaimErr error
 	now := time.Now()
+	
 	for rows.Next() {
 		var c smart_contract.Claim
 		if err := rows.Scan(&c.ClaimID, &c.TaskID, &c.AiIdentifier, &c.Status, &c.ExpiresAt, &c.CreatedAt); err != nil {
+			rows.Close()
 			return smart_contract.Claim{}, err
 		}
 		if c.Status == "active" && now.Before(c.ExpiresAt) {
 			if strings.EqualFold(c.AiIdentifier, normalizedWallet) {
 				// IDEMPOTENT: Same user re-claiming active task.
-				// Ensure task table matches.
-				_, _ = tx.Exec(ctx, `UPDATE mcp_tasks SET status='claimed', claimed_by=$2 WHERE task_id=$1`, taskID, c.AiIdentifier)
-				return c, tx.Commit(ctx)
+				activeClaim = &c
+				break
 			}
-			return smart_contract.Claim{}, ErrTaskTaken
+			// Another user has it
+			activeClaimErr = ErrTaskTaken
+			break
 		}
 	}
-	rows.Close()
+	rows.Close() // Close BEFORE executing updates on tx
+
+	if activeClaimErr != nil {
+		return smart_contract.Claim{}, activeClaimErr
+	}
+	if activeClaim != nil {
+		// Ensure task table matches.
+		_, _ = tx.Exec(ctx, `UPDATE mcp_tasks SET status='claimed', claimed_by=$2 WHERE task_id=$1`, taskID, activeClaim.AiIdentifier)
+		return *activeClaim, tx.Commit(ctx)
+	}
 
 	// New claim logic: task must be available
 	if strings.EqualFold(task.Status, "approved") || strings.EqualFold(task.Status, "completed") || strings.EqualFold(task.Status, "published") || strings.EqualFold(task.Status, "claimed") || strings.EqualFold(task.Status, "submitted") {
