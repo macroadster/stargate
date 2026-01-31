@@ -39,6 +39,10 @@ func NewIngestionService(dsn string) (*IngestionService, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open pgx: %w", err)
 	}
+	db.SetMaxOpenConns(20)
+	db.SetMaxIdleConns(10)
+	db.SetConnMaxLifetime(1 * time.Hour)
+	db.SetConnMaxIdleTime(30 * time.Minute)
 	tableName := "starlight_ingestions"
 	if !isValidIngestionTableName(tableName) {
 		return nil, fmt.Errorf("invalid ingestion table name: %s", tableName)

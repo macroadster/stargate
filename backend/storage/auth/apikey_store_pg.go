@@ -52,7 +52,21 @@ type PGAPIKeyStore struct {
 
 // NewPGAPIKeyStore connects and initializes schema.
 func NewPGAPIKeyStore(ctx context.Context, dsn string) (*PGAPIKeyStore, error) {
-	pool, err := pgxpool.New(ctx, dsn)
+	config, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("parse postgres config: %w", err)
+	}
+
+	if config.MaxConns < 20 {
+		config.MaxConns = 20
+	}
+
+	config.MinConns = 5
+	config.HealthCheckPeriod = 1 * time.Minute
+	config.MaxConnLifetime = 1 * time.Hour
+	config.MaxConnIdleTime = 30 * time.Minute
+
+	pool, err := pgxpool.NewWithConfig(ctx, config)
 	if err != nil {
 		return nil, fmt.Errorf("connect postgres: %w", err)
 	}
