@@ -170,6 +170,12 @@ func refreshProofs(ctx context.Context, store *scstore.PGStore, provider Funding
 			continue
 		}
 		proof := t.MerkleProof
+
+		hasRealCommitment := proof.CommitmentRedeemScript != "" &&
+			proof.CommitmentVout > 0 &&
+			proof.TxID != "" &&
+			proof.TxID != "mock-txid"
+
 		prevStatus := proof.ConfirmationStatus
 		if proof.ConfirmationStatus == "provisional" {
 			fetched, err := provider.FetchProof(ctx, t)
@@ -180,7 +186,6 @@ func refreshProofs(ctx context.Context, store *scstore.PGStore, provider Funding
 			if err := store.UpdateTaskProof(ctx, t.TaskID, proof); err != nil {
 				log.Printf("failed to update proof for %s: %v", t.TaskID, err)
 			} else {
-				// Always publish proof update to sync across instances
 				PublishEvent(smart_contract.Event{
 					Type:      "task_proof_update",
 					EntityID:  t.TaskID,
@@ -201,17 +206,13 @@ func refreshProofs(ctx context.Context, store *scstore.PGStore, provider Funding
 			}
 		}
 
-		// Use EscortService to validate proof and publish results
-		if escort != nil {
+		if escort != nil && hasRealCommitment {
 			escortStatus, err := escort.ValidateProof(proof)
 			if err == nil && escortStatus != nil {
-				// We need TaskID in EscortStatus for sync
 				escortStatus.TaskID = t.TaskID
 
-				// Persist locally
 				_ = store.SyncEscortStatus(ctx, *escortStatus)
 
-				// Publish for other instances
 				PublishEvent(smart_contract.Event{
 					Type:      "escort_validation",
 					EntityID:  t.TaskID,
