@@ -99,16 +99,19 @@ type InscriptionHandler struct {
 	proxyBase          string
 	store              scmiddleware.Store
 	apiKeyIssuer       auth.APIKeyIssuer
+	RequireImage       bool
 }
 
 // NewInscriptionHandler creates a new inscription handler
 func NewInscriptionHandler(inscriptionService *services.InscriptionService, ingestionService *services.IngestionService, apiKeyIssuer auth.APIKeyIssuer) *InscriptionHandler {
+	requireImage := os.Getenv("STARGATE_REQUIRE_IMAGE") == "true"
 	return &InscriptionHandler{
 		BaseHandler:        NewBaseHandler(),
 		inscriptionService: inscriptionService,
 		ingestionService:   ingestionService,
 		proxyBase:          os.Getenv("STARGATE_PROXY_BASE"),
 		apiKeyIssuer:       apiKeyIssuer,
+		RequireImage:       requireImage,
 	}
 }
 
@@ -786,6 +789,10 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 
 	// Ensure we have image bytes & filename for downstream hashing/storage
 	if len(imgBytes) == 0 {
+		if h.RequireImage {
+			h.sendError(w, http.StatusBadRequest, "Image is required for inscription")
+			return
+		}
 		imgBytes = placeholderPNG()
 		if filename == "" {
 			filename = "placeholder.png"
