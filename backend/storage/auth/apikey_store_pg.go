@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
@@ -82,13 +81,11 @@ func (s *PGAPIKeyStore) initSchema(ctx context.Context) error {
 	const schema = `
 CREATE TABLE IF NOT EXISTS api_keys (
   key_hash TEXT PRIMARY KEY,
-  key TEXT,
   email TEXT,
   wallet_address TEXT,
   source TEXT,
   created_at TIMESTAMPTZ DEFAULT now()
 );
-ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS key_hash TEXT;
 ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS wallet_address TEXT;
 `
 	_, err := s.pool.Exec(ctx, schema)
@@ -101,21 +98,12 @@ func (s *PGAPIKeyStore) Validate(key string) bool {
 		return false
 	}
 
-	// Try new format: check key_hash
-	var hashedKeyExists bool
+	// Check key_hash column
+	var exists bool
 	err := s.pool.QueryRow(context.Background(),
 		"SELECT true FROM api_keys WHERE key_hash=$1",
-		key).Scan(&hashedKeyExists)
-	if err == nil && hashedKeyExists {
-		return true
-	}
-
-	// Fallback: check legacy key column (plain text)
-	var plainKeyExists bool
-	err = s.pool.QueryRow(context.Background(),
-		"SELECT true FROM api_keys WHERE key=$1",
-		key).Scan(&plainKeyExists)
-	return err == nil && plainKeyExists
+		key).Scan(&exists)
+	return err == nil && exists
 }
 
 // Get returns the API key record for the provided key.
@@ -124,20 +112,14 @@ func (s *PGAPIKeyStore) Get(key string) (APIKey, bool) {
 		return APIKey{}, false
 	}
 	var rec APIKey
-	var keyHash, plainKey sql.NullString
 
 	err := s.pool.QueryRow(context.Background(),
-		"SELECT COALESCE(key_hash, '') as key_hash, COALESCE(key, '') as key, email, wallet_address, source, created_at FROM api_keys WHERE key_hash=$1 OR key=$1",
+		"SELECT email, wallet_address, source, created_at FROM api_keys WHERE key_hash=$1",
 		key,
-	).Scan(&keyHash, &plainKey, &rec.Email, &rec.Wallet, &rec.Source, &rec.CreatedAt)
+	).Scan(&rec.Email, &rec.Wallet, &rec.Source, &rec.CreatedAt)
 
 	if err != nil {
 		return APIKey{}, false
-	}
-	if keyHash.Valid {
-		rec.Key = keyHash.String
-	} else if plainKey.Valid {
-		rec.Key = plainKey.String
 	}
 	return rec, true
 }
@@ -164,8 +146,8 @@ func (s *PGAPIKeyStore) Issue(email, wallet, source string) (APIKey, error) {
 		CreatedAt: time.Now(),
 	}
 	_, err = s.pool.Exec(context.Background(),
-		"INSERT INTO api_keys (key_hash, key, email, wallet_address, source, created_at) VALUES ($1,$2,$3,$4,$5,$6)",
-		keyHash, key, rec.Email, rec.Wallet, rec.Source, rec.CreatedAt)
+		"INSERT INTO api_keys (key_hash, email, wallet_address, source, created_at) VALUES ($1,$2,$3,$4,$5)",
+		keyHash, rec.Email, rec.Wallet, rec.Source, rec.CreatedAt)
 	if err != nil {
 		return APIKey{}, err
 	}
@@ -183,20 +165,14 @@ func (s *PGAPIKeyStore) UpdateWallet(key, wallet string) (APIKey, error) {
 		return APIKey{}, fmt.Errorf("wallet_address required")
 	}
 	var rec APIKey
-	var keyHash, plainKey sql.NullString
 	err := s.pool.QueryRow(context.Background(), `
 UPDATE api_keys
 SET wallet_address=$2
-WHERE key_hash=$1 OR key=$1
-RETURNING COALESCE(key_hash, '') as key_hash, COALESCE(key, '') as key, email, wallet_address, source, created_at
-`, normalizedKey, normalizedWallet).Scan(&keyHash, &plainKey, &rec.Email, &rec.Wallet, &rec.Source, &rec.CreatedAt)
+WHERE key_hash=$1
+RETURNING email, wallet_address, source, created_at
+`, normalizedKey, normalizedWallet).Scan(&rec.Email, &rec.Wallet, &rec.Source, &rec.CreatedAt)
 	if err != nil {
 		return APIKey{}, err
-	}
-	if keyHash.Valid {
-		rec.Key = keyHash.String
-	} else if plainKey.Valid {
-		rec.Key = plainKey.String
 	}
 	return rec, nil
 }
@@ -212,8 +188,8 @@ func (s *PGAPIKeyStore) Seed(key, email, source string) {
 	hash := hex.EncodeToString(sum[:])
 
 	_, _ = s.pool.Exec(context.Background(),
-		"INSERT INTO api_keys (key_hash, key, email, source, created_at) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING",
-		hash, key, email, source, time.Now())
+		"INSERT INTO api_keys (key_hash, email, source, created_at) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING",
+		hash, email, source, time.Now())
 }
 
 // SeedEnvironmentVariables seeds STARGATE_API_KEY and STARLIGHT_DONATION_ADDRESS from environment variables.
@@ -229,8 +205,8 @@ func (s *PGAPIKeyStore) SeedEnvironmentVariables() {
 		hash := hex.EncodeToString(sum[:])
 
 		_, _ = s.pool.Exec(context.Background(),
-			"INSERT INTO api_keys (key_hash, key, email, wallet_address, source, created_at) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING",
-			hash, stargateKey, "", donationAddr, "seed", time.Now())
+			"INSERT INTO api_keys (key_hash, email, wallet_address, source, created_at) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING",
+			hash, "", donationAddr, "seed", time.Now())
 		return
 	}
 
