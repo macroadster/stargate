@@ -2,9 +2,7 @@ package auth
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"os"
@@ -13,36 +11,6 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
-
-func generateSalt() (string, error) {
-	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		return "", fmt.Errorf("generate salt: %w", err)
-	}
-	return base64.URLEncoding.EncodeToString(b), nil
-}
-
-func hashKey(key, salt string) string {
-	h := sha256.New()
-	h.Write([]byte(salt + key))
-	return hex.EncodeToString(h.Sum(nil))
-}
-
-func encodeKeyHash(salt, hash string) string {
-	return base64.URLEncoding.EncodeToString([]byte(salt + ":" + hash))
-}
-
-func decodeKeyHash(encoded string) (salt, hash string, err error) {
-	decoded, err := base64.URLEncoding.DecodeString(encoded)
-	if err != nil {
-		return "", "", fmt.Errorf("decode key hash: %w", err)
-	}
-	parts := strings.SplitN(string(decoded), ":", 2)
-	if len(parts) != 2 {
-		return "", "", fmt.Errorf("invalid key hash format")
-	}
-	return parts[0], parts[1], nil
-}
 
 // PGAPIKeyStore persists API keys in Postgres.
 type PGAPIKeyStore struct {
@@ -131,12 +99,9 @@ func (s *PGAPIKeyStore) Issue(email, wallet, source string) (APIKey, error) {
 		return APIKey{}, err
 	}
 
-	salt, err := generateSalt()
-	if err != nil {
-		return APIKey{}, err
-	}
-	hash := hashKey(key, salt)
-	keyHash := encodeKeyHash(salt, hash)
+	// Use SHA256 hashing consistent with creatorAPIKeyHash() and Seed()
+	sum := sha256.Sum256([]byte(key))
+	keyHash := hex.EncodeToString(sum[:])
 
 	rec := APIKey{
 		Key:       key,
