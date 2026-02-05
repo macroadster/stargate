@@ -682,16 +682,7 @@ func (h *HTTPMCPServer) requireAuthorizedApprover(apiKey string, proposal smart_
 		return nil
 	}
 
-	// 1. Check if matches Proposal Creator by wallet
-	if proposal.Metadata != nil {
-		if creatorWallet, ok := proposal.Metadata["creator_wallet"].(string); ok {
-			if strings.EqualFold(strings.TrimSpace(creatorWallet), approverWallet) {
-				return nil
-			}
-		}
-	}
-
-	// 2. Check if matches Wish Creator by wallet
+	// 1. Check if matches Wish Creator by wallet
 	visibleHash := strings.TrimSpace(proposal.VisiblePixelHash)
 	if visibleHash == "" {
 		if v, ok := proposal.Metadata["visible_pixel_hash"].(string); ok {
@@ -699,6 +690,7 @@ func (h *HTTPMCPServer) requireAuthorizedApprover(apiKey string, proposal smart_
 		}
 	}
 
+	// 1. Check if matches Wish Creator by wallet (from ingestion record)
 	if visibleHash != "" && h.ingestionSvc != nil {
 		// Try both hash and wish-hash
 		rec, err := h.ingestionSvc.Get(visibleHash)
@@ -715,29 +707,37 @@ func (h *HTTPMCPServer) requireAuthorizedApprover(apiKey string, proposal smart_
 		}
 	}
 
-	// 3. Fallback: if no creator info exists at all, allow for now to prevent deadlock on old data
-	// (But if it exists and doesn't match, we reject)
-	hasAnyCreatorInfo := false
+	// 2. Fallback: Check proposal metadata for wish creator info
 	if proposal.Metadata != nil {
-		if _, ok := proposal.Metadata["creator_wallet"].(string); ok {
-			hasAnyCreatorInfo = true
-		}
-	}
-	if !hasAnyCreatorInfo && visibleHash != "" && h.ingestionSvc != nil {
-		rec, _ := h.ingestionSvc.Get(visibleHash)
-		if rec != nil && rec.Metadata != nil {
-			if _, ok := rec.Metadata["creator_wallet"].(string); ok {
-				hasAnyCreatorInfo = true
+		if creatorWallet, ok := proposal.Metadata["creator_wallet"].(string); ok {
+			if strings.EqualFold(strings.TrimSpace(creatorWallet), approverWallet) {
+				return nil
 			}
 		}
 	}
 
-	if !hasAnyCreatorInfo {
-		log.Printf("WARNING: allowing approval for proposal %s with NO creator info", proposal.ID)
+	// 3. If no wish creator info exists at all, allow for now to prevent deadlock on old data
+	hasWishCreatorInfo := false
+	if visibleHash != "" && h.ingestionSvc != nil {
+		rec, _ := h.ingestionSvc.Get(visibleHash)
+		if rec != nil && rec.Metadata != nil {
+			if _, ok := rec.Metadata["creator_wallet"].(string); ok {
+				hasWishCreatorInfo = true
+			}
+		}
+	}
+	if !hasWishCreatorInfo && proposal.Metadata != nil {
+		if _, ok := proposal.Metadata["creator_wallet"].(string); ok {
+			hasWishCreatorInfo = true
+		}
+	}
+
+	if !hasWishCreatorInfo {
+		log.Printf("WARNING: allowing approval for proposal %s with NO wish creator info", proposal.ID)
 		return nil
 	}
 
-	return fmt.Errorf("approver wallet %s does not match proposal creator or wish creator", approverWallet)
+	return fmt.Errorf("approver wallet %s does not match wish creator", approverWallet)
 }
 
 func (h *HTTPMCPServer) handleScanImage(ctx context.Context, args map[string]interface{}) (interface{}, error) {

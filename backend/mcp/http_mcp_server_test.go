@@ -506,7 +506,7 @@ func TestProposalCreationRequiresWish(t *testing.T) {
 		if resp.ErrorCode != "UNAUTHORIZED" {
 			t.Fatalf("expected UNAUTHORIZED error code, got: %s", resp.ErrorCode)
 		}
-		if !strings.Contains(resp.Error, "does not match proposal creator or wish creator") {
+		if !strings.Contains(resp.Error, "does not match wish creator") {
 			t.Fatalf("expected creator mismatch error, got: %s", resp.Error)
 		}
 	})

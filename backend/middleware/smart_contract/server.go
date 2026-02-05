@@ -108,16 +108,7 @@ func (s *Server) enforceCreatorApproval(r *http.Request, proposal smart_contract
 		return nil
 	}
 
-	// 1. Check if matches Proposal Creator by wallet
-	if proposal.Metadata != nil {
-		if creatorWallet, ok := proposal.Metadata["creator_wallet"].(string); ok {
-			if strings.EqualFold(strings.TrimSpace(creatorWallet), approverWallet) {
-				return nil
-			}
-		}
-	}
-
-	// 2. Check if matches Wish Creator by wallet
+	// 1. Check if matches Wish Creator by wallet
 	visibleHash := proposalVisibleHash(proposal)
 	if visibleHash != "" && s.ingestionSvc != nil {
 		// Try both hash and wish-hash
@@ -135,28 +126,23 @@ func (s *Server) enforceCreatorApproval(r *http.Request, proposal smart_contract
 		}
 	}
 
-	// 3. Fallback: if no creator info exists at all, allow for now to prevent deadlock on old data
-	hasAnyCreatorInfo := false
-	if proposal.Metadata != nil {
-		if _, ok := proposal.Metadata["creator_wallet"].(string); ok {
-			hasAnyCreatorInfo = true
-		}
-	}
-	if !hasAnyCreatorInfo && visibleHash != "" && s.ingestionSvc != nil {
+	// 2. Fallback: if no wish creator info exists at all, allow for now to prevent deadlock on old data
+	hasWishCreatorInfo := false
+	if visibleHash != "" && s.ingestionSvc != nil {
 		rec, _ := s.ingestionSvc.Get(visibleHash)
 		if rec != nil && rec.Metadata != nil {
 			if _, ok := rec.Metadata["creator_wallet"].(string); ok {
-				hasAnyCreatorInfo = true
+				hasWishCreatorInfo = true
 			}
 		}
 	}
 
-	if !hasAnyCreatorInfo {
-		log.Printf("WARNING: allowing approval for proposal %s with NO creator info via REST", proposal.ID)
+	if !hasWishCreatorInfo {
+		log.Printf("WARNING: allowing approval for proposal %s with NO wish creator info via REST", proposal.ID)
 		return nil
 	}
 
-	return fmt.Errorf("approver wallet %s does not match proposal creator or wish creator", approverWallet)
+	return fmt.Errorf("approver wallet %s does not match wish creator", approverWallet)
 }
 
 // NewServer builds a Server with the given store.
