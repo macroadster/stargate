@@ -561,6 +561,12 @@ func (h *HTTPMCPServer) handleCreateProposal(ctx context.Context, args map[strin
 		return nil, NewNotFoundError("create_proposal", "wish", visiblePixelHash)
 	}
 
+	// Get creator wallet from API key
+	var creatorWallet string
+	if apiKeyRec, ok := h.apiKeyStore.Get(apiKey); ok {
+		creatorWallet = strings.TrimSpace(apiKeyRec.Wallet)
+	}
+
 	proposalID := fmt.Sprintf("proposal-%d", time.Now().UnixNano())
 	contractID := "wish-" + visiblePixelHash
 	proposal := smart_contract.Proposal{
@@ -572,9 +578,9 @@ func (h *HTTPMCPServer) handleCreateProposal(ctx context.Context, args map[strin
 		Status:           "pending",
 		CreatedAt:        time.Now(),
 		Metadata: map[string]interface{}{
-			"creator_api_key_hash": apiKeyHash(apiKey),
-			"contract_id":          contractID,
-			"visible_pixel_hash":   visiblePixelHash,
+			"creator_wallet":     creatorWallet,
+			"contract_id":        contractID,
+			"visible_pixel_hash": visiblePixelHash,
 		},
 	}
 
@@ -658,33 +664,34 @@ func (h *HTTPMCPServer) handleApproveProposal(ctx context.Context, args map[stri
 }
 
 func (h *HTTPMCPServer) requireAuthorizedApprover(apiKey string, proposal smart_contract.Proposal) error {
-	currentHash := apiKeyHash(apiKey)
-	if currentHash == "" {
-		return fmt.Errorf("api key required for approval")
+	// Get approver's wallet from API key
+	var approverWallet string
+	if h.apiKeyStore != nil {
+		if approverRec, ok := h.apiKeyStore.Get(apiKey); ok {
+			approverWallet = strings.TrimSpace(approverRec.Wallet)
+		}
+	}
+	if approverWallet == "" {
+		return fmt.Errorf("api key with wallet binding required for approval")
 	}
 
 	// 0. GLOBAL AUDITOR: Check if the bound wallet is the donation address
 	donationAddr := strings.TrimSpace(os.Getenv("STARLIGHT_DONATION_ADDRESS"))
-	if donationAddr != "" && h.apiKeyStore != nil {
-		if approverRec, ok := h.apiKeyStore.Get(apiKey); ok {
-			approverWallet := strings.TrimSpace(approverRec.Wallet)
-			if approverWallet != "" && strings.EqualFold(approverWallet, donationAddr) {
-				log.Printf("AUTHORIZATION: Allowing approval for proposal %s based on Global Auditor status (%s)", proposal.ID, approverWallet)
-				return nil
-			}
-		}
+	if donationAddr != "" && strings.EqualFold(approverWallet, donationAddr) {
+		log.Printf("AUTHORIZATION: Allowing approval for proposal %s based on Global Auditor status (%s)", proposal.ID, approverWallet)
+		return nil
 	}
 
-	// 1. Check if matches Proposal Creator
+	// 1. Check if matches Proposal Creator by wallet
 	if proposal.Metadata != nil {
-		if creatorHash, ok := proposal.Metadata["creator_api_key_hash"].(string); ok {
-			if strings.TrimSpace(creatorHash) == currentHash {
+		if creatorWallet, ok := proposal.Metadata["creator_wallet"].(string); ok {
+			if strings.EqualFold(strings.TrimSpace(creatorWallet), approverWallet) {
 				return nil
 			}
 		}
 	}
 
-	// 2. Check if matches Wish Creator
+	// 2. Check if matches Wish Creator by wallet
 	visibleHash := strings.TrimSpace(proposal.VisiblePixelHash)
 	if visibleHash == "" {
 		if v, ok := proposal.Metadata["visible_pixel_hash"].(string); ok {
@@ -700,8 +707,8 @@ func (h *HTTPMCPServer) requireAuthorizedApprover(apiKey string, proposal smart_
 		}
 
 		if rec != nil && rec.Metadata != nil {
-			if wishCreatorHash, ok := rec.Metadata["creator_api_key_hash"].(string); ok {
-				if strings.TrimSpace(wishCreatorHash) == currentHash {
+			if wishCreatorWallet, ok := rec.Metadata["creator_wallet"].(string); ok {
+				if strings.EqualFold(strings.TrimSpace(wishCreatorWallet), approverWallet) {
 					return nil
 				}
 			}
@@ -712,14 +719,14 @@ func (h *HTTPMCPServer) requireAuthorizedApprover(apiKey string, proposal smart_
 	// (But if it exists and doesn't match, we reject)
 	hasAnyCreatorInfo := false
 	if proposal.Metadata != nil {
-		if _, ok := proposal.Metadata["creator_api_key_hash"].(string); ok {
+		if _, ok := proposal.Metadata["creator_wallet"].(string); ok {
 			hasAnyCreatorInfo = true
 		}
 	}
 	if !hasAnyCreatorInfo && visibleHash != "" && h.ingestionSvc != nil {
 		rec, _ := h.ingestionSvc.Get(visibleHash)
 		if rec != nil && rec.Metadata != nil {
-			if _, ok := rec.Metadata["creator_api_key_hash"].(string); ok {
+			if _, ok := rec.Metadata["creator_wallet"].(string); ok {
 				hasAnyCreatorInfo = true
 			}
 		}
@@ -730,7 +737,7 @@ func (h *HTTPMCPServer) requireAuthorizedApprover(apiKey string, proposal smart_
 		return nil
 	}
 
-	return fmt.Errorf("approver does not match proposal creator or wish creator")
+	return fmt.Errorf("approver wallet %s does not match proposal creator or wish creator", approverWallet)
 }
 
 func (h *HTTPMCPServer) handleScanImage(ctx context.Context, args map[string]interface{}) (interface{}, error) {

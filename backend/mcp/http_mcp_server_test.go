@@ -33,6 +33,21 @@ func (w walletValidator) Get(key string) (auth.APIKey, bool) {
 	return auth.APIKey{Key: key, Wallet: w.wallet}, true
 }
 
+// multiKeyWalletValidator returns different wallets for different keys
+type multiKeyWalletValidator struct {
+	wallets map[string]string
+}
+
+func (m *multiKeyWalletValidator) Validate(key string) bool {
+	_, ok := m.wallets[key]
+	return ok
+}
+
+func (m *multiKeyWalletValidator) Get(key string) (auth.APIKey, bool) {
+	wallet, ok := m.wallets[key]
+	return auth.APIKey{Key: key, Wallet: wallet}, ok
+}
+
 func TestHTTPMCPServer(t *testing.T) {
 	// Use memory store for testing
 	store := scstore.NewMemoryStore(72 * time.Hour)
@@ -329,6 +344,9 @@ func TestProposalCreationRequiresWish(t *testing.T) {
 
 	t.Run("approve_proposal_requires_wish", func(t *testing.T) {
 		apiKey := "approve-test-key"
+		creatorWallet := "tb1qcreatorwallet000000000000000000000000000"
+		// Use walletValidator so the API key has a wallet binding
+		walletServer := NewHTTPMCPServer(store, walletValidator{wallet: creatorWallet}, ingestionSvc, scannerManager, nil, auth.NewChallengeStore(10*time.Minute))
 		visibleHash := strings.Repeat("a", 64)
 		proposal := smart_contract.Proposal{
 			ID:               "proposal-approve-test",
@@ -347,8 +365,8 @@ func TestProposalCreationRequiresWish(t *testing.T) {
 				},
 			},
 			Metadata: map[string]interface{}{
-				"creator_api_key_hash": apiKeyHash(apiKey),
-				"visible_pixel_hash":   visibleHash,
+				"creator_wallet":     creatorWallet,
+				"visible_pixel_hash": visibleHash,
 			},
 		}
 		if err := store.CreateProposal(context.Background(), proposal); err != nil {
@@ -368,7 +386,7 @@ func TestProposalCreationRequiresWish(t *testing.T) {
 		r.Header.Set("Content-Type", "application/json")
 		r.Header.Set("X-API-Key", apiKey)
 
-		server.handleToolCall(w, r)
+		walletServer.handleToolCall(w, r)
 
 		if w.Code != http.StatusOK {
 			t.Fatalf("expected 404, got %d: %s", w.Code, w.Body.String())
@@ -403,7 +421,7 @@ func TestProposalCreationRequiresWish(t *testing.T) {
 		r.Header.Set("Content-Type", "application/json")
 		r.Header.Set("X-API-Key", apiKey)
 
-		server.handleToolCall(w, r)
+		walletServer.handleToolCall(w, r)
 
 		if w.Code != http.StatusOK {
 			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
@@ -420,7 +438,18 @@ func TestProposalCreationRequiresWish(t *testing.T) {
 	t.Run("approve_proposal_requires_creator", func(t *testing.T) {
 		creatorKey := "creator-key"
 		otherKey := "other-key"
+		creatorWallet := "tb1qcreatorwallet000000000000000000000000000"
+		otherWallet := "tb1qotherwallet00000000000000000000000000000"
 		visibleHash := strings.Repeat("b", 64)
+
+		// Create a validator that returns different wallets for different keys
+		multiWalletValidator := &multiKeyWalletValidator{
+			wallets: map[string]string{
+				creatorKey: creatorWallet,
+				otherKey:   otherWallet,
+			},
+		}
+		creatorServer := NewHTTPMCPServer(store, multiWalletValidator, ingestionSvc, scannerManager, nil, auth.NewChallengeStore(10*time.Minute))
 
 		proposal := smart_contract.Proposal{
 			ID:               "proposal-creator-test",
@@ -430,8 +459,8 @@ func TestProposalCreationRequiresWish(t *testing.T) {
 			BudgetSats:       1000,
 			Status:           "pending",
 			Metadata: map[string]interface{}{
-				"creator_api_key_hash": apiKeyHash(creatorKey),
-				"visible_pixel_hash":   visibleHash,
+				"creator_wallet":     creatorWallet,
+				"visible_pixel_hash": visibleHash,
 			},
 		}
 		if err := store.CreateProposal(context.Background(), proposal); err != nil {
@@ -461,7 +490,7 @@ func TestProposalCreationRequiresWish(t *testing.T) {
 		r.Header.Set("Content-Type", "application/json")
 		r.Header.Set("X-API-Key", otherKey)
 
-		server.handleToolCall(w, r)
+		creatorServer.handleToolCall(w, r)
 
 		if w.Code != http.StatusOK {
 			t.Fatalf("expected 401, got %d: %s", w.Code, w.Body.String())
@@ -477,7 +506,7 @@ func TestProposalCreationRequiresWish(t *testing.T) {
 		if resp.ErrorCode != "UNAUTHORIZED" {
 			t.Fatalf("expected UNAUTHORIZED error code, got: %s", resp.ErrorCode)
 		}
-		if !strings.Contains(resp.Error, "approver does not match proposal creator") {
+		if !strings.Contains(resp.Error, "does not match proposal creator or wish creator") {
 			t.Fatalf("expected creator mismatch error, got: %s", resp.Error)
 		}
 	})

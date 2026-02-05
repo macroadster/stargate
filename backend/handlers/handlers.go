@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -99,11 +98,12 @@ type InscriptionHandler struct {
 	proxyBase          string
 	store              scmiddleware.Store
 	apiKeyIssuer       auth.APIKeyIssuer
+	apiKeyValidator    auth.APIKeyValidator
 	RequireImage       bool
 }
 
 // NewInscriptionHandler creates a new inscription handler
-func NewInscriptionHandler(inscriptionService *services.InscriptionService, ingestionService *services.IngestionService, apiKeyIssuer auth.APIKeyIssuer) *InscriptionHandler {
+func NewInscriptionHandler(inscriptionService *services.InscriptionService, ingestionService *services.IngestionService, apiKeyIssuer auth.APIKeyIssuer, apiKeyValidator auth.APIKeyValidator) *InscriptionHandler {
 	requireImage := os.Getenv("STARGATE_REQUIRE_IMAGE") == "true"
 	return &InscriptionHandler{
 		BaseHandler:        NewBaseHandler(),
@@ -111,6 +111,7 @@ func NewInscriptionHandler(inscriptionService *services.InscriptionService, inge
 		ingestionService:   ingestionService,
 		proxyBase:          os.Getenv("STARGATE_PROXY_BASE"),
 		apiKeyIssuer:       apiKeyIssuer,
+		apiKeyValidator:    apiKeyValidator,
 		RequireImage:       requireImage,
 	}
 }
@@ -884,23 +885,13 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 							creatorKey = strings.TrimPrefix(auth, "Bearer ")
 						}
 					}
-					var creatorHash string
-					if creatorKey != "" {
-						hashBytes := sha256.Sum256([]byte(creatorKey))
-						creatorHash = hex.EncodeToString(hashBytes[:])
-
-						log.Printf("DEBUG: Storing creator API key with hash: %s", creatorHash)
-						// Store the API key in the database for future validation
-						if h.apiKeyIssuer != nil {
-							// The Seed method stores an existing key in the database
-							if seedIssuer, ok := h.apiKeyIssuer.(interface{ Seed(string, string, string) }); ok {
-								seedIssuer.Seed(creatorKey, "", "wish-creator")
-								log.Printf("DEBUG: Successfully stored creator API key in database")
-							} else {
-								log.Printf("Warning: apiKeyIssuer does not support Seed method for storing existing API key")
-							}
+					var creatorWallet string
+					if creatorKey != "" && h.apiKeyValidator != nil {
+						if apiKeyRec, ok := h.apiKeyValidator.Get(creatorKey); ok {
+							creatorWallet = strings.TrimSpace(apiKeyRec.Wallet)
+							log.Printf("DEBUG: Found creator wallet: %s", creatorWallet)
 						} else {
-							log.Printf("DEBUG: apiKeyIssuer is nil - cannot store API key")
+							log.Printf("DEBUG: API key not found in validator")
 						}
 					}
 
@@ -913,7 +904,7 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 						"address":              address,
 						"funding_mode":         fundingMode,
 						"starlight_request_id": starlightResponse.RequestID,
-						"creator_api_key_hash": creatorHash,
+						"creator_wallet":       creatorWallet,
 					}
 					if strings.EqualFold(priceUnit, "sats") {
 						meta["budget_sats"] = parsePriceSats(price)
@@ -996,7 +987,7 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 									"funding_mode":         fundingMode,
 									"address":              address,
 									"price_unit":           priceUnit,
-									"creator_api_key_hash": creatorHash,
+									"creator_wallet":       creatorWallet,
 								},
 							}
 

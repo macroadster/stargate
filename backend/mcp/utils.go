@@ -1,37 +1,27 @@
 package mcp
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"strings"
 
 	"stargate-backend/core/smart_contract"
 )
 
-func apiKeyHash(apiKey string) string {
-	key := strings.TrimSpace(apiKey)
-	if key == "" {
-		return ""
-	}
-	sum := sha256.Sum256([]byte(key))
-	return hex.EncodeToString(sum[:])
-}
-
-func requireCreatorApproval(apiKey string, proposal smart_contract.Proposal) error {
+// requireCreatorApproval checks if the provided wallet address matches the proposal creator.
+// This is a helper for cases where the apiKeyStore is not available.
+func requireCreatorApproval(approverWallet string, proposal smart_contract.Proposal) error {
 	if proposal.Metadata == nil {
 		return fmt.Errorf("proposal missing creator metadata")
 	}
-	required, _ := proposal.Metadata["creator_api_key_hash"].(string)
+	required, _ := proposal.Metadata["creator_wallet"].(string)
 	required = strings.TrimSpace(required)
 	if required == "" {
-		return fmt.Errorf("proposal missing creator_api_key_hash; recreate the wish to approve")
+		return fmt.Errorf("proposal missing creator_wallet; recreate the wish to approve")
 	}
-	current := apiKeyHash(apiKey)
-	if current == "" {
-		return fmt.Errorf("api key required for approval")
+	if approverWallet == "" {
+		return fmt.Errorf("wallet address required for approval")
 	}
-	if required != current {
+	if !strings.EqualFold(required, approverWallet) {
 		return fmt.Errorf("approver does not match proposal creator")
 	}
 	return nil

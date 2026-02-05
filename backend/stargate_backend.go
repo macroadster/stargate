@@ -377,7 +377,7 @@ func runHTTPServer() {
 	store, apiKeyIssuer, apiKeyValidator, ingestionSvc, challengeStore := initializeMCPComponents()
 
 	// Initialize dependency container
-	container := container.NewContainer(apiKeyIssuer)
+	container := container.NewContainer(apiKeyIssuer, apiKeyValidator)
 
 	// Initialize EscortService
 	rpcURL := bitcoin.GetNetworkConfig(bitcoin.GetCurrentNetwork()).BaseURL

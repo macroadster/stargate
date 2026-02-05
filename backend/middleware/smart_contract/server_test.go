@@ -8,14 +8,39 @@ import (
 	"testing"
 
 	"stargate-backend/core/smart_contract"
+	auth "stargate-backend/storage/auth"
 	scstore "stargate-backend/storage/smart_contract"
 )
 
+// mockAPIKeyStore is a simple mock for testing
+type mockAPIKeyStore struct {
+	keys map[string]auth.APIKey
+}
+
+func (m *mockAPIKeyStore) Validate(key string) bool {
+	_, ok := m.keys[key]
+	return ok
+}
+
+func (m *mockAPIKeyStore) Get(key string) (auth.APIKey, bool) {
+	k, ok := m.keys[key]
+	return k, ok
+}
+
 func TestApproveProposalRequiresWishContract(t *testing.T) {
 	store := scstore.NewMemoryStore(72 * 60 * 60)
-	server := NewServer(store, nil, nil)
 
+	// Set up mock API key store with wallet binding
 	apiKey := "approve-rest-key"
+	creatorWallet := "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh"
+	mockStore := &mockAPIKeyStore{
+		keys: map[string]auth.APIKey{
+			apiKey: {Key: apiKey, Wallet: creatorWallet},
+		},
+	}
+
+	server := NewServer(store, mockStore, nil)
+
 	visibleHash := strings.Repeat("b", 64)
 	proposal := smart_contract.Proposal{
 		ID:               "proposal-approve-rest",
@@ -34,8 +59,8 @@ func TestApproveProposalRequiresWishContract(t *testing.T) {
 			},
 		},
 		Metadata: map[string]interface{}{
-			"creator_api_key_hash": creatorAPIKeyHash(apiKey),
-			"visible_pixel_hash":   visibleHash,
+			"creator_wallet":     creatorWallet,
+			"visible_pixel_hash": visibleHash,
 		},
 	}
 	if err := store.CreateProposal(context.Background(), proposal); err != nil {

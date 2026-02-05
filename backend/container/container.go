@@ -40,7 +40,7 @@ type Container struct {
 }
 
 // NewContainer creates a new dependency container
-func NewContainer(apiKeyIssuer auth.APIKeyIssuer) *Container {
+func NewContainer(apiKeyIssuer auth.APIKeyIssuer, apiKeyValidator auth.APIKeyValidator) *Container {
 	storageType := os.Getenv("STARGATE_STORAGE")
 	pgDSN := os.Getenv("STARGATE_PG_DSN")
 	if pgDSN == "" {
@@ -100,7 +100,7 @@ func NewContainer(apiKeyIssuer auth.APIKeyIssuer) *Container {
 
 	// Initialize handlers
 	healthHandler := handlers.NewHealthHandler(healthService)
-	inscriptionHandler := handlers.NewInscriptionHandler(inscriptionService, ingestionService, apiKeyIssuer)
+	inscriptionHandler := handlers.NewInscriptionHandler(inscriptionService, ingestionService, apiKeyIssuer, apiKeyValidator)
 	blockHandler := handlers.NewBlockHandler(blockService)
 	// contractHandler will be set later with store
 	searchHandler := handlers.NewSearchHandler(inscriptionService, blockService, dataStorage)

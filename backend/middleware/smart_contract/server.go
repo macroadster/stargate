@@ -71,56 +71,53 @@ type ProposalUpdateBody struct {
 	Tasks            *[]smart_contract.Task  `json:"tasks"`
 }
 
-func creatorAPIKeyHash(apiKey string) string {
-	key := strings.TrimSpace(apiKey)
-	if key == "" {
-		return ""
-	}
-	sum := sha256.Sum256([]byte(key))
-	return hex.EncodeToString(sum[:])
-}
-
-func applyCreatorAPIKeyHash(meta map[string]interface{}, apiKey string) {
+func applyCreatorWallet(meta map[string]interface{}, apiKey string, apiKeys auth.APIKeyValidator) {
 	if meta == nil {
 		return
 	}
-	if _, ok := meta["creator_api_key_hash"].(string); ok {
+	if _, ok := meta["creator_wallet"].(string); ok {
 		return
 	}
-	if hash := creatorAPIKeyHash(apiKey); hash != "" {
-		meta["creator_api_key_hash"] = hash
+	if apiKeys != nil {
+		if rec, ok := apiKeys.Get(apiKey); ok {
+			if wallet := strings.TrimSpace(rec.Wallet); wallet != "" {
+				meta["creator_wallet"] = wallet
+			}
+		}
 	}
 }
 
 func (s *Server) enforceCreatorApproval(r *http.Request, proposal smart_contract.Proposal) error {
 	apiKey := r.Header.Get("X-API-Key")
-	currentHash := creatorAPIKeyHash(apiKey)
-	if currentHash == "" {
-		return fmt.Errorf("api key required for approval")
+
+	// Get approver's wallet from API key
+	var approverWallet string
+	if s.apiKeys != nil {
+		if approverRec, ok := s.apiKeys.Get(apiKey); ok {
+			approverWallet = strings.TrimSpace(approverRec.Wallet)
+		}
+	}
+	if approverWallet == "" {
+		return fmt.Errorf("api key with wallet binding required for approval")
 	}
 
 	// 0. GLOBAL AUDITOR: Check if the bound wallet is the donation address
 	donationAddr := strings.TrimSpace(os.Getenv("STARLIGHT_DONATION_ADDRESS"))
-	if donationAddr != "" && s.apiKeys != nil {
-		if approverRec, ok := s.apiKeys.Get(apiKey); ok {
-			approverWallet := strings.TrimSpace(approverRec.Wallet)
-			if approverWallet != "" && strings.EqualFold(approverWallet, donationAddr) {
-				log.Printf("AUTHORIZATION: Allowing approval for proposal %s based on Global Auditor status (%s)", proposal.ID, approverWallet)
-				return nil
-			}
-		}
+	if donationAddr != "" && strings.EqualFold(approverWallet, donationAddr) {
+		log.Printf("AUTHORIZATION: Allowing approval for proposal %s based on Global Auditor status (%s)", proposal.ID, approverWallet)
+		return nil
 	}
 
-	// 1. Check if matches Proposal Creator
+	// 1. Check if matches Proposal Creator by wallet
 	if proposal.Metadata != nil {
-		if creatorHash, ok := proposal.Metadata["creator_api_key_hash"].(string); ok {
-			if strings.TrimSpace(creatorHash) == currentHash {
+		if creatorWallet, ok := proposal.Metadata["creator_wallet"].(string); ok {
+			if strings.EqualFold(strings.TrimSpace(creatorWallet), approverWallet) {
 				return nil
 			}
 		}
 	}
 
-	// 2. Check if matches Wish Creator
+	// 2. Check if matches Wish Creator by wallet
 	visibleHash := proposalVisibleHash(proposal)
 	if visibleHash != "" && s.ingestionSvc != nil {
 		// Try both hash and wish-hash
@@ -130,28 +127,9 @@ func (s *Server) enforceCreatorApproval(r *http.Request, proposal smart_contract
 		}
 
 		if rec != nil && rec.Metadata != nil {
-			// A. Match by API Key Hash
-			if wishCreatorHash, ok := rec.Metadata["creator_api_key_hash"].(string); ok {
-				if strings.TrimSpace(wishCreatorHash) == currentHash {
+			if wishCreatorWallet, ok := rec.Metadata["creator_wallet"].(string); ok {
+				if strings.EqualFold(strings.TrimSpace(wishCreatorWallet), approverWallet) {
 					return nil
-				}
-			}
-
-			// B. Match by Wallet Address (IDENTITY MATCH)
-			// This allows a user with a personal key to approve wishes handled by agents using a seed key,
-			// provided both keys are bound to the same wallet.
-			wishWallet := strings.TrimSpace(toString(rec.Metadata["address"]))
-			if wishWallet == "" {
-				wishWallet = strings.TrimSpace(toString(rec.Metadata["payout_address"]))
-			}
-
-			if wishWallet != "" && s.apiKeys != nil {
-				if approverRec, ok := s.apiKeys.Get(apiKey); ok {
-					approverWallet := strings.TrimSpace(approverRec.Wallet)
-					if approverWallet != "" && strings.EqualFold(approverWallet, wishWallet) {
-						log.Printf("AUTHORIZATION: Allowing approval for proposal %s based on wallet identity match (%s)", proposal.ID, approverWallet)
-						return nil
-					}
 				}
 			}
 		}
@@ -160,14 +138,14 @@ func (s *Server) enforceCreatorApproval(r *http.Request, proposal smart_contract
 	// 3. Fallback: if no creator info exists at all, allow for now to prevent deadlock on old data
 	hasAnyCreatorInfo := false
 	if proposal.Metadata != nil {
-		if _, ok := proposal.Metadata["creator_api_key_hash"].(string); ok {
+		if _, ok := proposal.Metadata["creator_wallet"].(string); ok {
 			hasAnyCreatorInfo = true
 		}
 	}
 	if !hasAnyCreatorInfo && visibleHash != "" && s.ingestionSvc != nil {
 		rec, _ := s.ingestionSvc.Get(visibleHash)
 		if rec != nil && rec.Metadata != nil {
-			if _, ok := rec.Metadata["creator_api_key_hash"].(string); ok {
+			if _, ok := rec.Metadata["creator_wallet"].(string); ok {
 				hasAnyCreatorInfo = true
 			}
 		}
@@ -178,7 +156,7 @@ func (s *Server) enforceCreatorApproval(r *http.Request, proposal smart_contract
 		return nil
 	}
 
-	return fmt.Errorf("approver does not match proposal creator or wish creator")
+	return fmt.Errorf("approver wallet %s does not match proposal creator or wish creator", approverWallet)
 }
 
 // NewServer builds a Server with the given store.
@@ -2645,8 +2623,8 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 			if proposal.Metadata == nil {
 				proposal.Metadata = map[string]interface{}{}
 			}
-			if _, ok := proposal.Metadata["creator_api_key_hash"].(string); !ok {
-				applyCreatorAPIKeyHash(proposal.Metadata, r.Header.Get("X-API-Key"))
+			if _, ok := proposal.Metadata["creator_wallet"].(string); !ok {
+				applyCreatorWallet(proposal.Metadata, r.Header.Get("X-API-Key"), s.apiKeys)
 				if err := s.store.UpdateProposal(r.Context(), proposal); err != nil {
 					Error(w, http.StatusBadRequest, err.Error())
 					return
@@ -2815,7 +2793,7 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 				Error(w, http.StatusBadRequest, "contract_id and visible_pixel_hash are required for proposal creation so the UI can display it; set both to the same 64-char hash if needed")
 				return
 			}
-			applyCreatorAPIKeyHash(proposal.Metadata, r.Header.Get("X-API-Key"))
+			applyCreatorWallet(proposal.Metadata, r.Header.Get("X-API-Key"), s.apiKeys)
 			if err := s.store.CreateProposal(r.Context(), proposal); err != nil {
 				Error(w, http.StatusBadRequest, err.Error())
 				return
@@ -2860,7 +2838,7 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 		if body.Metadata == nil {
 			body.Metadata = map[string]interface{}{}
 		}
-		applyCreatorAPIKeyHash(body.Metadata, r.Header.Get("X-API-Key"))
+		applyCreatorWallet(body.Metadata, r.Header.Get("X-API-Key"), s.apiKeys)
 		if body.ContractID != "" {
 			body.Metadata["contract_id"] = body.ContractID
 		}
