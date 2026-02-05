@@ -12,6 +12,13 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// hashAPIKey returns the SHA256 hash of an API key for database lookup.
+// This must match the hashing used in Issue() and Seed().
+func hashAPIKey(key string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(key)))
+	return hex.EncodeToString(sum[:])
+}
+
 // PGAPIKeyStore persists API keys in Postgres.
 type PGAPIKeyStore struct {
 	pool *pgxpool.Pool
@@ -66,11 +73,13 @@ func (s *PGAPIKeyStore) Validate(key string) bool {
 		return false
 	}
 
-	// Check key_hash column
+	// Hash the key for lookup (matches how it's stored)
+	keyHash := hashAPIKey(key)
+
 	var exists bool
 	err := s.pool.QueryRow(context.Background(),
 		"SELECT true FROM api_keys WHERE key_hash=$1",
-		key).Scan(&exists)
+		keyHash).Scan(&exists)
 	return err == nil && exists
 }
 
@@ -81,9 +90,12 @@ func (s *PGAPIKeyStore) Get(key string) (APIKey, bool) {
 	}
 	var rec APIKey
 
+	// Hash the key for lookup (matches how it's stored)
+	keyHash := hashAPIKey(key)
+
 	err := s.pool.QueryRow(context.Background(),
 		"SELECT email, wallet_address, source, created_at FROM api_keys WHERE key_hash=$1",
-		key,
+		keyHash,
 	).Scan(&rec.Email, &rec.Wallet, &rec.Source, &rec.CreatedAt)
 
 	if err != nil {
@@ -129,13 +141,17 @@ func (s *PGAPIKeyStore) UpdateWallet(key, wallet string) (APIKey, error) {
 	if normalizedWallet == "" {
 		return APIKey{}, fmt.Errorf("wallet_address required")
 	}
+
+	// Hash the key for lookup (matches how it's stored)
+	keyHash := hashAPIKey(normalizedKey)
+
 	var rec APIKey
 	err := s.pool.QueryRow(context.Background(), `
 UPDATE api_keys
 SET wallet_address=$2
 WHERE key_hash=$1
 RETURNING email, wallet_address, source, created_at
-`, normalizedKey, normalizedWallet).Scan(&rec.Email, &rec.Wallet, &rec.Source, &rec.CreatedAt)
+`, keyHash, normalizedWallet).Scan(&rec.Email, &rec.Wallet, &rec.Source, &rec.CreatedAt)
 	if err != nil {
 		return APIKey{}, err
 	}
