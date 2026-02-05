@@ -1400,20 +1400,6 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                                   </span>
                                 );
                               }
-                              // Check if current user is the wish creator
-                              const wishCreatorWallet = p.metadata?.creator_wallet;
-                              const isWishCreator = wishCreatorWallet && auth.wallet && 
-                                normalizeAddress(wishCreatorWallet) === normalizeAddress(auth.wallet);
-                              const hasCreatorInfo = Boolean(wishCreatorWallet);
-                              
-                              if (hasCreatorInfo && !isWishCreator) {
-                                return (
-                                  <span className="text-xs text-gray-500 dark:text-gray-400">
-                                    Only wish creator can approve
-                                  </span>
-                                );
-                              }
-                              
                               return (
                                 <button
                                   onClick={() => approveProposal(p.id, false)}
