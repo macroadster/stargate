@@ -263,8 +263,8 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'overview' }) => 
     if (stegoPayload) {
       return JSON.stringify(stegoPayload, null, 2);
     }
-    return inscription?.metadata?.extracted_message || '';
-  }, [stegoPayload, inscription?.metadata?.extracted_message]);
+    return scanMessage || inscription?.metadata?.extracted_message || '';
+  }, [stegoPayload, scanMessage, inscription?.metadata?.extracted_message]);
 
   const inscriptionMessage = parsedPayload?.message || inscriptionMessageRaw;
   const inscriptionAddress = parsedPayload?.address ?? inscriptionAddressRaw;
@@ -498,8 +498,16 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'overview' }) => 
           throw new Error(`image fetch failed: ${imageRes.status}`);
         }
         const blob = await imageRes.blob();
+        
+        // Align filename extension with actual MIME type
+        let extension = 'png';
+        if (blob.type === 'image/jpeg') extension = 'jpg';
+        else if (blob.type === 'image/gif') extension = 'gif';
+        else if (blob.type === 'image/webp') extension = 'webp';
+        else if (blob.type === 'image/bmp') extension = 'bmp';
+        
         const form = new FormData();
-        form.append('image', blob, 'stego.png');
+        form.append('image', blob, `stego.${extension}`);
         const scanRes = await fetchWithTimeout(`${API_BASE}/bitcoin/v1/extract`, { method: 'POST', body: form }, 15000);
         if (!scanRes.ok) {
           throw new Error(`scan failed: ${scanRes.status}`);
