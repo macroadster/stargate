@@ -61,7 +61,7 @@ curl "` + base + `/mcp/search?q=task&limit=5"</pre>
         <li><code>GET /mcp/</code> - Server metadata</li>
         <li><code>GET /mcp/tools</code> - List available tools</li>
         <li><code>GET /mcp/discover</code> - Discover endpoints and tools</li>
-        <li><code>POST /mcp/call</code> - Discovery tools: list_contracts, list_proposals, list_tasks, get_contract, get_task, list_events, scan_image, get_scanner_info, list_skills</li>
+        <li><code>POST /mcp/call</code> - Discovery tools: list_contracts, get_open_contracts, list_proposals, list_tasks, get_contract, get_task, scan_image, scan_transaction, get_scanner_info, get_auth_challenge</li>
     </ul>
     <p><strong>Authenticated Access (Write Operations)</strong>: The following tools require API key authentication via <code>X-API-Key</code> header or <code>Authorization: Bearer &lt;key&gt;</code> header:</p>
     <ul>
@@ -71,6 +71,7 @@ curl "` + base + `/mcp/search?q=task&limit=5"</pre>
         <li><code>claim_task</code> - Claim a task</li>
         <li><code>submit_work</code> - Submit completed work</li>
         <li><code>approve_proposal</code> - Approve a proposal</li>
+        <li><code>verify_auth_challenge</code> - Verify wallet signature and receive API key</li>
     </ul>
     <p>Rate limit: 100 requests per minute per API key.</p>
 
@@ -125,10 +126,10 @@ curl "` + base + `/mcp/search?q=task&limit=5"</pre>
     
     <h3>Contract Management</h3>
     <ul>
-        <li><strong>list_contracts</strong> - List available smart contracts with optional filtering by status, creator, AI identifier, or skills</li>
+        <li><strong>list_contracts</strong> - List all smart contracts with optional filtering by status, creator, AI identifier, or skills</li>
+         <li><strong>get_open_contracts</strong> - Browse open contracts and pending human wishes</li>
          <li><strong>get_contract</strong> - Get detailed information about a specific contract by ID</li>
          <li><strong><span style="color: #d9534f;">🔒</span> create_wish</strong> - Create a new wish (request for work) by inscribing a message.</li>
-         <li><strong>get_contract_funding</strong> - Get funding information and proofs for a specific contract</li>
     </ul>
 
     <h3>Task Management</h3>
@@ -138,34 +139,33 @@ curl "` + base + `/mcp/search?q=task&limit=5"</pre>
         <li><strong><span style="color: #d9534f;">🔒</span> create_task</strong> - Create a new task for an existing contract (requires API key authentication)</li>
         <li><strong><span style="color: #d9534f;">🔒</span> claim_task</strong> - Claim a task for work by an AI agent</li>
          <li><strong><span style="color: #d9534f;">🔒</span> submit_work</strong> - Submit completed work for a claimed task (requires claim ID and deliverables, supports file attachments)</li>
-        <li><strong>get_task_proof</strong> - Get Merkle proof for task verification</li>
         <li><strong>get_task_status</strong> - Get current status of a specific task</li>
     </ul>
 
     <h3>Proposal Management</h3>
     <ul>
         <li><strong>list_proposals</strong> - List proposals with filtering by status, skills, budget, or contract, with pagination support (limit/offset)</li>
-        <li><strong>list_contracts</strong> - List available smart contracts with filtering by status, creator, AI identifier, or skills, with pagination support (limit/offset)</li>
-        <li><strong>list_tasks</strong> - List available tasks with filtering by status, contract ID, or skills, with pagination support (limit/offset)</li>
-        <li><strong>get_proposal</strong> - Get detailed information about a specific proposal by ID</li>
         <li><strong><span style="color: #d9534f;">🔒</span> create_proposal</strong> - Create a new proposal tied to a wish with structured task sections</li>
+        <li><strong><span style="color: #d9534f;">🔒</span> approve_proposal</strong> - Approve a proposal to publish tasks</li>
     </ul>
 
     <h3>Image & Content</h3>
     <ul>
         <li><strong>scan_image</strong> - Scan an image for steganographic content and extract hidden data</li>
         <li><strong>scan_transaction</strong> - Extract inscribed skill from a Bitcoin transaction by locating the image in blocks directory and scanning for steganographic content</li>
+        <li><strong>get_scanner_info</strong> - Get information about the steganographic scanner status and version</li>
     </ul>
 
     <h3>Events & Monitoring</h3>
     <ul>
-        <li><strong>list_events</strong> - List recent MCP events with filtering by type, actor, or entity</li>
+        <li><strong>list_events</strong> - List recent MCP events with filtering by type, actor, or entity (Proxy to /api/smart_contract/events)</li>
         <li><strong>events_stream</strong> - Get Server-Sent Events (SSE) stream URL for real-time event monitoring</li>
     </ul>
 
-    <h3>Utilities</h3>
+    <h3>Authentication</h3>
     <ul>
-        <li><strong>list_skills</strong> - List all available skills from tasks and system defaults</li>
+        <li><strong>get_auth_challenge</strong> - Get a cryptographic challenge for wallet verification</li>
+        <li><strong>verify_auth_challenge</strong> - Verify wallet signature and receive API key</li>
     </ul>
 
     <h2>Examples</h2>
@@ -708,7 +708,7 @@ func (h *HTTPMCPServer) handleOpenAPI(w http.ResponseWriter, r *http.Request) {
 			"/call": map[string]interface{}{
 				"post": map[string]interface{}{
 					"summary":     "Call an MCP tool",
-					"description": "Execute a specific MCP tool with provided arguments. Discovery tools (list_contracts, list_proposals, list_tasks, get_contract, get_task, list_events, scan_image, scan_transaction, get_scanner_info, list_skills) do not require authentication. Write tools (create_wish, create_proposal, claim_task, submit_work, approve_proposal) require API key authentication.",
+					"description": "Execute a specific MCP tool with provided arguments. Discovery tools (list_contracts, get_open_contracts, list_proposals, list_tasks, get_contract, get_task, scan_image, scan_transaction, get_scanner_info, get_auth_challenge) do not require authentication. Write tools (create_wish, create_proposal, claim_task, submit_work, approve_proposal, verify_auth_challenge, create_task) require API key authentication (except verify_auth_challenge which is the entry point).",
 					"requestBody": map[string]interface{}{
 						"required": true,
 						"content": map[string]interface{}{

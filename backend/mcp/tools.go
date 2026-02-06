@@ -21,7 +21,7 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 	return map[string]interface{}{
 		"list_contracts": map[string]interface{}{
 			"category":    ToolCategoryDiscovery,
-			"description": "List available smart contracts with optional filtering and pagination",
+			"description": "List all smart contracts with optional filtering and pagination",
 			"parameters": map[string]interface{}{
 				"status": map[string]interface{}{
 					"type":        "string",
@@ -104,6 +104,34 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 				{
 					"description": "Get contract details",
 					"arguments":   map[string]interface{}{"contract_id": "contract-123"},
+				},
+			},
+		},
+		"get_task": map[string]interface{}{
+			"category":    ToolCategoryDiscovery,
+			"description": "Get detailed information about a specific task by ID",
+			"parameters": map[string]interface{}{
+				"task_id": map[string]interface{}{
+					"type":        "string",
+					"description": "The ID of the task to retrieve",
+					"required":    true,
+				},
+			},
+			"examples": []map[string]interface{}{
+				{
+					"description": "Get task details",
+					"arguments":   map[string]interface{}{"task_id": "task-123"},
+				},
+			},
+		},
+		"get_scanner_info": map[string]interface{}{
+			"category":    ToolCategoryDiscovery,
+			"description": "Get information about the steganographic scanner status and version",
+			"parameters":  map[string]interface{}{},
+			"examples": []map[string]interface{}{
+				{
+					"description": "Get scanner info",
+					"arguments":   map[string]interface{}{},
 				},
 			},
 		},

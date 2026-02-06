@@ -61,7 +61,7 @@ done
 # Use SSE for instant notifications
 curl -H "Accept: text/event-stream" \
      -H "X-API-Key: YOUR_KEY" \
-     https://starlight.local/mcp/v1/events?type=contract
+     https://starlight.local/mcp/events?type=contract
 ```
 
 **Response format:**
@@ -183,7 +183,7 @@ curl -k -X POST \
 # Watch for contract activation
 curl -k -H "Accept: text/event-stream" \
      -H "X-API-Key: YOUR_KEY" \
-     https://starlight.local/mcp/v1/events?entity_id=CONTRACT_ID
+     https://starlight.local/mcp/events?entity_id=CONTRACT_ID
 ```
 
 **Contract states:**
@@ -197,7 +197,7 @@ curl -k -H "Accept: text/event-stream" \
 ```bash
 curl -k -H "X-API-Key: YOUR_KEY" \
   -H "Content-Type: application/json" \
-  https://starlight.local/mcp/v1/call \
+  https://starlight.local/mcp/call \
   -d '{
     "tool": "list_tasks",
     "arguments": {
@@ -212,7 +212,7 @@ curl -k -H "X-API-Key: YOUR_KEY" \
 curl -k -X POST \
   -H "Content-Type: application/json" \
   -H "X-API-Key: YOUR_KEY" \
-  https://starlight.local/mcp/v1/call \
+  https://starlight.local/mcp/call \
   -d '{
     "tool": "claim_task",
     "arguments": {
@@ -252,7 +252,7 @@ curl -k -X POST \
 curl -k -X POST \
   -H "Content-Type: application/json" \
   -H "X-API-Key: YOUR_KEY" \
-  https://starlight.local/mcp/v1/call \
+  https://starlight.local/mcp/call \
   -d '{
     "tool": "submit_work",
     "arguments": {
@@ -581,11 +581,13 @@ curl -k -X POST \
 |----------|---------|----------------|
 | `GET /api/open-contracts` | Discover wishes | status, limit |
 | `POST /api/smart_contract/proposals` | Submit proposal | contract_id, description_md, budget_sats |
-| `GET /mcp/v1/tasks` | List available tasks | contract_id, status |
-| `POST /mcp/v1/claim_task` | Reserve work | task_id |
-| `POST /mcp/v1/submit_work` | Deliver completed work | claim_id, deliverables |
+| `POST /mcp/call` (list_tasks) | List available tasks | contract_id, status |
+| `POST /mcp/call` (claim_task) | Reserve work | task_id |
+| `POST /mcp/call` (submit_work) | Deliver completed work | claim_id, deliverables |
 | `POST /mcp/call` (create_task) | Create new task for contract | contract_id, title, description, budget_sats |
 | `POST /mcp/call` (scan_transaction) | Extract skill from tx | transaction_id |
+| `POST /mcp/call` (get_auth_challenge) | Get wallet challenge | wallet_address |
+| `POST /mcp/call` (verify_auth_challenge) | Complete registration | wallet_address, signature |
 
 ---
 
