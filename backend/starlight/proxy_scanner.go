@@ -89,7 +89,7 @@ func (p *ProxyScanner) ScanImage(imageData []byte, options core.ScanOptions) (*c
 	writer := multipart.NewWriter(&buf)
 
 	// Add image file
-	part, err := writer.CreateFormFile("image", "image.png")
+	part, err := writer.CreateFormFile("image", "image")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create form file: %w", err)
 	}
@@ -229,7 +229,7 @@ func (p *ProxyScanner) ExtractMessage(imageData []byte, method string) (*core.Ex
 	writer := multipart.NewWriter(&buf)
 
 	// Add image file
-	part, err := writer.CreateFormFile("image", "image.png")
+	part, err := writer.CreateFormFile("image", "image")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create form file: %w", err)
 	}
