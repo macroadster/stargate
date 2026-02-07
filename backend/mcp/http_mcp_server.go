@@ -17,6 +17,7 @@ import (
 	"stargate-backend/bitcoin"
 	"stargate-backend/core"
 	"stargate-backend/core/smart_contract"
+	"stargate-backend/handlers"
 	scmiddleware "stargate-backend/middleware/smart_contract"
 	"stargate-backend/services"
 	"stargate-backend/starlight"
@@ -27,6 +28,7 @@ import (
 type HTTPMCPServer struct {
 	store            scmiddleware.Store
 	apiKeyStore      auth.APIKeyValidator
+	apiKeyIssuer     auth.APIKeyIssuer
 	ingestionSvc     *services.IngestionService
 	scannerManager   *starlight.ScannerManager
 	smartContractSvc *services.SmartContractService
@@ -34,12 +36,13 @@ type HTTPMCPServer struct {
 	server           *scmiddleware.Server
 	httpClient       *http.Client
 	baseURL          string
+	proxyBase        string
 	rateLimiter      map[string][]time.Time
 	challengeStore   *auth.ChallengeStore
 }
 
 // NewHTTPMCPServer creates a new HTTP MCP server
-func NewHTTPMCPServer(store scmiddleware.Store, apiKeyStore auth.APIKeyValidator, ingestionSvc *services.IngestionService, scannerManager *starlight.ScannerManager, smartContractSvc *services.SmartContractService, challengeStore *auth.ChallengeStore) *HTTPMCPServer {
+func NewHTTPMCPServer(store scmiddleware.Store, apiKeyStore auth.APIKeyValidator, apiKeyIssuer auth.APIKeyIssuer, ingestionSvc *services.IngestionService, scannerManager *starlight.ScannerManager, smartContractSvc *services.SmartContractService, challengeStore *auth.ChallengeStore) *HTTPMCPServer {
 	network := "mainnet"
 	if strings.Contains(os.Getenv("BITCOIN_NETWORK"), "testnet") {
 		network = "testnet4"
@@ -49,6 +52,7 @@ func NewHTTPMCPServer(store scmiddleware.Store, apiKeyStore auth.APIKeyValidator
 	return &HTTPMCPServer{
 		store:            store,
 		apiKeyStore:      apiKeyStore,
+		apiKeyIssuer:     apiKeyIssuer,
 		ingestionSvc:     ingestionSvc,
 		scannerManager:   scannerManager,
 		smartContractSvc: smartContractSvc,
@@ -56,6 +60,7 @@ func NewHTTPMCPServer(store scmiddleware.Store, apiKeyStore auth.APIKeyValidator
 		server:           nil,
 		httpClient:       &http.Client{Timeout: 30 * time.Second},
 		baseURL:          "http://localhost:3001",
+		proxyBase:        os.Getenv("STARGATE_PROXY_BASE"),
 		rateLimiter:      make(map[string][]time.Time),
 		challengeStore:   challengeStore,
 	}
@@ -799,7 +804,7 @@ func (h *HTTPMCPServer) handleScanTransaction(ctx context.Context, args map[stri
 	}
 
 	blockHeight := txInfo.BlockHeight
-	
+
 	baseDir := os.Getenv("BLOCKS_DIR")
 	if baseDir == "" {
 		baseDir = "blocks"
@@ -871,7 +876,7 @@ func (h *HTTPMCPServer) handleScanTransaction(ctx context.Context, args map[stri
 	// If block directory lookup failed, try direct file lookup: BLOCKS_DIR/[tx_id].png
 	if imagePath == "" {
 		imagePath = filepath.Join(baseDir, fmt.Sprintf("%s.png", txID))
-		
+
 		// Try without extension first (in case the recent commits removed it)
 		if _, err := os.Stat(imagePath); os.IsNotExist(err) {
 			imagePath = filepath.Join(baseDir, txID)
@@ -1172,13 +1177,20 @@ func (h *HTTPMCPServer) handleCreateWish(ctx context.Context, args map[string]in
 		return nil, NewInternalError("create_wish", fmt.Sprintf("Failed to marshal request: %v", err))
 	}
 
-	inscribeURL := h.baseURL + "/api/inscribe"
+	inscribeURL := h.proxyBase + "/inscribe"
+	if h.proxyBase == "" {
+		return nil, NewServiceUnavailableError("create_wish", "inscription service not configured (STARGATE_PROXY_BASE)")
+	}
 	req, err := http.NewRequestWithContext(ctx, "POST", inscribeURL, bytes.NewReader(jsonBody))
 	if err != nil {
 		return nil, NewInternalError("create_wish", fmt.Sprintf("Failed to create request: %v", err))
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+apiKey)
+	// Use STARGATE_API_KEY for proxy authorization if configured
+	proxyAPIKey := os.Getenv("STARGATE_API_KEY")
+	if proxyAPIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+proxyAPIKey)
+	}
 
 	resp, err := h.httpClient.Do(req)
 	if err != nil {
@@ -1546,95 +1558,28 @@ func (h *HTTPMCPServer) handleVerifyAuthChallenge(ctx context.Context, args map[
 		return nil, NewValidationError("verify_auth_challenge", "Invalid signature")
 	}
 
-	// Issue API key using the existing auth system (we need access to the issuer)
-	// For now, we'll call the existing API endpoint
-	reqBody := map[string]interface{}{
-		"wallet_address": strings.TrimSpace(wallet),
-		"signature":      strings.TrimSpace(signature),
-	}
-	if email != "" {
-		reqBody["email"] = email
+	// Issue API key directly using the issuer
+	if h.apiKeyIssuer == nil {
+		return nil, NewServiceUnavailableError("verify_auth_challenge", "API key issuer")
 	}
 
-	jsonBody, err := json.Marshal(reqBody)
+	apiKeyRec, err := h.apiKeyIssuer.Issue(email, strings.TrimSpace(wallet), "wallet-verify")
 	if err != nil {
-		return nil, NewInternalError("verify_auth_challenge", "Failed to marshal verification request")
-	}
-
-	verifyURL := h.baseURL + "/api/auth/verify"
-	req, err := http.NewRequestWithContext(ctx, "POST", verifyURL, bytes.NewReader(jsonBody))
-	if err != nil {
-		return nil, NewInternalError("verify_auth_challenge", "Failed to create verification request")
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := h.httpClient.Do(req)
-	if err != nil {
-		return nil, NewServiceUnavailableError("verify_auth_challenge", "verification API")
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, NewInternalError("verify_auth_challenge", "Failed to read verification response")
-	}
-
-	if resp.StatusCode >= 400 {
-		var errResp struct {
-			Success bool   `json:"success"`
-			Error   string `json:"error"`
-			Message string `json:"message"`
-		}
-		if err := json.Unmarshal(body, &errResp); err == nil {
-			return nil, NewValidationError("verify_auth_challenge", fmt.Sprintf("Verification failed: %s - %s", errResp.Error, errResp.Message))
-		}
-		return nil, NewValidationError("verify_auth_challenge", fmt.Sprintf("Verification failed (%d)", resp.StatusCode))
-	}
-
-	var successResp struct {
-		Success  bool   `json:"success"`
-		APIKey   string `json:"api_key"`
-		Wallet   string `json:"wallet"`
-		Email    string `json:"email"`
-		Verified bool   `json:"verified"`
-	}
-	if err := json.Unmarshal(body, &successResp); err != nil {
-		return nil, NewInternalError("verify_auth_challenge", "Failed to parse verification response")
-	}
-
-	if !successResp.Success {
-		return nil, NewValidationError("verify_auth_challenge", "Verification unsuccessful")
+		return nil, NewInternalError("verify_auth_challenge", fmt.Sprintf("Failed to issue API key: %v", err))
 	}
 
 	return map[string]interface{}{
-		"api_key":  successResp.APIKey,
-		"wallet":   successResp.Wallet,
-		"email":    successResp.Email,
-		"verified": successResp.Verified,
+		"api_key":  apiKeyRec.Key,
+		"wallet":   apiKeyRec.Wallet,
+		"email":    apiKeyRec.Email,
+		"verified": true,
 	}, nil
 }
 
 // verifyBTCSignature verifies a Bitcoin signature against a message
-// This is a simplified version of the logic from auth_handler.go
+// Uses the exported verification functions from the handlers package
 func (h *HTTPMCPServer) verifyBTCSignature(address, signature, message string) (bool, error) {
-	// For now, we'll delegate to the existing API by calling the verify endpoint
-	// This is a temporary implementation - in a real scenario, we'd import the verification logic
-	reqBody := map[string]interface{}{
-		"wallet_address": address,
-		"signature":      signature,
-	}
-
-	jsonBody, _ := json.Marshal(reqBody)
-	req, _ := http.NewRequest("POST", h.baseURL+"/api/auth/verify", bytes.NewReader(jsonBody))
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := h.httpClient.Do(req)
-	if err != nil {
-		return false, err
-	}
-	defer resp.Body.Close()
-
-	return resp.StatusCode < 400, nil
+	return handlers.VerifyBTCSignature(address, signature, message)
 }
 
 func (h *HTTPMCPServer) handleCreateTask(ctx context.Context, args map[string]interface{}, apiKey string) (interface{}, error) {

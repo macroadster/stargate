@@ -149,7 +149,7 @@ func (h *APIKeyHandler) HandleVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	verifier := func(ch auth.Challenge, sig string) bool {
-		ok, err := verifyBTCSignature(ch.Wallet, sig, strings.TrimSpace(ch.Nonce))
+		ok, err := VerifyBTCSignature(ch.Wallet, sig, strings.TrimSpace(ch.Nonce))
 		if err != nil {
 			return false
 		}
@@ -172,34 +172,34 @@ func (h *APIKeyHandler) HandleVerify(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// verifyBTCSignature supports legacy signmessage (compact) and BIP-322 simple witness signatures.
+// VerifyBTCSignature supports legacy signmessage (compact) and BIP-322 simple witness signatures.
 // It tries both the provided message and a hex-decoded variant to be lenient with wallets that
 // interpret hex-looking nonces differently.
-func verifyBTCSignature(address, signature, message string) (bool, error) {
+func VerifyBTCSignature(address, signature, message string) (bool, error) {
 	msgTrimmed := strings.TrimSpace(message)
 
-	if ok, err := verifyLegacySignMessage(address, signature, msgTrimmed); err == nil && ok {
+	if ok, err := VerifyLegacySignMessage(address, signature, msgTrimmed); err == nil && ok {
 		return true, nil
 	}
-	if ok, err := verifyBIP322Simple(address, signature, msgTrimmed); err == nil && ok {
+	if ok, err := VerifyBIP322Simple(address, signature, msgTrimmed); err == nil && ok {
 		return true, nil
 	}
 	// If the message is hex, also try interpreting it as raw bytes.
 	if hexMsg, err := hex.DecodeString(msgTrimmed); err == nil {
 		msgAlt := string(hexMsg)
-		if ok, err := verifyLegacySignMessage(address, signature, msgAlt); err == nil && ok {
+		if ok, err := VerifyLegacySignMessage(address, signature, msgAlt); err == nil && ok {
 			return true, nil
 		}
-		if ok, err := verifyBIP322Simple(address, signature, msgAlt); err == nil && ok {
+		if ok, err := VerifyBIP322Simple(address, signature, msgAlt); err == nil && ok {
 			return true, nil
 		}
 	}
 	return false, fmt.Errorf("signature did not verify")
 }
 
-// verifyLegacySignMessage verifies a legacy Bitcoin signmessage signature (base64 compact) against a wallet address.
-func verifyLegacySignMessage(address, signatureB64, message string) (bool, error) {
-	params := chooseParams(address)
+// VerifyLegacySignMessage verifies a legacy Bitcoin signmessage signature (base64 compact) against a wallet address.
+func VerifyLegacySignMessage(address, signatureB64, message string) (bool, error) {
+	params := ChooseParams(address)
 	if params == nil {
 		return false, fmt.Errorf("unsupported address network")
 	}
@@ -270,10 +270,10 @@ func hashBitcoinMessage(message string) []byte {
 	return h2[:]
 }
 
-// verifyBIP322Simple implements the "simple" flow from BIP-322 for P2PKH/P2WPKH/P2SH-P2WPKH.
+// VerifyBIP322Simple implements the "simple" flow from BIP-322 for P2PKH/P2WPKH/P2SH-P2WPKH.
 // It accepts witness encoded as hex (preferred) or base64, as produced by Bitcoin Core `signmessage` with a segwit address.
-func verifyBIP322Simple(address, signature, message string) (bool, error) {
-	params := chooseParams(address)
+func VerifyBIP322Simple(address, signature, message string) (bool, error) {
+	params := ChooseParams(address)
 	if params == nil {
 		return false, fmt.Errorf("unsupported address network")
 	}
@@ -374,8 +374,8 @@ func decodeMaybeHexOrBase64(s string) ([]byte, error) {
 	return base64.StdEncoding.DecodeString(s)
 }
 
-// chooseParams picks network params by decoding the address (prefers testnet4 for tb1/m/n/2).
-func chooseParams(address string) *chaincfg.Params {
+// ChooseParams picks network params by decoding the address (prefers testnet4 for tb1/m/n/2).
+func ChooseParams(address string) *chaincfg.Params {
 	addr := strings.TrimSpace(address)
 	if addr == "" {
 		return nil

@@ -20,7 +20,7 @@ func TestStructuredErrorResponses(t *testing.T) {
 	store := scstore.NewMemoryStore(72 * time.Hour)
 	ingestionSvc := &services.IngestionService{}  // nil for memory mode
 	scannerManager := &starlight.ScannerManager{} // mock scanner manager
-	server := NewHTTPMCPServer(store, walletValidator{wallet: "tb1qtestwallet00000000000000000000000000000000"}, ingestionSvc, scannerManager, nil, auth.NewChallengeStore(10*time.Minute))
+	server := NewHTTPMCPServer(store, walletValidator{wallet: "tb1qtestwallet00000000000000000000000000000000"}, nil, ingestionSvc, scannerManager, nil, auth.NewChallengeStore(10*time.Minute))
 
 	t.Run("claim_task_validation_errors", func(t *testing.T) {
 		req := MCPRequest{
@@ -232,7 +232,7 @@ func TestStructuredErrorResponses(t *testing.T) {
 
 func TestErrorResponseStructure(t *testing.T) {
 	store := scstore.NewMemoryStore(72 * time.Hour)
-	server := NewHTTPMCPServer(store, allowAllValidator{}, nil, nil, nil, auth.NewChallengeStore(10*time.Minute))
+	server := NewHTTPMCPServer(store, allowAllValidator{}, nil, nil, nil, nil, auth.NewChallengeStore(10*time.Minute))
 
 	t.Run("error_response_has_all_fields", func(t *testing.T) {
 		// Trigger a validation error

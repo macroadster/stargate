@@ -53,7 +53,7 @@ func TestHTTPMCPServer(t *testing.T) {
 	store := scstore.NewMemoryStore(72 * time.Hour)
 	ingestionSvc := &services.IngestionService{}  // nil for memory mode
 	scannerManager := &starlight.ScannerManager{} // mock scanner manager
-	server := NewHTTPMCPServer(store, allowAllValidator{}, ingestionSvc, scannerManager, nil, auth.NewChallengeStore(10*time.Minute))
+	server := NewHTTPMCPServer(store, allowAllValidator{}, nil, ingestionSvc, scannerManager, nil, auth.NewChallengeStore(10*time.Minute))
 
 	// Test list_contracts
 	t.Run("list_contracts", func(t *testing.T) {
@@ -116,7 +116,7 @@ func TestClaimTaskUsesAPIKeyWallet(t *testing.T) {
 	scannerManager := &starlight.ScannerManager{}
 	apiKey := "test-api-key"
 	wallet := "tb1qwallettest000000000000000000000000000000000"
-	server := NewHTTPMCPServer(store, walletValidator{wallet: wallet}, ingestionSvc, scannerManager, nil, auth.NewChallengeStore(10*time.Minute))
+	server := NewHTTPMCPServer(store, walletValidator{wallet: wallet}, nil, ingestionSvc, scannerManager, nil, auth.NewChallengeStore(10*time.Minute))
 
 	contract := smart_contract.Contract{
 		ContractID:          "contract-claim-wallet",
@@ -173,7 +173,7 @@ func TestProposalCreationRequiresWish(t *testing.T) {
 	store := scstore.NewMemoryStore(72 * time.Hour)
 	ingestionSvc := &services.IngestionService{}  // nil for memory mode
 	scannerManager := &starlight.ScannerManager{} // mock scanner manager
-	server := NewHTTPMCPServer(store, allowAllValidator{}, ingestionSvc, scannerManager, nil, auth.NewChallengeStore(10*time.Minute))
+	server := NewHTTPMCPServer(store, allowAllValidator{}, nil, ingestionSvc, scannerManager, nil, auth.NewChallengeStore(10*time.Minute))
 
 	// Test that proposals require a wish hash.
 	t.Run("create_proposal_requires_visible_pixel_hash", func(t *testing.T) {
@@ -346,7 +346,7 @@ func TestProposalCreationRequiresWish(t *testing.T) {
 		apiKey := "approve-test-key"
 		creatorWallet := "tb1qcreatorwallet000000000000000000000000000"
 		// Use walletValidator so the API key has a wallet binding
-		walletServer := NewHTTPMCPServer(store, walletValidator{wallet: creatorWallet}, ingestionSvc, scannerManager, nil, auth.NewChallengeStore(10*time.Minute))
+		walletServer := NewHTTPMCPServer(store, walletValidator{wallet: creatorWallet}, nil, ingestionSvc, scannerManager, nil, auth.NewChallengeStore(10*time.Minute))
 		visibleHash := strings.Repeat("a", 64)
 		proposal := smart_contract.Proposal{
 			ID:               "proposal-approve-test",
@@ -449,7 +449,7 @@ func TestProposalCreationRequiresWish(t *testing.T) {
 				otherKey:   otherWallet,
 			},
 		}
-		creatorServer := NewHTTPMCPServer(store, multiWalletValidator, ingestionSvc, scannerManager, nil, auth.NewChallengeStore(10*time.Minute))
+		creatorServer := NewHTTPMCPServer(store, multiWalletValidator, nil, ingestionSvc, scannerManager, nil, auth.NewChallengeStore(10*time.Minute))
 
 		proposal := smart_contract.Proposal{
 			ID:               "proposal-creator-test",
@@ -517,7 +517,7 @@ func TestScanTransactionTool(t *testing.T) {
 	store := scstore.NewMemoryStore(72 * time.Hour)
 	ingestionSvc := &services.IngestionService{}
 	scannerManager := &starlight.ScannerManager{}
-	server := NewHTTPMCPServer(store, allowAllValidator{}, ingestionSvc, scannerManager, nil, auth.NewChallengeStore(10*time.Minute))
+	server := NewHTTPMCPServer(store, allowAllValidator{}, nil, ingestionSvc, scannerManager, nil, auth.NewChallengeStore(10*time.Minute))
 
 	t.Run("scan_transaction_requires_tx_id", func(t *testing.T) {
 		req := MCPRequest{
