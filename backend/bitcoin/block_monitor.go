@@ -2647,7 +2647,8 @@ func (bm *BlockMonitor) maybeReconcileStego(rec *services.IngestionRecord) {
 func txidImageFilename(txid, fallback string) string {
 	ext := filepath.Ext(fallback)
 	if ext == "" {
-		ext = ".png"
+		// Don't assume file type - preserve original or use no extension
+		return txid
 	}
 	return fmt.Sprintf("%s%s", txid, ext)
 }

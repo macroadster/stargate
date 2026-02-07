@@ -554,11 +554,11 @@ func (api *BitcoinAPI) HandleBlockScan(w http.ResponseWriter, r *http.Request) {
 		inscription := core.BlockScanInscription{
 			TxID:        txResult.TransactionID,
 			InputIndex:  0,
-			ContentType: "image/png", // Default assumption
+			ContentType: "application/octet-stream", // Unknown content type
 			Content:     "Scanned transaction",
 			SizeBytes:   0, // Unknown
-			FileName:    fmt.Sprintf("tx_%s.png", txResult.TransactionID[:16]),
-			FilePath:    fmt.Sprintf("images/tx_%s.png", txResult.TransactionID[:16]),
+			FileName:    txResult.TransactionID[:16],
+			FilePath:    txResult.TransactionID[:16],
 		}
 
 		// Add scan result if stego detected
