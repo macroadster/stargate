@@ -1177,20 +1177,13 @@ func (h *HTTPMCPServer) handleCreateWish(ctx context.Context, args map[string]in
 		return nil, NewInternalError("create_wish", fmt.Sprintf("Failed to marshal request: %v", err))
 	}
 
-	inscribeURL := h.proxyBase + "/inscribe"
-	if h.proxyBase == "" {
-		return nil, NewServiceUnavailableError("create_wish", "inscription service not configured (STARGATE_PROXY_BASE)")
-	}
+	inscribeURL := h.baseURL + "/api/inscribe"
 	req, err := http.NewRequestWithContext(ctx, "POST", inscribeURL, bytes.NewReader(jsonBody))
 	if err != nil {
 		return nil, NewInternalError("create_wish", fmt.Sprintf("Failed to create request: %v", err))
 	}
 	req.Header.Set("Content-Type", "application/json")
-	// Use STARGATE_API_KEY for proxy authorization if configured
-	proxyAPIKey := os.Getenv("STARGATE_API_KEY")
-	if proxyAPIKey != "" {
-		req.Header.Set("Authorization", "Bearer "+proxyAPIKey)
-	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
 
 	resp, err := h.httpClient.Do(req)
 	if err != nil {
