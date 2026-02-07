@@ -805,7 +805,7 @@ func (h *HTTPMCPServer) handleScanTransaction(ctx context.Context, args map[stri
 		baseDir = "blocks"
 	}
 
-	// Direct file lookup: BLOCKS_DIR/[tx_id].png
+	// First try direct file lookup: BLOCKS_DIR/[tx_id].png
 	imagePath := filepath.Join(baseDir, fmt.Sprintf("%s.png", txID))
 	
 	// Try without extension first (in case the recent commits removed it)
@@ -820,17 +820,90 @@ func (h *HTTPMCPServer) handleScanTransaction(ctx context.Context, args map[stri
 					break
 				}
 			}
-			
-			// If still not found, check if we need to fallback to old inscriptions.json method
-			if _, err := os.Stat(imagePath); os.IsNotExist(err) {
-				return map[string]interface{}{
-					"transaction_id": txID,
-					"block_height":   blockHeight,
-					"status":         "file_not_found",
-					"message":        fmt.Sprintf("Transaction image file not found in %s", baseDir),
-				}, nil
+		}
+	}
+
+	// If direct lookup failed, try the old block directory structure with inscriptions.json
+	if _, err := os.Stat(imagePath); os.IsNotExist(err) {
+		// Try old block directory structure: BLOCKS_DIR/{blockHeight}_*/
+		blockDirPattern := filepath.Join(baseDir, fmt.Sprintf("%d_*", blockHeight))
+		matches, err := filepath.Glob(blockDirPattern)
+		if err != nil || len(matches) == 0 {
+			legacyDir := filepath.Join(baseDir, fmt.Sprintf("%d_00000000", blockHeight))
+			if _, err := os.Stat(legacyDir); err == nil {
+				matches = []string{legacyDir}
 			}
 		}
+
+		if len(matches) == 0 {
+			return map[string]interface{}{
+				"transaction_id": txID,
+				"block_height":   blockHeight,
+				"status":         "file_not_found",
+				"message":        fmt.Sprintf("Transaction image file not found in %s (tried direct lookup and block directories)", baseDir),
+			}, nil
+		}
+
+		blockDir := matches[0]
+		inscriptionsPath := filepath.Join(blockDir, "inscriptions.json")
+
+		inscriptionsData, err := os.ReadFile(inscriptionsPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read inscriptions.json: %w", err)
+		}
+
+		var inscriptionsDoc struct {
+			Images []struct {
+				TxID     string `json:"tx_id"`
+				FileName string `json:"file_name"`
+				FilePath string `json:"file_path"`
+				Format   string `json:"format"`
+			} `json:"images"`
+			SmartContracts []struct {
+				ContractID string `json:"contract_id"`
+				ImagePath  string `json:"image_path"`
+				Metadata   struct {
+					TxID        string `json:"tx_id"`
+					FundingTxID string `json:"funding_txid"`
+					ImageFile   string `json:"image_file"`
+				} `json:"metadata"`
+			} `json:"smart_contracts"`
+		}
+
+		if err := json.Unmarshal(inscriptionsData, &inscriptionsDoc); err != nil {
+			return nil, fmt.Errorf("failed to parse inscriptions.json: %w", err)
+		}
+
+		var imageFile string
+		for _, img := range inscriptionsDoc.Images {
+			if strings.HasPrefix(img.TxID, txID) {
+				imageFile = img.FileName
+				break
+			}
+		}
+
+		if imageFile == "" {
+			for _, sc := range inscriptionsDoc.SmartContracts {
+				if strings.HasPrefix(sc.Metadata.TxID, txID) || strings.HasPrefix(sc.Metadata.FundingTxID, txID) {
+					imageFile = sc.Metadata.ImageFile
+					if imageFile == "" && sc.ImagePath != "" {
+						imageFile = filepath.Base(sc.ImagePath)
+					}
+					break
+				}
+			}
+		}
+
+		if imageFile == "" {
+			return map[string]interface{}{
+				"transaction_id": txID,
+				"block_height":   blockHeight,
+				"status":         "no_image",
+				"message":        "No image found for this transaction in block data",
+			}, nil
+		}
+
+		imagePath = filepath.Join(blockDir, "images", imageFile)
 	}
 	imageData, err := os.ReadFile(imagePath)
 	if err != nil {
