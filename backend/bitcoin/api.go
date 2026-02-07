@@ -3,7 +3,6 @@ package bitcoin
 import (
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"io"
 	"log"
 	"net/http"
