@@ -805,105 +805,106 @@ func (h *HTTPMCPServer) handleScanTransaction(ctx context.Context, args map[stri
 		baseDir = "blocks"
 	}
 
-	// First try direct file lookup: BLOCKS_DIR/[tx_id].png
-	imagePath := filepath.Join(baseDir, fmt.Sprintf("%s.png", txID))
-	
-	// Try without extension first (in case the recent commits removed it)
-	if _, err := os.Stat(imagePath); os.IsNotExist(err) {
-		imagePath = filepath.Join(baseDir, txID)
-		if _, err := os.Stat(imagePath); os.IsNotExist(err) {
-			// Try common image extensions
-			for _, ext := range []string{".png", ".jpg", ".jpeg", ".gif", ".webp"} {
-				testPath := filepath.Join(baseDir, fmt.Sprintf("%s%s", txID, ext))
-				if _, err := os.Stat(testPath); err == nil {
-					imagePath = testPath
-					break
+	// First try old block directory structure: BLOCKS_DIR/{blockHeight}_*/
+	blockDirPattern := filepath.Join(baseDir, fmt.Sprintf("%d_*", blockHeight))
+	matches, err := filepath.Glob(blockDirPattern)
+	if err != nil || len(matches) == 0 {
+		legacyDir := filepath.Join(baseDir, fmt.Sprintf("%d_00000000", blockHeight))
+		if _, err := os.Stat(legacyDir); err == nil {
+			matches = []string{legacyDir}
+		}
+	}
+
+	var imagePath string
+	if len(matches) > 0 {
+		blockDir := matches[0]
+		inscriptionsPath := filepath.Join(blockDir, "inscriptions.json")
+
+		inscriptionsData, err := os.ReadFile(inscriptionsPath)
+		if err == nil {
+			var inscriptionsDoc struct {
+				Images []struct {
+					TxID     string `json:"tx_id"`
+					FileName string `json:"file_name"`
+					FilePath string `json:"file_path"`
+					Format   string `json:"format"`
+				} `json:"images"`
+				SmartContracts []struct {
+					ContractID string `json:"contract_id"`
+					ImagePath  string `json:"image_path"`
+					Metadata   struct {
+						TxID        string `json:"tx_id"`
+						FundingTxID string `json:"funding_txid"`
+						ImageFile   string `json:"image_file"`
+					} `json:"metadata"`
+				} `json:"smart_contracts"`
+			}
+
+			if err := json.Unmarshal(inscriptionsData, &inscriptionsDoc); err == nil {
+				var imageFile string
+				for _, img := range inscriptionsDoc.Images {
+					if strings.HasPrefix(img.TxID, txID) {
+						imageFile = img.FileName
+						break
+					}
+				}
+
+				if imageFile == "" {
+					for _, sc := range inscriptionsDoc.SmartContracts {
+						if strings.HasPrefix(sc.Metadata.TxID, txID) || strings.HasPrefix(sc.Metadata.FundingTxID, txID) {
+							imageFile = sc.Metadata.ImageFile
+							if imageFile == "" && sc.ImagePath != "" {
+								imageFile = filepath.Base(sc.ImagePath)
+							}
+							break
+						}
+					}
+				}
+
+				if imageFile != "" {
+					imagePath = filepath.Join(blockDir, "images", imageFile)
 				}
 			}
 		}
 	}
 
-	// If direct lookup failed, try the old block directory structure with inscriptions.json
-	if _, err := os.Stat(imagePath); os.IsNotExist(err) {
-		// Try old block directory structure: BLOCKS_DIR/{blockHeight}_*/
-		blockDirPattern := filepath.Join(baseDir, fmt.Sprintf("%d_*", blockHeight))
-		matches, err := filepath.Glob(blockDirPattern)
-		if err != nil || len(matches) == 0 {
-			legacyDir := filepath.Join(baseDir, fmt.Sprintf("%d_00000000", blockHeight))
-			if _, err := os.Stat(legacyDir); err == nil {
-				matches = []string{legacyDir}
-			}
-		}
-
-		if len(matches) == 0 {
-			return map[string]interface{}{
-				"transaction_id": txID,
-				"block_height":   blockHeight,
-				"status":         "file_not_found",
-				"message":        fmt.Sprintf("Transaction image file not found in %s (tried direct lookup and block directories)", baseDir),
-			}, nil
-		}
-
-		blockDir := matches[0]
-		inscriptionsPath := filepath.Join(blockDir, "inscriptions.json")
-
-		inscriptionsData, err := os.ReadFile(inscriptionsPath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read inscriptions.json: %w", err)
-		}
-
-		var inscriptionsDoc struct {
-			Images []struct {
-				TxID     string `json:"tx_id"`
-				FileName string `json:"file_name"`
-				FilePath string `json:"file_path"`
-				Format   string `json:"format"`
-			} `json:"images"`
-			SmartContracts []struct {
-				ContractID string `json:"contract_id"`
-				ImagePath  string `json:"image_path"`
-				Metadata   struct {
-					TxID        string `json:"tx_id"`
-					FundingTxID string `json:"funding_txid"`
-					ImageFile   string `json:"image_file"`
-				} `json:"metadata"`
-			} `json:"smart_contracts"`
-		}
-
-		if err := json.Unmarshal(inscriptionsData, &inscriptionsDoc); err != nil {
-			return nil, fmt.Errorf("failed to parse inscriptions.json: %w", err)
-		}
-
-		var imageFile string
-		for _, img := range inscriptionsDoc.Images {
-			if strings.HasPrefix(img.TxID, txID) {
-				imageFile = img.FileName
-				break
-			}
-		}
-
-		if imageFile == "" {
-			for _, sc := range inscriptionsDoc.SmartContracts {
-				if strings.HasPrefix(sc.Metadata.TxID, txID) || strings.HasPrefix(sc.Metadata.FundingTxID, txID) {
-					imageFile = sc.Metadata.ImageFile
-					if imageFile == "" && sc.ImagePath != "" {
-						imageFile = filepath.Base(sc.ImagePath)
+	// If block directory lookup failed, try direct file lookup: BLOCKS_DIR/[tx_id].png
+	if imagePath == "" {
+		imagePath = filepath.Join(baseDir, fmt.Sprintf("%s.png", txID))
+		
+		// Try without extension first (in case the recent commits removed it)
+		if _, err := os.Stat(imagePath); os.IsNotExist(err) {
+			imagePath = filepath.Join(baseDir, txID)
+			if _, err := os.Stat(imagePath); os.IsNotExist(err) {
+				// Try common image extensions
+				for _, ext := range []string{".png", ".jpg", ".jpeg", ".gif", ".webp"} {
+					testPath := filepath.Join(baseDir, fmt.Sprintf("%s%s", txID, ext))
+					if _, err := os.Stat(testPath); err == nil {
+						imagePath = testPath
+						break
 					}
-					break
 				}
 			}
 		}
+	}
 
-		if imageFile == "" {
-			return map[string]interface{}{
-				"transaction_id": txID,
-				"block_height":   blockHeight,
-				"status":         "no_image",
-				"message":        "No image found for this transaction in block data",
-			}, nil
-		}
+	// If still not found after both lookup methods
+	if imagePath == "" {
+		return map[string]interface{}{
+			"transaction_id": txID,
+			"block_height":   blockHeight,
+			"status":         "file_not_found",
+			"message":        fmt.Sprintf("Transaction image file not found in %s (tried block directories and direct lookup)", baseDir),
+		}, nil
+	}
 
-		imagePath = filepath.Join(blockDir, "images", imageFile)
+	if _, err := os.Stat(imagePath); os.IsNotExist(err) {
+		return map[string]interface{}{
+			"transaction_id": txID,
+			"block_height":   blockHeight,
+			"status":         "file_not_found",
+			"message":        fmt.Sprintf("Transaction image file not found in %s (tried block directories and direct lookup)", baseDir),
+		}, nil
 	}
 	imageData, err := os.ReadFile(imagePath)
 	if err != nil {
