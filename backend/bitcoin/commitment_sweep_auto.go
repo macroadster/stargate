@@ -43,6 +43,62 @@ func SweepCommitmentIfReady(ctx context.Context, store SweepStore, mempool *Memp
 		log.Printf("commitment sweep: sweep already confirmed for task %s", task.TaskID)
 		return nil
 	}
+
+	// Allow retry for broadcast or skipped transactions that may have failed
+	if (proof.SweepTxID != "" && proof.SweepStatus == "broadcast") || proof.SweepStatus == "skipped" {
+		// Check if enough time has passed since last attempt (for broadcast only)
+		if proof.SweepStatus == "broadcast" && proof.SweepAttemptedAt != nil && time.Since(*proof.SweepAttemptedAt) < 10*time.Minute {
+			log.Printf("commitment sweep: skipping retry for task %s, last attempt %v ago", task.TaskID, time.Since(*proof.SweepAttemptedAt))
+			return nil
+		}
+		log.Printf("commitment sweep: retrying sweep for task %s (previous status: %s, tx: %s)", task.TaskID, proof.SweepStatus, proof.SweepTxID)
+		// Clear previous sweep info to allow retry
+		proof.SweepTxID = ""
+		proof.SweepStatus = ""
+		proof.SweepAttemptedAt = nil
+	}
+
+	log.Printf("commitment sweep DEBUG: task %s checking required fields - script: %s, vout: %d, txid: %s, hash: %s",
+		task.TaskID,
+		func() string {
+			if proof.CommitmentRedeemScript == "" {
+				return "EMPTY"
+			}
+			return proof.CommitmentRedeemScript[:10] + "..."
+		}(),
+		proof.CommitmentVout,
+		func() string {
+			if proof.TxID == "" {
+				return "EMPTY"
+			}
+			return proof.TxID
+		}(),
+		func() string {
+			if proof.VisiblePixelHash == "" {
+				return "EMPTY"
+			}
+			return proof.VisiblePixelHash[:10] + "..."
+		}())
+
+	if proof.CommitmentRedeemScript == "" || proof.CommitmentVout == 0 || proof.TxID == "" {
+		log.Printf("commitment sweep: missing required data for task %s - script_empty: %v, vout_zero: %v, txid_empty: %v",
+			task.TaskID, proof.CommitmentRedeemScript == "", proof.CommitmentVout == 0, proof.TxID == "")
+		return nil
+	}
+	if strings.TrimSpace(proof.CommitmentPixelHash) == "" {
+		log.Printf("commitment sweep: missing commitment pixel hash for task %s", task.TaskID)
+		return nil
+	}
+	donation := strings.TrimSpace(os.Getenv("STARLIGHT_DONATION_ADDRESS"))
+	log.Printf("commitment sweep DEBUG: task %s donation address: %s", task.TaskID, func() string {
+		if donation == "" {
+			return "NOT_SET"
+		}
+		return donation[:10] + "..."
+	}())
+	if donation == "" {
+		return markSweepStatus(ctx, store, task.TaskID, proof, "skipped", "donation address not configured")
+	}
 	if proof.ConfirmationStatus != "confirmed" {
 		return nil
 	}
@@ -91,22 +147,17 @@ func SweepCommitmentIfReady(ctx context.Context, store SweepStore, mempool *Memp
 			task.TaskID, proof.CommitmentRedeemScript == "", proof.CommitmentVout == 0, proof.TxID == "")
 		return nil
 	}
-	if strings.TrimSpace(proof.CommitmentPixelHash) == "" {
-		log.Printf("commitment sweep: missing commitment pixel hash for task %s", task.TaskID)
-		return nil
-	}
-	donation := strings.TrimSpace(os.Getenv("STARLIGHT_DONATION_ADDRESS"))
-	log.Printf("commitment sweep DEBUG: task %s donation address: %s", task.TaskID, func() string {
-		if donation == "" {
-			return "NOT_SET"
-		}
-		return donation[:10] + "..."
-	}())
-	if donation == "" {
-		return markSweepStatus(ctx, store, task.TaskID, proof, "skipped", "donation address not configured")
+	// Check if this is actually a donation commitment - if not, skip sweep
+	commitmentAddr := strings.TrimSpace(proof.CommitmentAddress)
+	if commitmentAddr != "" && commitmentAddr != donation {
+		log.Printf("commitment sweep: skipping non-donation commitment for task %s (commitment_addr: %s != donation_addr: %s)",
+			task.TaskID, commitmentAddr[:20]+"...", donation[:20]+"...")
+		return markSweepStatus(ctx, store, task.TaskID, proof, "skipped", "non-donation commitment address")
 	}
 
-	redeemScript, err := hex.DecodeString(strings.TrimSpace(proof.CommitmentRedeemScript))
+	var redeemScript []byte
+	var err error
+	redeemScript, err = hex.DecodeString(strings.TrimSpace(proof.CommitmentRedeemScript))
 	if err != nil {
 		log.Printf("commitment sweep: failed to decode redeem script for task %s: %v", task.TaskID, err)
 		return markSweepStatus(ctx, store, task.TaskID, proof, "failed", "invalid redeem script")
@@ -115,7 +166,8 @@ func SweepCommitmentIfReady(ctx context.Context, store SweepStore, mempool *Memp
 	if !isHashlockOnlyRedeemScript(redeemScript) {
 		return markSweepStatus(ctx, store, task.TaskID, proof, "skipped", "commitment redeem script requires signature")
 	}
-	preimage, err := hex.DecodeString(strings.TrimSpace(proof.CommitmentPixelHash))
+	var preimage []byte
+	preimage, err = hex.DecodeString(strings.TrimSpace(proof.CommitmentPixelHash))
 	if err != nil {
 		return markSweepStatus(ctx, store, task.TaskID, proof, "failed", "invalid preimage")
 	}
