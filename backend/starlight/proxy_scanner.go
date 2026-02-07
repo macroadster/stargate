@@ -108,8 +108,14 @@ func (p *ProxyScanner) ScanImage(imageData []byte, options core.ScanOptions) (*c
 		return nil, fmt.Errorf("failed to close multipart writer: %w", err)
 	}
 
+	// Use /extract endpoint for message extraction, /scan/image for scanning
+	endpoint := "/scan/image"
+	if options.ExtractMessage {
+		endpoint = "/extract"
+	}
+	
 	// Create request
-	req, err := http.NewRequest("POST", p.apiURL+"/scan/image", &buf)
+	req, err := http.NewRequest("POST", p.apiURL+endpoint, &buf)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
