@@ -113,7 +113,7 @@ func (p *ProxyScanner) ScanImage(imageData []byte, options core.ScanOptions) (*c
 	if options.ExtractMessage {
 		endpoint = "/extract"
 	}
-	
+
 	// Create request
 	req, err := http.NewRequest("POST", p.apiURL+endpoint, &buf)
 	if err != nil {
@@ -143,7 +143,38 @@ func (p *ProxyScanner) ScanImage(imageData []byte, options core.ScanOptions) (*c
 
 	// Convert to ScanResult
 	scanResult := &core.ScanResult{}
-	if scanData, ok := result["scan_result"].(map[string]any); ok {
+
+	// Handle the actual API response structure from extract endpoint
+	if extractionResult, ok := result["extraction_result"].(map[string]any); ok {
+		if messageFound, ok := extractionResult["message_found"].(bool); ok {
+			scanResult.IsStego = messageFound
+		}
+		if methodConfidence, ok := extractionResult["method_confidence"].(float64); ok {
+			scanResult.Confidence = methodConfidence
+			scanResult.StegoProbability = methodConfidence
+		}
+		if methodUsed, ok := extractionResult["method_used"].(string); ok && methodUsed != "" {
+			scanResult.StegoType = methodUsed
+		}
+		if message, ok := extractionResult["message"].(string); ok && message != "" {
+			scanResult.ExtractedMessage = message
+		}
+
+		// Set prediction based on message_found
+		if scanResult.IsStego {
+			scanResult.Prediction = "stego"
+		} else {
+			scanResult.Prediction = "clean"
+		}
+	} else {
+		// Fallback to old scan_result structure for backward compatibility
+		var scanData map[string]any
+		if nested, ok := result["scan_result"].(map[string]any); ok {
+			scanData = nested
+		} else {
+			scanData = result
+		}
+
 		if isStego, ok := scanData["is_stego"].(bool); ok {
 			scanResult.IsStego = isStego
 		}
