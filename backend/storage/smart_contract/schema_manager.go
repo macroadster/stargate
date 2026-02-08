@@ -35,7 +35,9 @@ CREATE TABLE IF NOT EXISTS mcp_contracts (
   available_tasks_count INT,
   status TEXT,
   skills TEXT[],
-  stego_image_url TEXT
+  stego_image_url TEXT,
+  confirmed_block_height INTEGER,
+  confirmed_at TIMESTAMP WITH TIME ZONE
 );
 
 -- Tasks table
@@ -103,6 +105,8 @@ CREATE TABLE IF NOT EXISTS mcp_escort_status (
 -- Indexes for performance
 CREATE INDEX IF NOT EXISTS idx_mcp_proposals_status ON mcp_proposals(status);
 CREATE INDEX IF NOT EXISTS idx_mcp_tasks_contract_status ON mcp_tasks(contract_id, status);
+CREATE INDEX IF NOT EXISTS idx_mcp_contracts_confirmed_height ON mcp_contracts(confirmed_block_height DESC);
+CREATE INDEX IF NOT EXISTS idx_mcp_contracts_confirmed_at ON mcp_contracts(confirmed_at DESC);
 
 -- Column additions for backwards compatibility
 ALTER TABLE mcp_submissions ADD COLUMN IF NOT EXISTS rejection_reason TEXT;
@@ -111,6 +115,9 @@ ALTER TABLE mcp_submissions ADD COLUMN IF NOT EXISTS rejected_at TIMESTAMPTZ;
 
 -- Add stego_image_url column to existing mcp_contracts tables
 ALTER TABLE mcp_contracts ADD COLUMN IF NOT EXISTS stego_image_url TEXT;
+-- Add confirmation tracking columns to existing mcp_contracts tables
+ALTER TABLE mcp_contracts ADD COLUMN IF NOT EXISTS confirmed_block_height INTEGER;
+ALTER TABLE mcp_contracts ADD COLUMN IF NOT EXISTS confirmed_at TIMESTAMP WITH TIME ZONE;
 `
 }
 

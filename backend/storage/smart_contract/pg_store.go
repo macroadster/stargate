@@ -191,34 +191,58 @@ func (s *PGStore) Close() {
 }
 
 // ListContracts returns all contracts filtered by status, skill, and metadata fields with pagination.
+// Supports cursor-based pagination using confirmed_block_height for optimized frontend display.
 func (s *PGStore) ListContracts(filter smart_contract.ContractFilter) ([]smart_contract.Contract, error) {
 	ctx := context.Background()
 
-	// Build WHERE clause for creator and ai_identifier filtering
-	whereClause := "WHERE ($1 = '' OR c.status = $1)"
-	args := []interface{}{filter.Status}
-	argIndex := 2
+	// Build query dynamically based on filter
+	baseSelect := `
+SELECT c.contract_id, c.title, c.total_budget_sats, c.goals_count,
+	COALESCE((SELECT COUNT(*) FROM mcp_tasks t WHERE t.contract_id = c.contract_id AND t.status = 'available'), 0) AS available_tasks_count,
+	c.status, c.skills, c.stego_image_url, c.confirmed_block_height, c.confirmed_at
+FROM mcp_contracts c
+`
 
-	if filter.Creator != "" {
-		whereClause += fmt.Sprintf(" AND c.metadata->>'creator' = $%d", argIndex)
-		args = append(args, filter.Creator)
+	// Build WHERE clause
+	whereConditions := []string{}
+	args := []interface{}{}
+	argIndex := 1
+
+	// Status filter
+	if filter.Status != "" {
+		whereConditions = append(whereConditions, fmt.Sprintf("c.status = $%d", argIndex))
+		args = append(args, filter.Status)
 		argIndex++
 	}
 
-	if filter.AiIdentifier != "" {
-		whereClause += fmt.Sprintf(" AND c.metadata->>'ai_identifier' = $%d", argIndex)
-		args = append(args, filter.AiIdentifier)
+	// Cursor-based pagination by block height (for efficient frontend pagination)
+	if filter.CursorHeight != nil && *filter.CursorHeight > 0 {
+		whereConditions = append(whereConditions, fmt.Sprintf("c.confirmed_block_height < $%d", argIndex))
+		args = append(args, *filter.CursorHeight)
 		argIndex++
 	}
 
-	// Build base query
-	query := fmt.Sprintf(`
-	SELECT c.contract_id, c.title, c.total_budget_sats, c.goals_count,
-		COALESCE((SELECT COUNT(*) FROM mcp_tasks t WHERE t.contract_id = c.contract_id AND t.status = 'available'), 0) AS available_tasks_count,
-		c.status, c.skills, c.stego_image_url
-	FROM mcp_contracts c
-	%s
-	`, whereClause)
+	// Build WHERE clause
+	whereClause := ""
+	if len(whereConditions) > 0 {
+		whereClause = "WHERE " + strings.Join(whereConditions, " AND ")
+	}
+
+	// ORDER BY - prefer confirmed_block_height for cursor-based pagination
+	orderBy := "ORDER BY c.confirmed_block_height DESC NULLS LAST, c.contract_id DESC"
+	if filter.OrderByConfirmedAt {
+		orderBy = "ORDER BY c.confirmed_at DESC NULLS LAST, c.contract_id DESC"
+	}
+
+	// LIMIT
+	limitClause := ""
+	if filter.Limit > 0 {
+		limitClause = fmt.Sprintf("LIMIT $%d", argIndex)
+		args = append(args, filter.Limit)
+		argIndex++
+	}
+
+	query := baseSelect + whereClause + " " + orderBy + " " + limitClause
 
 	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
@@ -229,7 +253,8 @@ func (s *PGStore) ListContracts(filter smart_contract.ContractFilter) ([]smart_c
 	var allContracts []smart_contract.Contract
 	for rows.Next() {
 		var c smart_contract.Contract
-		if err := rows.Scan(&c.ContractID, &c.Title, &c.TotalBudgetSats, &c.GoalsCount, &c.AvailableTasksCount, &c.Status, &c.Skills, &c.StegoImageURL); err != nil {
+		if err := rows.Scan(&c.ContractID, &c.Title, &c.TotalBudgetSats, &c.GoalsCount, &c.AvailableTasksCount,
+			&c.Status, &c.Skills, &c.StegoImageURL, &c.ConfirmedBlockHeight, &c.ConfirmedAt); err != nil {
 			return nil, err
 		}
 		if len(filter.Skills) > 0 && !containsSkill(c.Skills, filter.Skills) {
@@ -242,12 +267,9 @@ func (s *PGStore) ListContracts(filter smart_contract.ContractFilter) ([]smart_c
 		return nil, err
 	}
 
-	// Apply pagination in memory (simple approach since we need to filter by skills after query)
+	// Apply offset in memory if needed (offset should be used sparingly with cursor pagination)
 	if filter.Offset > 0 && filter.Offset < len(allContracts) {
 		allContracts = allContracts[filter.Offset:]
-	}
-	if filter.Limit > 0 && filter.Limit < len(allContracts) {
-		allContracts = allContracts[:filter.Limit]
 	}
 
 	return allContracts, nil
@@ -419,9 +441,9 @@ func (s *PGStore) GetContract(id string) (smart_contract.Contract, error) {
 	err := s.pool.QueryRow(ctx, `
 SELECT contract_id, title, total_budget_sats, goals_count,
        COALESCE((SELECT COUNT(*) FROM mcp_tasks t WHERE t.contract_id = mcp_contracts.contract_id AND t.status = 'available'), 0) AS available_tasks_count,
-       status, skills, stego_image_url
+       status, skills, stego_image_url, confirmed_block_height, confirmed_at
 FROM mcp_contracts WHERE contract_id=$1
-`, id).Scan(&c.ContractID, &c.Title, &c.TotalBudgetSats, &c.GoalsCount, &c.AvailableTasksCount, &c.Status, &c.Skills, &c.StegoImageURL)
+`, id).Scan(&c.ContractID, &c.Title, &c.TotalBudgetSats, &c.GoalsCount, &c.AvailableTasksCount, &c.Status, &c.Skills, &c.StegoImageURL, &c.ConfirmedBlockHeight, &c.ConfirmedAt)
 	if err != nil {
 		if strings.Contains(err.Error(), "no rows") {
 			return smart_contract.Contract{}, fmt.Errorf("contract %s not found", id)
@@ -458,11 +480,11 @@ FROM mcp_tasks WHERE task_id=$1 FOR UPDATE
 	if err != nil {
 		return smart_contract.Claim{}, err
 	}
-	
+
 	var activeClaim *smart_contract.Claim
 	var activeClaimErr error
 	now := time.Now()
-	
+
 	for rows.Next() {
 		var c smart_contract.Claim
 		if err := rows.Scan(&c.ClaimID, &c.TaskID, &c.AiIdentifier, &c.Status, &c.ExpiresAt, &c.CreatedAt); err != nil {
@@ -1081,6 +1103,49 @@ WHERE status='approved' AND (
 )`, normalized, wishID)
 	}
 	return err
+}
+
+// UpdateContractStatusWithConfirmation updates the status for a contract and sets confirmation tracking
+func (s *PGStore) UpdateContractStatusWithConfirmation(ctx context.Context, contractID, status string, blockHeight int) error {
+	contractID = strings.TrimSpace(contractID)
+	status = strings.TrimSpace(status)
+	if contractID == "" || status == "" {
+		return nil
+	}
+
+	// Update status and confirmation tracking
+	if strings.EqualFold(status, "confirmed") {
+		_, err := s.pool.Exec(ctx, `
+UPDATE mcp_contracts 
+SET status=$2, confirmed_block_height=$3, confirmed_at=NOW() 
+WHERE contract_id=$1`, contractID, status, blockHeight)
+		if err != nil {
+			return err
+		}
+	} else {
+		// For non-confirmed status, just update the status
+		_, err := s.pool.Exec(ctx, `UPDATE mcp_contracts SET status=$2 WHERE contract_id=$1`, contractID, status)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Handle proposal status updates for confirmed contracts
+	if strings.EqualFold(status, "confirmed") {
+		normalized := NormalizeContractID(contractID)
+		wishID := "wish-" + normalized
+		_, err := s.pool.Exec(ctx, `
+UPDATE mcp_proposals SET status='confirmed'
+WHERE status='approved' AND (
+  metadata->>'contract_id' IN ($1, $2) OR
+  metadata->>'ingestion_id' IN ($1, $2) OR
+  metadata->>'visible_pixel_hash' IN ($1, $2) OR
+  id IN ($1, $2)
+)`, normalized, wishID)
+		return err
+	}
+
+	return nil
 }
 
 // Proposal operations

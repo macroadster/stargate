@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/btcsuite/btcd/chaincfg"
@@ -108,6 +109,24 @@ func (h *ContractHandler) validatePSBTRequest(w http.ResponseWriter, r *http.Req
 // handleGetContracts handles GET /contracts
 func (h *ContractHandler) handleGetContracts(w http.ResponseWriter, r *http.Request) {
 	filter := smart_contract.ContractFilter{}
+	query := r.URL.Query()
+	if status := query.Get("status"); status != "" {
+		filter.Status = status
+	}
+	if limitStr := query.Get("limit"); limitStr != "" {
+		if limit, err := strconv.Atoi(limitStr); err == nil && limit > 0 {
+			filter.Limit = limit
+		}
+	}
+	if cursorStr := query.Get("cursor_height"); cursorStr != "" {
+		if cursor, err := strconv.Atoi(cursorStr); err == nil && cursor > 0 {
+			filter.CursorHeight = &cursor
+		}
+	}
+	if orderBy := query.Get("order_by"); orderBy == "confirmed_at" {
+		filter.OrderByConfirmedAt = true
+	}
+
 	contracts, err := h.store.ListContracts(filter)
 	if err != nil {
 		middleware.Error(w, http.StatusInternalServerError, err.Error())
@@ -127,4 +146,43 @@ func (h *ContractHandler) handleCreateContract(w http.ResponseWriter, r *http.Re
 	}
 
 	middleware.Error(w, http.StatusNotImplemented, "contract creation not implemented")
+}
+
+// ContractsConfirmed handles GET /contracts-confirmed
+func (h *ContractHandler) ContractsConfirmed(w http.ResponseWriter, r *http.Request) {
+	filter := smart_contract.ContractFilter{}
+	query := r.URL.Query()
+
+	if status := query.Get("status"); status != "" {
+		filter.Status = status
+	}
+	if limitStr := query.Get("limit"); limitStr != "" {
+		if limit, err := strconv.Atoi(limitStr); err == nil && limit > 0 {
+			filter.Limit = limit
+		}
+	}
+	if cursorStr := query.Get("cursor_height"); cursorStr != "" {
+		if cursor, err := strconv.Atoi(cursorStr); err == nil && cursor > 0 {
+			filter.CursorHeight = &cursor
+		}
+	}
+	if orderBy := query.Get("order_by"); orderBy == "confirmed_at" {
+		filter.OrderByConfirmedAt = true
+	}
+
+	// Use the contracts repository to get confirmed contracts with pagination
+	if repo, ok := h.store.(interface {
+		ListContractsByHeight(ctx context.Context, filter smart_contract.ContractFilter) ([]smart_contract.Contract, error)
+	}); ok {
+		contracts, err := repo.ListContractsByHeight(r.Context(), filter)
+		if err != nil {
+			middleware.Error(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(contracts)
+	} else {
+		middleware.Error(w, http.StatusNotImplemented, "confirmed contracts endpoint not available")
+	}
 }

@@ -2761,7 +2761,13 @@ func (bm *BlockMonitor) markIngestionConfirmed(rec *services.IngestionRecord, tx
 	if bm.sweepStore != nil {
 		contractID := contractIDFromIngestion(rec)
 		if contractID != "" {
-			if err := bm.sweepStore.UpdateContractStatus(context.Background(), contractID, "confirmed"); err != nil {
+			if sweepStoreWithConfirmation, ok := bm.sweepStore.(interface {
+				UpdateContractStatusWithConfirmation(ctx context.Context, contractID, status string, blockHeight int) error
+			}); ok {
+				if err := sweepStoreWithConfirmation.UpdateContractStatusWithConfirmation(context.Background(), contractID, "confirmed", int(height)); err != nil {
+					log.Printf("oracle reconcile: failed to update contract status with confirmation for %s: %v", contractID, err)
+				}
+			} else if err := bm.sweepStore.UpdateContractStatus(context.Background(), contractID, "confirmed"); err != nil {
 				log.Printf("oracle reconcile: failed to update contract status for %s: %v", contractID, err)
 			}
 		}

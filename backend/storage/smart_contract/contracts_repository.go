@@ -25,13 +25,13 @@ func (r *ContractsRepository) List(ctx context.Context, filter smart_contract.Co
 	rows, err := r.pool.Query(ctx, `
 SELECT c.contract_id, c.title, c.total_budget_sats, c.goals_count,
        COALESCE((SELECT COUNT(*) FROM mcp_tasks t WHERE t.contract_id = c.contract_id AND t.status = 'available'), 0) AS available_tasks_count,
-       c.status, c.skills
+       c.status, c.skills, c.confirmed_block_height, c.confirmed_at
 FROM mcp_contracts c
 LEFT JOIN mcp_proposals p ON p.id = c.contract_id
 WHERE ($1 = '' OR c.status = $1)
   AND ($2 = '' OR LOWER(COALESCE(p.metadata->>'creator','')) = LOWER($2))
   AND ($3 = '' OR LOWER(COALESCE(p.metadata->>'ai_identifier','')) = LOWER($3))
-`, filter.Status, filter.Creator, filter.AiIdentifier)
+ `, filter.Status, filter.Creator, filter.AiIdentifier)
 	if err != nil {
 		return nil, err
 	}
@@ -40,7 +40,7 @@ WHERE ($1 = '' OR c.status = $1)
 	var out []smart_contract.Contract
 	for rows.Next() {
 		var c smart_contract.Contract
-		if err := rows.Scan(&c.ContractID, &c.Title, &c.TotalBudgetSats, &c.GoalsCount, &c.AvailableTasksCount, &c.Status, &c.Skills); err != nil {
+		if err := rows.Scan(&c.ContractID, &c.Title, &c.TotalBudgetSats, &c.GoalsCount, &c.AvailableTasksCount, &c.Status, &c.Skills, &c.ConfirmedBlockHeight, &c.ConfirmedAt); err != nil {
 			return nil, err
 		}
 		if len(filter.Skills) > 0 && !containsSkill(c.Skills, filter.Skills) {
@@ -57,9 +57,9 @@ func (r *ContractsRepository) Get(ctx context.Context, id string) (smart_contrac
 	err := r.pool.QueryRow(ctx, `
 SELECT contract_id, title, total_budget_sats, goals_count,
        COALESCE((SELECT COUNT(*) FROM mcp_tasks t WHERE t.contract_id = mcp_contracts.contract_id AND t.status = 'available'), 0) AS available_tasks_count,
-       status, skills
+       status, skills, confirmed_block_height, confirmed_at
 FROM mcp_contracts WHERE contract_id=$1
-`, id).Scan(&c.ContractID, &c.Title, &c.TotalBudgetSats, &c.GoalsCount, &c.AvailableTasksCount, &c.Status, &c.Skills)
+`, id).Scan(&c.ContractID, &c.Title, &c.TotalBudgetSats, &c.GoalsCount, &c.AvailableTasksCount, &c.Status, &c.Skills, &c.ConfirmedBlockHeight, &c.ConfirmedAt)
 	if err != nil {
 		if strings.Contains(err.Error(), "no rows") {
 			return smart_contract.Contract{}, fmt.Errorf("contract %s not found", id)
@@ -139,4 +139,81 @@ func (r *ContractsRepository) Funding(ctx context.Context, contractID string) (s
 		proofs = append(proofs, proof)
 	}
 	return contract, proofs, rows.Err()
+}
+
+// ListContractsByHeight returns contracts with cursor-based pagination using confirmed_block_height
+func (r *ContractsRepository) ListContractsByHeight(ctx context.Context, filter smart_contract.ContractFilter) ([]smart_contract.Contract, error) {
+	query := `
+SELECT c.contract_id, c.title, c.total_budget_sats, c.goals_count,
+       COALESCE((SELECT COUNT(*) FROM mcp_tasks t WHERE t.contract_id = c.contract_id AND t.status = 'available'), 0) AS available_tasks_count,
+       c.status, c.skills, c.confirmed_block_height, c.confirmed_at
+FROM mcp_contracts c
+LEFT JOIN mcp_proposals p ON p.id = c.contract_id
+WHERE c.confirmed_block_height IS NOT NULL
+`
+	args := []interface{}{}
+	argIndex := 1
+
+	if filter.Status != "" {
+		query += fmt.Sprintf(" AND c.status = $%d", argIndex)
+		args = append(args, filter.Status)
+		argIndex++
+	}
+
+	if filter.Creator != "" {
+		query += fmt.Sprintf(" AND LOWER(COALESCE(p.metadata->>'creator','')) = LOWER($%d)", argIndex)
+		args = append(args, filter.Creator)
+		argIndex++
+	}
+
+	if filter.AiIdentifier != "" {
+		query += fmt.Sprintf(" AND LOWER(COALESCE(p.metadata->>'ai_identifier','')) = LOWER($%d)", argIndex)
+		args = append(args, filter.AiIdentifier)
+		argIndex++
+	}
+
+	if filter.CursorHeight != nil {
+		query += fmt.Sprintf(" AND c.confirmed_block_height < $%d", argIndex)
+		args = append(args, *filter.CursorHeight)
+		argIndex++
+	}
+
+	if filter.OrderByConfirmedAt {
+		query += " ORDER BY c.confirmed_at DESC"
+	} else {
+		query += " ORDER BY c.confirmed_block_height DESC"
+	}
+
+	if filter.Limit > 0 {
+		query += fmt.Sprintf(" LIMIT $%d", argIndex)
+		args = append(args, filter.Limit)
+	}
+
+	rows, err := r.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []smart_contract.Contract
+	for rows.Next() {
+		var c smart_contract.Contract
+		if err := rows.Scan(&c.ContractID, &c.Title, &c.TotalBudgetSats, &c.GoalsCount, &c.AvailableTasksCount, &c.Status, &c.Skills, &c.ConfirmedBlockHeight, &c.ConfirmedAt); err != nil {
+			return nil, err
+		}
+		if len(filter.Skills) > 0 && !containsSkill(c.Skills, filter.Skills) {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// GetContractsWithPagination returns contracts with pagination support
+func (r *ContractsRepository) GetContractsWithPagination(ctx context.Context, limit int, cursorHeight *int) ([]smart_contract.Contract, error) {
+	filter := smart_contract.ContractFilter{
+		Limit:        limit,
+		CursorHeight: cursorHeight,
+	}
+	return r.ListContractsByHeight(ctx, filter)
 }

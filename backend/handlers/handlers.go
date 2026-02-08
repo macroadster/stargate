@@ -1251,6 +1251,83 @@ func (h *SmartContractHandler) HandleGetContracts(w http.ResponseWriter, r *http
 
 }
 
+// HandleGetContractsOptimized provides cursor-based pagination for contracts by confirmed block height
+// This is the optimized endpoint that eliminates the N+1 API call problem from the frontend
+func (h *SmartContractHandler) HandleGetContractsOptimized(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		h.sendError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	// Parse pagination parameters
+	limit := 12 // default to match frontend request
+	if lim := r.URL.Query().Get("limit"); lim != "" {
+		if parsed, err := strconv.Atoi(lim); err == nil && parsed > 0 && parsed <= 100 {
+			limit = parsed
+		}
+	}
+
+	// Parse cursor_height for pagination (returns contracts confirmed at height < cursor)
+	cursorHeightValue := 0
+	if cursor := r.URL.Query().Get("cursor_height"); cursor != "" && cursor != "*" {
+		if parsed, err := strconv.Atoi(cursor); err == nil && parsed > 0 {
+			cursorHeightValue = parsed
+		}
+	}
+
+	// Status filter (optional)
+	status := r.URL.Query().Get("status")
+
+	// Build filter with cursor-based pagination
+	filter := sc.ContractFilter{
+		Status:             status,
+		Limit:              limit,
+		OrderByConfirmedAt: true,
+	}
+	if cursorHeightValue > 0 {
+		filter.CursorHeight = &cursorHeightValue
+	}
+
+	// Query mcp_contracts table with cursor-based pagination
+	contracts, err := h.store.ListContracts(filter)
+	if err != nil {
+		log.Printf("Failed to get contracts with pagination: %v", err)
+		h.sendError(w, http.StatusInternalServerError, "Failed to get contracts")
+		return
+	}
+
+	// Convert results to inscriptions for frontend compatibility
+	var inscriptions []models.InscriptionRequest
+	for _, contract := range contracts {
+		inscription := contractToInscriptionRequest(contract)
+		inscriptions = append(inscriptions, inscription)
+	}
+
+	// Determine next cursor for pagination
+	nextCursor := ""
+	hasMore := false
+	if len(contracts) > 0 {
+		lastContract := contracts[len(contracts)-1]
+		if lastContract.ConfirmedBlockHeight != nil && *lastContract.ConfirmedBlockHeight > 0 {
+			nextCursor = fmt.Sprintf("%d", *lastContract.ConfirmedBlockHeight)
+			hasMore = true
+		}
+	}
+
+	// Build response matching the block-summaries API structure for frontend compatibility
+	response := map[string]interface{}{
+		"contracts":     inscriptions,
+		"total":         len(inscriptions),
+		"limit":         limit,
+		"next_cursor":   nextCursor,
+		"has_more":      hasMore,
+		"cursor_height": cursorHeightValue,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
 // HandleCreateContract handles creating a new smart contract
 func (h *SmartContractHandler) HandleCreateContract(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {

@@ -509,6 +509,9 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 	// Block endpoints
 	mux.HandleFunc("/api/blocks", container.BlockHandler.HandleGetBlocks)
 
+	// Optimized contracts endpoint - eliminates N+1 API call problem
+	mux.HandleFunc("/api/contracts-confirmed", container.SmartContractHandler.HandleGetContractsOptimized)
+
 	// Smart contract endpoints
 	mux.HandleFunc("/api/smart-contracts", container.SmartContractHandler.HandleGetContracts)
 	mux.HandleFunc("/api/contract-stego", container.SmartContractHandler.HandleGetContract)

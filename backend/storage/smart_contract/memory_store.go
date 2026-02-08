@@ -548,6 +548,37 @@ func (s *MemoryStore) UpdateContractStatus(ctx context.Context, contractID, stat
 	return nil
 }
 
+// UpdateContractStatusWithConfirmation updates the status for a contract and records confirmation details.
+func (s *MemoryStore) UpdateContractStatusWithConfirmation(ctx context.Context, contractID, status string, blockHeight int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	contractID = strings.TrimSpace(contractID)
+	status = strings.TrimSpace(status)
+	if contractID == "" || status == "" {
+		return nil
+	}
+	contract, ok := s.contracts[contractID]
+	if !ok {
+		return fmt.Errorf("contract %s not found", contractID)
+	}
+	contract.Status = status
+	contract.ConfirmedBlockHeight = &blockHeight
+	confirmedAt := time.Now()
+	contract.ConfirmedAt = &confirmedAt
+	s.contracts[contractID] = contract
+	if strings.EqualFold(status, "confirmed") {
+		normalized := NormalizeContractID(contractID)
+		for id, proposal := range s.proposals {
+			proposalCID := NormalizeContractID(contractIDFromMeta(proposal.Metadata, proposal.ID))
+			if proposalCID == normalized && strings.EqualFold(proposal.Status, "approved") {
+				proposal.Status = "confirmed"
+				s.proposals[id] = proposal
+			}
+		}
+	}
+	return nil
+}
+
 // CreateProposal stores a new proposal with validation.
 func (s *MemoryStore) CreateProposal(ctx context.Context, p smart_contract.Proposal) error {
 	s.mu.Lock()

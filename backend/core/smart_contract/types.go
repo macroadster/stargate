@@ -4,14 +4,16 @@ import "time"
 
 // Contract captures a goal contract summary.
 type Contract struct {
-	ContractID          string   `json:"contract_id"`
-	Title               string   `json:"title"`
-	TotalBudgetSats     int64    `json:"total_budget_sats"`
-	GoalsCount          int      `json:"goals_count"`
-	AvailableTasksCount int      `json:"available_tasks_count"`
-	Status              string   `json:"status"` // created | active | funded | confirmed | expired
-	Skills              []string `json:"skills,omitempty"`
-	StegoImageURL       string   `json:"stego_image_url,omitempty"`
+	ContractID           string     `json:"contract_id"`
+	Title                string     `json:"title"`
+	TotalBudgetSats      int64      `json:"total_budget_sats"`
+	GoalsCount           int        `json:"goals_count"`
+	AvailableTasksCount  int        `json:"available_tasks_count"`
+	Status               string     `json:"status"` // created | active | funded | confirmed | expired
+	Skills               []string   `json:"skills,omitempty"`
+	StegoImageURL        string     `json:"stego_image_url,omitempty"`
+	ConfirmedBlockHeight *int       `json:"confirmed_block_height,omitempty"`
+	ConfirmedAt          *time.Time `json:"confirmed_at,omitempty"`
 }
 
 // Task describes a specific unit of work an AI can claim.
@@ -92,12 +94,14 @@ type Submission struct {
 
 // ContractFilter captures list filters for contracts.
 type ContractFilter struct {
-	Status       string
-	Skills       []string
-	Creator      string
-	AiIdentifier string
-	Limit        int
-	Offset       int
+	Status             string
+	Skills             []string
+	Creator            string
+	AiIdentifier       string
+	Limit              int
+	Offset             int
+	CursorHeight       *int // For cursor-based pagination using confirmed_block_height
+	OrderByConfirmedAt bool // Order by confirmed_at instead of block height
 }
 
 // TaskFilter captures simple query params for listing tasks.
