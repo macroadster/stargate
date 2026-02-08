@@ -100,8 +100,10 @@ type ContractFilter struct {
 	AiIdentifier       string
 	Limit              int
 	Offset             int
-	CursorHeight       *int // For cursor-based pagination using confirmed_block_height
-	OrderByConfirmedAt bool // Order by confirmed_at instead of block height
+	CursorHeight       *int       // For cursor-based pagination using confirmed_block_height
+	CursorDate         *time.Time // For cursor-based pagination using confirmed_at
+	CursorType         string     // 'before' or 'after'
+	OrderByConfirmedAt bool       // Order by confirmed_at instead of block height
 }
 
 // TaskFilter captures simple query params for listing tasks.

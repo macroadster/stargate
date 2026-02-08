@@ -501,19 +501,11 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 
 	mux.Handle("/metrics", promhttp.Handler())
 
-	// Inscription endpoints
-	mux.HandleFunc("/api/inscriptions", container.InscriptionHandler.HandleGetInscriptions)
-	mux.Handle("/api/inscribe", wrapWithAuth(container.InscriptionHandler.HandleCreateInscription))
-	mux.HandleFunc("/api/open-contracts", container.SmartContractHandler.HandleGetContracts)
-
-	// Block endpoints
-	mux.HandleFunc("/api/blocks", container.BlockHandler.HandleGetBlocks)
-
-	// Optimized contracts endpoint - eliminates N+1 API call problem
-	mux.HandleFunc("/api/contracts-confirmed", container.SmartContractHandler.HandleGetContractsOptimized)
-
 	// Smart contract endpoints
+	mux.HandleFunc("/api/open-contracts", container.SmartContractHandler.HandleGetContracts)
 	mux.HandleFunc("/api/smart-contracts", container.SmartContractHandler.HandleGetContracts)
+	mux.HandleFunc("/api/contracts-confirmed", container.SmartContractHandler.HandleGetContracts)
+	mux.HandleFunc("/api/data/contracts-with-pagination", container.SmartContractHandler.HandleGetContracts)
 	mux.HandleFunc("/api/contract-stego", container.SmartContractHandler.HandleGetContract)
 	mux.Handle("/api/contract-stego/create", wrapWithAuth(container.SmartContractHandler.HandleCreateContract))
 

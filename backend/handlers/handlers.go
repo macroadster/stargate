@@ -1214,46 +1214,8 @@ func (h *SmartContractHandler) InvalidateContractCache() {
 	}
 }
 
-// HandleGetContracts handles getting all smart contracts
+// HandleGetContracts handles getting smart contracts with support for filtering and pagination
 func (h *SmartContractHandler) HandleGetContracts(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		h.sendError(w, http.StatusMethodNotAllowed, "Method not allowed")
-		return
-	}
-
-	// Skip cache - go directly to database for consistency
-	// Build filter from query parameters
-	filter := sc.ContractFilter{}
-	if status := r.URL.Query().Get("status"); status != "" {
-		filter.Status = status
-	}
-
-	// Query mcp_contracts table directly
-	contracts, err := h.store.ListContracts(filter)
-	if err != nil {
-		log.Printf("Failed to get contracts: %v", err)
-		h.sendError(w, http.StatusInternalServerError, "Failed to get contracts")
-		return
-	}
-
-	// Convert results
-	var inscriptions []models.InscriptionRequest
-	for _, contract := range contracts {
-		inscription := contractToInscriptionRequest(contract)
-		inscriptions = append(inscriptions, inscription)
-	}
-
-	response := models.PendingTransactionsResponse{
-		Transactions: inscriptions,
-		Total:        len(inscriptions),
-	}
-	h.sendSuccess(w, response)
-
-}
-
-// HandleGetContractsOptimized provides cursor-based pagination for contracts by confirmed block height
-// This is the optimized endpoint that eliminates the N+1 API call problem from the frontend
-func (h *SmartContractHandler) HandleGetContractsOptimized(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		h.sendError(w, http.StatusMethodNotAllowed, "Method not allowed")
 		return
@@ -1267,31 +1229,43 @@ func (h *SmartContractHandler) HandleGetContractsOptimized(w http.ResponseWriter
 		}
 	}
 
-	// Parse cursor_height for pagination (returns contracts confirmed at height < cursor)
-	cursorHeightValue := 0
-	if cursor := r.URL.Query().Get("cursor_height"); cursor != "" && cursor != "*" {
-		if parsed, err := strconv.Atoi(cursor); err == nil && parsed > 0 {
-			cursorHeightValue = parsed
-		}
-	}
-
-	// Status filter (optional)
-	status := r.URL.Query().Get("status")
-
-	// Build filter with cursor-based pagination
+	// Build filter
 	filter := sc.ContractFilter{
-		Status:             status,
 		Limit:              limit,
 		OrderByConfirmedAt: true,
 	}
-	if cursorHeightValue > 0 {
-		filter.CursorHeight = &cursorHeightValue
+
+	if status := r.URL.Query().Get("status"); status != "" {
+		filter.Status = status
 	}
 
-	// Query mcp_contracts table with cursor-based pagination
+	if skills := r.URL.Query().Get("skills"); skills != "" {
+		filter.Skills = strings.Split(skills, ",")
+	}
+
+	// Parse cursor_height for pagination
+	if cursor := r.URL.Query().Get("cursor_height"); cursor != "" && cursor != "*" {
+		if parsed, err := strconv.Atoi(cursor); err == nil && parsed > 0 {
+			filter.CursorHeight = &parsed
+		}
+	}
+
+	// Parse cursor_date for pagination
+	if cursorDate := r.URL.Query().Get("cursor_date"); cursorDate != "" {
+		if parsed, err := time.Parse(time.RFC3339, cursorDate); err == nil {
+			filter.CursorDate = &parsed
+		}
+	}
+
+	// Parse cursor_type
+	if cursorType := r.URL.Query().Get("cursor_type"); cursorType != "" {
+		filter.CursorType = cursorType
+	}
+
+	// Query database
 	contracts, err := h.store.ListContracts(filter)
 	if err != nil {
-		log.Printf("Failed to get contracts with pagination: %v", err)
+		log.Printf("Failed to get contracts: %v", err)
 		h.sendError(w, http.StatusInternalServerError, "Failed to get contracts")
 		return
 	}
@@ -1303,8 +1277,9 @@ func (h *SmartContractHandler) HandleGetContractsOptimized(w http.ResponseWriter
 		inscriptions = append(inscriptions, inscription)
 	}
 
-	// Determine next cursor for pagination
+	// Determine next cursors for pagination
 	nextCursor := ""
+	nextCursorDate := ""
 	hasMore := false
 	if len(contracts) > 0 {
 		lastContract := contracts[len(contracts)-1]
@@ -1312,16 +1287,21 @@ func (h *SmartContractHandler) HandleGetContractsOptimized(w http.ResponseWriter
 			nextCursor = fmt.Sprintf("%d", *lastContract.ConfirmedBlockHeight)
 			hasMore = true
 		}
+		if lastContract.ConfirmedAt != nil {
+			nextCursorDate = lastContract.ConfirmedAt.Format(time.RFC3339)
+			hasMore = true
+		}
 	}
 
-	// Build response matching the block-summaries API structure for frontend compatibility
+	// Build response matching frontend expectations
 	response := map[string]interface{}{
-		"contracts":     inscriptions,
-		"total":         len(inscriptions),
-		"limit":         limit,
-		"next_cursor":   nextCursor,
-		"has_more":      hasMore,
-		"cursor_height": cursorHeightValue,
+		"contracts":        inscriptions,
+		"transactions":     inscriptions, // for backward compatibility
+		"total":            len(inscriptions),
+		"limit":            limit,
+		"next_cursor":      nextCursor,
+		"next_cursor_date": nextCursorDate,
+		"has_more":         hasMore,
 	}
 
 	w.Header().Set("Content-Type", "application/json")

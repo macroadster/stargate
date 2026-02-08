@@ -53,15 +53,20 @@ Optimized to use direct Postgres queries with cursor-based pagination:
 
 ### Backend - API Layer
 **`backend/handlers/handlers.go`**
-- Added new handler `HandleGetContractsWithPagination()`
+- Unified handler `HandleGetContracts()`
 - Supports query parameters:
   - `limit`: Number of contracts per page (default: 12)
   - `cursor_date`: ISO 8601 timestamp for pagination cursor
+  - `cursor_height`: Block height for alternative pagination
   - `cursor_type`: 'before' or 'after' cursor direction
 - Returns JSON response with contracts array and pagination info
 
 **`backend/stargate_backend.go`**
-- Registered new route: `GET /api/data/contracts-with-pagination`
+- Registered routes:
+  - `GET /api/open-contracts`
+  - `GET /api/smart-contracts`
+  - `GET /api/contracts-confirmed`
+  - `GET /api/data/contracts-with-pagination` (Preferred for frontend)
 
 ### Frontend - Hooks
 **`frontend/src/hooks/useContracts.js`** (NEW FILE)

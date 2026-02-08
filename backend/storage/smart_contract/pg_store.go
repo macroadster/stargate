@@ -64,8 +64,12 @@ CREATE TABLE IF NOT EXISTS mcp_contracts (
   available_tasks_count INT,
   status TEXT,
   skills TEXT[],
-  stego_image_url TEXT
+  stego_image_url TEXT,
+  confirmed_block_height INTEGER,
+  confirmed_at TIMESTAMP WITH TIME ZONE
 );
+CREATE INDEX IF NOT EXISTS idx_mcp_contracts_confirmed_height ON mcp_contracts(confirmed_block_height DESC);
+CREATE INDEX IF NOT EXISTS idx_mcp_contracts_confirmed_at ON mcp_contracts(confirmed_at DESC);
 CREATE TABLE IF NOT EXISTS mcp_tasks (
   task_id TEXT PRIMARY KEY,
   contract_id TEXT,
@@ -219,6 +223,17 @@ FROM mcp_contracts c
 	if filter.CursorHeight != nil && *filter.CursorHeight > 0 {
 		whereConditions = append(whereConditions, fmt.Sprintf("c.confirmed_block_height < $%d", argIndex))
 		args = append(args, *filter.CursorHeight)
+		argIndex++
+	}
+
+	// Cursor-based pagination by date
+	if filter.CursorDate != nil {
+		op := "<"
+		if strings.EqualFold(filter.CursorType, "after") {
+			op = ">"
+		}
+		whereConditions = append(whereConditions, fmt.Sprintf("c.confirmed_at %s $%d", op, argIndex))
+		args = append(args, *filter.CursorDate)
 		argIndex++
 	}
 

@@ -43,22 +43,26 @@ export const useContracts = () => {
     setIsLoading(true);
     setError('');
     try {
-      const url = new URL(`${API_BASE}/api/contracts-confirmed`);
+      const url = new URL(`${API_BASE}/api/data/contracts-with-pagination`);
       url.searchParams.set('limit', 12);
-      if (cursor && cursor !== '*') url.searchParams.set('cursor_height', cursor);
+      url.searchParams.set('status', 'confirmed');
+      if (cursor) {
+        url.searchParams.set('cursor_date', cursor);
+        url.searchParams.set('cursor_type', 'before');
+      }
       const res = await fetch(url.toString());
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       
       const contractsData = Array.isArray(data.contracts) ? data.contracts : [];
-      const nextCursor = data.next_cursor || '';
-      const more = Boolean(data.has_more);
+      const nextCursor = data.next_cursor_date || '';
+      const more = Boolean(data.has_more) && contractsData.length > 0;
 
       const mappedContracts = contractsData.map(mapContractToDisplayFormat);
       
       const unique = [];
       mappedContracts.forEach((item) => {
-        const key = `${item.id}-${item.block_height}`;
+        const key = item.id;
         if (!seenRef.current.has(key)) {
           seenRef.current.add(key);
           unique.push(item);

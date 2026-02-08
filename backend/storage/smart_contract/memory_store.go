@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -140,8 +141,57 @@ func (s *MemoryStore) ListContracts(filter smart_contract.ContractFilter) ([]sma
 		if !matchesContractMeta(c.ContractID, s.proposals, filter) {
 			continue
 		}
+
+		// Cursor pagination by height
+		if filter.CursorHeight != nil && *filter.CursorHeight > 0 {
+			if c.ConfirmedBlockHeight == nil || *c.ConfirmedBlockHeight >= *filter.CursorHeight {
+				continue
+			}
+		}
+
+		// Cursor pagination by date
+		if filter.CursorDate != nil && c.ConfirmedAt != nil {
+			if strings.EqualFold(filter.CursorType, "after") {
+				if !c.ConfirmedAt.After(*filter.CursorDate) {
+					continue
+				}
+			} else {
+				if !c.ConfirmedAt.Before(*filter.CursorDate) {
+					continue
+				}
+			}
+		}
+
 		c.AvailableTasksCount = availableCounts[c.ContractID]
 		out = append(out, c)
+	}
+
+	// Sort based on filter preference
+	if filter.OrderByConfirmedAt {
+		sort.Slice(out, func(i, j int) bool {
+			if out[i].ConfirmedAt == nil {
+				return false
+			}
+			if out[j].ConfirmedAt == nil {
+				return true
+			}
+			return out[i].ConfirmedAt.After(*out[j].ConfirmedAt)
+		})
+	} else {
+		sort.Slice(out, func(i, j int) bool {
+			h1 := 0
+			if out[i].ConfirmedBlockHeight != nil {
+				h1 = *out[i].ConfirmedBlockHeight
+			}
+			h2 := 0
+			if out[j].ConfirmedBlockHeight != nil {
+				h2 = *out[j].ConfirmedBlockHeight
+			}
+			if h1 != h2 {
+				return h1 > h2
+			}
+			return out[i].ContractID > out[j].ContractID
+		})
 	}
 
 	// Apply pagination

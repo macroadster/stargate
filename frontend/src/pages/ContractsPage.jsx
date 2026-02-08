@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { API_BASE, CONTENT_BASE } from '../apiBase';
 import { useNavigate } from 'react-router-dom';
 import InscriptionModal from '../components/Inscription/InscriptionModal';
 import AppHeader from '../components/Common/AppHeader';
+import { useContracts } from '../hooks/useContracts';
 
 const extractHeadline = (text) => {
   if (!text) return '';
@@ -14,86 +14,14 @@ const extractHeadline = (text) => {
   return line.replace(/^#+\s*/, '').slice(0, 140);
 };
 
-const mapContractItem = (contract) => {
-  const rawUrl = contract.stego_image_url || '';
-  const imageUrl = rawUrl.startsWith('http') ? rawUrl : (rawUrl ? `${CONTENT_BASE}${rawUrl}` : '');
-  return {
-    id: contract.contract_id,
-    mime_type: 'application/json',
-    image_url: imageUrl,
-    file_name: contract.title || 'Contract',
-    size_bytes: 0,
-    text: contract.title || '',
-    metadata: {
-      total_budget: contract.total_budget_sats,
-      goals_count: contract.goals_count,
-      available_tasks: contract.available_tasks_count,
-      status: contract.status,
-      skills: contract.skills
-    },
-    genesis_block_height: contract.confirmed_block_height,
-    block_height: contract.confirmed_block_height,
-    contract_type: 'Smart Contract'
-  };
-};
-
 export default function ContractsPage() {
   const navigate = useNavigate();
-  const [contracts, setContracts] = useState([]);
-  const [cursorDate, setCursorDate] = useState(null);
-  const [hasMore, setHasMore] = useState(true);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState('');
+  const { contracts, isLoading, hasMore, error, loadMore } = useContracts();
   const [selectedInscription, setSelectedInscription] = useState(null);
   const sentinelRef = useRef(null);
-  const seenRef = useRef(new Set());
-
-  const loadMore = useCallback(async () => {
-    if (isLoading || !hasMore) return;
-    setIsLoading(true);
-    setError('');
-    try {
-      // Use optimized contracts endpoint with cursor-based pagination
-      const url = new URL(`${API_BASE}/api/data/contracts-with-pagination`);
-      url.searchParams.set('limit', '12');
-      if (cursorDate) {
-        url.searchParams.set('cursor_date', cursorDate);
-        url.searchParams.set('cursor_type', 'before');
-      }
-      
-      const res = await fetch(url.toString());
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      
-      const newContracts = Array.isArray(data.contracts) ? data.contracts : [];
-      const mappedContracts = newContracts.map(mapContractItem);
-      
-      // Deduplicate using contract_id
-      const unique = [];
-      mappedContracts.forEach((item) => {
-        if (!seenRef.current.has(item.id)) {
-          seenRef.current.add(item.id);
-          unique.push(item);
-        }
-      });
-
-      setContracts((prev) => [...prev, ...unique]);
-      setCursorDate(data.next_cursor_date);
-      setHasMore(data.has_more);
-    } catch (err) {
-      console.error('Failed to load contracts', err);
-      setError('Unable to load contracts. Please retry.');
-    } finally {
-      setIsLoading(false);
-    }
-  }, [cursorDate, hasMore, isLoading]);
 
   useEffect(() => {
-    loadMore();
-  }, [loadMore]);
-
-  useEffect(() => {
-    if (!sentinelRef.current || !hasMore) return;
+    if (!sentinelRef.current || !hasMore || isLoading) return;
     const sentinel = sentinelRef.current;
     const observer = new IntersectionObserver(
       ([entry]) => {
@@ -101,18 +29,17 @@ export default function ContractsPage() {
           loadMore();
         }
       },
-      { threshold: 0.6 }
+      { threshold: 0.1 }
     );
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [loadMore, hasMore]);
+  }, [loadMore, hasMore, isLoading]);
 
   const displayContracts = useMemo(() => {
     return contracts.map((contract) => {
-      const rawText = contract.text || contract.metadata?.embedded_message || contract.metadata?.extracted_message || '';
       return {
         ...contract,
-        headline: extractHeadline(rawText) || contract.file_name || 'Untitled Contract'
+        headline: extractHeadline(contract.text) || contract.file_name || 'Untitled Contract'
       };
     });
   }, [contracts]);

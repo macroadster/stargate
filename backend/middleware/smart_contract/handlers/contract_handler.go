@@ -150,12 +150,11 @@ func (h *ContractHandler) handleCreateContract(w http.ResponseWriter, r *http.Re
 
 // ContractsConfirmed handles GET /contracts-confirmed
 func (h *ContractHandler) ContractsConfirmed(w http.ResponseWriter, r *http.Request) {
-	filter := smart_contract.ContractFilter{}
+	filter := smart_contract.ContractFilter{
+		Status: "confirmed",
+	}
 	query := r.URL.Query()
 
-	if status := query.Get("status"); status != "" {
-		filter.Status = status
-	}
 	if limitStr := query.Get("limit"); limitStr != "" {
 		if limit, err := strconv.Atoi(limitStr); err == nil && limit > 0 {
 			filter.Limit = limit
@@ -170,19 +169,12 @@ func (h *ContractHandler) ContractsConfirmed(w http.ResponseWriter, r *http.Requ
 		filter.OrderByConfirmedAt = true
 	}
 
-	// Use the contracts repository to get confirmed contracts with pagination
-	if repo, ok := h.store.(interface {
-		ListContractsByHeight(ctx context.Context, filter smart_contract.ContractFilter) ([]smart_contract.Contract, error)
-	}); ok {
-		contracts, err := repo.ListContractsByHeight(r.Context(), filter)
-		if err != nil {
-			middleware.Error(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(contracts)
-	} else {
-		middleware.Error(w, http.StatusNotImplemented, "confirmed contracts endpoint not available")
+	contracts, err := h.store.ListContracts(filter)
+	if err != nil {
+		middleware.Error(w, http.StatusInternalServerError, err.Error())
+		return
 	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(contracts)
 }
