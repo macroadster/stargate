@@ -14,19 +14,25 @@ const extractHeadline = (text) => {
   return line.replace(/^#+\s*/, '').slice(0, 140);
 };
 
-const mapContractItem = (item, height) => {
-  const rawUrl = item.image_url || '';
+const mapContractItem = (contract) => {
+  const rawUrl = contract.stego_image_url || '';
   const imageUrl = rawUrl.startsWith('http') ? rawUrl : (rawUrl ? `${CONTENT_BASE}${rawUrl}` : '');
   return {
-    id: item.tx_id || item.id,
-    mime_type: item.content_type || 'application/octet-stream',
+    id: contract.contract_id,
+    mime_type: 'application/json',
     image_url: imageUrl,
-    file_name: item.file_name,
-    size_bytes: item.size_bytes,
-    text: item.content || '',
-    metadata: item.metadata || {},
-    genesis_block_height: height,
-    block_height: height,
+    file_name: contract.title || 'Contract',
+    size_bytes: 0,
+    text: contract.title || '',
+    metadata: {
+      total_budget: contract.total_budget_sats,
+      goals_count: contract.goals_count,
+      available_tasks: contract.available_tasks_count,
+      status: contract.status,
+      skills: contract.skills
+    },
+    genesis_block_height: contract.confirmed_block_height,
+    block_height: contract.confirmed_block_height,
     contract_type: 'Smart Contract'
   };
 };
@@ -34,7 +40,7 @@ const mapContractItem = (item, height) => {
 export default function ContractsPage() {
   const navigate = useNavigate();
   const [contracts, setContracts] = useState([]);
-  const [cursor, setCursor] = useState('');
+  const [cursorDate, setCursorDate] = useState(null);
   const [hasMore, setHasMore] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
@@ -47,49 +53,40 @@ export default function ContractsPage() {
     setIsLoading(true);
     setError('');
     try {
-      const url = new URL(`${API_BASE}/api/data/block-summaries`);
-      url.searchParams.set('limit', 12);
-      if (cursor) url.searchParams.set('cursor_height', cursor);
+      // Use optimized contracts endpoint with cursor-based pagination
+      const url = new URL(`${API_BASE}/api/data/contracts-with-pagination`);
+      url.searchParams.set('limit', '12');
+      if (cursorDate) {
+        url.searchParams.set('cursor_date', cursorDate);
+        url.searchParams.set('cursor_type', 'before');
+      }
+      
       const res = await fetch(url.toString());
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      const blocks = Array.isArray(data.blocks) ? data.blocks : [];
-      const nextCursor = data.next_cursor || '';
-      const more = Boolean(data.has_more);
-
-      const blockFetches = blocks.map(async (block) => {
-        const height = Number(block.block_height || block.height);
-        if (!height || block.smart_contract_count <= 0) {
-          return [];
-        }
-        const blockRes = await fetch(`${API_BASE}/api/data/block-inscriptions/${height}?limit=50&fields=summary`);
-        if (!blockRes.ok) return [];
-        const blockData = await blockRes.json();
-        const items = Array.isArray(blockData.inscriptions) ? blockData.inscriptions : [];
-        return items.map((item) => mapContractItem(item, height));
-      });
-
-      const results = await Promise.all(blockFetches);
-      const flattened = results.flat();
+      
+      const newContracts = Array.isArray(data.contracts) ? data.contracts : [];
+      const mappedContracts = newContracts.map(mapContractItem);
+      
+      // Deduplicate using contract_id
       const unique = [];
-      flattened.forEach((item) => {
-        const key = `${item.id}-${item.metadata?.input_index ?? ''}`;
-        if (!seenRef.current.has(key)) {
-          seenRef.current.add(key);
+      mappedContracts.forEach((item) => {
+        if (!seenRef.current.has(item.id)) {
+          seenRef.current.add(item.id);
           unique.push(item);
         }
       });
 
       setContracts((prev) => [...prev, ...unique]);
-      setCursor(nextCursor);
-      setHasMore(more);
+      setCursorDate(data.next_cursor_date);
+      setHasMore(data.has_more);
     } catch (err) {
       console.error('Failed to load contracts', err);
       setError('Unable to load contracts. Please retry.');
     } finally {
       setIsLoading(false);
     }
-  }, [cursor, hasMore, isLoading]);
+  }, [cursorDate, hasMore, isLoading]);
 
   useEffect(() => {
     loadMore();
