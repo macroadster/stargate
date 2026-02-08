@@ -206,7 +206,7 @@ func refreshProofs(ctx context.Context, store *scstore.PGStore, provider Funding
 			}
 		}
 
-		if escort != nil && hasRealCommitment {
+		if escort != nil && hasRealCommitment && proof.ConfirmationStatus != "confirmed" {
 			escortStatus, err := escort.ValidateProof(proof)
 			if err == nil && escortStatus != nil {
 				escortStatus.TaskID = t.TaskID
