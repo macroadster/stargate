@@ -2,31 +2,34 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { API_BASE, CONTENT_BASE } from '../apiBase';
 
 const mapContractToDisplayFormat = (contract) => {
-  const rawUrl = contract.stego_image_url || '';
+  const rawUrl = contract.stego_image_url || contract.imageData || '';
   const imageUrl = rawUrl.startsWith('http') ? rawUrl : (rawUrl ? `${CONTENT_BASE}${rawUrl}` : '');
   
+  const id = contract.id || contract.contract_id || '';
+  const title = contract.title || contract.text || 'Untitled Contract';
+
   return {
-    id: contract.contract_id,
-    tx_id: contract.contract_id,
+    id: id,
+    tx_id: id,
     mime_type: 'application/json',
     image_url: imageUrl,
-    file_name: contract.title || 'Untitled Contract',
+    file_name: title,
     size_bytes: 0,
-    text: contract.title || '',
+    text: title,
     metadata: {
-      embedded_message: contract.title,
-      extracted_message: contract.title,
+      embedded_message: title,
+      extracted_message: title,
       status: contract.status,
       skills: contract.skills || [],
-      total_budget_sats: contract.total_budget_sats,
+      total_budget_sats: contract.total_budget_sats || (contract.price ? contract.price * 1e8 : 0),
       goals_count: contract.goals_count,
       available_tasks_count: contract.available_tasks_count
     },
-    genesis_block_height: contract.confirmed_block_height || 0,
-    block_height: contract.confirmed_block_height || 0,
+    genesis_block_height: contract.confirmed_block_height || contract.block_height || 0,
+    block_height: contract.confirmed_block_height || contract.block_height || 0,
     contract_type: 'Smart Contract',
-    confirmed_at: contract.confirmed_at,
-    headline: contract.title || 'Untitled Contract'
+    confirmed_at: contract.confirmed_at || contract.timestamp,
+    headline: title
   };
 };
 
@@ -54,16 +57,18 @@ export const useContracts = () => {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       
-      const contractsData = Array.isArray(data.contracts) ? data.contracts : [];
-      const nextCursor = data.next_cursor_date || '';
-      const more = Boolean(data.has_more) && contractsData.length > 0;
+      // Handle both wrapped and unwrapped responses
+      const payload = data?.data ?? data;
+      const contractsData = Array.isArray(payload.contracts) ? payload.contracts : [];
+      const nextCursor = payload.next_cursor_date || '';
+      const more = Boolean(payload.has_more) && contractsData.length > 0;
 
       const mappedContracts = contractsData.map(mapContractToDisplayFormat);
       
       const unique = [];
       mappedContracts.forEach((item) => {
         const key = item.id;
-        if (!seenRef.current.has(key)) {
+        if (key && !seenRef.current.has(key)) {
           seenRef.current.add(key);
           unique.push(item);
         }

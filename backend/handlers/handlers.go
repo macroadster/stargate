@@ -1305,7 +1305,7 @@ func (h *SmartContractHandler) HandleGetContracts(w http.ResponseWriter, r *http
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	h.sendSuccess(w, response)
 }
 
 // HandleCreateContract handles creating a new smart contract
