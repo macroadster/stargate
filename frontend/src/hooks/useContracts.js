@@ -8,12 +8,22 @@ const mapContractToDisplayFormat = (contract) => {
   const id = contract.id || contract.contract_id || '';
   const title = contract.title || contract.text || 'Untitled Contract';
 
+  // Extract actual filename from URL for display
+  let fileName = title;
+  if (rawUrl) {
+    const urlParts = rawUrl.split('/');
+    const lastPart = urlParts[urlParts.length - 1];
+    if (lastPart && lastPart.length > 0) {
+      fileName = lastPart.split('?')[0];
+    }
+  }
+
   return {
     id: id,
     tx_id: id,
-    mime_type: 'application/json',
+    mime_type: imageUrl ? 'image/png' : 'application/json',
     image_url: imageUrl,
-    file_name: title,
+    file_name: fileName,
     size_bytes: 0,
     text: title,
     metadata: {

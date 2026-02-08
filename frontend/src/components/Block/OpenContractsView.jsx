@@ -43,13 +43,22 @@ const OpenContractsView = ({ setSelectedInscription, refreshKey }) => {
       .filter((tx) => !['confirmed', 'complete', 'rejected'].includes((tx.status || '').toLowerCase()))
       .map((tx) => {
       const imagePath = tx.imageData || '';
-      const uploadFile = imagePath ? imagePath.split('/').pop() : null;
+      let uploadFile = 'pending.txt';
+      if (imagePath) {
+        const urlParts = imagePath.split('/');
+        const lastPart = urlParts[urlParts.length - 1];
+        if (lastPart) {
+          uploadFile = lastPart.split('?')[0];
+        }
+      }
       let imageUrl = null;
       if (imagePath.startsWith('http')) {
         imageUrl = imagePath;
       } else if (imagePath.startsWith('/uploads/')) {
         imageUrl = `${API_BASE}${imagePath}`;
-      } else if (uploadFile) {
+      } else if (imagePath.startsWith('/api/block-image/')) {
+        imageUrl = `${API_BASE}${imagePath}`;
+      } else if (uploadFile && uploadFile !== 'pending.txt') {
         imageUrl = `${API_BASE}/uploads/${encodeURIComponent(uploadFile)}`;
       }
       const wishText = tx.wish_text || tx.embedded_message || tx.message || '';
@@ -71,7 +80,7 @@ const OpenContractsView = ({ setSelectedInscription, refreshKey }) => {
         timestamp: tx.timestamp,
         status: tx.status,
         image_url: imageUrl,
-        file_name: uploadFile || 'pending.txt',
+        file_name: uploadFile,
         size_bytes: tx.text ? tx.text.length : 0,
         metadata: {
           is_stego: false,
