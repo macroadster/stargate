@@ -72,6 +72,10 @@ func loadSyncPubsubConfig() syncPubsubConfig {
 	if raw := os.Getenv("STARGATE_SYNC_ENABLED"); raw != "" {
 		enabled = strings.EqualFold(raw, "true")
 	}
+	// Check global IPFS disable flag
+	if !ipfs.IsEnabled() {
+		enabled = false
+	}
 	apiURL := os.Getenv("IPFS_API_URL")
 	if apiURL == "" {
 		apiURL = "http://127.0.0.1:5001"

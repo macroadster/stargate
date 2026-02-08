@@ -142,6 +142,10 @@ func StartIPFSIngestionSync(ctx context.Context, ingest *services.IngestionServi
 
 func loadIPFSIngestSyncConfig() ipfsIngestSyncConfig {
 	enabled := strings.EqualFold(strings.TrimSpace(os.Getenv("IPFS_INGEST_SYNC_ENABLED")), "true")
+	// Check global IPFS disable flag
+	if !ipfs.IsEnabled() {
+		enabled = false
+	}
 	interval := 60 * time.Second
 	if raw := strings.TrimSpace(os.Getenv("IPFS_INGEST_SYNC_INTERVAL_SEC")); raw != "" {
 		if v, err := strconv.Atoi(raw); err == nil && v > 0 {
