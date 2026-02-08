@@ -21,3 +21,5 @@ test-results/
 *.swp
 
 opencode.json
+# Compiled binaries with stargate-backend prefix
+backend/stargate-backend*
