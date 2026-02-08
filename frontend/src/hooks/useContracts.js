@@ -52,9 +52,11 @@ export const useContracts = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const seenRef = useRef(new Set());
+  const loadingRef = useRef(false);
 
   const loadMore = useCallback(async () => {
-    if (isLoading || !hasMore) return;
+    if (loadingRef.current || !hasMore) return;
+    loadingRef.current = true;
     setIsLoading(true);
     setError('');
     try {
@@ -101,9 +103,10 @@ export const useContracts = () => {
       console.error('Failed to load contracts', err);
       setError('Unable to load contracts. Please retry.');
     } finally {
+      loadingRef.current = false;
       setIsLoading(false);
     }
-  }, [cursor, hasMore, isLoading]);
+  }, [cursor, hasMore]);
 
   const refresh = useCallback(() => {
     seenRef.current.clear();

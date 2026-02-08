@@ -5,9 +5,11 @@ import { API_BASE } from '../../apiBase';
 const OpenContractsView = ({ setSelectedInscription, refreshKey }) => {
   const [pendingTxs, setPendingTxs] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
+  const loadingRef = useRef(false);
 
   const fetchOpenContracts = useCallback(async () => {
-    if (isLoading) return;
+    if (loadingRef.current) return;
+    loadingRef.current = true;
     setIsLoading(true);
     try {
       const response = await fetch(`${API_BASE}/api/open-contracts`);
@@ -28,9 +30,10 @@ const OpenContractsView = ({ setSelectedInscription, refreshKey }) => {
       console.error('Error fetching open contracts:', error);
       setPendingTxs([]);
     } finally {
+      loadingRef.current = false;
       setIsLoading(false);
     }
-  }, [isLoading]);
+  }, []);
 
   useEffect(() => {
     fetchOpenContracts();
@@ -39,7 +42,7 @@ const OpenContractsView = ({ setSelectedInscription, refreshKey }) => {
   useEffect(() => {
     const intervalId = setInterval(() => {
       fetchOpenContracts();
-    }, 8000);
+    }, 15000); // 4 times per minute
     return () => clearInterval(intervalId);
   }, [fetchOpenContracts]);
 
