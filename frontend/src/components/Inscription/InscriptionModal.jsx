@@ -1210,6 +1210,12 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                           <span className="text-gray-600 dark:text-gray-400 text-sm">Block Height:</span>
                           <span className="text-black dark:text-white font-semibold">{inscription.block_height || inscription.genesis_block_height || 'Unknown'}</span>
                         </div>
+                        {inscription.visible_pixel_hash && (
+                          <div className="flex items-center gap-2">
+                            <span className="text-gray-600 dark:text-gray-400 text-sm">Hash:</span>
+                            <span className="text-indigo-600 dark:text-indigo-400 font-mono text-xs font-bold">{inscription.visible_pixel_hash.slice(0, 16)}...</span>
+                          </div>
+                        )}
                         <div className="flex items-center gap-2">
                           <span className="text-gray-600 dark:text-gray-400 text-sm">Type:</span>
                           <span className="text-black dark:text-white font-semibold">{inscription.mime_type?.split('/')[1]?.toUpperCase() || 'UNKNOWN'}</span>

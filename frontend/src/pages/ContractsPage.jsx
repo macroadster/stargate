@@ -20,16 +20,21 @@ export default function ContractsPage() {
   const [selectedInscription, setSelectedInscription] = useState(null);
   const sentinelRef = useRef(null);
 
+  // Initial load
+  useEffect(() => {
+    loadMore();
+  }, []);
+
   useEffect(() => {
     if (!sentinelRef.current || !hasMore || isLoading) return;
     const sentinel = sentinelRef.current;
     const observer = new IntersectionObserver(
       ([entry]) => {
-        if (entry.isIntersecting) {
+        if (entry.isIntersecting && !isLoading && hasMore) {
           loadMore();
         }
       },
-      { threshold: 0.1 }
+      { threshold: 0.1, rootMargin: '100px' }
     );
     observer.observe(sentinel);
     return () => observer.disconnect();
@@ -66,7 +71,7 @@ export default function ContractsPage() {
               onClick={() => setSelectedInscription(contract)}
               className="group text-left"
             >
-              <div className="relative overflow-hidden rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 shadow-sm">
+              <div className="relative overflow-hidden rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 shadow-sm transition-all duration-300 hover:shadow-md">
                 <div className={`relative ${contract.image_url ? 'aspect-[3/4] min-h-[200px]' : 'min-h-[320px]'} bg-gray-100 dark:bg-gray-800`}>
                   {contract.image_url ? (
                     <img
@@ -83,22 +88,41 @@ export default function ContractsPage() {
                       </div>
                     </div>
                   )}
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent opacity-90" />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent opacity-90" />
                   <div className="absolute bottom-0 left-0 right-0 p-4 text-white">
-                    <div className="text-xs uppercase tracking-wide text-white/70">
-                      Block #{contract.block_height}
+                    <div className="text-xs uppercase tracking-wide text-white/70 flex justify-between items-center">
+                      <span>Block #{contract.block_height || 'Pending'}</span>
+                      {contract.metadata?.status && (
+                        <span className="px-2 py-0.5 rounded-full bg-white/20 backdrop-blur-sm text-[10px]">
+                          {contract.metadata.status}
+                        </span>
+                      )}
                     </div>
-                    <div className="text-lg font-semibold leading-snug">
+                    <div className="text-lg font-semibold leading-snug mt-1">
                       {contract.headline}
                     </div>
                   </div>
                 </div>
-                <div className="p-4">
-                  <div className="text-xs text-gray-500 dark:text-gray-400 font-mono break-all">
-                    {contract.id.slice(0, 10)}...{contract.id.slice(-6)}
+                <div className="p-4 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-[10px] text-gray-500 dark:text-gray-400 font-mono break-all truncate flex-1">
+                      ID: {contract.id}
+                    </div>
+                    {contract.metadata?.visible_pixel_hash && (
+                      <div className="text-[10px] text-indigo-500 dark:text-indigo-400 font-mono font-bold">
+                        HASH: {contract.metadata.visible_pixel_hash.slice(0, 8)}
+                      </div>
+                    )}
                   </div>
-                  <div className="mt-2 text-sm text-gray-700 dark:text-gray-300">
-                    {contract.headline}
+                  <div className="flex items-center gap-3 text-xs text-gray-600 dark:text-gray-400">
+                    <div className="flex items-center gap-1">
+                      <span>💰</span>
+                      <span>{(contract.metadata?.total_budget / 1e8 || 0).toFixed(4)} BTC</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <span>📋</span>
+                      <span>{contract.metadata?.available_tasks || 0} tasks</span>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -106,8 +130,17 @@ export default function ContractsPage() {
           ))}
         </div>
 
-        <div ref={sentinelRef} className="py-6 text-center text-sm text-gray-500 dark:text-gray-400">
-          {isLoading ? 'Loading more contracts…' : hasMore ? 'Scroll for more' : 'End of contracts'}
+        <div ref={sentinelRef} className="py-10 text-center text-sm text-gray-500 dark:text-gray-400">
+          {isLoading ? (
+            <div className="flex flex-col items-center gap-2">
+              <div className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+              <span>Loading more contracts…</span>
+            </div>
+          ) : hasMore ? (
+            'Scroll for more'
+          ) : (
+            <div className="opacity-60">— End of contracts —</div>
+          )}
         </div>
       </div>
 

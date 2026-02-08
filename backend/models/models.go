@@ -4,13 +4,15 @@ import "time"
 
 // InscriptionRequest represents an inscription creation request
 type InscriptionRequest struct {
-	ImageData string  `json:"imageData"`
-	Text      string  `json:"text"`
-	Price     float64 `json:"price"`
-	Address   string  `json:"address,omitempty"`
-	Timestamp int64   `json:"timestamp"`
-	ID        string  `json:"id"`
-	Status    string  `json:"status"`
+	ImageData   string  `json:"imageData"`
+	Text        string  `json:"text"`
+	Price       float64 `json:"price"`
+	Address     string  `json:"address,omitempty"`
+	Timestamp   int64   `json:"timestamp"`
+	ID               string  `json:"id"`
+	Status           string  `json:"status"`
+	BlockHeight      int64   `json:"blockHeight,omitempty"`
+	VisiblePixelHash string  `json:"visiblePixelHash,omitempty"`
 }
 
 // SmartContractImage represents a smart contract with steganographic image

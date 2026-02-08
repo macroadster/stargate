@@ -33,13 +33,15 @@ const mapContractToDisplayFormat = (contract) => {
       skills: contract.skills || [],
       total_budget_sats: contract.total_budget_sats || (contract.price ? contract.price * 1e8 : 0),
       goals_count: contract.goals_count,
-      available_tasks_count: contract.available_tasks_count
+      available_tasks_count: contract.available_tasks_count,
+      visible_pixel_hash: contract.visiblePixelHash
     },
-    genesis_block_height: contract.confirmed_block_height || contract.block_height || 0,
-    block_height: contract.confirmed_block_height || contract.block_height || 0,
+    genesis_block_height: contract.confirmed_block_height || contract.blockHeight || 0,
+    block_height: contract.confirmed_block_height || contract.blockHeight || 0,
     contract_type: 'Smart Contract',
     confirmed_at: contract.confirmed_at || contract.timestamp,
-    headline: title
+    headline: title,
+    visible_pixel_hash: contract.visiblePixelHash
   };
 };
 
@@ -86,7 +88,15 @@ export const useContracts = () => {
 
       setContracts((prev) => [...prev, ...unique]);
       setCursor(nextCursor);
-      setHasMore(more);
+      
+      // If we didn't find any new unique contracts but the API says there are more,
+      // it might be a pagination issue. Stop to prevent infinite loop "storm".
+      if (unique.length === 0 && contractsData.length > 0 && more) {
+        console.warn('Pagination returned no new unique items, stopping to prevent storm');
+        setHasMore(false);
+      } else {
+        setHasMore(more);
+      }
     } catch (err) {
       console.error('Failed to load contracts', err);
       setError('Unable to load contracts. Please retry.');

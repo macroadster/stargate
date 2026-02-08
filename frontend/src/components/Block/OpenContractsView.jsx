@@ -73,7 +73,7 @@ const OpenContractsView = ({ setSelectedInscription, refreshKey }) => {
         isActive: false,
         number: parseInt(tx.id.split('_')[1]) || 0,
         address: tx.address || 'bc1q...pending',
-        genesis_block_height: tx.blockHeight || 0,
+        genesis_block_height: tx.blockHeight || tx.block_height || 0,
         mime_type: imageUrl ? 'image/png' : 'text/plain',
         text: wishText || tx.text,
         price: tx.price,
@@ -83,11 +83,12 @@ const OpenContractsView = ({ setSelectedInscription, refreshKey }) => {
         file_name: uploadFile,
         size_bytes: tx.text ? tx.text.length : 0,
         metadata: {
-          is_stego: false,
+          is_stego: !!tx.visiblePixelHash,
           confidence: 0,
           stego_probability: 0,
           transaction_id: tx.id,
-          wish_text: wishText
+          wish_text: wishText,
+          visible_pixel_hash: tx.visiblePixelHash
         }
       };
     });

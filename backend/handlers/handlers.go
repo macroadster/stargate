@@ -1172,14 +1172,20 @@ func contractToInscriptionRequest(contract sc.Contract) models.InscriptionReques
 		timestamp = time.Now().Unix() // Use current time as fallback
 	}
 
+	height := int64(0)
+	if contract.ConfirmedBlockHeight != nil {
+		height = int64(*contract.ConfirmedBlockHeight)
+	}
+
 	return models.InscriptionRequest{
-		ID:        contract.ContractID,
-		Text:      contract.Title,
-		ImageData: imageURL,
-		Price:     float64(contract.TotalBudgetSats) / 1e8,
-		Address:   "", // No address in contract model
-		Timestamp: timestamp,
-		Status:    contract.Status,
+		ID:          contract.ContractID,
+		Text:        contract.Title,
+		ImageData:   imageURL,
+		Price:       float64(contract.TotalBudgetSats) / 1e8,
+		Address:     "", // No address in contract model
+		Timestamp:   timestamp,
+		Status:      contract.Status,
+		BlockHeight: height,
 	}
 }
 
@@ -1299,6 +1305,9 @@ func (h *SmartContractHandler) HandleGetContracts(w http.ResponseWriter, r *http
 					inscription.Text = wishText
 				} else if wishText, ok := rec.Metadata["embedded_message"].(string); ok && wishText != "" {
 					inscription.Text = wishText
+				}
+				if vph, ok := rec.Metadata["visible_pixel_hash"].(string); ok && vph != "" {
+					inscription.VisiblePixelHash = vph
 				}
 				if inscription.Timestamp == 0 || inscription.Timestamp == time.Now().Unix() {
 					inscription.Timestamp = rec.CreatedAt.Unix()

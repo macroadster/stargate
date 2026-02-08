@@ -216,8 +216,15 @@ const InscriptionCard = ({ inscription, onClick }) => {
       </div>
       
       <div className="mt-2 space-y-1">
-        <div className="text-black dark:text-white font-mono text-xs truncate font-medium" title={inscription.id}>
-          {inscription.id}
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-black dark:text-white font-mono text-[10px] truncate font-medium flex-1" title={inscription.id}>
+            ID: {inscription.id}
+          </div>
+          {inscription.metadata?.visible_pixel_hash && (
+            <div className="text-indigo-500 dark:text-indigo-400 font-mono text-[10px] font-bold">
+              HASH: {inscription.metadata.visible_pixel_hash.slice(0, 8)}
+            </div>
+          )}
         </div>
         <div className="flex items-center gap-2">
           {inscription.mime_type && (
