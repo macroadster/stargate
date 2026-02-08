@@ -13,6 +13,8 @@ type InscriptionRequest struct {
 	Status           string  `json:"status"`
 	BlockHeight      int64   `json:"blockHeight,omitempty"`
 	VisiblePixelHash string  `json:"visiblePixelHash,omitempty"`
+	TotalBudgetSats  int64   `json:"totalBudgetSats,omitempty"`
+	AvailableTasks   int     `json:"availableTasks,omitempty"`
 }
 
 // SmartContractImage represents a smart contract with steganographic image

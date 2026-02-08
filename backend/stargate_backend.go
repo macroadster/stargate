@@ -500,6 +500,13 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 	})
 
 	mux.Handle("/metrics", promhttp.Handler())
+	
+	// Inscription endpoints
+	mux.HandleFunc("/api/inscriptions", container.InscriptionHandler.HandleGetInscriptions)
+	mux.Handle("/api/inscribe", wrapWithAuth(container.InscriptionHandler.HandleCreateInscription))
+
+	// Block endpoints
+	mux.HandleFunc("/api/blocks", container.BlockHandler.HandleGetBlocks)
 
 	// Smart contract endpoints
 	mux.HandleFunc("/api/open-contracts", container.SmartContractHandler.HandleGetContracts)

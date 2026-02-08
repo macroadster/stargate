@@ -4,10 +4,14 @@ import { API_BASE } from '../../apiBase';
 
 const OpenContractsView = ({ setSelectedInscription, refreshKey }) => {
   const [pendingTxs, setPendingTxs] = useState([]);
+  const [isLoading, setIsLoading] = useState(false);
 
   const fetchOpenContracts = useCallback(async () => {
+    if (isLoading) return;
+    setIsLoading(true);
     try {
       const response = await fetch(`${API_BASE}/api/open-contracts`);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const data = await response.json();
       const raw = data?.data?.transactions ?? data;
       const normalized = Array.isArray(raw) ? raw : [];
@@ -23,8 +27,10 @@ const OpenContractsView = ({ setSelectedInscription, refreshKey }) => {
     } catch (error) {
       console.error('Error fetching open contracts:', error);
       setPendingTxs([]);
+    } finally {
+      setIsLoading(false);
     }
-  }, []);
+  }, [isLoading]);
 
   useEffect(() => {
     fetchOpenContracts();
@@ -88,7 +94,9 @@ const OpenContractsView = ({ setSelectedInscription, refreshKey }) => {
           stego_probability: 0,
           transaction_id: tx.id,
           wish_text: wishText,
-          visible_pixel_hash: tx.visiblePixelHash
+          visible_pixel_hash: tx.visiblePixelHash,
+          total_budget: tx.totalBudgetSats || (tx.price ? tx.price * 1e8 : 0),
+          available_tasks: tx.availableTasks || 0
         }
       };
     });

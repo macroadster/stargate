@@ -31,10 +31,10 @@ const mapContractToDisplayFormat = (contract) => {
       extracted_message: title,
       status: contract.status,
       skills: contract.skills || [],
-      total_budget_sats: contract.total_budget_sats || (contract.price ? contract.price * 1e8 : 0),
+      total_budget: contract.totalBudgetSats || contract.total_budget_sats || (contract.price ? contract.price * 1e8 : 0),
+      available_tasks: contract.availableTasks || contract.available_tasks_count || 0,
       goals_count: contract.goals_count,
-      available_tasks_count: contract.available_tasks_count,
-      visible_pixel_hash: contract.visiblePixelHash
+      visible_pixel_hash: contract.visiblePixelHash || contract.visible_pixel_hash
     },
     genesis_block_height: contract.confirmed_block_height || contract.blockHeight || 0,
     block_height: contract.confirmed_block_height || contract.blockHeight || 0,

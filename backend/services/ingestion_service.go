@@ -287,6 +287,40 @@ func (s *IngestionService) ListRecent(status string, limit int) ([]IngestionReco
 	return recs, rows.Err()
 }
 
+// ListByIDs returns ingestions for the given IDs.
+func (s *IngestionService) ListByIDs(ids []string) ([]IngestionRecord, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	if s.db == nil {
+		return nil, fmt.Errorf("ingestion service is in memory-only mode (no database)")
+	}
+
+	query := fmt.Sprintf(`
+SELECT id, filename, method, message_length, image_base64, metadata, status, created_at
+FROM %s
+WHERE id = ANY($1)
+`, s.tableName)
+
+	rows, err := s.db.Query(query, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var recs []IngestionRecord
+	for rows.Next() {
+		var rec IngestionRecord
+		var metadataRaw []byte
+		if err := rows.Scan(&rec.ID, &rec.Filename, &rec.Method, &rec.MessageLength, &rec.ImageBase64, &metadataRaw, &rec.Status, &rec.CreatedAt); err != nil {
+			return nil, err
+		}
+		rec.Metadata, _ = fromJSONB(metadataRaw)
+		recs = append(recs, rec)
+	}
+	return recs, rows.Err()
+}
+
 // Helpers to marshal/unmarshal metadata safely.
 func toJSONB(v map[string]interface{}) ([]byte, error) {
 	if v == nil {

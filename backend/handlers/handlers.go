@@ -1178,14 +1178,16 @@ func contractToInscriptionRequest(contract sc.Contract) models.InscriptionReques
 	}
 
 	return models.InscriptionRequest{
-		ID:          contract.ContractID,
-		Text:        contract.Title,
-		ImageData:   imageURL,
-		Price:       float64(contract.TotalBudgetSats) / 1e8,
-		Address:     "", // No address in contract model
-		Timestamp:   timestamp,
-		Status:      contract.Status,
-		BlockHeight: height,
+		ID:               contract.ContractID,
+		Text:             contract.Title,
+		ImageData:        imageURL,
+		Price:            float64(contract.TotalBudgetSats) / 1e8,
+		Address:          "", // No address in contract model
+		Timestamp:        timestamp,
+		Status:           contract.Status,
+		BlockHeight:      height,
+		TotalBudgetSats:  contract.TotalBudgetSats,
+		AvailableTasks:   contract.AvailableTasksCount,
 	}
 }
 
@@ -1291,27 +1293,38 @@ func (h *SmartContractHandler) HandleGetContracts(w http.ResponseWriter, r *http
 
 	// Convert results to inscriptions for frontend compatibility
 	var inscriptions []models.InscriptionRequest
+	ingestionMap := make(map[string]services.IngestionRecord)
+
+	// Pre-fetch ingestion records in batch if service is available
+	if h.ingestion != nil && len(contracts) > 0 {
+		var ingestionIDs []string
+		for _, c := range contracts {
+			id := strings.TrimPrefix(c.ContractID, "wish-")
+			ingestionIDs = append(ingestionIDs, id)
+		}
+		if recs, err := h.ingestion.ListByIDs(ingestionIDs); err == nil {
+			for _, rec := range recs {
+				ingestionMap[rec.ID] = rec
+			}
+		}
+	}
+
 	for _, contract := range contracts {
 		inscription := contractToInscriptionRequest(contract)
 
-		// Enrich with ingestion data if available
-		if h.ingestion != nil {
-			ingestionID := strings.TrimPrefix(contract.ContractID, "wish-")
-			if rec, err := h.ingestion.Get(ingestionID); err == nil && rec != nil {
-				// We don't have a good way to add extra fields to InscriptionRequest 
-				// without changing the model, but we can use the existing 'Text' field
-				// if it's better than the contract title.
-				if wishText, ok := rec.Metadata["message"].(string); ok && wishText != "" {
-					inscription.Text = wishText
-				} else if wishText, ok := rec.Metadata["embedded_message"].(string); ok && wishText != "" {
-					inscription.Text = wishText
-				}
-				if vph, ok := rec.Metadata["visible_pixel_hash"].(string); ok && vph != "" {
-					inscription.VisiblePixelHash = vph
-				}
-				if inscription.Timestamp == 0 || inscription.Timestamp == time.Now().Unix() {
-					inscription.Timestamp = rec.CreatedAt.Unix()
-				}
+		// Enrich with ingestion data from pre-fetched map
+		ingestionID := strings.TrimPrefix(contract.ContractID, "wish-")
+		if rec, ok := ingestionMap[ingestionID]; ok {
+			if wishText, ok := rec.Metadata["message"].(string); ok && wishText != "" {
+				inscription.Text = wishText
+			} else if wishText, ok := rec.Metadata["embedded_message"].(string); ok && wishText != "" {
+				inscription.Text = wishText
+			}
+			if vph, ok := rec.Metadata["visible_pixel_hash"].(string); ok && vph != "" {
+				inscription.VisiblePixelHash = vph
+			}
+			if inscription.Timestamp == 0 || inscription.Timestamp == time.Now().Unix() {
+				inscription.Timestamp = rec.CreatedAt.Unix()
 			}
 		}
 
