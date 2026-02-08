@@ -127,6 +127,10 @@ func (s *Server) maybePublishStegoForProposal(ctx context.Context, proposalID st
 	if !cfg.Enabled {
 		return nil
 	}
+	if !ipfs.IsEnabled() {
+		log.Printf("stego approval: IPFS disabled, skipping for proposal %s", proposalID)
+		return nil
+	}
 	timeout := cfg.InscribeTimeout + cfg.IngestTimeout + (5 * time.Second)
 	runCtx := context.Background()
 	if timeout > 0 {
@@ -206,6 +210,9 @@ func (s *Server) publishStegoForProposal(ctx context.Context, proposalID string,
 		return fmt.Errorf("failed to marshal stego payload: %w", err)
 	}
 	ipfsClient := ipfs.NewClientFromEnv()
+	if ipfsClient == nil {
+		return fmt.Errorf("IPFS client is disabled - cannot publish stego")
+	}
 	payloadName := fmt.Sprintf("proposal-%s-payload.json", proposalID)
 	payloadCID, err := ipfsClient.AddBytes(ctx, payloadName, payloadBytes)
 	if err != nil {
@@ -747,39 +754,43 @@ func (s *Server) inscribeStego(ctx context.Context, cfg stegoApprovalConfig, cov
 				pubCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 				defer cancel()
 				client := ipfs.NewClientFromEnv()
-				ext := filepath.Ext(filename)
-				if ext == "" {
-					ext = ".png"
-				}
-				name := fmt.Sprintf("stego-%s%s", ingestionID, ext)
-				imageCID, err := client.AddBytes(pubCtx, name, stegoBytes)
-				if err != nil {
-					log.Printf("stego: ipfs add failed for %s: %v", ingestionID, err)
+				if client == nil {
+					log.Printf("stego: IPFS disabled, skipping stego publish for %s", ingestionID)
 				} else {
-					log.Printf("stego: ipfs added %s -> %s", ingestionID, imageCID)
-					ann := struct {
-						Type        string `json:"type"`
-						IngestionID string `json:"ingestion_id"`
-						ImageCID    string `json:"image_cid"`
-						Filename    string `json:"filename,omitempty"`
-						Method      string `json:"method,omitempty"`
-						Message     string `json:"message,omitempty"`
-						Timestamp   int64  `json:"timestamp"`
-					}{
-						Type:        "stego_ingest",
-						IngestionID: ingestionID,
-						ImageCID:    imageCID,
-						Filename:    filename,
-						Method:      method,
-						Message:     string(message),
-						Timestamp:   time.Now().Unix(),
+					ext := filepath.Ext(filename)
+					if ext == "" {
+						ext = ".png"
 					}
-					if payload, err := json.Marshal(ann); err != nil {
-						log.Printf("stego: announce marshal failed: %v", err)
-					} else if err := client.PubsubPublish(pubCtx, topic, payload); err != nil {
-						log.Printf("stego: announce publish failed: %v", err)
+					name := fmt.Sprintf("stego-%s%s", ingestionID, ext)
+					imageCID, err := client.AddBytes(pubCtx, name, stegoBytes)
+					if err != nil {
+						log.Printf("stego: ipfs add failed for %s: %v", ingestionID, err)
 					} else {
-						log.Printf("stego: published announcement to topic %s", topic)
+						log.Printf("stego: ipfs added %s -> %s", ingestionID, imageCID)
+						ann := struct {
+							Type        string `json:"type"`
+							IngestionID string `json:"ingestion_id"`
+							ImageCID    string `json:"image_cid"`
+							Filename    string `json:"filename,omitempty"`
+							Method      string `json:"method,omitempty"`
+							Message     string `json:"message,omitempty"`
+							Timestamp   int64  `json:"timestamp"`
+						}{
+							Type:        "stego_ingest",
+							IngestionID: ingestionID,
+							ImageCID:    imageCID,
+							Filename:    filename,
+							Method:      method,
+							Message:     string(message),
+							Timestamp:   time.Now().Unix(),
+						}
+						if payload, err := json.Marshal(ann); err != nil {
+							log.Printf("stego: announce marshal failed: %v", err)
+						} else if err := client.PubsubPublish(pubCtx, topic, payload); err != nil {
+							log.Printf("stego: announce publish failed: %v", err)
+						} else {
+							log.Printf("stego: published announcement to topic %s", topic)
+						}
 					}
 				}
 			}

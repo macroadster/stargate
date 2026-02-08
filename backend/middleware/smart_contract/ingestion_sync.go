@@ -51,6 +51,9 @@ func publishProposalEvent(ctx context.Context, proposal smart_contract.Proposal)
 
 	// Use IPFS client for publishing
 	client := ipfs.NewClientFromEnv()
+	if client == nil {
+		return fmt.Errorf("IPFS client is disabled")
+	}
 	return client.PubsubPublish(ctx, topic, data)
 }
 

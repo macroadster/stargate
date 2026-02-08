@@ -114,6 +114,10 @@ func StartIPFSIngestionSync(ctx context.Context, ingest *services.IngestionServi
 	if !cfg.Enabled {
 		return nil
 	}
+	if !ipfs.IsEnabled() {
+		log.Printf("ipfs ingestion sync: IPFS disabled, skipping")
+		return nil
+	}
 	state := &ipfsIngestSyncState{
 		lastSeen:      make(map[string]int64),
 		repairChecked: make(map[string]bool),

@@ -21,7 +21,16 @@ type Client struct {
 	client *http.Client
 }
 
+// IsEnabled returns true if IPFS is enabled globally
+func IsEnabled() bool {
+	// Check for global IPFS disable flag - only disable if explicitly set to "false"
+	return strings.TrimSpace(os.Getenv("IPFS_ENABLED")) != "false"
+}
+
 func NewClientFromEnv() *Client {
+	if !IsEnabled() {
+		return nil
+	}
 	apiURL := os.Getenv("IPFS_API_URL")
 	if apiURL == "" {
 		apiURL = "http://127.0.0.1:5001"
@@ -39,6 +48,9 @@ func NewClientFromEnv() *Client {
 }
 
 func (c *Client) AddBytes(ctx context.Context, name string, data []byte) (string, error) {
+	if c == nil {
+		return "", fmt.Errorf("IPFS client is disabled")
+	}
 	return c.addStream(ctx, name, bytes.NewReader(data))
 }
 
@@ -101,6 +113,9 @@ func (c *Client) addStream(ctx context.Context, name string, reader io.Reader) (
 }
 
 func (c *Client) Cat(ctx context.Context, cid string) ([]byte, error) {
+	if c == nil {
+		return nil, fmt.Errorf("IPFS client is disabled")
+	}
 	if strings.TrimSpace(cid) == "" {
 		return nil, fmt.Errorf("ipfs cat missing cid")
 	}
@@ -125,6 +140,9 @@ func (c *Client) Cat(ctx context.Context, cid string) ([]byte, error) {
 }
 
 func (c *Client) PubsubPublish(ctx context.Context, topic string, message []byte) error {
+	if c == nil {
+		return fmt.Errorf("IPFS client is disabled")
+	}
 	if strings.TrimSpace(topic) == "" {
 		return fmt.Errorf("ipfs pubsub missing topic")
 	}

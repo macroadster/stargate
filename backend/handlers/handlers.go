@@ -1677,6 +1677,10 @@ func publishPendingIngestAnnouncement(ingestionID, visibleHash, filename, method
 	if !ipfsIngestSyncEnabled() {
 		return
 	}
+	if !ipfs.IsEnabled() {
+		log.Printf("pending ingest announce: IPFS disabled, skipping for %s", ingestionID)
+		return
+	}
 	if strings.TrimSpace(ingestionID) == "" || len(imgBytes) == 0 {
 		return
 	}

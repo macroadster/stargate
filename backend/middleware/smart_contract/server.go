@@ -254,6 +254,10 @@ func (s *Server) handleStegoPayload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	client := ipfs.NewClientFromEnv()
+	if client == nil {
+		Error(w, http.StatusServiceUnavailable, "IPFS is disabled")
+		return
+	}
 	data, err := client.Cat(r.Context(), cid)
 	if err != nil {
 		Error(w, http.StatusBadRequest, err.Error())
@@ -986,8 +990,12 @@ func (s *Server) publishIngestUpdate(ctx context.Context, proposalID, ingestionI
 		return
 	}
 	client := ipfs.NewClientFromEnv()
-	if err := client.PubsubPublish(ctx, topic, payload); err != nil {
-		log.Printf("psbt: ingest update publish failed: %v", err)
+	if client != nil {
+		if err := client.PubsubPublish(ctx, topic, payload); err != nil {
+			log.Printf("psbt: ingest update publish failed: %v", err)
+		}
+	} else {
+		log.Printf("psbt: ingest update publish skipped - IPFS disabled")
 	}
 }
 
@@ -1079,8 +1087,12 @@ func (s *Server) publishPendingStegoIngest(ctx context.Context, proposalID, visi
 		return
 	}
 	client := ipfs.NewClientFromEnv()
-	if err := client.PubsubPublish(ctx, topic, payload); err != nil {
-		log.Printf("psbt: pending ingest publish failed: %v", err)
+	if client != nil {
+		if err := client.PubsubPublish(ctx, topic, payload); err != nil {
+			log.Printf("psbt: pending ingest publish failed: %v", err)
+		}
+	} else {
+		log.Printf("psbt: pending ingest publish skipped - IPFS disabled")
 	}
 }
 
@@ -3298,37 +3310,22 @@ func (s *Server) handleSubmissions(w http.ResponseWriter, r *http.Request) {
 			submissionID := parts[0]
 			log.Printf("GET submission by ID: %s", submissionID)
 
-			// We need to get all submissions to find the specific one
-			// This is not optimal but works for the current store interface
-			tasks, err := s.store.ListTasks(smart_contract.TaskFilter{})
+			// Use the efficient GetSubmission method instead of loading all submissions
+			submission, err := s.store.GetSubmission(r.Context(), submissionID)
 			if err != nil {
+				log.Printf("Failed to get submission %s: %v", submissionID, err)
 				Error(w, http.StatusInternalServerError, err.Error())
 				return
 			}
 
-			taskIDs := make([]string, len(tasks))
-			for i, task := range tasks {
-				taskIDs[i] = task.TaskID
+			// Check if submission was found
+			if submission.SubmissionID != "" {
+				log.Printf("Found submission: %s", submissionID)
+				JSON(w, http.StatusOK, submission)
+			} else {
+				log.Printf("Submission not found: %s", submissionID)
+				Error(w, http.StatusNotFound, "submission not found")
 			}
-
-			submissions, err := s.store.ListSubmissions(r.Context(), taskIDs)
-			if err != nil {
-				Error(w, http.StatusInternalServerError, err.Error())
-				return
-			}
-
-			log.Printf("Found %d submissions for contract", len(submissions))
-			for _, sub := range submissions {
-				log.Printf("Checking submission ID: %s == %s ?", sub.SubmissionID, submissionID)
-				if sub.SubmissionID == submissionID {
-					log.Printf("Found matching submission: %s", submissionID)
-					JSON(w, http.StatusOK, sub)
-					return
-				}
-			}
-
-			log.Printf("No matching submission found for ID: %s", submissionID)
-			Error(w, http.StatusNotFound, "submission not found")
 			return
 		}
 
@@ -3422,33 +3419,16 @@ func (s *Server) handleSubmissions(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			// Get the original submission to update it
-			tasks, err := s.store.ListTasks(smart_contract.TaskFilter{})
+			// Get the original submission to update it efficiently
+			originalSubmission, err := s.store.GetSubmission(r.Context(), submissionID)
 			if err != nil {
+				log.Printf("Failed to get submission %s for rework: %v", submissionID, err)
 				Error(w, http.StatusInternalServerError, err.Error())
 				return
 			}
 
-			taskIDs := make([]string, len(tasks))
-			for i, task := range tasks {
-				taskIDs[i] = task.TaskID
-			}
-
-			submissions, err := s.store.ListSubmissions(r.Context(), taskIDs)
-			if err != nil {
-				Error(w, http.StatusInternalServerError, err.Error())
-				return
-			}
-
-			var originalSubmission *smart_contract.Submission
-			for _, sub := range submissions {
-				if sub.SubmissionID == submissionID {
-					originalSubmission = &sub
-					break
-				}
-			}
-
-			if originalSubmission == nil {
+			if originalSubmission.SubmissionID == "" {
+				log.Printf("Submission not found for rework: %s", submissionID)
 				Error(w, http.StatusNotFound, "submission not found")
 				return
 			}

@@ -164,6 +164,9 @@ func (s *Server) ReconcileStego(ctx context.Context, stegoCID, expectedHash stri
 func (s *Server) ReconcileStegoWithAnnouncement(ctx context.Context, ann *stegoAnnouncement) error {
 	// Download stego image from IPFS
 	ipfsClient := ipfs.NewClientFromEnv()
+	if ipfsClient == nil {
+		return fmt.Errorf("IPFS client is disabled - cannot reconcile stego")
+	}
 	stegoBytes, err := ipfsClient.Cat(ctx, ann.StegoCID)
 	if err != nil {
 		return fmt.Errorf("ipfs cat stego failed: %w", err)
@@ -234,6 +237,9 @@ func (s *Server) ReconcileStegoWithAnnouncement(ctx context.Context, ann *stegoA
 
 func (s *Server) reconcileStegoFromIPFS(ctx context.Context, stegoCID string, expectedHash string) (stegoReconcileResponse, error) {
 	ipfsClient := ipfs.NewClientFromEnv()
+	if ipfsClient == nil {
+		return stegoReconcileResponse{}, fmt.Errorf("IPFS client is disabled")
+	}
 	stegoBytes, err := ipfsClient.Cat(ctx, stegoCID)
 	if err != nil {
 		return stegoReconcileResponse{}, fmt.Errorf("ipfs cat stego failed: %w", err)

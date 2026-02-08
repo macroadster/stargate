@@ -235,5 +235,8 @@ func (s *Server) PublishSyncAnnouncement(ctx context.Context, ann *syncAnnouncem
 
 	// Use IPFS client for proper multipart form publishing
 	client := ipfs.NewClientFromEnv()
+	if client == nil {
+		return fmt.Errorf("IPFS client is disabled")
+	}
 	return client.PubsubPublish(ctx, cfg.Topic, data)
 }
