@@ -81,9 +81,9 @@ func SweepCommitmentIfReady(ctx context.Context, store SweepStore, mempool *Memp
 		}())
 
 	if proof.CommitmentRedeemScript == "" || proof.CommitmentVout == 0 || proof.TxID == "" {
-		log.Printf("commitment sweep: missing required data for task %s - script_empty: %v, vout_zero: %v, txid_empty: %v",
+		log.Printf("commitment sweep: missing required data for task %s - script_empty: %v, vout_zero: %v, txid_empty: %v, marking as skipped",
 			task.TaskID, proof.CommitmentRedeemScript == "", proof.CommitmentVout == 0, proof.TxID == "")
-		return nil
+		return markSweepStatus(ctx, store, task.TaskID, proof, "skipped", "no donation commitment data available")
 	}
 	if strings.TrimSpace(proof.CommitmentPixelHash) == "" {
 		log.Printf("commitment sweep: missing commitment pixel hash for task %s", task.TaskID)
@@ -143,9 +143,9 @@ func SweepCommitmentIfReady(ctx context.Context, store SweepStore, mempool *Memp
 		}())
 
 	if proof.CommitmentRedeemScript == "" || proof.CommitmentVout == 0 || proof.TxID == "" {
-		log.Printf("commitment sweep: missing required data for task %s - script_empty: %v, vout_zero: %v, txid_empty: %v",
+		log.Printf("commitment sweep: missing required data for task %s - script_empty: %v, vout_zero: %v, txid_empty: %v, marking as skipped",
 			task.TaskID, proof.CommitmentRedeemScript == "", proof.CommitmentVout == 0, proof.TxID == "")
-		return nil
+		return markSweepStatus(ctx, store, task.TaskID, proof, "skipped", "no donation commitment data available")
 	}
 	// Check if this is actually a donation commitment - if not, skip sweep
 	commitmentAddr := strings.TrimSpace(proof.CommitmentAddress)
