@@ -34,7 +34,7 @@ type Store interface {
 	Close()
 	UpdateTaskProof(ctx context.Context, taskID string, proof *smart_contract.MerkleProof) error
 	UpdateContractStatus(ctx context.Context, contractID, status string) error
-	UpdateContractStatusWithConfirmation(ctx context.Context, contractID, status string, blockHeight int) error
+	UpdateContractStatusWithConfirmation(ctx context.Context, contractID, status string, blockHeight int, stegoImageURL string) error
 	// Sync operations for distributed deployments
 	SyncClaim(ctx context.Context, claim smart_contract.Claim) error
 	SyncSubmission(ctx context.Context, submission smart_contract.Submission) error

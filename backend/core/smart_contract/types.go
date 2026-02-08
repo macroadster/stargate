@@ -14,6 +14,7 @@ type Contract struct {
 	StegoImageURL        string     `json:"stego_image_url,omitempty"`
 	ConfirmedBlockHeight *int       `json:"confirmed_block_height,omitempty"`
 	ConfirmedAt          *time.Time `json:"confirmed_at,omitempty"`
+	CreatedAt            time.Time  `json:"created_at"`
 }
 
 // Task describes a specific unit of work an AI can claim.

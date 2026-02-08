@@ -1149,13 +1149,26 @@ func computeStegoImageURL(contractID string) string {
 func contractToInscriptionRequest(contract sc.Contract) models.InscriptionRequest {
 	// Use persisted stego image URL or compute fallback
 	imageURL := contract.StegoImageURL
+
+	// Normalize relative paths from block monitor (e.g. "images/filename.png")
+	if imageURL != "" && !strings.HasPrefix(imageURL, "/") && !strings.HasPrefix(imageURL, "http") {
+		if contract.ConfirmedBlockHeight != nil {
+			filename := filepath.Base(imageURL)
+			imageURL = fmt.Sprintf("/api/block-image/%d/%s", *contract.ConfirmedBlockHeight, filename)
+		}
+	}
+
 	if imageURL == "" {
 		imageURL = computeStegoImageURL(contract.ContractID)
 	}
 
 	// Convert timestamp to Unix if available
 	var timestamp int64
-	if contract.GoalsCount > 0 { // Contract has some data
+	if contract.ConfirmedAt != nil {
+		timestamp = contract.ConfirmedAt.Unix()
+	} else if !contract.CreatedAt.IsZero() {
+		timestamp = contract.CreatedAt.Unix()
+	} else if contract.GoalsCount > 0 { // Contract has some data
 		timestamp = time.Now().Unix() // Use current time as fallback
 	}
 
@@ -1163,7 +1176,7 @@ func contractToInscriptionRequest(contract sc.Contract) models.InscriptionReques
 		ID:        contract.ContractID,
 		Text:      contract.Title,
 		ImageData: imageURL,
-		Price:     0,  // No price in contract model
+		Price:     float64(contract.TotalBudgetSats) / 1e8,
 		Address:   "", // No address in contract model
 		Timestamp: timestamp,
 		Status:    contract.Status,
@@ -1222,9 +1235,9 @@ func (h *SmartContractHandler) HandleGetContracts(w http.ResponseWriter, r *http
 	}
 
 	// Parse pagination parameters
-	limit := 12 // default to match frontend request
+	limit := 100 // larger default for sidebar/full views
 	if lim := r.URL.Query().Get("limit"); lim != "" {
-		if parsed, err := strconv.Atoi(lim); err == nil && parsed > 0 && parsed <= 100 {
+		if parsed, err := strconv.Atoi(lim); err == nil && parsed > 0 && parsed <= 500 {
 			limit = parsed
 		}
 	}
@@ -1274,6 +1287,25 @@ func (h *SmartContractHandler) HandleGetContracts(w http.ResponseWriter, r *http
 	var inscriptions []models.InscriptionRequest
 	for _, contract := range contracts {
 		inscription := contractToInscriptionRequest(contract)
+
+		// Enrich with ingestion data if available
+		if h.ingestion != nil {
+			ingestionID := strings.TrimPrefix(contract.ContractID, "wish-")
+			if rec, err := h.ingestion.Get(ingestionID); err == nil && rec != nil {
+				// We don't have a good way to add extra fields to InscriptionRequest 
+				// without changing the model, but we can use the existing 'Text' field
+				// if it's better than the contract title.
+				if wishText, ok := rec.Metadata["message"].(string); ok && wishText != "" {
+					inscription.Text = wishText
+				} else if wishText, ok := rec.Metadata["embedded_message"].(string); ok && wishText != "" {
+					inscription.Text = wishText
+				}
+				if inscription.Timestamp == 0 || inscription.Timestamp == time.Now().Unix() {
+					inscription.Timestamp = rec.CreatedAt.Unix()
+				}
+			}
+		}
+
 		inscriptions = append(inscriptions, inscription)
 	}
 

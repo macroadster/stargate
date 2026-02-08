@@ -29,8 +29,12 @@ type MemoryStore struct {
 // NewMemoryStore seeds fixtures and returns a MemoryStore.
 func NewMemoryStore(claimTTL time.Duration) *MemoryStore {
 	contracts, tasks := SeedData()
+	now := time.Now()
 	cMap := make(map[string]smart_contract.Contract, len(contracts))
 	for _, c := range contracts {
+		if c.CreatedAt.IsZero() {
+			c.CreatedAt = now
+		}
 		cMap[c.ContractID] = c
 	}
 	tMap := make(map[string]smart_contract.Task, len(tasks))
@@ -599,7 +603,7 @@ func (s *MemoryStore) UpdateContractStatus(ctx context.Context, contractID, stat
 }
 
 // UpdateContractStatusWithConfirmation updates the status for a contract and records confirmation details.
-func (s *MemoryStore) UpdateContractStatusWithConfirmation(ctx context.Context, contractID, status string, blockHeight int) error {
+func (s *MemoryStore) UpdateContractStatusWithConfirmation(ctx context.Context, contractID, status string, blockHeight int, stegoImageURL string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	contractID = strings.TrimSpace(contractID)
@@ -615,6 +619,9 @@ func (s *MemoryStore) UpdateContractStatusWithConfirmation(ctx context.Context, 
 	contract.ConfirmedBlockHeight = &blockHeight
 	confirmedAt := time.Now()
 	contract.ConfirmedAt = &confirmedAt
+	if stegoImageURL != "" {
+		contract.StegoImageURL = stegoImageURL
+	}
 	s.contracts[contractID] = contract
 	if strings.EqualFold(status, "confirmed") {
 		normalized := NormalizeContractID(contractID)
@@ -740,6 +747,11 @@ func (s *MemoryStore) createMissingTasks() {
 func (s *MemoryStore) UpsertContractWithTasks(ctx context.Context, contract smart_contract.Contract, tasks []smart_contract.Task) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	// Ensure CreatedAt is set
+	if contract.CreatedAt.IsZero() {
+		contract.CreatedAt = time.Now()
+	}
 
 	// Store the contract
 	s.contracts[contract.ContractID] = contract

@@ -66,10 +66,12 @@ CREATE TABLE IF NOT EXISTS mcp_contracts (
   skills TEXT[],
   stego_image_url TEXT,
   confirmed_block_height INTEGER,
-  confirmed_at TIMESTAMP WITH TIME ZONE
+  confirmed_at TIMESTAMP WITH TIME ZONE,
+  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_mcp_contracts_confirmed_height ON mcp_contracts(confirmed_block_height DESC);
 CREATE INDEX IF NOT EXISTS idx_mcp_contracts_confirmed_at ON mcp_contracts(confirmed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_mcp_contracts_created_at ON mcp_contracts(created_at DESC);
 CREATE TABLE IF NOT EXISTS mcp_tasks (
   task_id TEXT PRIMARY KEY,
   contract_id TEXT,
@@ -203,7 +205,7 @@ func (s *PGStore) ListContracts(filter smart_contract.ContractFilter) ([]smart_c
 	baseSelect := `
 SELECT c.contract_id, c.title, c.total_budget_sats, c.goals_count,
 	COALESCE((SELECT COUNT(*) FROM mcp_tasks t WHERE t.contract_id = c.contract_id AND t.status = 'available'), 0) AS available_tasks_count,
-	c.status, c.skills, c.stego_image_url, c.confirmed_block_height, c.confirmed_at
+	c.status, c.skills, c.stego_image_url, c.confirmed_block_height, c.confirmed_at, c.created_at
 FROM mcp_contracts c
 `
 
@@ -244,9 +246,9 @@ FROM mcp_contracts c
 	}
 
 	// ORDER BY - prefer confirmed_block_height for cursor-based pagination
-	orderBy := "ORDER BY c.confirmed_block_height DESC NULLS LAST, c.contract_id DESC"
+	orderBy := "ORDER BY c.confirmed_block_height DESC NULLS FIRST, c.created_at DESC, c.contract_id DESC"
 	if filter.OrderByConfirmedAt {
-		orderBy = "ORDER BY c.confirmed_at DESC NULLS LAST, c.contract_id DESC"
+		orderBy = "ORDER BY c.confirmed_at DESC NULLS FIRST, c.created_at DESC, c.contract_id DESC"
 	}
 
 	// LIMIT
@@ -269,7 +271,7 @@ FROM mcp_contracts c
 	for rows.Next() {
 		var c smart_contract.Contract
 		if err := rows.Scan(&c.ContractID, &c.Title, &c.TotalBudgetSats, &c.GoalsCount, &c.AvailableTasksCount,
-			&c.Status, &c.Skills, &c.StegoImageURL, &c.ConfirmedBlockHeight, &c.ConfirmedAt); err != nil {
+			&c.Status, &c.Skills, &c.StegoImageURL, &c.ConfirmedBlockHeight, &c.ConfirmedAt, &c.CreatedAt); err != nil {
 			return nil, err
 		}
 		if len(filter.Skills) > 0 && !containsSkill(c.Skills, filter.Skills) {
@@ -927,9 +929,15 @@ func (s *PGStore) UpsertContractWithTasks(ctx context.Context, contract smart_co
 	}
 	defer tx.Rollback(ctx)
 
-	_, err = tx.Exec(ctx, `
-INSERT INTO mcp_contracts (contract_id, title, total_budget_sats, goals_count, available_tasks_count, status, skills, stego_image_url)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+	// Use Provided CreatedAt if set, otherwise NOW()
+	createdAt := "now()"
+	if !contract.CreatedAt.IsZero() {
+		createdAt = fmt.Sprintf("'%s'", contract.CreatedAt.Format(time.RFC3339))
+	}
+
+	query := fmt.Sprintf(`
+INSERT INTO mcp_contracts (contract_id, title, total_budget_sats, goals_count, available_tasks_count, status, skills, stego_image_url, created_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8, %s)
 ON CONFLICT (contract_id) DO UPDATE SET
   title = EXCLUDED.title,
   total_budget_sats = EXCLUDED.total_budget_sats,
@@ -938,7 +946,9 @@ ON CONFLICT (contract_id) DO UPDATE SET
   status = EXCLUDED.status,
   skills = EXCLUDED.skills,
   stego_image_url = EXCLUDED.stego_image_url
- `, contract.ContractID, contract.Title, contract.TotalBudgetSats, contract.GoalsCount, contract.AvailableTasksCount, contract.Status, contract.Skills, contract.StegoImageURL)
+ `, createdAt)
+
+	_, err = tx.Exec(ctx, query, contract.ContractID, contract.Title, contract.TotalBudgetSats, contract.GoalsCount, contract.AvailableTasksCount, contract.Status, contract.Skills, contract.StegoImageURL)
 	if err != nil {
 		return err
 	}
@@ -1121,7 +1131,7 @@ WHERE status='approved' AND (
 }
 
 // UpdateContractStatusWithConfirmation updates the status for a contract and sets confirmation tracking
-func (s *PGStore) UpdateContractStatusWithConfirmation(ctx context.Context, contractID, status string, blockHeight int) error {
+func (s *PGStore) UpdateContractStatusWithConfirmation(ctx context.Context, contractID, status string, blockHeight int, stegoImageURL string) error {
 	contractID = strings.TrimSpace(contractID)
 	status = strings.TrimSpace(status)
 	if contractID == "" || status == "" {
@@ -1132,8 +1142,8 @@ func (s *PGStore) UpdateContractStatusWithConfirmation(ctx context.Context, cont
 	if strings.EqualFold(status, "confirmed") {
 		_, err := s.pool.Exec(ctx, `
 UPDATE mcp_contracts 
-SET status=$2, confirmed_block_height=$3, confirmed_at=NOW() 
-WHERE contract_id=$1`, contractID, status, blockHeight)
+SET status=$2, confirmed_block_height=$3, confirmed_at=NOW(), stego_image_url=COALESCE($4, stego_image_url)
+WHERE contract_id=$1`, contractID, status, blockHeight, stegoImageURL)
 		if err != nil {
 			return err
 		}
