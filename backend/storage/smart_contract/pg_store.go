@@ -1145,8 +1145,8 @@ func (s *PGStore) UpdateContractStatusWithConfirmation(ctx context.Context, cont
 		var imageFile string
 		err := s.pool.QueryRow(ctx,
 			`SELECT COALESCE((metadata->>'image_file'), '') 
-			 FROM mcp_contracts 
-			 WHERE contract_id=$1`, contractID).Scan(&imageFile)
+			 FROM starlight_ingestions
+			 WHERE id=$1`, contractID).Scan(&imageFile)
 		if err != nil {
 			// Fallback: use contract_id directly (stealthy design)
 			imageFile = contractID
