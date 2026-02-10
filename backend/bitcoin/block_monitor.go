@@ -2410,7 +2410,7 @@ func (bm *BlockMonitor) moveIngestionImageWithFilename(blockDir string, rec *ser
 	}
 	filename := strings.TrimSpace(rec.Filename)
 	if filename == "" {
-		filename = "inscription.png"
+		filename = "inscription" // Stealthy: no extension
 	}
 	if strings.TrimSpace(destFilename) == "" {
 		destFilename = blockImageFilename(rec, "")
@@ -2759,20 +2759,14 @@ func (bm *BlockMonitor) markIngestionConfirmed(rec *services.IngestionRecord, tx
 		log.Printf("oracle reconcile: failed to update ingestion status for %s: %v", rec.ID, err)
 	}
 
-	// Construct proper block image URL for confirmed contract
-	stegoImageURL := fmt.Sprintf("/api/block-image/%d/%s", height, imageFile)
-
 	if bm.sweepStore != nil {
-		contractID := contractIDFromIngestion(rec)
+		// Use ingestion ID directly to match contract creation logic in reconcileOracleIngestions
+		contractID := strings.TrimSpace(rec.ID)
 		if contractID != "" {
-			if sweepStoreWithConfirmation, ok := bm.sweepStore.(interface {
-				UpdateContractStatusWithConfirmation(ctx context.Context, contractID, status string, blockHeight int, stegoImageURL string) error
-			}); ok {
-				if err := sweepStoreWithConfirmation.UpdateContractStatusWithConfirmation(context.Background(), contractID, "confirmed", int(height), stegoImageURL); err != nil {
-					log.Printf("oracle reconcile: failed to update contract status with confirmation for %s: %v", contractID, err)
-				}
-			} else if err := bm.sweepStore.UpdateContractStatus(context.Background(), contractID, "confirmed"); err != nil {
-				log.Printf("oracle reconcile: failed to update contract status for %s: %v", contractID, err)
+			if err := bm.sweepStore.UpdateContractStatusWithConfirmation(context.Background(), contractID, "confirmed", int(height)); err != nil {
+				log.Printf("oracle reconcile: failed to update contract status with confirmation for %s: %v", contractID, err)
+			} else {
+				log.Printf("oracle reconcile: successfully updated contract %s status to confirmed with stego_image_url calculated by storage layer", contractID)
 			}
 		}
 	}

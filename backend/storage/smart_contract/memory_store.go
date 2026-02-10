@@ -603,7 +603,7 @@ func (s *MemoryStore) UpdateContractStatus(ctx context.Context, contractID, stat
 }
 
 // UpdateContractStatusWithConfirmation updates the status for a contract and records confirmation details.
-func (s *MemoryStore) UpdateContractStatusWithConfirmation(ctx context.Context, contractID, status string, blockHeight int, stegoImageURL string) error {
+func (s *MemoryStore) UpdateContractStatusWithConfirmation(ctx context.Context, contractID, status string, blockHeight int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	contractID = strings.TrimSpace(contractID)
@@ -619,8 +619,12 @@ func (s *MemoryStore) UpdateContractStatusWithConfirmation(ctx context.Context, 
 	contract.ConfirmedBlockHeight = &blockHeight
 	confirmedAt := time.Now()
 	contract.ConfirmedAt = &confirmedAt
-	if stegoImageURL != "" {
-		contract.StegoImageURL = stegoImageURL
+
+	// Calculate stego_image_url from contract_id and block_height when confirmed
+	if strings.EqualFold(status, "confirmed") {
+		// Use contract_id directly (stealthy design)
+		imageFile := contractID
+		contract.StegoImageURL = fmt.Sprintf("/api/block-image/%d/%s", blockHeight, imageFile)
 	}
 	s.contracts[contractID] = contract
 	if strings.EqualFold(status, "confirmed") {

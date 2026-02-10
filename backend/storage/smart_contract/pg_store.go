@@ -1131,11 +1131,29 @@ WHERE status='approved' AND (
 }
 
 // UpdateContractStatusWithConfirmation updates the status for a contract and sets confirmation tracking
-func (s *PGStore) UpdateContractStatusWithConfirmation(ctx context.Context, contractID, status string, blockHeight int, stegoImageURL string) error {
+func (s *PGStore) UpdateContractStatusWithConfirmation(ctx context.Context, contractID, status string, blockHeight int) error {
 	contractID = strings.TrimSpace(contractID)
 	status = strings.TrimSpace(status)
 	if contractID == "" || status == "" {
 		return nil
+	}
+
+	// Calculate stego_image_url from contract_id and block_height
+	stegoImageURL := ""
+	if strings.EqualFold(status, "confirmed") {
+		// Get the image_file from contract metadata to construct the URL
+		var imageFile string
+		err := s.pool.QueryRow(ctx,
+			`SELECT COALESCE((metadata->>'image_file'), '') 
+			 FROM mcp_contracts 
+			 WHERE contract_id=$1`, contractID).Scan(&imageFile)
+		if err != nil {
+			// Fallback: use contract_id directly (stealthy design)
+			imageFile = contractID
+		}
+		if imageFile != "" {
+			stegoImageURL = fmt.Sprintf("/api/block-image/%d/%s", blockHeight, imageFile)
+		}
 	}
 
 	// Update status and confirmation tracking
@@ -1148,7 +1166,7 @@ WHERE contract_id=$1`, contractID, status, blockHeight, stegoImageURL)
 			return err
 		}
 	} else {
-		// For non-confirmed status, just update the status
+		// For non-confirmed status, just update status
 		_, err := s.pool.Exec(ctx, `UPDATE mcp_contracts SET status=$2 WHERE contract_id=$1`, contractID, status)
 		if err != nil {
 			return err
