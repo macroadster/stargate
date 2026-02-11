@@ -1,3 +1,12 @@
 # https://www.robotstxt.org/robotstxt.html
 User-agent: *
-Disallow:
+Allow: /
+
+# Sitemap location
+Sitemap: https://starlight.local/sitemap.xml
+
+# Block common development/build files
+Disallow: /build/
+Disallow: /node_modules/
+Disallow: /*.js$
+Disallow: /*.css$
