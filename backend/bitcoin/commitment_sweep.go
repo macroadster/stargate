@@ -24,7 +24,6 @@ type CommitmentSweepResult struct {
 
 // BuildCommitmentSweepTx builds a signed-less hashlock sweep transaction with the preimage witness.
 func BuildCommitmentSweepTx(client *MempoolClient, params *chaincfg.Params, txid string, vout uint32, redeemScript, preimage []byte, dest btcutil.Address, feeRate int64) (*CommitmentSweepResult, error) {
-	log.Printf("commitment sweep DEBUG: BuildCommitmentSweepTx called with txid=%s, vout=%d, preimage_len=%d", txid, vout, len(preimage))
 	if client == nil {
 		return nil, fmt.Errorf("mempool client required")
 	}
@@ -38,13 +37,11 @@ func BuildCommitmentSweepTx(client *MempoolClient, params *chaincfg.Params, txid
 		feeRate = 1
 	}
 
-	log.Printf("commitment sweep DEBUG: fetching txid=%s to find commitment output by script hash", txid)
 	msg, err := client.FetchTx(txid)
 	if err != nil {
 		log.Printf("commitment sweep ERROR: failed to fetch txid=%s: %v", txid, err)
 		return nil, fmt.Errorf("fetch commitment tx: %w", err)
 	}
-	log.Printf("commitment sweep DEBUG: fetched txid=%s successfully, num_outputs=%d", txid, len(msg.TxOut))
 
 	// Use the provided commitment vout directly (no script hash matching needed)
 	if vout >= uint32(len(msg.TxOut)) {
@@ -55,8 +52,6 @@ func BuildCommitmentSweepTx(client *MempoolClient, params *chaincfg.Params, txid
 	if commitmentOutput == nil {
 		return nil, fmt.Errorf("commitment output vout %d not found in tx %s", vout, txid)
 	}
-
-	log.Printf("commitment sweep DEBUG: using provided commitment vout=%d, value=%d", vout, commitmentOutput.Value)
 
 	destScript, err := txscript.PayToAddrScript(dest)
 	if err != nil {

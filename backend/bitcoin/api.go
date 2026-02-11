@@ -86,7 +86,6 @@ func (api *BitcoinAPI) HandleHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Cache miss - fetch fresh data
-	log.Println("Health cache miss - fetching fresh data")
 
 	// Test Bitcoin connection
 	bitcoinConnected := api.bitcoinClient.TestConnection()

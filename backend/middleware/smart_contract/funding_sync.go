@@ -161,10 +161,16 @@ func StartFundingSync(ctx context.Context, store Store, provider FundingProvider
 }
 
 func refreshProofs(ctx context.Context, store *scstore.PGStore, provider FundingProvider, escort *smart_contract.EscortService, mempool *bitcoin.MempoolClient) error {
-	tasks, err := store.ListTasks(smart_contract.TaskFilter{Status: ""})
+	// Only process tasks with activity in the last 24 hours to reduce processing load
+	twentyFourHoursAgo := time.Now().Add(-24 * time.Hour)
+	tasks, err := store.ListTasks(smart_contract.TaskFilter{
+		Status:            "",
+		LastActivitySince: &twentyFourHoursAgo,
+	})
 	if err != nil {
 		return err
 	}
+	log.Printf("funding sync: processing %d tasks with activity in last 24 hours", len(tasks))
 	for _, t := range tasks {
 		if t.MerkleProof == nil {
 			continue

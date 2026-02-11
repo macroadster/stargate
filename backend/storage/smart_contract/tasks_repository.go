@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -22,13 +23,36 @@ func NewTasksRepository(pool *pgxpool.Pool) *TasksRepository {
 
 // List returns tasks filtered by a TaskFilter
 func (r *TasksRepository) List(ctx context.Context, filter smart_contract.TaskFilter) ([]smart_contract.Task, error) {
-	rows, err := r.pool.Query(ctx, `
+	query := `
 SELECT task_id, contract_id, goal_id, title, description, budget_sats, skills, status, claimed_by, claimed_at, claim_expires_at, difficulty, estimated_hours, requirements, merkle_proof
 FROM mcp_tasks
 WHERE ($1 = '' OR status = $1)
 AND ($2 = '' OR contract_id = $2)
-AND ($3 = '' OR claimed_by = $3)
-`, filter.Status, filter.ContractID, filter.ClaimedBy)
+AND ($3 = '' OR claimed_by = $3)`
+
+	args := []interface{}{filter.Status, filter.ContractID, filter.ClaimedBy}
+	argIndex := 4
+
+	// Add time-based filtering for UpdatedSince (filter by SeenAt or SweepAttemptedAt)
+	if filter.UpdatedSince != nil {
+		query += ` AND ($` + fmt.Sprintf("%d", argIndex) + ` IS NULL OR merkle_proof IS NULL OR 
+			(merkle_proof->>'seen_at')::timestamp >= $` + fmt.Sprintf("%d", argIndex+1) + ` OR
+			(merkle_proof->>'sweep_attempted_at')::timestamp >= $` + fmt.Sprintf("%d", argIndex+1) + `)`
+		args = append(args, filter.UpdatedSince, filter.UpdatedSince)
+		argIndex += 2
+	}
+
+	// Add time-based filtering for LastActivitySince (filter by any recent activity)
+	if filter.LastActivitySince != nil {
+		query += ` AND ($` + fmt.Sprintf("%d", argIndex) + ` IS NULL OR merkle_proof IS NULL OR 
+			(merkle_proof->>'seen_at')::timestamp >= $` + fmt.Sprintf("%d", argIndex+1) + ` OR
+			(merkle_proof->>'confirmed_at')::timestamp >= $` + fmt.Sprintf("%d", argIndex+1) + ` OR
+			(merkle_proof->>'sweep_attempted_at')::timestamp >= $` + fmt.Sprintf("%d", argIndex+1) + `)`
+		args = append(args, filter.LastActivitySince, filter.LastActivitySince)
+		argIndex += 2
+	}
+
+	rows, err := r.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

@@ -74,14 +74,21 @@ CREATE TABLE IF NOT EXISTS mcp_claims (
 CREATE TABLE IF NOT EXISTS mcp_submissions (
   submission_id TEXT PRIMARY KEY,
   claim_id TEXT,
-  status TEXT,
+  task_id TEXT,
+  status TEXT NOT NULL,
   deliverables JSONB,
   completion_proof JSONB,
   rejection_reason TEXT,
   rejection_type TEXT,
   rejected_at TIMESTAMPTZ,
-  created_at TIMESTAMPTZ
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Indexes for mcp_submissions
+CREATE INDEX IF NOT EXISTS idx_mcp_submissions_claim_id ON mcp_submissions(claim_id);
+CREATE INDEX IF NOT EXISTS idx_mcp_submissions_task_id ON mcp_submissions(task_id);
+CREATE INDEX IF NOT EXISTS idx_mcp_submissions_status ON mcp_submissions(status);
+CREATE INDEX IF NOT EXISTS idx_mcp_submissions_created_at ON mcp_submissions(created_at DESC);
 
 -- Proposals table
 CREATE TABLE IF NOT EXISTS mcp_proposals (
@@ -111,6 +118,7 @@ CREATE INDEX IF NOT EXISTS idx_mcp_contracts_confirmed_at ON mcp_contracts(confi
 CREATE INDEX IF NOT EXISTS idx_mcp_contracts_created_at ON mcp_contracts(created_at DESC);
 
 -- Column additions for backwards compatibility
+ALTER TABLE mcp_submissions ADD COLUMN IF NOT EXISTS task_id TEXT;
 ALTER TABLE mcp_submissions ADD COLUMN IF NOT EXISTS rejection_reason TEXT;
 ALTER TABLE mcp_submissions ADD COLUMN IF NOT EXISTS rejection_type TEXT;
 ALTER TABLE mcp_submissions ADD COLUMN IF NOT EXISTS rejected_at TIMESTAMPTZ;

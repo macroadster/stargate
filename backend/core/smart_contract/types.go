@@ -109,14 +109,16 @@ type ContractFilter struct {
 
 // TaskFilter captures simple query params for listing tasks.
 type TaskFilter struct {
-	Skills        []string
-	MaxDifficulty string
-	MinBudgetSats int64
-	Limit         int
-	Offset        int
-	Status        string
-	ContractID    string
-	ClaimedBy     string
+	Skills            []string
+	MaxDifficulty     string
+	MinBudgetSats     int64
+	Limit             int
+	Offset            int
+	Status            string
+	ContractID        string
+	ClaimedBy         string
+	UpdatedSince      *time.Time // Only include tasks updated since this time
+	LastActivitySince *time.Time // Only include tasks with activity since this time
 }
 
 // Proposal represents a human/markdown wish that must be approved before tasks are published.

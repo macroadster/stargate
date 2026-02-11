@@ -1648,17 +1648,6 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 			txidMatches[txid] = &recCopy
 		}
 
-		// Debug: check metadata for specific ingestion
-		if strings.Contains(recCopy.ID, "092fe0f6") {
-			var keys []string
-			for k := range recCopy.Metadata {
-				keys = append(keys, k)
-			}
-			log.Printf("DEBUG: ingestion %s metadata keys: %v", recCopy.ID, keys)
-			log.Printf("DEBUG: ingestion %s funding_txid: %v", recCopy.ID, recCopy.Metadata["funding_txid"])
-			log.Printf("DEBUG: ingestion %s funding_txids: %v", recCopy.ID, recCopy.Metadata["funding_txids"])
-			log.Printf("DEBUG: ingestion %s all funding txids: %v", recCopy.ID, fundingTxIDsFromMeta(recCopy.Metadata))
-		}
 	}
 	if len(primaryCandidates) == 0 && len(fallbackCandidates) == 0 && len(txidMatches) == 0 {
 		return smartContracts
@@ -1859,45 +1848,35 @@ func (bm *BlockMonitor) confirmAndSweepContractTasks(contractID, txid string, bl
 	if bm.sweepStore == nil || bm.sweepMempool == nil || strings.TrimSpace(contractID) == "" || strings.TrimSpace(txid) == "" {
 		return
 	}
-	tasks, err := bm.sweepStore.ListTasks(smart_contract.TaskFilter{ContractID: contractID})
+	// Also filter by recent activity for efficiency, even though we're already filtering by contract
+	twentyFourHoursAgo := time.Now().Add(-24 * time.Hour)
+	tasks, err := bm.sweepStore.ListTasks(smart_contract.TaskFilter{
+		ContractID:        contractID,
+		LastActivitySince: &twentyFourHoursAgo,
+	})
 	if err != nil {
 		log.Printf("oracle reconcile: failed to list tasks for %s: %v", contractID, err)
 		return
 	}
-	log.Printf("oracle reconcile DEBUG: found %d tasks for contract %s", len(tasks), contractID)
-	log.Printf("oracle reconcile DEBUG: flushing logs")
-	for i, task := range tasks {
+	for _, task := range tasks {
 		proof := task.MerkleProof
-		log.Printf("oracle reconcile DEBUG: task %d - ID: %s, proof: %v", i, task.TaskID, proof != nil)
-		log.Printf("oracle reconcile DEBUG: flushing logs")
-		log.Println() // Force flush
 		if proof == nil {
-			log.Printf("oracle reconcile DEBUG: skipping task %s - no proof", task.TaskID)
 			continue
 		}
-		log.Printf("oracle reconcile DEBUG: checking task %s proof.TxID='%s' against txid='%s'", task.TaskID, proof.TxID, txid)
 		if proof.TxID == "" || strings.TrimSpace(proof.TxID) != strings.TrimSpace(txid) {
-			log.Printf("oracle reconcile DEBUG: skipping task %s - txid mismatch (proof='%s' vs txid='%s')", task.TaskID, proof.TxID, txid)
 			continue
 		}
-		log.Printf("oracle reconcile DEBUG: task %s confirmation_status=%s", task.TaskID, proof.ConfirmationStatus)
-		log.Printf("oracle reconcile DEBUG: flushing logs")
-		log.Println() // Force flush
 		if proof.ConfirmationStatus != "confirmed" {
 			now := time.Now()
 			proof.ConfirmationStatus = "confirmed"
 			proof.ConfirmedAt = &now
 			proof.BlockHeight = blockHeight
-			log.Printf("oracle reconcile DEBUG: confirming proof for task %s at block %d", task.TaskID, blockHeight)
 			if err := bm.sweepStore.UpdateTaskProof(context.Background(), task.TaskID, proof); err != nil {
 				log.Printf("oracle reconcile: failed to confirm proof for %s: %v", task.TaskID, err)
 			}
 		}
-		log.Printf("oracle reconcile DEBUG: attempting commitment sweep for task %s", task.TaskID)
 		if err := SweepCommitmentIfReady(context.Background(), bm.sweepStore, bm.sweepMempool, task, proof); err != nil {
 			log.Printf("oracle reconcile: sweep error for %s: %v", task.TaskID, err)
-		} else {
-			log.Printf("oracle reconcile DEBUG: commitment sweep successful for task %s", task.TaskID)
 		}
 	}
 }
@@ -1906,7 +1885,12 @@ func (bm *BlockMonitor) updateTaskFundingProofsFromTx(contractID string, tx Tran
 	if bm.sweepStore == nil || strings.TrimSpace(contractID) == "" {
 		return
 	}
-	tasks, err := bm.sweepStore.ListTasks(smart_contract.TaskFilter{ContractID: contractID})
+	// Also filter by recent activity for efficiency, even though we're already filtering by contract
+	twentyFourHoursAgo := time.Now().Add(-24 * time.Hour)
+	tasks, err := bm.sweepStore.ListTasks(smart_contract.TaskFilter{
+		ContractID:        contractID,
+		LastActivitySince: &twentyFourHoursAgo,
+	})
 	if err != nil {
 		log.Printf("oracle reconcile: failed to list tasks for funding update %s: %v", contractID, err)
 		return

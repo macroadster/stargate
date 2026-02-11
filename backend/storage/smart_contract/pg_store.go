@@ -100,14 +100,21 @@ CREATE TABLE IF NOT EXISTS mcp_claims (
 CREATE TABLE IF NOT EXISTS mcp_submissions (
   submission_id TEXT PRIMARY KEY,
   claim_id TEXT,
-  status TEXT,
+  task_id TEXT,
+  status TEXT NOT NULL,
   deliverables JSONB,
   completion_proof JSONB,
   rejection_reason TEXT,
   rejection_type TEXT,
   rejected_at TIMESTAMPTZ,
-  created_at TIMESTAMPTZ
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Indexes for mcp_submissions
+CREATE INDEX IF NOT EXISTS idx_mcp_submissions_claim_id ON mcp_submissions(claim_id);
+CREATE INDEX IF NOT EXISTS idx_mcp_submissions_task_id ON mcp_submissions(task_id);
+CREATE INDEX IF NOT EXISTS idx_mcp_submissions_status ON mcp_submissions(status);
+CREATE INDEX IF NOT EXISTS idx_mcp_submissions_created_at ON mcp_submissions(created_at DESC);
 
 CREATE TABLE IF NOT EXISTS mcp_proposals (
   id TEXT PRIMARY KEY,
@@ -121,6 +128,7 @@ CREATE TABLE IF NOT EXISTS mcp_proposals (
 );
 CREATE INDEX IF NOT EXISTS idx_mcp_proposals_status ON mcp_proposals(status);
 CREATE INDEX IF NOT EXISTS idx_mcp_tasks_contract_status ON mcp_tasks(contract_id, status);
+ALTER TABLE mcp_submissions ADD COLUMN IF NOT EXISTS task_id TEXT;
 ALTER TABLE mcp_submissions ADD COLUMN IF NOT EXISTS rejection_reason TEXT;
 ALTER TABLE mcp_submissions ADD COLUMN IF NOT EXISTS rejection_type TEXT;
 ALTER TABLE mcp_submissions ADD COLUMN IF NOT EXISTS rejected_at TIMESTAMPTZ;
@@ -693,9 +701,9 @@ func (s *PGStore) SubmitWork(claimID string, deliverables map[string]interface{}
 	log.Printf("Creating new submission: ID=%s, ClaimID=%s", subID, claimID)
 
 	if _, err := tx.Exec(ctx, `
-	INSERT INTO mcp_submissions (submission_id, claim_id, status, deliverables, completion_proof, created_at)
-	VALUES ($1,$2,$3,$4,$5,$6)
-	`, sub.SubmissionID, sub.ClaimID, sub.Status, delivJSON, proofJSON, sub.CreatedAt); err != nil {
+	INSERT INTO mcp_submissions (submission_id, claim_id, task_id, status, deliverables, completion_proof, created_at)
+	VALUES ($1,$2,$3,$4,$5,$6,$7)
+	`, sub.SubmissionID, sub.ClaimID, claim.TaskID, sub.Status, delivJSON, proofJSON, sub.CreatedAt); err != nil {
 		log.Printf("Failed to insert submission: %v", err)
 		return smart_contract.Submission{}, err
 	}
@@ -1033,16 +1041,17 @@ func (s *PGStore) SyncSubmission(ctx context.Context, sub smart_contract.Submiss
 	delivJSON, _ := json.Marshal(sub.Deliverables)
 	proofJSON, _ := json.Marshal(sub.CompletionProof)
 	_, err := s.pool.Exec(ctx, `
-INSERT INTO mcp_submissions (submission_id, claim_id, status, deliverables, completion_proof, rejection_reason, rejection_type, rejected_at, created_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+INSERT INTO mcp_submissions (submission_id, claim_id, task_id, status, deliverables, completion_proof, rejection_reason, rejection_type, rejected_at, created_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 ON CONFLICT (submission_id) DO UPDATE SET
   status = EXCLUDED.status,
   deliverables = EXCLUDED.deliverables,
   completion_proof = EXCLUDED.completion_proof,
   rejection_reason = EXCLUDED.rejection_reason,
   rejection_type = EXCLUDED.rejection_type,
-  rejected_at = EXCLUDED.rejected_at
-`, sub.SubmissionID, sub.ClaimID, sub.Status, string(delivJSON), string(proofJSON), sub.RejectionReason, sub.RejectionType, sub.RejectedAt, sub.CreatedAt)
+  rejected_at = EXCLUDED.rejected_at,
+  task_id = EXCLUDED.task_id
+`, sub.SubmissionID, sub.ClaimID, sub.TaskID, sub.Status, string(delivJSON), string(proofJSON), sub.RejectionReason, sub.RejectionType, sub.RejectedAt, sub.CreatedAt)
 	return err
 }
 

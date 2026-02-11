@@ -257,6 +257,34 @@ func (s *MemoryStore) ListTasks(filter smart_contract.TaskFilter) ([]smart_contr
 		if filter.MinBudgetSats > 0 && t.BudgetSats < filter.MinBudgetSats {
 			continue
 		}
+
+		// Add time-based filtering for UpdatedSince
+		if filter.UpdatedSince != nil {
+			if t.MerkleProof == nil {
+				continue
+			}
+			proof := t.MerkleProof
+			hasRecentActivity := proof.SeenAt.After(*filter.UpdatedSince) ||
+				(proof.SweepAttemptedAt != nil && proof.SweepAttemptedAt.After(*filter.UpdatedSince))
+			if !hasRecentActivity {
+				continue
+			}
+		}
+
+		// Add time-based filtering for LastActivitySince
+		if filter.LastActivitySince != nil {
+			if t.MerkleProof == nil {
+				continue
+			}
+			proof := t.MerkleProof
+			hasRecentActivity := proof.SeenAt.After(*filter.LastActivitySince) ||
+				(proof.ConfirmedAt != nil && proof.ConfirmedAt.After(*filter.LastActivitySince)) ||
+				(proof.SweepAttemptedAt != nil && proof.SweepAttemptedAt.After(*filter.LastActivitySince))
+			if !hasRecentActivity {
+				continue
+			}
+		}
+
 		out = append(out, t)
 	}
 
