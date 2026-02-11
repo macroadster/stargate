@@ -602,39 +602,34 @@ func (s *MemoryStore) UpdateContractStatus(ctx context.Context, contractID, stat
 	return nil
 }
 
-// UpdateContractStatusWithConfirmation updates the status for a contract and records confirmation details.
-func (s *MemoryStore) UpdateContractStatusWithConfirmation(ctx context.Context, contractID, status string, blockHeight int) error {
+// ConfirmContract confirms a contract and records confirmation details.
+func (s *MemoryStore) ConfirmContract(ctx context.Context, contractID string, blockHeight int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	contractID = strings.TrimSpace(contractID)
-	status = strings.TrimSpace(status)
-	if contractID == "" || status == "" {
+	if contractID == "" {
 		return nil
 	}
 	contract, ok := s.contracts[contractID]
 	if !ok {
 		return fmt.Errorf("contract %s not found", contractID)
 	}
-	contract.Status = status
+	contract.Status = "confirmed"
 	contract.ConfirmedBlockHeight = &blockHeight
 	confirmedAt := time.Now()
 	contract.ConfirmedAt = &confirmedAt
 
-	// Calculate stego_image_url from contract_id and block_height when confirmed
-	if strings.EqualFold(status, "confirmed") {
-		// Use contract_id directly (stealthy design)
-		imageFile := contractID
-		contract.StegoImageURL = fmt.Sprintf("/api/block-image/%d/%s", blockHeight, imageFile)
-	}
+	// Use contract_id directly (stealthy design)
+	imageFile := contractID
+	contract.StegoImageURL = fmt.Sprintf("/api/block-image/%d/%s", blockHeight, imageFile)
 	s.contracts[contractID] = contract
-	if strings.EqualFold(status, "confirmed") {
-		normalized := NormalizeContractID(contractID)
-		for id, proposal := range s.proposals {
-			proposalCID := NormalizeContractID(contractIDFromMeta(proposal.Metadata, proposal.ID))
-			if proposalCID == normalized && strings.EqualFold(proposal.Status, "approved") {
-				proposal.Status = "confirmed"
-				s.proposals[id] = proposal
-			}
+
+	normalized := NormalizeContractID(contractID)
+	for id, proposal := range s.proposals {
+		proposalCID := NormalizeContractID(contractIDFromMeta(proposal.Metadata, proposal.ID))
+		if proposalCID == normalized && strings.EqualFold(proposal.Status, "approved") {
+			proposal.Status = "confirmed"
+			s.proposals[id] = proposal
 		}
 	}
 	return nil

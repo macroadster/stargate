@@ -2763,10 +2763,10 @@ func (bm *BlockMonitor) markIngestionConfirmed(rec *services.IngestionRecord, tx
 		// Use ingestion ID directly to match contract creation logic in reconcileOracleIngestions
 		contractID := strings.TrimSpace(rec.ID)
 		if contractID != "" {
-			if err := bm.sweepStore.UpdateContractStatusWithConfirmation(context.Background(), contractID, "confirmed", int(height)); err != nil {
-				log.Printf("oracle reconcile: failed to update contract status with confirmation for %s: %v", contractID, err)
+			if err := bm.sweepStore.ConfirmContract(context.Background(), contractID, int(height)); err != nil {
+				log.Printf("oracle reconcile: failed to confirm contract %s: %v", contractID, err)
 			} else {
-				log.Printf("oracle reconcile: successfully updated contract %s status to confirmed with stego_image_url calculated by storage layer", contractID)
+				log.Printf("oracle reconcile: successfully confirmed contract %s with stego_image_url calculated by storage layer", contractID)
 			}
 		}
 	}

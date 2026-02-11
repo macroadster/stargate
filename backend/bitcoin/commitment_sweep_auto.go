@@ -25,7 +25,7 @@ type SweepTaskStore interface {
 	SweepStore
 	ListTasks(filter smart_contract.TaskFilter) ([]smart_contract.Task, error)
 	UpdateContractStatus(ctx context.Context, contractID, status string) error
-	UpdateContractStatusWithConfirmation(ctx context.Context, contractID, status string, blockHeight int) error
+	ConfirmContract(ctx context.Context, contractID string, blockHeight int) error
 }
 
 // SweepCommitmentIfReady builds and broadcasts a sweep transaction for confirmed commitment outputs.
