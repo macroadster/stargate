@@ -311,6 +311,7 @@ func (h *HTTPMCPServer) toolRequiresAuth(toolName string) bool {
 		"approve_proposal":      true,
 		"get_auth_challenge":    false, // No auth required - discovery tool
 		"verify_auth_challenge": false, // No auth required - solves chicken-egg problem
+		"validate_address":      false, // No auth required - AI debugging tool
 		"get_task":              false, // No auth required - discovery tool
 	}
 	return authenticatedTools[toolName]
@@ -354,6 +355,8 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 		return h.handleGetAuthChallenge(ctx, args)
 	case "verify_auth_challenge":
 		return h.handleVerifyAuthChallenge(ctx, args)
+	case "validate_address":
+		return h.handleValidateAddress(ctx, args)
 	case "create_task":
 		return h.handleCreateTask(ctx, args, apiKey)
 	default:
@@ -1491,6 +1494,9 @@ func (h *HTTPMCPServer) handleGetAuthChallenge(ctx context.Context, args map[str
 		validation.AddFieldError("wallet_address", args["wallet_address"], "wallet_address is required and must be a non-empty string", true)
 	}
 
+	// Check for AI-friendly mode flag
+	aiMode, _ := args["ai_mode"].(bool)
+
 	// Return validation errors if any
 	if validation.HasErrors() {
 		return nil, validation
@@ -1500,15 +1506,26 @@ func (h *HTTPMCPServer) handleGetAuthChallenge(ctx context.Context, args map[str
 		return nil, NewServiceUnavailableError("get_auth_challenge", "challenge store")
 	}
 
-	challenge, err := h.challengeStore.Issue(strings.TrimSpace(wallet))
+	var challenge auth.Challenge
+	var err error
+
+	// Use AI-friendly settings if requested
+	if aiMode {
+		challenge, err = h.challengeStore.IssueAIChallenge(strings.TrimSpace(wallet))
+	} else {
+		challenge, err = h.challengeStore.Issue(strings.TrimSpace(wallet))
+	}
+
 	if err != nil {
 		return nil, NewInternalError("get_auth_challenge", fmt.Sprintf("Failed to issue challenge: %v", err))
 	}
 
 	return map[string]interface{}{
-		"nonce":      challenge.Nonce,
-		"expires_at": challenge.ExpiresAt,
-		"wallet":     challenge.Wallet,
+		"nonce":            challenge.Nonce,
+		"expires_at":       challenge.ExpiresAt,
+		"wallet":           challenge.Wallet,
+		"max_attempts":     challenge.MaxAttempts,
+		"ai_friendly_mode": aiMode,
 	}, nil
 }
 
@@ -1526,7 +1543,8 @@ func (h *HTTPMCPServer) handleVerifyAuthChallenge(ctx context.Context, args map[
 		validation.AddFieldError("signature", args["signature"], "signature is required and must be a non-empty string", true)
 	}
 
-	email, _ := args["email"].(string) // Optional
+	email, _ := args["email"].(string)         // Optional
+	detailedMode, _ := args["detailed"].(bool) // Optional - enable detailed error reporting
 
 	// Return validation errors if any
 	if validation.HasErrors() {
@@ -1537,18 +1555,47 @@ func (h *HTTPMCPServer) handleVerifyAuthChallenge(ctx context.Context, args map[
 		return nil, NewServiceUnavailableError("verify_auth_challenge", "challenge store")
 	}
 
-	// Verify the Bitcoin signature
+	// Enhanced verifier that provides detailed results
+	var sigResult handlers.SignatureVerificationResult
 	verifier := func(ch auth.Challenge, sig string) bool {
-		// Import the signature verification logic from auth_handler
-		ok, err := h.verifyBTCSignature(ch.Wallet, sig, strings.TrimSpace(ch.Nonce))
-		if err != nil {
+		sigResult = handlers.VerifyBTCSignatureWithDetails(ch.Wallet, sig, strings.TrimSpace(ch.Nonce))
+		if !sigResult.Success {
 			return false
 		}
-		return ok
+		return true
 	}
 
-	if !h.challengeStore.Verify(strings.TrimSpace(wallet), strings.TrimSpace(signature), verifier) {
-		return nil, NewValidationError("verify_auth_challenge", "Invalid signature")
+	// Use detailed verification for better error handling
+	var verifyResult auth.VerificationResult
+	if detailedMode {
+		verifyResult = h.challengeStore.VerifyWithDetails(strings.TrimSpace(wallet), strings.TrimSpace(signature), verifier)
+	} else {
+		success := h.challengeStore.Verify(strings.TrimSpace(wallet), strings.TrimSpace(signature), verifier)
+		verifyResult = auth.VerificationResult{
+			Success: success,
+			Reason:  "Basic verification completed",
+		}
+	}
+
+	if !verifyResult.Success {
+		// Provide detailed error information when requested
+		if detailedMode {
+			// For detailed mode, return a structured error response with verification details
+			return map[string]interface{}{
+				"verified": false,
+				"reason":   verifyResult.Reason,
+				"details": map[string]interface{}{
+					"remaining_attempts": verifyResult.RemainingAttempts,
+					"signature_info": map[string]interface{}{
+						"success": sigResult.Success,
+						"format":  sigResult.Format,
+						"message": sigResult.Message,
+					},
+				},
+			}, nil
+		} else {
+			return nil, NewValidationError("verify_auth_challenge", "Invalid signature")
+		}
 	}
 
 	// Issue API key directly using the issuer
@@ -1566,6 +1613,32 @@ func (h *HTTPMCPServer) handleVerifyAuthChallenge(ctx context.Context, args map[
 		"wallet":   apiKeyRec.Wallet,
 		"email":    apiKeyRec.Email,
 		"verified": true,
+	}, nil
+}
+
+// handleValidateAddress validates and provides detailed information about a Bitcoin address (no auth required)
+func (h *HTTPMCPServer) handleValidateAddress(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	validation := NewValidationError("validate_address", "Invalid request parameters")
+
+	address, ok := args["address"].(string)
+	if !ok || strings.TrimSpace(address) == "" {
+		validation.AddFieldError("address", args["address"], "address is required and must be a non-empty string", true)
+	}
+
+	// Return validation errors if any
+	if validation.HasErrors() {
+		return nil, validation
+	}
+
+	// Use the enhanced address detection from handlers package
+	info := handlers.DetectAddressInfo(strings.TrimSpace(address))
+
+	return map[string]interface{}{
+		"address":      info.Address,
+		"is_valid":     info.IsValid,
+		"address_type": info.AddressType,
+		"network":      info.Network,
+		"error":        info.Error,
 	}, nil
 }
 

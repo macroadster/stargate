@@ -33,7 +33,7 @@ func TestChooseParamsPicksTestnet4ForTaproot(t *testing.T) {
 		t.Fatalf("address %s should not belong to mainnet", encoded)
 	}
 
-	params := chooseParams(encoded)
+	params := ChooseParams(encoded)
 	if params == nil {
 		t.Fatalf("expected params for address %s", encoded)
 	}
@@ -59,7 +59,7 @@ func TestChooseParamsMainnet(t *testing.T) {
 	if _, err := btcutil.DecodeAddress(encoded, &chaincfg.MainNetParams); err != nil {
 		t.Fatalf("expected decode with mainnet params to succeed: %v", err)
 	}
-	params := chooseParams(encoded)
+	params := ChooseParams(encoded)
 	if params == nil {
 		t.Fatalf("expected params for address %s", encoded)
 	}
@@ -84,7 +84,7 @@ func TestVerifySignatureHexMessageFallback(t *testing.T) {
 	sig := ecdsa.SignCompact(priv, msgHash, true)
 	sigB64 := base64.StdEncoding.EncodeToString(sig)
 
-	ok, err := verifyBTCSignature(addr.EncodeAddress(), sigB64, msg)
+	ok, err := VerifyBTCSignature(addr.EncodeAddress(), sigB64, msg)
 	if err != nil {
 		t.Fatalf("verify returned error: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestLegacySignatureAcceptsSegwitAddresses(t *testing.T) {
 	sig := ecdsa.SignCompact(priv, hash, true)
 	sigB64 := base64.StdEncoding.EncodeToString(sig)
 
-	ok, err := verifyLegacySignMessage(addr.EncodeAddress(), sigB64, msg)
+	ok, err := VerifyLegacySignMessage(addr.EncodeAddress(), sigB64, msg)
 	if err != nil {
 		t.Fatalf("verify returned error: %v", err)
 	}
@@ -188,7 +188,7 @@ func TestBIP322SimpleRoundTrip(t *testing.T) {
 	}
 	sigPayload := base64.StdEncoding.EncodeToString(buf.Bytes())
 
-	ok, err := verifyBIP322Simple(addr.EncodeAddress(), sigPayload, msg)
+	ok, err := VerifyBIP322Simple(addr.EncodeAddress(), sigPayload, msg)
 	if err != nil {
 		t.Fatalf("verify returned error: %v", err)
 	}

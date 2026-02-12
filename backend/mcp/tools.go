@@ -494,24 +494,50 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 		},
 		"get_auth_challenge": map[string]interface{}{
 			"category":    ToolCategoryDiscovery,
-			"description": "Get a cryptographic challenge for wallet verification",
+			"description": "Get a cryptographic challenge for wallet verification with AI-friendly options",
 			"parameters": map[string]interface{}{
 				"wallet_address": map[string]interface{}{
 					"type":        "string",
 					"description": "Bitcoin wallet address to verify",
 					"required":    true,
 				},
+				"ai_mode": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Enable AI-friendly mode with higher attempt limits",
+					"required":    false,
+				},
 			},
 			"examples": []map[string]interface{}{
 				{
-					"description": "Get challenge for wallet verification",
+					"description": "Get standard challenge for wallet verification",
 					"arguments":   map[string]interface{}{"wallet_address": "tb1qexample..."},
+				},
+				{
+					"description": "Get AI-friendly challenge with higher attempt limits",
+					"arguments":   map[string]interface{}{"wallet_address": "tb1qexample...", "ai_mode": true},
+				},
+			},
+		},
+		"validate_address": map[string]interface{}{
+			"category":    ToolCategoryDiscovery,
+			"description": "Validate a Bitcoin address and get detailed information about its type and network",
+			"parameters": map[string]interface{}{
+				"address": map[string]interface{}{
+					"type":        "string",
+					"description": "Bitcoin address to validate",
+					"required":    true,
+				},
+			},
+			"examples": []map[string]interface{}{
+				{
+					"description": "Validate a Bitcoin address",
+					"arguments":   map[string]interface{}{"address": "tb1qexample..."},
 				},
 			},
 		},
 		"verify_auth_challenge": map[string]interface{}{
 			"category":    ToolCategoryWrite,
-			"description": "Verify wallet signature and receive API key",
+			"description": "Verify wallet signature and receive API key with detailed error reporting",
 			"parameters": map[string]interface{}{
 				"wallet_address": map[string]interface{}{
 					"type":        "string",
@@ -520,12 +546,16 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 				},
 				"signature": map[string]interface{}{
 					"type":        "string",
-					"description": "Bitcoin signature of the challenge nonce",
+					"description": "Bitcoin signature of the challenge nonce (supports legacy signmessage and BIP-322 formats)",
 					"required":    true,
 				},
 				"email": map[string]interface{}{
 					"type":        "string",
 					"description": "Optional email address for account recovery",
+				},
+				"detailed": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Enable detailed error reporting with specific signature format information",
 				},
 			},
 			"examples": []map[string]interface{}{
@@ -535,6 +565,14 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 						"wallet_address": "tb1qexample...",
 						"signature":      "base64_or_hex_signature...",
 						"email":          "user@example.com",
+					},
+				},
+				{
+					"description": "Complete verification with detailed error reporting for debugging",
+					"arguments": map[string]interface{}{
+						"wallet_address": "tb1qexample...",
+						"signature":      "base64_or_hex_signature...",
+						"detailed":       true,
 					},
 				},
 			},
