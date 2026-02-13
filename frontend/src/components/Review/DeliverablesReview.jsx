@@ -296,15 +296,15 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
     const normalized = (status || '').toLowerCase();
     switch (normalized) {
       case 'approved':
-        return <CheckCircle className="w-4 h-4 text-green-500" />;
+        return <CheckCircle className="w-4 h-4" style={{ color: '#10b981' }} />;
       case 'rejected':
-        return <XCircle className="w-4 h-4 text-red-500" />;
+        return <XCircle className="w-4 h-4" style={{ color: '#ef4444' }} />;
       case 'reviewed':
-        return <Eye className="w-4 h-4 text-purple-500" />;
+        return <Eye className="w-4 h-4" style={{ color: '#a855f7' }} />;
       case 'submitted':
-        return <Clock className="w-4 h-4 text-blue-500" />;
+        return <Clock className="w-4 h-4" style={{ color: '#3b82f6' }} />;
       default:
-        return <Clock className="w-4 h-4 text-gray-400" />;
+        return <Clock className="w-4 h-4" style={{ color: '#9ca3af' }} />;
     }
   };
 
@@ -312,15 +312,15 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
     const normalized = (status || '').toLowerCase();
     switch (normalized) {
       case 'approved':
-        return 'bg-green-100 dark:bg-green-900/40 border-green-400 text-green-700 dark:text-green-200';
+        return 'deliverables-status-badge approved';
       case 'rejected':
-        return 'bg-red-100 dark:bg-red-900/40 border-red-400 text-red-700 dark:text-red-200';
+        return 'deliverables-status-badge rejected';
       case 'reviewed':
-        return 'bg-purple-100 dark:bg-purple-900/40 border-purple-400 text-purple-700 dark:text-purple-200';
+        return 'deliverables-status-badge reviewed';
       case 'submitted':
-        return 'bg-blue-100 dark:bg-blue-900/40 border-blue-400 text-blue-700 dark:text-blue-200';
+        return 'deliverables-status-badge submitted';
       default:
-        return 'bg-gray-100 dark:bg-gray-900/40 border-gray-400 text-gray-700 dark:text-gray-200';
+        return 'deliverables-status-badge pending';
     }
   };
 
@@ -526,10 +526,10 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
 
   if (allDeliverables.length === 0 && comparisonGroups.length === 0) {
     return (
-      <div className="text-center py-8">
-        <div className="text-4xl mb-4">📋</div>
-        <div className="text-gray-600 dark:text-gray-400 font-semibold">No Deliverables Found</div>
-        <div className="text-gray-500 dark:text-gray-500 text-sm mt-2">
+      <div className="deliverables-empty">
+        <div className="deliverables-empty-icon">📋</div>
+        <div className="deliverables-empty-title">No Deliverables Found</div>
+        <div className="deliverables-empty-subtitle">
           No task submissions have been made yet for these proposals.
         </div>
       </div>
@@ -538,24 +538,20 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-4 flex-wrap">
+      <div className="deliverables-header">
         <div>
-          <h4 className="text-lg font-semibold text-black dark:text-white">Deliverables Review</h4>
-          <p className="text-sm text-gray-500 dark:text-gray-400">
+          <h4 className="deliverables-header-title">Deliverables Review</h4>
+          <p className="deliverables-header-subtitle">
             Review and approve task submissions for this contract
           </p>
         </div>
         
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="deliverables-controls">
           <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={() => setViewMode('list')}
-              className={`px-3 py-1.5 text-xs rounded border flex items-center gap-1 ${
-                viewMode === 'list'
-                  ? 'bg-gray-900 text-white border-gray-900'
-                  : 'bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200'
-              }`}
+              className={`deliverables-view-btn ${viewMode === 'list' ? 'active' : ''}`}
             >
               <List className="w-3 h-3" />
               List
@@ -563,11 +559,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
             <button
               type="button"
               onClick={() => setViewMode('compare')}
-              className={`px-3 py-1.5 text-xs rounded border flex items-center gap-1 ${
-                viewMode === 'compare'
-                  ? 'bg-gray-900 text-white border-gray-900'
-                  : 'bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200'
-              }`}
+              className={`deliverables-view-btn ${viewMode === 'compare' ? 'active' : ''}`}
             >
               <Columns className="w-3 h-3" />
               Compare
@@ -577,7 +569,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
           <select
             value={filterStatus}
             onChange={(e) => setFilterStatus(e.target.value)}
-            className="text-sm rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-2 py-1"
+            className="deliverables-select"
           >
             <option value="all">All Status</option>
             <option value="submitted">Submitted</option>
@@ -590,7 +582,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
               <select
                 value={sortBy}
                 onChange={(e) => setSortBy(e.target.value)}
-                className="text-sm rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-2 py-1"
+                className="deliverables-select"
               >
                 <option value="newest">Newest first</option>
                 <option value="oldest">Oldest first</option>
@@ -600,7 +592,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
               <button
                 type="button"
                 onClick={exportComparison}
-                className="px-3 py-1.5 text-xs rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
+                className="deliverables-export-btn"
               >
                 Export JSON
               </button>
@@ -609,20 +601,20 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
         </div>
       </div>
 
-      <div className="text-sm text-gray-600 dark:text-gray-400">
+      <div className="deliverables-count">
         {viewMode === 'list'
           ? `Showing ${filteredDeliverables.length} of ${allDeliverables.length} deliverables`
           : `Showing ${comparisonGroups.length} tasks with submissions`}
       </div>
 
       {viewMode === 'list' && (
-        <div className="flex items-center justify-between gap-3 flex-wrap text-xs text-gray-600 dark:text-gray-400">
+        <div className="deliverables-bulk-bar">
           <label className="flex items-center gap-2">
             <input
               type="checkbox"
               checked={allSelected}
               onChange={(e) => toggleSelectAll(e.target.checked, selectableDeliverables)}
-              className="h-4 w-4 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500 dark:border-gray-600"
+              className="deliverables-checkbox"
             />
             Select all
           </label>
@@ -632,7 +624,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
               type="button"
               onClick={() => bulkReview('approve', filteredDeliverables)}
               disabled={selectedCount === 0 || reviewingId === 'bulk' || isContractLocked}
-              className="px-3 py-1.5 text-xs rounded bg-green-600 hover:bg-green-500 text-white disabled:opacity-60"
+              className="deliverables-bulk-btn approve"
             >
               Bulk approve
             </button>
@@ -640,7 +632,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
               type="button"
               onClick={() => bulkReview('reject', filteredDeliverables)}
               disabled={selectedCount === 0 || reviewingId === 'bulk' || isContractLocked}
-              className="px-3 py-1.5 text-xs rounded bg-red-600 hover:bg-red-500 text-white disabled:opacity-60"
+              className="deliverables-bulk-btn reject"
             >
               Bulk reject
             </button>
@@ -649,7 +641,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
       )}
 
       {viewMode === 'compare' ? (
-        <div className="space-y-4" ref={rootRef}>
+        <div className="deliverables-compare-view" ref={rootRef}>
           {comparisonGroups.map((group) => {
             const filteredSubmissions = group.submissions.filter((submission) => {
               if (filterStatus === 'all') return true;
@@ -660,19 +652,19 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
             const sortedSubmissions = sortSubmissions(filteredSubmissions);
 
             return (
-              <div key={group.task_id} className="border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 overflow-hidden">
-                <div className="p-4 border-b border-gray-200 dark:border-gray-700">
+              <div key={group.task_id} className="deliverables-compare-group">
+                <div className="deliverables-compare-header">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <div className="text-xs text-gray-500 dark:text-gray-400">Task {group.task_id}</div>
-                      <h5 className="text-base font-semibold text-black dark:text-white">{group.title}</h5>
-                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">{group.proposalTitle}</p>
+                      <div className="deliverables-task-label">Task {group.task_id}</div>
+                      <h5 className="deliverables-task-title">{group.title}</h5>
+                      <p className="deliverables-task-meta mt-1">{group.proposalTitle}</p>
                     </div>
-                    <span className="text-xs text-gray-500 dark:text-gray-400">Proposal: {group.proposalId}</span>
+                    <span className="deliverables-task-label">Proposal: {group.proposalId}</span>
                   </div>
                 </div>
-                <div className="overflow-x-auto">
-                  <div className="flex gap-4 p-4 min-w-full">
+                <div className="deliverables-compare-scroll">
+                  <div className="deliverables-compare-cards">
                     {sortedSubmissions.map((submission, index) => {
                       const submissionId = submission.submission_id || submission.id || `${group.task_id}-${index}`;
                       const notes = getSubmissionNotes(submission);
@@ -681,40 +673,40 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
                       const isExpanded = !!expandedSubmissions[submissionId];
                       const status = submission.status || 'pending';
                       return (
-                        <div key={submissionId} className="min-w-[360px] max-w-[520px] flex-shrink-0 border border-gray-200 dark:border-gray-700 rounded-lg p-3 bg-gray-50 dark:bg-gray-900">
-                          <div className="flex items-start justify-between gap-2">
+                        <div key={submissionId} className="deliverables-compare-card">
+                          <div className="deliverables-compare-card-header">
                             <div>
                               <div className="flex items-center gap-2">
                                 {getStatusIcon(status)}
                                 <span className={`text-xs px-2 py-0.5 rounded border ${getStatusColor(status)}`}>
                                   {status}
                                 </span>
-                                <span className="text-[11px] text-gray-500 dark:text-gray-400">Attempt {index + 1}</span>
+                                <span className="deliverables-compare-attempt">Attempt {index + 1}</span>
                               </div>
                               <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
                                 {submission.submitted_at ? new Date(submission.submitted_at).toLocaleString() : 'Unknown time'}
                               </div>
                             </div>
-                            <div className="text-xs text-gray-500 dark:text-gray-400 text-right">
+                            <div className="deliverables-compare-id">
                               {submission.submission_id || submission.id}
                             </div>
                           </div>
 
-                          <div className="grid grid-cols-2 gap-2 text-xs text-gray-600 dark:text-gray-300 mt-3">
+                          <div className="deliverables-compare-stats">
                             <div>Words: {wordCount}</div>
                             <div>Proof: {submission.completion_proof?.link ? 'Yes' : 'No'}</div>
-                            <div className="col-span-2">Submitted by: {submission?.deliverables?.submitted_by || 'Unknown'}</div>
+                            <div className="deliverables-compare-stats-full">Submitted by: {submission?.deliverables?.submitted_by || 'Unknown'}</div>
                           </div>
 
                           {submission?.rejection_reason && (
-                            <div className="mt-3 bg-red-50 dark:bg-red-900/40 border border-red-200 dark:border-red-700 rounded p-2 text-xs text-red-700 dark:text-red-200 whitespace-pre-wrap">
+                            <div className="deliverables-compare-rejection">
                               {submission.rejection_reason}
                             </div>
                           )}
 
                           <div className="mt-3">
-                            <div className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">Notes</div>
-                            <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded p-2 max-h-64 overflow-y-auto overflow-x-auto max-w-full">
+                            <div className="deliverables-compare-notes-label">Notes</div>
+                            <div className="deliverables-compare-notes-box">
                               {isExpanded ? renderMarkdown(notes || 'No notes provided.') : (
                                 <pre className="text-xs text-gray-700 dark:text-gray-300 whitespace-pre-wrap overflow-x-auto max-w-full">
                                   {preview || 'No notes provided.'}
@@ -725,7 +717,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
                               <button
                                 type="button"
                                 onClick={() => setExpandedSubmissions(prev => ({ ...prev, [submissionId]: !prev[submissionId] }))}
-                                className="mt-2 text-xs text-blue-600 dark:text-blue-400 hover:underline"
+                                className="deliverables-compare-notes-expand"
                               >
                                 {isExpanded ? 'Show preview' : 'Show full notes'}
                               </button>
@@ -747,7 +739,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
                               <button
                                 onClick={() => reviewDeliverable(submissionId, 'review')}
                                 disabled={reviewingId === submissionId || isContractLocked}
-                                className="px-2 py-1 bg-purple-600 hover:bg-purple-500 text-white rounded text-xs disabled:opacity-60 flex items-center gap-1"
+                                className="deliverables-action-btn review"
                               >
                                 <Eye className="w-3 h-3" />
                                 {reviewingId === submissionId ? 'Processing…' : 'Review'}
@@ -755,7 +747,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
                               <button
                                 onClick={() => reviewDeliverable(submissionId, 'approve')}
                                 disabled={reviewingId === submissionId || isContractLocked}
-                                className="px-2 py-1 bg-green-600 hover:bg-green-500 text-white rounded text-xs disabled:opacity-60 flex items-center gap-1"
+                                className="deliverables-action-btn approve"
                               >
                                 <CheckCircle className="w-3 h-3" />
                                 {reviewingId === submissionId ? 'Processing…' : 'Approve'}
@@ -763,7 +755,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
                               <button
                                 onClick={() => reviewDeliverable(submissionId, 'reject')}
                                 disabled={reviewingId === submissionId || isContractLocked}
-                                className="px-2 py-1 bg-red-600 hover:bg-red-500 text-white rounded text-xs disabled:opacity-60 flex items-center gap-1"
+                                className="deliverables-action-btn reject"
                               >
                                 <XCircle className="w-3 h-3" />
                                 {reviewingId === submissionId ? 'Processing…' : 'Reject'}
@@ -782,8 +774,8 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
       ) : (
         <div className="space-y-3" ref={rootRef}>
           {filteredDeliverables.map((deliverable) => (
-            <div key={deliverable.task_id} className="border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 overflow-hidden">
-              <div className="p-4">
+            <div key={deliverable.task_id} className="deliverables-card">
+              <div className="deliverables-card-header">
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex-1">
                     <div className="flex items-center gap-2 mb-2">
@@ -795,25 +787,25 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
                           toggleSelectSubmission(deliverable.submissionKey);
                         }}
                         disabled={!deliverable.submissionKey}
-                        className="h-4 w-4 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500 dark:border-gray-600"
+                        className="deliverables-checkbox"
                       />
                       {getStatusIcon(deliverable.submission?.status)}
                       <span className={`text-xs px-2 py-0.5 rounded border ${getStatusColor(deliverable.submission?.status)}`}>
                         {deliverable.submission?.status || 'pending'}
                       </span>
-                      <span className="text-xs text-gray-500 dark:text-gray-400">
+                      <span className="deliverables-task-label">
                         Proposal: {deliverable.proposalId}
                       </span>
                     </div>
                     
-                    <h5 className="font-semibold text-black dark:text-white mb-1">
+                    <h5 className="deliverables-task-title mb-1">
                       {deliverable.title}
                     </h5>
-                    <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
+                    <p className="deliverables-task-meta mb-2">
                       {deliverable.proposalTitle}
                     </p>
                     
-                    <div className="flex items-center gap-4 text-xs text-gray-500 dark:text-gray-400">
+                    <div className="deliverables-task-meta">
                       <span>Budget: {deliverable.budget_sats} sats</span>
                       <span>Submitted by: {deliverable.submission?.deliverables?.submitted_by || 'Unknown'}</span>
                       {deliverable.submission?.submitted_at && (
@@ -833,14 +825,14 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
                           <button
                             onClick={() => reviewDeliverable(deliverable.submissionKey, 'approve')}
                             disabled={reviewingId === deliverable.submissionKey || isContractLocked}
-                            className="px-2 py-1 bg-green-600 hover:bg-green-500 text-white rounded text-xs disabled:opacity-60"
+                            className="deliverables-action-btn approve"
                           >
                             Approve
                           </button>
                           <button
                             onClick={() => reviewDeliverable(deliverable.submissionKey, 'reject')}
                             disabled={reviewingId === deliverable.submissionKey || isContractLocked}
-                            className="px-2 py-1 bg-red-600 hover:bg-red-500 text-white rounded text-xs disabled:opacity-60"
+                            className="deliverables-action-btn reject"
                           >
                             Reject
                           </button>
@@ -849,7 +841,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
                     })()}
                     <button
                       onClick={() => toggleTaskExpansion(deliverable.task_id)}
-                      className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                      className="deliverables-expand-btn"
                     >
                       {expandedTasks[deliverable.task_id] ? (
                         <ChevronUp className="w-5 h-5" />
@@ -867,7 +859,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
                   const status = (deliverable.submission?.status || '').toLowerCase();
                   const statusText = status || 'pending';
                   return (
-                    <div className="mt-3 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg p-3">
+                    <div className="deliverables-notes-box">
                       <div className="flex items-center justify-between text-xs text-gray-600 dark:text-gray-400 mb-2">
                         <span>Words: {wordCount}</span>
                         <span>Status: {statusText}</span>
@@ -883,7 +875,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
                   <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700 space-y-4">
                   <div>
                     <h6 className="text-sm font-semibold text-black dark:text-white mb-2">Deliverable Details</h6>
-                    <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-3 space-y-2">
+                    <div className="deliverables-notes-box">
                       {deliverable.submission?.submitted_at && (
                         <div className="flex items-start justify-between gap-2">
                           <span className="text-sm text-gray-600 dark:text-gray-400">Submitted At:</span>
@@ -933,7 +925,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
                   {deliverable.submission?.deliverables?.notes && (
                     <div>
                       <h6 className="text-sm font-semibold text-black dark:text-white mb-2">Submission Notes</h6>
-                      <div className="bg-blue-50 dark:bg-blue-900/40 border border-blue-200 dark:border-blue-700 rounded-lg p-3 max-h-[60vh] overflow-y-auto overflow-x-auto max-w-full">
+                      <div className="deliverables-notes-box" style={{ maxHeight: '60vh', overflowY: 'auto' }}>
                         {renderMarkdown(deliverable.submission.deliverables.notes)}
                       </div>
                     </div>
@@ -942,19 +934,19 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
                   {(deliverable.submission?.rejection_reason || deliverable.submission?.rejection_type) && (
                     <div>
                       <h6 className="text-sm font-semibold text-black dark:text-white mb-2">Rejection Feedback</h6>
-                      <div className="bg-red-50 dark:bg-red-900/40 border border-red-200 dark:border-red-700 rounded-lg p-3 space-y-2">
+                      <div className="deliverables-compare-rejection">
                         {deliverable.submission?.rejection_type && (
-                          <div className="text-xs font-semibold uppercase tracking-wide text-red-700 dark:text-red-200">
+                          <div className="text-xs font-semibold uppercase tracking-wide">
                             {deliverable.submission.rejection_type}
                           </div>
                         )}
                         {deliverable.submission?.rejection_reason && (
-                          <div className="text-sm text-red-900 dark:text-red-100 whitespace-pre-wrap">
+                          <div className="text-sm whitespace-pre-wrap">
                             {deliverable.submission.rejection_reason}
                           </div>
                         )}
                         {deliverable.submission?.rejected_at && (
-                          <div className="text-xs text-red-700 dark:text-red-200">
+                          <div className="text-xs">
                             Rejected at {new Date(deliverable.submission.rejected_at).toLocaleString()}
                           </div>
                         )}
@@ -965,7 +957,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
                   {deliverable.submission?.deliverables?.document && (
                     <div>
                       <h6 className="text-sm font-semibold text-black dark:text-white mb-2">Submission Document</h6>
-                      <div className="bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-700 rounded-lg p-3 max-h-[60vh] overflow-y-auto overflow-x-auto max-w-full">
+                      <div className="deliverables-notes-box" style={{ maxHeight: '60vh', overflowY: 'auto' }}>
                         {renderMarkdown(deliverable.submission.deliverables.document)}
                       </div>
                     </div>
@@ -989,7 +981,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
                             const diffKey = `${deliverable.task_id}-${submissionId}`;
                             const showDiff = !!expandedDiffs[diffKey];
                             return (
-                              <div key={submissionId} className="border border-gray-200 dark:border-gray-700 rounded-lg p-3 bg-gray-50 dark:bg-gray-900">
+                              <div key={submissionId} className="deliverables-compare-card">
                                 <div className="flex items-start justify-between gap-2">
                                   <div>
                                     <div className="flex items-center gap-2">
@@ -997,24 +989,24 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
                                       <span className={`text-xs px-2 py-0.5 rounded border ${getStatusColor(status)}`}>
                                         {status}
                                       </span>
-                                      <span className="text-[11px] text-gray-500 dark:text-gray-400">Attempt {index + 1}</span>
+                                      <span className="deliverables-compare-attempt">Attempt {index + 1}</span>
                                     </div>
                                     <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
                                       {formatTimestamp(submission.submitted_at || submission.created_at)}
                                     </div>
                                   </div>
-                                  <div className="text-xs text-gray-500 dark:text-gray-400 text-right">
+                                  <div className="deliverables-compare-id">
                                     {submissionId}
                                   </div>
                                 </div>
 
-                                <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-gray-600 dark:text-gray-300">
+                                <div className="deliverables-compare-stats">
                                   <div>Words: {words}</div>
                                   <div>Claim: {submission.claim_id || '—'}</div>
                                 </div>
 
                                 {submission.rejection_reason && (
-                                  <div className="mt-2 text-xs text-red-700 dark:text-red-200 bg-red-50 dark:bg-red-900/40 border border-red-200 dark:border-red-700 rounded p-2 whitespace-pre-wrap">
+                                  <div className="deliverables-compare-rejection">
                                     {submission.rejection_reason}
                                   </div>
                                 )}
@@ -1023,7 +1015,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
                                   <button
                                     type="button"
                                     onClick={() => setExpandedDiffs(prev => ({ ...prev, [diffKey]: !prev[diffKey] }))}
-                                    className="mt-2 text-xs text-blue-600 dark:text-blue-400 hover:underline"
+                                    className="deliverables-compare-notes-expand"
                                   >
                                     {showDiff ? 'Hide comparison' : 'Compare with previous'}
                                   </button>
@@ -1032,18 +1024,18 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
                                 {showDiff && (
                                   <div className="mt-2 grid md:grid-cols-2 gap-3">
                                     <div>
-                                      <div className="text-[11px] text-gray-500 dark:text-gray-400 mb-1">
+                                      <div className="deliverables-compare-attempt mb-1">
                                         Previous ({prevWords} words)
                                       </div>
-                                      <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded p-2 max-h-48 overflow-y-auto overflow-x-auto max-w-full">
+                                      <div className="deliverables-compare-notes-box" style={{ maxHeight: '12rem' }}>
                                         {renderMarkdown(prevNotes || 'No notes provided.')}
                                       </div>
                                     </div>
                                     <div>
-                                      <div className="text-[11px] text-gray-500 dark:text-gray-400 mb-1">
+                                      <div className="deliverables-compare-attempt mb-1">
                                         Current ({words} words)
                                       </div>
-                                      <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded p-2 max-h-48 overflow-y-auto overflow-x-auto max-w-full">
+                                      <div className="deliverables-compare-notes-box" style={{ maxHeight: '12rem' }}>
                                         {renderMarkdown(notes || 'No notes provided.')}
                                       </div>
                                     </div>
@@ -1083,16 +1075,17 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
                   {deliverable.submission?.completion_proof && (
                     <div>
                       <h6 className="text-sm font-semibold text-black dark:text-white mb-2">Completion Proof</h6>
-                      <div className="bg-green-50 dark:bg-green-900/40 border border-green-200 dark:border-green-700 rounded-lg p-3 space-y-3">
+                      <div className="deliverables-notes-box" style={{ background: 'rgba(34, 197, 94, 0.1)', borderColor: 'rgba(34, 197, 94, 0.2)' }}>
                         {deliverable.submission.completion_proof.link && (
                           <div className="flex items-center justify-between gap-2">
                             <div className="flex items-center gap-2">
-                              <ExternalLink className="w-4 h-4 text-green-600 dark:text-green-400" />
+                              <ExternalLink className="w-4 h-4" style={{ color: '#22c55e' }} />
                               <a
                                 href={deliverable.submission.completion_proof.link}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="text-sm text-green-900 dark:text-green-100 hover:underline break-all flex-1"
+                                className="text-sm hover:underline break-all flex-1"
+                                style={{ color: '#14532d' }}
                               >
                                 {deliverable.submission.completion_proof.link}
                               </a>
@@ -1167,7 +1160,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
                         </div>
                         
                         {deliverable.submission.completion_proof.link && (
-                        <div className="border-t border-green-200 dark:border-green-700 pt-3">
+                        <div className="border-t border-green-200 dark:border-green-700 pt-3 mt-3">
                           {renderProofContent(deliverable.submission.completion_proof.link, deliverable.submissionKey)}
                         </div>
                         )}
@@ -1199,7 +1192,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
                           <button
                             onClick={() => reviewDeliverable(deliverable.submissionKey, 'review')}
                             disabled={reviewingId === deliverable.submissionKey || isContractLocked}
-                            className="px-3 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded text-sm disabled:opacity-60 flex items-center gap-2"
+                            className="deliverables-action-btn review"
                           >
                             <Eye className="w-4 h-4" />
                             {reviewingId === deliverable.submissionKey ? 'Processing…' : 'Mark as Reviewed'}
@@ -1207,7 +1200,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
                           <button
                             onClick={() => reviewDeliverable(deliverable.submissionKey, 'approve')}
                             disabled={reviewingId === deliverable.submissionKey || isContractLocked}
-                            className="px-3 py-2 bg-green-600 hover:bg-green-500 text-white rounded text-sm disabled:opacity-60 flex items-center gap-2"
+                            className="deliverables-action-btn approve"
                           >
                             <CheckCircle className="w-4 h-4" />
                             {reviewingId === deliverable.submissionKey ? 'Processing…' : 'Approve'}
@@ -1215,7 +1208,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
                           <button
                             onClick={() => reviewDeliverable(deliverable.submissionKey, 'reject')}
                             disabled={reviewingId === deliverable.submissionKey || isContractLocked}
-                            className="px-3 py-2 bg-red-600 hover:bg-red-500 text-white rounded text-sm disabled:opacity-60 flex items-center gap-2"
+                            className="deliverables-action-btn reject"
                           >
                             <XCircle className="w-4 h-4" />
                             {reviewingId === deliverable.submissionKey ? 'Processing…' : 'Reject'}

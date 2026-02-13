@@ -52,7 +52,7 @@ export default function ContractsPage() {
   return (
     <div className="min-h-screen bg-app-main text-gray-900 dark:text-gray-100">
       <AppHeader onInscribe={() => navigate('/')} />
-      <div className="container mx-auto px-6 py-10 space-y-8">
+      <div className="w-full mx-auto px-6 py-10 space-y-8">
         <div>
           <h1 className="text-4xl font-black text-gray-900 dark:text-white uppercase tracking-tight leading-none mb-2">Contracts</h1>
           <p className="text-xs text-starlight font-bold uppercase tracking-widest opacity-70">
@@ -66,24 +66,24 @@ export default function ContractsPage() {
           </div>
         )}
 
-        <div className="grid gap-4 sm:gap-6 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="contracts-grid">
           {displayContracts.map((contract) => (
             <button
               key={`${contract.id}-${contract.block_height}`}
               onClick={() => setSelectedInscription(contract)}
               className="group text-left"
             >
-              <div className="card-premium overflow-hidden transition-all duration-300 hover:shadow-xl">
-                <div className={`relative ${contract.image_url ? 'aspect-[3/4] min-h-[200px]' : 'min-h-[320px]'} bg-gray-100 dark:bg-gray-800`}>
+              <div className="contract-card transition-all duration-300 hover:shadow-xl hover:translate-y-[-5px]">
+                <div className="relative">
                   {contract.image_url ? (
                     <img
                       src={contract.image_url}
                       alt={contract.file_name || contract.id}
-                      className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
+                      className="contract-card-image transition-transform duration-300 group-hover:scale-[1.02]"
                       loading="lazy"
                     />
                   ) : (
-                    <div className="h-full w-full flex flex-col items-center justify-center p-6 text-center">
+                    <div className="contract-card-image flex flex-col items-center justify-center p-6 text-center bg-gray-100 dark:bg-gray-800">
                       <div className="text-5xl mb-4">🧩</div>
                       <div className="text-sm font-medium text-gray-700 dark:text-gray-300 line-clamp-3">
                         {contract.headline}
@@ -105,13 +105,13 @@ export default function ContractsPage() {
                     </div>
                   </div>
                 </div>
-                <div className="p-4 space-y-2">
+                <div className="p-3 space-y-2">
                   <div className="flex items-center justify-between gap-2">
-                    <div className="text-[10px] text-gray-500 dark:text-gray-400 font-mono break-all truncate flex-1">
+                    <div className="contract-id text-xs text-gray-500 dark:text-gray-400 truncate flex-1">
                       ID: {contract.id}
                     </div>
                     {contract.metadata?.visible_pixel_hash && (
-                      <div className="text-[10px] text-starlight font-mono font-bold">
+                      <div className="contract-hash text-[10px] text-starlight font-mono font-bold">
                         HASH: {contract.metadata.visible_pixel_hash.slice(0, 8)}
                       </div>
                     )}
