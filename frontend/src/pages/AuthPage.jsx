@@ -98,14 +98,14 @@ export default function AuthPage() {
   };
 
   const renderLogin = () => (
-    <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl p-6 shadow-lg">
+    <div className="bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl p-6 shadow-lg">
       <h2 className="text-xl font-semibold mb-2">Sign In</h2>
       <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">Use an existing API key.</p>
       {savedWallets.length > 0 && (
         <div className="mb-4">
           <label className="block text-sm mb-2">Saved wallets</label>
           <select
-            className="w-full h-10 mb-2 px-3 rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700"
+            className="form-select w-full h-10 mb-2 px-3 rounded-lg"
             onChange={(e) => setLoginKey(e.target.value)}
             value={loginKey}
           >
@@ -120,7 +120,7 @@ export default function AuthPage() {
       )}
       <label className="block text-sm mb-2">API Key</label>
       <input
-        className="w-full mb-4 px-3 py-2 rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700"
+        className="form-input w-full mb-4 px-3 py-2 rounded-lg"
         value={loginKey}
         onChange={(e) => setLoginKey(e.target.value)}
         placeholder="paste your key"
@@ -141,7 +141,7 @@ export default function AuthPage() {
 
 
   const renderWallet = () => (
-    <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl p-6 shadow-lg">
+    <div className="bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl p-6 shadow-lg">
       <h2 className="text-xl font-semibold mb-2">Wallet Challenge</h2>
       <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">Sign the nonce with Bitcoin signmessage (mainnet or testnet3/4) to issue a key.</p>
       <div className="text-xs text-gray-500 dark:text-gray-400 mb-4 space-y-1">
@@ -175,7 +175,7 @@ export default function AuthPage() {
         <div className="mb-3 text-xs bg-gray-100 dark:bg-gray-800 border border-dashed border-gray-300 dark:border-gray-700 rounded-lg p-2 break-all">
           <div>Nonce to sign: {challenge}</div>
           <div className="mt-2 flex justify-center">
-            <div className="bg-white p-2 rounded">
+            <div className="bg-gray-50 p-2 rounded">
               <QRCodeCanvas value={challenge} size={140} level="M" includeMargin />
             </div>
           </div>

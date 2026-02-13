@@ -28,7 +28,7 @@ export default function McpDocsPage() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-white dark:bg-gray-950 text-black dark:text-white">
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-950 text-black dark:text-white">
       <AppHeader />
       
       <div className="container mx-auto px-6 py-8">
@@ -54,7 +54,7 @@ export default function McpDocsPage() {
         )}
 
         {!loading && !error && (
-          <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 overflow-hidden">
+          <div className="bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 overflow-hidden">
             <div 
               className="p-6"
               dangerouslySetInnerHTML={{ __html: docs }}

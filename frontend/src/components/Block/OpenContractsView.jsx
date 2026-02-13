@@ -107,14 +107,14 @@ const OpenContractsView = ({ setSelectedInscription, refreshKey }) => {
 
   return (
     <div className="mb-4">
-      <div className="mb-4">
-        <h3 className="text-black dark:text-white text-lg font-semibold border-b-2 border-yellow-500 pb-2 inline-block">
+      <div className="mb-6">
+        <h2 className="text-black dark:text-white text-2xl font-bold border-b-4 border-yellow-500 pb-2 inline-block">
           Open Contracts
-        </h3>
+        </h2>
       </div>
 
       {Array.isArray(mappedInscriptions) && mappedInscriptions.length > 0 ? (
-        <div className="columns-1 sm:columns-2 xl:columns-3 gap-6">
+        <div className="contracts-grid">
           {mappedInscriptions.map((inscription, idx) => (
             <InscriptionCard
               key={idx}

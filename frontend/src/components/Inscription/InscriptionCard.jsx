@@ -83,7 +83,7 @@ const InscriptionCard = ({ inscription, onClick }) => {
       className="relative group cursor-pointer break-inside-avoid mb-6"
     >
       <div className="relative overflow-hidden rounded-2xl border border-gray-200 dark:border-gray-800 hover:border-indigo-400 transition-all duration-200 bg-white dark:bg-gray-900 shadow-sm">
-        <div className={`${hasTextContent && !imageSource ? '' : 'max-h-[460px] min-h-[200px]'} flex items-start justify-center bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-700 dark:to-gray-800 relative overflow-hidden`}
+        <div className={`${hasTextContent && !imageSource ? '' : 'min-h-[280px] sm:min-h-[350px] xl:min-h-[400px]'} flex items-start justify-center bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-700 dark:to-gray-800 relative overflow-hidden`}
              style={hasTextContent && !imageSource ? { minHeight: `${calculateTextHeight(textContent, false)}px` } : {}}>
           {showTextPreview && hasTextContent ? (
             <div className="absolute inset-0 p-3 bg-white dark:bg-gray-900 rounded-lg overflow-hidden">
@@ -165,25 +165,6 @@ const InscriptionCard = ({ inscription, onClick }) => {
                 </span>
               </div>
             )}
-            
-            {inscription.metadata?.is_stego && (
-              <div className="mt-2 p-2 bg-purple-50 dark:bg-purple-900 border border-purple-200 dark:border-purple-700 rounded-lg">
-                <div className="flex items-center gap-2 mb-1">
-                  <div className="w-2 h-2 bg-purple-500 rounded-full animate-pulse"></div>
-                  <span className="text-purple-700 dark:text-purple-300 text-xs font-semibold">STEGANOGRAPHY DETECTED</span>
-                </div>
-                {inscription.metadata.stego_type && (
-                  <div className="text-xs text-purple-600 dark:text-purple-400">
-                    Method: <span className="font-mono font-semibold">{inscription.metadata.stego_type.toUpperCase()}</span>
-                  </div>
-                )}
-                {stegoProbability > 0 && Math.round(stegoProbability * 100) > 0 && (
-                  <div className="text-xs text-purple-600 dark:text-purple-400">
-                    Probability: <span className="font-semibold">{Math.round(stegoProbability * 100)}%</span>
-                  </div>
-                )}
-              </div>
-            )}
           </div>
         </div>
         
@@ -220,11 +201,6 @@ const InscriptionCard = ({ inscription, onClick }) => {
           <div className="text-black dark:text-white font-mono text-[10px] truncate font-medium flex-1" title={inscription.id}>
             ID: {inscription.id}
           </div>
-          {inscription.metadata?.visible_pixel_hash && (
-            <div className="text-indigo-500 dark:text-indigo-400 font-mono text-[10px] font-bold">
-              HASH: {inscription.metadata.visible_pixel_hash.slice(0, 8)}
-            </div>
-          )}
         </div>
         <div className="flex items-center gap-2">
           {inscription.mime_type && (

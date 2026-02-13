@@ -1,101 +1,207 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import '@howssatoshi/quantumcss/dist/quantum.min.css';
 
-/* Root theme backgrounds for html and body */
-html, body {
-  background-color: white;
-  color: black;
-  margin: 0;
-  padding: 0;
+/* Quantum CSS Design Token Mapping */
+/* This file maps Tailwind utility classes to Quantum CSS design tokens */
+
+:root {
+  /* Map Tailwind grays to Quantum slate palette */
+  --color-gray-50: #f8fafc;   /* slate-50 */
+  --color-gray-100: #f1f5f9;  /* slate-100 */
+  --color-gray-200: #e2e8f0;  /* slate-200 */
+  --color-gray-300: #cbd5e1;  /* slate-300 */
+  --color-gray-400: #94a3b8;  /* slate-400 */
+  --color-gray-500: #64748b;  /* slate-500 */
+  --color-gray-600: #475569;  /* slate-600 */
+  --color-gray-700: #334155;  /* slate-700 */
+  --color-gray-800: #1e293b;  /* slate-800 */
+  --color-gray-900: #0f172a;  /* slate-900 */
+  --color-gray-950: #020617;  /* slate-950 */
+  
+  /* Map Tailwind indigo to Quantum primary palette */
+  --color-indigo-50: #eef2ff;
+  --color-indigo-100: #e0e7ff;
+  --color-indigo-200: #c7d2fe;
+  --color-indigo-300: #a5b4fc;
+  --color-indigo-400: #818cf8;
+  --color-indigo-500: #6366f1;
+  --color-indigo-600: #4f46e5;
+  --color-indigo-700: #4338ca;
+  --color-indigo-800: #3730a3;
+  --color-indigo-900: #312e81;
+  
+  /* Map to Quantum semantic colors */
+  --color-success: #10b981;
+  --color-warning: #f59e0b;
+  --color-error: #ef4444;
+  --color-neutral: #6b7280;
+  
+  /* Purple - keep as-is for accent */
+  --color-purple-500: #a855f7;
+  --color-purple-600: #9333ea;
+  --color-purple-700: #7c3aed;
+  
+  /* Emerald - map to success */
+  --color-emerald-50: #d1fae5;
+  --color-emerald-100: #a7f3d0;
+  --color-emerald-200: #6ee7b7;
+  --color-emerald-300: #34d399;
+  --color-emerald-400: #10b981;
+  --color-emerald-500: #059669;
+  --color-emerald-600: #047857;
+  --color-emerald-700: #065f46;
+  --color-emerald-800: #064e3b;
+  --color-emerald-900: #064e3b;
+  
+  /* Yellow - map to warning/orange palette */
+  --color-yellow-50: #fffbeb;
+  --color-yellow-100: #fef3c7;
+  --color-yellow-200: #fde68a;
+  --color-yellow-300: #fcd34d;
+  --color-yellow-400: #fbbf24;
+  --color-yellow-500: #f59e0b;
+  --color-yellow-600: #d97706;
+  --color-yellow-700: #b45309;
+  --color-yellow-800: #92400e;
+  --color-yellow-900: #78350f;
+
+  --color-primary: var(--color-indigo-600);
 }
 
-/* Explicit dark mode for root elements */
-html.dark, html.dark body {
-  background-color: #030712 !important; /* Tailwind gray-950 */
-  color: white !important;
+.dark {
+  --color-primary: var(--color-indigo-400) !important;
+  --bg-primary: #1e293b !important;
 }
 
-.no-scrollbar::-webkit-scrollbar {
+/* Explicitly override quantum.min.css dark mode media query */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-primary: var(--color-indigo-400) !important;
+    --bg-primary: #1e293b !important;
+  }
+}
+
+/* Custom transitions and specialized utilities not in Quantum */
+.nav-link svg { color: currentColor; stroke: currentColor; }
+.nav-item:hover { background: transparent !important; }
+.nav-link:hover { color: var(--color-starlight-blue) !important; }
+
+/* Custom Scrollbar for specific sections */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+}
+
+/* Hide scrollbar for block scroll container */
+#block-scroll::-webkit-scrollbar {
   display: none;
-}
-
-/* Documentation prose styling */
-.prose {
-  max-width: none;
-}
-
-.prose h1 {
-  @apply text-3xl font-bold mb-6 text-black dark:text-white;
-}
-
-.prose h2 {
-  @apply text-2xl font-semibold mb-4 text-black dark:text-white mt-6;
-}
-
-.prose h3 {
-  @apply text-xl font-medium mb-3 text-black dark:text-white mt-4;
-}
-
-.prose p {
-  @apply mb-4 text-black dark:text-white;
-}
-
-.prose strong {
-  @apply font-bold text-black dark:text-white;
-}
-
-.prose em {
-  @apply italic text-black dark:text-white;
-}
-
-.prose code {
-  @apply bg-gray-200 dark:bg-gray-800 px-2 py-1 rounded text-sm font-mono text-black dark:text-white;
-}
-
-.prose pre {
-  @apply bg-gray-100 dark:bg-gray-900 p-4 rounded-lg overflow-x-auto mb-4;
-}
-
-.prose pre code {
-  @apply text-sm font-mono text-black dark:text-white bg-transparent;
-}
-
-.prose a {
-  @apply text-indigo-600 dark:text-indigo-400 hover:underline;
-}
-
-.prose ul {
-  @apply list-disc pl-6 mb-4 text-black dark:text-white;
-}
-
-.prose li {
-  @apply mb-2 text-black dark:text-white;
-}
-
-.prose blockquote {
-  @apply border-l-4 border-gray-300 dark:border-gray-600 pl-4 italic text-gray-600 dark:text-gray-400;
-}
-
-.prose table {
-  @apply w-full border-collapse border border-gray-300 dark:border-gray-700 mb-4;
-}
-
-.prose th,
-.prose td {
-  @apply border border-gray-300 dark:border-gray-700 px-4 py-2 text-left text-black dark:text-white;
-}
-
-.prose th {
-  @apply bg-gray-50 dark:bg-gray-800 font-semibold;
-}
-
-.no-scrollbar {
-  -ms-overflow-style: none;
-  scrollbar-width: none;
 }
 
 .dragging {
   cursor: grabbing;
   user-select: none;
+}
+
+/* Root theme backgrounds for html and body */
+html, body {
+  background: #e2e8f0;
+  color: #1e293b;
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+}
+
+.bg-app-main {
+  background-color: #e2e8f0;
+}
+
+/* Dark mode override */
+html.dark, html.dark body {
+  background: #1e293b;
+  color: white;
+}
+
+/* Override Quantum CSS dark mode with higher specificity */
+html[data-theme="dark"] body,
+body.dark-mode {
+  background: #1e293b !important;
+  color: #f1f5f9 !important;
+}
+
+.dark .bg-app-main {
+  background-color: #1e293b !important;
+}
+
+/* Documentation prose styling overrides */
+.prose {
+  max-width: none;
+  font-size: 1rem;
+  line-height: 1.75;
+}
+
+.prose pre {
+  background-color: #f3f4f6;
+  padding: 1rem;
+  border-radius: 0.5rem;
+  overflow-x: auto;
+  margin-bottom: 1rem;
+  border: 1px solid #e5e7eb;
+}
+
+html.dark .prose pre {
+  background-color: #111827;
+  border-color: #374151;
+}
+
+html.dark .prose code {
+  color: white;
+}
+
+.prose pre code {
+  background-color: transparent;
+}
+
+/* Specialized animations */
+@keyframes nebula-drift {
+  0% { transform: translate(-5%, -5%) scale(1); opacity: 0.4; }
+  50% { transform: translate(5%, 5%) scale(1.2); opacity: 0.7; }
+  100% { transform: translate(-5%, -5%) scale(1); opacity: 0.4; }
+}
+
+.ani-nebula {
+  animation: nebula-drift 20s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+
+/* Ensure badge border is visible */
+.badge {
+  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+}
+
+html[data-theme="light"] .badge {
+  border: 1px solid rgba(0, 0, 0, 0.1) !important;
+}
+
+/* Contracts grid responsive layout */
+.contracts-grid {
+  display: grid;
+  grid-template-columns: repeat(1, minmax(0, 1fr));
+  gap: 2rem;
+}
+
+@media (min-width: 640px) {
+  .contracts-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 2.5rem;
+  }
+}
+
+@media (min-width: 1280px) {
+  .contracts-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 3rem;
+  }
 }

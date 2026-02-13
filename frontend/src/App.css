@@ -15,7 +15,6 @@ header {
 }
 
 h1 {
-  color: #2c3e50;
   font-size: 2.5em;
   margin-bottom: 10px;
 }
@@ -28,17 +27,25 @@ h1 {
 
 .section {
   flex: 1;
-  @apply bg-white dark:bg-gray-900;
+  background-color: white;
   border-radius: 8px;
   box-shadow: 0 2px 10px rgba(0,0,0,0.1);
   padding: 20px;
 }
 
+html.dark .section {
+  background-color: #111827;
+}
+
 .section h2 {
-  @apply text-gray-800 dark:text-gray-100;
+  color: #1f2937;
   border-bottom: 2px solid #3498db;
   padding-bottom: 10px;
   margin-top: 0;
+}
+
+html.dark .section h2 {
+  color: #f3f4f6;
 }
 
 .blocks-container {
@@ -50,12 +57,16 @@ h1 {
 
 .block-item {
   min-width: 200px;
-  @apply bg-gray-100 dark:bg-gray-800;
+  background-color: #f3f4f6;
   border-radius: 5px;
   padding: 15px;
   text-align: center;
   box-shadow: 0 1px 3px rgba(0,0,0,0.1);
   transition: transform 0.3s ease;
+}
+
+html.dark .block-item {
+  background-color: #1f2937;
 }
 
 .block-item:hover {
@@ -124,10 +135,14 @@ h1 {
 
 .contract-display {
   margin-top: 30px;
-  @apply bg-white dark:bg-gray-900;
+  background-color: white;
   border-radius: 8px;
   box-shadow: 0 2px 10px rgba(0,0,0,0.1);
   padding: 20px;
+}
+
+html.dark .contract-display {
+  background-color: #111827;
 }
 
 .contract-display h2 {
@@ -136,10 +151,16 @@ h1 {
 }
 
 .contract-display pre {
-  @apply bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-gray-100;
+  background-color: #f9fafb;
+  color: #111827;
   padding: 15px;
   border-radius: 5px;
   overflow-x: auto;
   white-space: pre-wrap;
   font-family: 'Courier New', monospace;
+}
+
+html.dark .contract-display pre {
+  background-color: #1f2937;
+  color: #f3f4f6;
 }

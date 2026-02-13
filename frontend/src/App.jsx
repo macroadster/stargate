@@ -400,47 +400,47 @@ function MainContent() {
     };
 
     return (
-      <div className="absolute mt-2 w-96 max-h-96 overflow-y-auto bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50">
+      <div className="absolute mt-2 w-96 max-h-96 overflow-y-auto dropdown-menu rounded-lg shadow-lg z-50">
         {inscriptionResults.length > 0 && (
-          <div className="p-3 border-b border-gray-200 dark:border-gray-800">
-            <div className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-2">Transactions</div>
+          <div className="p-3 border-b border-white/10">
+            <div className="text-xs uppercase tracking-wide text-secondary mb-2">Transactions</div>
             <div className="space-y-2">
               {inscriptionResults.slice(0, 5).map((tx, idx) => (
                 <button
                   key={`ins-${idx}`}
                   onClick={() => onSelectInscription(tx)}
-                  className="w-full text-left p-2 rounded bg-yellow-50 dark:bg-yellow-900/40 hover:bg-yellow-100 dark:hover:bg-yellow-800 transition-colors"
+                  className="w-full text-left p-2 rounded bg-white/5 hover:bg-white/10 transition-colors"
                 >
                   <div className="flex items-center justify-between text-xs mb-1">
                     <span className="px-2 py-0.5 rounded bg-yellow-600 text-white text-[11px]">Inscribe</span>
-                    <span className="text-yellow-800 dark:text-yellow-200">{tx.status || 'pending'}</span>
+                    <span className="text-secondary">{tx.status || 'pending'}</span>
                   </div>
-                  <div className="text-yellow-900 dark:text-yellow-100 font-mono text-xs break-all">{tx.id}</div>
-                  {tx.text && <div className="text-yellow-700 dark:text-yellow-300 text-xs truncate mt-1">{tx.text}</div>}
+                  <div className="text-primary font-mono text-xs break-all">{tx.id}</div>
+                  {tx.text && <div className="text-secondary text-xs truncate mt-1">{tx.text}</div>}
                 </button>
               ))}
             </div>
           </div>
         )}
         {contractResults.length > 0 && (
-          <div className="p-3 border-b border-gray-200 dark:border-gray-800">
-            <div className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-2">Open Contracts</div>
+          <div className="p-3 border-b border-white/10">
+            <div className="text-xs uppercase tracking-wide text-secondary mb-2">Open Contracts</div>
             <div className="space-y-2">
               {contractResults.slice(0, 5).map((contract, idx) => (
                 <button
                   key={`ctr-${idx}`}
                   onClick={() => selectContract(contract)}
-                  className="w-full text-left p-2 rounded bg-emerald-50 dark:bg-emerald-900/40 hover:bg-emerald-100 dark:hover:bg-emerald-800 transition-colors"
+                  className="w-full text-left p-2 rounded bg-white/5 hover:bg-white/10 transition-colors"
                 >
                   <div className="flex items-center justify-between text-xs mb-1">
                     <span className="px-2 py-0.5 rounded bg-emerald-600 text-white text-[11px]">Contract</span>
-                    <span className="text-emerald-800 dark:text-emerald-200">Open</span>
+                    <span className="text-emerald-500 font-bold">Open</span>
                   </div>
-                  <div className="text-emerald-900 dark:text-emerald-100 font-mono text-xs break-all">
+                  <div className="text-primary font-mono text-xs break-all">
                     {contract.contract_id || contract.contractId || contract.id}
                   </div>
                   {(contract.metadata?.embedded_message || contract.metadata?.message) && (
-                    <div className="text-emerald-700 dark:text-emerald-300 text-xs truncate mt-1">
+                    <div className="text-secondary text-xs truncate mt-1">
                       {contract.metadata?.embedded_message || contract.metadata?.message}
                     </div>
                   )}
@@ -451,23 +451,23 @@ function MainContent() {
         )}
         {blockResults.length > 0 && (
           <div className="p-3">
-            <div className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-2">Blocks</div>
+            <div className="text-xs uppercase tracking-wide text-secondary mb-2">Blocks</div>
             <div className="space-y-2">
               {blockResults.slice(0, 5).map((b, idx) => (
                 <button
                   key={`blk-${idx}`}
                   onClick={() => onSelectBlock(b)}
-                  className="w-full text-left p-2 rounded bg-indigo-50 dark:bg-indigo-900/40 hover:bg-indigo-100 dark:hover:bg-indigo-800 transition-colors"
+                  className="w-full text-left p-2 rounded bg-white/5 hover:bg-white/10 transition-colors"
                 >
                   <div className="flex items-center justify-between text-xs mb-1">
-                    <span className="px-2 py-0.5 rounded bg-indigo-600 text-white text-[11px]">Block</span>
-                    <span className="text-indigo-800 dark:text-indigo-200">{b.tx_count || 0} tx</span>
+                    <span className="px-2 py-0.5 rounded bg-primary text-white text-[11px]">Block</span>
+                    <span className="text-secondary">{b.tx_count || 0} tx</span>
                   </div>
-                  <div className="text-indigo-900 dark:text-indigo-100 font-mono text-xs break-all">
+                  <div className="text-primary font-mono text-xs break-all">
                     #{b.height} • {b.id || b.hash}
                   </div>
                   {b.timestamp && (
-                    <div className="text-indigo-700 dark:text-indigo-300 text-[11px] mt-1">
+                    <div className="text-secondary text-[11px] mt-1">
                       {new Date(b.timestamp * 1000).toLocaleString()}
                     </div>
                   )}
@@ -481,7 +481,7 @@ function MainContent() {
   };
 
   return (
-    <div className="min-h-screen bg-white dark:bg-gray-950 text-black dark:text-white">
+    <div className="min-h-screen bg-app-main text-primary">
       <AppHeader
         onInscribe={() => setShowInscribeModal(true)}
         showSearch
@@ -495,350 +495,301 @@ function MainContent() {
         showBrcToggle
         hideBrc20={hideBrc20}
         onToggleBrc20={() => setHideBrc20(!hideBrc20)}
-        // Theme props no longer needed here as AppHeader uses context
       />
 
-      <div className="bg-gray-100 dark:bg-gray-900 border-b border-gray-300 dark:border-gray-800 relative">
-        <div className="container mx-auto px-6 py-8">
-          <div className="relative pt-6">
-                        <div
-              id="block-scroll"
-              ref={scrollRef}
-              className="flex gap-4 overflow-x-auto whitespace-nowrap pb-4 px-12 no-scrollbar"
-              onScroll={(e) => {
-                const el = e.currentTarget;
-                if (el.scrollLeft + el.clientWidth >= el.scrollWidth - 50) {
-                  loadMoreBlocks();
-                }
-              }}
-            >
-              {blocks.map((block, index) => (
-                <BlockCard
-                  key={`${block.height}-${index}`}
-                  block={block}
-                  onClick={handleBlockSelect}
-                  isSelected={selectedBlock?.height === block.height}
-                />
-              ))}
-            </div>
-
-          </div>
+      <div className="pt-0">
+        <div
+          id="block-scroll"
+          ref={scrollRef}
+          className="flex gap-4 overflow-x-auto whitespace-nowrap py-6 px-6 border-b border-white/5"
+          style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+          onScroll={(e) => {
+            const el = e.currentTarget;
+            if (el.scrollLeft + el.clientWidth >= el.scrollWidth - 50) {
+              loadMoreBlocks();
+            }
+          }}
+        >
+          {blocks.map((block, index) => (
+            <BlockCard
+              key={`${block.height}-${index}`}
+              block={block}
+              onClick={handleBlockSelect}
+              isSelected={selectedBlock?.height === block.height}
+            />
+          ))}
         </div>
-      </div>
 
-      <div className="container mx-auto px-6 py-8">
-        {searchResults !== null ? (
-          <div className="mb-8">
-            <h2 className="text-4xl font-bold mb-4 text-black dark:text-white">Search Results</h2>
-
-            {searchResults.inscriptions && searchResults.inscriptions.length > 0 && (
-              <div className="mb-8">
-                <h3 className="text-black dark:text-white text-lg font-semibold border-b-2 border-yellow-500 pb-2 inline-block mb-4">
-                  Transactions
-                </h3>
-                <div className="space-y-3">
-                  {searchResults.inscriptions.map((tx, idx) => (
-                    <div
-                      key={idx}
-                      className="bg-yellow-50 dark:bg-yellow-900 border border-yellow-200 dark:border-yellow-700 rounded-lg p-4 cursor-pointer hover:bg-yellow-100 dark:hover:bg-yellow-800 transition-colors"
-                      onClick={() => {
-                         const inscription = {
-                           id: tx.id,
-                           contractType: 'Custom Contract',
-                           capability: 'Data Storage',
-                           protocol: 'BRC-20',
-                           apiEndpoints: 0,
-                           interactions: 0,
-                           reputation: 'N/A',
-                           isActive: tx.status === 'confirmed',
-                           number: parseInt(tx.id.split('_')[1]) || 0,
-                           address: 'bc1q...',
-                           genesis_block_height: 923627,
-                           mime_type: 'text/plain',
-                         };
-                        setSelectedInscription(inscription);
-                        clearSearch();
-                      }}
-                    >
-                      <div className="flex justify-between items-start mb-3">
-                        <div className="flex items-center gap-3">
-                          <div className="px-3 py-1 rounded text-xs font-semibold bg-yellow-600 text-white">
-                            Inscribe
-                          </div>
-                          <div className="text-yellow-800 dark:text-yellow-200 font-mono text-sm">
-                            {tx.id}
-                          </div>
-                        </div>
-                        <div className="px-2 py-1 rounded text-xs font-semibold bg-yellow-100 dark:bg-yellow-800 text-yellow-800 dark:text-yellow-200">
-                          {tx.status}
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-4 text-sm">
-                        <div>
-                          <div className="text-yellow-700 dark:text-yellow-300 mb-1">Text Length</div>
-                          <div className="text-yellow-900 dark:text-yellow-100">{tx.text?.length || 0} chars</div>
-                        </div>
-                        <div>
-                          <div className="text-yellow-700 dark:text-yellow-300 mb-1">Price</div>
-                          <div className="text-yellow-900 dark:text-yellow-100 font-semibold">{tx.price} BTC</div>
-                        </div>
-                      </div>
-
-                      <div className="mt-3 text-xs text-yellow-600 dark:text-yellow-400">
-                        {tx.timestamp
-                          ? `Submitted ${new Date(tx.timestamp * 1000).toLocaleString()}`
-                          : 'Submitted —'}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {searchResults.contracts && searchResults.contracts.length > 0 && (
-              <div className="mb-8">
-                <h3 className="text-black dark:text-white text-lg font-semibold border-b-2 border-emerald-500 pb-2 inline-block mb-4">
-                  Open Contracts
-                </h3>
-                <div className="space-y-3">
-                  {searchResults.contracts.map((contract, idx) => (
-                    <div
-                      key={`contract-${idx}`}
-                      className="bg-emerald-50 dark:bg-emerald-900 border border-emerald-200 dark:border-emerald-700 rounded-lg p-4 cursor-pointer hover:bg-emerald-100 dark:hover:bg-emerald-800 transition-colors"
-                      onClick={() => selectContract(contract)}
-                    >
-                      <div className="flex justify-between items-start mb-3">
-                        <div className="flex items-center gap-3">
-                          <div className="px-3 py-1 rounded text-xs font-semibold bg-emerald-600 text-white">
-                            Contract
-                          </div>
-                          <div className="text-emerald-800 dark:text-emerald-200 font-mono text-sm">
-                            {contract.contract_id || contract.contractId || contract.id}
-                          </div>
-                        </div>
-                        <div className="px-2 py-1 rounded text-xs font-semibold bg-emerald-100 dark:bg-emerald-800 text-emerald-800 dark:text-emerald-200">
-                          open
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-4 text-sm">
-                        <div>
-                          <div className="text-emerald-700 dark:text-emerald-300 mb-1">Block</div>
-                          <div className="text-emerald-900 dark:text-emerald-100">
-                            {contract.block_height || '—'}
-                          </div>
-                        </div>
-                        <div>
-                          <div className="text-emerald-700 dark:text-emerald-300 mb-1">Pixel Hash</div>
-                          <div className="text-emerald-900 dark:text-emerald-100 font-mono truncate">
-                            {contract.visible_pixel_hash || contract.metadata?.visible_pixel_hash || '—'}
-                          </div>
-                        </div>
-                      </div>
-
-                      {(contract.metadata?.embedded_message || contract.metadata?.message) && (
-                        <div className="mt-3 text-xs text-emerald-700 dark:text-emerald-300 truncate">
-                          {contract.metadata?.embedded_message || contract.metadata?.message}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {searchResults.blocks && searchResults.blocks.length > 0 && (
-              <div className="mb-8">
-                <h3 className="text-black dark:text-white text-lg font-semibold border-b-2 border-indigo-500 pb-2 inline-block mb-4">
-                  Blocks
-                </h3>
-                <div className="space-y-3">
-                  {searchResults.blocks.map((block, idx) => (
-                    <div
-                      key={idx}
-                      className="bg-indigo-50 dark:bg-indigo-900 border border-indigo-200 dark:border-indigo-700 rounded-lg p-4 cursor-pointer hover:bg-indigo-100 dark:hover:bg-indigo-800 transition-colors"
-                      onClick={() => {
-                        setSelectedBlock({...block, hash: block.id.toString()});
-                        clearSearch();
-                      }}
-                    >
-                      <div className="flex justify-between items-start mb-3">
-                        <div className="flex items-center gap-3">
-                          <div className="px-3 py-1 rounded text-xs font-semibold bg-indigo-600 text-white">
-                            Block
-                          </div>
-                          <div className="text-indigo-800 dark:text-indigo-200 font-mono text-sm">
-                            #{block.id}
-                          </div>
-                        </div>
-                        <div className="text-indigo-700 dark:text-indigo-300 text-sm">
-                          {block.tx_count} transactions
-                        </div>
-                      </div>
-
-                      <div className="text-xs text-indigo-600 dark:text-indigo-400">
-                        Height: {block.height} • Timestamp: {new Date(block.timestamp * 1000).toLocaleString()}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {(!searchResults.inscriptions || searchResults.inscriptions.length === 0) &&
-             (!searchResults.contracts || searchResults.contracts.length === 0) &&
-             (!searchResults.blocks || searchResults.blocks.length === 0) && (
-              <div className="text-center py-8 text-gray-500 dark:text-gray-400">
-                No results found for "{searchQuery}"
-              </div>
-            )}
-          </div>
-        ) : selectedBlock && (
-          <>
+        <div className="w-full px-4 sm:px-6 lg:px-8 xl:px-12 py-8">
+          {searchResults !== null ? (
             <div className="mb-8">
-              <h2 className="text-4xl font-bold mb-4 text-black dark:text-white">Block {selectedBlock.height}</h2>
-              <div className="flex items-center gap-4 text-sm">
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="text-gray-600 dark:text-gray-400 truncate max-w-[200px] sm:max-w-none">{selectedBlock.hash}</span>
-                  {copiedText === selectedBlock.hash ? (
-                    <Check className="w-4 h-4 text-green-600 dark:text-green-400 flex-shrink-0" />
-                  ) : (
-                    <Copy
-                      className="w-4 h-4 text-gray-600 dark:text-gray-400 hover:text-black dark:hover:text-white cursor-pointer flex-shrink-0"
-                      onClick={() => copyToClipboard(selectedBlock.hash)}
-                    />
-                  )}
-                </div>
-              </div>
-              <div className="text-gray-600 dark:text-gray-400 text-sm mt-2">
-                {new Date(selectedBlock.timestamp * 1000).toLocaleString()} ({formatTimeAgo(selectedBlock.timestamp)})
-              </div>
-            </div>
+              <h2 className="text-4xl font-bold mb-4 text-primary">Search Results</h2>
 
-            {selectedBlock.isFuture ? (
-              <OpenContractsView
-                setSelectedInscription={setSelectedInscription}
-                refreshKey={pendingRefreshKey}
-              />
-            ) : (
-              <div className="mb-4">
-                <div className="mb-4">
-                  <h3 className="text-black dark:text-white text-lg font-semibold border-b-2 border-indigo-500 pb-2 inline-block">
-                    Smart Contracts
+              {searchResults.inscriptions && searchResults.inscriptions.length > 0 && (
+                <div className="mb-8">
+                  <h3 className="text-primary text-lg font-semibold border-b-2 border-warning pb-2 inline-block mb-4">
+                    Transactions
                   </h3>
-                </div>
-                {inscriptionsError && (
-                  <div className="mb-4 rounded-lg border border-red-200 bg-red-50 text-red-800 dark:border-red-800 dark:bg-red-900/40 dark:text-red-100 px-4 py-3 text-sm">
-                    {inscriptionsError}
+                  <div className="space-y-3">
+                    {searchResults.inscriptions.map((tx, idx) => (
+                      <div
+                        key={idx}
+                        className="bg-white/5 border border-white/10 rounded-lg p-4 cursor-pointer hover:bg-white/10 transition-colors"
+                        onClick={() => {
+                           const inscription = {
+                             id: tx.id,
+                             contractType: 'Custom Contract',
+                             capability: 'Data Storage',
+                             protocol: 'BRC-20',
+                             apiEndpoints: 0,
+                             interactions: 0,
+                             reputation: 'N/A',
+                             isActive: tx.status === 'confirmed',
+                             number: parseInt(tx.id.split('_')[1]) || 0,
+                             address: 'bc1q...',
+                             genesis_block_height: 923627,
+                             mime_type: 'text/plain',
+                           };
+                          setSelectedInscription(inscription);
+                          clearSearch();
+                        }}
+                      >
+                        <div className="flex justify-between items-start mb-3">
+                          <div className="flex items-center gap-3">
+                            <div className="px-3 py-1 rounded text-xs font-semibold bg-yellow-600 text-white">
+                              Inscribe
+                            </div>
+                            <div className="text-primary font-mono text-sm">
+                              {tx.id}
+                            </div>
+                          </div>
+                          <div className="px-2 py-1 rounded text-xs font-semibold bg-white/5 text-secondary border border-white/10">
+                            {tx.status}
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-4 text-sm">
+                          <div>
+                            <div className="text-secondary mb-1">Text Length</div>
+                            <div className="text-primary">{tx.text?.length || 0} chars</div>
+                          </div>
+                          <div>
+                            <div className="text-secondary mb-1">Price</div>
+                            <div className="text-primary font-semibold">{tx.price} BTC</div>
+                          </div>
+                        </div>
+
+                        <div className="mt-3 text-xs text-secondary">
+                          {tx.timestamp
+                            ? `Submitted ${new Date(tx.timestamp * 1000).toLocaleString()}`
+                            : 'Submitted —'}
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                )}
+                </div>
+              )}
 
-                 {filteredInscriptions.length === 0 && isLoadingInscriptions && (
-                   <div className="columns-1 sm:columns-2 xl:columns-3 gap-6">
-                     {Array.from({ length: 5 }).map((_, i) => (
-                       <div key={i} className="h-48 rounded-lg bg-gray-200 dark:bg-gray-800 animate-pulse break-inside-avoid mb-6" />
-                     ))}
-                   </div>
-                 )}
+              {searchResults.contracts && searchResults.contracts.length > 0 && (
+                <div className="mb-8">
+                  <h3 className="text-primary text-lg font-semibold border-b-2 border-success pb-2 inline-block mb-4">
+                    Open Contracts
+                  </h3>
+                  <div className="space-y-3">
+                    {searchResults.contracts.map((contract, idx) => (
+                      <div
+                        key={`contract-${idx}`}
+                        className="bg-white/5 border border-white/10 rounded-lg p-4 cursor-pointer hover:bg-white/10 transition-colors"
+                        onClick={() => selectContract(contract)}
+                      >
+                        <div className="flex justify-between items-start mb-3">
+                          <div className="flex items-center gap-3">
+                            <div className="px-3 py-1 rounded text-xs font-semibold bg-emerald-600 text-white">
+                              Contract
+                            </div>
+                            <div className="text-primary font-mono text-sm">
+                              {contract.contract_id || contract.contractId || contract.id}
+                            </div>
+                          </div>
+                          <div className="px-2 py-1 rounded text-xs font-semibold bg-white/5 text-secondary border border-white/10">
+                            open
+                          </div>
+                        </div>
 
-                 {filteredInscriptions.length === 0 && !isLoadingInscriptions && (
-                   <div className="text-gray-500 dark:text-gray-400 py-6">
-                     No inscriptions found for this block.
-                   </div>
-                 )}
+                        <div className="grid grid-cols-2 gap-4 text-sm">
+                          <div>
+                            <div className="text-secondary mb-1">Block</div>
+                            <div className="text-primary">
+                              {contract.block_height || '—'}
+                            </div>
+                          </div>
+                          <div>
+                            <div className="text-secondary mb-1">Pixel Hash</div>
+                            <div className="text-primary font-mono truncate">
+                              {contract.visible_pixel_hash || contract.metadata?.visible_pixel_hash || '—'}
+                            </div>
+                          </div>
+                        </div>
 
-                  {filteredInscriptions.length > 0 && (
-                    <>
-                      <div className="columns-1 sm:columns-2 xl:columns-3 gap-6">
-                        {filteredInscriptions.map((inscription, idx) => (
-                          <InscriptionCard
-                            key={idx}
-                            inscription={inscription}
-                            onClick={setSelectedInscription}
-                          />
-                        ))}
-                        {hasMoreImages && (
-                          <div ref={sentinelRef} className="column-span-all flex justify-center py-4">
-                            <div className="text-gray-500 dark:text-gray-400">Loading more...</div>
+                        {(contract.metadata?.embedded_message || contract.metadata?.message) && (
+                          <div className="mt-3 text-xs text-secondary truncate">
+                            {contract.metadata?.embedded_message || contract.metadata?.message}
                           </div>
                         )}
                       </div>
-                      {!hasMoreImages && (
-                        <div className="column-span-all text-center text-gray-500 dark:text-gray-400 text-sm mt-4">
-                          You&apos;ve reached the end of inscriptions for this block.
-                        </div>
-                      )}
-                    </>
-                  )}
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {(!searchResults.inscriptions || searchResults.inscriptions.length === 0) &&
+               (!searchResults.contracts || searchResults.contracts.length === 0) &&
+               (!searchResults.blocks || searchResults.blocks.length === 0) && (
+                <div className="text-center py-8 text-secondary">
+                  No results found for "{searchQuery}"
+                </div>
+              )}
+            </div>
+          ) : selectedBlock && (
+            <>
+              <div className="mb-8">
+                <h2 className="text-4xl font-bold mb-4 text-primary">Block {selectedBlock.height}</h2>
+                <div className="flex items-center gap-4 text-sm">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-secondary truncate max-w-[200px] sm:max-w-none">{selectedBlock.hash}</span>
+                    {copiedText === selectedBlock.hash ? (
+                      <Check className="w-4 h-4 text-success flex-shrink-0" />
+                    ) : (
+                      <Copy
+                        className="w-4 h-4 text-secondary hover:text-primary cursor-pointer flex-shrink-0"
+                        onClick={() => copyToClipboard(selectedBlock.hash)}
+                      />
+                    )}
+                  </div>
+                </div>
+                <div className="text-secondary text-sm mt-2">
+                  {new Date(selectedBlock.timestamp * 1000).toLocaleString()} ({formatTimeAgo(selectedBlock.timestamp)})
+                </div>
               </div>
-            )}
-          </>
-        )}
+
+              {selectedBlock.isFuture ? (
+                <OpenContractsView
+                  setSelectedInscription={setSelectedInscription}
+                  refreshKey={pendingRefreshKey}
+                />
+              ) : (
+                <div className="mb-4">
+                  <div className="mb-6">
+                    <h3 className="text-primary text-lg font-bold border-b-2 border-indigo-500 pb-2 inline-block">
+                      Smart Contracts
+                    </h3>
+                  </div>
+                  {inscriptionsError && (
+                    <div className="mb-4 rounded-lg border border-error bg-error/10 text-error px-4 py-3 text-sm">
+                      {inscriptionsError}
+                    </div>
+                  )}
+
+                   {filteredInscriptions.length === 0 && isLoadingInscriptions && (
+                     <div className="starlight-gallery">
+                       {Array.from({ length: 6 }).map((_, i) => (
+                         <div key={i} className="aspect-square rounded-2xl bg-white/5 animate-pulse" />
+                       ))}
+                     </div>
+                   )}
+
+                   {filteredInscriptions.length === 0 && !isLoadingInscriptions && (
+                      <div className="text-secondary py-6">
+                        No inscriptions found for this block.
+                      </div>
+                    )}
+
+                     {filteredInscriptions.length > 0 && (
+                       <div className="starlight-gallery">
+                         {filteredInscriptions.map((inscription, idx) => (
+                           <div key={idx} className="gallery-item">
+                             <InscriptionCard
+                               inscription={inscription}
+                               onClick={setSelectedInscription}
+                             />
+                           </div>
+                         ))}
+                          {hasMoreImages && (
+                            <div ref={sentinelRef} className="flex justify-center py-8 col-span-full">
+                              <div className="spinner border-2" />
+                            </div>
+                          )}
+                       </div>
+                     )}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        {/* Intelligent Footer: only shows when reached end of content */}
+        {!hasMoreImages && blocks.length > 0 && (
+          <footer className="nav-glass h-16 flex flex-row items-center border-t border-white/5 relative z-0 shrink-0 mt-auto">
+            <div className="container mx-auto px-6 h-full flex flex-row items-center justify-between gap-12">
+              <div className="flex flex-row items-center gap-3">
+                <div className="flex items-center justify-center w-7 h-7 bg-starlight rounded-lg glow-blue">
+                  <span className="text-primary text-[10px] font-extrabold">✦</span>
+                </div>
+                 <span className="text-lg font-bold text-gradient-starlight">Starlight</span>
+              </div>
+
+              <div className="flex flex-row items-center gap-8">
+                <a
+                  href="https://github.com/macroadster"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="nav-link p-0 text-secondary hover:text-primary"
+                  title="GitHub"
+                >
+                  <Github className="w-5 h-5" />
+                </a>
+                <a
+                  href="https://x.com/howssatoshi"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="nav-link p-0 text-muted hover:text-primary"
+                  title="X (Twitter)"
+                >
+                  <span className="text-xl font-bold leading-none">𝕏</span>
+                </a>
+                <a
+                  href="https://www.linkedin.com/in/eric-yang-182a377/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="nav-link p-0 text-muted hover:text-primary"
+                  title="LinkedIn"
+                >
+                  <Linkedin className="w-5 h-5" />
+                </a>
+              </div>
+
+                <a href="/mcp/docs" className="nav-link text-muted text-sm hover:text-primary whitespace-nowrap hidden md:block">
+                  💡 Are you a builder? Try our API!
+                </a>
+             </div>
+           </footer>
+         )}
        </div>
 
-        {showInscribeModal && (
-          <InscribeModal
-            onClose={() => setShowInscribeModal(false)}
-            onSuccess={handleInscribeSuccess}
-          />
-        )}
+      {showInscribeModal && (
+        <InscribeModal
+          onClose={() => setShowInscribeModal(false)}
+          onSuccess={handleInscribeSuccess}
+        />
+      )}
 
-       {selectedInscription && (
-         <InscriptionModal
-           inscription={selectedInscription}
-           onClose={() => setSelectedInscription(null)}
-           initialTab={proposalId ? 'proposals' : 'overview'}
-         />
-       )}
-
-       <footer className="bg-gray-100 dark:bg-gray-900 border-t border-gray-300 dark:border-gray-800 mt-12">
-         <div className="container mx-auto px-6 py-6">
-           <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-             <div className="flex items-center gap-2">
-               <div className="flex items-center justify-center w-6 h-6 bg-gradient-to-br from-indigo-500 to-purple-600 rounded">
-                 <span className="text-white text-sm">✦</span>
-               </div>
-               <span className="text-gray-400">Starlight</span>
-             </div>
-             
-             <div className="flex items-center gap-6">
-               <a 
-                 href="https://github.com/macroadster" 
-                 target="_blank" 
-                 rel="noopener noreferrer"
-                 className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
-                 title="GitHub"
-               >
-                 <Github className="w-5 h-5" />
-               </a>
-               <a 
-                 href="https://x.com/howssatoshi" 
-                 target="_blank" 
-                 rel="noopener noreferrer"
-                 className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
-                 title="X (Twitter)"
-               >
-                 <span className="text-lg font-bold leading-none">𝕏</span>
-               </a>
-               <a 
-                 href="https://www.linkedin.com/in/eric-yang-182a377/" 
-                 target="_blank" 
-                 rel="noopener noreferrer"
-                 className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
-                 title="LinkedIn"
-               >
-                 <Linkedin className="w-5 h-5" />
-               </a>
-             </div>
-
-              <a href="/mcp/docs" className="text-gray-400 text-sm hover:text-gray-600 dark:hover:text-gray-200 transition-colors whitespace-nowrap">
-                💡 Are you a builder? Try our API!
-              </a>
-           </div>
-         </div>
-       </footer>
-
+      {selectedInscription && (
+        <InscriptionModal
+          inscription={selectedInscription}
+          onClose={() => setSelectedInscription(null)}
+          initialTab={proposalId ? 'proposals' : 'overview'}
+        />
+      )}
     </div>
   );
 }
