@@ -490,6 +490,31 @@ body.dark-mode {
   background-color: #1e293b !important;
 }
 
+/* Text color utilities */
+.text-primary {
+  color: #e5e7eb;
+}
+
+.text-secondary {
+  color: #9ca3af;
+}
+
+@media (prefers-color-scheme: light) {
+  .text-primary {
+    color: #1e293b;
+  }
+  .text-secondary {
+    color: #6b7280;
+  }
+}
+
+html[data-theme="light"] .text-primary {
+  color: #1e293b;
+}
+html[data-theme="light"] .text-secondary {
+  color: #6b7280;
+}
+
 /* Documentation prose styling overrides */
 .prose {
   max-width: none;
