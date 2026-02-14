@@ -606,12 +606,6 @@ html[data-theme="light"] .badge {
   }
 }
 
-@media (min-width: 1280px) {
-  .contracts-grid {
-    column-count: 4;
-  }
-}
-
 .contract-card {
   display: flex;
   flex-direction: column;
