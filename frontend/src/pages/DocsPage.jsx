@@ -90,7 +90,7 @@ const DocsPage = () => {
   const Icon = currentDoc.icon;
 
   return (
-    <div className="min-h-screen bg-app-main text-gray-900 dark:text-gray-100">
+    <div className="min-h-screen bg-app-main text-gray-900 dark:text-gray-100 page-docs">
       <AppHeader onInscribe={() => navigate('/')} />
 
       <div className="container mx-auto px-6 py-10 space-y-8">

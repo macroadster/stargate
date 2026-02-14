@@ -4702,3 +4702,9 @@ html[data-theme="light"] .deliverables-proof-content-box {
   background: #f3f4f6;
   border-color: #e5e7eb;
 }
+
+/* Disable card hover magnification on /discover and /docs pages */
+.page-discover .card-premium:hover,
+.page-docs .card-premium:hover {
+  transform: none;
+}
