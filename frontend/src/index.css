@@ -588,11 +588,28 @@ html[data-theme="light"] .badge {
   border: 1px solid rgba(0, 0, 0, 0.1) !important;
 }
 
-/* Contracts grid responsive layout */
+/* Contracts grid responsive layout - masonry style */
 .contracts-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-  gap: 1.5rem;
+  column-count: 1;
+  column-gap: 1.5rem;
+}
+
+@media (min-width: 640px) {
+  .contracts-grid {
+    column-count: 2;
+  }
+}
+
+@media (min-width: 1024px) {
+  .contracts-grid {
+    column-count: 3;
+  }
+}
+
+@media (min-width: 1280px) {
+  .contracts-grid {
+    column-count: 4;
+  }
 }
 
 .contract-card {
