@@ -592,7 +592,7 @@ function MainContent() {
 
               {searchResults.contracts && searchResults.contracts.length > 0 && (
                 <div className="mb-8">
-                  <h3 className="text-primary text-lg font-semibold border-b-2 border-success pb-2 inline-block mb-4">
+                  <h3 className="text-secondary text-lg font-semibold border-b-2 border-success pb-2 inline-block mb-4">
                     Open Contracts
                   </h3>
                   <div className="space-y-3">
@@ -733,7 +733,7 @@ function MainContent() {
             <div className="container mx-auto px-6 h-full flex flex-row items-center justify-between gap-12">
               <div className="flex flex-row items-center gap-3">
                 <div className="flex items-center justify-center w-7 h-7 bg-starlight rounded-lg glow-blue">
-                  <span className="text-primary text-[10px] font-extrabold">✦</span>
+                  <span className="text-white text-[10px] font-extrabold">✦</span>
                 </div>
                  <span className="text-lg font-bold text-gradient-starlight">Starlight</span>
               </div>
@@ -787,7 +787,7 @@ function MainContent() {
         <InscriptionModal
           inscription={selectedInscription}
           onClose={() => setSelectedInscription(null)}
-          initialTab={proposalId ? 'proposals' : 'overview'}
+          initialTab={proposalId ? 'proposals' : 'content'}
         />
       )}
     </div>

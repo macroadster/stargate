@@ -11,7 +11,7 @@ import { useAuth } from '../../context/AuthContext';
 // QR version 40-L max byte capacity (base64 uses byte mode).
 const QR_BYTE_LIMIT = 2953;
 
-const InscriptionModal = ({ inscription, onClose, initialTab = 'overview' }) => {
+const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
   const { auth } = useAuth();
   const [activeTab, setActiveTab] = useState(initialTab);
   const [monoContent, setMonoContent] = useState(true);
@@ -1159,8 +1159,7 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
               <div className="mb-6">
                 <div className="modal-tabs">
                   {[
-                    { id: 'overview', label: 'Details', icon: '📋' },
-                    { id: 'content', label: 'Content', icon: '📄' },
+                    { id: 'content', label: 'Details', icon: '📋' },
                     { id: 'proposals', label: 'Proposals', icon: '🗂️' },
                     { id: 'deliverables', label: 'Deliverables', icon: '✅' },
                     { id: 'blockchain', label: 'Blockchain', icon: '⛓️' }
@@ -1178,101 +1177,8 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
               </div>
 
 
-              {activeTab === 'overview' && (
+              {activeTab === 'content' && (
                 <div className="space-y-6">
-                  <div>
-                    <h4 className="modal-section-title">
-                      <span className="modal-section-dot purple"></span>
-                      Identity
-                    </h4>
-                    <div className="modal-identity-box space-y-3">
-                      <div className="space-y-2">
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="flex items-start gap-2">
-                            <span className="modal-data-label">Transaction ID:</span>
-                            <span className="modal-data-value font-mono text-xs break-all leading-tight">{inscription.metadata?.transaction_id || inscription.id}</span>
-                          </div>
-                          <CopyButton text={inscription.metadata?.transaction_id || inscription.id} />
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-4">
-                        <div className="flex items-center gap-2">
-                          <span className="modal-data-label">Block Height:</span>
-                          <span className="modal-data-value font-semibold">{inscription.block_height || inscription.genesis_block_height || 'Unknown'}</span>
-                        </div>
-                        {inscription.visible_pixel_hash && (
-                          <div className="flex items-center gap-2">
-                            <span className="modal-data-label">Hash:</span>
-                            <span className="modal-data-value text-indigo-400 font-mono text-xs font-bold">{inscription.visible_pixel_hash.slice(0, 16)}...</span>
-                          </div>
-                        )}
-                        <div className="flex items-center gap-2">
-                          <span className="modal-data-label">Type:</span>
-                          <span className="modal-data-value font-semibold">{inscription.mime_type?.split('/')[1]?.toUpperCase() || 'UNKNOWN'}</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div>
-                    <h4 className="modal-section-title">
-                      <span className="modal-section-dot blue"></span>
-                      File Information
-                    </h4>
-                    <div className="modal-data-grid">
-                      <div className="modal-data-card">
-                        <div className="modal-data-label">File Name</div>
-                        <div className="modal-data-value break-words">{inscription.file_name || 'N/A'}</div>
-                      </div>
-                      <div className="modal-data-card">
-                        <div className="modal-data-label">File Size</div>
-                        <div className="modal-data-value">{inscription.size_bytes ? `${(inscription.size_bytes / 1024).toFixed(2)} KB` : 'Unknown'}</div>
-                      </div>
-                      <div className="modal-data-card">
-                        <div className="modal-data-label">Content Type</div>
-                        <div className="modal-data-value">{inscription.mime_type || 'Unknown'}</div>
-                      </div>
-                      <div className="modal-data-card">
-                        <div className="modal-data-label">Contract Type</div>
-                        <div className="modal-data-value">{inscription.contract_type || 'Standard'}</div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {inscription.metadata?.is_stego && (
-                    <div>
-                      <h4 className="modal-section-title">
-                        <span className="modal-section-dot gold"></span>
-                        Steganographic Analysis
-                      </h4>
-                      <div className="modal-stego-box">
-                        <div className="modal-data-grid">
-                          <div className="modal-stego-card">
-                            <div className="modal-stego-label">Detection Status</div>
-                            <div className="modal-stego-value">Steganography Detected</div>
-                          </div>
-                          <div className="modal-stego-card">
-                            <div className="modal-stego-label">Confidence Level</div>
-                            <div className="modal-stego-value">
-                              {confidencePercent > 0 ? `${confidencePercent}%` : 'N/A'}
-                            </div>
-                          </div>
-                          {inscription.metadata.stego_type && (
-                            <div className="modal-stego-card">
-                              <div className="modal-stego-label">Method</div>
-                              <div className="modal-stego-value">{inscription.metadata.stego_type.toUpperCase()}</div>
-                            </div>
-                          )}
-                          {inscription.metadata.extracted_message && (
-                            <div className="modal-stego-card">
-                              <div className="modal-stego-label">Hidden Message</div>
-                              <div className="modal-stego-value">Available</div>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  )}
                 </div>
               )}
 
@@ -1464,42 +1370,38 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                     {psbtTasks.length === 0 && allTasks.length === 0 ? (
                       <div className="modal-data-label mt-3">No deliverables available yet.</div>
                     ) : (
-                      <div className="modal-deliverables-grid text-sm mt-3">
+                      <div className="modal-deliverables-grid text-sm mt-4" style={{ gap: '1rem' }}>
                         <div className="space-y-1">
-                          <label className="modal-deliverables-label">
+                          <label className="block modal-deliverables-label">
                             {isRaiseFund ? 'Funding target (sum of task budgets)' : 'Budget (sum of proposal tasks)'}
                           </label>
-                          <div className="modal-deliverables-box" style={{ minHeight: '2.5rem', display: 'flex', alignItems: 'center', padding: '0.5rem 0.75rem' }}>
+                          <div className="modal-deliverables-box" style={{ minHeight: '2.5rem', padding: '0.5rem 0.75rem', fontFamily: 'monospace', fontSize: '0.7rem' }}>
                             {approvedBudgetsTotal || selectedTask?.budget_sats || 'n/a'} sats
                           </div>
                         </div>
-                        <div className="space-y-2">
+                        <div className="space-y-1">
                           <label className="block modal-deliverables-label">
                             {isRaiseFund ? 'Fund deposit address' : 'Payer address'}
                           </label>
-                          <input
-                            className="modal-deliverables-input"
-                            placeholder={isRaiseFund ? 'Contract creator address' : 'Funding address'}
-                            value={
-                              isRaiseFund
-                                ? resolvedFundraiserWallet || ''
-                                : auth.wallet || fundDepositAddress || ''
-                            }
-                            readOnly
-                          />
+                          <div
+                            className="modal-deliverables-box"
+                            style={{ minHeight: '2.5rem', padding: '0.5rem 0.75rem', fontFamily: 'monospace', fontSize: '0.7rem' }}
+                          >
+                            {isRaiseFund ? resolvedFundraiserWallet || 'n/a' : auth.wallet || fundDepositAddress || 'n/a'}
+                          </div>
                         </div>
-                        <div className="md:col-span-2 grid sm:grid-cols-2 gap-2">
-                          <label className="flex items-start gap-3 modal-deliverables-checkbox-label modal-deliverables-box" style={{ padding: '0.5rem 0.75rem' }}>
+                        <div className="md:col-span-2">
+                          <label className="flex items-start gap-3 modal-deliverables-checkbox-label" style={{ padding: '0.75rem' }}>
                             <input
                               type="checkbox"
                               className="modal-deliverables-checkbox"
                               checked={psbtForm.includeDonation}
                               onChange={(e) => setPsbtForm((p) => ({ ...p, includeDonation: e.target.checked }))}
                             />
-                            <span>Donate to Starlight Project to keep lights on</span>
+                            <span style={{ marginTop: '0.125rem' }}>Donate to Starlight Project to keep lights on</span>
                           </label>
                         </div>
-                        <div className="space-y-2 md:col-span-2">
+                        <div className="space-y-1 md:col-span-2">
                           <label className="block modal-deliverables-label">Fee rate (sat/vB)</label>
                           <input
                             className="modal-deliverables-input"
@@ -1516,7 +1418,7 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                               ? 'Contributor summary by contractor wallet'
                               : 'Payout summary by contractor wallet'}
                           </div>
-                          <div className="modal-deliverables-box">
+                          <div className="modal-deliverables-box" style={{ flexDirection: 'column', gap: '0.5rem' }}>
                             {payoutSummaries.map((item) => (
                               <div key={item.wallet} className="modal-deliverables-row">
                                 <span>{item.wallet}</span>
@@ -1528,78 +1430,6 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                         <div className="space-y-2 md:col-span-2">
                           <label className="block modal-deliverables-label">Contract ID</label>
                           <div className="modal-deliverables-contract">
-                            {psbtForm.contractId || primaryContractId || 'n/a'}
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                    {psbtTasks.length === 0 && allTasks.length === 0 ? (
-                      <div className="text-sm text-gray-500 dark:text-gray-400 mt-3">No deliverables available yet.</div>
-                    ) : (
-                      <div className="grid md:grid-cols-2 gap-3 text-sm mt-3">
-                        <div className="space-y-1">
-                          <label className="text-xs text-gray-500">
-                            {isRaiseFund ? 'Funding target (sum of task budgets)' : 'Budget (sum of proposal tasks)'}
-                          </label>
-                          <div className="h-10 px-3 py-2 rounded bg-gray-100 dark:bg-gray-800 font-mono text-xs flex items-center">
-                            {approvedBudgetsTotal || selectedTask?.budget_sats || 'n/a'} sats
-                          </div>
-                        </div>
-                        <div className="space-y-2">
-                          <label className="block text-xs text-gray-500">
-                            {isRaiseFund ? 'Fund deposit address' : 'Payer address'}
-                          </label>
-                          <input
-                            className="w-full h-10 rounded bg-gray-100 dark:bg-gray-800 px-3 py-2 font-mono text-xs text-gray-600 dark:text-gray-300"
-                            placeholder={isRaiseFund ? 'Contract creator address' : 'Funding address'}
-                            value={
-                              isRaiseFund
-                                ? resolvedFundraiserWallet || ''
-                                : auth.wallet || fundDepositAddress || ''
-                            }
-                            readOnly
-                          />
-                        </div>
-                        <div className="md:col-span-2 grid sm:grid-cols-2 gap-2">
-                          <label className="flex items-start gap-3 text-xs text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-800 rounded-md px-3 py-2">
-                            <input
-                              type="checkbox"
-                              className="mt-0.5 h-4 w-4 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500 dark:border-gray-600"
-                              checked={psbtForm.includeDonation}
-                              onChange={(e) => setPsbtForm((p) => ({ ...p, includeDonation: e.target.checked }))}
-                            />
-                            <span>Donate to Starlight Project to keep lights on</span>
-                          </label>
-                        </div>
-                        <div className="space-y-2 md:col-span-2">
-                          <label className="block text-xs text-gray-500">Fee rate (sat/vB)</label>
-                          <input
-                            className="w-full h-10 rounded bg-gray-100 dark:bg-gray-800 px-3 py-2"
-                            type="number"
-                            min="1"
-                            step="1"
-                            value={psbtForm.feeRate}
-                            onChange={(e) => setPsbtForm((p) => ({ ...p, feeRate: e.target.value }))}
-                          />
-                        </div>
-                        <div className="space-y-1 md:col-span-2">
-                          <div className="text-xs text-gray-500">
-                            {isRaiseFund
-                              ? 'Contributor summary by contractor wallet'
-                              : 'Payout summary by contractor wallet'}
-                          </div>
-                          <div className="rounded bg-gray-100 dark:bg-gray-800 p-3 space-y-2 min-h-[96px]">
-                            {payoutSummaries.map((item) => (
-                              <div key={item.wallet} className="flex items-center justify-between text-xs font-mono text-gray-700 dark:text-gray-300">
-                                <span className="truncate">{item.wallet}</span>
-                                <span>{item.total} sats</span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                        <div className="space-y-2 md:col-span-2">
-                          <label className="block text-xs text-gray-500">Contract ID</label>
-                          <div className="w-full rounded bg-gray-100 dark:bg-gray-800 px-3 py-3 min-h-[48px] font-mono text-xs text-gray-500 dark:text-gray-400 flex items-center">
                             {psbtForm.contractId || primaryContractId || 'n/a'}
                           </div>
                         </div>
@@ -2281,33 +2111,6 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                         <div className="modal-blockchain-row">
                           <span className="modal-blockchain-label">Network</span>
                           <span className="modal-blockchain-value font-semibold">Bitcoin {network.charAt(0).toUpperCase() + network.slice(1)}</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div>
-                    <h4 className="modal-section-title">
-                      <span className="modal-section-dot blue"></span>
-                      File Details
-                    </h4>
-                    <div className="modal-blockchain-card blue">
-                      <div className="modal-blockchain-grid">
-                        <div className="modal-blockchain-grid-item">
-                          <div className="modal-blockchain-grid-label">File Name</div>
-                          <div className="modal-blockchain-grid-value">{inscription.file_name || 'N/A'}</div>
-                        </div>
-                        <div className="modal-blockchain-grid-item">
-                          <div className="modal-blockchain-grid-label">File Size</div>
-                          <div className="modal-blockchain-grid-value">{inscription.size_bytes ? `${(inscription.size_bytes / 1024).toFixed(2)} KB` : 'Unknown'}</div>
-                        </div>
-                        <div className="modal-blockchain-grid-item">
-                          <div className="modal-blockchain-grid-label">Content Type</div>
-                          <div className="modal-blockchain-grid-value">{inscription.mime_type || 'Unknown'}</div>
-                        </div>
-                        <div className="modal-blockchain-grid-item">
-                          <div className="modal-blockchain-grid-label">Contract Type</div>
-                          <div className="modal-blockchain-grid-value">{inscription.contract_type || 'Standard'}</div>
                         </div>
                       </div>
                     </div>

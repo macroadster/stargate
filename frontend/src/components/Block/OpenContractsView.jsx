@@ -108,7 +108,7 @@ const OpenContractsView = ({ setSelectedInscription, refreshKey }) => {
   return (
     <div className="mb-4">
       <div className="mb-6">
-        <h2 className="text-black dark:text-white text-2xl font-bold border-b-4 border-yellow-500 pb-2 inline-block">
+        <h2 className="page-subtitle text-2xl font-bold pb-2 inline-block">
           Open Contracts
         </h2>
       </div>

@@ -170,8 +170,8 @@ export default function DiscoverPage() {
       <div className="container mx-auto px-6 py-10 space-y-8">
         <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-6">
           <div className="flex-1">
-            <h1 className="text-4xl font-black text-gray-900 dark:text-white uppercase tracking-tight leading-none mb-2">Discover</h1>
-            <p className="text-xs text-starlight font-bold uppercase tracking-widest opacity-70">
+            <h1 className="text-4xl font-black page-title uppercase tracking-tight leading-none mb-2">Discover</h1>
+            <p className="text-xs page-subtitle uppercase tracking-widest opacity-70">
               Browse proposals and tasks by status, skills, budget, or contract.
             </p>
           </div>

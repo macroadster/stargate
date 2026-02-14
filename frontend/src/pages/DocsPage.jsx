@@ -97,8 +97,8 @@ const DocsPage = () => {
         {/* Header */}
         <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-6">
           <div className="flex-1">
-            <h1 className="text-4xl font-black text-starlight uppercase tracking-tight leading-none mb-2">Documentation</h1>
-            <p className="text-xs text-starlight font-bold uppercase tracking-widest opacity-70">
+            <h1 className="text-4xl font-black page-title uppercase tracking-tight leading-none mb-2">Documentation</h1>
+            <p className="text-xs page-subtitle font-bold uppercase tracking-widest opacity-70">
               Complete guides and reference materials for the Starlight platform.
             </p>
           </div>

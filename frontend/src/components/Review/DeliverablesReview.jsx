@@ -708,7 +708,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
                             <div className="deliverables-compare-notes-label">Notes</div>
                             <div className="deliverables-compare-notes-box">
                               {isExpanded ? renderMarkdown(notes || 'No notes provided.') : (
-                                <pre className="text-xs text-gray-700 dark:text-gray-300 whitespace-pre-wrap overflow-x-auto max-w-full">
+                                <pre className="deliverables-notes-preview">
                                   {preview || 'No notes provided.'}
                                 </pre>
                               )}
@@ -726,7 +726,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
 
                           <div className="mt-3 space-y-2">
                             <textarea
-                              className="w-full rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-xs px-2 py-1"
+                              className="deliverables-textarea"
                               placeholder="Review notes (optional)"
                               rows={2}
                               value={reviewNotes[submissionId] || ''}
@@ -864,7 +864,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
                         <span>Words: {wordCount}</span>
                         <span>Status: {statusText}</span>
                       </div>
-                      <pre className="text-xs text-gray-700 dark:text-gray-300 whitespace-pre-wrap overflow-x-auto max-w-full">
+                      <pre className="deliverables-notes-preview">
                         {preview || 'No notes provided.'}
                       </pre>
                     </div>
@@ -872,14 +872,14 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
                 })()}
 
                 {expandedTasks[deliverable.task_id] && (
-                  <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700 space-y-4">
+                    <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700 space-y-4">
                   <div>
-                    <h6 className="text-sm font-semibold text-black dark:text-white mb-2">Deliverable Details</h6>
+                    <h6 className="deliverables-section-title mb-2">Deliverable Details</h6>
                     <div className="deliverables-notes-box">
                       {deliverable.submission?.submitted_at && (
                         <div className="flex items-start justify-between gap-2">
                           <span className="text-sm text-gray-600 dark:text-gray-400">Submitted At:</span>
-                          <span className="text-sm text-black dark:text-white">
+                          <span className="text-sm">
                             {new Date(deliverable.submission.submitted_at).toLocaleString()}
                           </span>
                         </div>
@@ -887,7 +887,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
                       <div className="flex items-start justify-between gap-2">
                         <span className="text-sm text-gray-600 dark:text-gray-400">Task ID:</span>
                         <div className="flex items-center gap-2">
-                          <span className="text-sm font-mono text-black dark:text-white">{deliverable.task_id}</span>
+                          <span className="text-sm font-mono">{deliverable.task_id}</span>
                           <CopyButton text={deliverable.task_id} />
                         </div>
                       </div>
@@ -895,7 +895,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
                         <div className="flex items-start justify-between gap-2">
                           <span className="text-sm text-gray-600 dark:text-gray-400">Claim ID:</span>
                           <div className="flex items-center gap-2">
-                            <span className="text-sm font-mono text-black dark:text-white">
+                            <span className="text-sm font-mono">
                               {deliverable.submission?.claim_id || deliverable.active_claim_id}
                             </span>
                             <CopyButton text={deliverable.submission?.claim_id || deliverable.active_claim_id} />
@@ -905,7 +905,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
                       <div className="flex items-start justify-between gap-2">
                         <span className="text-sm text-gray-600 dark:text-gray-400">Submission ID:</span>
                         <div className="flex items-center gap-2">
-                          <span className="text-sm font-mono text-black dark:text-white">
+                          <span className="text-sm font-mono">
                             {deliverable.submission?.submission_id || deliverable.submission?.id || deliverable.active_claim_id}
                           </span>
                           <CopyButton text={deliverable.submission?.submission_id || deliverable.submission?.id || deliverable.active_claim_id} />
@@ -914,7 +914,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
                       {deliverable.skills_required && deliverable.skills_required.length > 0 && (
                         <div className="flex items-start justify-between gap-2">
                           <span className="text-sm text-gray-600 dark:text-gray-400">Required Skills:</span>
-                          <span className="text-sm text-black dark:text-white">
+                          <span className="text-sm">
                             {deliverable.skills_required.join(', ')}
                           </span>
                         </div>
@@ -924,7 +924,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
 
                   {deliverable.submission?.deliverables?.notes && (
                     <div>
-                      <h6 className="text-sm font-semibold text-black dark:text-white mb-2">Submission Notes</h6>
+                      <h6 className="deliverables-section-title mb-2">Submission Notes</h6>
                       <div className="deliverables-notes-box" style={{ maxHeight: '60vh', overflowY: 'auto' }}>
                         {renderMarkdown(deliverable.submission.deliverables.notes)}
                       </div>
@@ -933,7 +933,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
 
                   {(deliverable.submission?.rejection_reason || deliverable.submission?.rejection_type) && (
                     <div>
-                      <h6 className="text-sm font-semibold text-black dark:text-white mb-2">Rejection Feedback</h6>
+                      <h6 className="deliverables-section-title mb-2">Rejection Feedback</h6>
                       <div className="deliverables-compare-rejection">
                         {deliverable.submission?.rejection_type && (
                           <div className="text-xs font-semibold uppercase tracking-wide">
@@ -956,7 +956,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
 
                   {deliverable.submission?.deliverables?.document && (
                     <div>
-                      <h6 className="text-sm font-semibold text-black dark:text-white mb-2">Submission Document</h6>
+                      <h6 className="deliverables-section-title mb-2">Submission Document</h6>
                       <div className="deliverables-notes-box" style={{ maxHeight: '60vh', overflowY: 'auto' }}>
                         {renderMarkdown(deliverable.submission.deliverables.document)}
                       </div>
@@ -969,7 +969,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
                     if (timeline.length === 0) return null;
                     return (
                       <div>
-                        <h6 className="text-sm font-semibold text-black dark:text-white mb-2">Submission Timeline</h6>
+                        <h6 className="deliverables-section-title mb-2">Submission Timeline</h6>
                         <div className="space-y-3">
                           {timeline.map((submission, index) => {
                             const submissionId = getSubmissionId(submission, `${deliverable.task_id}-${index}`);
@@ -1052,7 +1052,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
                   {/* Debug section - can be removed in production */}
                   {import.meta.env.DEV && (
                     <div>
-                      <h6 className="text-sm font-semibold text-black dark:text-white mb-2">Debug: Submission Data</h6>
+                      <h6 className="deliverables-section-title mb-2">Debug: Submission Data</h6>
                       <div className="bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg p-3 space-y-2">
                         <div className="text-xs">
                           <strong>Current Status:</strong> {deliverable.submission?.status || 'undefined'}
@@ -1074,7 +1074,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
 
                   {deliverable.submission?.completion_proof && (
                     <div>
-                      <h6 className="text-sm font-semibold text-black dark:text-white mb-2">Completion Proof</h6>
+                      <h6 className="deliverables-section-title mb-2">Completion Proof</h6>
                       <div className="deliverables-notes-box" style={{ background: 'rgba(34, 197, 94, 0.1)', borderColor: 'rgba(34, 197, 94, 0.2)' }}>
                         {deliverable.submission.completion_proof.link && (
                           <div className="flex items-center justify-between gap-2">
@@ -1176,10 +1176,10 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
                     return showReviewActions;
                   })() && (
                     <div>
-                      <h6 className="text-sm font-semibold text-black dark:text-white mb-2">Review Actions</h6>
+                      <h6 className="deliverables-section-title mb-2">Review Actions</h6>
                       <div className="space-y-3">
                         <textarea
-                          className="w-full rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm px-3 py-2"
+                          className="deliverables-textarea"
                           placeholder="Review notes (optional)"
                           rows={3}
                           value={reviewNotes[deliverable.submissionKey] || ''}

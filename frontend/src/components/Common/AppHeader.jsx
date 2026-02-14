@@ -56,7 +56,7 @@ const AppHeader = ({
               className="flex flex-row items-center gap-3 p-0 bg-transparent border-none cursor-pointer group"
             >
               <div className="flex items-center justify-center w-8 h-8 bg-starlight rounded-lg glow-blue group-hover:scale-105 transition-transform">
-                <span className="text-black dark:text-white text-lg font-extrabold">✦</span>
+                <span className="text-white text-lg font-extrabold">✦</span>
               </div>
               <h1 className="text-2xl font-bold text-gradient-starlight m-0">Starlight</h1>
             </button>
@@ -108,7 +108,6 @@ const AppHeader = ({
                     <MoreVertical className="w-5 h-5" />
                   </button>
                   <div className="dropdown-menu active" style={{ right: 0, left: 'auto' }}>
-                    <button onClick={() => { navigate('/mcp/docs'); setIsDropdownOpen(false); }} className="dropdown-item">MCP Gateway</button>
                     {showBrcToggle && (
                       <button
                         onClick={() => {
@@ -180,7 +179,6 @@ const AppHeader = ({
             <li><button onClick={() => { navigate('/contracts'); setIsMenuOpen(false); }} className="nav-link">Contracts</button></li>
             <li><button onClick={() => { navigate('/discover'); setIsMenuOpen(false); }} className="nav-link">Discover</button></li>
             <li><button onClick={() => { navigate('/docs'); setIsMenuOpen(false); }} className="nav-link">Help</button></li>
-            <li><button onClick={() => { navigate('/mcp/docs'); setIsMenuOpen(false); }} className="nav-link">MCP Gateway</button></li>
             {showBrcToggle && (
               <li>
                 <button 

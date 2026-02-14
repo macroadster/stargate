@@ -54,8 +54,8 @@ export default function ContractsPage() {
       <AppHeader onInscribe={() => navigate('/')} />
       <div className="w-full mx-auto px-6 py-10 space-y-8">
         <div>
-          <h1 className="text-4xl font-black text-gray-900 dark:text-white uppercase tracking-tight leading-none mb-2">Contracts</h1>
-          <p className="text-xs text-starlight font-bold uppercase tracking-widest opacity-70">
+          <h1 className="text-4xl font-black page-title">Contracts</h1>
+          <p className="text-xs page-subtitle uppercase tracking-widest opacity-70">
             Newest contracts first, with infinite scroll.
           </p>
         </div>

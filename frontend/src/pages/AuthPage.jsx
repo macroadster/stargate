@@ -98,12 +98,12 @@ export default function AuthPage() {
   };
 
   const renderLogin = () => (
-    <div className="bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl p-6 shadow-lg">
-      <h2 className="text-xl font-semibold mb-2">Sign In</h2>
-      <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">Use an existing API key.</p>
+    <div className="auth-card">
+      <h2 className="text-xl font-semibold mb-2 auth-card-title">Sign In</h2>
+      <p className="text-sm mb-4 auth-card-text">Use an existing API key.</p>
       {savedWallets.length > 0 && (
         <div className="mb-4">
-          <label className="block text-sm mb-2">Saved wallets</label>
+          <label className="block text-sm mb-2 auth-card-label">Saved wallets</label>
           <select
             className="form-select w-full h-10 mb-2 px-3 rounded-lg"
             onChange={(e) => setLoginKey(e.target.value)}
@@ -118,7 +118,7 @@ export default function AuthPage() {
           </select>
         </div>
       )}
-      <label className="block text-sm mb-2">API Key</label>
+      <label className="block text-sm mb-2 auth-card-label">API Key</label>
       <input
         className="form-input w-full mb-4 px-3 py-2 rounded-lg"
         value={loginKey}
@@ -127,12 +127,12 @@ export default function AuthPage() {
       />
       <button
         onClick={handleLogin}
-        className="w-full bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg py-2 font-semibold"
+        className="w-full auth-btn-primary"
       >
         Sign In
       </button>
       {apiKey && (
-        <div className="mt-4 text-xs break-all bg-gray-100 dark:bg-gray-800 rounded-lg p-3 border border-dashed border-gray-300 dark:border-gray-700">
+        <div className="mt-4 text-xs break-all auth-card-highlight">
           Saved key: {apiKey}
         </div>
       )}
@@ -141,18 +141,18 @@ export default function AuthPage() {
 
 
   const renderWallet = () => (
-    <div className="bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl p-6 shadow-lg">
-      <h2 className="text-xl font-semibold mb-2">Wallet Challenge</h2>
-      <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">Sign the nonce with Bitcoin signmessage (mainnet or testnet3/4) to issue a key.</p>
-      <div className="text-xs text-gray-500 dark:text-gray-400 mb-4 space-y-1">
-        <div>1) Click “Get challenge”.</div>
-        <div>2) Sign the nonce with your wallet’s <code className="font-mono">signmessage</code>.</div>
-        <div>3) Paste the base64 signature and click “Verify & Issue Key”.</div>
+    <div className="auth-card">
+      <h2 className="text-xl font-semibold mb-2 auth-card-title">Wallet Challenge</h2>
+      <p className="text-sm mb-4 auth-card-text">Sign the nonce with Bitcoin signmessage (mainnet or testnet3/4) to issue a key.</p>
+      <div className="text-xs mb-4 space-y-1 auth-card-text">
+        <div>1) Click "Get challenge".</div>
+        <div>2) Sign the nonce with your wallet's <code className="font-mono">signmessage</code>.</div>
+        <div>3) Paste the base64 signature and click "Verify & Issue Key".</div>
         <div className="text-[11px]">Message to sign = nonce exactly as shown (no extra whitespace).</div>
       </div>
-      <label className="block text-sm mb-2">Wallet address</label>
+      <label className="block text-sm mb-2 auth-card-label">Wallet address</label>
       <input
-        className="w-full mb-3 px-3 py-2 rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700"
+        className="w-full mb-3 px-3 py-2 rounded-lg auth-card-input"
         value={wallet}
         onChange={(e) => setWallet(e.target.value)}
         placeholder="bc1... (mainnet) or tb1... (testnet3/4)"
@@ -160,30 +160,30 @@ export default function AuthPage() {
       <div className="flex gap-2 mb-3">
         <button
           onClick={handleChallenge}
-          className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg py-2 font-semibold"
+          className="flex-1 auth-btn-secondary"
         >
           Get challenge
         </button>
         <button
           onClick={() => setChallenge('')}
-          className="px-3 py-2 text-xs text-gray-500 dark:text-gray-400"
+          className="auth-btn-clear"
         >
           Clear
         </button>
       </div>
       {challenge && (
-        <div className="mb-3 text-xs bg-gray-100 dark:bg-gray-800 border border-dashed border-gray-300 dark:border-gray-700 rounded-lg p-2 break-all">
+        <div className="mb-3 text-xs auth-card-highlight">
           <div>Nonce to sign: {challenge}</div>
           <div className="mt-2 flex justify-center">
-            <div className="bg-gray-50 p-2 rounded">
+            <div className="auth-card-qr-bg p-2 rounded">
               <QRCodeCanvas value={challenge} size={140} level="M" includeMargin />
             </div>
           </div>
         </div>
       )}
-      <label className="block text-sm mb-2">Signature (base64)</label>
+      <label className="block text-sm mb-2 auth-card-label">Signature (base64)</label>
       <textarea
-        className="w-full mb-3 px-3 py-2 rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700"
+        className="w-full mb-3 px-3 py-2 rounded-lg auth-card-input"
         rows={2}
         value={signature}
         onChange={(e) => setSignature(e.target.value)}
@@ -191,7 +191,7 @@ export default function AuthPage() {
       />
       <button
         onClick={handleVerify}
-        className="w-full bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg py-2 font-semibold"
+        className="w-full auth-btn-primary"
       >
         Verify & Issue Key
       </button>
@@ -204,17 +204,17 @@ export default function AuthPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-950 text-gray-900 dark:text-gray-50 flex items-center justify-center px-4">
+    <div className="auth-page-container">
       <div className="w-full max-w-xl space-y-4">
         <div className="flex justify-center gap-3 text-sm">
           <button
-            className={`px-3 py-1 rounded-full border ${view === 'login' ? 'bg-emerald-600 text-white border-emerald-600' : 'border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-300'}`}
+            className={`auth-tab ${view === 'login' ? 'auth-tab-active' : 'auth-tab-inactive'}`}
             onClick={() => setView('login')}
           >
             Sign In (API key)
           </button>
           <button
-            className={`px-3 py-1 rounded-full border ${view === 'wallet' ? 'bg-amber-600 text-white border-amber-600' : 'border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-300'}`}
+            className={`auth-tab ${view === 'wallet' ? 'auth-tab-active-wallet' : 'auth-tab-inactive'}`}
             onClick={() => setView('wallet')}
           >
             Wallet Challenge
@@ -225,7 +225,7 @@ export default function AuthPage() {
       </div>
 
       {status && (
-        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 bg-gray-900 text-white px-4 py-2 rounded-full shadow-lg text-sm">
+        <div className="auth-status-toast">
           {status}
         </div>
       )}
