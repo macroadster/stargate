@@ -1,5 +1,18 @@
 @import '@howssatoshi/quantumcss/dist/quantum.min.css';
 
+/* Dropdown menu override to match menu bar */
+.dropdown-menu {
+  background: rgba(30, 41, 59, 0.95) !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+}
+
+@media (prefers-color-scheme: light), html[data-theme="light"] {
+  .dropdown-menu {
+    background: rgba(255, 255, 255, 0.98) !important;
+    border: 1px solid rgba(0, 0, 0, 0.1) !important;
+  }
+}
+
 /* Page title styles for Contracts, Discover, Help pages */
 .page-title {
   color: #ffffff;
@@ -430,6 +443,12 @@ html[data-theme="light"] .auth-tab-inactive {
 .nav-item:hover { background: transparent !important; }
 .nav-link:hover { color: var(--color-starlight-blue) !important; }
 
+/* Mobile menu overflow fix */
+.nav-menu-mobile {
+  overflow-y: auto !important;
+  max-height: calc(100vh - 80px) !important;
+}
+
 /* Custom Scrollbar for specific sections */
 .custom-scrollbar::-webkit-scrollbar {
   width: 4px;
@@ -632,10 +651,13 @@ html[data-theme="light"] .contract-card {
   }
 }
 
-/* Hide Hash on mobile (under 640px) */
+/* Show Hash on mobile (under 640px), hide ID */
 @media (max-width: 639px) {
-  .contract-hash {
+  .contract-id {
     display: none;
+  }
+  .contract-hash {
+    display: block;
   }
 }
 
@@ -652,7 +674,7 @@ html[data-theme="light"] .contract-card {
 }
 
 .modal-container {
-  background: rgba(22, 27, 34, 0.95);
+  background: rgba(30, 41, 59, 0.95);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 12px;
   max-width: 80rem;
@@ -690,7 +712,7 @@ html[data-theme="light"] .modal-container {
 
 .create-contract-modal {
   padding: 1.5rem;
-  background: rgba(22, 27, 34, 0.95);
+  background: rgba(30, 41, 59, 0.95);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 12px;
   backdrop-filter: blur(12px);
@@ -976,6 +998,13 @@ html[data-theme="light"] .deliverables-notes-preview {
   gap: 1.5rem;
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
   padding-bottom: 0.75rem;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.modal-tabs::-webkit-scrollbar {
+  display: none;
 }
 
 @media (prefers-color-scheme: light) {
@@ -4707,4 +4736,23 @@ html[data-theme="light"] .deliverables-proof-content-box {
 .page-discover .card-premium:hover,
 .page-docs .card-premium:hover {
   transform: none;
+}
+
+/* Fix overflow on discover page mobile */
+.page-discover {
+  overflow-x: hidden;
+}
+
+.page-discover .card-premium {
+  overflow: hidden;
+}
+
+.page-discover .grid {
+  overflow-x: hidden;
+}
+
+@media (max-width: 1023px) {
+  .page-discover .grid > * {
+    min-width: 0;
+  }
 }

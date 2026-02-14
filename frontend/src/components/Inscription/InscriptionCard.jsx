@@ -141,7 +141,7 @@ const InscriptionCard = ({ inscription, onClick }) => {
           )}
         </div>
         
-        <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/5 to-transparent opacity-100">
+        <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent opacity-100">
           <div className="absolute bottom-0 left-0 right-0 p-3 text-white">
             <div className="text-xs uppercase tracking-wide text-white/70">
               {inscription.genesis_block_height ? `Block #${inscription.genesis_block_height}` : 'Smart Contract'}
