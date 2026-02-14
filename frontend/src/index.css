@@ -449,6 +449,10 @@ html[data-theme="light"] .auth-tab-inactive {
   max-height: calc(100vh - 80px) !important;
 }
 
+.nav-menu-mobile:not(.active) {
+  display: none !important;
+}
+
 /* Custom Scrollbar for specific sections */
 .custom-scrollbar::-webkit-scrollbar {
   width: 4px;
