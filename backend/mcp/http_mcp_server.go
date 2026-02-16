@@ -1349,18 +1349,37 @@ func (h *HTTPMCPServer) handleSubmitWork(ctx context.Context, args map[string]in
 					return nil, NewInternalError("submit_work", fmt.Sprintf("Failed to decode artifact %d (%s): %v", i, filename, err))
 				}
 
-				// Create secure file path
-				safeFilename := filepath.Base(filename)
-				if safeFilename == "" || safeFilename == "." || safeFilename == ".." {
-					safeFilename = fmt.Sprintf("artifact_%d", i)
+				// Create secure file path - preserve directory structure
+				// First, sanitize only the basename to prevent directory traversal
+				filename = strings.ReplaceAll(filename, "..", "")
+				
+				// Get the directory portion and filename portion
+				dir := filepath.Dir(filename)
+				baseName := filepath.Base(filename)
+				
+				// Sanitize just the basename
+				baseName = strings.ReplaceAll(baseName, "..", "")
+				baseName = strings.ReplaceAll(baseName, "/", "_")
+				baseName = strings.ReplaceAll(baseName, "\\", "_")
+				
+				if baseName == "" || baseName == "." || baseName == ".." {
+					baseName = fmt.Sprintf("artifact_%d", i)
+				}
+				
+				// Create subdirectory if needed (sanitize dir path too)
+				dir = strings.ReplaceAll(dir, "..", "")
+				dir = strings.ReplaceAll(dir, "\\", "_")
+				
+				subDirPath := resultsDir
+				if dir != "." && dir != "" {
+					subDirPath = filepath.Join(resultsDir, dir)
+				}
+				
+				if err := os.MkdirAll(subDirPath, 0755); err != nil {
+					return nil, NewInternalError("submit_work", fmt.Sprintf("Failed to create artifact subdirectory: %v", err))
 				}
 
-				// Sanitize filename
-				safeFilename = strings.ReplaceAll(safeFilename, "..", "")
-				safeFilename = strings.ReplaceAll(safeFilename, "/", "_")
-				safeFilename = strings.ReplaceAll(safeFilename, "\\", "_")
-
-				filePath := filepath.Join(resultsDir, safeFilename)
+				filePath := filepath.Join(subDirPath, baseName)
 
 				// Write file
 				if err := os.WriteFile(filePath, fileData, 0644); err != nil {
@@ -1372,13 +1391,17 @@ func (h *HTTPMCPServer) handleSubmitWork(ctx context.Context, args map[string]in
 					contentType = http.DetectContentType(fileData)
 				}
 
-				// Create file info for response
+				// Create file info for response - preserve relative path
+				relativePath := baseName
+				if dir != "." && dir != "" {
+					relativePath = filepath.Join(dir, baseName)
+				}
 				fileInfo := map[string]interface{}{
-					"filename":      safeFilename,
+					"filename":      relativePath,
 					"original_name": filename,
 					"size":          len(fileData),
 					"content_type":  contentType,
-					"path":          fmt.Sprintf("/uploads/results/%s/%s", subDir, safeFilename),
+					"path":          fmt.Sprintf("/uploads/results/%s/%s", subDir, relativePath),
 				}
 				processedArtifacts = append(processedArtifacts, fileInfo)
 			}
