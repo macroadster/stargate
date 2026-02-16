@@ -1383,6 +1383,7 @@ func (h *HTTPMCPServer) handleSubmitWork(ctx context.Context, args map[string]in
 				}
 
 				filePath := filepath.Join(subDirPath, baseName)
+				fmt.Printf("DEBUG: Writing file to: %s\n", filePath)
 
 				// Write file
 				if err := os.WriteFile(filePath, fileData, 0644); err != nil {
