@@ -1357,6 +1357,9 @@ func (h *HTTPMCPServer) handleSubmitWork(ctx context.Context, args map[string]in
 				dir := filepath.Dir(filename)
 				baseName := filepath.Base(filename)
 				
+				// DEBUG: Log what we're processing
+				fmt.Printf("DEBUG: Processing artifact - original: %s, dir: %s, baseName: %s\n", filename, dir, baseName)
+				
 				// Sanitize just the basename
 				baseName = strings.ReplaceAll(baseName, "..", "")
 				baseName = strings.ReplaceAll(baseName, "/", "_")
