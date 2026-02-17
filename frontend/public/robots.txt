@@ -3,7 +3,7 @@ User-agent: *
 Allow: /
 
 # Sitemap location
-Sitemap: https://starlight.local/sitemap.xml
+Sitemap: https://starlight-ai.freemyip.com/sitemap.xml
 
 # Block common development/build files
 Disallow: /build/

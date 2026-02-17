@@ -14,7 +14,9 @@ const path = require('path');
 
 // Configuration
 const SITE_URL = process.env.SITE_URL || 'https://starlight.local';
-const OUTPUT_PATH = path.join(__dirname, '..', 'public', 'sitemap.xml');
+const OUTPUT_PATH = path.join(__dirname, '..', 'build', 'sitemap.xml');
+const PUBLIC_PATH = path.join(__dirname, '..', 'public');
+const BUILD_PATH = path.join(__dirname, '..', 'build');
 
 // Static routes from the application
 const staticRoutes = [
@@ -141,8 +143,20 @@ async function generateSitemapFile() {
 
     const sitemapContent = generateSitemap(routes);
     
-    // Write sitemap to public directory
+    // Write sitemap to build directory
     fs.writeFileSync(OUTPUT_PATH, sitemapContent, 'utf8');
+    
+    // Copy static files to build directory
+    const staticFiles = ['robots.txt', 'sitemap-index.xml'];
+    staticFiles.forEach(file => {
+      const src = path.join(PUBLIC_PATH, file);
+      const dest = path.join(BUILD_PATH, file);
+      if (fs.existsSync(src)) {
+        let content = fs.readFileSync(src, 'utf8');
+        content = content.replace(/https:\/\/starlight\.local/g, SITE_URL);
+        fs.writeFileSync(dest, content, 'utf8');
+      }
+    });
     
     console.log(`✅ Sitemap generated successfully!`);
     console.log(`📍 Location: ${OUTPUT_PATH}`);

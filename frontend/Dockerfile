@@ -10,6 +10,9 @@ RUN npm ci && npm cache clean --force
 # Copy source code after dependencies are installed
 COPY . .
 
+# Set default SITE_URL for sitemap generation
+ENV SITE_URL=https://starlight-ai.freemyip.com
+
 # Copy documentation files
 COPY docs/ ./docs/
 
