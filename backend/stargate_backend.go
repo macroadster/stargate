@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
@@ -162,20 +161,23 @@ func customUploadsHandler(uploadsDir string) http.HandlerFunc {
 			return
 		}
 
-		// Read file content for MIME type detection
-		file, err := os.Open(filePath)
+		// Read entire file once for both MIME detection and serving
+		// This avoids reading the file twice from disk
+		content, err := os.ReadFile(filePath)
 		if err != nil {
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
-		defer file.Close()
-
-		// Read first 512 bytes for MIME detection
-		buffer := make([]byte, 512)
-		n, _ := file.Read(buffer)
 
 		// Detect MIME type using content-based detection (Stealth Design)
-		mimeType := detectMimeType(buffer[:n], filepath.Base(relPath))
+		// Use first 512 bytes for detection, same as before
+		var sample []byte
+		if len(content) > 512 {
+			sample = content[:512]
+		} else {
+			sample = content
+		}
+		mimeType := detectMimeType(sample, filepath.Base(relPath))
 		if mimeType == "" {
 			mimeType = "application/octet-stream"
 		}
@@ -185,9 +187,8 @@ func customUploadsHandler(uploadsDir string) http.HandlerFunc {
 		w.Header().Set("Cache-Control", "public, max-age=3600")
 		w.Header().Set("Content-Length", strconv.FormatInt(fileInfo.Size(), 10))
 
-		// Reset file pointer and copy to response
-		_, _ = file.Seek(0, 0)
-		io.Copy(w, file)
+		// Write cached content to response
+		_, _ = w.Write(content)
 	}
 }
 

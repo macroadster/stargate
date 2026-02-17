@@ -262,8 +262,8 @@ make backend
 make frontend
 
 # 2. Update deployment to use local images
-kubectl rollout restart deployment/stargate-backend:latest -n default
-kubectl rollout restart deployment/stargate-frontend:latest -n default
+kubectl rollout restart deployment/stargate-backend -n default
+kubectl rollout restart deployment/stargate-frontend -n default
 
 # 3. Wait for rollout
 kubectl wait --for=condition=available --timeout=60s deployment/stargate-backend -n default
