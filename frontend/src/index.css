@@ -2211,6 +2211,11 @@ html[data-theme="light"] .modal-psbt-result {
   background: #f3f4f6;
 }
 
+html[data-theme="dark"] .modal-psbt-result {
+  background: rgba(30, 41, 59, 0.5);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
 .modal-psbt-row {
   font-size: 0.688rem;
   color: #9ca3af;
