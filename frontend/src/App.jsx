@@ -54,7 +54,7 @@ function MainContent() {
   const [hideBrc20, setHideBrc20] = useState(true);
   const [pendingRefreshKey, setPendingRefreshKey] = useState(0);
   const { elRef: scrollRef, isDragging } = useHorizontalScroll();
-  // MCP proposal management handled in inscription modal.
+  const prevBlocksLengthRef = useRef(0);
 
   const {
     blocks,
@@ -67,6 +67,17 @@ function MainContent() {
     loadMoreBlocks,
     refreshBlocks
   } = useBlocks();
+
+  useEffect(() => {
+    const newBlock = blocks.find(b => b.isNew);
+    if (newBlock && scrollRef.current && blocks.length > prevBlocksLengthRef.current) {
+      scrollRef.current.scrollTo({
+        left: 0,
+        behavior: 'smooth'
+      });
+    }
+    prevBlocksLengthRef.current = blocks.length;
+  }, [blocks, scrollRef]);
 
   const handleBlockSelect = (block) => {
     if (isDragging) return; // Prevent click if a drag occurred
@@ -367,49 +378,6 @@ function MainContent() {
     setSearchQuery('');
     setSearchResults(null);
   };
-
-  const selectContract = (contract) => {
-    const metadata = contract.metadata || {};
-    const visiblePixelHash = contract.visible_pixel_hash || metadata.visible_pixel_hash || '';
-    const contractId = contract.contract_id || contract.contractId || contract.id;
-    
-    // Determine image URL:
-    // - If status is 'confirmed' and we have a confirmed txid, use /content/[txid]
-    // - Otherwise, use /uploads/[visible_pixel_hash]
-    let imageUrl = '';
-    const status = (contract.status || metadata.confirmation_status || '').toLowerCase();
-    const confirmedTxid = metadata.confirmed_txid || metadata.tx_id || '';
-    
-    if (status === 'confirmed' && confirmedTxid) {
-      imageUrl = `${CONTENT_BASE}/content/${confirmedTxid}`;
-    } else if (visiblePixelHash) {
-      imageUrl = `${CONTENT_BASE}/uploads/${visiblePixelHash}`;
-    } else if (contract.stego_image_url || contract.stegoImageUrl) {
-      const rawUrl = contract.stego_image_url || contract.stegoImageUrl || '';
-      imageUrl = rawUrl && !rawUrl.startsWith('http') ? `${CONTENT_BASE}${rawUrl}` : rawUrl;
-    }
-    
-    const wishText = metadata.wish_text || metadata.embedded_message || metadata.message || '';
-    const inscription = {
-      id: contractId,
-      contract_type: contract.contract_type || 'Smart Contract',
-      metadata: {
-        ...metadata,
-        visible_pixel_hash: visiblePixelHash,
-        is_stego: true,
-      },
-      image_url: imageUrl,
-      mime_type: metadata.content_type || 'image/png',
-      text: wishText,
-      genesis_block_height: contract.block_height || 0,
-      block_height: contract.block_height || 0,
-      status: status || 'pending',
-    };
-    setSelectedInscription(inscription);
-    clearSearch();
-  };
-
-  // Top-level proposals panel removed; handled in inscription modal.
 
   const copyToClipboard = async (text) => {
     try {

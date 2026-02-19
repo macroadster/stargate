@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Search, X, Moon, Sun, Monitor, Menu, MoreVertical, Check, LogOut } from 'lucide-react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
 
@@ -16,7 +16,6 @@ const AppHeader = ({
   onToggleBrc20,
   showThemeToggle = true,
   isDarkMode: propIsDarkMode,
-  onToggleTheme: propOnToggleTheme
 }) => {
   const navigate = useNavigate();
   const { auth, signOut } = useAuth();
@@ -25,7 +24,6 @@ const AppHeader = ({
   const isDarkMode = themeContext ? themeContext.isDarkMode : (propIsDarkMode || false);
   const useSystemTheme = themeContext ? themeContext.useSystemTheme : false;
   const setTheme = themeContext ? themeContext.setTheme : (() => {});
-  const onToggleTheme = themeContext ? themeContext.toggleTheme : (propOnToggleTheme || (() => {}));
 
   const cycleTheme = () => {
     if (useSystemTheme) {
@@ -106,8 +104,22 @@ const AppHeader = ({
                       placeholder="Search..."
                       value={searchQuery}
                       onChange={(e) => onSearchChange?.(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Escape') {
+                          onClearSearch?.();
+                        }
+                      }}
                       className="search-input text-sm"
                     />
+                    {searchQuery && (
+                      <button
+                        onClick={onClearSearch}
+                        className="search-clear"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    )}
+                    {renderInlineSearch && renderInlineSearch()}
                   </div>
                 )}
                 
@@ -190,8 +202,19 @@ const AppHeader = ({
                 placeholder="Search..."
                 value={searchQuery}
                 onChange={(e) => onSearchChange?.(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') {
+                    onClearSearch?.();
+                  }
+                }}
                 className="search-input w-full"
               />
+              {searchQuery && (
+                <button onClick={onClearSearch} className="search-clear">
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+              {renderInlineSearch && renderInlineSearch()}
             </div>
           )}
           

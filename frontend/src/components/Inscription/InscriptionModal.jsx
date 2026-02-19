@@ -2,7 +2,6 @@ import React, { useLayoutEffect, useState, useEffect, useMemo, useCallback } fro
 import { X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import CopyButton from '../Common/CopyButton';
-import ConfidenceIndicator from '../Common/ConfidenceIndicator';
 import SafeQrCodeCanvas from '../Common/SafeQrCodeCanvas';
 import DeliverablesReview from '../Review/DeliverablesReview';
 import { API_BASE } from '../../apiBase';
@@ -735,7 +734,6 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
       }
     }
   }, [
-    auth.apiKey,
     authBlocked,
     contractCandidates,
     contractKey,
@@ -805,7 +803,7 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
     } catch (err) {
       console.error('Failed to load submissions:', err);
     }
-  }, [auth.apiKey, authBlocked, contractCandidates, fetchWithTimeout]);
+  }, [authBlocked, contractCandidates, fetchWithTimeout]);
 
   useEffect(() => {
     if (authBlocked) {
@@ -1046,45 +1044,6 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
     }
   };
 
-  const markdownContent = `# Steganographic Smart Contract Analysis
-
-## Contract Identity
-- **Contract ID**: \`${inscription.contract_id || inscription.id}\`
-- **Block Height**: ${inscription.block_height || inscription.genesis_block_height || 'Unknown'}
-- **Transaction ID**: \`${inscription.metadata?.transaction_id || 'Not available'}\`
-- **Deployment Date**: ${inscription.metadata?.created_at ? new Date(inscription.metadata.created_at * 1000).toLocaleDateString() : 'Unknown'}
-
-## Technical Architecture
-- **Contract Type**: ${inscription.contract_type || inscription.contractType || 'Steganographic'}
-- **Protocol Layer**: ${inscription.protocol || 'BRC-20'}
-- **Data Capability**: ${inscription.capability || 'Data Storage & Concealment'}
-- **MIME Type**: ${inscription.mime_type || 'Unknown'}
-
-## Steganographic Specifications
-- **Detection Method**: ${inscription.metadata?.detection_method || 'AI-Powered Analysis'}
-- **Steganography Type**: ${inscription.metadata?.stego_type || 'Unknown'}
-- **Confidence Level**: ${inscription.metadata?.confidence ? Math.round(inscription.metadata.confidence * 100) + '%' : 'N/A'}
-- **Probability Score**: ${inscription.metadata?.stego_probability ? Math.round(inscription.metadata.stego_probability * 100) + '%' : 'N/A'}
-
-## Media Properties
-- **Image Format**: ${inscription.metadata?.image_format || 'Unknown'}
-- **File Size**: ${inscription.metadata?.image_size ? (inscription.metadata.image_size / 1024).toFixed(2) + ' KB' : 'Unknown'}
-- **Image Index**: ${inscription.metadata?.image_index || 'Unknown'}
-- **Encoding Method**: ${inscription.metadata?.stego_type || 'Analysis Required'}
-
-## Extracted Intelligence
-${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extracted_message}\n\`\`\`` : 'No hidden message detected'}
-
-## Blockchain Integration
-- **Block Hash**: \`${inscription.metadata?.block_hash || 'Unknown'}\`
-- **Network**: Bitcoin Mainnet
-- **Consensus**: Proof of Work
-- **Timestamp**: ${inscription.metadata?.created_at ? new Date(inscription.metadata.created_at * 1000).toISOString() : 'Unknown'}
-
----
-
-*Analysis performed by Steganography Detection System*`;
-
   return (
     <div className="modal-backdrop">
       <div className="modal-container">
@@ -1246,8 +1205,7 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                           try {
                             const o = JSON.parse(p.title);
                             if (o?.message) return o.message;
-                          } catch {
-                          }
+                          } catch { /* not JSON */ }
                         }
                         return p.title;
                       })();
@@ -1256,8 +1214,7 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                           try {
                             const o = JSON.parse(p.description_md);
                             if (o?.message) return o.message;
-                          } catch {
-                          }
+                          } catch { /* not JSON */ }
                         }
                         return p.description_md;
                       })();

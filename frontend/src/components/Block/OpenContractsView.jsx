@@ -4,7 +4,7 @@ import { API_BASE } from '../../apiBase';
 
 const OpenContractsView = ({ setSelectedInscription, refreshKey }) => {
   const [pendingTxs, setPendingTxs] = useState([]);
-  const [isLoading, setIsLoading] = useState(false);
+  const [, setIsLoading] = useState(false);
   const loadingRef = useRef(false);
 
   const fetchOpenContracts = useCallback(async () => {

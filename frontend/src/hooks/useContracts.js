@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { API_BASE, CONTENT_BASE } from '../apiBase';
 
 const mapContractToDisplayFormat = (contract) => {

@@ -87,7 +87,6 @@ const DocsPage = () => {
   }, [docPath]);
 
   const currentDoc = docs[docPath || ''] || docs['README.md'] || { title: 'Documentation', icon: FileText };
-  const Icon = currentDoc.icon;
 
   return (
     <div className="min-h-screen bg-app-main text-gray-900 dark:text-gray-100 page-docs">
@@ -181,8 +180,7 @@ const DocsPage = () => {
                     <ReactMarkdown 
                       remarkPlugins={[remarkGfm]}
                       components={{
-                        // Custom link handling to use React Router for internal links
-                        a: ({node, href, children, ...props}) => {
+                        a: ({ href, children, ...props }) => {
                           if (href && (href.startsWith('/') || href.startsWith('.'))) {
                             return <Link to={href} {...props}>{children}</Link>;
                           }
