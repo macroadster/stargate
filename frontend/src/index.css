@@ -6,11 +6,21 @@
   border: 1px solid rgba(255, 255, 255, 0.1) !important;
 }
 
-@media (prefers-color-scheme: light), html[data-theme="light"] {
+@media (prefers-color-scheme: light) {
   .dropdown-menu {
     background: rgba(255, 255, 255, 0.98) !important;
     border: 1px solid rgba(0, 0, 0, 0.1) !important;
   }
+}
+
+html[data-theme="light"] .dropdown-menu {
+  background: rgba(255, 255, 255, 0.98) !important;
+  border: 1px solid rgba(0, 0, 0, 0.1) !important;
+}
+
+html[data-theme="dark"] .dropdown-menu {
+  background: rgba(30, 41, 59, 0.95) !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
 }
 
 /* Page title styles for Contracts, Discover, Help pages */
@@ -503,19 +513,29 @@ html.dark, html.dark body {
 }
 
 /* Override Quantum CSS dark mode with higher specificity */
+html[data-theme="dark"],
 html[data-theme="dark"] body,
 body.dark-mode {
   background: #1e293b !important;
   color: #f1f5f9 !important;
 }
 
-.dark .bg-app-main {
+.dark .bg-app-main,
+html[data-theme="dark"] .bg-app-main {
   background-color: #1e293b !important;
 }
 
 /* Text color utilities */
 .text-primary {
   color: #e5e7eb;
+}
+
+html[data-theme="dark"] .text-primary {
+  color: #e5e7eb !important;
+}
+
+html[data-theme="dark"] .text-secondary {
+  color: #9ca3af !important;
 }
 
 .text-secondary {
@@ -707,6 +727,11 @@ html[data-theme="light"] .contract-card {
   flex-direction: column;
   box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
   backdrop-filter: blur(12px);
+}
+
+html[data-theme="dark"] .modal-container {
+  background: rgba(30, 41, 59, 0.95);
+  border-color: rgba(255, 255, 255, 0.1);
 }
 
 @media (prefers-color-scheme: light) {
@@ -4782,3 +4807,144 @@ html[data-theme="light"] .deliverables-proof-content-box {
     min-width: 0;
   }
 }
+
+/* ============================================
+   DARK THEME OVERRIDES
+   These override light-mode media queries when
+   user explicitly selects dark theme
+   ============================================ */
+
+html[data-theme="dark"] .page-title { color: #ffffff !important; }
+html[data-theme="dark"] .page-subtitle { color: #fbbf24 !important; }
+
+html[data-theme="dark"] .form-input,
+html[data-theme="dark"] .form-select {
+  color: #e5e7eb !important;
+  background-color: rgba(0, 0, 0, 0.2) !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+html[data-theme="dark"] .auth-btn-clear { color: #9ca3af !important; }
+html[data-theme="dark"] .auth-btn-clear:hover { color: #d1d5db !important; }
+
+html[data-theme="dark"] .auth-page-container { background: rgba(15, 23, 42, 0.8) !important; }
+html[data-theme="dark"] .auth-card {
+  background: rgba(30, 41, 59, 0.95) !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+}
+html[data-theme="dark"] .auth-card-title { color: #f1f5f9 !important; }
+html[data-theme="dark"] .auth-card-text { color: #9ca3af !important; }
+html[data-theme="dark"] .auth-card-label { color: #9ca3af !important; }
+html[data-theme="dark"] .auth-card-input {
+  color: #f1f5f9 !important;
+  background-color: rgba(0, 0, 0, 0.3) !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+}
+html[data-theme="dark"] .auth-card-highlight { color: #fbbf24 !important; }
+html[data-theme="dark"] .auth-card-qr-bg { background: #ffffff !important; }
+html[data-theme="dark"] .auth-tab-inactive { color: #9ca3af !important; }
+
+html[data-theme="dark"] .contract-card {
+  background: #0d1117 !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+html[data-theme="dark"] .modal-container {
+  background: rgba(30, 41, 59, 0.95) !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+html[data-theme="dark"] .create-contract-modal {
+  background: rgba(30, 41, 59, 0.98) !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+html[data-theme="dark"] .create-contract-title { color: #f1f5f9 !important; }
+html[data-theme="dark"] .create-contract-close { color: #9ca3af !important; }
+html[data-theme="dark"] .create-contract-close:hover { color: #f1f5f9 !important; }
+html[data-theme="dark"] .modal-form-content label { color: #9ca3af !important; }
+html[data-theme="dark"] .modal-form-content input,
+html[data-theme="dark"] .modal-form-content textarea,
+html[data-theme="dark"] .modal-form-content select {
+  color: #f1f5f9 !important;
+  background-color: rgba(0, 0, 0, 0.3) !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+}
+html[data-theme="dark"] .contract-subtitle { color: #9ca3af !important; }
+html[data-theme="dark"] .contract-submitted-title { color: #f1f5f9 !important; }
+html[data-theme="dark"] .contract-success-text { color: #10b981 !important; }
+html[data-theme="dark"] .create-contract-modal button[type="button"] {
+  color: #9ca3af !important;
+}
+html[data-theme="dark"] .create-contract-modal button[type="submit"] {
+  background-color: #059669 !important;
+  color: #ffffff !important;
+}
+html[data-theme="dark"] .contract-success-btn {
+  background-color: #4f46e5 !important;
+  color: #ffffff !important;
+}
+html[data-theme="dark"] .contract-success-btn-done {
+  background-color: #6b7280 !important;
+  color: #ffffff !important;
+}
+
+html[data-theme="dark"] .modal-header { border-color: rgba(255, 255, 255, 0.1) !important; }
+
+html[data-theme="dark"] .deliverables-textarea {
+  color: #f1f5f9 !important;
+  background-color: rgba(0, 0, 0, 0.3) !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+}
+html[data-theme="dark"] .deliverables-section-title { color: #9ca3af !important; }
+html[data-theme="dark"] .deliverables-value { color: #f1f5f9 !important; }
+html[data-theme="dark"] .deliverables-notes-preview { color: #9ca3af !important; }
+
+html[data-theme="dark"] .modal-tabs { border-color: rgba(255, 255, 255, 0.1) !important; }
+html[data-theme="dark"] .modal-tab { color: #9ca3af !important; }
+html[data-theme="dark"] .modal-tab:hover { color: #f1f5f9 !important; }
+html[data-theme="dark"] .modal-tab.active { color: #fbbf24 !important; border-color: #fbbf24 !important; }
+
+html[data-theme="dark"] .modal-identity-image { border-color: rgba(255, 255, 255, 0.1) !important; }
+html[data-theme="dark"] .modal-identity-box { border-color: rgba(255, 255, 255, 0.1) !important; }
+
+html[data-theme="dark"] .modal-data-card {
+  background: rgba(0, 0, 0, 0.2) !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+}
+html[data-theme="dark"] .modal-data-label { color: #9ca3af !important; }
+html[data-theme="dark"] .modal-data-value { color: #f1f5f9 !important; }
+html[data-theme="dark"] .modal-section-title { color: #9ca3af !important; }
+
+html[data-theme="dark"] .badge { color: #fbbf24 !important; }
+
+html[data-theme="dark"] .btn-icon { color: #9ca3af !important; }
+html[data-theme="dark"] .btn-icon:hover { color: #d1d5db !important; }
+
+html[data-theme="dark"] .modal-placeholder {
+  background: linear-gradient(to bottom right, #374151, #1f2937) !important;
+}
+
+html[data-theme="dark"] .modal-stego-box {
+  background: #713f12 !important;
+  border-color: #a16207 !important;
+}
+
+html[data-theme="dark"] .modal-text-box {
+  background: #1e3a5f !important;
+  border-color: #3b82f6 !important;
+}
+html[data-theme="dark"] .modal-text-label { color: #60a5fa !important; }
+html[data-theme="dark"] .modal-text-value { color: #bfdbfe !important; }
+html[data-theme="dark"] .modal-text-content { background: #0f172a !important; }
+html[data-theme="dark"] .modal-text-content pre { color: #93c5fd !important; }
+html[data-theme="dark"] .modal-stats { border-top-color: rgba(59, 130, 246, 0.3) !important; }
+
+html[data-theme="dark"] .deliverables-proof-label { color: #9ca3af !important; }
+html[data-theme="dark"] .deliverables-proof-content-label { color: #60a5fa !important; }
+html[data-theme="dark"] .deliverables-proof-content-header { color: #9ca3af !important; }
+html[data-theme="dark"] .deliverables-proof-content-box {
+  background: #1f2937 !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+}
+

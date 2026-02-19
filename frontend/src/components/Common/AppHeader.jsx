@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, X, Moon, Sun, Menu, MoreVertical, Check, LogOut } from 'lucide-react';
+import { Search, X, Moon, Sun, Monitor, Menu, MoreVertical, Check, LogOut } from 'lucide-react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
@@ -23,7 +23,29 @@ const AppHeader = ({
   const themeContext = useTheme();
   
   const isDarkMode = themeContext ? themeContext.isDarkMode : (propIsDarkMode || false);
+  const useSystemTheme = themeContext ? themeContext.useSystemTheme : false;
+  const setTheme = themeContext ? themeContext.setTheme : (() => {});
   const onToggleTheme = themeContext ? themeContext.toggleTheme : (propOnToggleTheme || (() => {}));
+
+  const cycleTheme = () => {
+    if (useSystemTheme) {
+      setTheme('light');
+    } else if (isDarkMode) {
+      setTheme('system');
+    } else {
+      setTheme('dark');
+    }
+  };
+
+  const getThemeIcon = () => {
+    if (useSystemTheme) return <Monitor className="w-5 h-5" />;
+    return isDarkMode ? <Moon className="w-5 h-5" /> : <Sun className="w-5 h-5" />;
+  };
+
+  const getThemeTitle = () => {
+    if (useSystemTheme) return "Theme: System (click for light)";
+    return isDarkMode ? "Theme: Dark (click for system)" : "Theme: Light (click for dark)";
+  };
 
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
@@ -91,11 +113,11 @@ const AppHeader = ({
                 
                 {showThemeToggle && (
                   <button
-                    onClick={onToggleTheme}
+                    onClick={cycleTheme}
                     className="nav-link px-2 bg-transparent border-none cursor-pointer"
-                    title={isDarkMode ? "Switch to light mode" : "Switch to dark mode"}
+                    title={getThemeTitle()}
                   >
-                    {isDarkMode ? <Moon className="w-5 h-5" /> : <Sun className="w-5 h-5" />}
+                    {getThemeIcon()}
                   </button>
                 )}
 
@@ -220,8 +242,8 @@ const AppHeader = ({
               )}
               
               {showThemeToggle && (
-                <button onClick={onToggleTheme} className="nav-link p-2 bg-transparent border-none">
-                  {isDarkMode ? <Moon className="w-5 h-5" /> : <Sun className="w-5 h-5" />}
+                <button onClick={cycleTheme} className="nav-link p-2 bg-transparent border-none" title={getThemeTitle()}>
+                  {getThemeIcon()}
                 </button>
               )}
             </div>

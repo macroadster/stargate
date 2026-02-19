@@ -1,14 +1,23 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 
 const ThemeContext = createContext(null);
 
 export const ThemeProvider = ({ children }) => {
+  const getSystemTheme = useCallback(() => {
+    return window.matchMedia('(prefers-color-scheme: dark)').matches;
+  }, []);
+
   const [isDarkMode, setIsDarkMode] = useState(() => {
     const savedTheme = localStorage.getItem('theme');
-    if (savedTheme) {
+    if (savedTheme && savedTheme !== 'system') {
       return savedTheme === 'dark';
     }
-    return window.matchMedia('(prefers-color-scheme: dark)').matches;
+    return getSystemTheme();
+  });
+
+  const [useSystemTheme, setUseSystemTheme] = useState(() => {
+    const savedTheme = localStorage.getItem('theme');
+    return !savedTheme || savedTheme === 'system';
   });
 
   useEffect(() => {
@@ -19,15 +28,44 @@ export const ThemeProvider = ({ children }) => {
       document.documentElement.classList.remove('dark');
       document.documentElement.setAttribute('data-theme', 'light');
     }
-    localStorage.setItem('theme', isDarkMode ? 'dark' : 'light');
   }, [isDarkMode]);
 
-  const toggleTheme = () => {
-    setIsDarkMode(prev => !prev);
-  };
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+
+    const handleSystemThemeChange = (e) => {
+      if (useSystemTheme) {
+        setIsDarkMode(e.matches);
+      }
+    };
+
+    mediaQuery.addEventListener('change', handleSystemThemeChange);
+    return () => mediaQuery.removeEventListener('change', handleSystemThemeChange);
+  }, [useSystemTheme]);
+
+  const toggleTheme = useCallback(() => {
+    setUseSystemTheme(false);
+    setIsDarkMode(prev => {
+      const newValue = !prev;
+      localStorage.setItem('theme', newValue ? 'dark' : 'light');
+      return newValue;
+    });
+  }, []);
+
+  const setTheme = useCallback((theme) => {
+    if (theme === 'system') {
+      setUseSystemTheme(true);
+      setIsDarkMode(getSystemTheme());
+      localStorage.setItem('theme', 'system');
+    } else {
+      setUseSystemTheme(false);
+      setIsDarkMode(theme === 'dark');
+      localStorage.setItem('theme', theme);
+    }
+  }, [getSystemTheme]);
 
   return (
-    <ThemeContext.Provider value={{ isDarkMode, toggleTheme }}>
+    <ThemeContext.Provider value={{ isDarkMode, toggleTheme, useSystemTheme, setTheme }}>
       {children}
     </ThemeContext.Provider>
   );
