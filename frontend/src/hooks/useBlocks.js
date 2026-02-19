@@ -221,8 +221,28 @@ export const useBlocks = () => {
       // Keep a user-selected block pinned even as new data loads.
       if (manualSelectedHeight.current) {
         const match = deduped.find((b) => b.height === manualSelectedHeight.current);
-        if (match && selectedBlockRef.current?.height !== match.height) {
-          setSelectedBlock({ ...match });
+        if (match) {
+          if (selectedBlockRef.current?.height !== match.height) {
+            setSelectedBlock({ ...match });
+          }
+        } else {
+          // Block not in list yet - create/update placeholder if needed
+          const targetHeight = manualSelectedHeight.current;
+          if (selectedBlockRef.current?.height !== targetHeight) {
+            setSelectedBlock({
+              height: targetHeight,
+              timestamp: Date.now() / 1000,
+              hash: `block-${targetHeight}`,
+              tx_count: 0,
+              inscriptionCount: 0,
+              smart_contract_count: 0,
+              witness_image_count: 0,
+              hasBRC20: false,
+              has_images: false,
+              smart_contracts: [],
+              witness_images: []
+            });
+          }
         }
       } else if (!selectedBlockRef.current && deduped.length && !isPolling) {
         setIsUserNavigating(false);
@@ -317,6 +337,31 @@ export const useBlocks = () => {
     setSelectedBlock({ ...block });
   };
 
+  const setManualHeight = (height) => {
+    manualSelectedHeight.current = height;
+    setIsUserNavigating(true);
+    // Check if block exists in current list, otherwise create placeholder
+    const existingBlock = blocksRef.current.find(b => b.height === height);
+    if (existingBlock) {
+      setSelectedBlock({ ...existingBlock });
+    } else {
+      // Create placeholder block
+      setSelectedBlock({
+        height: height,
+        timestamp: Date.now() / 1000,
+        hash: `block-${height}`,
+        tx_count: 0,
+        inscriptionCount: 0,
+        smart_contract_count: 0,
+        witness_image_count: 0,
+        hasBRC20: false,
+        has_images: false,
+        smart_contracts: [],
+        witness_images: []
+      });
+    }
+  };
+
   const refreshBlocks = () => fetchBlocks(null, false);
 
   return {
@@ -326,6 +371,7 @@ export const useBlocks = () => {
     handleBlockSelect,
     setSelectedBlock,
     setIsUserNavigating,
+    setManualHeight,
     loadMoreBlocks,
     refreshBlocks
   };

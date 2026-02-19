@@ -1179,6 +1179,38 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
 
               {activeTab === 'content' && (
                 <div className="space-y-6">
+                  {pixelHash && (
+                    <div>
+                      <h4 className="modal-section-title">
+                        <span className="modal-section-dot green"></span>
+                        Contract Details
+                      </h4>
+                      <div className="modal-text-box">
+                        <div className="flex flex-col gap-3">
+                          <div className="flex flex-col gap-1">
+                            <span className="modal-data-label">Contract ID</span>
+                            <span className="font-mono text-sm text-primary break-all">{inscription.id}</span>
+                          </div>
+                          <div className="flex flex-col gap-1">
+                            <span className="modal-data-label">Visible Pixel Hash</span>
+                            <span className="font-mono text-sm text-primary break-all">{pixelHash}</span>
+                          </div>
+                          {inscription.status && (
+                            <div className="flex flex-col gap-1">
+                              <span className="modal-data-label">Status</span>
+                              <span className="text-primary">{inscription.status}</span>
+                            </div>
+                          )}
+                          {inscription.block_height > 0 && (
+                            <div className="flex flex-col gap-1">
+                              <span className="modal-data-label">Block Height</span>
+                              <span className="text-primary">{inscription.block_height}</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -1998,7 +2030,7 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                     </div>
                   )}
 
-                  {!textContent && !inscription.metadata?.extracted_message && (
+                  {!textContent && !inscription.metadata?.extracted_message && !pixelHash && (
                     <div className="text-center py-12">
                       <div className="text-6xl mb-4">📦</div>
                       <div className="modal-data-label font-semibold">No Text Content Available</div>

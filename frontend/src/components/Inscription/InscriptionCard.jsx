@@ -3,6 +3,7 @@ import React, { useEffect, useRef, useState } from 'react';
 const InscriptionCard = ({ inscription, onClick }) => {
   const [showTextPreview, setShowTextPreview] = useState(false);
   const [isVisible, setIsVisible] = useState(false);
+  const [isHovered, setIsHovered] = useState(false);
   const containerRef = useRef(null);
   const mediaObserverRef = useRef(null);
 
@@ -80,7 +81,10 @@ const InscriptionCard = ({ inscription, onClick }) => {
     <div
       onClick={() => onClick(inscription)}
       ref={containerRef}
-      className="relative group cursor-pointer break-inside-avoid mb-6"
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+      className="relative group cursor-pointer mb-6 w-full"
+      style={{ breakInside: 'avoid', pageBreakInside: 'avoid' }}
     >
       <div className="relative overflow-hidden rounded-2xl border border-gray-200 dark:border-gray-800 hover:border-indigo-400 transition-all duration-200 bg-white dark:bg-gray-900 shadow-sm">
         <div className={`${hasTextContent && !imageSource ? '' : 'min-h-[280px] sm:min-h-[350px] xl:min-h-[400px]'} flex items-start justify-center bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-700 dark:to-gray-800 relative overflow-hidden`}
@@ -141,26 +145,50 @@ const InscriptionCard = ({ inscription, onClick }) => {
           )}
         </div>
         
-        <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent opacity-100">
-          <div className="absolute bottom-0 left-0 right-0 p-3 text-white">
-            <div className="text-xs uppercase tracking-wide text-white/70">
+        <div style={{
+          position: 'absolute',
+          inset: 0,
+          background: 'linear-gradient(to top, rgba(0,0,0,0.9), rgba(0,0,0,0.4), transparent)',
+          opacity: 1
+        }}>
+          <div style={{
+            position: 'absolute',
+            bottom: 0,
+            left: 0,
+            right: 0,
+            padding: '0.75rem',
+            color: 'white'
+          }}>
+            <div style={{ fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'rgba(255,255,255,0.7)' }}>
               {inscription.genesis_block_height ? `Block #${inscription.genesis_block_height}` : 'Smart Contract'}
             </div>
-            <div className="text-sm font-semibold leading-snug line-clamp-2">{headline}</div>
+            <div style={{ fontSize: '0.875rem', fontWeight: 600, lineHeight: 1.375 }}>{headline}</div>
           </div>
         </div>
 
-        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-          <div className="absolute bottom-0 left-0 right-0 p-3 text-white">
+        <div style={{
+          position: 'absolute',
+          inset: 0,
+          background: 'linear-gradient(to top, rgba(0,0,0,0.8), transparent, transparent)',
+          opacity: isHovered ? 1 : 0,
+          transition: 'opacity 0.2s'
+        }}>
+          <div style={{
+            position: 'absolute',
+            bottom: 0,
+            left: 0,
+            right: 0,
+            padding: '0.75rem',
+            color: 'white'
+          }}>
             {detectionScore > 0.1 && detectionPercent > 0 && (
-              <div className="flex items-center gap-2 mt-2">
-                <div className="w-full bg-green-400 rounded-full h-1">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.5rem' }}>
+                <div style={{ width: '100%', backgroundColor: 'rgba(74, 222, 128, 1)', borderRadius: '9999px', height: 4 }}>
                   <div 
-                    className="bg-green-600 h-1 rounded-full" 
-                    style={{width: `${detectionPercent}%`}}
+                    style={{ backgroundColor: 'rgba(22, 163, 74, 1)', height: 4, borderRadius: '9999px', width: `${detectionPercent}%` }}
                   ></div>
                 </div>
-                <span className="text-xs font-semibold">
+                <span style={{ fontSize: '0.75rem', fontWeight: 600 }}>
                   {detectionPercent}%
                 </span>
               </div>
@@ -168,16 +196,41 @@ const InscriptionCard = ({ inscription, onClick }) => {
           </div>
         </div>
         
-        <div className="absolute top-2 left-2 flex flex-col gap-1">
+        <div style={{
+          position: 'absolute',
+          top: '0.5rem',
+          left: '0.5rem',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '0.25rem'
+        }}>
           {inscription.contract_type === 'Steganographic Contract' && (
-            <div className="px-2 py-1 bg-gradient-to-r from-purple-600 to-purple-700 text-white text-xs rounded-full font-semibold shadow-lg">
+            <div style={{
+              padding: '0.25rem 0.5rem',
+              background: 'linear-gradient(to right, #9333ea, #7c3aed)',
+              color: 'white',
+              fontSize: '0.75rem',
+              borderRadius: '9999px',
+              fontWeight: 600,
+              boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)'
+            }}>
               🔐 STEGO
             </div>
           )}
           {hasTextContent && (
             <button
               onClick={handleTextPreviewToggle}
-              className="px-2 py-1 bg-gradient-to-r from-blue-600 to-blue-700 text-white text-xs rounded-full font-semibold shadow-lg hover:from-blue-700 hover:to-blue-800 transition-colors"
+              style={{
+                padding: '0.25rem 0.5rem',
+                background: 'linear-gradient(to right, #2563eb, #1d4ed8)',
+                color: 'white',
+                fontSize: '0.75rem',
+                borderRadius: '9999px',
+                fontWeight: 600,
+                boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)',
+                border: 'none',
+                cursor: 'pointer'
+              }}
               title={showTextPreview ? "Hide text preview" : "Show text preview"}
             >
               {showTextPreview ? "📝 Hide" : "📄 Text"}
@@ -186,12 +239,19 @@ const InscriptionCard = ({ inscription, onClick }) => {
         </div>
         
         {sizeBytes > 0 && (
-          <div className="absolute bottom-2 right-2 bg-white dark:bg-gray-800 rounded-lg px-2 py-1 shadow-lg border border-gray-200 dark:border-gray-600">
-            <div className="flex items-center gap-1">
-              <span className="text-black dark:text-white text-xs font-bold">
-                {(sizeBytes / 1024).toFixed(1)}KB
-              </span>
-            </div>
+          <div style={{
+            position: 'absolute',
+            bottom: '0.5rem',
+            right: '0.5rem',
+            backgroundColor: 'white',
+            borderRadius: '0.5rem',
+            padding: '0.25rem 0.5rem',
+            boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)',
+            border: '1px solid rgba(229, 231, 235, 1)'
+          }}>
+            <span style={{ color: 'black', fontSize: '0.75rem', fontWeight: 700 }}>
+              {(sizeBytes / 1024).toFixed(1)}KB
+            </span>
           </div>
         )}
       </div>

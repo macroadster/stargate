@@ -122,7 +122,75 @@ Get ingestion status by ID.
 ### Search
 
 #### GET /api/search
-Search across various data types.
+Search across inscriptions, transactions, blocks, contracts, and proposals.
+
+**Query Parameters:**
+- `q` (required): Search query string
+
+**Response:**
+```json
+{
+  "status": "success",
+  "data": {
+    "inscriptions": [
+      {
+        "type": "inscription",
+        "id": "tx_id",
+        "block_height": 800000,
+        "text": "content",
+        "timestamp": 1234567890,
+        "status": "confirmed"
+      }
+    ],
+    "transactions": [
+      {
+        "type": "transaction",
+        "id": "tx_id",
+        "block_height": 800000,
+        "text": "message",
+        "timestamp": 1234567890,
+        "status": "confirmed"
+      }
+    ],
+    "blocks": [
+      {
+        "type": "block",
+        "id": "block_hash",
+        "block_height": 800000,
+        "tx_count": 2500,
+        "timestamp": 1234567890
+      }
+    ],
+    "contracts": [
+      {
+        "type": "contract",
+        "id": "contract_id",
+        "contract_id": "contract_id",
+        "title": "Contract Title",
+        "block_height": 800000,
+        "budget_sats": 1000000,
+        "status": "active"
+      }
+    ],
+    "proposals": [
+      {
+        "type": "proposal",
+        "id": "proposal_id",
+        "proposal_id": "proposal_id",
+        "title": "Proposal Title",
+        "budget_sats": 500000,
+        "status": "pending",
+        "timestamp": 1234567890
+      }
+    ]
+  }
+}
+```
+
+**Navigation URLs:**
+- Inscription/Transaction/Block → `/block/{block_height}`
+- Contract → `/contract/{contract_id}`
+- Proposal → `/proposal/{proposal_id}`
 
 ### QR Codes
 

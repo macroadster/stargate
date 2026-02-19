@@ -103,7 +103,7 @@ paths:
           description: Scan queued/executed.
   /api/search:
     get:
-      summary: Search inscriptions/blocks
+      summary: Search inscriptions, transactions, blocks, contracts, and proposals
       parameters:
         - in: query
           name: q
@@ -112,7 +112,37 @@ paths:
             type: string
       responses:
         '200':
-          description: Search results.
+          description: Search results with typed result items.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  data:
+                    type: object
+                    properties:
+                      inscriptions:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/SearchResultItem'
+                      transactions:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/SearchResultItem'
+                      blocks:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/SearchResultItem'
+                      contracts:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/SearchResultItem'
+                      proposals:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/SearchResultItem'
   /api/qrcode:
     get:
       summary: Generate QR code
@@ -226,6 +256,53 @@ components:
       name: X-API-Key
       description: API key for MCP authentication (set via MCP_API_KEY environment variable)
   schemas:
+    SearchResultItem:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [inscription, transaction, block, contract, proposal]
+          description: Type of search result
+        id:
+          type: string
+          description: Unique identifier
+        title:
+          type: string
+          description: Display title (for contracts/proposals)
+        block_height:
+          type: integer
+          format: int64
+          description: Block height for navigation
+        contract_id:
+          type: string
+          description: Contract ID (for contract type)
+        proposal_id:
+          type: string
+          description: Proposal ID (for proposal type)
+        status:
+          type: string
+          description: Status of the item
+        timestamp:
+          type: integer
+          format: int64
+          description: Unix timestamp
+        text:
+          type: string
+          description: Text content (for inscriptions/transactions)
+        visible_pixel_hash:
+          type: string
+          description: Visible pixel hash (for contracts/proposals)
+        budget_sats:
+          type: integer
+          format: int64
+          description: Budget in satoshis (for contracts/proposals)
+        tx_count:
+          type: integer
+          description: Transaction count (for blocks)
+        metadata:
+          type: object
+          additionalProperties: true
+          description: Additional metadata
     Contract:
       type: object
       properties:

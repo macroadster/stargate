@@ -1178,16 +1178,16 @@ func contractToInscriptionRequest(contract sc.Contract) models.InscriptionReques
 	}
 
 	return models.InscriptionRequest{
-		ID:               contract.ContractID,
-		Text:             contract.Title,
-		ImageData:        imageURL,
-		Price:            float64(contract.TotalBudgetSats) / 1e8,
-		Address:          "", // No address in contract model
-		Timestamp:        timestamp,
-		Status:           contract.Status,
-		BlockHeight:      height,
-		TotalBudgetSats:  contract.TotalBudgetSats,
-		AvailableTasks:   contract.AvailableTasksCount,
+		ID:              contract.ContractID,
+		Text:            contract.Title,
+		ImageData:       imageURL,
+		Price:           float64(contract.TotalBudgetSats) / 1e8,
+		Address:         "", // No address in contract model
+		Timestamp:       timestamp,
+		Status:          contract.Status,
+		BlockHeight:     height,
+		TotalBudgetSats: contract.TotalBudgetSats,
+		AvailableTasks:  contract.AvailableTasksCount,
 	}
 }
 
@@ -1415,16 +1415,23 @@ type SearchHandler struct {
 	inscriptionService *services.InscriptionService
 	blockService       *services.BlockService
 	dataStorage        storage.ExtendedDataStorage
+	store              scmiddleware.Store
 }
 
 // NewSearchHandler creates a new search handler
-func NewSearchHandler(inscriptionService *services.InscriptionService, blockService *services.BlockService, dataStorage storage.ExtendedDataStorage) *SearchHandler {
+func NewSearchHandler(inscriptionService *services.InscriptionService, blockService *services.BlockService, dataStorage storage.ExtendedDataStorage, store scmiddleware.Store) *SearchHandler {
 	return &SearchHandler{
 		BaseHandler:        NewBaseHandler(),
 		inscriptionService: inscriptionService,
 		blockService:       blockService,
 		dataStorage:        dataStorage,
+		store:              store,
 	}
+}
+
+// SetStore sets the smart contract store for searching proposals and contracts
+func (h *SearchHandler) SetStore(store scmiddleware.Store) {
+	h.store = store
 }
 
 // HandleSearch handles search requests
@@ -1453,30 +1460,30 @@ func (h *SearchHandler) recentBlocksResponse(query string) models.SearchResult {
 	if len(result.Inscriptions) > 5 {
 		result.Inscriptions = result.Inscriptions[:5]
 	}
+	if len(result.Transactions) > 5 {
+		result.Transactions = result.Transactions[:5]
+	}
+	if len(result.Contracts) > 5 {
+		result.Contracts = result.Contracts[:5]
+	}
+	if len(result.Proposals) > 5 {
+		result.Proposals = result.Proposals[:5]
+	}
 	return result
 }
 
 func (h *SearchHandler) searchData(query string) models.SearchResult {
 	q := strings.ToLower(strings.TrimSpace(query))
-	var blocks []interface{}
-	var inscriptions []models.InscriptionRequest
-	var contracts []models.SmartContractImage
+	var blocks []models.SearchResultItem
+	var inscriptions []models.SearchResultItem
+	var transactions []models.SearchResultItem
+	var contracts []models.SearchResultItem
+	var proposals []models.SearchResultItem
+	seenBlocks := make(map[string]bool)
 	seenInscriptions := make(map[string]bool)
+	seenTransactions := make(map[string]bool)
 	seenContracts := make(map[string]bool)
-
-	addInscription := func(id, text string, ts int64) {
-		if id == "" || seenInscriptions[id] {
-			return
-		}
-		seenInscriptions[id] = true
-		inscriptions = append(inscriptions, models.InscriptionRequest{
-			ID:        id,
-			Status:    "confirmed",
-			Text:      text,
-			Price:     0,
-			Timestamp: ts,
-		})
-	}
+	seenProposals := make(map[string]bool)
 
 	matchesQuery := func(values ...string) bool {
 		if q == "" {
@@ -1539,18 +1546,83 @@ func (h *SearchHandler) searchData(query string) models.SearchResult {
 		return txids
 	}
 
-	addContract := func(id string, height int64, imageURL string, contractType string, visibleHash string, meta map[string]any) {
+	addBlock := func(id string, height int64, timestamp int64, txCount int) {
+		if id == "" || seenBlocks[id] || seenBlocks[fmt.Sprintf("%d", height)] {
+			return
+		}
+		seenBlocks[id] = true
+		seenBlocks[fmt.Sprintf("%d", height)] = true
+		blocks = append(blocks, models.SearchResultItem{
+			Type:        "block",
+			ID:          id,
+			BlockHeight: height,
+			Timestamp:   timestamp,
+			TxCount:     txCount,
+		})
+	}
+
+	addInscription := func(id, text string, ts int64, blockHeight int64) {
+		if id == "" || seenInscriptions[id] {
+			return
+		}
+		seenInscriptions[id] = true
+		inscriptions = append(inscriptions, models.SearchResultItem{
+			Type:        "inscription",
+			ID:          id,
+			Text:        text,
+			Timestamp:   ts,
+			BlockHeight: blockHeight,
+			Status:      "confirmed",
+		})
+	}
+
+	addTransaction := func(id, text string, ts int64, blockHeight int64) {
+		if id == "" || seenTransactions[id] {
+			return
+		}
+		seenTransactions[id] = true
+		transactions = append(transactions, models.SearchResultItem{
+			Type:        "transaction",
+			ID:          id,
+			Text:        text,
+			Timestamp:   ts,
+			BlockHeight: blockHeight,
+			Status:      "confirmed",
+		})
+	}
+
+	addContract := func(id string, height int64, imageURL string, contractType string, visibleHash string, meta map[string]any, title string, budgetSats int64, status string) {
 		if id == "" || seenContracts[id] {
 			return
 		}
 		seenContracts[id] = true
-		contracts = append(contracts, models.SmartContractImage{
+		contracts = append(contracts, models.SearchResultItem{
+			Type:             "contract",
+			ID:               id,
 			ContractID:       id,
 			BlockHeight:      height,
-			StegoImage:       imageURL,
-			ContractType:     contractType,
+			Title:            title,
 			VisiblePixelHash: visibleHash,
+			BudgetSats:       budgetSats,
 			Metadata:         meta,
+			Status:           status,
+		})
+	}
+
+	addProposal := func(id, title string, status string, budgetSats int64, createdAt time.Time, visibleHash string) {
+		if id == "" || seenProposals[id] {
+			return
+		}
+		seenProposals[id] = true
+		proposals = append(proposals, models.SearchResultItem{
+			Type:             "proposal",
+			ID:               id,
+			ProposalID:       id,
+			Title:            title,
+			Status:           status,
+			BudgetSats:       budgetSats,
+			Timestamp:        createdAt.Unix(),
+			VisiblePixelHash: visibleHash,
 		})
 	}
 
@@ -1559,21 +1631,16 @@ func (h *SearchHandler) searchData(query string) models.SearchResult {
 			for _, b := range recent {
 				if cache, ok := b.(*storage.BlockDataCache); ok {
 					if matchesQuery(cache.BlockHash, fmt.Sprintf("%d", cache.BlockHeight)) {
-						blocks = append(blocks, map[string]interface{}{
-							"id":        cache.BlockHash,
-							"height":    cache.BlockHeight,
-							"timestamp": cache.Timestamp,
-							"tx_count":  cache.TxCount,
-						})
+						addBlock(cache.BlockHash, cache.BlockHeight, cache.Timestamp, cache.TxCount)
 					}
 					for _, ins := range cache.Inscriptions {
 						if matchesQuery(ins.TxID, ins.FileName, ins.FilePath, ins.Content, ins.ContentType) {
-							addInscription(ins.TxID, ins.Content, cache.Timestamp)
+							addInscription(ins.TxID, ins.Content, cache.Timestamp, cache.BlockHeight)
 						}
 					}
 					for _, img := range cache.Images {
 						if matchesQuery(img.TxID, img.FileName, img.FilePath, img.ContentType) {
-							addInscription(img.TxID, "", cache.Timestamp)
+							addTransaction(img.TxID, "", cache.Timestamp, cache.BlockHeight)
 						}
 					}
 					for _, sc := range cache.SmartContracts {
@@ -1635,8 +1702,8 @@ func (h *SearchHandler) searchData(query string) models.SearchResult {
 							metaString(meta, "image_path"),
 							text,
 						) {
-							addInscription(id, text, cache.Timestamp)
-							addContract(id, cache.BlockHeight, imageURL, "Smart Contract", visibleHash, meta)
+							addTransaction(id, text, cache.Timestamp, cache.BlockHeight)
+							addContract(id, cache.BlockHeight, imageURL, "Smart Contract", visibleHash, meta, "", 0, metaString(meta, "confirmation_status"))
 						}
 					}
 				}
@@ -1648,28 +1715,62 @@ func (h *SearchHandler) searchData(query string) models.SearchResult {
 	if len(blocks) == 0 {
 		if svcBlocks, err := h.blockService.SearchBlocks(query); err == nil {
 			for _, b := range svcBlocks {
-				blocks = append(blocks, b)
+				if m, ok := b.(map[string]interface{}); ok {
+					height, _ := m["height"].(int64)
+					if height == 0 {
+						if f, ok := m["height"].(float64); ok {
+							height = int64(f)
+						}
+					}
+					addBlock(fmt.Sprintf("%v", m["id"]), height, 0, 0)
+				}
 			}
 		}
 	}
-	if len(inscriptions) == 0 {
+	if len(inscriptions) == 0 && len(transactions) == 0 {
 		if svcInscriptions, err := h.inscriptionService.SearchInscriptions(query); err == nil {
 			for _, ins := range svcInscriptions {
-				inscriptions = append(inscriptions, models.InscriptionRequest{
-					ID:        ins.ID,
-					Text:      ins.Text,
-					Price:     ins.Price,
-					Timestamp: ins.Timestamp,
-					Status:    ins.Status,
-				})
+				addInscription(ins.ID, ins.Text, ins.Timestamp, 0)
+			}
+		}
+	}
+
+	// Search contracts from Store
+	if h.store != nil {
+		contractList, err := h.store.ListContracts(sc.ContractFilter{})
+		if err == nil {
+			for _, c := range contractList {
+				if matchesQuery(c.ContractID, c.Title, strings.Join(c.Skills, " ")) {
+					blockHeight := int64(0)
+					if c.ConfirmedBlockHeight != nil {
+						blockHeight = int64(*c.ConfirmedBlockHeight)
+					}
+					// Extract visible_pixel_hash from contract_id (format: wish-{hash})
+					visibleHash := ""
+					if strings.HasPrefix(c.ContractID, "wish-") {
+						visibleHash = strings.TrimPrefix(c.ContractID, "wish-")
+					}
+					addContract(c.ContractID, blockHeight, "", "Smart Contract", visibleHash, nil, c.Title, c.TotalBudgetSats, c.Status)
+				}
+			}
+		}
+
+		proposalList, err := h.store.ListProposals(context.Background(), sc.ProposalFilter{})
+		if err == nil {
+			for _, p := range proposalList {
+				if matchesQuery(p.ID, p.Title, p.DescriptionMD, p.VisiblePixelHash, p.Status) {
+					addProposal(p.ID, p.Title, p.Status, p.BudgetSats, p.CreatedAt, p.VisiblePixelHash)
+				}
 			}
 		}
 	}
 
 	return models.SearchResult{
 		Inscriptions: inscriptions,
+		Transactions: transactions,
 		Blocks:       blocks,
 		Contracts:    contracts,
+		Proposals:    proposals,
 	}
 }
 

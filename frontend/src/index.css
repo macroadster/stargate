@@ -594,6 +594,12 @@ html[data-theme="light"] .badge {
   column-gap: 1.5rem;
 }
 
+.contracts-grid > div {
+  display: inline-block;
+  width: 100%;
+  vertical-align: top;
+}
+
 @media (min-width: 640px) {
   .contracts-grid {
     column-count: 2;
@@ -651,7 +657,7 @@ html[data-theme="light"] .contract-card {
   }
 
   .contracts-grid {
-    grid-template-columns: repeat(3, 1fr);
+    column-count: 3;
   }
 
   .contract-card-image {

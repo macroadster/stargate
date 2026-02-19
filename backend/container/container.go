@@ -103,7 +103,7 @@ func NewContainer(apiKeyIssuer auth.APIKeyIssuer, apiKeyValidator auth.APIKeyVal
 	inscriptionHandler := handlers.NewInscriptionHandler(inscriptionService, ingestionService, apiKeyIssuer, apiKeyValidator)
 	blockHandler := handlers.NewBlockHandler(blockService)
 	// contractHandler will be set later with store
-	searchHandler := handlers.NewSearchHandler(inscriptionService, blockService, dataStorage)
+	searchHandler := handlers.NewSearchHandler(inscriptionService, blockService, dataStorage, nil)
 	qrHandler := handlers.NewQRCodeHandler(qrService)
 	proxyBase := os.Getenv("STARGATE_PROXY_BASE")
 	if proxyBase == "" {
@@ -140,6 +140,10 @@ func NewContainer(apiKeyIssuer auth.APIKeyIssuer, apiKeyValidator auth.APIKeyVal
 // SetSmartContractHandler sets the smart contract handler with the MCP store
 func (c *Container) SetSmartContractHandler(store scmiddleware.Store) {
 	c.SmartContractHandler = handlers.NewSmartContractHandler(store, c.IngestionService, c.ContractCache)
+	// Also set the store on SearchHandler for proposals/contracts search
+	if c.SearchHandler != nil {
+		c.SearchHandler.SetStore(store)
+	}
 }
 
 // initIngestionService retries connecting to Postgres a few times to avoid startup races.

@@ -63,6 +63,7 @@ function MainContent() {
     handleBlockSelect: originalHandleBlockSelect,
     setSelectedBlock,
     setIsUserNavigating,
+    setManualHeight,
     loadMoreBlocks,
     refreshBlocks
   } = useBlocks();
@@ -90,6 +91,31 @@ function MainContent() {
     const isBrc = text.toLowerCase().includes('brc-20') || text.toLowerCase().includes('brc20') || name.toLowerCase().includes('brc-20') || name.toLowerCase().includes('brc20');
     return !isBrc;
   });
+
+  // Track if we're navigating via URL to prevent loops
+  const urlNavigatedHeightRef = useRef(null);
+  const lastUrlNavTimeRef = useRef(0);
+
+  // Reset URL navigation ref when leaving block route
+  useEffect(() => {
+    if (!height) {
+      urlNavigatedHeightRef.current = null;
+    }
+  }, [height]);
+
+  // Handle URL navigation to specific block
+  useEffect(() => {
+    if (height && !searchResults && urlNavigatedHeightRef.current !== height) {
+      const blockHeight = parseInt(height, 10);
+      if (!isNaN(blockHeight)) {
+        urlNavigatedHeightRef.current = height;
+        lastUrlNavTimeRef.current = Date.now();
+        // Tell useBlocks which block we want - it will handle placeholder/selection
+        setManualHeight(blockHeight);
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [height, searchResults]);
 
   // Handle deep linking for wishes, contracts, and proposals
   useEffect(() => {
@@ -131,20 +157,39 @@ function MainContent() {
         const inscription = payload?.inscriptions?.[0];
         
         if (contract) {
-             const rawUrl = contract.stego_image_url || contract.stegoImageUrl || '';
-             const imageUrl = rawUrl && !rawUrl.startsWith('http') ? `${CONTENT_BASE}${rawUrl}` : rawUrl;
              const metadata = contract.metadata || {};
+             const visiblePixelHash = contract.visible_pixel_hash || metadata.visible_pixel_hash || '';
+             const contractId = contract.contract_id || contract.contractId || contract.id;
+             
+             // Determine image URL based on status
+             let imageUrl = '';
+             const status = (contract.status || metadata.confirmation_status || '').toLowerCase();
+             const confirmedTxid = metadata.confirmed_txid || metadata.tx_id || '';
+             
+             if (status === 'confirmed' && confirmedTxid) {
+               imageUrl = `${CONTENT_BASE}/content/${confirmedTxid}`;
+             } else if (visiblePixelHash) {
+               imageUrl = `${CONTENT_BASE}/uploads/${visiblePixelHash}`;
+             } else if (contract.stego_image_url || contract.stegoImageUrl) {
+               const rawUrl = contract.stego_image_url || contract.stegoImageUrl || '';
+               imageUrl = rawUrl && !rawUrl.startsWith('http') ? `${CONTENT_BASE}${rawUrl}` : rawUrl;
+             }
+             
              const wishText = metadata.wish_text || metadata.embedded_message || metadata.message || '';
              const item = {
-               id: contract.contract_id || contract.contractId || contract.id,
+               id: contractId,
                contract_type: contract.contract_type || 'Smart Contract',
-               metadata,
+               metadata: {
+                 ...metadata,
+                 visible_pixel_hash: visiblePixelHash,
+                 is_stego: true,
+               },
                image_url: imageUrl,
                mime_type: metadata.content_type || 'image/png',
                text: wishText,
                genesis_block_height: contract.block_height || 0,
                block_height: contract.block_height || 0,
-               status: metadata.confirmation_status || 'open',
+               status: status || 'pending',
              };
              setSelectedInscription(item);
         } else if (inscription) {
@@ -257,9 +302,11 @@ function MainContent() {
   }, [blocks, selectedBlock, setSelectedBlock, setIsUserNavigating, wishId, contractId, proposalId]);
 
   // If selection and route diverge (race between click and router), force the route to the selected block.
-  // But strictly AVOID this if we are on a deep-link route.
+  // But strictly AVOID this if we are on a deep-link route or just did URL-driven navigation.
   useEffect(() => {
     if (wishId || contractId || proposalId) return;
+    // Skip if we just did URL-driven navigation (within last 500ms)
+    if (Date.now() - lastUrlNavTimeRef.current < 500) return;
 
     if (!selectedBlock) return;
     const currentHeight = height !== undefined ? parseInt(height, 10) : null;
@@ -322,20 +369,41 @@ function MainContent() {
   };
 
   const selectContract = (contract) => {
-    const rawUrl = contract.stego_image_url || contract.stegoImageUrl || '';
-    const imageUrl = rawUrl && !rawUrl.startsWith('http') ? `${CONTENT_BASE}${rawUrl}` : rawUrl;
     const metadata = contract.metadata || {};
+    const visiblePixelHash = contract.visible_pixel_hash || metadata.visible_pixel_hash || '';
+    const contractId = contract.contract_id || contract.contractId || contract.id;
+    
+    // Determine image URL:
+    // - If status is 'confirmed' and we have a confirmed txid, use /content/[txid]
+    // - Otherwise, use /uploads/[visible_pixel_hash]
+    let imageUrl = '';
+    const status = (contract.status || metadata.confirmation_status || '').toLowerCase();
+    const confirmedTxid = metadata.confirmed_txid || metadata.tx_id || '';
+    
+    if (status === 'confirmed' && confirmedTxid) {
+      imageUrl = `${CONTENT_BASE}/content/${confirmedTxid}`;
+    } else if (visiblePixelHash) {
+      imageUrl = `${CONTENT_BASE}/uploads/${visiblePixelHash}`;
+    } else if (contract.stego_image_url || contract.stegoImageUrl) {
+      const rawUrl = contract.stego_image_url || contract.stegoImageUrl || '';
+      imageUrl = rawUrl && !rawUrl.startsWith('http') ? `${CONTENT_BASE}${rawUrl}` : rawUrl;
+    }
+    
     const wishText = metadata.wish_text || metadata.embedded_message || metadata.message || '';
     const inscription = {
-      id: contract.contract_id || contract.contractId || contract.id,
+      id: contractId,
       contract_type: contract.contract_type || 'Smart Contract',
-      metadata,
+      metadata: {
+        ...metadata,
+        visible_pixel_hash: visiblePixelHash,
+        is_stego: true,
+      },
       image_url: imageUrl,
       mime_type: metadata.content_type || 'image/png',
       text: wishText,
       genesis_block_height: contract.block_height || 0,
       block_height: contract.block_height || 0,
-      status: metadata.confirmation_status || 'open',
+      status: status || 'pending',
     };
     setSelectedInscription(inscription);
     clearSearch();
@@ -364,38 +432,45 @@ function MainContent() {
     if (searchResults === null) return null;
 
     const inscriptionResults = searchResults?.inscriptions || [];
+    const transactionResults = searchResults?.transactions || [];
     const blockResults = searchResults?.blocks || [];
     const contractResults = searchResults?.contracts || [];
+    const proposalResults = searchResults?.proposals || [];
     
     const hasResults =
       (inscriptionResults && inscriptionResults.length > 0) ||
+      (transactionResults && transactionResults.length > 0) ||
       (blockResults && blockResults.length > 0) ||
-      (contractResults && contractResults.length > 0);
+      (contractResults && contractResults.length > 0) ||
+      (proposalResults && proposalResults.length > 0);
     if (!hasResults) return null;
 
     const onSelectBlock = (block) => {
-      setSelectedBlock({ ...block, hash: block.id?.toString() || block.hash });
+      navigate(`/block/${block.block_height || block.height}`);
       clearSearch();
     };
 
     const onSelectInscription = (tx) => {
-      const inscription = {
-        id: tx.id,
-        contractType: 'Custom Contract',
-        capability: 'Data Storage',
-        protocol: 'BRC-20',
-        apiEndpoints: 0,
-        interactions: 0,
-        reputation: 'N/A',
-        isActive: tx.status === 'confirmed',
-        number: parseInt(tx.id?.split('_')[1]) || 0,
-        address: 'bc1q...',
-        genesis_block_height: tx.blockHeight || 0,
-        mime_type: 'text/plain',
-        text: tx.text || '',
-        metadata: tx.metadata || {},
-      };
-      setSelectedInscription(inscription);
+      if (tx.block_height) {
+        navigate(`/block/${tx.block_height}`);
+      }
+      clearSearch();
+    };
+
+    const onSelectTransaction = (tx) => {
+      if (tx.block_height) {
+        navigate(`/block/${tx.block_height}`);
+      }
+      clearSearch();
+    };
+
+    const onSelectContract = (contract) => {
+      navigate(`/contract/${contract.contract_id || contract.id}`);
+      clearSearch();
+    };
+
+    const onSelectProposal = (proposal) => {
+      navigate(`/proposal/${proposal.proposal_id || proposal.id}`);
       clearSearch();
     };
 
@@ -403,7 +478,7 @@ function MainContent() {
       <div className="absolute mt-2 w-96 max-h-96 overflow-y-auto dropdown-menu rounded-lg shadow-lg z-50">
         {inscriptionResults.length > 0 && (
           <div className="p-3 border-b border-white/10">
-            <div className="text-xs uppercase tracking-wide text-secondary mb-2">Transactions</div>
+            <div className="text-xs uppercase tracking-wide text-secondary mb-2">Inscriptions</div>
             <div className="space-y-2">
               {inscriptionResults.slice(0, 5).map((tx, idx) => (
                 <button
@@ -412,8 +487,29 @@ function MainContent() {
                   className="w-full text-left p-2 rounded bg-white/5 hover:bg-white/10 transition-colors"
                 >
                   <div className="flex items-center justify-between text-xs mb-1">
-                    <span className="px-2 py-0.5 rounded bg-yellow-600 text-white text-[11px]">Inscribe</span>
-                    <span className="text-secondary">{tx.status || 'pending'}</span>
+                    <span className="px-2 py-0.5 rounded bg-yellow-600 text-white text-[11px]">Inscription</span>
+                    <span className="text-secondary">{tx.status || 'confirmed'}</span>
+                  </div>
+                  <div className="text-primary font-mono text-xs break-all">{tx.id}</div>
+                  {tx.text && <div className="text-secondary text-xs truncate mt-1">{tx.text}</div>}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        {transactionResults.length > 0 && (
+          <div className="p-3 border-b border-white/10">
+            <div className="text-xs uppercase tracking-wide text-secondary mb-2">Transactions</div>
+            <div className="space-y-2">
+              {transactionResults.slice(0, 5).map((tx, idx) => (
+                <button
+                  key={`tx-${idx}`}
+                  onClick={() => onSelectTransaction(tx)}
+                  className="w-full text-left p-2 rounded bg-white/5 hover:bg-white/10 transition-colors"
+                >
+                  <div className="flex items-center justify-between text-xs mb-1">
+                    <span className="px-2 py-0.5 rounded bg-blue-600 text-white text-[11px]">Transaction</span>
+                    <span className="text-secondary">{tx.status || 'confirmed'}</span>
                   </div>
                   <div className="text-primary font-mono text-xs break-all">{tx.id}</div>
                   {tx.text && <div className="text-secondary text-xs truncate mt-1">{tx.text}</div>}
@@ -424,26 +520,45 @@ function MainContent() {
         )}
         {contractResults.length > 0 && (
           <div className="p-3 border-b border-white/10">
-            <div className="text-xs uppercase tracking-wide text-secondary mb-2">Open Contracts</div>
+            <div className="text-xs uppercase tracking-wide text-secondary mb-2">Contracts</div>
             <div className="space-y-2">
               {contractResults.slice(0, 5).map((contract, idx) => (
                 <button
                   key={`ctr-${idx}`}
-                  onClick={() => selectContract(contract)}
+                  onClick={() => onSelectContract(contract)}
                   className="w-full text-left p-2 rounded bg-white/5 hover:bg-white/10 transition-colors"
                 >
                   <div className="flex items-center justify-between text-xs mb-1">
                     <span className="px-2 py-0.5 rounded bg-emerald-600 text-white text-[11px]">Contract</span>
-                    <span className="text-emerald-500 font-bold">Open</span>
+                    <span className="text-emerald-500 font-bold">{contract.status || 'open'}</span>
                   </div>
                   <div className="text-primary font-mono text-xs break-all">
-                    {contract.contract_id || contract.contractId || contract.id}
+                    {contract.contract_id || contract.id}
                   </div>
-                  {(contract.metadata?.embedded_message || contract.metadata?.message) && (
-                    <div className="text-secondary text-xs truncate mt-1">
-                      {contract.metadata?.embedded_message || contract.metadata?.message}
-                    </div>
-                  )}
+                  {contract.title && <div className="text-secondary text-xs truncate mt-1">{contract.title}</div>}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        {proposalResults.length > 0 && (
+          <div className="p-3 border-b border-white/10">
+            <div className="text-xs uppercase tracking-wide text-secondary mb-2">Proposals</div>
+            <div className="space-y-2">
+              {proposalResults.slice(0, 5).map((proposal, idx) => (
+                <button
+                  key={`prop-${idx}`}
+                  onClick={() => onSelectProposal(proposal)}
+                  className="w-full text-left p-2 rounded bg-white/5 hover:bg-white/10 transition-colors"
+                >
+                  <div className="flex items-center justify-between text-xs mb-1">
+                    <span className="px-2 py-0.5 rounded bg-purple-600 text-white text-[11px]">Proposal</span>
+                    <span className="text-purple-400 font-bold">{proposal.status || 'pending'}</span>
+                  </div>
+                  <div className="text-primary font-mono text-xs break-all">
+                    {proposal.proposal_id || proposal.id}
+                  </div>
+                  {proposal.title && <div className="text-secondary text-xs truncate mt-1">{proposal.title}</div>}
                 </button>
               ))}
             </div>
@@ -464,7 +579,7 @@ function MainContent() {
                     <span className="text-secondary">{b.tx_count || 0} tx</span>
                   </div>
                   <div className="text-primary font-mono text-xs break-all">
-                    #{b.height} • {b.id || b.hash}
+                    #{b.block_height || b.height} • {b.id}
                   </div>
                   {b.timestamp && (
                     <div className="text-secondary text-[11px] mt-1">
@@ -528,7 +643,7 @@ function MainContent() {
               {searchResults.inscriptions && searchResults.inscriptions.length > 0 && (
                 <div className="mb-8">
                   <h3 className="text-primary text-lg font-semibold border-b-2 border-warning pb-2 inline-block mb-4">
-                    Transactions
+                    Inscriptions
                   </h3>
                   <div className="space-y-3">
                     {searchResults.inscriptions.map((tx, idx) => (
@@ -536,46 +651,34 @@ function MainContent() {
                         key={idx}
                         className="bg-white/5 border border-white/10 rounded-lg p-4 cursor-pointer hover:bg-white/10 transition-colors"
                         onClick={() => {
-                           const inscription = {
-                             id: tx.id,
-                             contractType: 'Custom Contract',
-                             capability: 'Data Storage',
-                             protocol: 'BRC-20',
-                             apiEndpoints: 0,
-                             interactions: 0,
-                             reputation: 'N/A',
-                             isActive: tx.status === 'confirmed',
-                             number: parseInt(tx.id.split('_')[1]) || 0,
-                             address: 'bc1q...',
-                             genesis_block_height: 923627,
-                             mime_type: 'text/plain',
-                           };
-                          setSelectedInscription(inscription);
+                          if (tx.block_height) {
+                            navigate(`/block/${tx.block_height}`);
+                          }
                           clearSearch();
                         }}
                       >
                         <div className="flex justify-between items-start mb-3">
                           <div className="flex items-center gap-3">
                             <div className="px-3 py-1 rounded text-xs font-semibold bg-yellow-600 text-white">
-                              Inscribe
+                              Inscription
                             </div>
                             <div className="text-primary font-mono text-sm">
                               {tx.id}
                             </div>
                           </div>
                           <div className="px-2 py-1 rounded text-xs font-semibold bg-white/5 text-secondary border border-white/10">
-                            {tx.status}
+                            {tx.status || 'confirmed'}
                           </div>
                         </div>
 
                         <div className="grid grid-cols-2 gap-4 text-sm">
                           <div>
-                            <div className="text-secondary mb-1">Text Length</div>
-                            <div className="text-primary">{tx.text?.length || 0} chars</div>
+                            <div className="text-secondary mb-1">Block Height</div>
+                            <div className="text-primary">{tx.block_height || '—'}</div>
                           </div>
                           <div>
-                            <div className="text-secondary mb-1">Price</div>
-                            <div className="text-primary font-semibold">{tx.price} BTC</div>
+                            <div className="text-secondary mb-1">Text Length</div>
+                            <div className="text-primary">{tx.text?.length || 0} chars</div>
                           </div>
                         </div>
 
@@ -590,17 +693,73 @@ function MainContent() {
                 </div>
               )}
 
+              {searchResults.transactions && searchResults.transactions.length > 0 && (
+                <div className="mb-8">
+                  <h3 className="text-primary text-lg font-semibold border-b-2 border-blue-500 pb-2 inline-block mb-4">
+                    Transactions
+                  </h3>
+                  <div className="space-y-3">
+                    {searchResults.transactions.map((tx, idx) => (
+                      <div
+                        key={idx}
+                        className="bg-white/5 border border-white/10 rounded-lg p-4 cursor-pointer hover:bg-white/10 transition-colors"
+                        onClick={() => {
+                          if (tx.block_height) {
+                            navigate(`/block/${tx.block_height}`);
+                          }
+                          clearSearch();
+                        }}
+                      >
+                        <div className="flex justify-between items-start mb-3">
+                          <div className="flex items-center gap-3">
+                            <div className="px-3 py-1 rounded text-xs font-semibold bg-blue-600 text-white">
+                              Transaction
+                            </div>
+                            <div className="text-primary font-mono text-sm">
+                              {tx.id}
+                            </div>
+                          </div>
+                          <div className="px-2 py-1 rounded text-xs font-semibold bg-white/5 text-secondary border border-white/10">
+                            {tx.status || 'confirmed'}
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-4 text-sm">
+                          <div>
+                            <div className="text-secondary mb-1">Block Height</div>
+                            <div className="text-primary">{tx.block_height || '—'}</div>
+                          </div>
+                          <div>
+                            <div className="text-secondary mb-1">Type</div>
+                            <div className="text-primary">{tx.type || 'transaction'}</div>
+                          </div>
+                        </div>
+
+                        {tx.text && (
+                          <div className="mt-3 text-xs text-secondary truncate">
+                            {tx.text}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {searchResults.contracts && searchResults.contracts.length > 0 && (
                 <div className="mb-8">
                   <h3 className="text-secondary text-lg font-semibold border-b-2 border-success pb-2 inline-block mb-4">
-                    Open Contracts
+                    Contracts
                   </h3>
                   <div className="space-y-3">
                     {searchResults.contracts.map((contract, idx) => (
                       <div
                         key={`contract-${idx}`}
                         className="bg-white/5 border border-white/10 rounded-lg p-4 cursor-pointer hover:bg-white/10 transition-colors"
-                        onClick={() => selectContract(contract)}
+                        onClick={() => {
+                          navigate(`/contract/${contract.contract_id || contract.id}`);
+                          clearSearch();
+                        }}
                       >
                         <div className="flex justify-between items-start mb-3">
                           <div className="flex items-center gap-3">
@@ -608,11 +767,11 @@ function MainContent() {
                               Contract
                             </div>
                             <div className="text-primary font-mono text-sm">
-                              {contract.contract_id || contract.contractId || contract.id}
+                              {contract.contract_id || contract.id}
                             </div>
                           </div>
                           <div className="px-2 py-1 rounded text-xs font-semibold bg-white/5 text-secondary border border-white/10">
-                            open
+                            {contract.status || 'open'}
                           </div>
                         </div>
 
@@ -624,16 +783,113 @@ function MainContent() {
                             </div>
                           </div>
                           <div>
-                            <div className="text-secondary mb-1">Pixel Hash</div>
+                            <div className="text-secondary mb-1">Budget</div>
                             <div className="text-primary font-mono truncate">
-                              {contract.visible_pixel_hash || contract.metadata?.visible_pixel_hash || '—'}
+                              {contract.budget_sats ? `${contract.budget_sats} sats` : '—'}
                             </div>
                           </div>
                         </div>
 
-                        {(contract.metadata?.embedded_message || contract.metadata?.message) && (
+                        {contract.title && (
                           <div className="mt-3 text-xs text-secondary truncate">
-                            {contract.metadata?.embedded_message || contract.metadata?.message}
+                            {contract.title}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {searchResults.proposals && searchResults.proposals.length > 0 && (
+                <div className="mb-8">
+                  <h3 className="text-purple-400 text-lg font-semibold border-b-2 border-purple-500 pb-2 inline-block mb-4">
+                    Proposals
+                  </h3>
+                  <div className="space-y-3">
+                    {searchResults.proposals.map((proposal, idx) => (
+                      <div
+                        key={`proposal-${idx}`}
+                        className="bg-white/5 border border-white/10 rounded-lg p-4 cursor-pointer hover:bg-white/10 transition-colors"
+                        onClick={() => {
+                          navigate(`/proposal/${proposal.proposal_id || proposal.id}`);
+                          clearSearch();
+                        }}
+                      >
+                        <div className="flex justify-between items-start mb-3">
+                          <div className="flex items-center gap-3">
+                            <div className="px-3 py-1 rounded text-xs font-semibold bg-purple-600 text-white">
+                              Proposal
+                            </div>
+                            <div className="text-primary font-mono text-sm">
+                              {proposal.proposal_id || proposal.id}
+                            </div>
+                          </div>
+                          <div className="px-2 py-1 rounded text-xs font-semibold bg-white/5 text-purple-400 border border-white/10">
+                            {proposal.status || 'pending'}
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-4 text-sm">
+                          <div>
+                            <div className="text-secondary mb-1">Title</div>
+                            <div className="text-primary truncate">{proposal.title || '—'}</div>
+                          </div>
+                          <div>
+                            <div className="text-secondary mb-1">Budget</div>
+                            <div className="text-primary font-mono truncate">
+                              {proposal.budget_sats ? `${proposal.budget_sats} sats` : '—'}
+                            </div>
+                          </div>
+                        </div>
+
+                        {proposal.visible_pixel_hash && (
+                          <div className="mt-3 text-xs text-secondary truncate">
+                            Pixel Hash: {proposal.visible_pixel_hash}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {searchResults.blocks && searchResults.blocks.length > 0 && (
+                <div className="mb-8">
+                  <h3 className="text-primary text-lg font-semibold border-b-2 border-indigo-500 pb-2 inline-block mb-4">
+                    Blocks
+                  </h3>
+                  <div className="space-y-3">
+                    {searchResults.blocks.map((b, idx) => (
+                      <div
+                        key={`block-${idx}`}
+                        className="bg-white/5 border border-white/10 rounded-lg p-4 cursor-pointer hover:bg-white/10 transition-colors"
+                        onClick={() => {
+                          navigate(`/block/${b.block_height || b.height}`);
+                          clearSearch();
+                        }}
+                      >
+                        <div className="flex justify-between items-start mb-3">
+                          <div className="flex items-center gap-3">
+                            <div className="px-3 py-1 rounded text-xs font-semibold bg-indigo-600 text-white">
+                              Block
+                            </div>
+                            <div className="text-primary font-mono text-sm">
+                              #{b.block_height || b.height}
+                            </div>
+                          </div>
+                          <div className="px-2 py-1 rounded text-xs font-semibold bg-white/5 text-secondary border border-white/10">
+                            {b.tx_count || 0} tx
+                          </div>
+                        </div>
+
+                        <div className="text-xs text-secondary font-mono truncate">
+                          {b.id}
+                        </div>
+
+                        {b.timestamp && (
+                          <div className="mt-3 text-xs text-secondary">
+                            {new Date(b.timestamp * 1000).toLocaleString()}
                           </div>
                         )}
                       </div>
@@ -643,7 +899,9 @@ function MainContent() {
               )}
 
               {(!searchResults.inscriptions || searchResults.inscriptions.length === 0) &&
+               (!searchResults.transactions || searchResults.transactions.length === 0) &&
                (!searchResults.contracts || searchResults.contracts.length === 0) &&
+               (!searchResults.proposals || searchResults.proposals.length === 0) &&
                (!searchResults.blocks || searchResults.blocks.length === 0) && (
                 <div className="text-center py-8 text-secondary">
                   No results found for "{searchQuery}"

@@ -138,7 +138,7 @@ IPFS_API_URL=http://127.0.0.1:5001
 - `GET /api/open-contracts` - View open contracts
 
 ### Search
-- `GET /api/search?q=query` - Search inscriptions and blocks
+- `GET /api/search?q=query` - Search inscriptions, transactions, blocks, contracts, and proposals
 
 ## 📁 Project Structure
 
