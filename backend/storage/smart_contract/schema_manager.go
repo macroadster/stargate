@@ -123,6 +123,20 @@ ALTER TABLE mcp_submissions ADD COLUMN IF NOT EXISTS rejection_reason TEXT;
 ALTER TABLE mcp_submissions ADD COLUMN IF NOT EXISTS rejection_type TEXT;
 ALTER TABLE mcp_submissions ADD COLUMN IF NOT EXISTS rejected_at TIMESTAMPTZ;
 
+-- Add FOREIGN KEY constraints (ignoring errors if they already exist)
+DO $$ 
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_mcp_tasks_contract') THEN
+        ALTER TABLE mcp_tasks ADD CONSTRAINT fk_mcp_tasks_contract FOREIGN KEY (contract_id) REFERENCES mcp_contracts(contract_id) ON DELETE CASCADE;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_mcp_claims_task') THEN
+        ALTER TABLE mcp_claims ADD CONSTRAINT fk_mcp_claims_task FOREIGN KEY (task_id) REFERENCES mcp_tasks(task_id) ON DELETE CASCADE;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_mcp_submissions_claim') THEN
+        ALTER TABLE mcp_submissions ADD CONSTRAINT fk_mcp_submissions_claim FOREIGN KEY (claim_id) REFERENCES mcp_claims(claim_id) ON DELETE CASCADE;
+    END IF;
+END $$;
+
 -- Add stego_image_url column to existing mcp_contracts tables
 ALTER TABLE mcp_contracts ADD COLUMN IF NOT EXISTS stego_image_url TEXT;
 -- Add confirmation tracking columns to existing mcp_contracts tables

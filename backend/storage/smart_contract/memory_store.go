@@ -436,7 +436,14 @@ SubmitWork:
 		return smart_contract.Submission{}, fmt.Errorf("claim %s expired", claimID)
 	}
 
+	// Safeguard: Ensure internal fields cannot be overridden by external tool calls
+	delete(deliverables, "status")
+	if proof != nil {
+		delete(proof, "status")
+	}
+
 	subID := fmt.Sprintf("SUB-%d", time.Now().UnixNano())
+
 	sub := smart_contract.Submission{
 		SubmissionID:    subID,
 		ClaimID:         claimID,
@@ -1101,9 +1108,20 @@ func (s *MemoryStore) SyncClaim(ctx context.Context, claim smart_contract.Claim)
 func (s *MemoryStore) SyncSubmission(ctx context.Context, sub smart_contract.Submission) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	// Safeguard: Ensure internal fields cannot be overridden by external tool calls
+	if sub.Deliverables != nil {
+		delete(sub.Deliverables, "status")
+	}
+	if sub.CompletionProof != nil {
+		delete(sub.CompletionProof, "status")
+	}
+
 	s.submissions[sub.SubmissionID] = sub
+
 	return nil
 }
+
 
 // UpsertTask persists a single task update.
 func (s *MemoryStore) UpsertTask(ctx context.Context, task smart_contract.Task) error {
@@ -1202,3 +1220,26 @@ func (s *MemoryStore) UpdateSubmissionStatus(ctx context.Context, submissionID, 
 
 	return nil
 }
+
+// UpdateSubmission updates a full submission record with internal field protection.
+func (s *MemoryStore) UpdateSubmission(ctx context.Context, sub smart_contract.Submission) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Safeguard: Ensure internal fields cannot be overridden by external tool calls
+	if sub.Deliverables != nil {
+		delete(sub.Deliverables, "status")
+	}
+	if sub.CompletionProof != nil {
+		delete(sub.CompletionProof, "status")
+	}
+
+	if _, ok := s.submissions[sub.SubmissionID]; !ok {
+
+		return fmt.Errorf("submission %s not found", sub.SubmissionID)
+	}
+
+	s.submissions[sub.SubmissionID] = sub
+	return nil
+}
+

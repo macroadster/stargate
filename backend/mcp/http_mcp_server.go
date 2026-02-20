@@ -24,6 +24,13 @@ import (
 	auth "stargate-backend/storage/auth"
 )
 
+const (
+	// maxDeliverablesSize is the maximum size allowed for the deliverables JSON (10MB)
+	maxDeliverablesSize = 10 * 1024 * 1024
+	// maxArtifactSize is the maximum size allowed for a single artifact (50MB)
+	maxArtifactSize = 50 * 1024 * 1024
+)
+
 // HTTPMCPServer provides HTTP endpoints for MCP tools
 type HTTPMCPServer struct {
 	store            scmiddleware.Store
@@ -1349,29 +1356,46 @@ func (h *HTTPMCPServer) handleSubmitWork(ctx context.Context, args map[string]in
 					return nil, NewInternalError("submit_work", fmt.Sprintf("Failed to decode artifact %d (%s): %v", i, filename, err))
 				}
 
-				// Create secure file path - preserve directory structure
-				// First, sanitize only the basename to prevent directory traversal
-				filename = strings.ReplaceAll(filename, "..", "")
-				
-				// Get the directory portion and filename portion
-				dir := filepath.Dir(filename)
-				baseName := filepath.Base(filename)
-				
-				// DEBUG: Log what we're processing
-				fmt.Printf("DEBUG: Processing artifact - original: %s, dir: %s, baseName: %s\n", filename, dir, baseName)
-				
-				// Sanitize just the basename
-				baseName = strings.ReplaceAll(baseName, "..", "")
-				baseName = strings.ReplaceAll(baseName, "/", "_")
-				baseName = strings.ReplaceAll(baseName, "\\", "_")
-				
-				if baseName == "" || baseName == "." || baseName == ".." {
-					baseName = fmt.Sprintf("artifact_%d", i)
+				// Enforce artifact size limit
+				if len(fileData) > maxArtifactSize {
+					return nil, NewSubmitWorkError("FILE_TOO_LARGE", fmt.Sprintf("Artifact '%s' exceeds maximum size of %d MB", filename, maxArtifactSize/(1024*1024)), "deliverables.artifacts")
+				}
+
+				// Create secure file path - preserve directory structure safely
+				// Sanitize the filename to prevent directory traversal
+				// We strip all absolute path indicators and ".." components
+				filename = filepath.Clean(filename)
+				if filepath.IsAbs(filename) {
+					// Convert absolute path to relative path components
+					if vol := filepath.VolumeName(filename); vol != "" {
+						filename = strings.TrimPrefix(filename, vol)
+					}
+					filename = strings.TrimPrefix(filename, string(filepath.Separator))
 				}
 				
-				// Create subdirectory if needed (sanitize dir path too)
-				dir = strings.ReplaceAll(dir, "..", "")
-				dir = strings.ReplaceAll(dir, "\\", "_")
+				// Rebuild path component by component to ensure no escapes
+				parts := strings.Split(filename, string(filepath.Separator))
+				var safeParts []string
+				for _, part := range parts {
+					if part == ".." || part == "." || part == "" {
+						continue
+					}
+					// Sanitize each component to be a safe filename
+					safePart := strings.ReplaceAll(part, "/", "_")
+					safePart = strings.ReplaceAll(safePart, "\\", "_")
+					safePart = strings.ReplaceAll(safePart, "..", "")
+					if safePart != "" {
+						safeParts = append(safeParts, safePart)
+					}
+				}
+				
+				if len(safeParts) == 0 {
+					safeParts = []string{fmt.Sprintf("artifact_%d", i)}
+				}
+				
+				safeFilename := filepath.Join(safeParts...)
+				dir := filepath.Dir(safeFilename)
+				baseName := filepath.Base(safeFilename)
 				
 				subDirPath := resultsDir
 				if dir != "." && dir != "" {
@@ -1396,10 +1420,7 @@ func (h *HTTPMCPServer) handleSubmitWork(ctx context.Context, args map[string]in
 				}
 
 				// Create file info for response - preserve relative path
-				relativePath := baseName
-				if dir != "." && dir != "" {
-					relativePath = filepath.Join(dir, baseName)
-				}
+				relativePath := safeFilename
 				fileInfo := map[string]interface{}{
 					"filename":      relativePath,
 					"original_name": filename,
@@ -1408,11 +1429,20 @@ func (h *HTTPMCPServer) handleSubmitWork(ctx context.Context, args map[string]in
 					"path":          fmt.Sprintf("/uploads/results/%s/%s", subDir, relativePath),
 				}
 				processedArtifacts = append(processedArtifacts, fileInfo)
+
+				// CRITICAL: Remove content from artifactMap to prevent it from being stored in JSONB
+				delete(artifactMap, "content")
 			}
 
 			// Update deliverables with processed artifact info
 			deliverables["artifacts_uploaded"] = processedArtifacts
 		}
+	}
+
+	// Final safeguard: Check the size of deliverables JSON before storing
+	delivJSON, err := json.Marshal(deliverables)
+	if err == nil && len(delivJSON) > maxDeliverablesSize {
+		return nil, NewSubmitWorkError("DATA_TOO_LARGE", fmt.Sprintf("Total deliverables data size (%d bytes) exceeds limit of %d bytes", len(delivJSON), maxDeliverablesSize), "deliverables")
 	}
 
 	submission, err := h.store.SubmitWork(claimID, deliverables, nil)

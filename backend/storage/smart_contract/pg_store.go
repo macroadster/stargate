@@ -133,6 +133,20 @@ ALTER TABLE mcp_submissions ADD COLUMN IF NOT EXISTS rejection_reason TEXT;
 ALTER TABLE mcp_submissions ADD COLUMN IF NOT EXISTS rejection_type TEXT;
 ALTER TABLE mcp_submissions ADD COLUMN IF NOT EXISTS rejected_at TIMESTAMPTZ;
 
+-- Add FOREIGN KEY constraints (ignoring errors if they already exist)
+DO $$ 
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_mcp_tasks_contract') THEN
+        ALTER TABLE mcp_tasks ADD CONSTRAINT fk_mcp_tasks_contract FOREIGN KEY (contract_id) REFERENCES mcp_contracts(contract_id) ON DELETE CASCADE;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_mcp_claims_task') THEN
+        ALTER TABLE mcp_claims ADD CONSTRAINT fk_mcp_claims_task FOREIGN KEY (task_id) REFERENCES mcp_tasks(task_id) ON DELETE CASCADE;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_mcp_submissions_claim') THEN
+        ALTER TABLE mcp_submissions ADD CONSTRAINT fk_mcp_submissions_claim FOREIGN KEY (claim_id) REFERENCES mcp_claims(claim_id) ON DELETE CASCADE;
+    END IF;
+END $$;
+
 CREATE TABLE IF NOT EXISTS mcp_escort_status (
   task_id TEXT PRIMARY KEY,
   proof_status TEXT,
@@ -686,7 +700,14 @@ func (s *PGStore) SubmitWork(claimID string, deliverables map[string]interface{}
 		time.Sleep(10 * time.Millisecond)
 	}
 
+	// Safeguard: Ensure internal fields cannot be overridden by external tool calls
+	delete(deliverables, "status")
+	if proof != nil {
+		delete(proof, "status")
+	}
+
 	subID := fmt.Sprintf("SUB-%d", time.Now().UnixNano())
+
 	delivJSON, _ := json.Marshal(deliverables)
 	proofJSON, _ := json.Marshal(proof)
 	sub := smart_contract.Submission{
@@ -1038,7 +1059,16 @@ WHERE task_id = $1 AND (status = 'available' OR status = 'claimed' OR status = '
 
 // SyncSubmission persists a submission from another instance.
 func (s *PGStore) SyncSubmission(ctx context.Context, sub smart_contract.Submission) error {
+	// Safeguard: Ensure internal fields cannot be overridden by external tool calls
+	if sub.Deliverables != nil {
+		delete(sub.Deliverables, "status")
+	}
+	if sub.CompletionProof != nil {
+		delete(sub.CompletionProof, "status")
+	}
+
 	delivJSON, _ := json.Marshal(sub.Deliverables)
+
 	proofJSON, _ := json.Marshal(sub.CompletionProof)
 	_, err := s.pool.Exec(ctx, `
 INSERT INTO mcp_submissions (submission_id, claim_id, task_id, status, deliverables, completion_proof, rejection_reason, rejection_type, rejected_at, created_at)
@@ -1860,3 +1890,27 @@ WHERE task_id=$1
 
 	return tx.Commit(ctx)
 }
+
+// UpdateSubmission updates a full submission record with internal field protection.
+func (s *PGStore) UpdateSubmission(ctx context.Context, sub smart_contract.Submission) error {
+	// Safeguard: Ensure internal fields cannot be overridden by external tool calls
+	if sub.Deliverables != nil {
+		delete(sub.Deliverables, "status")
+	}
+	if sub.CompletionProof != nil {
+		delete(sub.CompletionProof, "status")
+	}
+
+	delivJSON, _ := json.Marshal(sub.Deliverables)
+
+	proofJSON, _ := json.Marshal(sub.CompletionProof)
+
+	_, err := s.pool.Exec(ctx, `
+UPDATE mcp_submissions
+SET status=$2, deliverables=$3, completion_proof=$4, rejection_reason=$5, rejection_type=$6, rejected_at=$7, task_id=$8
+WHERE submission_id=$1
+`, sub.SubmissionID, sub.Status, string(delivJSON), string(proofJSON), sub.RejectionReason, sub.RejectionType, sub.RejectedAt, sub.TaskID)
+
+	return err
+}
+

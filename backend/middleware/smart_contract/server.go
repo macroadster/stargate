@@ -3447,13 +3447,15 @@ func (s *Server) handleSubmissions(w http.ResponseWriter, r *http.Request) {
 				originalSubmission.Deliverables["reworked_at"] = time.Now().Format(time.RFC3339)
 			}
 
-			// Reset status to pending_review
+			// Reset status to pending_review and save all changes
 			ctx := r.Context()
-			err = s.store.UpdateSubmissionStatus(ctx, submissionID, "pending_review", "", "")
+			originalSubmission.Status = "pending_review"
+			err = s.store.UpdateSubmission(ctx, originalSubmission)
 			if err != nil {
 				Error(w, http.StatusInternalServerError, err.Error())
 				return
 			}
+
 
 			// Record event
 			s.recordEvent(smart_contract.Event{
