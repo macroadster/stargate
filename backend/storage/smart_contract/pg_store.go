@@ -1924,3 +1924,33 @@ WHERE submission_id=$1
 	return err
 }
 
+func (s *PGStore) DeleteWish(ctx context.Context, visiblePixelHash string) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	// 1. Delete associated proposals
+	if _, err := tx.Exec(ctx, `DELETE FROM mcp_proposals WHERE visible_pixel_hash = $1`, visiblePixelHash); err != nil {
+		return fmt.Errorf("delete proposals: %w", err)
+	}
+
+	wishID := "wish-" + visiblePixelHash
+
+	// 2. Delete from mcp_escort_status (for any tasks linked to this wish)
+	if _, err := tx.Exec(ctx, `
+		DELETE FROM mcp_escort_status 
+		WHERE task_id IN (SELECT task_id FROM mcp_tasks WHERE contract_id = $1)
+	`, wishID); err != nil {
+		return fmt.Errorf("delete escort status: %w", err)
+	}
+
+	// 3. Delete the wish contract (cascades to tasks, claims, and submissions)
+	if _, err := tx.Exec(ctx, `DELETE FROM mcp_contracts WHERE contract_id = $1`, wishID); err != nil {
+		return fmt.Errorf("delete wish contract: %w", err)
+	}
+
+	return tx.Commit(ctx)
+}
+

@@ -1265,3 +1265,44 @@ func (s *MemoryStore) UpdateSubmission(ctx context.Context, sub smart_contract.S
 	return nil
 }
 
+func (s *MemoryStore) DeleteWish(ctx context.Context, visiblePixelHash string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// 1. Delete associated proposals
+	for id, p := range s.proposals {
+		if p.VisiblePixelHash == visiblePixelHash {
+			delete(s.proposals, id)
+		}
+	}
+
+	wishID := "wish-" + visiblePixelHash
+
+	// 2. Collect task IDs for this wish to cascade delete claims and submissions
+	taskIDs := make(map[string]bool)
+	for id, t := range s.tasks {
+		if t.ContractID == wishID {
+			taskIDs[id] = true
+			delete(s.tasks, id)
+		}
+	}
+
+	// 3. Delete claims and submissions for those tasks
+	for id, c := range s.claims {
+		if taskIDs[c.TaskID] {
+			delete(s.claims, id)
+			// Delete submissions linked to this claim
+			for sid, sub := range s.submissions {
+				if sub.ClaimID == id {
+					delete(s.submissions, sid)
+				}
+			}
+		}
+	}
+
+	// 4. Delete the contract itself
+	delete(s.contracts, wishID)
+
+	return nil
+}
+

@@ -1066,6 +1066,44 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 	}
 }
 
+// HandleDeleteInscription handles deleting an inscription and its associated wish
+func (h *InscriptionHandler) HandleDeleteInscription(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		h.sendError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	// Extract ID from URL path (e.g., /api/inscriptions/{id})
+	id := strings.TrimPrefix(r.URL.Path, "/api/inscriptions/")
+	if id == "" {
+		h.sendError(w, http.StatusBadRequest, "Missing ID")
+		return
+	}
+
+	// Normalize ID (strip wish- prefix)
+	visibleHash := strings.TrimPrefix(id, "wish-")
+
+	// 1. Delete from ingestion service
+	if h.ingestionService != nil {
+		if err := h.ingestionService.Delete(r.Context(), visibleHash); err != nil {
+			log.Printf("Failed to delete ingestion record %s: %v", visibleHash, err)
+		}
+	}
+
+	// 2. Delete from MCP store (cascading delete)
+	if h.store != nil {
+		if err := h.store.DeleteWish(r.Context(), visibleHash); err != nil {
+			log.Printf("Failed to delete wish %s from store: %v", visibleHash, err)
+		}
+	}
+
+	h.sendSuccess(w, map[string]string{
+		"status":  "success",
+		"message": "Inscription and associated wish deleted",
+		"id":      id,
+	})
+}
+
 // BlockHandler handles block-related requests
 type BlockHandler struct {
 	*BaseHandler

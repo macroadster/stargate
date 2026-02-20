@@ -321,6 +321,28 @@ WHERE id = ANY($1)
 	return recs, rows.Err()
 }
 
+// Delete removes an ingestion record and its updates.
+func (s *IngestionService) Delete(ctx context.Context, id string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Delete from ingest updates first
+	if _, err := tx.ExecContext(ctx, "DELETE FROM starlight_ingest_updates WHERE ingestion_id = $1", id); err != nil {
+		return fmt.Errorf("delete ingest updates: %w", err)
+	}
+
+	// Delete from ingestions
+	query := fmt.Sprintf("DELETE FROM %s WHERE id = $1", s.tableName)
+	if _, err := tx.ExecContext(ctx, query, id); err != nil {
+		return fmt.Errorf("delete ingestion: %w", err)
+	}
+
+	return tx.Commit()
+}
+
 // Helpers to marshal/unmarshal metadata safely.
 func toJSONB(v map[string]interface{}) ([]byte, error) {
 	if v == nil {

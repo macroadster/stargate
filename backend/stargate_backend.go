@@ -513,6 +513,7 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 
 	// Inscription endpoints
 	mux.HandleFunc("/api/inscriptions", container.InscriptionHandler.HandleGetInscriptions)
+	mux.HandleFunc("/api/inscriptions/", container.InscriptionHandler.HandleDeleteInscription)
 	mux.Handle("/api/inscribe", wrapWithAuth(container.InscriptionHandler.HandleCreateInscription))
 
 	// Block endpoints
