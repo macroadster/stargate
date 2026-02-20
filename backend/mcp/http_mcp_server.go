@@ -602,6 +602,13 @@ func (h *HTTPMCPServer) handleCreateProposal(ctx context.Context, args map[strin
 	log.Printf("MCP CREATE PROPOSAL DEBUG: ID=%s, metadata=%+v", proposal.ID, proposal.Metadata)
 	err = h.store.CreateProposal(ctx, proposal)
 	if err != nil {
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "maximum of 5 proposals reached") {
+			return nil, NewCreateProposalError("LIMIT_REACHED", "Maximum of 5 proposals reached for this wish to prevent spam", "visible_pixel_hash")
+		}
+		if strings.Contains(errMsg, "already approved/published") {
+			return nil, NewCreateProposalError("ALREADY_FINALIZED", "This wish already has an approved or published proposal and is no longer accepting new proposals", "visible_pixel_hash")
+		}
 		return nil, NewInternalError("create_proposal", fmt.Sprintf("Failed to create proposal: %v", err))
 	}
 

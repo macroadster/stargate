@@ -2,11 +2,76 @@ package smart_contract
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
 	"stargate-backend/core/smart_contract"
 )
+
+func TestProposalLimitPerWish(t *testing.T) {
+	store := NewMemoryStore(time.Hour)
+	ctx := context.Background()
+
+	pixelHash := "d0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1"
+
+	for i := 1; i <= 5; i++ {
+		prop := smart_contract.Proposal{
+			ID:               fmt.Sprintf("proposal-%d", i),
+			Status:           "pending",
+			VisiblePixelHash: pixelHash,
+			Title:            fmt.Sprintf("Proposal %d", i),
+		}
+		if err := store.CreateProposal(ctx, prop); err != nil {
+			t.Fatalf("create proposal %d: %v", i, err)
+		}
+	}
+
+	// 6th proposal should fail
+	prop6 := smart_contract.Proposal{
+		ID:               "proposal-6",
+		Status:           "pending",
+		VisiblePixelHash: pixelHash,
+		Title:            "Proposal 6",
+	}
+	if err := store.CreateProposal(ctx, prop6); err == nil {
+		t.Fatalf("expected 6th proposal to fail")
+	} else if !strings.Contains(err.Error(), "maximum of 5 proposals reached") {
+		t.Fatalf("expected 'maximum of 5 proposals reached' error, got: %v", err)
+	}
+}
+
+func TestProposalFailsIfApprovedExists(t *testing.T) {
+	store := NewMemoryStore(time.Hour)
+	ctx := context.Background()
+
+	pixelHash := "e0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1"
+
+	// Create and approve a proposal
+	prop1 := smart_contract.Proposal{
+		ID:               "proposal-approved",
+		Status:           "approved",
+		VisiblePixelHash: pixelHash,
+		Title:            "Approved Proposal",
+	}
+	if err := store.CreateProposal(ctx, prop1); err != nil {
+		t.Fatalf("create approved proposal: %v", err)
+	}
+
+	// Create another proposal for the same wish - should fail
+	prop2 := smart_contract.Proposal{
+		ID:               "proposal-pending",
+		Status:           "pending",
+		VisiblePixelHash: pixelHash,
+		Title:            "Pending Proposal",
+	}
+	if err := store.CreateProposal(ctx, prop2); err == nil {
+		t.Fatalf("expected proposal creation to fail because an approved proposal exists")
+	} else if !strings.Contains(err.Error(), "already approved/published") {
+		t.Fatalf("expected 'already approved/published' error, got: %v", err)
+	}
+}
 
 func TestApproveProposalPreventsDoubleApproval(t *testing.T) {
 	store := NewMemoryStore(time.Hour)

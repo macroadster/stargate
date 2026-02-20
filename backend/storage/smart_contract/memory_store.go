@@ -710,6 +710,28 @@ func (s *MemoryStore) CreateProposal(ctx context.Context, p smart_contract.Propo
 		return fmt.Errorf("invalid proposal status: %s (must be one of: pending, approved, rejected, published)", p.Status)
 	}
 
+	// Check for duplicate visible_pixel_hash or max limit
+	visibleHash := strings.TrimSpace(p.VisiblePixelHash)
+	if visibleHash == "" {
+		if v, ok := p.Metadata["visible_pixel_hash"].(string); ok {
+			visibleHash = strings.TrimSpace(v)
+		}
+	}
+	if visibleHash != "" {
+		count := 0
+		for _, prop := range s.proposals {
+			if prop.VisiblePixelHash == visibleHash && prop.ID != p.ID {
+				if strings.EqualFold(prop.Status, "approved") || strings.EqualFold(prop.Status, "published") {
+					return fmt.Errorf("a proposal with visible_pixel_hash=%s is already approved/published (id=%s)", visibleHash, prop.ID)
+				}
+				count++
+			}
+		}
+		if count >= 5 {
+			return fmt.Errorf("maximum of 5 proposals reached for wish %s", visibleHash)
+		}
+	}
+
 	s.proposals[p.ID] = p
 	if strings.EqualFold(p.Status, "approved") || strings.EqualFold(p.Status, "published") {
 		visible := strings.TrimSpace(p.VisiblePixelHash)

@@ -1267,6 +1267,16 @@ func (s *PGStore) CreateProposal(ctx context.Context, p smart_contract.Proposal)
 		if err == nil && conflictID != "" {
 			return fmt.Errorf("a proposal with visible_pixel_hash=%s is already approved/published (id=%s)", visibleHash, conflictID)
 		}
+
+		// Safeguard: Maximum 5 proposals per wish
+		var count int
+		err = s.pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM mcp_proposals
+		WHERE visible_pixel_hash=$1 AND id<>$2
+		`, visibleHash, p.ID).Scan(&count)
+		if err == nil && count >= 5 {
+			return fmt.Errorf("maximum of 5 proposals reached for wish %s", visibleHash)
+		}
 	}
 
 	metaMap := p.Metadata
