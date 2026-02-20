@@ -1118,6 +1118,12 @@ func (h *InscriptionHandler) HandleDeleteInscription(w http.ResponseWriter, r *h
 			}
 		}
 
+		// Check status - deletion not allowed for confirmed/finalized items
+		if !isPendingContractStatus(rec.Status) {
+			h.sendError(w, http.StatusForbidden, fmt.Sprintf("Cannot delete a wish with status '%s' (only pending wishes can be deleted)", rec.Status))
+			return
+		}
+
 		// Delete from ingestion service
 		if err := h.ingestionService.Delete(r.Context(), visibleHash); err != nil {
 			log.Printf("Failed to delete ingestion record %s: %v", visibleHash, err)
@@ -1126,6 +1132,15 @@ func (h *InscriptionHandler) HandleDeleteInscription(w http.ResponseWriter, r *h
 
 	// 2. Delete from MCP store (cascading delete)
 	if h.store != nil {
+		// Double check status in contract store
+		wishID := wishContractID(visibleHash)
+		if contract, err := h.store.GetContract(wishID); err == nil {
+			if !isPendingContractStatus(contract.Status) {
+				h.sendError(w, http.StatusForbidden, fmt.Sprintf("Cannot delete a contract with status '%s'", contract.Status))
+				return
+			}
+		}
+
 		if err := h.store.DeleteWish(r.Context(), visibleHash); err != nil {
 			log.Printf("Failed to delete wish %s from store: %v", visibleHash, err)
 		}
