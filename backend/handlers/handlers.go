@@ -1083,8 +1083,42 @@ func (h *InscriptionHandler) HandleDeleteInscription(w http.ResponseWriter, r *h
 	// Normalize ID (strip wish- prefix)
 	visibleHash := strings.TrimPrefix(id, "wish-")
 
-	// 1. Delete from ingestion service
+	// Get requester wallet from API key (provided by wrapWithAuth)
+	var requesterWallet string
+	apiKey := strings.TrimSpace(r.Header.Get("X-API-Key"))
+	if apiKey == "" {
+		auth := r.Header.Get("Authorization")
+		if strings.HasPrefix(auth, "Bearer ") {
+			apiKey = strings.TrimPrefix(auth, "Bearer ")
+		}
+	}
+	if apiKey != "" && h.apiKeyValidator != nil {
+		if apiKeyRec, ok := h.apiKeyValidator.Get(apiKey); ok {
+			requesterWallet = strings.TrimSpace(apiKeyRec.Wallet)
+		}
+	}
+
+	// 1. Check ownership via ingestion record
 	if h.ingestionService != nil {
+		rec, err := h.ingestionService.Get(visibleHash)
+		if err != nil {
+			h.sendError(w, http.StatusNotFound, "Inscription not found")
+			return
+		}
+
+		// Verify ownership
+		if creatorWallet, ok := rec.Metadata["creator_wallet"].(string); ok && creatorWallet != "" {
+			if requesterWallet == "" || !strings.EqualFold(strings.TrimSpace(creatorWallet), requesterWallet) {
+				// Special case: check global auditor status (donation address)
+				donationAddr := strings.TrimSpace(os.Getenv("STARLIGHT_DONATION_ADDRESS"))
+				if donationAddr == "" || !strings.EqualFold(requesterWallet, donationAddr) {
+					h.sendError(w, http.StatusForbidden, "Only the wish creator or an authorized auditor can delete this wish")
+					return
+				}
+			}
+		}
+
+		// Delete from ingestion service
 		if err := h.ingestionService.Delete(r.Context(), visibleHash); err != nil {
 			log.Printf("Failed to delete ingestion record %s: %v", visibleHash, err)
 		}
