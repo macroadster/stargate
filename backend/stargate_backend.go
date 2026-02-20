@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -161,34 +162,42 @@ func customUploadsHandler(uploadsDir string) http.HandlerFunc {
 			return
 		}
 
-		// Read entire file once for both MIME detection and serving
-		// This avoids reading the file twice from disk
-		content, err := os.ReadFile(filePath)
+		// Open file for streaming (avoids loading entire file into memory)
+		file, err := os.Open(filePath)
 		if err != nil {
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
+		defer file.Close()
+
+		// Read only first 512 bytes for MIME detection
+		sample := make([]byte, 512)
+		n, err := file.Read(sample)
+		if err != nil && err != io.EOF {
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+		sample = sample[:n]
 
 		// Detect MIME type using content-based detection (Stealth Design)
-		// Use first 512 bytes for detection, same as before
-		var sample []byte
-		if len(content) > 512 {
-			sample = content[:512]
-		} else {
-			sample = content
-		}
 		mimeType := detectMimeType(sample, filepath.Base(relPath))
 		if mimeType == "" {
 			mimeType = "application/octet-stream"
 		}
 
-		// Set Content-Type header
+		// Seek back to beginning for streaming
+		if _, err := file.Seek(0, io.SeekStart); err != nil {
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+
+		// Set headers
 		w.Header().Set("Content-Type", mimeType)
 		w.Header().Set("Cache-Control", "public, max-age=3600")
 		w.Header().Set("Content-Length", strconv.FormatInt(fileInfo.Size(), 10))
 
-		// Write cached content to response
-		_, _ = w.Write(content)
+		// Stream file directly to response
+		_, _ = io.Copy(w, file)
 	}
 }
 
@@ -501,7 +510,7 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 	})
 
 	mux.Handle("/metrics", promhttp.Handler())
-	
+
 	// Inscription endpoints
 	mux.HandleFunc("/api/inscriptions", container.InscriptionHandler.HandleGetInscriptions)
 	mux.Handle("/api/inscribe", wrapWithAuth(container.InscriptionHandler.HandleCreateInscription))
