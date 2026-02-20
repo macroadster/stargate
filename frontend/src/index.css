@@ -1359,6 +1359,46 @@ html[data-theme="light"] .btn-icon:hover {
   color: #374151;
 }
 
+/* QuantumCSS component presets */
+.input {
+  border: 1px solid #d1d5db;
+  border-radius: 0.25rem;
+  padding: 0.5rem 0.75rem;
+  background: white;
+  color: inherit;
+}
+
+html[data-theme="dark"] .input {
+  background: #1f2937;
+  border-color: #4b5563;
+  color: white;
+}
+
+html[data-theme="light"] .input {
+  background: white;
+  border-color: #d1d5db;
+}
+
+.btn-success {
+  background: #059669;
+  color: white;
+  padding: 0.375rem 0.75rem;
+  border-radius: 0.25rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.2s;
+  border: none;
+}
+
+.btn-success:hover {
+  background: #047857;
+}
+
+.btn-success:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .badge-success {
   background: #10b981;
   color: white;

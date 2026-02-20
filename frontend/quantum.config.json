@@ -1,0 +1,41 @@
+{
+  "componentPresets": {
+    "card": "bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700 p-4",
+    "btn": "px-4 py-2 rounded font-medium transition-colors cursor-pointer",
+    "btn-primary": "btn bg-indigo-600 text-white hover:bg-indigo-700",
+    "btn-success": "btn bg-emerald-600 text-white hover:bg-emerald-700",
+    "btn-secondary": "btn bg-gray-200 text-gray-900 hover:bg-gray-300 dark:bg-gray-700 dark:text-white dark:hover:bg-gray-600",
+    "input": "border border-gray-300 rounded px-3 py-2 bg-white dark:bg-gray-800 dark:border-gray-600 dark:text-white",
+    "prose": "max-w-none prose prose-gray dark:prose-invert",
+    "no-scrollbar": "scrollbar-hide",
+    "glass": "bg-white/10 backdrop-blur-md border border-white/20"
+  },
+  "theme": {
+    "extend": {
+      "colors": {
+        "indigo": {
+          "400": "#818CF8",
+          "500": "#6366F1",
+          "600": "#4F46E5",
+          "700": "#4338CA"
+        },
+        "purple": {
+          "500": "#A855F7",
+          "600": "#9333EA",
+          "700": "#7C3AED"
+        },
+        "emerald": {
+          "600": "#059669",
+          "700": "#047857"
+        },
+        "yellow": {
+          "500": "#EAB308",
+          "600": "#CA8A04"
+        }
+      },
+      "fontFamily": {
+        "mono": ["ui-monospace", "SFMono-Regular", "Monaco", "Consolas", "Liberation Mono", "Menlo", "monospace"]
+      }
+    }
+  }
+}

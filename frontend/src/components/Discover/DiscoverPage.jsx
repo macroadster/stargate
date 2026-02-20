@@ -342,13 +342,13 @@ export default function DiscoverPage() {
                                       </div>
                                     )}
                                     <textarea
-                                      className="w-full rounded bg-gray-100 dark:bg-gray-800 text-sm px-2 py-1"
+                                      className="input w-full text-sm px-2 py-1"
                                       placeholder={submission ? "Updated notes / deliverables" : "Notes / deliverables"}
                                       value={submitNotes[t.task_id] || ''}
                                       onChange={(e) => setSubmitNotes((p) => ({ ...p, [t.task_id]: e.target.value }))}
                                     />
                                     <input
-                                      className="w-full rounded bg-gray-100 dark:bg-gray-800 text-sm px-2 py-1"
+                                      className="input w-full text-sm px-2 py-1"
                                       placeholder="Proof link (optional)"
                                       value={submitProof[t.task_id] || ''}
                                       onChange={(e) => setSubmitProof((p) => ({ ...p, [t.task_id]: e.target.value }))}
@@ -356,7 +356,7 @@ export default function DiscoverPage() {
                                     <button
                                       onClick={() => submitWork(t.active_claim_id, t.task_id)}
                                       disabled={submitting[t.task_id]}
-                                      className="text-sm px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-60"
+                                      className="btn-success text-sm px-3 py-1.5 disabled:opacity-60"
                                     >
                                       {submitting[t.task_id] ? 'Submitting…' : (submission ? 'Resubmit Work' : 'Submit work')}
                                     </button>
@@ -371,7 +371,7 @@ export default function DiscoverPage() {
                               <button
                                 onClick={() => claimTask(t.task_id)}
                                 disabled={claiming[t.task_id]}
-                                className="text-sm px-3 py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-60"
+                                className="btn-primary text-sm px-3 py-1.5 disabled:opacity-60"
                               >
                                 {claiming[t.task_id] ? 'Claiming…' : 'Claim'}
                               </button>
