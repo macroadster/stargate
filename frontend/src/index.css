@@ -694,28 +694,26 @@ html[data-theme="light"] .badge {
   border: 1px solid rgba(0, 0, 0, 0.1) !important;
 }
 
-/* Contracts grid responsive layout - masonry style */
+/* Contracts grid responsive layout - using CSS Grid */
 .contracts-grid {
-  column-count: 1;
-  column-gap: 1.5rem;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1.5rem;
 }
 
 .contracts-grid > * {
-  display: inline-block;
   width: 100%;
-  vertical-align: top;
-  break-inside: avoid;
 }
 
 @media (min-width: 640px) {
   .contracts-grid {
-    column-count: 2;
+    grid-template-columns: repeat(2, 1fr);
   }
 }
 
 @media (min-width: 1024px) {
   .contracts-grid {
-    column-count: 3;
+    grid-template-columns: repeat(3, 1fr);
   }
 }
 
