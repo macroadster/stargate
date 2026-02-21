@@ -694,26 +694,33 @@ html[data-theme="light"] .badge {
   border: 1px solid rgba(0, 0, 0, 0.1) !important;
 }
 
-/* Contracts grid responsive layout - using CSS Grid */
+/* Contracts grid responsive layout - masonry style */
 .contracts-grid {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 1.5rem;
+  column-count: 1;
+  column-gap: 1.5rem;
 }
 
 .contracts-grid > * {
+  display: inline-block;
   width: 100%;
+  vertical-align: top;
+  break-inside: avoid;
+}
+
+.contracts-grid button {
+  width: 100%;
+  text-align: left;
 }
 
 @media (min-width: 640px) {
   .contracts-grid {
-    grid-template-columns: repeat(2, 1fr);
+    column-count: 2;
   }
 }
 
 @media (min-width: 1024px) {
   .contracts-grid {
-    grid-template-columns: repeat(3, 1fr);
+    column-count: 3;
   }
 }
 

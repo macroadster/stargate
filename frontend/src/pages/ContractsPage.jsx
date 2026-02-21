@@ -68,10 +68,13 @@ export default function ContractsPage() {
 
         <div className="contracts-grid">
           {displayContracts.map((contract) => (
-            <button
+            <div
               key={`${contract.id}-${contract.block_height}`}
               onClick={() => setSelectedInscription(contract)}
-              className="group text-left"
+              onKeyDown={(e) => e.key === 'Enter' && setSelectedInscription(contract)}
+              role="button"
+              tabIndex={0}
+              className="group text-left cursor-pointer"
             >
               <div className="contract-card transition-all duration-300 hover:shadow-xl hover:translate-y-[-5px]">
                 <div className="relative">
@@ -128,7 +131,7 @@ export default function ContractsPage() {
                   </div>
                 </div>
               </div>
-            </button>
+            </div>
           ))}
         </div>
 
