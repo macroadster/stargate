@@ -524,6 +524,20 @@ html[data-theme="light"] .auth-tab-inactive {
 .nav-link svg { color: currentColor; stroke: currentColor; }
 .nav-item:hover { background: transparent !important; }
 .nav-link:hover { color: var(--color-starlight-blue) !important; }
+.nav-link:focus { outline: none !important; box-shadow: none !important; }
+.nav-link::-moz-focus-inner { border: 0 !important; }
+
+.starlight-nav button:focus { outline: none !important; box-shadow: none !important; }
+.starlight-nav button::-moz-focus-inner { border: 0 !important; }
+
+.text-gradient-starlight {
+  background: linear-gradient(135deg, #ffb38a 40%, #00d4ff 100%) !important;
+  -webkit-background-clip: text !important;
+  -webkit-text-fill-color: transparent !important;
+  background-clip: text !important;
+  padding-bottom: 4px;
+  margin-bottom: -2px;
+}
 
 /* Mobile menu overflow fix */
 .nav-menu-mobile {
@@ -686,7 +700,7 @@ html[data-theme="light"] .badge {
   column-gap: 1.5rem;
 }
 
-.contracts-grid > div {
+.contracts-grid > * {
   display: inline-block;
   width: 100%;
   vertical-align: top;
@@ -1153,6 +1167,9 @@ html[data-theme="light"] .modal-tabs {
 .modal-tab:hover {
   color: #d1d5db;
 }
+
+.modal-tab:focus { outline: none !important; box-shadow: none !important; }
+.modal-tab::-moz-focus-inner { border: 0 !important; }
 
 .modal-tab.active {
   color: #818cf8;
