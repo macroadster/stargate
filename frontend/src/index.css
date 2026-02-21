@@ -698,16 +698,21 @@ html[data-theme="light"] .badge {
 .contracts-grid {
   column-count: 1;
   column-gap: 1.5rem;
+  column-fill: balance;
+  width: 100%;
 }
 
 .contracts-grid > * {
-  display: inline-block;
+  display: block;
   width: 100%;
-  vertical-align: top;
   break-inside: avoid;
+  -webkit-column-break-inside: avoid;
+  page-break-inside: avoid;
+  overflow: hidden;
 }
 
-.contracts-grid button {
+.contracts-grid button,
+.contracts-grid [role="button"] {
   width: 100%;
   text-align: left;
 }
