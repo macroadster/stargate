@@ -704,6 +704,7 @@ html[data-theme="light"] .badge {
   display: inline-block;
   width: 100%;
   vertical-align: top;
+  break-inside: avoid;
 }
 
 @media (min-width: 640px) {
