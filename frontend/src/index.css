@@ -1,5 +1,76 @@
 @import '@howssatoshi/quantumcss/dist/quantum.min.css';
 
+@media (prefers-color-scheme: light) {
+  .nav-glass {
+    background: rgba(255, 255, 255, 0.48) !important;
+    border-bottom-color: rgba(0, 0, 0, 0.1);
+  }
+}
+
+html[data-theme="light"] .nav-glass {
+  background: rgba(255, 255, 255, 0.48) !important;
+  border-bottom-color: rgba(0, 0, 0, 0.1);
+}
+
+.search-container {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.search-input {
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 0.5rem;
+  padding: 0.5rem 2rem 0.5rem 2rem;
+  color: #e5e7eb;
+  font-size: 0.875rem;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.search-input:focus {
+  border-color: #6366f1;
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
+}
+
+.search-icon {
+  position: absolute;
+  left: 0.75rem;
+  color: #64748b;
+  pointer-events: none;
+}
+
+@media (prefers-color-scheme: light) {
+  .search-input {
+    background: rgba(255, 255, 255, 0.8);
+    border-color: #cbd5e1;
+    color: #1e293b;
+  }
+  .search-input:focus {
+    border-color: #4f46e5;
+    box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.2);
+  }
+  .search-icon {
+    color: #64748b;
+  }
+}
+
+html[data-theme="light"] .search-input {
+  background: rgba(255, 255, 255, 0.8);
+  border-color: #cbd5e1;
+  color: #1e293b;
+}
+
+html[data-theme="light"] .search-input:focus {
+  border-color: #4f46e5;
+  box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.2);
+}
+
+html[data-theme="light"] .search-icon {
+  color: #64748b;
+}
+
 /* Search clear button */
 .search-clear {
   position: absolute;
@@ -812,7 +883,7 @@ html[data-theme="light"] .contract-card {
 }
 
 .modal-container {
-  background: rgba(30, 41, 59, 0.95);
+  background: rgba(30, 41, 59, 0.40);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 12px;
   max-width: 80rem;
@@ -827,19 +898,19 @@ html[data-theme="light"] .contract-card {
 }
 
 html[data-theme="dark"] .modal-container {
-  background: rgba(30, 41, 59, 0.95);
+  background: rgba(30, 41, 59, 0.40);
   border-color: rgba(255, 255, 255, 0.1);
 }
 
 @media (prefers-color-scheme: light) {
   .modal-container {
-    background: rgba(255, 255, 255, 0.95);
+    background: rgba(255, 255, 255, 0.85) !important;
     border-color: rgba(0, 0, 0, 0.1);
   }
 }
 
 html[data-theme="light"] .modal-container {
-  background: rgba(255, 255, 255, 0.95);
+  background: rgba(255, 255, 255, 0.85) !important;
   border-color: rgba(0, 0, 0, 0.1);
 }
 
@@ -855,7 +926,7 @@ html[data-theme="light"] .modal-container {
 
 .create-contract-modal {
   padding: 1.5rem;
-  background: rgba(30, 41, 59, 0.95);
+  background: rgba(30, 41, 59, 0.40);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 12px;
   backdrop-filter: blur(12px);
@@ -863,13 +934,13 @@ html[data-theme="light"] .modal-container {
 
 @media (prefers-color-scheme: light) {
   .create-contract-modal {
-    background: rgba(255, 255, 255, 0.95);
+    background: rgba(255, 255, 255, 0.85) !important;
     border-color: rgba(0, 0, 0, 0.1);
   }
 }
 
 html[data-theme="light"] .create-contract-modal {
-  background: rgba(255, 255, 255, 0.95);
+  background: rgba(255, 255, 255, 0.85) !important;
   border-color: rgba(0, 0, 0, 0.1);
 }
 

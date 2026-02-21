@@ -1147,11 +1147,17 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
                       <div className="modal-text-box">
                         <div className="flex flex-col gap-3">
                           <div className="flex flex-col gap-1">
-                            <span className="modal-data-label">Contract ID</span>
+                            <div className="flex items-center justify-between">
+                              <span className="modal-data-label">Contract ID</span>
+                              <CopyButton text={inscription.id} />
+                            </div>
                             <span className="font-mono text-sm text-primary break-all">{inscription.id}</span>
                           </div>
                           <div className="flex flex-col gap-1">
-                            <span className="modal-data-label">Visible Pixel Hash</span>
+                            <div className="flex items-center justify-between">
+                              <span className="modal-data-label">Visible Pixel Hash</span>
+                              <CopyButton text={pixelHash} />
+                            </div>
                             <span className="font-mono text-sm text-primary break-all">{pixelHash}</span>
                           </div>
                           {inscription.status && (

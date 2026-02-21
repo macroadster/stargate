@@ -21,7 +21,7 @@ const CopyButton = ({ text, className = "" }) => {
   return (
     <button 
       onClick={() => copyToClipboard(text)}
-      className={`text-indigo-600 dark:text-white hover:text-indigo-800 dark:hover:text-gray-200 ${className}`}
+      className={`text-primary hover:opacity-70 ${className}`}
     >
       {copiedText === text ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
     </button>
