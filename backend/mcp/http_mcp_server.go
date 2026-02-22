@@ -1379,7 +1379,7 @@ func (h *HTTPMCPServer) handleSubmitWork(ctx context.Context, args map[string]in
 					}
 					filename = strings.TrimPrefix(filename, string(filepath.Separator))
 				}
-				
+
 				// Rebuild path component by component to ensure no escapes
 				parts := strings.Split(filename, string(filepath.Separator))
 				var safeParts []string
@@ -1395,20 +1395,20 @@ func (h *HTTPMCPServer) handleSubmitWork(ctx context.Context, args map[string]in
 						safeParts = append(safeParts, safePart)
 					}
 				}
-				
+
 				if len(safeParts) == 0 {
 					safeParts = []string{fmt.Sprintf("artifact_%d", i)}
 				}
-				
+
 				safeFilename := filepath.Join(safeParts...)
 				dir := filepath.Dir(safeFilename)
 				baseName := filepath.Base(safeFilename)
-				
+
 				subDirPath := resultsDir
 				if dir != "." && dir != "" {
 					subDirPath = filepath.Join(resultsDir, dir)
 				}
-				
+
 				if err := os.MkdirAll(subDirPath, 0755); err != nil {
 					return nil, NewInternalError("submit_work", fmt.Sprintf("Failed to create artifact subdirectory: %v", err))
 				}

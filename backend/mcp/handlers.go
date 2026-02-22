@@ -70,7 +70,6 @@ func (h *HTTPMCPServer) handleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.URL.Path != "/mcp" && r.URL.Path != "/mcp/" {
-		h.writeHTTPError(w, http.StatusNotFound, "MCP_ENDPOINT_NOT_FOUND", "Unknown MCP endpoint", "See available MCP endpoints at /mcp/docs or /mcp/discover.")
 		return
 	}
 
