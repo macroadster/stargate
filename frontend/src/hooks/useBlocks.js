@@ -342,6 +342,8 @@ export const useBlocks = () => {
     setIsUserNavigating(true);
     // Check if block exists in current list, otherwise create placeholder
     const existingBlock = blocksRef.current.find(b => b.height === height);
+    const networkHeight = networkBlockHeightRef.current;
+    const isFuture = !existingBlock?.isFuture && networkHeight && height > networkHeight;
     if (existingBlock) {
       setSelectedBlock({ ...existingBlock });
     } else {
@@ -357,7 +359,8 @@ export const useBlocks = () => {
         hasBRC20: false,
         has_images: false,
         smart_contracts: [],
-        witness_images: []
+        witness_images: [],
+        isFuture
       });
     }
   };

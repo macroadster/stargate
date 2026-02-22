@@ -193,7 +193,7 @@ func customUploadsHandler(uploadsDir string) http.HandlerFunc {
 
 		// Set headers
 		w.Header().Set("Content-Type", mimeType)
-		w.Header().Set("Cache-Control", "public, max-age=3600")
+		w.Header().Set("Cache-Control", "public, max-age=31536000")
 		w.Header().Set("Content-Length", strconv.FormatInt(fileInfo.Size(), 10))
 
 		// Stream file directly to response
