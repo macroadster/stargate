@@ -343,11 +343,13 @@ export const useBlocks = () => {
     // Check if block exists in current list, otherwise create placeholder
     const existingBlock = blocksRef.current.find(b => b.height === height);
     const networkHeight = networkBlockHeightRef.current;
-    const isFuture = !existingBlock?.isFuture && networkHeight && height > networkHeight;
+    const isFutureBlock = !existingBlock?.isFuture && networkHeight && height > networkHeight;
     if (existingBlock) {
       setSelectedBlock({ ...existingBlock });
     } else {
       // Create placeholder block
+      // For future blocks, set isFuture=true and has_images=false to skip fetching and show OpenContractsView
+      // For non-future blocks, leave has_images undefined so useInscriptions will fetch the data
       setSelectedBlock({
         height: height,
         timestamp: Date.now() / 1000,
@@ -357,10 +359,10 @@ export const useBlocks = () => {
         smart_contract_count: 0,
         witness_image_count: 0,
         hasBRC20: false,
-        has_images: false,
+        has_images: isFutureBlock ? false : undefined,
         smart_contracts: [],
         witness_images: [],
-        isFuture
+        isFuture: isFutureBlock
       });
     }
   };
