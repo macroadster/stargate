@@ -3036,13 +3036,44 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		if path == "" {
 			minBudget := int64FromQuery(r, "min_budget_sats", 0)
+			limit := intFromQuery(r, "limit", 20)
+			offset := intFromQuery(r, "offset", 0)
+
+			// First get total count by fetching all matching proposals without limit
+			countFilter := smart_contract.ProposalFilter{
+				Status:     r.URL.Query().Get("status"),
+				Skills:     splitCSV(r.URL.Query().Get("skills")),
+				MinBudget:  minBudget,
+				ContractID: r.URL.Query().Get("contract_id"),
+			}
+			allProposals, err := s.store.ListProposals(r.Context(), countFilter)
+			if err != nil {
+				Error(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			if !includeConfirmed(r) {
+				filtered := make([]smart_contract.Proposal, 0, len(allProposals))
+				for _, p := range allProposals {
+					if looksLikeStegoManifestText(p.DescriptionMD) {
+						continue
+					}
+					if strings.EqualFold(strings.TrimSpace(p.Status), "rejected") {
+						continue
+					}
+					filtered = append(filtered, p)
+				}
+				allProposals = filtered
+			}
+			total := len(allProposals)
+
+			// Apply pagination
 			filter := smart_contract.ProposalFilter{
 				Status:     r.URL.Query().Get("status"),
 				Skills:     splitCSV(r.URL.Query().Get("skills")),
 				MinBudget:  minBudget,
 				ContractID: r.URL.Query().Get("contract_id"),
-				MaxResults: intFromQuery(r, "limit", 0),
-				Offset:     intFromQuery(r, "offset", 0),
+				MaxResults: limit,
+				Offset:     offset,
 			}
 			proposals, err := s.store.ListProposals(r.Context(), filter)
 			if err != nil {
@@ -3050,7 +3081,6 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if !includeConfirmed(r) {
-				// Filter out rejected and stego manifest proposals, but keep confirmed ones
 				filtered := make([]smart_contract.Proposal, 0, len(proposals))
 				for _, p := range proposals {
 					if looksLikeStegoManifestText(p.DescriptionMD) {
@@ -3059,11 +3089,11 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 					if strings.EqualFold(strings.TrimSpace(p.Status), "rejected") {
 						continue
 					}
-					// Note: Confirmed proposals are now included by default
 					filtered = append(filtered, p)
 				}
 				proposals = filtered
 			}
+
 			// hydrate tasks and submissions with current state from task store
 			var taskIDs []string
 			for _, p := range proposals {
@@ -3085,9 +3115,14 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 			}
+
+			hasMore := offset+len(proposals) < total
 			JSON(w, http.StatusOK, map[string]interface{}{
 				"proposals":   proposals,
-				"total":       len(proposals),
+				"total":       total,
+				"has_more":    hasMore,
+				"limit":       limit,
+				"offset":      offset,
 				"submissions": subs,
 			})
 			return
@@ -3455,7 +3490,6 @@ func (s *Server) handleSubmissions(w http.ResponseWriter, r *http.Request) {
 				Error(w, http.StatusInternalServerError, err.Error())
 				return
 			}
-
 
 			// Record event
 			s.recordEvent(smart_contract.Event{

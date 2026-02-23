@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { RefreshCw, Search } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useState, useRef } from 'react';
+import { RefreshCw, Search, Loader2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { API_BASE } from '../../apiBase';
 import AppHeader from '../Common/AppHeader';
@@ -22,6 +22,7 @@ export default function DiscoverPage() {
   const [proposals, setProposals] = useState([]);
   const [submissions, setSubmissions] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState('');
   const [status, setStatus] = useState('');
   const [skills, setSkills] = useState('');
@@ -33,31 +34,71 @@ export default function DiscoverPage() {
   const [submitProof, setSubmitProof] = useState({});
   const [submitting, setSubmitting] = useState({});
   const [claiming, setClaiming] = useState({});
+  const [pagination, setPagination] = useState({ total: 0, has_more: false, limit: 20, offset: 0 });
+  const loadMoreRef = useRef(null);
 
-  const loadProposals = useCallback(async () => {
-    setLoading(true);
-    setError('');
+  const loadProposals = useCallback(async (reset = true, offset = 0) => {
+    if (reset) {
+      setLoading(true);
+      setError('');
+    } else {
+      setLoadingMore(true);
+    }
     try {
       const params = new URLSearchParams();
       if (status) params.set('status', status);
       if (skills) params.set('skills', skills);
       if (minBudget) params.set('min_budget_sats', minBudget);
       if (contractId) params.set('contract_id', contractId);
+      params.set('limit', String(pagination.limit));
+      params.set('offset', String(offset));
       const res = await fetch(`${API_BASE}/api/smart_contract/proposals?${params.toString()}`, {
         headers: auth.apiKey ? { 'X-API-Key': auth.apiKey } : undefined,
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      setProposals(data.proposals || []);
+      if (reset) {
+        setProposals(data.proposals || []);
+      } else {
+        setProposals(prev => [...prev, ...(data.proposals || [])]);
+      }
       setSubmissions(data.submissions || []);
+      setPagination({
+        total: data.total || 0,
+        has_more: data.has_more || false,
+        limit: data.limit || pagination.limit,
+        offset: data.offset || 0,
+      });
       setLastUpdated(new Date().toLocaleTimeString());
     } catch (err) {
       setError('Failed to load proposals');
       console.error(err);
     } finally {
       setLoading(false);
+      setLoadingMore(false);
     }
-  }, [auth.apiKey, contractId, minBudget, skills, status]);
+  }, [auth.apiKey, contractId, minBudget, skills, status, pagination.limit]);
+
+  const loadMore = useCallback(() => {
+    if (!loadingMore && pagination.has_more) {
+      loadProposals(false, pagination.offset + pagination.limit);
+    }
+  }, [loadingMore, pagination.has_more, loadProposals, pagination.offset, pagination.limit]);
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && pagination.has_more && !loadingMore) {
+          loadMore();
+        }
+      },
+      { threshold: 0.1 }
+    );
+    if (loadMoreRef.current) {
+      observer.observe(loadMoreRef.current);
+    }
+    return () => observer.disconnect();
+  }, [pagination.has_more, loadingMore, loadMore]);
 
   const submitWork = async (claimId, taskId) => {
     if (!claimId) return;
@@ -127,8 +168,8 @@ export default function DiscoverPage() {
   };
 
   useEffect(() => {
-    loadProposals();
-    const id = setInterval(loadProposals, 30000);
+    loadProposals(true);
+    const id = setInterval(() => loadProposals(true), 30000);
     return () => clearInterval(id);
   }, [loadProposals]);
 
@@ -178,7 +219,10 @@ export default function DiscoverPage() {
           <div className="flex items-center gap-4 justify-end shrink-0 bg-black/20 p-2 rounded-2xl border border-white/5 shadow-inner">
             <div className="text-[10px] font-mono text-slate-500 uppercase tracking-widest px-2">Last Sync: {lastUpdated || '—'}</div>
             <button
-              onClick={loadProposals}
+              onClick={() => {
+                setPagination(prev => ({ ...prev, offset: 0 }));
+                loadProposals(true);
+              }}
               disabled={loading}
               className="h-10 px-6 rounded-xl bg-white/5 border border-white/10 text-[10px] font-black uppercase tracking-widest hover:bg-white/10 hover:border-starlight text-white transition-all disabled:opacity-40 flex items-center gap-2 shadow-lg"
             >
@@ -224,7 +268,10 @@ export default function DiscoverPage() {
             <div className="flex flex-col gap-1.5 flex-shrink-0 justify-end">
               <label className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500 ml-1 invisible md:visible">Filter</label>
               <button
-                onClick={loadProposals}
+                onClick={() => {
+                  setPagination(prev => ({ ...prev, offset: 0 }));
+                  loadProposals(true);
+                }}
                 className="btn-primary w-full md:w-auto h-10 px-6 text-[10px] font-black uppercase tracking-[0.2em] rounded-lg shadow-lg active:scale-95 whitespace-nowrap"
               >
                 Apply Filters
@@ -394,6 +441,26 @@ export default function DiscoverPage() {
             {proposals.length === 0 && !loading && (
               <div className="card-premium p-6 text-center">
                 <p className="text-gray-500">No proposals match these filters yet.</p>
+              </div>
+            )}
+            {pagination.total > 0 && (
+              <div ref={loadMoreRef} className="py-4 text-center">
+                {loadingMore && (
+                  <div className="flex items-center justify-center gap-2 text-gray-500">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span className="text-sm">Loading more...</span>
+                  </div>
+                )}
+                {!loadingMore && pagination.has_more && (
+                  <p className="text-sm text-gray-500">
+                    Showing {proposals.length} of {pagination.total} proposals
+                  </p>
+                )}
+                {!loadingMore && !pagination.has_more && proposals.length > 0 && (
+                  <p className="text-sm text-gray-500">
+                    Showing all {pagination.total} proposals
+                  </p>
+                )}
               </div>
             )}
           </div>
