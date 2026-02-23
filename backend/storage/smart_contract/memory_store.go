@@ -825,6 +825,9 @@ func (s *MemoryStore) ListProposals(ctx context.Context, filter smart_contract.P
 	defer s.mu.RUnlock()
 	var out []smart_contract.Proposal
 	for _, p := range s.proposals {
+		if filter.ProposalID != "" && filter.ProposalID != p.ID {
+			continue
+		}
 		if filter.Status != "" && !strings.EqualFold(filter.Status, p.Status) {
 			continue
 		}
@@ -1144,7 +1147,6 @@ func (s *MemoryStore) SyncSubmission(ctx context.Context, sub smart_contract.Sub
 	return nil
 }
 
-
 // UpsertTask persists a single task update.
 func (s *MemoryStore) UpsertTask(ctx context.Context, task smart_contract.Task) error {
 	s.mu.Lock()
@@ -1305,4 +1307,3 @@ func (s *MemoryStore) DeleteWish(ctx context.Context, visiblePixelHash string) e
 
 	return nil
 }
-

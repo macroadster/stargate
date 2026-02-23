@@ -1325,9 +1325,16 @@ ON CONFLICT (id) DO UPDATE SET
 func (s *PGStore) ListProposals(ctx context.Context, filter smart_contract.ProposalFilter) ([]smart_contract.Proposal, error) {
 	query := `SELECT id, title, description_md, visible_pixel_hash, budget_sats, status, metadata, created_at FROM mcp_proposals`
 	var args []interface{}
-	if filter.Status != "" {
-		query += " WHERE status=$1"
+	argNum := 1
+
+	if filter.ProposalID != "" {
+		query += fmt.Sprintf(" WHERE id=$%d", argNum)
+		args = append(args, filter.ProposalID)
+		argNum++
+	} else if filter.Status != "" {
+		query += fmt.Sprintf(" WHERE status=$%d", argNum)
 		args = append(args, filter.Status)
+		argNum++
 	}
 	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
@@ -1953,4 +1960,3 @@ func (s *PGStore) DeleteWish(ctx context.Context, visiblePixelHash string) error
 
 	return tx.Commit(ctx)
 }
-
