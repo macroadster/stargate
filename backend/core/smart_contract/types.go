@@ -136,6 +136,7 @@ type Proposal struct {
 
 // ProposalFilter captures list filters for proposals.
 type ProposalFilter struct {
+	ProposalID string
 	Status     string
 	Skills     []string
 	MinBudget  int64

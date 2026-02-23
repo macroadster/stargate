@@ -279,6 +279,10 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 					"type":        "string",
 					"description": "Filter by contract/wish ID",
 				},
+				"proposal_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Filter by proposal ID",
+				},
 				"status": map[string]interface{}{
 					"type":        "string",
 					"description": "Filter by proposal status",
