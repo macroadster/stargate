@@ -438,6 +438,9 @@ func (h *HTTPMCPServer) handleListProposals(ctx context.Context, args map[string
 	if status, ok := args["status"].(string); ok {
 		filter.Status = status
 	}
+	if contractID, ok := args["contract_id"].(string); ok {
+		filter.ContractID = contractID
+	}
 
 	// Handle pagination parameters
 	if limit, ok := args["limit"].(int); ok && limit > 0 {
