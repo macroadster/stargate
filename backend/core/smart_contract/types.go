@@ -4,17 +4,29 @@ import "time"
 
 // Contract captures a goal contract summary.
 type Contract struct {
-	ContractID           string     `json:"contract_id"`
-	Title                string     `json:"title"`
-	TotalBudgetSats      int64      `json:"total_budget_sats"`
-	GoalsCount           int        `json:"goals_count"`
-	AvailableTasksCount  int        `json:"available_tasks_count"`
-	Status               string     `json:"status"` // created | active | funded | confirmed | expired
-	Skills               []string   `json:"skills,omitempty"`
-	StegoImageURL        string     `json:"stego_image_url,omitempty"`
-	ConfirmedBlockHeight *int       `json:"confirmed_block_height,omitempty"`
-	ConfirmedAt          *time.Time `json:"confirmed_at,omitempty"`
-	CreatedAt            time.Time  `json:"created_at"`
+	ContractID           string                  `json:"contract_id"`
+	Title                string                  `json:"title"`
+	TotalBudgetSats      int64                   `json:"total_budget_sats"`
+	GoalsCount           int                     `json:"goals_count"`
+	AvailableTasksCount  int                     `json:"available_tasks_count"`
+	Status               string                  `json:"status"` // created | active | funded | confirmed | expired
+	Skills               []string                `json:"skills,omitempty"`
+	StegoImageURL        string                  `json:"stego_image_url,omitempty"`
+	ConfirmedBlockHeight *int                    `json:"confirmed_block_height,omitempty"`
+	ConfirmedAt          *time.Time              `json:"confirmed_at,omitempty"`
+	CreatedAt            time.Time               `json:"created_at"`
+	ReworkRequests       []ContractReworkRequest `json:"rework_requests,omitempty"`
+}
+
+// ContractReworkRequest represents a rework request from the wish creator at contract level.
+type ContractReworkRequest struct {
+	RequestID  string     `json:"request_id"`
+	ContractID string     `json:"contract_id"`
+	Requester  string     `json:"requester"` // wallet address of wish creator
+	Notes      string     `json:"notes"`     // feedback for rework
+	Status     string     `json:"status"`    // open | resolved
+	CreatedAt  time.Time  `json:"created_at"`
+	ResolvedAt *time.Time `json:"resolved_at,omitempty"`
 }
 
 // Task describes a specific unit of work an AI can claim.

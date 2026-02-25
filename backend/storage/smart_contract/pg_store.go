@@ -45,6 +45,10 @@ func NewPGStore(ctx context.Context, dsn string, claimTTL time.Duration, seed bo
 		pool.Close()
 		return nil, err
 	}
+	if err := s.runMigrations(ctx); err != nil {
+		pool.Close()
+		return nil, err
+	}
 	if seed {
 		if err := s.seedFixtures(ctx); err != nil {
 			pool.Close()
@@ -52,6 +56,14 @@ func NewPGStore(ctx context.Context, dsn string, claimTTL time.Duration, seed bo
 		}
 	}
 	return s, nil
+}
+
+func (s *PGStore) runMigrations(ctx context.Context) error {
+	_, err := s.pool.Exec(ctx, `ALTER TABLE mcp_contracts ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'::jsonb;`)
+	if err != nil {
+		log.Printf("Migration warning: %v", err)
+	}
+	return nil
 }
 
 func (s *PGStore) initSchema(ctx context.Context) error {
@@ -67,7 +79,8 @@ CREATE TABLE IF NOT EXISTS mcp_contracts (
   stego_image_url TEXT,
   confirmed_block_height INTEGER,
   confirmed_at TIMESTAMP WITH TIME ZONE,
-  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
+  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+  metadata JSONB DEFAULT '{}'::jsonb
 );
 CREATE INDEX IF NOT EXISTS idx_mcp_contracts_confirmed_height ON mcp_contracts(confirmed_block_height DESC);
 CREATE INDEX IF NOT EXISTS idx_mcp_contracts_confirmed_at ON mcp_contracts(confirmed_at DESC);
@@ -477,19 +490,244 @@ FROM mcp_claims WHERE claim_id=$1
 func (s *PGStore) GetContract(id string) (smart_contract.Contract, error) {
 	ctx := context.Background()
 	var c smart_contract.Contract
+	var metadata []byte
 	err := s.pool.QueryRow(ctx, `
 SELECT contract_id, title, total_budget_sats, goals_count,
        COALESCE((SELECT COUNT(*) FROM mcp_tasks t WHERE t.contract_id = mcp_contracts.contract_id AND t.status = 'available'), 0) AS available_tasks_count,
-       status, skills, stego_image_url, confirmed_block_height, confirmed_at
+       status, skills, stego_image_url, confirmed_block_height, confirmed_at, metadata
 FROM mcp_contracts WHERE contract_id=$1
-`, id).Scan(&c.ContractID, &c.Title, &c.TotalBudgetSats, &c.GoalsCount, &c.AvailableTasksCount, &c.Status, &c.Skills, &c.StegoImageURL, &c.ConfirmedBlockHeight, &c.ConfirmedAt)
+`, id).Scan(&c.ContractID, &c.Title, &c.TotalBudgetSats, &c.GoalsCount, &c.AvailableTasksCount, &c.Status, &c.Skills, &c.StegoImageURL, &c.ConfirmedBlockHeight, &c.ConfirmedAt, &metadata)
 	if err != nil {
 		if strings.Contains(err.Error(), "no rows") {
 			return smart_contract.Contract{}, fmt.Errorf("contract %s not found", id)
 		}
 		return smart_contract.Contract{}, err
 	}
+	if len(metadata) > 0 {
+		var meta map[string]interface{}
+		if err := json.Unmarshal(metadata, &meta); err == nil {
+			if reworkReqs, ok := meta["rework_requests"].([]interface{}); ok {
+				for _, r := range reworkReqs {
+					if rMap, ok := r.(map[string]interface{}); ok {
+						req := smart_contract.ContractReworkRequest{}
+						if id, ok := rMap["request_id"].(string); ok {
+							req.RequestID = id
+						}
+						if contractID, ok := rMap["contract_id"].(string); ok {
+							req.ContractID = contractID
+						}
+						if requester, ok := rMap["requester"].(string); ok {
+							req.Requester = requester
+						}
+						if notes, ok := rMap["notes"].(string); ok {
+							req.Notes = notes
+						}
+						if status, ok := rMap["status"].(string); ok {
+							req.Status = status
+						}
+						if createdAt, ok := rMap["created_at"].(string); ok {
+							if t, err := time.Parse(time.RFC3339, createdAt); err == nil {
+								req.CreatedAt = t
+							}
+						}
+						if resolvedAt, ok := rMap["resolved_at"].(string); ok {
+							if t, err := time.Parse(time.RFC3339, resolvedAt); err == nil {
+								req.ResolvedAt = &t
+							}
+						}
+						c.ReworkRequests = append(c.ReworkRequests, req)
+					}
+				}
+			}
+		}
+	}
 	return c, nil
+}
+
+// CreateContractReworkRequest adds a rework request from the wish creator at contract level.
+func (s *PGStore) CreateContractReworkRequest(ctx context.Context, contractID, requester, notes string) (smart_contract.ContractReworkRequest, error) {
+	requestID := fmt.Sprintf("rework-%s-%d", contractID, time.Now().UnixNano())
+	now := time.Now()
+
+	reworkReq := smart_contract.ContractReworkRequest{
+		RequestID:  requestID,
+		ContractID: contractID,
+		Requester:  requester,
+		Notes:      notes,
+		Status:     "open",
+		CreatedAt:  now,
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return smart_contract.ContractReworkRequest{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	var metadata []byte
+	err = tx.QueryRow(ctx, `SELECT metadata FROM mcp_contracts WHERE contract_id=$1 FOR UPDATE`, contractID).Scan(&metadata)
+	if err != nil {
+		if strings.Contains(err.Error(), "no rows") {
+			return smart_contract.ContractReworkRequest{}, fmt.Errorf("contract %s not found", contractID)
+		}
+		return smart_contract.ContractReworkRequest{}, err
+	}
+
+	var meta map[string]interface{}
+	if len(metadata) > 0 {
+		if err := json.Unmarshal(metadata, &meta); err != nil {
+			meta = make(map[string]interface{})
+		}
+	} else {
+		meta = make(map[string]interface{})
+	}
+
+	reworkReqs := []interface{}{}
+	if existing, ok := meta["rework_requests"].([]interface{}); ok {
+		reworkReqs = existing
+	}
+
+	reworkReqs = append(reworkReqs, map[string]interface{}{
+		"request_id":  reworkReq.RequestID,
+		"contract_id": reworkReq.ContractID,
+		"requester":   reworkReq.Requester,
+		"notes":       reworkReq.Notes,
+		"status":      reworkReq.Status,
+		"created_at":  reworkReq.CreatedAt.Format(time.RFC3339),
+	})
+	meta["rework_requests"] = reworkReqs
+
+	updatedMetadata, err := json.Marshal(meta)
+	if err != nil {
+		return smart_contract.ContractReworkRequest{}, err
+	}
+
+	_, err = tx.Exec(ctx, `UPDATE mcp_contracts SET metadata=$2 WHERE contract_id=$1`, contractID, updatedMetadata)
+	if err != nil {
+		return smart_contract.ContractReworkRequest{}, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return smart_contract.ContractReworkRequest{}, err
+	}
+
+	return reworkReq, nil
+}
+
+// GetContractReworkRequests returns all rework requests for a contract.
+func (s *PGStore) GetContractReworkRequests(ctx context.Context, contractID string) ([]smart_contract.ContractReworkRequest, error) {
+	var metadata []byte
+	err := s.pool.QueryRow(ctx, `SELECT metadata FROM mcp_contracts WHERE contract_id=$1`, contractID).Scan(&metadata)
+	if err != nil {
+		if strings.Contains(err.Error(), "no rows") {
+			return nil, fmt.Errorf("contract %s not found", contractID)
+		}
+		return nil, err
+	}
+
+	var reqs []smart_contract.ContractReworkRequest
+	if len(metadata) > 0 {
+		var meta map[string]interface{}
+		if err := json.Unmarshal(metadata, &meta); err == nil {
+			if reworkReqs, ok := meta["rework_requests"].([]interface{}); ok {
+				for _, r := range reworkReqs {
+					if rMap, ok := r.(map[string]interface{}); ok {
+						req := smart_contract.ContractReworkRequest{}
+						if id, ok := rMap["request_id"].(string); ok {
+							req.RequestID = id
+						}
+						if contractID, ok := rMap["contract_id"].(string); ok {
+							req.ContractID = contractID
+						}
+						if requester, ok := rMap["requester"].(string); ok {
+							req.Requester = requester
+						}
+						if notes, ok := rMap["notes"].(string); ok {
+							req.Notes = notes
+						}
+						if status, ok := rMap["status"].(string); ok {
+							req.Status = status
+						}
+						if createdAt, ok := rMap["created_at"].(string); ok {
+							if t, err := time.Parse(time.RFC3339, createdAt); err == nil {
+								req.CreatedAt = t
+							}
+						}
+						if resolvedAt, ok := rMap["resolved_at"].(string); ok {
+							if t, err := time.Parse(time.RFC3339, resolvedAt); err == nil {
+								req.ResolvedAt = &t
+							}
+						}
+						reqs = append(reqs, req)
+					}
+				}
+			}
+		}
+	}
+	return reqs, nil
+}
+
+// ResolveContractReworkRequest marks a rework request as resolved.
+func (s *PGStore) ResolveContractReworkRequest(ctx context.Context, contractID, requestID string) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var metadata []byte
+	err = tx.QueryRow(ctx, `SELECT metadata FROM mcp_contracts WHERE contract_id=$1 FOR UPDATE`, contractID).Scan(&metadata)
+	if err != nil {
+		if strings.Contains(err.Error(), "no rows") {
+			return fmt.Errorf("contract %s not found", contractID)
+		}
+		return err
+	}
+
+	var meta map[string]interface{}
+	if len(metadata) > 0 {
+		if err := json.Unmarshal(metadata, &meta); err != nil {
+			meta = make(map[string]interface{})
+		}
+	} else {
+		meta = make(map[string]interface{})
+	}
+
+	reworkReqs := []interface{}{}
+	if existing, ok := meta["rework_requests"].([]interface{}); ok {
+		reworkReqs = existing
+	}
+
+	found := false
+	now := time.Now().Format(time.RFC3339)
+	for i, r := range reworkReqs {
+		if rMap, ok := r.(map[string]interface{}); ok {
+			if rid, ok := rMap["request_id"].(string); ok && rid == requestID {
+				rMap["status"] = "resolved"
+				rMap["resolved_at"] = now
+				reworkReqs[i] = rMap
+				found = true
+				break
+			}
+		}
+	}
+
+	if !found {
+		return fmt.Errorf("rework request %s not found", requestID)
+	}
+
+	meta["rework_requests"] = reworkReqs
+	updatedMetadata, err := json.Marshal(meta)
+	if err != nil {
+		return err
+	}
+
+	_, err = tx.Exec(ctx, `UPDATE mcp_contracts SET metadata=$2 WHERE contract_id=$1`, contractID, updatedMetadata)
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit(ctx)
 }
 
 // ClaimTask reserves a task for an AI. It is idempotent if the same AI reclaims before expiry.

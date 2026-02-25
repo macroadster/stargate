@@ -107,6 +107,45 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 				},
 			},
 		},
+		"get_contract_rework_requests": map[string]interface{}{
+			"category":    ToolCategoryDiscovery,
+			"description": "Get rework requests for a contract",
+			"parameters": map[string]interface{}{
+				"contract_id": map[string]interface{}{
+					"type":        "string",
+					"description": "The ID of the contract",
+					"required":    true,
+				},
+			},
+			"examples": []map[string]interface{}{
+				{
+					"description": "Get rework requests for a contract",
+					"arguments":   map[string]interface{}{"contract_id": "contract-123"},
+				},
+			},
+		},
+		"create_contract_rework_request": map[string]interface{}{
+			"category":    ToolCategoryWrite,
+			"description": "Create a rework request for a contract (wish creator only)",
+			"parameters": map[string]interface{}{
+				"contract_id": map[string]interface{}{
+					"type":        "string",
+					"description": "The ID of the contract",
+					"required":    true,
+				},
+				"notes": map[string]interface{}{
+					"type":        "string",
+					"description": "Feedback notes explaining what needs to be reworked",
+					"required":    true,
+				},
+			},
+			"examples": []map[string]interface{}{
+				{
+					"description": "Create rework request",
+					"arguments":   map[string]interface{}{"contract_id": "contract-123", "notes": "The output doesn't work as expected..."},
+				},
+			},
+		},
 		"get_task": map[string]interface{}{
 			"category":    ToolCategoryDiscovery,
 			"description": "Get detailed information about a specific task by ID",

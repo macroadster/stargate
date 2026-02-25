@@ -354,10 +354,127 @@ func (s *Server) handleContracts(w http.ResponseWriter, r *http.Request) {
 			s.handlePaymentDetails(w, r, contractID)
 			return
 		}
+		if len(parts) > 1 && parts[1] == "rework" {
+			contractID := parts[0]
+			s.handleContractRework(w, r, contractID)
+			return
+		}
+		Error(w, http.StatusNotFound, "unknown contract action")
+	case http.MethodPatch:
+		if len(parts) > 1 && parts[1] == "rework" && len(parts) > 2 && parts[2] != "" {
+			contractID := parts[0]
+			requestID := parts[2]
+			s.handleResolveContractRework(w, r, contractID, requestID)
+			return
+		}
 		Error(w, http.StatusNotFound, "unknown contract action")
 	default:
 		Error(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
+}
+
+// handleGetContractReworkRequests returns all rework requests for a contract.
+func (s *Server) handleGetContractReworkRequests(w http.ResponseWriter, r *http.Request, contractID string) {
+	reworkReqs, err := s.store.GetContractReworkRequests(r.Context(), contractID)
+	if err != nil {
+		Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	JSON(w, http.StatusOK, map[string]interface{}{
+		"rework_requests": reworkReqs,
+	})
+}
+
+// handleContractRework creates a new rework request for a contract.
+func (s *Server) handleContractRework(w http.ResponseWriter, r *http.Request, contractID string) {
+	if r.Header.Get("Content-Type") != "" && !strings.Contains(r.Header.Get("Content-Type"), "application/json") {
+		Error(w, http.StatusUnsupportedMediaType, "Content-Type must be application/json")
+		return
+	}
+
+	var body struct {
+		Notes string `json:"notes"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if strings.TrimSpace(body.Notes) == "" {
+		Error(w, http.StatusBadRequest, "notes are required")
+		return
+	}
+
+	apiKey := r.Header.Get("X-API-Key")
+	var requester string
+	if apiKey != "" && s.apiKeys != nil {
+		if rec, ok := s.apiKeys.Get(apiKey); ok {
+			requester = strings.TrimSpace(rec.Wallet)
+		}
+	}
+
+	if requester == "" {
+		Error(w, http.StatusForbidden, "authenticated user required")
+		return
+	}
+
+	reworkReq, err := s.store.CreateContractReworkRequest(r.Context(), contractID, requester, body.Notes)
+	if err != nil {
+		Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	JSON(w, http.StatusCreated, reworkReq)
+}
+
+// handleResolveContractRework resolves/closes a rework request.
+func (s *Server) handleResolveContractRework(w http.ResponseWriter, r *http.Request, contractID, requestID string) {
+	apiKey := r.Header.Get("X-API-Key")
+	var requester string
+	if apiKey != "" && s.apiKeys != nil {
+		if rec, ok := s.apiKeys.Get(apiKey); ok {
+			requester = strings.TrimSpace(rec.Wallet)
+		}
+	}
+
+	if requester == "" {
+		Error(w, http.StatusForbidden, "authenticated user required")
+		return
+	}
+
+	// Get rework requests to verify the requester is the original requester
+	reworkReqs, err := s.store.GetContractReworkRequests(r.Context(), contractID)
+	if err != nil {
+		Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	// Verify the requester is the original creator of this rework request
+	authorized := false
+	for _, req := range reworkReqs {
+		if req.RequestID == requestID {
+			// Allow the original requester to resolve their own rework request
+			if strings.EqualFold(req.Requester, requester) {
+				authorized = true
+			}
+			break
+		}
+	}
+
+	if !authorized {
+		Error(w, http.StatusForbidden, "only the original requester can resolve this rework request")
+		return
+	}
+
+	err = s.store.ResolveContractReworkRequest(r.Context(), contractID, requestID)
+	if err != nil {
+		Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	JSON(w, http.StatusOK, map[string]interface{}{
+		"message": "rework request resolved",
+	})
 }
 
 // handleContractPSBT builds a PSBT to fund the contract payout using the caller's wallet UTXOs.
@@ -1988,6 +2105,7 @@ func (s *Server) handleDiscover(w http.ResponseWriter, r *http.Request) {
 		},
 		"tools": []string{
 			"list_contracts", "get_contract", "get_contract_funding", "get_open_contracts",
+			"get_contract_rework_requests", "create_contract_rework_request",
 			"list_tasks", "get_task", "claim_task", "submit_work", "get_task_proof", "get_task_status",
 			"list_skills",
 			"list_proposals", "get_proposal", "create_proposal", "approve_proposal", "publish_proposal",
@@ -3420,6 +3538,39 @@ func (s *Server) handleSubmissions(w http.ResponseWriter, r *http.Request) {
 				}
 				Error(w, http.StatusInternalServerError, err.Error())
 				return
+			}
+
+			// Auto-resolve rework requests when submission is approved and all tasks are approved
+			if newStatus == "approved" {
+				submission, err := s.store.GetSubmission(ctx, submissionID)
+				if err == nil && submission.TaskID != "" {
+					// Get the contract ID from task
+					task, err := s.store.GetTask(submission.TaskID)
+					if err == nil && task.ContractID != "" {
+						// Check if all tasks are approved
+						tasks, err := s.store.ListTasks(smart_contract.TaskFilter{ContractID: task.ContractID})
+						if err == nil {
+							allApproved := true
+							for _, t := range tasks {
+								if t.Status != "approved" && t.Status != "published" {
+									allApproved = false
+									break
+								}
+							}
+							// Auto-resolve open rework requests when all tasks are approved
+							if allApproved {
+								reworkReqs, err := s.store.GetContractReworkRequests(ctx, task.ContractID)
+								if err == nil {
+									for _, req := range reworkReqs {
+										if req.Status == "open" {
+											_ = s.store.ResolveContractReworkRequest(ctx, task.ContractID, req.RequestID)
+										}
+									}
+								}
+							}
+						}
+					}
+				}
 			}
 
 			// Record event

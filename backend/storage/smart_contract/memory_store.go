@@ -1307,3 +1307,73 @@ func (s *MemoryStore) DeleteWish(ctx context.Context, visiblePixelHash string) e
 
 	return nil
 }
+
+// CreateContractReworkRequest adds a rework request from the wish creator at contract level.
+func (s *MemoryStore) CreateContractReworkRequest(ctx context.Context, contractID, requester, notes string) (smart_contract.ContractReworkRequest, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	c, ok := s.contracts[contractID]
+	if !ok {
+		return smart_contract.ContractReworkRequest{}, fmt.Errorf("contract %s not found", contractID)
+	}
+
+	requestID := fmt.Sprintf("rework-%s-%d", contractID, time.Now().UnixNano())
+	now := time.Now()
+
+	reworkReq := smart_contract.ContractReworkRequest{
+		RequestID:  requestID,
+		ContractID: contractID,
+		Requester:  requester,
+		Notes:      notes,
+		Status:     "open",
+		CreatedAt:  now,
+	}
+
+	c.ReworkRequests = append(c.ReworkRequests, reworkReq)
+	s.contracts[contractID] = c
+
+	return reworkReq, nil
+}
+
+// GetContractReworkRequests returns all rework requests for a contract.
+func (s *MemoryStore) GetContractReworkRequests(ctx context.Context, contractID string) ([]smart_contract.ContractReworkRequest, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	c, ok := s.contracts[contractID]
+	if !ok {
+		return nil, fmt.Errorf("contract %s not found", contractID)
+	}
+
+	return c.ReworkRequests, nil
+}
+
+// ResolveContractReworkRequest marks a rework request as resolved.
+func (s *MemoryStore) ResolveContractReworkRequest(ctx context.Context, contractID, requestID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	c, ok := s.contracts[contractID]
+	if !ok {
+		return fmt.Errorf("contract %s not found", contractID)
+	}
+
+	found := false
+	now := time.Now()
+	for i, req := range c.ReworkRequests {
+		if req.RequestID == requestID {
+			c.ReworkRequests[i].Status = "resolved"
+			c.ReworkRequests[i].ResolvedAt = &now
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		return fmt.Errorf("rework request %s not found", requestID)
+	}
+
+	s.contracts[contractID] = c
+	return nil
+}

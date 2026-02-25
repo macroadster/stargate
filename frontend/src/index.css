@@ -1622,18 +1622,25 @@ html[data-theme="light"] .modal-sandbox-box {
   border: 1px solid #3b82f6;
   border-radius: 8px;
   padding: 1rem;
+  color: #e5e7eb;
 }
 
 @media (prefers-color-scheme: light) {
   .modal-text-box {
     background: #dbeafe;
     border-color: #93c5fd;
+    color: #1f2937;
   }
 }
 
 html[data-theme="light"] .modal-text-box {
   background: #dbeafe;
   border-color: #93c5fd;
+  color: #1f2937;
+}
+
+html[data-theme="dark"] .modal-text-box {
+  color: #e5e7eb;
 }
 
 .modal-text-label {
@@ -2175,6 +2182,97 @@ html[data-theme="light"] .modal-task-status.pending {
 
 .modal-btn-approve:disabled {
   opacity: 0.6;
+}
+
+.modal-btn-reject {
+  padding: 0.5rem 0.75rem;
+  background: #dc2626;
+  color: white;
+  border-radius: 0.25rem;
+  font-size: 0.875rem;
+  border: none;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.modal-btn-reject:hover {
+  background: #ef4444;
+}
+
+.modal-btn-cancel {
+  padding: 0.5rem 0.75rem;
+  background: #4b5563;
+  color: white;
+  border-radius: 0.25rem;
+  font-size: 0.875rem;
+  border: none;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.modal-btn-cancel:hover {
+  background: #6b7280;
+}
+
+.modal-textarea {
+  width: 100%;
+  padding: 0.5rem;
+  border-radius: 0.25rem;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(0, 0, 0, 0.3);
+  color: #e5e7eb;
+  font-size: 0.875rem;
+  font-family: inherit;
+  resize: vertical;
+}
+
+html[data-theme="light"] .modal-textarea,
+.modal-light .modal-textarea {
+  background: rgba(255, 255, 255, 0.8);
+  border-color: rgba(0, 0, 0, 0.2);
+  color: #1f2937;
+}
+
+.modal-rework-card {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 0.5rem;
+  padding: 1rem;
+  background: transparent;
+}
+
+@media (prefers-color-scheme: light) {
+  .modal-rework-card {
+    background: transparent;
+    border-color: rgba(0, 0, 0, 0.1);
+  }
+}
+
+html[data-theme="light"] .modal-rework-card {
+  background: transparent;
+  border-color: rgba(0, 0, 0, 0.1);
+}
+
+.modal-form-card {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 0.5rem;
+  padding: 1rem;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+@media (prefers-color-scheme: light) {
+  .modal-form-card {
+    background: rgba(255, 255, 255, 0.5);
+    border-color: rgba(0, 0, 0, 0.1);
+  }
+}
+
+html[data-theme="light"] .modal-form-card {
+  background: rgba(255, 255, 255, 0.5);
+  border-color: rgba(0, 0, 0, 0.1);
+}
+
+.modal-section-dot.orange {
+  background: #f97316;
 }
 
 .modal-approved-label {

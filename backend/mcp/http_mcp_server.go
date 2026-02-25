@@ -336,6 +336,10 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 		return h.handleListTasks(ctx, args)
 	case "get_contract":
 		return h.handleGetContract(ctx, args)
+	case "get_contract_rework_requests":
+		return h.handleGetContractReworkRequests(ctx, args)
+	case "create_contract_rework_request":
+		return h.handleCreateContractReworkRequest(ctx, args, apiKey)
 	case "get_task":
 		return h.handleGetTask(ctx, args)
 	case "list_events":
@@ -1092,6 +1096,73 @@ func (h *HTTPMCPServer) handleGetContract(ctx context.Context, args map[string]i
 	}
 
 	return contract, nil
+}
+
+func (h *HTTPMCPServer) handleGetContractReworkRequests(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	validation := NewValidationError("get_contract_rework_requests", "Invalid request parameters")
+
+	contractID, ok := args["contract_id"].(string)
+	if !ok || contractID == "" {
+		validation.AddFieldError("contract_id", args["contract_id"], "contract_id is required and must be a string", true)
+	}
+
+	if validation.HasErrors() {
+		return nil, validation
+	}
+
+	reworkReqs, err := h.store.GetContractReworkRequests(ctx, contractID)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			return nil, NewNotFoundError("get_contract_rework_requests", "contract", contractID)
+		}
+		return nil, NewInternalError("get_contract_rework_requests", fmt.Sprintf("Failed to get rework requests: %v", err))
+	}
+
+	return map[string]interface{}{
+		"rework_requests": reworkReqs,
+	}, nil
+}
+
+func (h *HTTPMCPServer) handleCreateContractReworkRequest(ctx context.Context, args map[string]interface{}, apiKey string) (interface{}, error) {
+	validation := NewValidationError("create_contract_rework_request", "Invalid request parameters")
+
+	contractID, ok := args["contract_id"].(string)
+	if !ok || contractID == "" {
+		validation.AddFieldError("contract_id", args["contract_id"], "contract_id is required and must be a string", true)
+	}
+
+	notes, ok := args["notes"].(string)
+	if !ok || strings.TrimSpace(notes) == "" {
+		validation.AddFieldError("notes", args["notes"], "notes are required and must be a string", true)
+	}
+
+	if validation.HasErrors() {
+		return nil, validation
+	}
+
+	if apiKey == "" {
+		return nil, NewUnauthorizedError("create_contract_rework_request", "API key required to create rework request")
+	}
+
+	var requester string
+	if h.apiKeyStore != nil {
+		if keyInfo, ok := h.apiKeyStore.Get(apiKey); ok {
+			requester = strings.TrimSpace(keyInfo.Wallet)
+		}
+	}
+	if requester == "" {
+		return nil, NewUnauthorizedError("create_contract_rework_request", "API key must have an associated wallet address")
+	}
+
+	reworkReq, err := h.store.CreateContractReworkRequest(ctx, contractID, requester, notes)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			return nil, NewNotFoundError("create_contract_rework_request", "contract", contractID)
+		}
+		return nil, NewInternalError("create_contract_rework_request", fmt.Sprintf("Failed to create rework request: %v", err))
+	}
+
+	return reworkReq, nil
 }
 
 func (h *HTTPMCPServer) handleGetTask(ctx context.Context, args map[string]interface{}) (interface{}, error) {

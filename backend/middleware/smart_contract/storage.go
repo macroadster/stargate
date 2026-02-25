@@ -53,4 +53,8 @@ type Store interface {
 	UpdateSubmissionStatus(ctx context.Context, submissionID, status, reviewerNotes, rejectionType string) error
 	UpdateSubmission(ctx context.Context, sub smart_contract.Submission) error
 	DeleteWish(ctx context.Context, visiblePixelHash string) error
+	// Contract rework operations
+	CreateContractReworkRequest(ctx context.Context, contractID, requester, notes string) (smart_contract.ContractReworkRequest, error)
+	GetContractReworkRequests(ctx context.Context, contractID string) ([]smart_contract.ContractReworkRequest, error)
+	ResolveContractReworkRequest(ctx context.Context, contractID, requestID string) error
 }

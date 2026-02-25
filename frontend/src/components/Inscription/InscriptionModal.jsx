@@ -57,6 +57,11 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
   const refreshIntervalRef = React.useRef(null);
   const scrollContainerRef = React.useRef(null);
   const deliverablesScrollRef = React.useRef(0);
+  const [reworkRequests, setReworkRequests] = useState([]);
+  const [isLoadingRework, setIsLoadingRework] = useState(false);
+  const [showReworkForm, setShowReworkForm] = useState(false);
+  const [reworkNotes, setReworkNotes] = useState('');
+  const [isSubmittingRework, setIsSubmittingRework] = useState(false);
 
   const guessNetworkFromAddress = (addr) => {
     const a = (addr || '').trim().toLowerCase();
@@ -835,6 +840,32 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
     };
   }, [activeTab, proposalItems, submissionsList]);
 
+  useEffect(() => {
+    if (activeTab !== 'rework') return;
+    if (!auth.apiKey) {
+      setReworkRequests([]);
+      return;
+    }
+    const fetchReworkRequests = async () => {
+      setIsLoadingRework(true);
+      try {
+        const res = await fetch(
+          `${API_BASE}/api/smart_contract/contracts/${inscription.id}/rework`,
+          { headers: { 'X-API-Key': auth.apiKey } }
+        );
+        if (res.ok) {
+          const data = await res.json();
+          setReworkRequests(data.rework_requests || []);
+        }
+      } catch (err) {
+        console.error('Failed to fetch rework requests:', err);
+      } finally {
+        setIsLoadingRework(false);
+      }
+    };
+    fetchReworkRequests();
+  }, [activeTab, auth.apiKey, inscription.id]);
+
   const getSubmissionTimestamp = (submission) => {
     const raw = submission?.submitted_at || submission?.created_at;
     if (!raw) return 0;
@@ -1121,6 +1152,7 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
                     { id: 'content', label: 'Details', icon: '📋' },
                     { id: 'proposals', label: 'Proposals', icon: '🗂️' },
                     { id: 'deliverables', label: 'Deliverables', icon: '✅' },
+                    { id: 'rework', label: 'Rework', icon: '🔧' },
                     { id: 'blockchain', label: 'Blockchain', icon: '⛓️' }
                   ].map((tab) => (
                     <button
@@ -2076,6 +2108,159 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
                       </div>
                     </div>
                   </div>
+                </div>
+              )}
+
+              {activeTab === 'rework' && (
+                <div className="space-y-4">
+                  <div className="flex justify-between items-center">
+                    <h4 className="modal-section-title">
+                      <span className="modal-section-dot orange"></span>
+                      Contract Rework Requests
+                    </h4>
+                    {auth.apiKey && (
+                      <button
+                        onClick={() => setShowReworkForm(true)}
+                        className="modal-btn-reject"
+                      >
+                        + Request Rework
+                      </button>
+                    )}
+                  </div>
+                  
+                  {showReworkForm && (
+                    <div className="modal-form-card">
+                      <div className="space-y-3">
+                        <label className="modal-data-label">Feedback Notes</label>
+                        <textarea
+                          value={reworkNotes}
+                          onChange={(e) => setReworkNotes(e.target.value)}
+                          placeholder="Explain what needs to be reworked..."
+                          className="modal-textarea"
+                          rows={4}
+                        />
+                        <div className="flex gap-2">
+                          <button
+                            onClick={async () => {
+                              if (!reworkNotes.trim()) {
+                                toast.error('Please provide feedback notes');
+                                return;
+                              }
+                              setIsSubmittingRework(true);
+                              try {
+                                const res = await fetch(
+                                  `${API_BASE}/api/smart_contract/contracts/${inscription.id}/rework`,
+                                  {
+                                    method: 'POST',
+                                    headers: {
+                                      'Content-Type': 'application/json',
+                                      'X-API-Key': auth.apiKey,
+                                    },
+                                    body: JSON.stringify({ notes: reworkNotes }),
+                                  }
+                                );
+                                if (!res.ok) {
+                                  throw new Error('Failed to create rework request');
+                                }
+                                toast.success('Rework request submitted');
+                                setReworkNotes('');
+                                setShowReworkForm(false);
+                                // Refresh rework requests
+                                const reworkRes = await fetch(
+                                  `${API_BASE}/api/smart_contract/contracts/${inscription.id}/rework`,
+                                  { headers: { 'X-API-Key': auth.apiKey } }
+                                );
+                                if (reworkRes.ok) {
+                                  const data = await reworkRes.json();
+                                  setReworkRequests(data.rework_requests || []);
+                                }
+                              } catch (err) {
+                                toast.error(err.message);
+                              } finally {
+                                setIsSubmittingRework(false);
+                              }
+                            }}
+                            disabled={isSubmittingRework}
+                            className="modal-btn-approve"
+                          >
+                            {isSubmittingRework ? 'Submitting...' : 'Submit'}
+                          </button>
+                          <button
+                            onClick={() => {
+                              setShowReworkForm(false);
+                              setReworkNotes('');
+                            }}
+                            className="modal-btn-cancel"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {isLoadingRework ? (
+                    <div className="modal-loading">Loading rework requests...</div>
+                  ) : reworkRequests.length === 0 ? (
+                    <div className="modal-data-label">No rework requests yet.</div>
+                  ) : (
+                    <div className="space-y-3">
+                      {reworkRequests.map((req) => (
+                        <div key={req.request_id} className="modal-rework-card">
+                          <div className="flex justify-between items-start">
+                            <div>
+                              <span className={`badge ${req.status === 'open' ? 'badge-warning' : 'badge-success'}`}>
+                                {req.status}
+                              </span>
+                              <span className="modal-data-label ml-2">
+                                {new Date(req.created_at).toLocaleString()}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <div className="font-mono text-xs text-gray-500">
+                                {req.requester?.slice(0, 8)}...{req.requester?.slice(-4)}
+                              </div>
+                              {req.status === 'open' && auth.apiKey && auth.wallet && req.requester && auth.wallet.toLowerCase() === req.requester.toLowerCase() && (
+                                <button
+                                  onClick={async () => {
+                                    try {
+                                      const res = await fetch(
+                                        `${API_BASE}/api/smart_contract/contracts/${inscription.id}/rework/${req.request_id}`,
+                                        {
+                                          method: 'PATCH',
+                                          headers: { 'X-API-Key': auth.apiKey },
+                                        }
+                                      );
+                                      if (res.ok) {
+                                        // Refresh rework requests
+                                        const reworkRes = await fetch(
+                                          `${API_BASE}/api/smart_contract/contracts/${inscription.id}/rework`,
+                                          { headers: { 'X-API-Key': auth.apiKey } }
+                                        );
+                                        if (reworkRes.ok) {
+                                          const data = await reworkRes.json();
+                                          setReworkRequests(data.rework_requests || []);
+                                        }
+                                        toast.success('Rework request resolved');
+                                      }
+                                    } catch (err) {
+                                      toast.error('Failed to resolve rework request');
+                                    }
+                                  }}
+                                  className="modal-btn-approve"
+                                >
+                                  Resolve
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                          <div className="modal-text-box mt-2">
+                            {req.notes}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
 
