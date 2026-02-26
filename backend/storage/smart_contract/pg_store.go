@@ -333,7 +333,14 @@ func (s *PGStore) hydrateProposalTasks(ctx context.Context, p *smart_contract.Pr
 		return
 	}
 	contractIDs := []string{}
+	// Try multiple sources to find the contract_id for tasks
 	if cid, ok := p.Metadata["contract_id"].(string); ok && strings.TrimSpace(cid) != "" {
+		contractIDs = append(contractIDs, cid)
+	}
+	if cid, ok := p.Metadata["visible_pixel_hash"].(string); ok && strings.TrimSpace(cid) != "" {
+		contractIDs = append(contractIDs, cid)
+	}
+	if cid, ok := p.Metadata["ingestion_id"].(string); ok && strings.TrimSpace(cid) != "" {
 		contractIDs = append(contractIDs, cid)
 	}
 	if strings.TrimSpace(p.ID) != "" {
@@ -1723,7 +1730,9 @@ FROM mcp_proposals WHERE id=$1 FOR UPDATE
 	if metaMap == nil {
 		metaMap = map[string]interface{}{}
 	}
-	if len(p.Tasks) > 0 {
+	// Only store suggested_tasks in metadata for pending proposals
+	// Approved/published proposals get their task status from mcp_tasks table (single source of truth)
+	if len(p.Tasks) > 0 && (p.Status == "" || strings.EqualFold(p.Status, "pending")) {
 		metaMap["suggested_tasks"] = p.Tasks
 	} else {
 		delete(metaMap, "suggested_tasks")
@@ -1879,6 +1888,8 @@ WHERE id<>$1 AND status='pending' AND (
 	if _, err := tx.Exec(ctx, `UPDATE mcp_proposals SET status='approved' WHERE id=$1`, id); err != nil {
 		return err
 	}
+	// Clean up suggested_tasks from metadata - task status now comes from mcp_tasks (single source of truth)
+	_, _ = tx.Exec(ctx, `UPDATE mcp_proposals SET metadata = metadata - 'suggested_tasks' WHERE id=$1`, id)
 	visible := strings.TrimSpace(visiblePixelHash)
 	if visible == "" {
 		if v, ok := meta["visible_pixel_hash"].(string); ok {
@@ -1925,6 +1936,8 @@ func (s *PGStore) PublishProposal(ctx context.Context, id string) error {
 	if _, err := tx.Exec(ctx, `UPDATE mcp_proposals SET status='published' WHERE id=$1`, id); err != nil {
 		return err
 	}
+	// Clean up suggested_tasks from metadata - task status now comes from mcp_tasks (single source of truth)
+	_, _ = tx.Exec(ctx, `UPDATE mcp_proposals SET metadata = metadata - 'suggested_tasks' WHERE id=$1`, id)
 
 	return tx.Commit(ctx)
 }
