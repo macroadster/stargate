@@ -607,6 +607,11 @@ func (s *PGStore) CreateContractReworkRequest(ctx context.Context, contractID, r
 		return smart_contract.ContractReworkRequest{}, err
 	}
 
+	_, err = tx.Exec(ctx, `UPDATE mcp_tasks SET status='rejected' WHERE contract_id=$1`, contractID)
+	if err != nil {
+		return smart_contract.ContractReworkRequest{}, err
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return smart_contract.ContractReworkRequest{}, err
 	}

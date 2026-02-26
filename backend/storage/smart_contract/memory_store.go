@@ -1330,7 +1330,14 @@ func (s *MemoryStore) CreateContractReworkRequest(ctx context.Context, contractI
 		CreatedAt:  now,
 	}
 
-	c.ReworkRequests = append(c.ReworkRequests, reworkReq)
+        c.ReworkRequests = append(c.ReworkRequests, reworkReq)
+	// Mark all pending tasks for this contract as rejected
+	for tID, t := range s.tasks {
+	    if t.ContractID == contractID {
+	        t.Status = "rejected"
+	        s.tasks[tID] = t
+	    }
+	}
 	s.contracts[contractID] = c
 
 	return reworkReq, nil
