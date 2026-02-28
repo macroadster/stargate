@@ -469,6 +469,11 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 	}
 	// Health endpoints
 	mux.HandleFunc("/api/health", container.HealthHandler.HandleHealth)
+	
+	// Peer Discovery endpoints
+	mux.HandleFunc("/api/peers/register", container.DiscoveryHandler.HandleRegisterPeer)
+	mux.HandleFunc("/api/peers", container.DiscoveryHandler.HandleListPeers)
+
 	mux.HandleFunc("/api/ipfs-mirror/status", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

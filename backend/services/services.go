@@ -373,3 +373,56 @@ func (s *HealthService) GetHealthStatus() *models.HealthResponse {
 		Timestamp: time.Now().Unix(),
 	}
 }
+
+// PeerService handles peer discovery and registration for WebRTC
+type PeerService struct {
+	peers map[string]time.Time
+	mu    sync.RWMutex
+}
+
+// NewPeerService creates a new peer service
+func NewPeerService() *PeerService {
+	ps := &PeerService{
+		peers: make(map[string]time.Time),
+	}
+	// Start cleanup goroutine to remove inactive peers after 5 minutes
+	go ps.cleanup()
+	return ps
+}
+
+// Register adds or updates a peer in the registry
+func (ps *PeerService) Register(peerID string) {
+	if peerID == "" {
+		return
+	}
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	ps.peers[peerID] = time.Now()
+}
+
+// GetPeers returns a list of currently active peer IDs
+func (ps *PeerService) GetPeers() []string {
+	ps.mu.RLock()
+	defer ps.mu.RUnlock()
+	
+	peerIDs := make([]string, 0, len(ps.peers))
+	for id := range ps.peers {
+		peerIDs = append(peerIDs, id)
+	}
+	return peerIDs
+}
+
+// cleanup periodically removes peers that haven't checked in recently
+func (ps *PeerService) cleanup() {
+	ticker := time.NewTicker(1 * time.Minute)
+	for range ticker.C {
+		ps.mu.Lock()
+		now := time.Now()
+		for id, lastSeen := range ps.peers {
+			if now.Sub(lastSeen) > 5*time.Minute {
+				delete(ps.peers, id)
+			}
+		}
+		ps.mu.Unlock()
+	}
+}

@@ -22,6 +22,7 @@ type Container struct {
 	SmartContractService *services.SmartContractService
 	QRCodeService        *services.QRCodeService
 	HealthService        *services.HealthService
+	PeerService          *services.PeerService
 	DataStorage          storage.ExtendedDataStorage
 	IngestionService     *services.IngestionService
 
@@ -30,6 +31,7 @@ type Container struct {
 
 	// Handlers
 	HealthHandler        *handlers.HealthHandler
+	DiscoveryHandler     *handlers.DiscoveryHandler
 	InscriptionHandler   *handlers.InscriptionHandler
 	BlockHandler         *handlers.BlockHandler
 	SmartContractHandler *handlers.SmartContractHandler
@@ -79,6 +81,8 @@ func NewContainer(apiKeyIssuer auth.APIKeyIssuer, apiKeyValidator auth.APIKeyVal
 	contractService := services.NewSmartContractService("smart_contracts.json")
 	qrService := services.NewQRCodeService()
 	healthService := services.NewHealthService()
+	peerService := services.NewPeerService()
+	
 	var ingestionService *services.IngestionService
 	if pgDSN != "" {
 		ingestionService = initIngestionService(pgDSN)
@@ -100,6 +104,7 @@ func NewContainer(apiKeyIssuer auth.APIKeyIssuer, apiKeyValidator auth.APIKeyVal
 
 	// Initialize handlers
 	healthHandler := handlers.NewHealthHandler(healthService)
+        discoveryHandler := handlers.NewDiscoveryHandler(peerService)
 	inscriptionHandler := handlers.NewInscriptionHandler(inscriptionService, ingestionService, apiKeyIssuer, apiKeyValidator)
 	blockHandler := handlers.NewBlockHandler(blockService)
 	// contractHandler will be set later with store
@@ -119,6 +124,7 @@ func NewContainer(apiKeyIssuer auth.APIKeyIssuer, apiKeyValidator auth.APIKeyVal
 		SmartContractService: contractService,
 		QRCodeService:        qrService,
 		HealthService:        healthService,
+		PeerService:          peerService,
 		DataStorage:          dataStorage,
 		IngestionService:     ingestionService,
 
@@ -127,6 +133,7 @@ func NewContainer(apiKeyIssuer auth.APIKeyIssuer, apiKeyValidator auth.APIKeyVal
 
 		// Handlers
 		HealthHandler:      healthHandler,
+		DiscoveryHandler:   discoveryHandler,
 		InscriptionHandler: inscriptionHandler,
 		BlockHandler:       blockHandler,
 		// SmartContractHandler will be set later

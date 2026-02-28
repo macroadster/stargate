@@ -90,6 +90,55 @@ func (h *HealthHandler) HandleHealth(w http.ResponseWriter, r *http.Request) {
 	h.sendSuccess(w, health)
 }
 
+// DiscoveryHandler handles peer discovery requests for WebRTC
+type DiscoveryHandler struct {
+	*BaseHandler
+	peerService *services.PeerService
+}
+
+// NewDiscoveryHandler creates a new discovery handler
+func NewDiscoveryHandler(peerService *services.PeerService) *DiscoveryHandler {
+	return &DiscoveryHandler{
+		BaseHandler: NewBaseHandler(),
+		peerService: peerService,
+	}
+}
+
+// HandleRegisterPeer registers a new peer ID
+func (h *DiscoveryHandler) HandleRegisterPeer(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		h.sendError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	var req struct {
+		PeerID string `json:"peerId"`
+	}
+	if err := h.parseJSON(r, &req); err != nil {
+		h.sendError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	if req.PeerID == "" {
+		h.sendError(w, http.StatusBadRequest, "peerId is required")
+		return
+	}
+
+	h.peerService.Register(req.PeerID)
+	h.sendSuccess(w, map[string]string{"status": "registered"})
+}
+
+// HandleListPeers returns a list of active peer IDs
+func (h *DiscoveryHandler) HandleListPeers(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		h.sendError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	peers := h.peerService.GetPeers()
+	h.sendSuccess(w, peers)
+}
+
 // InscriptionHandler handles inscription-related requests
 type InscriptionHandler struct {
 	*BaseHandler
