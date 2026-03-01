@@ -196,8 +196,44 @@ func (h *HTTPMCPServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *HTTPMCPServer) handleEventsProxy(w http.ResponseWriter, r *http.Request) {
-	// This would proxy to the events endpoint
-	h.writeHTTPError(w, http.StatusNotImplemented, "NOT_IMPLEMENTED", "Events proxy not implemented", "Use /api/smart_contract/events directly.")
+	// Support Server-Sent Events (SSE) as required by MCP HTTP transport
+	// Set the necessary headers for SSE
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	// Ensure the ResponseWriter supports flushing
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		h.writeHTTPError(w, http.StatusInternalServerError, "SSE_NOT_SUPPORTED", "SSE not supported", "Streaming not possible with current server configuration.")
+		return
+	}
+
+	// Immediately send the 'endpoint' event telling the client where to send POST requests
+	// This is standard for MCP over HTTP (SSE)
+	base := h.externalBaseURL(r)
+	endpointURL := base + "/mcp/call"
+	fmt.Fprintf(w, "event: endpoint\ndata: %s\n\n", endpointURL)
+	flusher.Flush()
+
+	// Keep the connection open for the client session
+	// We can also send a periodic heartbeat to prevent timeouts
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	notify := r.Context().Done()
+	for {
+		select {
+		case <-notify:
+			// Client disconnected
+			return
+		case <-ticker.C:
+			// Send heartbeat/ping to keep connection alive
+			fmt.Fprintf(w, ": heartbeat\n\n")
+			flusher.Flush()
+		}
+	}
 }
 
 func (h *HTTPMCPServer) handleToolCall(w http.ResponseWriter, r *http.Request) {
@@ -240,7 +276,7 @@ func (h *HTTPMCPServer) handleToolCall(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	result, err := h.callToolDirect(r.Context(), req.Tool, req.Arguments, apiKey)
+	result, err := h.callToolDirect(r.Context(), req.Tool, req.Arguments, apiKey, r)
 	if err != nil {
 		// Handle structured errors - always return 200 OK with error in JSON-RPC format
 		h.writeStructuredErrorJSONRPC(w, err)

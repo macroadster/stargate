@@ -56,6 +56,12 @@ func NewHTTPMCPServer(store scmiddleware.Store, apiKeyStore auth.APIKeyValidator
 	}
 	config := bitcoin.GetNetworkConfig(network)
 
+	baseURL := os.Getenv("STARGATE_API_URL")
+	if baseURL == "" {
+		baseURL = "http://localhost:3001"
+	}
+	baseURL = strings.TrimSuffix(baseURL, "/")
+
 	return &HTTPMCPServer{
 		store:            store,
 		apiKeyStore:      apiKeyStore,
@@ -66,7 +72,7 @@ func NewHTTPMCPServer(store scmiddleware.Store, apiKeyStore auth.APIKeyValidator
 		bitcoinClient:    bitcoin.NewBitcoinNodeClient(config.BaseURL),
 		server:           nil,
 		httpClient:       &http.Client{Timeout: 30 * time.Second},
-		baseURL:          "http://localhost:3001",
+		baseURL:          baseURL,
 		proxyBase:        os.Getenv("STARGATE_PROXY_BASE"),
 		rateLimiter:      make(map[string][]time.Time),
 		challengeStore:   challengeStore,
@@ -79,7 +85,7 @@ func (h *HTTPMCPServer) SetServer(server *scmiddleware.Server) {
 }
 
 func (h *HTTPMCPServer) externalBaseURL(r *http.Request) string {
-	if r == nil {
+	if r == nil || r.Host == "" {
 		return h.baseURL
 	}
 	scheme := r.Header.Get("X-Forwarded-Proto")
@@ -91,6 +97,9 @@ func (h *HTTPMCPServer) externalBaseURL(r *http.Request) string {
 		}
 	}
 	host := r.Header.Get("X-Forwarded-Host")
+	if host == "" {
+		host = r.Header.Get("X-Original-Host")
+	}
 	if host == "" {
 		host = r.Host
 	}
@@ -324,7 +333,7 @@ func (h *HTTPMCPServer) toolRequiresAuth(toolName string) bool {
 	return authenticatedTools[toolName]
 }
 
-func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, args map[string]interface{}, apiKey string) (interface{}, error) {
+func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, args map[string]interface{}, apiKey string, r *http.Request) (interface{}, error) {
 	switch toolName {
 	case "list_contracts":
 		return h.handleListContracts(ctx, args)
@@ -345,7 +354,7 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 	case "list_events":
 		return h.handleListEvents(ctx, args)
 	case "events_stream":
-		return h.handleEventsStream(ctx, args)
+		return h.handleEventsStream(ctx, args, r)
 	case "create_wish":
 		return h.handleCreateWish(ctx, args, apiKey)
 	case "claim_task":
@@ -1203,10 +1212,10 @@ func (h *HTTPMCPServer) handleListEvents(ctx context.Context, args map[string]in
 	}, nil
 }
 
-func (h *HTTPMCPServer) handleEventsStream(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	baseURL := h.externalBaseURL(&http.Request{})
+func (h *HTTPMCPServer) handleEventsStream(ctx context.Context, args map[string]interface{}, r *http.Request) (interface{}, error) {
+	baseURL := h.externalBaseURL(r)
 	return map[string]interface{}{
-		"stream_url": baseURL + "/api/smart_contract/events/stream",
+		"stream_url": baseURL + "/mcp/events",
 		"auth_hints": map[string]string{
 			"header": "Authorization: Bearer <api_key>",
 			"query":  "actor=<identifier>&entity_id=<id>&type=<event_type>",

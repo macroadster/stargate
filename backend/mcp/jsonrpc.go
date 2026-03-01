@@ -157,7 +157,7 @@ func (h *HTTPMCPServer) handleJSONRPCToolsCall(w http.ResponseWriter, r *http.Re
 		}
 	}
 
-	result, err := h.callToolDirect(r.Context(), name, args, apiKey)
+	result, err := h.callToolDirect(r.Context(), name, args, apiKey, r)
 	if err != nil {
 		if toolErr, ok := err.(*ToolError); ok {
 			h.writeJSONRPCError(w, req.ID, -32000, toolErr.Message, map[string]interface{}{
