@@ -469,7 +469,7 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 	}
 	// Health endpoints
 	mux.HandleFunc("/api/health", container.HealthHandler.HandleHealth)
-	
+
 	// Peer Discovery endpoints
 	mux.HandleFunc("/api/peers/register", container.DiscoveryHandler.HandleRegisterPeer)
 	mux.HandleFunc("/api/peers", container.DiscoveryHandler.HandleListPeers)
@@ -555,6 +555,11 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 	}
 	_ = os.MkdirAll(uploadsDir, 0755)
 	mux.HandleFunc("/uploads/", customUploadsHandler(uploadsDir))
+
+	// Serve sandbox files (alias for /uploads/results)
+	resultsDir := filepath.Join(uploadsDir, "results")
+	_ = os.MkdirAll(resultsDir, 0755)
+	mux.Handle("/sandbox/", http.StripPrefix("/sandbox/", http.FileServer(http.Dir(resultsDir))))
 
 	// Serve frontend files
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
