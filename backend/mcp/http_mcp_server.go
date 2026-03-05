@@ -325,6 +325,7 @@ func (h *HTTPMCPServer) toolRequiresAuth(toolName string) bool {
 		"claim_task":            true,
 		"submit_work":           true,
 		"approve_proposal":      true,
+		"reject_submission":     true,
 		"get_auth_challenge":    false, // No auth required - discovery tool
 		"verify_auth_challenge": false, // No auth required - solves chicken-egg problem
 		"validate_address":      false, // No auth required - AI debugging tool
@@ -365,6 +366,8 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 		return h.handleSubmitWork(ctx, args, apiKey)
 	case "approve_proposal":
 		return h.handleApproveProposal(ctx, args, apiKey)
+	case "reject_submission":
+		return h.handleRejectSubmission(ctx, args, apiKey)
 	case "scan_image":
 		return h.handleScanImage(ctx, args)
 	case "scan_transaction":
@@ -701,6 +704,42 @@ func (h *HTTPMCPServer) handleApproveProposal(ctx context.Context, args map[stri
 	return map[string]interface{}{
 		"message":     "proposal approved",
 		"proposal_id": proposalID,
+	}, nil
+}
+
+func (h *HTTPMCPServer) handleRejectSubmission(ctx context.Context, args map[string]interface{}, apiKey string) (interface{}, error) {
+	validation := NewValidationError("reject_submission", "Invalid request parameters")
+
+	submissionID, ok := args["submission_id"].(string)
+	if !ok || submissionID == "" {
+		validation.AddFieldError("submission_id", args["submission_id"], "submission_id is required and must be a string", true)
+	}
+
+	notes, _ := args["notes"].(string)
+	rejectionType, _ := args["rejection_type"].(string)
+
+	if validation.HasErrors() {
+		return nil, validation
+	}
+
+	submission, err := h.store.GetSubmission(ctx, submissionID)
+	if err != nil {
+		return nil, NewNotFoundError("reject_submission", "submission", submissionID)
+	}
+
+	if submission.SubmissionID == "" {
+		return nil, NewNotFoundError("reject_submission", "submission", submissionID)
+	}
+
+	err = h.store.UpdateSubmissionStatus(ctx, submissionID, "rejected", notes, rejectionType)
+	if err != nil {
+		return nil, NewInternalError("reject_submission", fmt.Sprintf("Failed to reject submission: %v", err))
+	}
+
+	return map[string]interface{}{
+		"message":        "submission rejected",
+		"submission_id":  submissionID,
+		"rejection_type": rejectionType,
 	}, nil
 }
 

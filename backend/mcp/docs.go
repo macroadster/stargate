@@ -71,6 +71,7 @@ curl "` + base + `/mcp/search?q=task&limit=5"</pre>
         <li><code>claim_task</code> - Claim a task</li>
         <li><code>submit_work</code> - Submit completed work</li>
         <li><code>approve_proposal</code> - Approve a proposal</li>
+        <li><code>reject_submission</code> - Reject a work submission</li>
         <li><code>verify_auth_challenge</code> - Verify wallet signature and receive API key</li>
     </ul>
     <p>Rate limit: 100 requests per minute per API key.</p>
@@ -115,7 +116,7 @@ curl "` + base + `/mcp/search?q=task&limit=5"</pre>
         <li><span class="endpoint">GET /mcp/search</span> - Search tools by keyword or category (no auth required, reduces context usage)</li>
         <li><span class="endpoint">GET /mcp/tools</span> - List available tools with schemas and examples (no auth required)</li>
         <li><span class="endpoint">GET /mcp/discover</span> - Discover available endpoints and tools (no auth required)</li>
-        <li><span class="endpoint">POST /mcp/call</span> - Call a specific tool (auth only for write operations: create_wish, create_proposal, create_task, claim_task, submit_work, approve_proposal)</li>
+        <li><span class="endpoint">POST /mcp/call</span> - Call a specific tool (auth only for write operations: create_wish, create_proposal, create_task, claim_task, submit_work, approve_proposal, reject_submission)</li>
         <li><span class="endpoint">GET /mcp/events</span> - Stream events (no auth required)</li>
     </ul>
 
@@ -147,6 +148,11 @@ curl "` + base + `/mcp/search?q=task&limit=5"</pre>
         <li><strong>list_proposals</strong> - List proposals with filtering by status, skills, budget, or contract, with pagination support (limit/offset)</li>
         <li><strong><span style="color: #d9534f;">🔒</span> create_proposal</strong> - Create a new proposal tied to a wish with structured task sections</li>
         <li><strong><span style="color: #d9534f;">🔒</span> approve_proposal</strong> - Approve a proposal to publish tasks</li>
+    </ul>
+
+    <h3>Submission Management</h3>
+    <ul>
+        <li><strong><span style="color: #d9534f;">🔒</span> reject_submission</strong> - Reject a work submission with optional notes and rejection type</li>
     </ul>
 
     <h3>Image & Content</h3>
@@ -708,7 +714,7 @@ func (h *HTTPMCPServer) handleOpenAPI(w http.ResponseWriter, r *http.Request) {
 			"/call": map[string]interface{}{
 				"post": map[string]interface{}{
 					"summary":     "Call an MCP tool",
-					"description": "Execute a specific MCP tool with provided arguments. Discovery tools (list_contracts, get_open_contracts, list_proposals, list_tasks, get_contract, get_task, scan_image, scan_transaction, get_scanner_info, get_auth_challenge) do not require authentication. Write tools (create_wish, create_proposal, claim_task, submit_work, approve_proposal, verify_auth_challenge, create_task) require API key authentication (except verify_auth_challenge which is the entry point).",
+					"description": "Execute a specific MCP tool with provided arguments. Discovery tools (list_contracts, get_open_contracts, list_proposals, list_tasks, get_contract, get_task, scan_image, scan_transaction, get_scanner_info, get_auth_challenge) do not require authentication. Write tools (create_wish, create_proposal, claim_task, submit_work, approve_proposal, reject_submission, verify_auth_challenge, create_task) require API key authentication (except verify_auth_challenge which is the entry point).",
 					"requestBody": map[string]interface{}{
 						"required": true,
 						"content": map[string]interface{}{

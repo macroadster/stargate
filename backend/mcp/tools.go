@@ -539,6 +539,33 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 				},
 			},
 		},
+		"reject_submission": map[string]interface{}{
+			"category":    ToolCategoryWrite,
+			"description": "Reject a work submission with optional notes and rejection type",
+			"parameters": map[string]interface{}{
+				"submission_id": map[string]interface{}{
+					"type":        "string",
+					"description": "The ID of the submission to reject",
+					"required":    true,
+				},
+				"notes": map[string]interface{}{
+					"type":        "string",
+					"description": "Reason for rejection",
+					"required":    false,
+				},
+				"rejection_type": map[string]interface{}{
+					"type":        "string",
+					"description": "Type of rejection (e.g., 'quality', 'incomplete', 'not_as_described')",
+					"required":    false,
+				},
+			},
+			"examples": []map[string]interface{}{
+				{
+					"description": "Reject a submission with a reason",
+					"arguments":   map[string]interface{}{"submission_id": "sub-123", "notes": "Deliverables do not meet quality standards", "rejection_type": "quality"},
+				},
+			},
+		},
 		"get_auth_challenge": map[string]interface{}{
 			"category":    ToolCategoryDiscovery,
 			"description": "Get a cryptographic challenge for wallet verification with AI-friendly options",
