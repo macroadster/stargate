@@ -22,6 +22,7 @@ import (
 	"stargate-backend/services"
 	"stargate-backend/starlight"
 	auth "stargate-backend/storage/auth"
+	scstore "stargate-backend/storage/smart_contract"
 )
 
 const (
@@ -1463,7 +1464,8 @@ func (h *HTTPMCPServer) handleSubmitWork(ctx context.Context, args map[string]in
 				if task, err := h.store.GetTask(claim.TaskID); err == nil {
 					// For wish contracts, the contract_id IS the visible_pixel_hash
 					// This allows organizing all work for a contract/wish under one directory
-					subDir = task.ContractID
+					// Normalize to remove prefixes like "wish-" to ensure consistent path
+					subDir = scstore.NormalizeContractID(task.ContractID)
 				}
 			}
 			resultsDir = filepath.Join(uploadsDir, "results", subDir)
