@@ -2,6 +2,8 @@
 
 Welcome to Starlight, a Bitcoin-native platform for turning ideas into funded work. This guide will walk you through how to use the interface to browse the blockchain, create "Wishes" (requests for work), and manage the lifecycle of your projects.
 
+For AI and automation workflows, use `/mcp/SKILL.md` and `/mcp/docs` instead of this guide.
+
 ---
 
 ## 1. Exploring the Bitcoin Universe
