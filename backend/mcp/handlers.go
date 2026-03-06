@@ -44,6 +44,10 @@ func (h *HTTPMCPServer) handleListTools(w http.ResponseWriter, r *http.Request) 
 				"description":     "Create a wish/inscription that seeds a proposal and contract metadata. Requires image payload.",
 			},
 		},
+		"agent_assets": map[string]string{
+			"skill": base + "/mcp/SKILL.md",
+			"sdk":   base + "/mcp/starlight_sdk.sh",
+		},
 		"endpoints": []string{
 			"/api/inscribe",
 			"/api/smart_contract/contracts",
@@ -90,6 +94,8 @@ func (h *HTTPMCPServer) handleIndex(w http.ResponseWriter, r *http.Request) {
 			"tools":        base + "/mcp/tools",
 			"discover":     base + "/mcp/discover",
 			"docs":         base + "/mcp/docs",
+			"skill":        base + "/mcp/SKILL.md",
+			"sdk":          base + "/mcp/starlight_sdk.sh",
 			"openapi":      base + "/mcp/openapi.json",
 			"health":       base + "/mcp/health",
 			"events":       base + "/mcp/events",
@@ -97,22 +103,18 @@ func (h *HTTPMCPServer) handleIndex(w http.ResponseWriter, r *http.Request) {
 			"mcp_base_url": base + "/mcp",
 		},
 		"quick_start": []string{
+			"GET /mcp/SKILL.md for the canonical agent workflow.",
+			"Download /mcp/starlight_sdk.sh for file-path based uploads.",
 			"GET /mcp/tools to fetch available tools.",
 			"POST /mcp/call with {\"tool\": \"list_contracts\"} to execute a tool.",
-			"GET /mcp/docs for full examples.",
+			"GET /mcp/docs for reference details and examples.",
 		},
 		"counts": map[string]int{
 			"tools":     len(h.getToolSchemas()),
 			"contracts": contractCount,
 			"tasks":     taskCount,
 		},
-		"agent_playbook": []string{
-			"Agent 1: POST /api/inscribe to create a wish (message + image required).",
-			"Agent 2: POST /api/smart_contract/proposals to draft tasks from the wish.",
-			"Agent 1: POST /api/smart_contract/proposals/{id}/approve to publish tasks.",
-			"Agent 2: claim and submit work via tasks/claims endpoints.",
-			"Agent 1: review submissions and build PSBT.",
-		},
+		"canonical_workflow": "Use /mcp/SKILL.md for agent workflow guidance and /mcp/starlight_sdk.sh for local file uploads.",
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
@@ -144,6 +146,10 @@ func (h *HTTPMCPServer) handleDiscover(w http.ResponseWriter, r *http.Request) {
 				"required_fields": []string{"message", "image_base64"},
 				"description":     "Create a wish/inscription that seeds a proposal and contract metadata. Requires image payload.",
 			},
+		},
+		"agent_assets": map[string]string{
+			"skill": base + "/mcp/SKILL.md",
+			"sdk":   base + "/mcp/starlight_sdk.sh",
 		},
 		"endpoints": []string{
 			"/api/inscribe",
@@ -184,7 +190,7 @@ func (h *HTTPMCPServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"timestamp": time.Now().Format(time.RFC3339),
 		"version":   "1.0.0",
 		"service":   "stargate-mcp",
-		"endpoints": []string{"/mcp", "/mcp/tools", "/mcp/call", "/mcp/docs"},
+		"endpoints": []string{"/mcp", "/mcp/tools", "/mcp/call", "/mcp/docs", "/mcp/SKILL.md", "/mcp/starlight_sdk.sh"},
 		"components": map[string]string{
 			"store":              fmt.Sprintf("%t", h.store != nil),
 			"api_key_store":      fmt.Sprintf("%t", h.apiKeyStore != nil),

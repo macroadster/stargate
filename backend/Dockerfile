@@ -41,7 +41,6 @@ COPY --from=builder /out/stargate /usr/local/bin/stargate
 # Copy documentation and assets
 COPY --from=builder /app/docs ./docs
 COPY --from=builder /app/assets ./assets
-
 # Create necessary directories
 RUN mkdir -p /app/frontend /app/uploads /app/logs && \
     chown -R stargate:stargate /app

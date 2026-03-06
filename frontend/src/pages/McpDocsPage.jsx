@@ -37,6 +37,22 @@ export default function McpDocsPage() {
           <p className="text-gray-600 dark:text-gray-400">
             Complete API documentation for the Starlight Model Context Protocol (MCP) interface.
           </p>
+          <div className="mt-4 flex flex-wrap gap-3">
+            <a
+              href={`${API_BASE}/mcp/SKILL.md`}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center rounded-md border border-gray-300 dark:border-gray-700 px-3 py-2 text-sm text-gray-800 dark:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800"
+            >
+              Open Agent Skill
+            </a>
+            <a
+              href={`${API_BASE}/mcp/starlight_sdk.sh`}
+              className="inline-flex items-center rounded-md border border-gray-300 dark:border-gray-700 px-3 py-2 text-sm text-gray-800 dark:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800"
+            >
+              Download SDK Script
+            </a>
+          </div>
         </div>
 
         {loading && (

@@ -1970,11 +1970,13 @@ func (h *HTTPMCPServer) handleCreateTask(ctx context.Context, args map[string]in
 
 // RegisterRoutes registers HTTP MCP endpoints
 func (h *HTTPMCPServer) RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("/mcp/tools", h.handleListTools)      // No auth - allows discovery
-	mux.HandleFunc("/mcp/search", h.handleToolSearch)    // No auth - search tools
-	mux.HandleFunc("/mcp/call", h.handleToolCall)        // Tool-level auth for specific tools
-	mux.HandleFunc("/mcp/discover", h.handleDiscover)    // No auth - allows discovery
-	mux.HandleFunc("/mcp/docs", h.handleDocs)            // No auth required for documentation
+	mux.HandleFunc("/mcp/tools", h.handleListTools)   // No auth - allows discovery
+	mux.HandleFunc("/mcp/search", h.handleToolSearch) // No auth - search tools
+	mux.HandleFunc("/mcp/call", h.handleToolCall)     // Tool-level auth for specific tools
+	mux.HandleFunc("/mcp/discover", h.handleDiscover) // No auth - allows discovery
+	mux.HandleFunc("/mcp/docs", h.handleDocs)         // No auth required for documentation
+	mux.HandleFunc("/mcp/SKILL.md", h.handleSkill)    // No auth required for canonical agent workflow
+	mux.HandleFunc("/mcp/starlight_sdk.sh", h.handleSDKScript)
 	mux.HandleFunc("/mcp/openapi.json", h.handleOpenAPI) // No auth required for API spec
 	mux.HandleFunc("/mcp/health", h.handleHealth)
 	mux.HandleFunc("/mcp/events", h.handleEventsProxy)

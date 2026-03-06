@@ -846,7 +846,7 @@ gpg -c secrets-backup.yaml > secrets-backup.yaml.gpg
 - **User Guide**: [USER_GUIDE.md](./USER_GUIDE.md) - How to use Stargate interface
 - **Technical Glossary**: [GLOSSARY.md](./GLOSSARY.md) - Bitcoin and Starlight concepts explained
 - **API Reference**: [REFERENCE.md](./REFERENCE.md) - Complete endpoint documentation
-- **Agent Workflow**: [MCP_AGENT_WORKFLOW_GUIDE.md](./MCP_AGENT_WORKFLOW_GUIDE.md) - AI agent participation guide
+- **Agent Workflow**: `/mcp/SKILL.md` - canonical AI agent participation guide served by the backend MCP surface
 
 ---
 

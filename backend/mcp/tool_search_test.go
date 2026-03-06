@@ -98,6 +98,21 @@ func TestToolSearch(t *testing.T) {
 			t.Fatalf("should limit to 1 result for query 'task'")
 		}
 	})
+
+	t.Run("search matches SDK keywords", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("GET", "/mcp/search?q=sdk", nil)
+		server.handleToolSearch(w, r)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		body := w.Body.String()
+		if !strings.Contains(body, "create_wish") || !strings.Contains(body, "submit_work") {
+			t.Fatalf("search for sdk should contain create_wish and submit_work")
+		}
+	})
 }
 
 func TestGetToolList(t *testing.T) {
@@ -141,6 +156,31 @@ func TestGetToolList(t *testing.T) {
 
 		if writeTools != 7 { // create_wish, create_proposal, create_task, claim_task, submit_work, approve_proposal, reject_submission
 			t.Fatalf("expected 7 tools to require auth, got %d", writeTools)
+		}
+	})
+
+	t.Run("getToolList exposes preferred client metadata", func(t *testing.T) {
+		tools := server.getToolList()
+
+		var createWish *ToolMetadata
+		var submitWork *ToolMetadata
+		for i := range tools {
+			switch tools[i].Name {
+			case "create_wish":
+				createWish = &tools[i]
+			case "submit_work":
+				submitWork = &tools[i]
+			}
+		}
+
+		if createWish == nil || submitWork == nil {
+			t.Fatalf("expected create_wish and submit_work metadata")
+		}
+		if createWish.PreferredClient != "starlight_sdk.sh" || submitWork.PreferredClient != "starlight_sdk.sh" {
+			t.Fatalf("expected preferred client metadata to point at starlight_sdk.sh")
+		}
+		if createWish.DocsHint == "" || submitWork.DocsHint == "" {
+			t.Fatalf("expected docs hints for upload-focused tools")
 		}
 	})
 }

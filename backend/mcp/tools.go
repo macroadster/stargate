@@ -10,10 +10,13 @@ const (
 
 // ToolMetadata contains lightweight metadata for search
 type ToolMetadata struct {
-	Name         string `json:"name"`
-	Description  string `json:"description"`
-	Category     string `json:"category"`
-	AuthRequired bool   `json:"auth_required"`
+	Name            string   `json:"name"`
+	Description     string   `json:"description"`
+	Category        string   `json:"category"`
+	AuthRequired    bool     `json:"auth_required"`
+	PreferredClient string   `json:"preferred_client,omitempty"`
+	DocsHint        string   `json:"docs_hint,omitempty"`
+	Keywords        []string `json:"keywords,omitempty"`
 }
 
 // getToolSchemas returns detailed schemas for all available tools
@@ -234,8 +237,11 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 			},
 		},
 		"submit_work": map[string]interface{}{
-			"category":    ToolCategoryWrite,
-			"description": "Submit completed work for a claimed task with optional file attachments",
+			"category":         ToolCategoryWrite,
+			"description":      "Submit completed work for a claimed task with optional file attachments",
+			"preferred_client": "starlight_sdk.sh",
+			"docs_hint":        "Use /mcp/SKILL.md and /mcp/starlight_sdk.sh for path-based file uploads.",
+			"keywords":         []string{"upload", "artifact", "file", "path", "sdk", "script"},
 			"parameters": map[string]interface{}{
 				"claim_id": map[string]interface{}{
 					"type":        "string",
@@ -392,8 +398,11 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 			},
 		},
 		"create_wish": map[string]interface{}{
-			"category":    ToolCategoryWrite,
-			"description": "Create a new wish (request for work) by inscribing a message. This creates a pending wish contract that agents can then propose solutions for using 'create_proposal'.",
+			"category":         ToolCategoryWrite,
+			"description":      "Create a new wish (request for work) by inscribing a message. This creates a pending wish contract that agents can then propose solutions for using 'create_proposal'.",
+			"preferred_client": "starlight_sdk.sh",
+			"docs_hint":        "Use /mcp/SKILL.md and /mcp/starlight_sdk.sh for local image uploads.",
+			"keywords":         []string{"image", "upload", "file", "path", "sdk", "script"},
 			"parameters": map[string]interface{}{
 				"message": map[string]interface{}{
 					"type":        "string",
@@ -728,11 +737,27 @@ func (h *HTTPMCPServer) getToolList() []ToolMetadata {
 		}
 		category, _ := tm["category"].(string)
 		description, _ := tm["description"].(string)
+		preferredClient, _ := tm["preferred_client"].(string)
+		docsHint, _ := tm["docs_hint"].(string)
+		rawKeywords, _ := tm["keywords"].([]string)
+		if rawKeywords == nil {
+			if genericKeywords, ok := tm["keywords"].([]interface{}); ok {
+				rawKeywords = make([]string, 0, len(genericKeywords))
+				for _, keyword := range genericKeywords {
+					if keywordStr, ok := keyword.(string); ok && keywordStr != "" {
+						rawKeywords = append(rawKeywords, keywordStr)
+					}
+				}
+			}
+		}
 		metadata = append(metadata, ToolMetadata{
-			Name:         name,
-			Description:  description,
-			Category:     category,
-			AuthRequired: h.toolRequiresAuth(name),
+			Name:            name,
+			Description:     description,
+			Category:        category,
+			AuthRequired:    h.toolRequiresAuth(name),
+			PreferredClient: preferredClient,
+			DocsHint:        docsHint,
+			Keywords:        rawKeywords,
 		})
 	}
 	return metadata
@@ -757,7 +782,14 @@ func (h *HTTPMCPServer) searchTools(query string, category string, limit int) []
 		if matched && queryLower != "" {
 			nameMatch := strings.Contains(strings.ToLower(tool.Name), queryLower)
 			descMatch := strings.Contains(strings.ToLower(tool.Description), queryLower)
-			if !nameMatch && !descMatch {
+			keywordMatch := false
+			for _, keyword := range tool.Keywords {
+				if strings.Contains(strings.ToLower(keyword), queryLower) {
+					keywordMatch = true
+					break
+				}
+			}
+			if !nameMatch && !descMatch && !keywordMatch {
 				matched = false
 			}
 		}

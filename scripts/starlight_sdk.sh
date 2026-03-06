@@ -2,4 +2,4 @@
 set -euo pipefail
 
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-exec "${script_dir}/starlight_sdk.sh" "$@"
+exec bash "${script_dir}/../backend/mcp/assets/starlight_sdk.sh" "$@"
