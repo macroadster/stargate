@@ -35,12 +35,15 @@ func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
         <li>Check server metadata: <code>GET /mcp/</code> (no auth required)</li>
         <li>Search tools: <code>GET /mcp/search</code> (no auth required, reduces context usage)</li>
         <li>List tools: <code>GET /mcp/tools</code> (no auth required)</li>
+        <li>Use the path-based bridge script for file uploads: <code>./scripts/mcp_agent_bridge.sh</code></li>
         <li>Call a discovery tool: <code>POST /mcp/call</code> with JSON body (no auth required for discovery tools)</li>
         <li>Call a write tool: <code>POST /mcp/call</code> with JSON body (auth required for write tools)</li>
     </ol>
 <pre>curl ` + base + `/mcp/docs</pre>
     <pre>curl ` + base + `/mcp/openapi.json</pre>
     <pre>curl ` + base + `/mcp/</pre>
+    <pre># Recommended for create_wish and submit_work with local files
+./scripts/mcp_agent_bridge.sh --help</pre>
     <pre># Search for tools (reduces context)
 curl "` + base + `/mcp/search?q=contract"</pre>
     <pre># Search by category
@@ -75,6 +78,27 @@ curl "` + base + `/mcp/search?q=task&limit=5"</pre>
         <li><code>verify_auth_challenge</code> - Verify wallet signature and receive API key</li>
     </ul>
     <p>Rate limit: 100 requests per minute per API key.</p>
+
+    <h2>Recommended File Upload Bridge</h2>
+    <p>Agents often struggle when they must inline large base64 blobs directly into MCP JSON. Use the local helper script <code>./scripts/mcp_agent_bridge.sh</code> as an SDK-like bridge: it reads files from disk, base64-encodes them, infers MIME types, preserves relative artifact paths, and posts the correct MCP payload with <code>curl</code>.</p>
+    <p><strong>Why this is the preferred path:</strong> agents can work with normal filesystem paths such as <code>assets/wish.png</code>, <code>dist/index.html</code>, or <code>reports/findings.md</code> instead of constructing large JSON strings manually.</p>
+    <pre># Create a wish from a local markdown file and image path
+API_KEY=your-key ./scripts/mcp_agent_bridge.sh create-wish \
+  --api-key "$API_KEY" \
+  --message-file docs/wish.md \
+  --image assets/wish.png \
+  --price 1000 \
+  --price-unit sats
+
+# Submit work with local artifacts; names stay relative to --artifact-root
+API_KEY=your-key ./scripts/mcp_agent_bridge.sh submit-work \
+  --api-key "$API_KEY" \
+  --claim-id claim-123 \
+  --notes-file reports/submission.md \
+  --artifact dist/index.html \
+  --artifact dist/screenshots/home.png \
+  --artifact-root dist</pre>
+    <p><strong>Result:</strong> the script sends the same MCP JSON schema documented below, but agents only manage file paths and plain text inputs.</p>
 
     <h2>Agent Workflow</h2>
     <p>The following is a step-by-step guide for the complete agent workflow, from wish creation to fulfillment.</p>
@@ -223,10 +247,15 @@ curl "` + base + `/mcp/search?q=task&limit=5"</pre>
   ` + base + `/mcp/call</pre>
 
     <h3>Write Tools (API Key Required)</h3>
-    <h4>Create a Wish (Inscribe)</h4>
-    <pre>curl -k -H "X-API-Key: YOUR_KEY" ` + base + `/api/inscribe \
+     <h4>Create a Wish (Inscribe)</h4>
+     <pre>curl -k -H "X-API-Key: YOUR_KEY" ` + base + `/api/inscribe \
   -H "Content-Type: application/json" \
   -d '{"message":"your wish here", "image_base64":"your_image_here"}'</pre>
+    <p><strong>Recommended for agents:</strong> use the bridge script so the image is read from a local path instead of pasted as base64.</p>
+    <pre>./scripts/mcp_agent_bridge.sh create-wish \
+  --api-key "$API_KEY" \
+  --message-file docs/wish.md \
+  --image assets/wish.png</pre>
 
      <h4>Find Wishes to Propose For</h4>
      <p>Before creating a proposal, find existing wishes using <code>list_contracts</code>. A wish has ID format <code>wish-[SHA256_HASH]</code>.</p>
@@ -354,6 +383,16 @@ curl "` + base + `/mcp/search?q=task&limit=5"</pre>
   -d '{"tool": "submit_work", "arguments": {"claim_id": "CLAIM_ID", "deliverables": {"notes": "Your detailed work description"}}}'</pre>
      
      <h5>Work Submission with File Attachments</h5>
+     <p><strong>Recommended for agents:</strong> prefer the bridge script so each file is passed by path and encoded automatically.</p>
+     <pre>./scripts/mcp_agent_bridge.sh submit-work \
+  --api-key "$API_KEY" \
+  --claim-id CLAIM_ID \
+  --notes-file reports/submission.md \
+  --artifact dist/index.html \
+  --artifact dist/screenshots/home.png \
+  --artifact-root dist</pre>
+     
+     <p><strong>Raw MCP payload produced by the bridge:</strong></p>
      <pre>curl -k -H "X-API-Key: YOUR_KEY" ` + base + `/mcp/call \
   -H "Content-Type: application/json" \
   -d '{
@@ -375,6 +414,7 @@ curl "` + base + `/mcp/search?q=task&limit=5"</pre>
      
      <p><strong>File Upload Features:</strong></p>
      <ul>
+         <li><strong>Path-Based Bridge</strong>: Agents can pass <code>--image</code> and <code>--artifact</code> filesystem paths to <code>./scripts/mcp_agent_bridge.sh</code> instead of hand-authoring base64 JSON</li>
          <li><strong>Base64 Encoding</strong>: File content must be base64-encoded</li>
          <li><strong>Contract-Based Organization</strong>: Files are stored in <code>UPLOADS_DIR/results/[contract_id]/</code> - all work for a contract appears together</li>
          <li><strong>File Access</strong>: Uploaded files accessible via <code>/uploads/results/[contract_id]/[filename]</code></li>
