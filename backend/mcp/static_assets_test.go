@@ -31,6 +31,9 @@ func TestStaticMCPAssets(t *testing.T) {
 		if !strings.Contains(w.Body.String(), "Starlight MCP Skill") {
 			t.Fatalf("expected skill markdown body")
 		}
+		if !strings.Contains(w.Body.String(), "http://example.com/mcp/starlight_sdk.sh") {
+			t.Fatalf("expected request-aware sdk url in skill body")
+		}
 	})
 
 	t.Run("sdk endpoint serves shell script attachment", func(t *testing.T) {
@@ -49,6 +52,9 @@ func TestStaticMCPAssets(t *testing.T) {
 		}
 		if !strings.Contains(w.Body.String(), "starlight_sdk.sh create-wish") {
 			t.Fatalf("expected sdk script body")
+		}
+		if !strings.Contains(w.Body.String(), "MCP_BASE=${MCP_BASE:-http://example.com/mcp}") {
+			t.Fatalf("expected request-aware mcp base in sdk script")
 		}
 	})
 }

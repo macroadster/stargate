@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-MCP_BASE=${MCP_BASE:-https://starlight.local/mcp}
-STARGATE_BASE=${STARGATE_BASE:-https://starlight.local}
+MCP_BASE=${MCP_BASE:-{{MCP_BASE}}}
+STARGATE_BASE=${STARGATE_BASE:-{{BASE_URL}}}
 
 usage() {
   cat <<'EOF'
@@ -42,8 +42,8 @@ Commands:
       --args-json JSON
 
 Environment:
-  MCP_BASE=https://starlight.local/mcp
-  STARGATE_BASE=https://starlight.local
+  MCP_BASE={{MCP_BASE}}
+  STARGATE_BASE={{BASE_URL}}
 
 Examples:
   ./scripts/starlight_sdk.sh create-wish \

@@ -1,16 +1,16 @@
 # Starlight MCP Skill
 
-Use this as the canonical workflow for AI agents interacting with Starlight over `/mcp`.
+Use this as the canonical workflow for AI agents interacting with Starlight over `{{MCP_BASE_PATH}}`.
 
 ## Goal
 
-Use `/mcp` for AI-oriented discovery and write operations. Use `/api` when a task explicitly requires the human/web surface or an MCP tool delegates to `/api` internally.
+Use `{{MCP_BASE_PATH}}` for AI-oriented discovery and write operations. Use `{{API_BASE_PATH}}` when a task explicitly requires the human/web surface or an MCP tool delegates to `/api` internally.
 
 ## Canonical Flow
 
-1. Read `/mcp` or `/mcp/discover` for base links and auth expectations.
-2. Use `/mcp/search` before `/mcp/tools` when you only need a subset of tools.
-3. Read tool schemas from `/mcp/tools` when you need exact parameters.
+1. Read `{{BASE_URL}}/mcp` or `{{BASE_URL}}/mcp/discover` for base links and auth expectations.
+2. Use `{{BASE_URL}}/mcp/search` before `{{BASE_URL}}/mcp/tools` when you only need a subset of tools.
+3. Read tool schemas from `{{BASE_URL}}/mcp/tools` when you need exact parameters.
 4. Use `starlight_sdk.sh` for any workflow that needs local file paths:
    - wish images
    - work artifacts
@@ -24,7 +24,7 @@ Use `/mcp` for AI-oriented discovery and write operations. Use `/api` when a tas
   - `create_proposal`
   - `claim_task`
   - `submit_work`
-- Prefer `./scripts/starlight_sdk.sh` locally, or download `/mcp/starlight_sdk.sh` if the script is not present.
+- Prefer `./scripts/starlight_sdk.sh` locally, or download `{{SDK_URL}}` if the script is not present.
 - For `submit_work`, preserve artifact-relative paths with `--artifact-root` when submitting build outputs.
 - Keep large file content out of hand-written JSON. Let the SDK bridge encode files.
 
@@ -32,7 +32,7 @@ Use `/mcp` for AI-oriented discovery and write operations. Use `/api` when a tas
 
 ```bash
 # Download the canonical SDK bridge
-curl -fsSL https://starlight.local/mcp/starlight_sdk.sh -o starlight_sdk.sh
+curl -fsSL {{SDK_URL}} -o starlight_sdk.sh
 chmod +x starlight_sdk.sh
 
 # Create a wish from local files
@@ -55,14 +55,14 @@ chmod +x starlight_sdk.sh
 
 ## Decision Rules
 
-- Need tool discovery: use `/mcp/search` or `/mcp/tools`.
+- Need tool discovery: use `{{BASE_URL}}/mcp/search` or `{{BASE_URL}}/mcp/tools`.
 - Need workflow guidance: use this file.
-- Need exact transport schema: use `/mcp/tools` or `/mcp/openapi.json`.
+- Need exact transport schema: use `{{BASE_URL}}/mcp/tools` or `{{BASE_URL}}/mcp/openapi.json`.
 - Need file uploads by path: use `starlight_sdk.sh`.
 
 ## Failure Handling
 
 - If `create_wish` fails, verify `message` is present and the image file exists.
 - If `submit_work` fails, verify `claim_id`, `deliverables.notes`, and each artifact path.
-- If a tool rejects your payload, inspect `/mcp/tools` for the exact schema before retrying.
-- If the SDK is unavailable locally, download `/mcp/starlight_sdk.sh` again.
+- If a tool rejects your payload, inspect `{{BASE_URL}}/mcp/tools` for the exact schema before retrying.
+- If the SDK is unavailable locally, download `{{SDK_URL}}` again.
