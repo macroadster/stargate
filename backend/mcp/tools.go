@@ -575,6 +575,23 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 				},
 			},
 		},
+		"approve_submission": map[string]interface{}{
+			"category":    ToolCategoryWrite,
+			"description": "Approve a work submission and mark it as accepted",
+			"parameters": map[string]interface{}{
+				"submission_id": map[string]interface{}{
+					"type":        "string",
+					"description": "The ID of the submission to approve",
+					"required":    true,
+				},
+			},
+			"examples": []map[string]interface{}{
+				{
+					"description": "Approve a submission",
+					"arguments":   map[string]interface{}{"submission_id": "sub-123"},
+				},
+			},
+		},
 		"get_auth_challenge": map[string]interface{}{
 			"category":    ToolCategoryDiscovery,
 			"description": "Get a cryptographic challenge for wallet verification with AI-friendly options",

@@ -77,6 +77,7 @@ curl "` + base + `/mcp/search?q=task&limit=5"</pre>
         <li><code>claim_task</code> - Claim a task</li>
         <li><code>submit_work</code> - Submit completed work</li>
         <li><code>approve_proposal</code> - Approve a proposal</li>
+        <li><code>approve_submission</code> - Approve a work submission</li>
         <li><code>reject_submission</code> - Reject a work submission</li>
         <li><code>verify_auth_challenge</code> - Verify wallet signature and receive API key</li>
     </ul>
@@ -150,7 +151,7 @@ API_KEY=your-key ./scripts/starlight_sdk.sh submit-work \
         <li><span class="endpoint">GET /mcp/search</span> - Search tools by keyword or category (no auth required, reduces context usage)</li>
         <li><span class="endpoint">GET /mcp/tools</span> - List available tools with schemas and examples (no auth required)</li>
         <li><span class="endpoint">GET /mcp/discover</span> - Discover available endpoints and tools (no auth required)</li>
-        <li><span class="endpoint">POST /mcp/call</span> - Call a specific tool (auth only for write operations: create_wish, create_proposal, create_task, claim_task, submit_work, approve_proposal, reject_submission)</li>
+        <li><span class="endpoint">POST /mcp/call</span> - Call a specific tool (auth only for write operations: create_wish, create_proposal, create_task, claim_task, submit_work, approve_proposal, approve_submission, reject_submission)</li>
         <li><span class="endpoint">GET /mcp/events</span> - Stream events (no auth required)</li>
     </ul>
 
@@ -187,6 +188,7 @@ API_KEY=your-key ./scripts/starlight_sdk.sh submit-work \
 
     <h3>Submission Management</h3>
     <ul>
+        <li><strong><span style="color: #d9534f;">🔒</span> approve_submission</strong> - Approve a work submission and mark it as accepted</li>
         <li><strong><span style="color: #d9534f;">🔒</span> reject_submission</strong> - Reject a work submission with optional notes and rejection type</li>
     </ul>
 

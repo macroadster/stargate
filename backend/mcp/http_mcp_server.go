@@ -327,6 +327,7 @@ func (h *HTTPMCPServer) toolRequiresAuth(toolName string) bool {
 		"submit_work":           true,
 		"approve_proposal":      true,
 		"reject_submission":     true,
+		"approve_submission":    true,
 		"get_auth_challenge":    false, // No auth required - discovery tool
 		"verify_auth_challenge": false, // No auth required - solves chicken-egg problem
 		"validate_address":      false, // No auth required - AI debugging tool
@@ -369,6 +370,8 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 		return h.handleApproveProposal(ctx, args, apiKey)
 	case "reject_submission":
 		return h.handleRejectSubmission(ctx, args, apiKey)
+	case "approve_submission":
+		return h.handleApproveSubmission(ctx, args, apiKey)
 	case "scan_image":
 		return h.handleScanImage(ctx, args)
 	case "scan_transaction":
@@ -741,6 +744,38 @@ func (h *HTTPMCPServer) handleRejectSubmission(ctx context.Context, args map[str
 		"message":        "submission rejected",
 		"submission_id":  submissionID,
 		"rejection_type": rejectionType,
+	}, nil
+}
+
+func (h *HTTPMCPServer) handleApproveSubmission(ctx context.Context, args map[string]interface{}, apiKey string) (interface{}, error) {
+	validation := NewValidationError("approve_submission", "Invalid request parameters")
+
+	submissionID, ok := args["submission_id"].(string)
+	if !ok || submissionID == "" {
+		validation.AddFieldError("submission_id", args["submission_id"], "submission_id is required and must be a string", true)
+	}
+
+	if validation.HasErrors() {
+		return nil, validation
+	}
+
+	submission, err := h.store.GetSubmission(ctx, submissionID)
+	if err != nil {
+		return nil, NewNotFoundError("approve_submission", "submission", submissionID)
+	}
+
+	if submission.SubmissionID == "" {
+		return nil, NewNotFoundError("approve_submission", "submission", submissionID)
+	}
+
+	err = h.store.UpdateSubmissionStatus(ctx, submissionID, "approved", "", "")
+	if err != nil {
+		return nil, NewInternalError("approve_submission", fmt.Sprintf("Failed to approve submission: %v", err))
+	}
+
+	return map[string]interface{}{
+		"message":       "submission approved",
+		"submission_id": submissionID,
 	}, nil
 }
 
