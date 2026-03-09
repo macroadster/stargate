@@ -69,7 +69,7 @@ func (sm *ScannerManager) InitializeScanner() error {
 	if baseURL == "" {
 		baseURL = "http://localhost:8080"
 	}
-	proxyScanner := NewProxyScanner(baseURL, "demo-api-key")
+	proxyScanner := NewProxyScanner(baseURL, os.Getenv("STARGATE_API_KEY"))
 	if proxyScanner != nil {
 		initErr := proxyScanner.Initialize()
 		if initErr == nil {
