@@ -1143,17 +1143,48 @@ func (h *HTTPMCPServer) handleListSubmissions(ctx context.Context, args map[stri
 	if taskID, ok := args["task_id"].(string); ok && taskID != "" {
 		taskIDs = []string{taskID}
 	} else if contractID, ok := args["contract_id"].(string); ok && contractID != "" {
-		// If contract_id is provided, get all tasks for that contract
-		tasks, err := h.store.ListTasks(smart_contract.TaskFilter{
-			ContractID: contractID,
-			Limit:      1000, // Get all tasks for the contract
-		})
-		if err != nil {
-			return nil, fmt.Errorf("failed to get tasks for contract: %v", err)
+		// Normalize contract ID - try multiple variations like other handlers
+		normalized := strings.TrimSpace(contractID)
+		prefixes := []string{"wish-", "proposal-", "contract-"}
+		for _, prefix := range prefixes {
+			if strings.HasPrefix(normalized, prefix) {
+				normalized = strings.TrimPrefix(normalized, prefix)
+				break
+			}
 		}
-		for _, task := range tasks {
-			taskIDs = append(taskIDs, task.TaskID)
+
+		// Try different contract ID variations
+		contractIDsToTry := []string{contractID, normalized}
+		if !strings.HasPrefix(contractID, "wish-") && !strings.HasPrefix(contractID, "proposal-") && !strings.HasPrefix(contractID, "contract-") {
+			contractIDsToTry = append(contractIDsToTry, "wish-"+normalized, "contract-"+normalized)
 		}
+
+		// Try each contract ID variation until we find tasks
+		for _, cid := range contractIDsToTry {
+			tasks, err := h.store.ListTasks(smart_contract.TaskFilter{
+				ContractID: cid,
+				Limit:      1000,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("failed to get tasks for contract: %v", err)
+			}
+			for _, task := range tasks {
+				taskIDs = append(taskIDs, task.TaskID)
+			}
+			if len(taskIDs) > 0 {
+				break // Found tasks, stop trying
+			}
+		}
+	} else {
+		// No filter provided - return empty with a hint
+		return map[string]interface{}{
+			"submissions": []smart_contract.Submission{},
+			"total":       0,
+			"limit":       50,
+			"offset":      0,
+			"has_more":    false,
+			"hint":        "Provide contract_id or task_id to filter submissions",
+		}, nil
 	}
 
 	// Handle pagination parameters
