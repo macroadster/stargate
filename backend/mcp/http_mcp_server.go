@@ -332,6 +332,7 @@ func (h *HTTPMCPServer) toolRequiresAuth(toolName string) bool {
 		"verify_auth_challenge": false, // No auth required - solves chicken-egg problem
 		"validate_address":      false, // No auth required - AI debugging tool
 		"get_task":              false, // No auth required - discovery tool
+		"list_submissions":      false, // No auth required - discovery tool
 	}
 	return authenticatedTools[toolName]
 }
@@ -346,6 +347,8 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 		return h.handleListProposals(ctx, args)
 	case "list_tasks":
 		return h.handleListTasks(ctx, args)
+	case "list_submissions":
+		return h.handleListSubmissions(ctx, args)
 	case "get_contract":
 		return h.handleGetContract(ctx, args)
 	case "get_contract_rework_requests":
@@ -1130,6 +1133,86 @@ func (h *HTTPMCPServer) handleListTasks(ctx context.Context, args map[string]int
 		"limit":    filter.Limit,
 		"offset":   filter.Offset,
 		"has_more": hasMore,
+	}, nil
+}
+
+func (h *HTTPMCPServer) handleListSubmissions(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	var taskIDs []string
+
+	// If task_id is provided, use it directly
+	if taskID, ok := args["task_id"].(string); ok && taskID != "" {
+		taskIDs = []string{taskID}
+	} else if contractID, ok := args["contract_id"].(string); ok && contractID != "" {
+		// If contract_id is provided, get all tasks for that contract
+		tasks, err := h.store.ListTasks(smart_contract.TaskFilter{
+			ContractID: contractID,
+			Limit:      1000, // Get all tasks for the contract
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to get tasks for contract: %v", err)
+		}
+		for _, task := range tasks {
+			taskIDs = append(taskIDs, task.TaskID)
+		}
+	}
+
+	// Handle pagination parameters
+	limit := 50
+	offset := 0
+	if lim, ok := args["limit"].(int); ok && lim > 0 {
+		limit = lim
+	} else if lim, ok := args["limit"].(float64); ok && lim > 0 {
+		limit = int(lim)
+	}
+
+	if off, ok := args["offset"].(int); ok && off >= 0 {
+		offset = off
+	} else if off, ok := args["offset"].(float64); ok && off >= 0 {
+		offset = int(off)
+	}
+
+	// Get submissions
+	submissions, err := h.store.ListSubmissions(ctx, taskIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list submissions: %v", err)
+	}
+
+	// Filter by status if provided
+	statusFilter := ""
+	if status, ok := args["status"].(string); ok && status != "" {
+		statusFilter = strings.ToLower(status)
+	}
+
+	var filtered []smart_contract.Submission
+	for _, sub := range submissions {
+		if statusFilter != "" && strings.ToLower(sub.Status) != statusFilter {
+			continue
+		}
+		filtered = append(filtered, sub)
+	}
+
+	// Apply pagination
+	hasMore := false
+	var paged []smart_contract.Submission
+	if offset < len(filtered) {
+		end := offset + limit
+		if end > len(filtered) {
+			end = len(filtered)
+		}
+		paged = filtered[offset:end]
+		if offset+limit < len(filtered) {
+			hasMore = true
+		}
+	} else {
+		paged = []smart_contract.Submission{}
+	}
+
+	return map[string]interface{}{
+		"submissions": paged,
+		"total":       len(filtered),
+		"limit":       limit,
+		"offset":      offset,
+		"has_more":    hasMore,
 	}, nil
 }
 

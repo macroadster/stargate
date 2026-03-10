@@ -217,6 +217,45 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 				},
 			},
 		},
+		"list_submissions": map[string]interface{}{
+			"category":    ToolCategoryDiscovery,
+			"description": "List submissions with filtering options and pagination",
+			"parameters": map[string]interface{}{
+				"contract_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Filter submissions by contract ID (returns submissions for all tasks in the contract)",
+				},
+				"task_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Filter submissions by task ID",
+				},
+				"status": map[string]interface{}{
+					"type":        "string",
+					"description": "Filter by submission status",
+					"enum":        []string{"pending_review", "reviewed", "approved", "rejected"},
+				},
+				"limit": map[string]interface{}{
+					"type":        "integer",
+					"description": "Maximum number of submissions to return (default: 50)",
+					"default":     50,
+				},
+				"offset": map[string]interface{}{
+					"type":        "integer",
+					"description": "Number of submissions to skip for pagination (default: 0)",
+					"default":     0,
+				},
+			},
+			"examples": []map[string]interface{}{
+				{
+					"description": "List submissions for a contract",
+					"arguments":   map[string]interface{}{"contract_id": "contract-123", "limit": 10},
+				},
+				{
+					"description": "List submissions for a specific task",
+					"arguments":   map[string]interface{}{"task_id": "task-456", "limit": 20, "offset": 0},
+				},
+			},
+		},
 		"claim_task": map[string]interface{}{
 			"category":    ToolCategoryWrite,
 			"description": "Claim a task for work by an AI agent",

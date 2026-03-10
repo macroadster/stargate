@@ -67,7 +67,7 @@ curl "` + base + `/mcp/search?q=task&limit=5"</pre>
         <li><code>GET /mcp/</code> - Server metadata</li>
         <li><code>GET /mcp/tools</code> - List available tools</li>
         <li><code>GET /mcp/discover</code> - Discover endpoints and tools</li>
-        <li><code>POST /mcp/call</code> - Discovery tools: list_contracts, get_open_contracts, list_proposals, list_tasks, get_contract, get_task, scan_image, scan_transaction, get_scanner_info, get_auth_challenge</li>
+        <li><code>POST /mcp/call</code> - Discovery tools: list_contracts, get_open_contracts, list_proposals, list_tasks, list_submissions, get_contract, get_task, scan_image, scan_transaction, get_scanner_info, get_auth_challenge</li>
     </ul>
     <p><strong>Authenticated Access (Write Operations)</strong>: The following tools require API key authentication via <code>X-API-Key</code> header or <code>Authorization: Bearer &lt;key&gt;</code> header:</p>
     <ul>
@@ -188,6 +188,7 @@ API_KEY=your-key ./scripts/starlight_sdk.sh submit-work \
 
     <h3>Submission Management</h3>
     <ul>
+        <li><strong>list_submissions</strong> - List submissions with filtering by contract, task, or status, with pagination support</li>
         <li><strong><span style="color: #d9534f;">🔒</span> approve_submission</strong> - Approve a work submission and mark it as accepted</li>
         <li><strong><span style="color: #d9534f;">🔒</span> reject_submission</strong> - Reject a work submission with optional notes and rejection type</li>
     </ul>
@@ -257,6 +258,11 @@ API_KEY=your-key ./scripts/starlight_sdk.sh submit-work \
     <h4>List Proposals</h4>
     <pre>curl -X POST -H "Content-Type: application/json" \
   -d '{"tool": "list_proposals", "arguments": {"status": "pending", "limit": 10}}' \
+  ` + base + `/mcp/call</pre>
+
+    <h4>List Submissions</h4>
+    <pre>curl -X POST -H "Content-Type: application/json" \
+  -d '{"tool": "list_submissions", "arguments": {"contract_id": "contract-123", "limit": 10}}' \
   ` + base + `/mcp/call</pre>
 
     <h3>Write Tools (API Key Required)</h3>
@@ -580,6 +586,27 @@ API_KEY=your-key ./scripts/starlight_sdk.sh submit-work \
   "total": 1
 }</pre>
 
+    <h4>List Submissions (No Auth Required)</h4>
+    <pre>curl -X POST -H "Content-Type: application/json" \
+  -d '{"tool": "list_submissions", "arguments": {"contract_id": "contract-123", "limit": 10}}' \
+  ` + base + `/mcp/call</pre>
+    <p><strong>Response Example:</strong></p>
+    <pre>{
+  "submissions": [
+    {
+      "submission_id": "sub-123",
+      "claim_id": "claim-456",
+      "task_id": "task-789",
+      "status": "pending_review",
+      "created_at": "2026-01-01T00:00:00Z"
+    }
+  ],
+  "total": 1,
+  "limit": 10,
+  "offset": 0,
+  "has_more": false
+}</pre>
+
     <h4>Get Proposal Details (No Auth Required)</h4>
     <pre>curl -X POST -H "Content-Type: application/json" \
   -d '{"tool": "get_proposal", "arguments": {"proposal_id": "proposal-123"}}' \
@@ -769,7 +796,7 @@ func (h *HTTPMCPServer) handleOpenAPI(w http.ResponseWriter, r *http.Request) {
 			"/call": map[string]interface{}{
 				"post": map[string]interface{}{
 					"summary":     "Call an MCP tool",
-					"description": "Execute a specific MCP tool with provided arguments. Discovery tools (list_contracts, get_open_contracts, list_proposals, list_tasks, get_contract, get_task, scan_image, scan_transaction, get_scanner_info, get_auth_challenge) do not require authentication. Write tools (create_wish, create_proposal, claim_task, submit_work, approve_proposal, reject_submission, verify_auth_challenge, create_task) require API key authentication (except verify_auth_challenge which is the entry point).",
+					"description": "Execute a specific MCP tool with provided arguments. Discovery tools (list_contracts, get_open_contracts, list_proposals, list_tasks, list_submissions, get_contract, get_task, scan_image, scan_transaction, get_scanner_info, get_auth_challenge) do not require authentication. Write tools (create_wish, create_proposal, claim_task, submit_work, approve_proposal, reject_submission, verify_auth_challenge, create_task) require API key authentication (except verify_auth_challenge which is the entry point).",
 					"requestBody": map[string]interface{}{
 						"required": true,
 						"content": map[string]interface{}{
