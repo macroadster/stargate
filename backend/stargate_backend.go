@@ -472,6 +472,7 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 
 	// Peer Discovery endpoints
 	mux.HandleFunc("/api/peers/register", container.DiscoveryHandler.HandleRegisterPeer)
+	mux.HandleFunc("/api/peers/unregister", container.DiscoveryHandler.HandleUnregisterPeer)
 	mux.HandleFunc("/api/peers", container.DiscoveryHandler.HandleListPeers)
 
 	mux.HandleFunc("/api/ipfs-mirror/status", func(w http.ResponseWriter, r *http.Request) {

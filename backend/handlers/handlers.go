@@ -127,6 +127,30 @@ func (h *DiscoveryHandler) HandleRegisterPeer(w http.ResponseWriter, r *http.Req
 	h.peerService.Register(req.PeerID)
 	h.sendSuccess(w, map[string]string{"status": "registered"})
 }
+// HandleUnregisterPeer unregisters a peer ID
+func (h *DiscoveryHandler) HandleUnregisterPeer(w http.ResponseWriter, r *http.Request) {
+        if r.Method != http.MethodPost {
+                h.sendError(w, http.StatusMethodNotAllowed, "Method not allowed")
+                return
+        }
+
+        var req struct {
+                PeerID string `json:"peerId"`
+        }
+        if err := h.parseJSON(r, &req); err != nil {
+                h.sendError(w, http.StatusBadRequest, "Invalid request body")
+                return
+        }
+
+        if req.PeerID == "" {
+                h.sendError(w, http.StatusBadRequest, "peerId is required")
+                return
+        }
+
+        h.peerService.Unregister(req.PeerID)
+        h.sendSuccess(w, map[string]string{"status": "unregistered"})
+}
+
 
 // HandleListPeers returns a list of active peer IDs
 func (h *DiscoveryHandler) HandleListPeers(w http.ResponseWriter, r *http.Request) {

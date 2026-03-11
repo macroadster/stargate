@@ -399,6 +399,13 @@ func (ps *PeerService) Register(peerID string) {
 	defer ps.mu.Unlock()
 	ps.peers[peerID] = time.Now()
 }
+// Unregister removes a peer from the registry
+func (ps *PeerService) Unregister(peerID string) {
+        ps.mu.Lock()
+        defer ps.mu.Unlock()
+        delete(ps.peers, peerID)
+}
+
 
 // GetPeers returns a list of currently active peer IDs
 func (ps *PeerService) GetPeers() []string {
@@ -419,7 +426,7 @@ func (ps *PeerService) cleanup() {
 		ps.mu.Lock()
 		now := time.Now()
 		for id, lastSeen := range ps.peers {
-			if now.Sub(lastSeen) > 5*time.Minute {
+			if now.Sub(lastSeen) > 2*time.Minute {
 				delete(ps.peers, id)
 			}
 		}
