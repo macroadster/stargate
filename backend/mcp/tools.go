@@ -779,6 +779,79 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 				},
 			},
 		},
+		"build_psbt": map[string]interface{}{
+			"category":    ToolCategoryUtility,
+			"description": "Build a Partially Signed Bitcoin Transaction (PSBT) for contract payouts. Selects UTXOs from payer addresses and creates outputs for contractor payments and optional commitment outputs.",
+			"parameters": map[string]interface{}{
+				"payer_addresses": map[string]interface{}{
+					"type":        "array",
+					"items":       map[string]interface{}{"type": "string"},
+					"description": "List of Bitcoin addresses that will fund the PSBT (must have confirmed UTXOs)",
+					"required":    true,
+				},
+				"payouts": map[string]interface{}{
+					"type": "array",
+					"items": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"address": map[string]interface{}{
+								"type":        "string",
+								"description": "Bitcoin address to pay",
+							},
+							"amount_sats": map[string]interface{}{
+								"type":        "integer",
+								"description": "Amount in sats to pay this address",
+							},
+						},
+					},
+					"description": "List of payout addresses and amounts",
+					"required":    true,
+				},
+				"change_address": map[string]interface{}{
+					"type":        "string",
+					"description": "Bitcoin address for change outputs (defaults to first payer address)",
+				},
+				"fee_rate_sat_per_vb": map[string]interface{}{
+					"type":        "integer",
+					"description": "Fee rate in sats per virtual byte (default: 10)",
+					"default":     10,
+				},
+				"pixel_hash": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional 32-byte hex string for commitment output (creates a hashlock output)",
+				},
+				"commitment_sats": map[string]interface{}{
+					"type":        "integer",
+					"description": "Sats to lock in commitment output (requires pixel_hash, min 546 sats)",
+				},
+				"commitment_address": map[string]interface{}{
+					"type":        "string",
+					"description": "Address for commitment output display (optional, for tracking)",
+				},
+			},
+			"examples": []map[string]interface{}{
+				{
+					"description": "Build PSBT for simple payout",
+					"arguments": map[string]interface{}{
+						"payer_addresses":     []string{"tb1qexample1...", "tb1qexample2..."},
+						"payouts":             []map[string]interface{}{{"address": "tb1qcontractor...", "amount_sats": 5000}},
+						"change_address":      "tb1qexample1...",
+						"fee_rate_sat_per_vb": 10,
+					},
+				},
+				{
+					"description": "Build PSBT with commitment output",
+					"arguments": map[string]interface{}{
+						"payer_addresses":     []string{"tb1qpayer..."},
+						"payouts":             []map[string]interface{}{{"address": "tb1qcontractor...", "amount_sats": 10000}},
+						"change_address":      "tb1qpayer...",
+						"fee_rate_sat_per_vb": 15,
+						"pixel_hash":          "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+						"commitment_sats":     1000,
+					},
+				},
+			},
+		},
 	}
 }
 

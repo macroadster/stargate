@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -23,6 +24,9 @@ import (
 	"stargate-backend/starlight"
 	auth "stargate-backend/storage/auth"
 	scstore "stargate-backend/storage/smart_contract"
+
+	"github.com/btcsuite/btcd/btcutil"
+	"github.com/btcsuite/btcd/chaincfg"
 )
 
 const (
@@ -47,6 +51,7 @@ type HTTPMCPServer struct {
 	proxyBase        string
 	rateLimiter      map[string][]time.Time
 	challengeStore   *auth.ChallengeStore
+	network          string
 }
 
 // NewHTTPMCPServer creates a new HTTP MCP server
@@ -77,6 +82,7 @@ func NewHTTPMCPServer(store scmiddleware.Store, apiKeyStore auth.APIKeyValidator
 		proxyBase:        os.Getenv("STARGATE_PROXY_BASE"),
 		rateLimiter:      make(map[string][]time.Time),
 		challengeStore:   challengeStore,
+		network:          network,
 	}
 }
 
@@ -333,6 +339,7 @@ func (h *HTTPMCPServer) toolRequiresAuth(toolName string) bool {
 		"validate_address":      false, // No auth required - AI debugging tool
 		"get_task":              false, // No auth required - discovery tool
 		"list_submissions":      false, // No auth required - discovery tool
+		"build_psbt":            false, // No auth required - utility tool for building PSBTs
 	}
 	return authenticatedTools[toolName]
 }
@@ -389,6 +396,8 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 		return h.handleValidateAddress(ctx, args)
 	case "create_task":
 		return h.handleCreateTask(ctx, args, apiKey)
+	case "build_psbt":
+		return h.handleBuildPSBT(ctx, args)
 	default:
 		return nil, fmt.Errorf("unknown tool: %s", toolName)
 	}
@@ -2117,6 +2126,174 @@ func (h *HTTPMCPServer) handleCreateTask(ctx context.Context, args map[string]in
 		"requirements":    task.Requirements,
 		"created_at":      time.Now().Format(time.RFC3339),
 	}, nil
+}
+
+func (h *HTTPMCPServer) handleBuildPSBT(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	if h.bitcoinClient == nil {
+		return nil, NewServiceUnavailableError("build_psbt", "bitcoin client")
+	}
+
+	validation := NewValidationError("build_psbt", "Invalid request parameters")
+
+	payerAddressesRaw, ok := args["payer_addresses"].([]interface{})
+	if !ok || len(payerAddressesRaw) == 0 {
+		validation.AddFieldError("payer_addresses", args["payer_addresses"], "payer_addresses is required and must be a non-empty array", true)
+	}
+
+	payoutsRaw, ok := args["payouts"].([]interface{})
+	if !ok || len(payoutsRaw) == 0 {
+		validation.AddFieldError("payouts", args["payouts"], "payouts is required and must be a non-empty array", true)
+	}
+
+	if validation.HasErrors() {
+		return nil, validation
+	}
+
+	origMempoolBase := os.Getenv("MEMPOOL_API_BASE")
+	if netConfig := bitcoin.GetNetworkConfig(h.network); netConfig.BaseURL != "" {
+		os.Setenv("MEMPOOL_API_BASE", netConfig.BaseURL)
+	}
+	params := h.chainParams()
+	mempoolClient := bitcoin.NewMempoolClient()
+	if origMempoolBase != "" {
+		os.Setenv("MEMPOOL_API_BASE", origMempoolBase)
+	} else {
+		os.Unsetenv("MEMPOOL_API_BASE")
+	}
+
+	var payerAddresses []btcutil.Address
+	for _, addrRaw := range payerAddressesRaw {
+		addrStr, ok := addrRaw.(string)
+		if !ok || strings.TrimSpace(addrStr) == "" {
+			validation.AddFieldError("payer_addresses", addrRaw, "each address must be a non-empty string", false)
+			continue
+		}
+		addr, err := btcutil.DecodeAddress(strings.TrimSpace(addrStr), params)
+		if err != nil {
+			validation.AddFieldError("payer_addresses", addrStr, fmt.Sprintf("invalid Bitcoin address: %v", err), false)
+			continue
+		}
+		payerAddresses = append(payerAddresses, addr)
+	}
+
+	var payouts []bitcoin.PayoutOutput
+	for i, payoutRaw := range payoutsRaw {
+		payoutMap, ok := payoutRaw.(map[string]interface{})
+		if !ok {
+			validation.AddFieldError(fmt.Sprintf("payouts[%d]", i), payoutRaw, "each payout must be an object", false)
+			continue
+		}
+		addrStr, _ := payoutMap["address"].(string)
+		amount, _ := payoutMap["amount_sats"].(float64)
+
+		if strings.TrimSpace(addrStr) == "" {
+			validation.AddFieldError(fmt.Sprintf("payouts[%d].address", i), addrStr, "address is required", false)
+			continue
+		}
+		if amount <= 0 {
+			validation.AddFieldError(fmt.Sprintf("payouts[%d].amount_sats", i), amount, "amount must be positive", false)
+			continue
+		}
+
+		addr, err := btcutil.DecodeAddress(strings.TrimSpace(addrStr), params)
+		if err != nil {
+			validation.AddFieldError(fmt.Sprintf("payouts[%d].address", i), addrStr, fmt.Sprintf("invalid Bitcoin address: %v", err), false)
+			continue
+		}
+		payouts = append(payouts, bitcoin.PayoutOutput{
+			Address:   addr,
+			ValueSats: int64(amount),
+		})
+	}
+
+	var changeAddress btcutil.Address
+	if changeStr, ok := args["change_address"].(string); ok && strings.TrimSpace(changeStr) != "" {
+		addr, err := btcutil.DecodeAddress(strings.TrimSpace(changeStr), params)
+		if err != nil {
+			validation.AddFieldError("change_address", changeStr, fmt.Sprintf("invalid Bitcoin address: %v", err), false)
+		} else {
+			changeAddress = addr
+		}
+	}
+
+	feeRate := int64(10)
+	if fr, ok := args["fee_rate_sat_per_vb"].(float64); ok && fr > 0 {
+		feeRate = int64(fr)
+	}
+
+	var pixelHash []byte
+	if pixelHashStr, ok := args["pixel_hash"].(string); ok && strings.TrimSpace(pixelHashStr) != "" {
+		var err error
+		pixelHash, err = hex.DecodeString(strings.TrimSpace(pixelHashStr))
+		if err != nil {
+			validation.AddFieldError("pixel_hash", pixelHashStr, "must be a valid hex string", false)
+		} else if len(pixelHash) != 32 {
+			validation.AddFieldError("pixel_hash", pixelHashStr, "must be exactly 32 bytes (64 hex characters)", false)
+		}
+	}
+
+	commitmentSats := int64(0)
+	if cs, ok := args["commitment_sats"].(float64); ok && cs > 0 {
+		commitmentSats = int64(cs)
+	}
+
+	var commitmentAddress btcutil.Address
+	if commAddrStr, ok := args["commitment_address"].(string); ok && strings.TrimSpace(commAddrStr) != "" {
+		addr, err := btcutil.DecodeAddress(strings.TrimSpace(commAddrStr), params)
+		if err != nil {
+			validation.AddFieldError("commitment_address", commAddrStr, fmt.Sprintf("invalid Bitcoin address: %v", err), false)
+		} else {
+			commitmentAddress = addr
+		}
+	}
+
+	if validation.HasErrors() {
+		return nil, validation
+	}
+
+	req := bitcoin.PSBTRequest{
+		PayerAddresses:    payerAddresses,
+		Payouts:           payouts,
+		FeeRateSatPerVB:   feeRate,
+		ChangeAddress:     changeAddress,
+		PixelHash:         pixelHash,
+		CommitmentSats:    commitmentSats,
+		CommitmentAddress: commitmentAddress,
+	}
+
+	result, err := bitcoin.BuildFundingPSBT(mempoolClient, params, req)
+	if err != nil {
+		return nil, NewInternalError("build_psbt", fmt.Sprintf("Failed to build PSBT: %v", err))
+	}
+
+	return map[string]interface{}{
+		"psbt_base64":        result.EncodedBase64,
+		"psbt_hex":           result.EncodedHex,
+		"fee_sats":           result.FeeSats,
+		"change_sats":        result.ChangeSats,
+		"change_addresses":   result.ChangeAddresses,
+		"change_amounts":     result.ChangeAmounts,
+		"selected_sats":      result.SelectedSats,
+		"payout_amounts":     result.PayoutAmounts,
+		"commitment_sats":    result.CommitmentSats,
+		"commitment_address": result.CommitmentAddr,
+		"funding_txid":       result.FundingTxID,
+	}, nil
+}
+
+func (h *HTTPMCPServer) chainParams() *chaincfg.Params {
+	switch h.network {
+	case "mainnet":
+		return &chaincfg.MainNetParams
+	case "testnet":
+		return &chaincfg.TestNet3Params
+	case "testnet4":
+		return &chaincfg.TestNet4Params
+	case "signet":
+		return &chaincfg.SigNetParams
+	default:
+		return &chaincfg.TestNet4Params
+	}
 }
 
 // RegisterRoutes registers HTTP MCP endpoints

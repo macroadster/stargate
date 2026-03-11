@@ -212,6 +212,12 @@ API_KEY=your-key ./scripts/starlight_sdk.sh submit-work \
         <li><strong>verify_auth_challenge</strong> - Verify wallet signature and receive API key</li>
     </ul>
 
+    <h3>Bitcoin Utilities</h3>
+    <ul>
+        <li><strong>build_psbt</strong> - Build a Partially Signed Bitcoin Transaction (PSBT) for contract payouts. Selects UTXOs from payer addresses and creates outputs for contractor payments and optional commitment outputs.</li>
+        <li><strong>validate_address</strong> - Validate a Bitcoin address and get detailed information about its type and network</li>
+    </ul>
+
     <h2>Examples</h2>
     <h3>Search for Tools (No Auth Required)</h3>
     <h4>Search by keyword</h4>
@@ -460,6 +466,50 @@ API_KEY=your-key ./scripts/starlight_sdk.sh submit-work \
   "currency": "sats",
   "network": "testnet"
 }</pre>
+
+     <h4>Build a PSBT (No Auth Required)</h4>
+     <pre>curl -X POST -H "Content-Type: application/json" \
+   -d '{
+     "tool": "build_psbt",
+     "arguments": {
+       "payer_addresses": ["tb1qpayer1...", "tb1qpayer2..."],
+       "payouts": [
+         {"address": "tb1qcontractor1...", "amount_sats": 5000},
+         {"address": "tb1qcontractor2...", "amount_sats": 3000}
+       ],
+       "change_address": "tb1qpayer1...",
+       "fee_rate_sat_per_vb": 10
+     }
+   }' \
+   ` + base + `/mcp/call</pre>
+     <p><strong>Response Example:</strong></p>
+     <pre>{
+   "psbt_base64": "cHNidP8BAA...",
+   "psbt_hex": "70736274ff010...",
+   "fee_sats": 420,
+   "change_sats": 4580,
+   "change_addresses": ["tb1qpayer1..."],
+   "change_amounts": [4580],
+   "selected_sats": 13000,
+   "payout_amounts": [5000, 3000],
+   "commitment_sats": 0,
+   "commitment_address": "",
+   "funding_txid": ""
+}</pre>
+     <p><strong>Build PSBT with Commitment Output:</strong></p>
+     <pre>curl -X POST -H "Content-Type: application/json" \
+   -d '{
+     "tool": "build_psbt",
+     "arguments": {
+       "payer_addresses": ["tb1qpayer..."],
+       "payouts": [{"address": "tb1qcontractor...", "amount_sats": 10000}],
+       "change_address": "tb1qpayer...",
+       "fee_rate_sat_per_vb": 15,
+       "pixel_hash": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+       "commitment_sats": 1000
+     }
+   }' \
+   ` + base + `/mcp/call</pre>
 
     <h4>Get Contract Details (No Auth Required)</h4>
     <pre>curl -X POST -H "Content-Type: application/json" \
