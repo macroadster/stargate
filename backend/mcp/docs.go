@@ -467,17 +467,12 @@ API_KEY=your-key ./scripts/starlight_sdk.sh submit-work \
   "network": "testnet"
 }</pre>
 
-     <h4>Build a PSBT (No Auth Required)</h4>
-     <pre>curl -X POST -H "Content-Type: application/json" \
+     <h4>Build a PSBT (Requires Auth)</h4>
+     <pre>curl -X POST -H "Content-Type: application/json" -H "X-API-Key: YOUR_KEY" \
    -d '{
      "tool": "build_psbt",
      "arguments": {
-       "payer_addresses": ["tb1qpayer1...", "tb1qpayer2..."],
-       "payouts": [
-         {"address": "tb1qcontractor1...", "amount_sats": 5000},
-         {"address": "tb1qcontractor2...", "amount_sats": 3000}
-       ],
-       "change_address": "tb1qpayer1...",
+       "pixel_hash": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
        "fee_rate_sat_per_vb": 10
      }
    }' \
@@ -494,18 +489,17 @@ API_KEY=your-key ./scripts/starlight_sdk.sh submit-work \
    "payout_amounts": [5000, 3000],
    "commitment_sats": 0,
    "commitment_address": "",
-   "funding_txid": ""
+   "funding_txid": "",
+   "contract_id": "wish-deadbeef...",
+   "payout_count": 2
 }</pre>
      <p><strong>Build PSBT with Commitment Output:</strong></p>
-     <pre>curl -X POST -H "Content-Type: application/json" \
+     <pre>curl -X POST -H "Content-Type: application/json" -H "X-API-Key: YOUR_KEY" \
    -d '{
      "tool": "build_psbt",
      "arguments": {
-       "payer_addresses": ["tb1qpayer..."],
-       "payouts": [{"address": "tb1qcontractor...", "amount_sats": 10000}],
-       "change_address": "tb1qpayer...",
-       "fee_rate_sat_per_vb": 15,
        "pixel_hash": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+       "fee_rate_sat_per_vb": 15,
        "commitment_sats": 1000
      }
    }' \

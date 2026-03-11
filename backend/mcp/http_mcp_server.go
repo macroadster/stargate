@@ -339,7 +339,7 @@ func (h *HTTPMCPServer) toolRequiresAuth(toolName string) bool {
 		"validate_address":      false, // No auth required - AI debugging tool
 		"get_task":              false, // No auth required - discovery tool
 		"list_submissions":      false, // No auth required - discovery tool
-		"build_psbt":            false, // No auth required - utility tool for building PSBTs
+		"build_psbt":            true,  // Auth required - payer address derived from API key
 	}
 	return authenticatedTools[toolName]
 }
@@ -397,7 +397,7 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 	case "create_task":
 		return h.handleCreateTask(ctx, args, apiKey)
 	case "build_psbt":
-		return h.handleBuildPSBT(ctx, args)
+		return h.handleBuildPSBT(ctx, args, apiKey)
 	default:
 		return nil, fmt.Errorf("unknown tool: %s", toolName)
 	}
@@ -2128,32 +2128,52 @@ func (h *HTTPMCPServer) handleCreateTask(ctx context.Context, args map[string]in
 	}, nil
 }
 
-func (h *HTTPMCPServer) handleBuildPSBT(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+func (h *HTTPMCPServer) handleBuildPSBT(ctx context.Context, args map[string]interface{}, apiKey string) (interface{}, error) {
 	if h.bitcoinClient == nil {
 		return nil, NewServiceUnavailableError("build_psbt", "bitcoin client")
 	}
 
-	validation := NewValidationError("build_psbt", "Invalid request parameters")
-
-	payerAddressesRaw, ok := args["payer_addresses"].([]interface{})
-	if !ok || len(payerAddressesRaw) == 0 {
-		validation.AddFieldError("payer_addresses", args["payer_addresses"], "payer_addresses is required and must be a non-empty array", true)
+	if apiKey == "" {
+		return nil, NewUnauthorizedError("build_psbt", "API key required - payer address is derived from your authenticated wallet")
 	}
 
-	payoutsRaw, ok := args["payouts"].([]interface{})
-	if !ok || len(payoutsRaw) == 0 {
-		validation.AddFieldError("payouts", args["payouts"], "payouts is required and must be a non-empty array", true)
+	var payerAddressStr string
+	if h.apiKeyStore != nil {
+		if keyInfo, ok := h.apiKeyStore.Get(apiKey); ok {
+			payerAddressStr = strings.TrimSpace(keyInfo.Wallet)
+		}
+	}
+	if payerAddressStr == "" {
+		return nil, NewUnauthorizedError("build_psbt", "API key must have an associated wallet address")
+	}
+
+	validation := NewValidationError("build_psbt", "Invalid request parameters")
+
+	pixelHash, ok := args["pixel_hash"].(string)
+	if !ok || strings.TrimSpace(pixelHash) == "" {
+		validation.AddFieldError("pixel_hash", args["pixel_hash"], "pixel_hash is required and must be a non-empty string", true)
 	}
 
 	if validation.HasErrors() {
 		return nil, validation
 	}
 
+	normalizedHash := strings.TrimSpace(pixelHash)
+	contractID := "wish-" + normalizedHash
+
+	_, err := h.store.GetContract(contractID)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			return nil, NewNotFoundError("build_psbt", "contract", contractID)
+		}
+		return nil, NewInternalError("build_psbt", fmt.Sprintf("Failed to get contract: %v", err))
+	}
+
+	params := h.chainParams()
 	origMempoolBase := os.Getenv("MEMPOOL_API_BASE")
 	if netConfig := bitcoin.GetNetworkConfig(h.network); netConfig.BaseURL != "" {
 		os.Setenv("MEMPOOL_API_BASE", netConfig.BaseURL)
 	}
-	params := h.chainParams()
 	mempoolClient := bitcoin.NewMempoolClient()
 	if origMempoolBase != "" {
 		os.Setenv("MEMPOOL_API_BASE", origMempoolBase)
@@ -2161,59 +2181,43 @@ func (h *HTTPMCPServer) handleBuildPSBT(ctx context.Context, args map[string]int
 		os.Unsetenv("MEMPOOL_API_BASE")
 	}
 
-	var payerAddresses []btcutil.Address
-	for _, addrRaw := range payerAddressesRaw {
-		addrStr, ok := addrRaw.(string)
-		if !ok || strings.TrimSpace(addrStr) == "" {
-			validation.AddFieldError("payer_addresses", addrRaw, "each address must be a non-empty string", false)
-			continue
-		}
-		addr, err := btcutil.DecodeAddress(strings.TrimSpace(addrStr), params)
-		if err != nil {
-			validation.AddFieldError("payer_addresses", addrStr, fmt.Sprintf("invalid Bitcoin address: %v", err), false)
-			continue
-		}
-		payerAddresses = append(payerAddresses, addr)
+	payerAddress, err := btcutil.DecodeAddress(payerAddressStr, params)
+	if err != nil {
+		return nil, NewValidationError("build_psbt", fmt.Sprintf("invalid payer address: %v", err))
+	}
+
+	tasks, err := h.store.ListTasks(smart_contract.TaskFilter{
+		ContractID: contractID,
+		Limit:      1000,
+	})
+	if err != nil {
+		return nil, NewInternalError("build_psbt", fmt.Sprintf("Failed to list tasks: %v", err))
 	}
 
 	var payouts []bitcoin.PayoutOutput
-	for i, payoutRaw := range payoutsRaw {
-		payoutMap, ok := payoutRaw.(map[string]interface{})
-		if !ok {
-			validation.AddFieldError(fmt.Sprintf("payouts[%d]", i), payoutRaw, "each payout must be an object", false)
+	for _, task := range tasks {
+		if task.Status != "approved" {
 			continue
 		}
-		addrStr, _ := payoutMap["address"].(string)
-		amount, _ := payoutMap["amount_sats"].(float64)
-
-		if strings.TrimSpace(addrStr) == "" {
-			validation.AddFieldError(fmt.Sprintf("payouts[%d].address", i), addrStr, "address is required", false)
+		wallet := strings.TrimSpace(task.ContractorWallet)
+		if wallet == "" && task.MerkleProof != nil {
+			wallet = strings.TrimSpace(task.MerkleProof.ContractorWallet)
+		}
+		if wallet == "" {
 			continue
 		}
-		if amount <= 0 {
-			validation.AddFieldError(fmt.Sprintf("payouts[%d].amount_sats", i), amount, "amount must be positive", false)
-			continue
-		}
-
-		addr, err := btcutil.DecodeAddress(strings.TrimSpace(addrStr), params)
+		addr, err := btcutil.DecodeAddress(wallet, params)
 		if err != nil {
-			validation.AddFieldError(fmt.Sprintf("payouts[%d].address", i), addrStr, fmt.Sprintf("invalid Bitcoin address: %v", err), false)
 			continue
 		}
 		payouts = append(payouts, bitcoin.PayoutOutput{
 			Address:   addr,
-			ValueSats: int64(amount),
+			ValueSats: task.BudgetSats,
 		})
 	}
 
-	var changeAddress btcutil.Address
-	if changeStr, ok := args["change_address"].(string); ok && strings.TrimSpace(changeStr) != "" {
-		addr, err := btcutil.DecodeAddress(strings.TrimSpace(changeStr), params)
-		if err != nil {
-			validation.AddFieldError("change_address", changeStr, fmt.Sprintf("invalid Bitcoin address: %v", err), false)
-		} else {
-			changeAddress = addr
-		}
+	if len(payouts) == 0 {
+		return nil, NewValidationError("build_psbt", "no approved tasks with contractor wallets found")
 	}
 
 	feeRate := int64(10)
@@ -2221,44 +2225,32 @@ func (h *HTTPMCPServer) handleBuildPSBT(ctx context.Context, args map[string]int
 		feeRate = int64(fr)
 	}
 
-	var pixelHash []byte
-	if pixelHashStr, ok := args["pixel_hash"].(string); ok && strings.TrimSpace(pixelHashStr) != "" {
-		var err error
-		pixelHash, err = hex.DecodeString(strings.TrimSpace(pixelHashStr))
-		if err != nil {
-			validation.AddFieldError("pixel_hash", pixelHashStr, "must be a valid hex string", false)
-		} else if len(pixelHash) != 32 {
-			validation.AddFieldError("pixel_hash", pixelHashStr, "must be exactly 32 bytes (64 hex characters)", false)
-		}
-	}
-
 	commitmentSats := int64(0)
 	if cs, ok := args["commitment_sats"].(float64); ok && cs > 0 {
 		commitmentSats = int64(cs)
 	}
 
-	var commitmentAddress btcutil.Address
-	if commAddrStr, ok := args["commitment_address"].(string); ok && strings.TrimSpace(commAddrStr) != "" {
-		addr, err := btcutil.DecodeAddress(strings.TrimSpace(commAddrStr), params)
+	var pixelHashBytes []byte
+	if commitmentSats > 0 {
+		pixelHashBytes, err = hex.DecodeString(normalizedHash)
 		if err != nil {
-			validation.AddFieldError("commitment_address", commAddrStr, fmt.Sprintf("invalid Bitcoin address: %v", err), false)
-		} else {
-			commitmentAddress = addr
+			validation.AddFieldError("pixel_hash", normalizedHash, "must be a valid hex string", false)
+		} else if len(pixelHashBytes) != 32 {
+			validation.AddFieldError("pixel_hash", normalizedHash, "must be exactly 32 bytes (64 hex characters)", false)
+		}
+		if validation.HasErrors() {
+			return nil, validation
 		}
 	}
 
-	if validation.HasErrors() {
-		return nil, validation
-	}
-
 	req := bitcoin.PSBTRequest{
-		PayerAddresses:    payerAddresses,
+		PayerAddress:      payerAddress,
 		Payouts:           payouts,
 		FeeRateSatPerVB:   feeRate,
-		ChangeAddress:     changeAddress,
-		PixelHash:         pixelHash,
+		ChangeAddress:     payerAddress,
+		PixelHash:         pixelHashBytes,
 		CommitmentSats:    commitmentSats,
-		CommitmentAddress: commitmentAddress,
+		CommitmentAddress: payerAddress,
 	}
 
 	result, err := bitcoin.BuildFundingPSBT(mempoolClient, params, req)
@@ -2278,6 +2270,8 @@ func (h *HTTPMCPServer) handleBuildPSBT(ctx context.Context, args map[string]int
 		"commitment_sats":    result.CommitmentSats,
 		"commitment_address": result.CommitmentAddr,
 		"funding_txid":       result.FundingTxID,
+		"contract_id":        contractID,
+		"payout_count":       len(payouts),
 	}, nil
 }
 
