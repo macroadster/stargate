@@ -31,7 +31,7 @@ Commands:
       --claim-id ID
       --notes TEXT
       --notes-file PATH
-      --artifact PATH        (repeatable)
+      --artifact PATH        (required, repeatable)
       --artifact-root PATH   (optional root for relative artifact names)
 
   call
@@ -206,6 +206,7 @@ submit_work() {
     notes=$(read_file "$notes_file")
   fi
   [[ -n "$notes" ]] || fail "--notes or --notes-file is required"
+  [[ ${#artifacts[@]} -gt 0 ]] || fail "--artifact is required (at least one)"
 
   local deliverables_json artifacts_json
   deliverables_json=$(jq -n --arg notes "$notes" '{notes: $notes}')
