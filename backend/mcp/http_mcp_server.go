@@ -1603,6 +1603,15 @@ func (h *HTTPMCPServer) handleSubmitWork(ctx context.Context, args map[string]in
 		return nil, validation
 	}
 
+	// Compute subDir (contract_id/visible_pixel_hash) for sandbox URL
+	// This is used for both file storage and the sandbox_url response
+	subDir := claimID
+	if claim, err := h.store.GetClaim(claimID); err == nil {
+		if task, err := h.store.GetTask(claim.TaskID); err == nil {
+			subDir = scstore.NormalizeContractID(task.ContractID)
+		}
+	}
+
 	// Process file artifacts if present
 	var processedArtifacts []map[string]interface{}
 	if artifacts, exists := deliverables["artifacts"]; exists {
@@ -1617,15 +1626,6 @@ func (h *HTTPMCPServer) handleSubmitWork(ctx context.Context, args map[string]in
 			// Create results directory: UPLOADS_DIR/results/[contract_id]
 			// Look up the contract/task relationship to get contract_id for file organization
 			var resultsDir string
-			subDir := claimID // Fallback to claim ID
-			if claim, err := h.store.GetClaim(claimID); err == nil {
-				if task, err := h.store.GetTask(claim.TaskID); err == nil {
-					// For wish contracts, the contract_id IS the visible_pixel_hash
-					// This allows organizing all work for a contract/wish under one directory
-					// Normalize to remove prefixes like "wish-" to ensure consistent path
-					subDir = scstore.NormalizeContractID(task.ContractID)
-				}
-			}
 			resultsDir = filepath.Join(uploadsDir, "results", subDir)
 
 			if err := os.MkdirAll(resultsDir, 0755); err != nil {
@@ -1750,9 +1750,10 @@ func (h *HTTPMCPServer) handleSubmitWork(ctx context.Context, args map[string]in
 	}
 
 	result := map[string]interface{}{
-		"message":    "work submitted successfully",
-		"claim_id":   claimID,
-		"submission": submission,
+		"message":     "work submitted successfully",
+		"claim_id":    claimID,
+		"submission":  submission,
+		"sandbox_url": fmt.Sprintf("/sandbox/%s", subDir),
 	}
 
 	// Include artifact information in response

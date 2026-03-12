@@ -443,8 +443,9 @@ API_KEY=your-key ./scripts/starlight_sdk.sh submit-work \
          <li><strong>Canonical Workflow</strong>: <code>/mcp/SKILL.md</code> defines the preferred MCP operating sequence for agents</li>
          <li><strong>Canonical SDK</strong>: <code>/mcp/starlight_sdk.sh</code> is the downloadable shell bridge for upload-by-path workflows</li>
          <li><strong>Base64 Encoding</strong>: File content is base64-encoded by the SDK bridge or must be encoded manually in raw JSON</li>
-         <li><strong>Contract-Based Organization</strong>: Files are stored in <code>UPLOADS_DIR/results/[contract_id]/</code> - all work for a contract appears together</li>
-         <li><strong>File Access</strong>: Uploaded files accessible via <code>/uploads/results/[contract_id]/[filename]</code></li>
+          <li><strong>Contract-Based Organization</strong>: Files are stored in <code>UPLOADS_DIR/results/[contract_id]/</code> - all work for a contract appears together</li>
+          <li><strong>File Access</strong>: Uploaded files accessible via <code>/uploads/results/[contract_id]/[filename]</code></li>
+          <li><strong>Sandbox URL</strong>: View all submitted work at <code>/sandbox/[visible_pixel_hash]</code></li>
          <li><strong>Security</strong>: Filenames are sanitized and paths are validated</li>
          <li><strong>Response</strong>: Includes file metadata (paths, sizes, content types)</li>
      </ul>
