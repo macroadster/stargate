@@ -214,7 +214,7 @@ API_KEY=your-key ./scripts/starlight_sdk.sh submit-work \
 
     <h3>Bitcoin Utilities</h3>
     <ul>
-        <li><strong>build_psbt</strong> - Build a Partially Signed Bitcoin Transaction (PSBT) for contract payouts. Selects UTXOs from payer addresses and creates outputs for contractor payments and optional commitment outputs.</li>
+        <li><strong>build_psbt</strong> - Build a Partially Signed Bitcoin Transaction (PSBT) for contract payouts. Selects UTXOs from payer addresses and creates outputs for contractor payments, optional commitment outputs, and configurable change address for privacy.</li>
         <li><strong>validate_address</strong> - Validate a Bitcoin address and get detailed information about its type and network</li>
     </ul>
 
@@ -494,17 +494,28 @@ API_KEY=your-key ./scripts/starlight_sdk.sh submit-work \
    "contract_id": "wish-deadbeef...",
    "payout_count": 2
 }</pre>
-     <p><strong>Build PSBT with Commitment Output:</strong></p>
-     <pre>curl -X POST -H "Content-Type: application/json" -H "X-API-Key: YOUR_KEY" \
-   -d '{
-     "tool": "build_psbt",
-     "arguments": {
-       "pixel_hash": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
-       "fee_rate_sat_per_vb": 15,
-       "commitment_sats": 1000
-     }
-   }' \
-   ` + base + `/mcp/call</pre>
+      <p><strong>Build PSBT with Commitment Output:</strong></p>
+      <pre>curl -X POST -H "Content-Type: application/json" -H "X-API-Key: YOUR_KEY" \
+    -d '{
+      "tool": "build_psbt",
+      "arguments": {
+        "pixel_hash": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+        "fee_rate_sat_per_vb": 15,
+        "commitment_sats": 1000
+      }
+    }' \
+    ` + base + `/mcp/call</pre>
+      <p><strong>Build PSBT with Custom Change Address for Privacy:</strong></p>
+      <pre>curl -X POST -H "Content-Type: application/json" -H "X-API-Key: YOUR_KEY" \
+    -d '{
+      "tool": "build_psbt",
+      "arguments": {
+        "pixel_hash": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+        "fee_rate_sat_per_vb": 1,
+        "change_address": "tb1qprivacy111111111111111111111111111111111"
+      }
+    }' \
+    ` + base + `/mcp/call</pre>
 
     <h4>Get Contract Details (No Auth Required)</h4>
     <pre>curl -X POST -H "Content-Type: application/json" \

@@ -2187,6 +2187,15 @@ func (h *HTTPMCPServer) handleBuildPSBT(ctx context.Context, args map[string]int
 		return nil, NewValidationError("build_psbt", fmt.Sprintf("invalid payer address: %v", err))
 	}
 
+	changeAddress := payerAddress
+	if changeAddrStr, ok := args["change_address"].(string); ok && strings.TrimSpace(changeAddrStr) != "" {
+		changeAddr, err := btcutil.DecodeAddress(strings.TrimSpace(changeAddrStr), params)
+		if err != nil {
+			return nil, NewValidationError("build_psbt", fmt.Sprintf("invalid change address: %v", err))
+		}
+		changeAddress = changeAddr
+	}
+
 	tasks, err := h.store.ListTasks(smart_contract.TaskFilter{
 		ContractID: contractID,
 		Limit:      1000,
@@ -2248,7 +2257,7 @@ func (h *HTTPMCPServer) handleBuildPSBT(ctx context.Context, args map[string]int
 		PayerAddress:      payerAddress,
 		Payouts:           payouts,
 		FeeRateSatPerVB:   feeRate,
-		ChangeAddress:     payerAddress,
+		ChangeAddress:     changeAddress,
 		PixelHash:         pixelHashBytes,
 		CommitmentSats:    commitmentSats,
 		CommitmentAddress: payerAddress,

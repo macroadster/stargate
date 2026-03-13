@@ -790,12 +790,16 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 				},
 				"fee_rate_sat_per_vb": map[string]interface{}{
 					"type":        "integer",
-					"description": "Fee rate in sats per virtual byte (default: 10)",
-					"default":     10,
+					"description": "Fee rate in sats per virtual byte (default: 1)",
+					"default":     1,
 				},
 				"commitment_sats": map[string]interface{}{
 					"type":        "integer",
 					"description": "Optional sats to lock in commitment output (min 546 sats)",
+				},
+				"change_address": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional change address for remaining balance (for privacy, defaults to payer address)",
 				},
 			},
 			"examples": []map[string]interface{}{
@@ -803,7 +807,7 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 					"description": "Build PSBT for contract payouts (requires auth)",
 					"arguments": map[string]interface{}{
 						"pixel_hash":          "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
-						"fee_rate_sat_per_vb": 10,
+						"fee_rate_sat_per_vb": 1,
 					},
 				},
 				{
@@ -812,6 +816,14 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 						"pixel_hash":          "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
 						"fee_rate_sat_per_vb": 15,
 						"commitment_sats":     1000,
+					},
+				},
+				{
+					"description": "Build PSBT with custom change address for privacy",
+					"arguments": map[string]interface{}{
+						"pixel_hash":          "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+						"fee_rate_sat_per_vb": 1,
+						"change_address":      "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
 					},
 				},
 			},
