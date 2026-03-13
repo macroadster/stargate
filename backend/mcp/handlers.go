@@ -28,26 +28,12 @@ func (h *HTTPMCPServer) handleListTools(w http.ResponseWriter, r *http.Request) 
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"tools":      tools,
-		"tool_names": toolNames,
-		"total":      len(tools),
-		"categories": map[string]bool{
-			"discovery": true,
-			"write":     true,
-			"utility":   true,
-		},
-		"http_endpoints": map[string]interface{}{
-			"inscribe": map[string]interface{}{
-				"method":          "POST",
-				"endpoint":        base + "/api/inscribe",
-				"required_fields": []string{"message", "image_base64"},
-				"description":     "Create a wish/inscription that seeds a proposal and contract metadata. Requires image payload.",
-			},
-		},
-		"agent_assets": map[string]string{
-			"skill": base + "/mcp/SKILL.md",
-			"sdk":   base + "/mcp/starlight_sdk.sh",
-		},
+		"tools":          tools,
+		"tool_names":     toolNames,
+		"total":          len(tools),
+		"categories":     h.getCategoriesMap(),
+		"http_endpoints": h.getHTTPEndpointsMap(base),
+		"agent_assets":   h.getAgentAssetsMap(base),
 		"endpoints": []string{
 			"/api/inscribe",
 			"/api/smart_contract/contracts",
@@ -139,18 +125,8 @@ func (h *HTTPMCPServer) handleDiscover(w http.ResponseWriter, r *http.Request) {
 			"api": base + "/api/smart_contract",
 			"mcp": base + "/mcp",
 		},
-		"http_endpoints": map[string]interface{}{
-			"inscribe": map[string]interface{}{
-				"method":          "POST",
-				"endpoint":        base + "/api/inscribe",
-				"required_fields": []string{"message", "image_base64"},
-				"description":     "Create a wish/inscription that seeds a proposal and contract metadata. Requires image payload.",
-			},
-		},
-		"agent_assets": map[string]string{
-			"skill": base + "/mcp/SKILL.md",
-			"sdk":   base + "/mcp/starlight_sdk.sh",
-		},
+		"http_endpoints": h.getHTTPEndpointsMap(base),
+		"agent_assets":   h.getAgentAssetsMap(base),
 		"endpoints": []string{
 			"/api/inscribe",
 			"/api/smart_contract/contracts",

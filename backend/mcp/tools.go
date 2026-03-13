@@ -2,12 +2,6 @@ package mcp
 
 import "strings"
 
-const (
-	ToolCategoryDiscovery = "discovery" // list, get, scan - no auth
-	ToolCategoryWrite     = "write"     // create, claim, submit - requires auth
-	ToolCategoryUtility   = "utility"   // helpers, tools
-)
-
 // ToolMetadata contains lightweight metadata for search
 type ToolMetadata struct {
 	Name            string   `json:"name"`
@@ -21,6 +15,14 @@ type ToolMetadata struct {
 
 // getToolSchemas returns detailed schemas for all available tools
 func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
+	if h.guidance != nil {
+		return h.guidance.GetToolSchemas()
+	}
+	return h.getToolSchemasLegacy()
+}
+
+// getToolSchemasLegacy returns the hardcoded tool schemas (fallback when guidance is not available)
+func (h *HTTPMCPServer) getToolSchemasLegacy() map[string]interface{} {
 	return map[string]interface{}{
 		"list_contracts": map[string]interface{}{
 			"category":    ToolCategoryDiscovery,
@@ -833,7 +835,10 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 
 // getToolList returns lightweight metadata for all tools
 func (h *HTTPMCPServer) getToolList() []ToolMetadata {
-	schemas := h.getToolSchemas()
+	if h.guidance != nil {
+		return h.guidance.GetToolList()
+	}
+	schemas := h.getToolSchemasLegacy()
 	metadata := make([]ToolMetadata, 0, len(schemas))
 	for name, tool := range schemas {
 		tm, ok := tool.(map[string]interface{})
@@ -870,6 +875,9 @@ func (h *HTTPMCPServer) getToolList() []ToolMetadata {
 
 // searchTools filters tools by keyword and category
 func (h *HTTPMCPServer) searchTools(query string, category string, limit int) []ToolMetadata {
+	if h.guidance != nil {
+		return h.guidance.SearchTools(query, category, limit)
+	}
 	allTools := h.getToolList()
 	queryLower := strings.ToLower(query)
 	categoryLower := strings.ToLower(category)

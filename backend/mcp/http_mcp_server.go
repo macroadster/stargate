@@ -52,6 +52,7 @@ type HTTPMCPServer struct {
 	rateLimiter      map[string][]time.Time
 	challengeStore   *auth.ChallengeStore
 	network          string
+	guidance         *GuidanceManifest
 }
 
 // NewHTTPMCPServer creates a new HTTP MCP server
@@ -83,6 +84,7 @@ func NewHTTPMCPServer(store scmiddleware.Store, apiKeyStore auth.APIKeyValidator
 		rateLimiter:      make(map[string][]time.Time),
 		challengeStore:   challengeStore,
 		network:          network,
+		guidance:         NewGuidanceManifest(baseURL),
 	}
 }
 
@@ -117,6 +119,69 @@ func (h *HTTPMCPServer) externalBaseURL(r *http.Request) string {
 		return h.baseURL
 	}
 	return scheme + "://" + host
+}
+
+func (h *HTTPMCPServer) getCategoriesMap() map[string]bool {
+	if h.guidance != nil {
+		cats := make(map[string]bool)
+		for k := range h.guidance.Categories {
+			cats[k] = true
+		}
+		return cats
+	}
+	return map[string]bool{
+		"discovery": true,
+		"write":     true,
+		"utility":   true,
+	}
+}
+
+func (h *HTTPMCPServer) getHTTPEndpointsMap(baseURL string) map[string]interface{} {
+	if h.guidance != nil {
+		result := make(map[string]interface{})
+		apiBase := baseURL + "/api"
+		for name, endpoint := range h.guidance.HTTPEndpoints {
+			ep := endpoint
+			ep.Endpoint = strings.Replace(ep.Endpoint, "{{API_BASE}}", apiBase, 1)
+			if !strings.HasPrefix(ep.Endpoint, "http") {
+				ep.Endpoint = apiBase + ep.Endpoint
+			}
+			result[name] = map[string]interface{}{
+				"method":          ep.Method,
+				"endpoint":        ep.Endpoint,
+				"required_fields": ep.RequiredFields,
+				"description":     ep.Description,
+			}
+		}
+		return result
+	}
+	return map[string]interface{}{
+		"inscribe": map[string]interface{}{
+			"method":          "POST",
+			"endpoint":        baseURL + "/api/inscribe",
+			"required_fields": []string{"message", "image_base64"},
+			"description":     "Create a wish/inscription that seeds a proposal and contract metadata. Requires image payload.",
+		},
+	}
+}
+
+func (h *HTTPMCPServer) getAgentAssetsMap(baseURL string) map[string]string {
+	if h.guidance != nil {
+		result := make(map[string]string)
+		mcpBase := baseURL + "/mcp"
+		for _, asset := range h.guidance.AgentAssets {
+			url := strings.Replace(asset.URL, "{{MCP_BASE}}", mcpBase, 1)
+			if !strings.HasPrefix(url, "http") {
+				url = mcpBase + url
+			}
+			result[asset.Name] = url
+		}
+		return result
+	}
+	return map[string]string{
+		"skill": baseURL + "/mcp/SKILL.md",
+		"sdk":   baseURL + "/mcp/starlight_sdk.sh",
+	}
 }
 
 func (h *HTTPMCPServer) writeHTTPError(w http.ResponseWriter, status int, code string, message string, hint string) {
@@ -325,6 +390,9 @@ func (h *HTTPMCPServer) statusFromError(err error) int {
 }
 
 func (h *HTTPMCPServer) toolRequiresAuth(toolName string) bool {
+	if h.guidance != nil {
+		return h.guidance.ToolRequiresAuth(toolName)
+	}
 	authenticatedTools := map[string]bool{
 		"create_proposal":       true,
 		"create_wish":           true,
