@@ -148,15 +148,15 @@ create_wish() {
   
   local args_json
   if [[ -n "$message_file" ]]; then
-    args_json=$(jq --rawfile message "$message_file" '{message: $message}')
+    args_json=$(jq -Rs '{message: .}' "$message_file")
   else
     [[ -n "$message" ]] || fail "--message or --message-file is required"
-    args_json=$(jq -n --rawfile message <(printf "%s" "$message") '{message: $message}')
+    args_json=$(printf "%s" "$message" | jq -Rs '{message: .}')
   fi
 
   if [[ -n "$image" ]]; then
-    args_json=$(jq --rawfile image_base64 <(base64 <"$image" | tr -d '\n') \
-      '. + {image_base64: $image_base64}' <<<"$args_json")
+    args_json=$(jq --slurpfile img <(base64 <"$image" | tr -d '\n' | jq -Rs .) \
+      '. + {image_base64: $img[0]}' <<<"$args_json")
   fi
   if [[ -n "$price" ]]; then
     args_json=$(jq --arg price "$price" '. + {price: $price}' <<<"$args_json")
@@ -196,10 +196,10 @@ submit_work() {
   
   local deliverables_json
   if [[ -n "$notes_file" ]]; then
-    deliverables_json=$(jq --rawfile notes "$notes_file" '{notes: $notes}')
+    deliverables_json=$(jq -Rs '{notes: .}' "$notes_file")
   else
     [[ -n "$notes" ]] || fail "--notes or --notes-file is required"
-    deliverables_json=$(jq -n --rawfile notes <(printf "%s" "$notes") '{notes: $notes}')
+    deliverables_json=$(printf "%s" "$notes" | jq -Rs '{notes: .}')
   fi
   
   [[ ${#artifacts[@]} -gt 0 ]] || fail "--artifact is required (at least one)"
@@ -210,11 +210,10 @@ submit_work() {
       [[ -f "$path" ]] || fail "artifact not found: $path"
       local filename=$(relative_name "$path" "$artifact_root")
       local content_type=$(mime_type_for "$path")
-      jq -n \
+      base64 <"$path" | tr -d '\n' | jq -Rs \
         --arg filename "$filename" \
-        --rawfile content <(base64 <"$path" | tr -d '\n') \
         --arg content_type "$content_type" \
-        '{filename: $filename, content: $content, content_type: $content_type}'
+        '{filename: $filename, content: ., content_type: $content_type}'
     done | jq -s '.'
   )
 
