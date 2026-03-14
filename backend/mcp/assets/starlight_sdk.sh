@@ -71,18 +71,6 @@ require_cmd() {
   command -v "$cmd" >/dev/null 2>&1 || fail "missing required command: $cmd"
 }
 
-read_file() {
-  local path=$1
-  [[ -f "$path" ]] || fail "file not found: $path"
-  cat "$path"
-}
-
-base64_file() {
-  local path=$1
-  [[ -f "$path" ]] || fail "file not found: $path"
-  base64 <"$path" | tr -d '\n'
-}
-
 mime_type_for() {
   local path=$1
   if command -v file >/dev/null 2>&1; then
@@ -128,11 +116,14 @@ call_mcp() {
   local tool=$2
   local args_json=$3
 
+  # Use a pipe and curl -d @- to avoid ARG_MAX issues with large payloads
+  jq -n --arg tool "$tool" --slurpfile args <(printf "%s" "$args_json") \
+    '{tool: $tool, arguments: $args[0]}' | \
   curl -sk \
     -H "X-API-Key: ${api_key}" \
     -H "Content-Type: application/json" \
     "${MCP_BASE}/call" \
-    -d "$(jq -n --arg tool "$tool" --argjson args "$args_json" '{tool: $tool, arguments: $args}')"
+    -d @-
 }
 
 create_wish() {
@@ -154,17 +145,17 @@ create_wish() {
   done
 
   [[ -n "$api_key" ]] || fail "--api-key is required"
-  if [[ -n "$message_file" ]]; then
-    message=$(read_file "$message_file")
-  fi
-  [[ -n "$message" ]] || fail "--message or --message-file is required"
-
+  
   local args_json
-  args_json=$(jq -n --arg message "$message" '{message: $message}')
+  if [[ -n "$message_file" ]]; then
+    args_json=$(jq --rawfile message "$message_file" '{message: $message}')
+  else
+    [[ -n "$message" ]] || fail "--message or --message-file is required"
+    args_json=$(jq -n --rawfile message <(printf "%s" "$message") '{message: $message}')
+  fi
 
   if [[ -n "$image" ]]; then
-    args_json=$(jq \
-      --arg image_base64 "$(base64_file "$image")" \
+    args_json=$(jq --rawfile image_base64 <(base64 <"$image" | tr -d '\n') \
       '. + {image_base64: $image_base64}' <<<"$args_json")
   fi
   if [[ -n "$price" ]]; then
@@ -202,37 +193,38 @@ submit_work() {
 
   [[ -n "$api_key" ]] || fail "--api-key is required"
   [[ -n "$claim_id" ]] || fail "--claim-id is required"
+  
+  local deliverables_json
   if [[ -n "$notes_file" ]]; then
-    notes=$(read_file "$notes_file")
+    deliverables_json=$(jq --rawfile notes "$notes_file" '{notes: $notes}')
+  else
+    [[ -n "$notes" ]] || fail "--notes or --notes-file is required"
+    deliverables_json=$(jq -n --rawfile notes <(printf "%s" "$notes") '{notes: $notes}')
   fi
-  [[ -n "$notes" ]] || fail "--notes or --notes-file is required"
+  
   [[ ${#artifacts[@]} -gt 0 ]] || fail "--artifact is required (at least one)"
 
-  local deliverables_json artifacts_json
-  deliverables_json=$(jq -n --arg notes "$notes" '{notes: $notes}')
-  artifacts_json='[]'
-
-  if [[ ${#artifacts[@]} -gt 0 ]]; then
-    local artifact path filename content_type content
+  local artifacts_json
+  artifacts_json=$(
     for path in "${artifacts[@]}"; do
       [[ -f "$path" ]] || fail "artifact not found: $path"
-      filename=$(relative_name "$path" "$artifact_root")
-      content_type=$(mime_type_for "$path")
-      content=$(base64_file "$path")
-      artifact=$(jq -n \
+      local filename=$(relative_name "$path" "$artifact_root")
+      local content_type=$(mime_type_for "$path")
+      jq -n \
         --arg filename "$filename" \
-        --arg content "$content" \
+        --rawfile content <(base64 <"$path" | tr -d '\n') \
         --arg content_type "$content_type" \
-        '{filename: $filename, content: $content, content_type: $content_type}')
-      artifacts_json=$(jq --argjson artifact "$artifact" '. + [$artifact]' <<<"$artifacts_json")
-    done
-    deliverables_json=$(jq --argjson artifacts "$artifacts_json" '. + {artifacts: $artifacts}' <<<"$deliverables_json")
-  fi
+        '{filename: $filename, content: $content, content_type: $content_type}'
+    done | jq -s '.'
+  )
+
+  deliverables_json=$(jq --slurpfile arts <(printf "%s" "$artifacts_json") \
+    '. + {artifacts: $arts[0]}' <<<"$deliverables_json")
 
   call_mcp "$api_key" "submit_work" "$(jq -n \
     --arg claim_id "$claim_id" \
-    --argjson deliverables "$deliverables_json" \
-    '{claim_id: $claim_id, deliverables: $deliverables}')"
+    --slurpfile deliv <(printf "%s" "$deliverables_json") \
+    '{claim_id: $claim_id, deliverables: $deliv[0]}')"
 }
 
 generic_call() {
