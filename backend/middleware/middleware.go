@@ -160,6 +160,12 @@ func (tw *timeoutTrackingWriter) Write(b []byte) (int, error) {
 	return tw.ResponseWriter.Write(b)
 }
 
+func (tw *timeoutTrackingWriter) Flush() {
+	if f, ok := tw.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
 // ContentType middleware
 func ContentType(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -242,16 +248,32 @@ type responseWriter struct {
 	http.ResponseWriter
 	statusCode     int
 	headersWritten bool
+	flushed        bool
 }
 
 func (rw *responseWriter) WriteHeader(code int) {
 	if rw.headersWritten {
-		// Headers already written, ignore superfluous calls
 		return
 	}
 	rw.statusCode = code
 	rw.ResponseWriter.WriteHeader(code)
 	rw.headersWritten = true
+}
+
+func (rw *responseWriter) Flush() {
+	if f, ok := rw.ResponseWriter.(http.Flusher); ok {
+		rw.flushed = true
+		f.Flush()
+	}
+}
+
+func (rw *responseWriter) Write(b []byte) (int, error) {
+	if !rw.headersWritten {
+		rw.statusCode = http.StatusOK
+		rw.ResponseWriter.WriteHeader(http.StatusOK)
+		rw.headersWritten = true
+	}
+	return rw.ResponseWriter.Write(b)
 }
 
 // APIAuth validates API keys against the validator
