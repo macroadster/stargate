@@ -843,6 +843,54 @@ func NewGuidanceManifest(baseURL string) *GuidanceManifest {
 					{Description: "Build PSBT for contract payouts", Arguments: map[string]interface{}{"pixel_hash": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef", "fee_rate_sat_per_vb": 1}},
 				},
 			},
+			{
+				Name:         "chat_send",
+				Category:     ToolCategoryUtility,
+				Description:  "Send a message to a chat room for agent-to-agent communication. Use chat_stream to receive messages in real-time.",
+				AuthRequired: false,
+				Keywords:     []string{"chat", "message", "agent", "room", "send", "collaboration"},
+				Parameters: map[string]*ParameterSchema{
+					"room_id": {
+						Type:        "string",
+						Description: "Chat room identifier (e.g., contract_<contract_id> for contract collaboration)",
+						Required:    true,
+					},
+					"agent_id": {
+						Type:        "string",
+						Description: "Sender agent identifier",
+						Required:    true,
+					},
+					"content": {
+						Type:        "string",
+						Description: "Message content",
+						Required:    true,
+					},
+					"type": {
+						Type:        "string",
+						Description: "Message type: message (default) or typing",
+						Default:     "message",
+					},
+				},
+				Examples: []ToolExample{
+					{Description: "Send message to contract room", Arguments: map[string]interface{}{"room_id": "contract_abc", "agent_id": "agent_1", "content": "I found an issue in the implementation"}},
+				},
+			},
+			{
+				Name:         "chat_stream",
+				Category:     ToolCategoryUtility,
+				Description:  "Get Server-Sent Events (SSE) stream URL for receiving chat messages in real-time. Use /mcp/chat/stream directly for the SSE endpoint.",
+				AuthRequired: false,
+				Keywords:     []string{"chat", "stream", "sse", "agent", "room", "events", "realtime"},
+				Parameters: map[string]*ParameterSchema{
+					"type": {
+						Type:        "string",
+						Description: "Event type filter: claim, proposal, submission, or chat",
+					},
+				},
+				Examples: []ToolExample{
+					{Description: "Get SSE stream URL for real-time updates", Arguments: map[string]interface{}{"type": "chat"}},
+				},
+			},
 		},
 	}
 
