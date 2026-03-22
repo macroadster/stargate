@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"stargate-backend/bitcoin"
@@ -36,6 +37,83 @@ const (
 	maxArtifactSize = 50 * 1024 * 1024
 )
 
+type ChatHub struct {
+	mu        sync.RWMutex
+	rooms     map[string]map[string]chan string
+	broadcast chan *ChatMessage
+}
+
+type ChatMessage struct {
+	Type      string                 `json:"type"`           // "message", "join", "leave", "typing"
+	RoomID    string                 `json:"room_id"`        // Room identifier (e.g., "contract_123", "agent_abc")
+	AgentID   string                 `json:"agent_id"`       // Sender agent ID
+	Content   string                 `json:"content"`        // Message content
+	Timestamp int64                  `json:"timestamp"`      // Unix timestamp in milliseconds
+	Meta      map[string]interface{} `json:"meta,omitempty"` // Optional metadata
+}
+
+func NewChatHub() *ChatHub {
+	return &ChatHub{
+		rooms:     make(map[string]map[string]chan string),
+		broadcast: make(chan *ChatMessage, 100),
+	}
+}
+
+func (ch *ChatHub) JoinRoom(roomID, agentID string) chan string {
+	ch.mu.Lock()
+	defer ch.mu.Unlock()
+
+	if ch.rooms[roomID] == nil {
+		ch.rooms[roomID] = make(map[string]chan string)
+	}
+	if ch.rooms[roomID][agentID] == nil {
+		ch.rooms[roomID][agentID] = make(chan string, 50)
+	}
+	return ch.rooms[roomID][agentID]
+}
+
+func (ch *ChatHub) LeaveRoom(roomID, agentID string) {
+	ch.mu.Lock()
+	defer ch.mu.Unlock()
+
+	if ch.rooms[roomID] != nil {
+		close(ch.rooms[roomID][agentID])
+		delete(ch.rooms[roomID], agentID)
+		if len(ch.rooms[roomID]) == 0 {
+			delete(ch.rooms, roomID)
+		}
+	}
+}
+
+func (ch *ChatHub) SendToRoom(roomID string, msg *ChatMessage) {
+	ch.mu.RLock()
+	defer ch.mu.RUnlock()
+
+	if ch.rooms[roomID] != nil {
+		msgJSON, _ := json.Marshal(msg)
+		msgStr := string(msgJSON)
+		for _, client := range ch.rooms[roomID] {
+			select {
+			case client <- msgStr:
+			default:
+			}
+		}
+	}
+}
+
+func (ch *ChatHub) GetRoomMembers(roomID string) []string {
+	ch.mu.RLock()
+	defer ch.mu.RUnlock()
+
+	var members []string
+	if ch.rooms[roomID] != nil {
+		for agentID := range ch.rooms[roomID] {
+			members = append(members, agentID)
+		}
+	}
+	return members
+}
+
 // HTTPMCPServer provides HTTP endpoints for MCP tools
 type HTTPMCPServer struct {
 	store            scmiddleware.Store
@@ -53,6 +131,7 @@ type HTTPMCPServer struct {
 	challengeStore   *auth.ChallengeStore
 	network          string
 	guidance         *GuidanceManifest
+	chatHub          *ChatHub
 }
 
 // NewHTTPMCPServer creates a new HTTP MCP server
@@ -85,6 +164,7 @@ func NewHTTPMCPServer(store scmiddleware.Store, apiKeyStore auth.APIKeyValidator
 		challengeStore:   challengeStore,
 		network:          network,
 		guidance:         NewGuidanceManifest(baseURL),
+		chatHub:          NewChatHub(),
 	}
 }
 
@@ -2380,6 +2460,9 @@ func (h *HTTPMCPServer) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/mcp/openapi.json", h.handleOpenAPI) // No auth required for API spec
 	mux.HandleFunc("/mcp/health", h.handleHealth)
 	mux.HandleFunc("/mcp/events", h.handleEventsProxy)
+	mux.HandleFunc("/mcp/chat/stream", h.handleChatStream)   // SSE for receiving chat messages
+	mux.HandleFunc("/mcp/chat/send", h.handleChatSend)       // POST to send chat messages
+	mux.HandleFunc("/mcp/chat/members", h.handleChatMembers) // GET room members
 	mux.HandleFunc("/mcp", h.handleIndex)
 	// Register catch-all last
 	mux.HandleFunc("/mcp/", h.handleIndex)
