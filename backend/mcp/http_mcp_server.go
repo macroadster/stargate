@@ -85,7 +85,7 @@ func (ch *ChatHub) LeaveRoom(roomID, agentID string) {
 	ch.mu.Lock()
 	defer ch.mu.Unlock()
 
-	if ch.rooms[roomID] != nil {
+	if ch.rooms[roomID] != nil && ch.rooms[roomID][agentID] != nil {
 		close(ch.rooms[roomID][agentID])
 		delete(ch.rooms[roomID], agentID)
 		if len(ch.rooms[roomID]) == 0 {
