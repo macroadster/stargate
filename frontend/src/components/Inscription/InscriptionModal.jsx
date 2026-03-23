@@ -2243,7 +2243,7 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
                                         }
                                         toast.success('Rework request resolved');
                                       }
-                                    } catch (err) {
+                                    } catch {
                                       toast.error('Failed to resolve rework request');
                                     }
                                   }}

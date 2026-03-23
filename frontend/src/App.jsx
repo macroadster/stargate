@@ -312,6 +312,13 @@ function MainContent() {
     }
   }, [blocks, selectedBlock, setSelectedBlock, setIsUserNavigating, wishId, contractId, proposalId]);
 
+  // Redirect / to /pending if no block is selected
+  useEffect(() => {
+    if (!selectedBlock && height === undefined && blocks.length > 0) {
+      navigate('/pending', { replace: true });
+    }
+  }, [selectedBlock, height, blocks.length, navigate]);
+
   // If selection and route diverge (race between click and router), force the route to the selected block.
   // But strictly AVOID this if we are on a deep-link route or just did URL-driven navigation.
   useEffect(() => {
