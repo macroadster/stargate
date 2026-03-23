@@ -36,6 +36,8 @@ const (
 	maxDeliverablesSize = 10 * 1024 * 1024
 	// maxArtifactSize is the maximum size allowed for a single artifact (50MB)
 	maxArtifactSize = 50 * 1024 * 1024
+	// maxChatMessagesPerRoom is the maximum number of messages to keep per room for reconnection
+	maxChatMessagesPerRoom = 100
 )
 
 func generateRandomString(length int) string {
@@ -45,9 +47,9 @@ func generateRandomString(length int) string {
 }
 
 type ChatHub struct {
-	mu        sync.RWMutex
-	rooms     map[string]map[string]chan string
-	broadcast chan *ChatMessage
+	mu       sync.RWMutex
+	rooms    map[string]map[string]chan string
+	messages map[string][]*ChatMessage
 }
 
 type ChatMessage struct {
@@ -61,8 +63,8 @@ type ChatMessage struct {
 
 func NewChatHub() *ChatHub {
 	return &ChatHub{
-		rooms:     make(map[string]map[string]chan string),
-		broadcast: make(chan *ChatMessage, 100),
+		rooms:    make(map[string]map[string]chan string),
+		messages: make(map[string][]*ChatMessage),
 	}
 }
 
@@ -93,8 +95,8 @@ func (ch *ChatHub) LeaveRoom(roomID, agentID string) {
 }
 
 func (ch *ChatHub) SendToRoom(roomID string, msg *ChatMessage) {
-	ch.mu.RLock()
-	defer ch.mu.RUnlock()
+	ch.mu.Lock()
+	defer ch.mu.Unlock()
 
 	if ch.rooms[roomID] != nil {
 		msgJSON, _ := json.Marshal(msg)
@@ -104,6 +106,13 @@ func (ch *ChatHub) SendToRoom(roomID string, msg *ChatMessage) {
 			case client <- msgStr:
 			default:
 			}
+		}
+	}
+
+	if msg.Type == "message" {
+		ch.messages[roomID] = append(ch.messages[roomID], msg)
+		if len(ch.messages[roomID]) > maxChatMessagesPerRoom {
+			ch.messages[roomID] = ch.messages[roomID][len(ch.messages[roomID])-maxChatMessagesPerRoom:]
 		}
 	}
 }
@@ -119,6 +128,31 @@ func (ch *ChatHub) GetRoomMembers(roomID string) []string {
 		}
 	}
 	return members
+}
+
+func (ch *ChatHub) GetRecentMessages(roomID string, limit int) []*ChatMessage {
+	ch.mu.RLock()
+	defer ch.mu.RUnlock()
+
+	if limit <= 0 {
+		limit = maxChatMessagesPerRoom
+	}
+	if limit > maxChatMessagesPerRoom {
+		limit = maxChatMessagesPerRoom
+	}
+
+	msgs := ch.messages[roomID]
+	if len(msgs) == 0 {
+		return nil
+	}
+
+	start := len(msgs) - limit
+	if start < 0 {
+		start = 0
+	}
+	result := make([]*ChatMessage, len(msgs[start:]))
+	copy(result, msgs[start:])
+	return result
 }
 
 type MCPSession struct {

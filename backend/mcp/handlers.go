@@ -256,6 +256,20 @@ func (h *HTTPMCPServer) handleChatStream(w http.ResponseWriter, r *http.Request)
 	msgs := h.chatHub.JoinRoom(roomID, agentID)
 	defer h.chatHub.LeaveRoom(roomID, agentID)
 
+	recentMsgs := h.chatHub.GetRecentMessages(roomID, 50)
+	if len(recentMsgs) > 0 {
+		historyMsg := &ChatMessage{
+			Type:      "history",
+			RoomID:    roomID,
+			AgentID:   agentID,
+			Timestamp: time.Now().UnixMilli(),
+			Meta:      map[string]interface{}{"messages": recentMsgs},
+		}
+		historyJSON, _ := json.Marshal(historyMsg)
+		fmt.Fprintf(w, "event: chat\ndata: %s\n\n", historyJSON)
+		flusher.Flush()
+	}
+
 	joinMsg := &ChatMessage{
 		Type:      "join",
 		RoomID:    roomID,
