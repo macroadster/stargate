@@ -161,6 +161,9 @@ func (tw *timeoutTrackingWriter) Write(b []byte) (int, error) {
 }
 
 func (tw *timeoutTrackingWriter) Flush() {
+	if tw.ResponseWriter == nil {
+		return
+	}
 	if f, ok := tw.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}
@@ -261,6 +264,9 @@ func (rw *responseWriter) WriteHeader(code int) {
 }
 
 func (rw *responseWriter) Flush() {
+	if rw.ResponseWriter == nil {
+		return
+	}
 	if f, ok := rw.ResponseWriter.(http.Flusher); ok {
 		rw.flushed = true
 		f.Flush()
