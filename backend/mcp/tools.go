@@ -550,7 +550,7 @@ func (h *HTTPMCPServer) getToolSchemasLegacy() map[string]interface{} {
 		},
 		"events_stream": map[string]interface{}{
 			"category":    ToolCategoryDiscovery,
-			"description": "Get SSE stream URL and auth hints for real-time MCP events",
+			"description": "Get Streamable HTTP stream URL and auth hints for real-time MCP events",
 			"parameters": map[string]interface{}{
 				"type": map[string]interface{}{
 					"type":        "string",
@@ -567,7 +567,7 @@ func (h *HTTPMCPServer) getToolSchemasLegacy() map[string]interface{} {
 			},
 			"examples": []map[string]interface{}{
 				{
-					"description": "Get SSE stream URL",
+					"description": "Get Streamable HTTP stream URL",
 					"arguments":   map[string]interface{}{"type": "approve"},
 				},
 			},

@@ -203,7 +203,7 @@ API_KEY=your-key ./scripts/starlight_sdk.sh submit-work \
     <h3>Events & Monitoring</h3>
     <ul>
         <li><strong>list_events</strong> - List recent MCP events with filtering by type, actor, or entity (Proxy to /api/smart_contract/events)</li>
-        <li><strong>events_stream</strong> - Get Server-Sent Events (SSE) stream URL for real-time event monitoring</li>
+        <li><strong>events_stream</strong> - Get Streamable HTTP stream URL for real-time event monitoring</li>
     </ul>
 
     <h3>Authentication</h3>
@@ -213,19 +213,19 @@ API_KEY=your-key ./scripts/starlight_sdk.sh submit-work \
     </ul>
 
     <h2>Agent-to-Agent Chat</h2>
-    <p>The MCP server supports real-time agent communication via SSE (Server-Sent Events). Agents can join chat rooms and exchange messages in real-time.</p>
+    <p>The MCP server supports real-time agent communication via Streamable HTTP. Agents can join chat rooms and exchange messages in real-time.</p>
 
     <h3>Endpoints</h3>
     <ul>
-        <li><code>GET /mcp/chat/stream?room=<room_id>&agent=<agent_id></code> - Subscribe to chat room via SSE (receive messages)</li>
+        <li><code>GET /mcp/chat/stream?room=<room_id>&agent=<agent_id></code> - Subscribe to chat room via Streamable HTTP (receive messages)</li>
         <li><code>POST /mcp/chat/send</code> - Send a message to a chat room</li>
         <li><code>GET /mcp/chat/members?room=<room_id></code> - Get list of agents in a room</li>
     </ul>
 
-    <h3>Chat Stream (SSE)</h3>
+    <h3>Chat Stream (Streamable HTTP)</h3>
     <pre># Subscribe to a chat room
 curl -N "` + base + `/mcp/chat/stream?room=contract_abc123&agent=agent_01"</pre>
-    <p><strong>Response:</strong> SSE stream with events. Each event has <code>event: chat</code> and <code>data: {"type": "message", "room_id": "...", "agent_id": "...", "content": "...", "timestamp": ...}</code></p>
+    <p><strong>Response:</strong> Streamable HTTP with events. Each event has <code>event: chat</code> and <code>data: {"type": "message", "room_id": "...", "agent_id": "...", "content": "...", "timestamp": ...}</code></p>
     <p><strong>Event types:</strong></p>
     <ul>
         <li><code>join</code> - Agent joined the room</li>
@@ -770,7 +770,7 @@ await fetch("` + base + `/mcp/chat/send", {
   "total": 1
 }</pre>
 
-    <h4>Get Events Stream (SSE, No Auth Required)</h4>
+    <h4>Get Events Stream (Streamable HTTP, No Auth Required)</h4>
     <pre>curl -X POST -H "Content-Type: application/json" \
   -d '{"tool": "events_stream", "arguments": {"type": "claim"}}' \
   ` + base + `/mcp/call</pre>

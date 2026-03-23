@@ -8,8 +8,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"stargate-backend/core/smart_contract"
 )
 
 func (h *HTTPMCPServer) handleListTools(w http.ResponseWriter, r *http.Request) {
@@ -63,47 +61,46 @@ func (h *HTTPMCPServer) handleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	sessionID := h.createSession()
 	base := h.externalBaseURL(r)
-	taskCount := 0
-	contractCount := 0
-	if h.store != nil {
-		if tasks, err := h.store.ListTasks(smart_contract.TaskFilter{}); err == nil {
-			taskCount = len(tasks)
-		}
-		if contracts, err := h.store.ListContracts(smart_contract.ContractFilter{}); err == nil {
-			contractCount = len(contracts)
-		}
-	}
-	resp := map[string]interface{}{
-		"message": "MCP HTTP server is running. Use /mcp/tools or /mcp/discover to list tools.",
-		"links": map[string]string{
-			"tools":        base + "/mcp/tools",
-			"discover":     base + "/mcp/discover",
-			"docs":         base + "/mcp/docs",
-			"skill":        base + "/mcp/SKILL.md",
-			"sdk":          base + "/mcp/starlight_sdk.sh",
-			"openapi":      base + "/mcp/openapi.json",
-			"health":       base + "/mcp/health",
-			"events":       base + "/mcp/events",
-			"tool_call":    base + "/mcp/call",
-			"mcp_base_url": base + "/mcp",
-		},
-		"quick_start": []string{
-			"GET /mcp/SKILL.md for the canonical agent workflow.",
-			"Download /mcp/starlight_sdk.sh for file-path based uploads.",
-			"GET /mcp/tools to fetch available tools.",
-			"POST /mcp/call with {\"tool\": \"list_contracts\"} to execute a tool.",
-			"GET /mcp/docs for reference details and examples.",
-		},
-		"counts": map[string]int{
-			"tools":     len(h.getToolSchemas()),
-			"contracts": contractCount,
-			"tasks":     taskCount,
-		},
-		"canonical_workflow": "Use /mcp/SKILL.md for agent workflow guidance and /mcp/starlight_sdk.sh for local file uploads.",
-	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(resp)
+	w.Header().Set("MCP-Session-Id", sessionID)
+	w.Header().Set("Accept", "application/json, text/event-stream")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      nil,
+		"result": map[string]interface{}{
+			"protocolVersion": "2025-03-26",
+			"capabilities": map[string]interface{}{
+				"tools": map[string]bool{
+					"list": true,
+					"call": true,
+				},
+				"resources": map[string]bool{
+					"list": false,
+					"read": false,
+				},
+				"prompts": map[string]bool{
+					"list": false,
+					"get":  false,
+				},
+				"logging":   map[string]bool{},
+				"streaming": map[string]bool{"accept": true},
+			},
+			"serverInfo": map[string]string{
+				"name":    "starlight",
+				"version": "1.0.0",
+			},
+			"instructions": "Use POST /mcp with JSON-RPC to call tools. Pass 'sessionId' in MCP-Session-Id header for Streamable HTTP.",
+			"links": map[string]string{
+				"docs":   base + "/mcp/docs",
+				"skill":  base + "/mcp/SKILL.md",
+				"sdk":    base + "/mcp/starlight_sdk.sh",
+				"tools":  base + "/mcp/tools",
+				"events": base + "/mcp/events",
+			},
+		},
+	})
 }
 
 // handleDiscover advertises available tools and base routes for agents.
@@ -178,8 +175,8 @@ func (h *HTTPMCPServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *HTTPMCPServer) handleEventsProxy(w http.ResponseWriter, r *http.Request) {
-	// Support Server-Sent Events (SSE) as required by MCP HTTP transport
-	// Set the necessary headers for SSE
+	// Support Streamable HTTP for real-time events
+	// Set the necessary headers for streaming
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -188,12 +185,12 @@ func (h *HTTPMCPServer) handleEventsProxy(w http.ResponseWriter, r *http.Request
 	// Ensure the ResponseWriter supports flushing
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		h.writeHTTPError(w, http.StatusInternalServerError, "SSE_NOT_SUPPORTED", "SSE not supported", "Streaming not possible with current server configuration.")
+		h.writeHTTPError(w, http.StatusInternalServerError, "STREAMING_NOT_SUPPORTED", "Streaming not supported", "Streaming not possible with current server configuration.")
 		return
 	}
 
-	// Immediately send the 'endpoint' event telling the client where to send POST requests
-	// This is standard for MCP over HTTP (SSE)
+	// Send the 'endpoint' event telling the client where to send POST requests
+	// This is standard for MCP over HTTP (Streamable HTTP)
 	base := h.externalBaseURL(r)
 	endpointURL := base + "/mcp/call"
 	fmt.Fprintf(w, "event: endpoint\ndata: %s\n\n", endpointURL)

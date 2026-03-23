@@ -56,7 +56,7 @@ func (h *HTTPMCPServer) handleJSONRPC(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *HTTPMCPServer) handleJSONRPCInitialize(w http.ResponseWriter, req jsonRPCRequest) {
-	protocolVersion := "2024-11-05"
+	protocolVersion := "2025-03-26"
 	if req.Params != nil {
 		if v, ok := req.Params["protocolVersion"].(string); ok && v != "" {
 			protocolVersion = v
@@ -79,6 +79,10 @@ func (h *HTTPMCPServer) handleJSONRPCInitialize(w http.ResponseWriter, req jsonR
 				"prompts": map[string]bool{
 					"list": false,
 					"get":  false,
+				},
+				"logging": map[string]bool{},
+				"streaming": map[string]bool{
+					"accept": true,
 				},
 			},
 			"serverInfo": map[string]string{

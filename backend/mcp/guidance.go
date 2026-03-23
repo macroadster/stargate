@@ -614,9 +614,9 @@ func NewGuidanceManifest(baseURL string) *GuidanceManifest {
 			{
 				Name:         "events_stream",
 				Category:     ToolCategoryDiscovery,
-				Description:  "Get SSE stream URL and auth hints for real-time MCP events",
+				Description:  "Get Streamable HTTP stream URL for real-time MCP events. Returns URL that can be used with GET /mcp for streaming responses.",
 				AuthRequired: false,
-				Keywords:     []string{"events", "stream", "sse", "realtime", "monitoring"},
+				Keywords:     []string{"events", "stream", "realtime", "monitoring", "streaming"},
 				Parameters: map[string]*ParameterSchema{
 					"type": {
 						Type:        "string",
@@ -632,7 +632,7 @@ func NewGuidanceManifest(baseURL string) *GuidanceManifest {
 					},
 				},
 				Examples: []ToolExample{
-					{Description: "Get SSE stream URL", Arguments: map[string]interface{}{"type": "claim"}},
+					{Description: "Get Streamable HTTP stream URL", Arguments: map[string]interface{}{"type": "claim"}},
 				},
 			},
 			{
@@ -878,9 +878,9 @@ func NewGuidanceManifest(baseURL string) *GuidanceManifest {
 			{
 				Name:         "chat_stream",
 				Category:     ToolCategoryUtility,
-				Description:  "Get Server-Sent Events (SSE) stream URL for receiving chat messages in real-time. Use /mcp/chat/stream directly for the SSE endpoint.",
+				Description:  "Get Streamable HTTP stream URL for receiving chat messages in real-time. Use /mcp/chat/stream endpoint.",
 				AuthRequired: false,
-				Keywords:     []string{"chat", "stream", "sse", "agent", "room", "events", "realtime"},
+				Keywords:     []string{"chat", "stream", "agent", "room", "events", "realtime", "streaming"},
 				Parameters: map[string]*ParameterSchema{
 					"type": {
 						Type:        "string",
@@ -888,7 +888,7 @@ func NewGuidanceManifest(baseURL string) *GuidanceManifest {
 					},
 				},
 				Examples: []ToolExample{
-					{Description: "Get SSE stream URL for real-time updates", Arguments: map[string]interface{}{"type": "chat"}},
+					{Description: "Get Streamable HTTP stream URL for real-time updates", Arguments: map[string]interface{}{"type": "chat"}},
 				},
 			},
 		},

@@ -3,6 +3,7 @@ package mcp
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -36,6 +37,12 @@ const (
 	// maxArtifactSize is the maximum size allowed for a single artifact (50MB)
 	maxArtifactSize = 50 * 1024 * 1024
 )
+
+func generateRandomString(length int) string {
+	b := make([]byte, length)
+	rand.Read(b)
+	return base64.URLEncoding.EncodeToString(b)[:length]
+}
 
 type ChatHub struct {
 	mu        sync.RWMutex
@@ -114,6 +121,12 @@ func (ch *ChatHub) GetRoomMembers(roomID string) []string {
 	return members
 }
 
+type MCPSession struct {
+	ID        string
+	CreatedAt time.Time
+	ExpiresAt time.Time
+}
+
 // HTTPMCPServer provides HTTP endpoints for MCP tools
 type HTTPMCPServer struct {
 	store            scmiddleware.Store
@@ -132,6 +145,8 @@ type HTTPMCPServer struct {
 	network          string
 	guidance         *GuidanceManifest
 	chatHub          *ChatHub
+	sessions         map[string]*MCPSession
+	sessionMu        sync.RWMutex
 }
 
 // NewHTTPMCPServer creates a new HTTP MCP server
@@ -165,12 +180,31 @@ func NewHTTPMCPServer(store scmiddleware.Store, apiKeyStore auth.APIKeyValidator
 		network:          network,
 		guidance:         NewGuidanceManifest(baseURL),
 		chatHub:          NewChatHub(),
+		sessions:         make(map[string]*MCPSession),
 	}
 }
 
 // SetServer sets the smart_contract server reference
 func (h *HTTPMCPServer) SetServer(server *scmiddleware.Server) {
 	h.server = server
+}
+
+func (h *HTTPMCPServer) createSession() string {
+	sessionID := fmt.Sprintf("session_%d_%s", time.Now().UnixNano(), generateRandomString(16))
+	h.sessionMu.Lock()
+	defer h.sessionMu.Unlock()
+	h.sessions[sessionID] = &MCPSession{
+		ID:        sessionID,
+		CreatedAt: time.Now(),
+		ExpiresAt: time.Now().Add(24 * time.Hour),
+	}
+	return sessionID
+}
+
+func (h *HTTPMCPServer) getSession(sessionID string) *MCPSession {
+	h.sessionMu.RLock()
+	defer h.sessionMu.RUnlock()
+	return h.sessions[sessionID]
 }
 
 func (h *HTTPMCPServer) externalBaseURL(r *http.Request) string {
@@ -1561,12 +1595,15 @@ func (h *HTTPMCPServer) handleListEvents(ctx context.Context, args map[string]in
 func (h *HTTPMCPServer) handleEventsStream(ctx context.Context, args map[string]interface{}, r *http.Request) (interface{}, error) {
 	baseURL := h.externalBaseURL(r)
 	return map[string]interface{}{
-		"stream_url": baseURL + "/mcp/events",
+		"stream_url":         baseURL + "/mcp/events",
+		"streaming_endpoint": baseURL + "/mcp",
 		"auth_hints": map[string]string{
-			"header": "Authorization: Bearer <api_key>",
-			"query":  "actor=<identifier>&entity_id=<id>&type=<event_type>",
+			"header":         "Authorization: Bearer <api_key>",
+			"query":          "actor=<identifier>&entity_id=<id>&type=<event_type>",
+			"session_header": "MCP-Session-Id: <session_id>",
 		},
-		"message": "Connect to this SSE endpoint to receive real-time MCP events",
+		"message":          "Use GET /mcp/events for SSE stream, or GET /mcp with sessionId for Streamable HTTP",
+		"accept_streaming": true,
 	}, nil
 }
 
@@ -2460,7 +2497,7 @@ func (h *HTTPMCPServer) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/mcp/openapi.json", h.handleOpenAPI) // No auth required for API spec
 	mux.HandleFunc("/mcp/health", h.handleHealth)
 	mux.HandleFunc("/mcp/events", h.handleEventsProxy)
-	mux.HandleFunc("/mcp/chat/stream", h.handleChatStream)   // SSE for receiving chat messages
+	mux.HandleFunc("/mcp/chat/stream", h.handleChatStream)   // Streamable HTTP for receiving chat messages
 	mux.HandleFunc("/mcp/chat/send", h.handleChatSend)       // POST to send chat messages
 	mux.HandleFunc("/mcp/chat/members", h.handleChatMembers) // GET room members
 	mux.HandleFunc("/mcp", h.handleIndex)
