@@ -35,6 +35,7 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
     pixelHash: '',
     budgetSats: '',
     feeRate: '1',
+    changeAddress: '',
     contractId: '',
     taskId: '',
     includeDonation: true,
@@ -999,6 +1000,7 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
         payouts: payouts.length > 0 ? payouts : undefined,
         budget_sats: targetBudget || undefined,
         fee_rate_sats_vb: feeRate,
+        change_address: !isRaiseFund && psbtForm.changeAddress?.trim() ? psbtForm.changeAddress.trim() : undefined,
         split_psbt: isRaiseFund ? true : undefined,
       };
       const res = await fetch(`${API_BASE}/api/smart_contract/contracts/${contractId}/psbt`, {
@@ -1439,6 +1441,24 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
                             onChange={(e) => setPsbtForm((p) => ({ ...p, feeRate: e.target.value }))}
                           />
                         </div>
+                        {!isRaiseFund && (
+                          <div className="space-y-1 md:col-span-2">
+                            <label className="block modal-deliverables-label">Change address</label>
+                            <input
+                              className="modal-deliverables-input"
+                              type="text"
+                              placeholder={auth.wallet || 'Defaults to payer wallet'}
+                              value={psbtForm.changeAddress}
+                              onChange={(e) => setPsbtForm((p) => ({ ...p, changeAddress: e.target.value }))}
+                              spellCheck={false}
+                              autoCapitalize="off"
+                              autoCorrect="off"
+                            />
+                            <div className="modal-deliverables-label">
+                              Leave blank to send change back to the payer wallet.
+                            </div>
+                          </div>
+                        )}
                         <div className="space-y-1 md:col-span-2">
                           <div className="modal-deliverables-label">
                             {isRaiseFund
@@ -1577,6 +1597,7 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
                       const changeAmounts = Array.isArray(psbtResult.change_amounts)
                         ? psbtResult.change_amounts
                         : [];
+                      const effectiveChangeAddress = psbtResult.change_address || changeAddresses[0] || '';
                       const payoutAmounts = Array.isArray(psbtResult.payout_amounts)
                         ? psbtResult.payout_amounts
                         : [];
@@ -1613,6 +1634,12 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
                             <div>Change</div>
                             <div style={{ textAlign: 'right' }}>{psbtResult.change_sats} sats</div>
                           </div>
+                          {!effectiveRaiseFund && effectiveChangeAddress && (
+                            <div className="modal-deliverables-card" style={{ padding: '0.5rem', fontSize: '0.688rem' }}>
+                              <div className="modal-deliverables-label" style={{ fontWeight: 600, marginBottom: '0.25rem' }}>Change address</div>
+                              <div style={{ fontFamily: 'monospace', wordBreak: 'break-all' }}>{effectiveChangeAddress}</div>
+                            </div>
+                          )}
                           {effectiveRaiseFund && payoutAmounts.length > 1 && (
                             <div className="modal-deliverables-card" style={{ padding: '0.5rem', fontSize: '0.688rem' }}>
                               <div className="modal-deliverables-label" style={{ fontWeight: 600, marginBottom: '0.25rem' }}>Funding outputs (per task)</div>

@@ -904,7 +904,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 				"pixel_hash":              strings.TrimSpace(body.PixelHash),
 				"payer_address":           payerTarget.Address.EncodeAddress(),
 				"payer_addresses":         []string{payerTarget.Address.EncodeAddress()},
-				"change_address":          "",
+				"change_address":          firstString(splitRes.ChangeAddresses),
 				"change_addresses":        splitRes.ChangeAddresses,
 				"change_amounts":          splitRes.ChangeAmounts,
 				"funding_mode":            fundingMode,
@@ -959,6 +959,10 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 			body.FeeRate,
 		)
 	} else {
+		effectiveChangeAddr := changeAddr
+		if effectiveChangeAddr == nil && len(payerAddresses) > 0 {
+			effectiveChangeAddr = payerAddresses[0]
+		}
 		psbtReq := bitcoin.PSBTRequest{
 			PayerAddress:      primaryPayer,
 			PayerAddresses:    payerAddresses,
@@ -969,10 +973,11 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 			ContractorAddress: contractorAddr,
 			Payouts:           payouts,
 			FeeRateSatPerVB:   body.FeeRate,
-			ChangeAddress:     changeAddr,
+			ChangeAddress:     effectiveChangeAddr,
 			UseAllPayers:      isRaiseFund(fundingMode),
 		}
 		res, err = bitcoin.BuildFundingPSBT(s.mempool, params, psbtReq)
+		changeAddr = effectiveChangeAddr
 	}
 	if err != nil {
 		Error(w, http.StatusBadRequest, err.Error())
@@ -1389,6 +1394,15 @@ func addressOrEmpty(addr btcutil.Address) string {
 		return ""
 	}
 	return addr.EncodeAddress()
+}
+
+func firstString(values []string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func (s *Server) resolveContractorPayers(ctx context.Context, contractID string, params *chaincfg.Params) ([]btcutil.Address, error) {
