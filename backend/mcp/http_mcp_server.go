@@ -48,7 +48,7 @@ func generateRandomString(length int) string {
 
 type ChatHub struct {
 	mu       sync.RWMutex
-	rooms    map[string]map[string]chan string
+	rooms    map[string]map[string]map[string]chan string // roomID -> agentID -> connID -> chan
 	messages map[string][]*ChatMessage
 }
 
@@ -63,31 +63,37 @@ type ChatMessage struct {
 
 func NewChatHub() *ChatHub {
 	return &ChatHub{
-		rooms:    make(map[string]map[string]chan string),
+		rooms:    make(map[string]map[string]map[string]chan string),
 		messages: make(map[string][]*ChatMessage),
 	}
 }
 
-func (ch *ChatHub) JoinRoom(roomID, agentID string) chan string {
+func (ch *ChatHub) JoinRoom(roomID, agentID, connID string) chan string {
 	ch.mu.Lock()
 	defer ch.mu.Unlock()
 
 	if ch.rooms[roomID] == nil {
-		ch.rooms[roomID] = make(map[string]chan string)
+		ch.rooms[roomID] = make(map[string]map[string]chan string)
 	}
 	if ch.rooms[roomID][agentID] == nil {
-		ch.rooms[roomID][agentID] = make(chan string, 50)
+		ch.rooms[roomID][agentID] = make(map[string]chan string)
 	}
-	return ch.rooms[roomID][agentID]
+	if ch.rooms[roomID][agentID][connID] == nil {
+		ch.rooms[roomID][agentID][connID] = make(chan string, 50)
+	}
+	return ch.rooms[roomID][agentID][connID]
 }
 
-func (ch *ChatHub) LeaveRoom(roomID, agentID string) {
+func (ch *ChatHub) LeaveRoom(roomID, agentID, connID string) {
 	ch.mu.Lock()
 	defer ch.mu.Unlock()
 
-	if ch.rooms[roomID] != nil && ch.rooms[roomID][agentID] != nil {
-		close(ch.rooms[roomID][agentID])
-		delete(ch.rooms[roomID], agentID)
+	if ch.rooms[roomID] != nil && ch.rooms[roomID][agentID] != nil && ch.rooms[roomID][agentID][connID] != nil {
+		close(ch.rooms[roomID][agentID][connID])
+		delete(ch.rooms[roomID][agentID], connID)
+		if len(ch.rooms[roomID][agentID]) == 0 {
+			delete(ch.rooms[roomID], agentID)
+		}
 		if len(ch.rooms[roomID]) == 0 {
 			delete(ch.rooms, roomID)
 		}
@@ -101,10 +107,12 @@ func (ch *ChatHub) SendToRoom(roomID string, msg *ChatMessage) {
 	if ch.rooms[roomID] != nil {
 		msgJSON, _ := json.Marshal(msg)
 		msgStr := string(msgJSON)
-		for _, client := range ch.rooms[roomID] {
-			select {
-			case client <- msgStr:
-			default:
+		for _, agents := range ch.rooms[roomID] {
+			for _, client := range agents {
+				select {
+				case client <- msgStr:
+				default:
+				}
 			}
 		}
 	}
@@ -614,6 +622,12 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 		return h.handleCreateTask(ctx, args, apiKey)
 	case "build_psbt":
 		return h.handleBuildPSBT(ctx, args, apiKey)
+	case "chat_send":
+		return h.handleChatSendTool(ctx, args)
+	case "chat_stream":
+		return h.handleChatStreamTool(ctx, args, r)
+	case "chat_members":
+		return h.handleChatMembersTool(ctx, args)
 	default:
 		return nil, fmt.Errorf("unknown tool: %s", toolName)
 	}
@@ -1638,6 +1652,86 @@ func (h *HTTPMCPServer) handleEventsStream(ctx context.Context, args map[string]
 		},
 		"message":          "Use GET /mcp/events for SSE stream, or GET /mcp with sessionId for Streamable HTTP",
 		"accept_streaming": true,
+	}, nil
+}
+
+func (h *HTTPMCPServer) handleChatStreamTool(ctx context.Context, args map[string]interface{}, r *http.Request) (interface{}, error) {
+	baseURL := h.externalBaseURL(r)
+	return map[string]interface{}{
+		"stream_url": baseURL + "/mcp/chat/stream",
+		"auth_hints": map[string]string{
+			"query": "room=<room_id>&agent=<agent_id>",
+		},
+		"message":          "Use GET /mcp/chat/stream?room=<room_id>&agent=<agent_id> for real-time chat",
+		"accept_streaming": true,
+	}, nil
+}
+
+func (h *HTTPMCPServer) handleChatSendTool(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	validation := NewValidationError("chat_send", "Invalid request parameters")
+
+	roomID, _ := args["room_id"].(string)
+	if roomID == "" {
+		validation.AddFieldError("room_id", args["room_id"], "room_id is required and must be a non-empty string", true)
+	}
+
+	agentID, _ := args["agent_id"].(string)
+	if agentID == "" {
+		validation.AddFieldError("agent_id", args["agent_id"], "agent_id is required and must be a non-empty string", true)
+	}
+
+	content, _ := args["content"].(string)
+	if content == "" {
+		validation.AddFieldError("content", args["content"], "content is required and must be a non-empty string", true)
+	}
+
+	if validation.HasErrors() {
+		return nil, validation
+	}
+
+	msgType, _ := args["type"].(string)
+	if msgType == "" {
+		msgType = "message"
+	}
+
+	msg := &ChatMessage{
+		Type:      msgType,
+		RoomID:    roomID,
+		AgentID:   agentID,
+		Content:   content,
+		Timestamp: time.Now().UnixMilli(),
+	}
+
+	if meta, ok := args["meta"].(map[string]interface{}); ok {
+		msg.Meta = meta
+	}
+
+	h.chatHub.SendToRoom(roomID, msg)
+
+	return map[string]interface{}{
+		"success":    true,
+		"timestamp":  msg.Timestamp,
+		"message_id": msg.Timestamp, // Use timestamp as a simple ID
+	}, nil
+}
+
+func (h *HTTPMCPServer) handleChatMembersTool(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	validation := NewValidationError("chat_members", "Invalid request parameters")
+
+	roomID, _ := args["room_id"].(string)
+	if roomID == "" {
+		validation.AddFieldError("room_id", args["room_id"], "room_id is required and must be a non-empty string", true)
+	}
+
+	if validation.HasErrors() {
+		return nil, validation
+	}
+
+	members := h.chatHub.GetRoomMembers(roomID)
+	return map[string]interface{}{
+		"room_id": roomID,
+		"members": members,
+		"total":   len(members),
 	}, nil
 }
 

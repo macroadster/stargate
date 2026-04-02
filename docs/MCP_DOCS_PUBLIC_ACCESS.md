@@ -21,33 +21,37 @@ mux.HandleFunc("/mcp/openapi.json", h.handleOpenAPI) // No auth required for API
 ### Public Endpoints
 
 - `GET /mcp/docs` - HTML documentation page (no auth required)
-- `GET /mcp/openapi.json` - OpenAPI specification (no auth required)  
+- `GET /mcp/openapi.json` - OpenAPI specification (no auth required)
 - `GET /mcp/health` - Health check (no auth required)
+- `GET /mcp/SKILL.md` - Canonical agent workflow (no auth required)
+- `GET /mcp/tools` - List available tools (no auth required)
+- `GET /mcp/search` - Search tools (no auth required)
+- `GET /mcp/discover` - Discover endpoints and tools (no auth required)
+- `GET /mcp/events` - Stream events (no auth required)
+- `GET /mcp/chat/stream` - Subscribe to chat room (no auth required)
+- `POST /mcp/chat/send` - Send message to chat room (no auth required)
+- `GET /mcp/chat/members` - Get list of agents in a room (no auth required)
 
-### Protected Endpoints (Still Require API Key)
+### Protected Endpoints (Tool-Level Auth)
 
-- `GET /mcp/tools` - List available tools
-- `POST /mcp/call` - Call a specific tool
-- `GET /mcp/discover` - Discover endpoints and tools
-- `GET /mcp/events` - Stream events
-- `GET /mcp/` - Server metadata
+- `POST /mcp/call` - Call a specific tool (Authentication required ONLY for write operations: create_wish, create_proposal, create_task, claim_task, submit_work, approve_proposal, approve_submission, reject_submission, build_psbt, create_contract_rework_request)
 
 ### Authentication
 
-Public documentation endpoints can be accessed without any authentication:
+Public endpoints can be accessed without any authentication:
 
 ```bash
 # Access documentation
 curl http://localhost:3001/mcp/docs
 
-# Access OpenAPI spec
-curl http://localhost:3001/mcp/openapi.json
+# List tools
+curl http://localhost:3001/mcp/tools
 
-# Health check
-curl http://localhost:3001/mcp/health
+# Subscribe to chat
+curl http://localhost:3001/mcp/chat/stream?room=contract_123&agent=agent_01
 ```
 
-Protected endpoints still require API key via `X-API-Key` header or `Authorization: Bearer <key>` header.
+Protected tool operations require an API key via `X-API-Key` header or `Authorization: Bearer <key>` header.
 
 ### Testing
 

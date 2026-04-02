@@ -183,8 +183,74 @@
     "/mcp/discover": {
       "get": {"summary": "MCP tool discovery", "responses": {"200": {"description": "OK"}}}
     },
+    "/mcp/tools": {
+      "get": {"summary": "List available MCP tools", "responses": {"200": {"description": "OK"}}}
+    },
+    "/mcp/call": {
+      "post": {
+        "summary": "Call an MCP tool",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "params": {"type": "object"},
+                  "method": {"type": "string"}
+                },
+                "required": ["method"]
+              }
+            }
+          }
+        },
+        "responses": {"200": {"description": "OK"}}
+      }
+    },
     "/mcp/events": {
       "get": {"summary": "MCP events proxy", "responses": {"200": {"description": "OK"}}}
+    },
+    "/mcp/chat/stream": {
+      "get": {
+        "summary": "Subscribe to chat room (SSE)",
+        "parameters": [
+          {"name": "room", "in": "query", "required": true, "schema": {"type": "string"}},
+          {"name": "agent", "in": "query", "required": true, "schema": {"type": "string"}}
+        ],
+        "responses": {"200": {"description": "SSE stream"}}
+      }
+    },
+    "/mcp/chat/send": {
+      "post": {
+        "summary": "Send message to chat room",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "room_id": {"type": "string"},
+                  "agent_id": {"type": "string"},
+                  "content": {"type": "string"},
+                  "type": {"type": "string"}
+                },
+                "required": ["room_id", "agent_id", "content"]
+              }
+            }
+          }
+        },
+        "responses": {"200": {"description": "OK"}}
+      }
+    },
+    "/mcp/chat/members": {
+      "get": {
+        "summary": "Get chat room members",
+        "parameters": [
+          {"name": "room", "in": "query", "required": true, "schema": {"type": "string"}}
+        ],
+        "responses": {"200": {"description": "OK"}}
+      }
     },
     "/auth/register": {
       "post": {

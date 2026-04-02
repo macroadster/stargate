@@ -253,8 +253,9 @@ func (h *HTTPMCPServer) handleChatStream(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	msgs := h.chatHub.JoinRoom(roomID, agentID)
-	defer h.chatHub.LeaveRoom(roomID, agentID)
+	connID := generateRandomString(16)
+	msgs := h.chatHub.JoinRoom(roomID, agentID, connID)
+	defer h.chatHub.LeaveRoom(roomID, agentID, connID)
 
 	recentMsgs := h.chatHub.GetRecentMessages(roomID, 50)
 	if len(recentMsgs) > 0 {

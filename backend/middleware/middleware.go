@@ -99,6 +99,15 @@ func SecurityHeaders(next http.Handler) http.Handler {
 func Timeout(timeout time.Duration) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Skip timeout for streaming endpoints
+			if r.Header.Get("Accept") == "text/event-stream" ||
+				strings.Contains(r.URL.Path, "/chat/stream") ||
+				strings.Contains(r.URL.Path, "/mcp/events") ||
+				strings.Contains(r.URL.Path, "/smart_contract/events") {
+				next.ServeHTTP(w, r)
+				return
+			}
+
 			ctx, cancel := context.WithTimeout(r.Context(), timeout)
 			defer cancel()
 
