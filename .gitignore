@@ -23,3 +23,8 @@ test-results/
 opencode.json
 # Compiled binaries with stargate-backend prefix
 backend/stargate-backend*
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key

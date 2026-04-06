@@ -1,4 +1,7 @@
 {
-  "database": "beads.db",
-  "jsonl_export": "issues.jsonl"
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "server",
+  "dolt_database": "stargate",
+  "project_id": "7d0ba81f-0ffa-457b-9f35-54fcd363e437"
 }
