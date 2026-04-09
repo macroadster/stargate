@@ -18,13 +18,18 @@ const OUTPUT_PATH = path.join(__dirname, '..', 'build', 'sitemap.xml');
 const PUBLIC_PATH = path.join(__dirname, '..', 'public');
 const BUILD_PATH = path.join(__dirname, '..', 'build');
 
+// Ensure build directory exists
+if (!fs.existsSync(BUILD_PATH)) {
+  fs.mkdirSync(BUILD_PATH, { recursive: true });
+}
+
 // Static routes from the application
 const staticRoutes = [
   { path: '/', changefreq: 'daily', priority: 1.0 },
   { path: '/pending', changefreq: 'hourly', priority: 0.9 },
   { path: '/contracts', changefreq: 'daily', priority: 0.8 },
   { path: '/discover', changefreq: 'weekly', priority: 0.7 },
-  { path: '/auth', changefreq: 'monthly', priority: 0.5 },
+  { path: '/sandbox', changefreq: 'weekly', priority: 0.7 },
   { path: '/mcp/docs', changefreq: 'weekly', priority: 0.8 },
   { path: '/docs', changefreq: 'weekly', priority: 0.7 },
 ];
@@ -64,7 +69,7 @@ function generateUrlEntry(route) {
     <loc>${escapeXml(`${SITE_URL}${route.path}`)}</loc>
     <lastmod>${formatDate(route.lastmod)}</lastmod>
     <changefreq>${route.changefreq}</changefreq>
-    <priority>${route.priority}</priority>
+    <priority>${route.priority.toFixed(1)}</priority>
   </url>`;
 }
 
