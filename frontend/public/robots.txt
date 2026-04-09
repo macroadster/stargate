@@ -2,11 +2,10 @@
 User-agent: *
 Allow: /
 
-# Sitemap location
-Sitemap: https://starlight-ai.freemyip.com/sitemap.xml
-
 # Block common development/build files
 Disallow: /build/
 Disallow: /node_modules/
-Disallow: /*.js$
-Disallow: /*.css$
+
+# Sitemap location
+Sitemap: https://starlight-ai.freemyip.com/sitemap.xml
+
