@@ -1931,17 +1931,17 @@ func (h *SearchHandler) searchData(query string) models.SearchResult {
 					if strings.HasPrefix(c.ContractID, "wish-") {
 						visibleHash = strings.TrimPrefix(c.ContractID, "wish-")
 					}
-					addContract(c.ContractID, blockHeight, "", "Smart Contract", visibleHash, nil, c.Title, c.TotalBudgetSats, c.Status)
+					addContract(c.ContractID, blockHeight, "", "Smart Contract", visibleHash, c.Metadata, c.Title, c.TotalBudgetSats, c.Status)
 				}
 			}
 		}
+	}
 
-		proposalList, err := h.store.ListProposals(context.Background(), sc.ProposalFilter{})
-		if err == nil {
-			for _, p := range proposalList {
-				if matchesQuery(p.ID, p.Title, p.DescriptionMD, p.VisiblePixelHash, p.Status) {
-					addProposal(p.ID, p.Title, p.Status, p.BudgetSats, p.CreatedAt, p.VisiblePixelHash)
-				}
+	proposalList, err := h.store.ListProposals(context.Background(), sc.ProposalFilter{})
+	if err == nil {
+		for _, p := range proposalList {
+			if matchesQuery(p.ID, p.Title, p.DescriptionMD, p.VisiblePixelHash, p.Status) {
+				addProposal(p.ID, p.Title, p.Status, p.BudgetSats, p.CreatedAt, p.VisiblePixelHash)
 			}
 		}
 	}
