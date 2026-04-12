@@ -1426,7 +1426,7 @@ WHERE status='approved' AND (
 }
 
 // ConfirmContract confirms a contract and sets confirmation tracking
-func (s *PGStore) ConfirmContract(ctx context.Context, contractID string, blockHeight int) error {
+func (s *PGStore) ConfirmContract(ctx context.Context, contractID string, blockHeight int, txid string) error {
 	contractID = strings.TrimSpace(contractID)
 	if contractID == "" {
 		return nil
@@ -1447,11 +1447,13 @@ func (s *PGStore) ConfirmContract(ctx context.Context, contractID string, blockH
 		stegoImageURL = fmt.Sprintf("/api/block-image/%d/%s", blockHeight, imageFile)
 	}
 
-	// Update status and confirmation tracking
+	// Update status and confirmation tracking, including metadata with confirmed_txid
 	_, err = s.pool.Exec(ctx, `
 UPDATE mcp_contracts 
-SET status='confirmed', confirmed_block_height=$2, confirmed_at=NOW(), stego_image_url=COALESCE($3, stego_image_url)
-WHERE contract_id=$1`, contractID, blockHeight, stegoImageURL)
+SET status='confirmed', confirmed_block_height=$2, confirmed_at=NOW(), 
+    stego_image_url=COALESCE($3, stego_image_url),
+    metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{confirmed_txid}', to_jsonb($4::text))
+WHERE contract_id=$1`, contractID, blockHeight, stegoImageURL, txid)
 	if err != nil {
 		return err
 	}

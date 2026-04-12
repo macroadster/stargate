@@ -638,7 +638,7 @@ func (s *MemoryStore) UpdateContractStatus(ctx context.Context, contractID, stat
 }
 
 // ConfirmContract confirms a contract and records confirmation details.
-func (s *MemoryStore) ConfirmContract(ctx context.Context, contractID string, blockHeight int) error {
+func (s *MemoryStore) ConfirmContract(ctx context.Context, contractID string, blockHeight int, txid string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	contractID = strings.TrimSpace(contractID)
@@ -653,6 +653,12 @@ func (s *MemoryStore) ConfirmContract(ctx context.Context, contractID string, bl
 	contract.ConfirmedBlockHeight = &blockHeight
 	confirmedAt := time.Now()
 	contract.ConfirmedAt = &confirmedAt
+
+	// Set confirmed_txid in metadata
+	if contract.Metadata == nil {
+		contract.Metadata = make(map[string]interface{})
+	}
+	contract.Metadata["confirmed_txid"] = txid
 
 	// Use contract_id directly (stealthy design)
 	imageFile := contractID
@@ -1330,13 +1336,13 @@ func (s *MemoryStore) CreateContractReworkRequest(ctx context.Context, contractI
 		CreatedAt:  now,
 	}
 
-        c.ReworkRequests = append(c.ReworkRequests, reworkReq)
+	c.ReworkRequests = append(c.ReworkRequests, reworkReq)
 	// Mark all pending tasks for this contract as rejected
 	for tID, t := range s.tasks {
-	    if t.ContractID == contractID {
-	        t.Status = "rejected"
-	        s.tasks[tID] = t
-	    }
+		if t.ContractID == contractID {
+			t.Status = "rejected"
+			s.tasks[tID] = t
+		}
 	}
 	s.contracts[contractID] = c
 
