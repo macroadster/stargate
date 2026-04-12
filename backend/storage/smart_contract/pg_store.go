@@ -240,7 +240,7 @@ func (s *PGStore) ListContracts(filter smart_contract.ContractFilter) ([]smart_c
 	baseSelect := `
 SELECT c.contract_id, c.title, c.total_budget_sats, c.goals_count,
 	COALESCE((SELECT COUNT(*) FROM mcp_tasks t WHERE t.contract_id = c.contract_id AND t.status = 'available'), 0) AS available_tasks_count,
-	c.status, c.skills, c.stego_image_url, c.confirmed_block_height, c.confirmed_at, c.created_at
+	c.status, c.skills, c.stego_image_url, c.metadata, c.confirmed_block_height, c.confirmed_at, c.created_at
 FROM mcp_contracts c
 `
 
@@ -305,9 +305,15 @@ FROM mcp_contracts c
 	var allContracts []smart_contract.Contract
 	for rows.Next() {
 		var c smart_contract.Contract
+		var metadata []byte
 		if err := rows.Scan(&c.ContractID, &c.Title, &c.TotalBudgetSats, &c.GoalsCount, &c.AvailableTasksCount,
-			&c.Status, &c.Skills, &c.StegoImageURL, &c.ConfirmedBlockHeight, &c.ConfirmedAt, &c.CreatedAt); err != nil {
+			&c.Status, &c.Skills, &c.StegoImageURL, &metadata, &c.ConfirmedBlockHeight, &c.ConfirmedAt, &c.CreatedAt); err != nil {
 			return nil, err
+		}
+		if len(metadata) > 0 {
+			if err := json.Unmarshal(metadata, &c.Metadata); err == nil {
+				// Metadata loaded successfully
+			}
 		}
 		if len(filter.Skills) > 0 && !containsSkill(c.Skills, filter.Skills) {
 			continue

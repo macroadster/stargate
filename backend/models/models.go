@@ -10,6 +10,7 @@ type InscriptionRequest struct {
 	Address          string  `json:"address,omitempty"`
 	Timestamp        int64   `json:"timestamp"`
 	ID               string  `json:"id"`
+	TXID             string  `json:"tx_id,omitempty"`
 	Status           string  `json:"status"`
 	BlockHeight      int64   `json:"blockHeight,omitempty"`
 	VisiblePixelHash string  `json:"visiblePixelHash,omitempty"`
@@ -62,6 +63,7 @@ type SearchResult struct {
 type SearchResultItem struct {
 	Type             string                 `json:"type"` // inscription, transaction, block, contract, proposal
 	ID               string                 `json:"id"`
+	TXID             string                 `json:"tx_id,omitempty"`
 	Title            string                 `json:"title,omitempty"`
 	BlockHeight      int64                  `json:"block_height,omitempty"`
 	ContractID       string                 `json:"contract_id,omitempty"`

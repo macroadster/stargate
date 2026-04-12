@@ -127,30 +127,30 @@ func (h *DiscoveryHandler) HandleRegisterPeer(w http.ResponseWriter, r *http.Req
 	h.peerService.Register(req.PeerID)
 	h.sendSuccess(w, map[string]string{"status": "registered"})
 }
+
 // HandleUnregisterPeer unregisters a peer ID
 func (h *DiscoveryHandler) HandleUnregisterPeer(w http.ResponseWriter, r *http.Request) {
-        if r.Method != http.MethodPost {
-                h.sendError(w, http.StatusMethodNotAllowed, "Method not allowed")
-                return
-        }
+	if r.Method != http.MethodPost {
+		h.sendError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
 
-        var req struct {
-                PeerID string `json:"peerId"`
-        }
-        if err := h.parseJSON(r, &req); err != nil {
-                h.sendError(w, http.StatusBadRequest, "Invalid request body")
-                return
-        }
+	var req struct {
+		PeerID string `json:"peerId"`
+	}
+	if err := h.parseJSON(r, &req); err != nil {
+		h.sendError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
 
-        if req.PeerID == "" {
-                h.sendError(w, http.StatusBadRequest, "peerId is required")
-                return
-        }
+	if req.PeerID == "" {
+		h.sendError(w, http.StatusBadRequest, "peerId is required")
+		return
+	}
 
-        h.peerService.Unregister(req.PeerID)
-        h.sendSuccess(w, map[string]string{"status": "unregistered"})
+	h.peerService.Unregister(req.PeerID)
+	h.sendSuccess(w, map[string]string{"status": "unregistered"})
 }
-
 
 // HandleListPeers returns a list of active peer IDs
 func (h *DiscoveryHandler) HandleListPeers(w http.ResponseWriter, r *http.Request) {
@@ -1337,8 +1337,19 @@ func contractToInscriptionRequest(contract sc.Contract) models.InscriptionReques
 		height = int64(*contract.ConfirmedBlockHeight)
 	}
 
+	// Determine TXID: use confirmed_txid for confirmed contracts, otherwise TBD
+	txID := "TBD"
+	if contract.Status == "confirmed" && contract.Metadata != nil {
+		if v, ok := contract.Metadata["confirmed_txid"].(string); ok && v != "" {
+			txID = v
+		} else if v, ok := contract.Metadata["funding_txid"].(string); ok && v != "" {
+			txID = v
+		}
+	}
+
 	return models.InscriptionRequest{
 		ID:              contract.ContractID,
+		TXID:            txID,
 		Text:            contract.Title,
 		ImageData:       imageURL,
 		Price:           float64(contract.TotalBudgetSats) / 1e8,
@@ -1756,9 +1767,19 @@ func (h *SearchHandler) searchData(query string) models.SearchResult {
 			return
 		}
 		seenContracts[id] = true
+
+		// Determine TXID based on status: use confirmed_txid/funding_txid for confirmed contracts, TBD otherwise
+		txID := "TBD"
+		if status == "confirmed" {
+			if txID = metaString(meta, "confirmed_txid"); txID == "" {
+				txID = metaString(meta, "funding_txid")
+			}
+		}
+
 		contracts = append(contracts, models.SearchResultItem{
 			Type:             "contract",
 			ID:               id,
+			TXID:             txID,
 			ContractID:       id,
 			BlockHeight:      height,
 			Title:            title,

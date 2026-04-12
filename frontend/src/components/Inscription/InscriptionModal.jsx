@@ -2304,9 +2304,9 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
                           <span className="modal-blockchain-label">Transaction ID</span>
                           <div className="flex items-center gap-2">
                             <span className="modal-blockchain-mono">
-                              {inscription.id?.slice(0, 12)}...
+                              {inscription.tx_id ? inscription.tx_id.slice(0, 12) + '...' : 'TBD'}
                             </span>
-                            <CopyButton text={inscription.id || ''} />
+                            <CopyButton text={inscription.tx_id || 'TBD'} />
                           </div>
                         </div>
                         <div className="modal-blockchain-row">

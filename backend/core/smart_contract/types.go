@@ -12,6 +12,7 @@ type Contract struct {
 	Status               string                  `json:"status"` // created | active | funded | confirmed | expired
 	Skills               []string                `json:"skills,omitempty"`
 	StegoImageURL        string                  `json:"stego_image_url,omitempty"`
+	Metadata             map[string]interface{}  `json:"metadata,omitempty"`
 	ConfirmedBlockHeight *int                    `json:"confirmed_block_height,omitempty"`
 	ConfirmedAt          *time.Time              `json:"confirmed_at,omitempty"`
 	CreatedAt            time.Time               `json:"created_at"`
