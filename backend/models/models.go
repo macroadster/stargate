@@ -61,20 +61,22 @@ type SearchResult struct {
 
 // SearchResultItem represents a single search result with type and navigation info
 type SearchResultItem struct {
-	Type             string                 `json:"type"` // inscription, transaction, block, contract, proposal
-	ID               string                 `json:"id"`
-	TXID             string                 `json:"tx_id,omitempty"`
-	Title            string                 `json:"title,omitempty"`
-	BlockHeight      int64                  `json:"block_height,omitempty"`
-	ContractID       string                 `json:"contract_id,omitempty"`
-	ProposalID       string                 `json:"proposal_id,omitempty"`
-	Status           string                 `json:"status,omitempty"`
-	Timestamp        int64                  `json:"timestamp,omitempty"`
-	Text             string                 `json:"text,omitempty"`
-	VisiblePixelHash string                 `json:"visible_pixel_hash,omitempty"`
-	BudgetSats       int64                  `json:"budget_sats,omitempty"`
-	TxCount          int                    `json:"tx_count,omitempty"`
-	Metadata         map[string]interface{} `json:"metadata,omitempty"`
+	Type                 string                 `json:"type"` // inscription, transaction, block, contract, proposal
+	ID                   string                 `json:"id"`
+	TXID                 string                 `json:"tx_id,omitempty"`
+	Title                string                 `json:"title,omitempty"`
+	BlockHeight          int64                  `json:"block_height,omitempty"`
+	ConfirmedBlockHeight *int                   `json:"confirmed_block_height,omitempty"`
+	ContractID           string                 `json:"contract_id,omitempty"`
+	ProposalID           string                 `json:"proposal_id,omitempty"`
+	Status               string                 `json:"status,omitempty"`
+	Timestamp            int64                  `json:"timestamp,omitempty"`
+	Text                 string                 `json:"text,omitempty"`
+	VisiblePixelHash     string                 `json:"visible_pixel_hash,omitempty"`
+	BudgetSats           int64                  `json:"budget_sats,omitempty"`
+	TxCount              int                    `json:"tx_count,omitempty"`
+	Metadata             map[string]interface{} `json:"metadata,omitempty"`
+	StegoImageURL        string                 `json:"stego_image_url,omitempty"`
 }
 
 // HealthResponse represents health check response

@@ -164,45 +164,58 @@ function MainContent() {
         const payload = data?.data || data;
         
         // Prioritize contracts, then inscriptions.
-        const contract = payload?.contracts?.[0];
+        // For contracts, prefer confirmed status over superseded
+        let contract = payload?.contracts?.[0];
+        const contracts = payload?.contracts || [];
+        
+        // Find a confirmed contract if available
+        const confirmedContract = contracts.find(c => c.status === 'confirmed');
+        if (confirmedContract) {
+            contract = confirmedContract;
+        }
+        
         const inscription = payload?.inscriptions?.[0];
         
         if (contract) {
-             const metadata = contract.metadata || {};
-             const visiblePixelHash = contract.visible_pixel_hash || metadata.visible_pixel_hash || '';
-             const contractId = contract.contract_id || contract.contractId || contract.id;
-             
-             // Determine image URL based on status
-             let imageUrl = '';
-             const status = (contract.status || metadata.confirmation_status || '').toLowerCase();
-             const confirmedTxid = metadata.confirmed_txid || metadata.tx_id || '';
-             
-             if (status === 'confirmed' && confirmedTxid) {
-               imageUrl = `${CONTENT_BASE}/content/${confirmedTxid}`;
-             } else if (visiblePixelHash) {
-               imageUrl = `${CONTENT_BASE}/uploads/${visiblePixelHash}`;
-             } else if (contract.stego_image_url || contract.stegoImageUrl) {
-               const rawUrl = contract.stego_image_url || contract.stegoImageUrl || '';
-               imageUrl = rawUrl && !rawUrl.startsWith('http') ? `${CONTENT_BASE}${rawUrl}` : rawUrl;
-             }
-             
-             const wishText = metadata.wish_text || metadata.embedded_message || metadata.message || '';
-             const item = {
-               id: contractId,
-               contract_type: contract.contract_type || 'Smart Contract',
-               metadata: {
-                 ...metadata,
-                 visible_pixel_hash: visiblePixelHash,
-                 is_stego: true,
-               },
-               image_url: imageUrl,
-               mime_type: metadata.content_type || 'image/png',
-               text: wishText,
-               genesis_block_height: contract.block_height || 0,
-               block_height: contract.block_height || 0,
-               status: status || 'pending',
-             };
-             setSelectedInscription(item);
+              const metadata = contract.metadata || {};
+              const visiblePixelHash = contract.visible_pixel_hash || metadata.visible_pixel_hash || '';
+              const contractId = contract.contract_id || contract.contractId || contract.id;
+              
+              // Determine image URL based on confirmation status
+              // - Confirmed contracts: use stego_image_url from search result (most accurate)
+              // - Unconfirmed contracts: use /uploads/[visible_pixel_hash]
+              let imageUrl = '';
+              const status = (contract.status || metadata.confirmation_status || '').toLowerCase();
+              const confirmedBlockHeight = contract.confirmed_block_height || metadata.confirmed_block_height;
+              
+              // Use stego_image_url if available (from mcp_contracts table), otherwise fall back to uploads
+              if (contract.stego_image_url) {
+                imageUrl = contract.stego_image_url.startsWith('http') 
+                  ? contract.stego_image_url 
+                  : `${CONTENT_BASE}${contract.stego_image_url}`;
+              } else if (visiblePixelHash) {
+                imageUrl = `${CONTENT_BASE}/uploads/${visiblePixelHash}`;
+              }
+              
+              const wishText = metadata.wish_text || metadata.embedded_message || metadata.message || '';
+              const item = {
+                id: contractId,
+                contract_type: contract.contract_type || 'Smart Contract',
+                tx_id: contract.tx_id || '',
+                metadata: {
+                  ...metadata,
+                  visible_pixel_hash: visiblePixelHash,
+                  confirmed_block_height: confirmedBlockHeight,
+                  is_stego: true,
+                },
+                image_url: imageUrl,
+                mime_type: metadata.content_type || 'image/png',
+                text: wishText,
+                genesis_block_height: contract.block_height || confirmedBlockHeight || 0,
+                block_height: contract.block_height || confirmedBlockHeight || 0,
+                status: status || 'pending',
+              };
+              setSelectedInscription(item);
         } else if (inscription) {
             const item = {
                 id: inscription.id,
@@ -226,13 +239,24 @@ function MainContent() {
             const meta = proposalData.metadata || {};
             const stegoId = proposalData.visible_pixel_hash || meta.visible_pixel_hash || meta.contract_id;
             
-            // Determine image source:
-            // 1. If ID looks like an inscription ID (has 'i'), it's definitely content.
-            // 2. If status is pending/approved, it's likely in uploads (pre-chain).
-            // 3. Otherwise (published/confirmed), assume content.
-            const isInscriptionId = stegoId && stegoId.includes('i');
-            const isPending = ['pending', 'approved'].includes((proposalData.status || '').toLowerCase());
-            const imageBase = (isInscriptionId || !isPending) ? 'content' : 'uploads';
+            // Determine image source based on confirmation status:
+            // - If confirmed_block_height exists: use /api/block-image/[height]/[tx_id]
+            // - If status is pending/approved: use /uploads/[visible_pixel_hash]
+            // - Otherwise: use block-image as fallback
+            const confirmedBlockHeight = meta.confirmed_block_height;
+            const confirmedTxid = meta.confirmed_txid || meta.tx_id;
+            let imageUrl = null;
+            
+            if (stegoId) {
+              if (confirmedBlockHeight && confirmedTxid) {
+                imageUrl = `${CONTENT_BASE}/api/block-image/${confirmedBlockHeight}/${confirmedTxid}`;
+              } else if (['pending', 'approved'].includes((proposalData.status || '').toLowerCase())) {
+                imageUrl = `${CONTENT_BASE}/uploads/${stegoId}`;
+              } else {
+                // Fallback: use uploads (will work if the image was uploaded)
+                imageUrl = `${CONTENT_BASE}/uploads/${stegoId}`;
+              }
+            }
 
             const item = {
                 id: stegoId || proposalData.id,
@@ -241,15 +265,16 @@ function MainContent() {
                     ...meta,
                     visible_pixel_hash: proposalData.visible_pixel_hash,
                     contract_id: meta.contract_id,
+                    confirmed_block_height: confirmedBlockHeight,
                     wish_text: proposalData.description_md,
                     is_stego: true, // Hint to modal to show stego analysis sections
                     stego_type: 'alpha' // Default assumption if missing
                 },
-                image_url: stegoId ? `${CONTENT_BASE}/${imageBase}/${stegoId}` : null,
+                image_url: imageUrl,
                 mime_type: stegoId ? 'image/png' : 'application/json',
                 text: proposalData.description_md || proposalData.title || '',
                 status: proposalData.status,
-                genesis_block_height: 0 // Unknown without search
+                genesis_block_height: confirmedBlockHeight || 0
             };
             setSelectedInscription(item);
         } else if (wishId || contractId) {
@@ -260,14 +285,31 @@ function MainContent() {
                     const directData = await directRes.json();
                     const ins = directData.inscription || directData;
                     if (ins) {
-                         const item = {
-                            id: ins.tx_id || ins.id,
+                        // Determine image URL based on confirmation status
+                        const meta = ins.metadata || {};
+                        const confirmedBlockHeight = meta.confirmed_block_height;
+                        const confirmedTxid = ins.tx_id || ins.id;
+                        const visiblePixelHash = meta.visible_pixel_hash || wishId || contractId;
+                        
+                        let imageUrl = '';
+                        if (confirmedBlockHeight && confirmedTxid) {
+                            imageUrl = `${CONTENT_BASE}/api/block-image/${confirmedBlockHeight}/${confirmedTxid}`;
+                        } else if (visiblePixelHash) {
+                            imageUrl = `${CONTENT_BASE}/uploads/${visiblePixelHash}`;
+                        }
+                        
+                        const item = {
+                            id: confirmedTxid || ins.id,
                             contractType: ins.is_stego ? 'Smart Contract' : 'Inscription',
                             mime_type: ins.content_type,
                             text: ins.content,
-                            metadata: ins.metadata || {},
-                            image_url: `${CONTENT_BASE}/content/${ins.tx_id || ins.id}`,
-                            genesis_block_height: ins.genesis_height || 0
+                            metadata: {
+                                ...meta,
+                                confirmed_block_height: confirmedBlockHeight,
+                                visible_pixel_hash: visiblePixelHash
+                            },
+                            image_url: imageUrl,
+                            genesis_block_height: ins.genesis_height || confirmedBlockHeight || 0
                         };
                         setSelectedInscription(item);
                     }

@@ -1762,7 +1762,7 @@ func (h *SearchHandler) searchData(query string) models.SearchResult {
 		})
 	}
 
-	addContract := func(id string, height int64, imageURL string, contractType string, visibleHash string, meta map[string]any, title string, budgetSats int64, status string) {
+	addContract := func(id string, height int64, imageURL string, contractType string, visibleHash string, meta map[string]any, title string, budgetSats int64, status string, confirmedBlockHeight *int) {
 		if id == "" || seenContracts[id] {
 			return
 		}
@@ -1777,16 +1777,18 @@ func (h *SearchHandler) searchData(query string) models.SearchResult {
 		}
 
 		contracts = append(contracts, models.SearchResultItem{
-			Type:             "contract",
-			ID:               id,
-			TXID:             txID,
-			ContractID:       id,
-			BlockHeight:      height,
-			Title:            title,
-			VisiblePixelHash: visibleHash,
-			BudgetSats:       budgetSats,
-			Metadata:         meta,
-			Status:           status,
+			Type:                 "contract",
+			ID:                   id,
+			TXID:                 txID,
+			ContractID:           id,
+			BlockHeight:          height,
+			ConfirmedBlockHeight: confirmedBlockHeight,
+			Title:                title,
+			VisiblePixelHash:     visibleHash,
+			BudgetSats:           budgetSats,
+			Metadata:             meta,
+			Status:               status,
+			StegoImageURL:        imageURL,
 		})
 	}
 
@@ -1884,7 +1886,13 @@ func (h *SearchHandler) searchData(query string) models.SearchResult {
 							text,
 						) {
 							addTransaction(id, text, cache.Timestamp, cache.BlockHeight)
-							addContract(id, cache.BlockHeight, imageURL, "Smart Contract", visibleHash, meta, "", 0, metaString(meta, "confirmation_status"))
+							// Extract confirmed_block_height from metadata if available
+							var confirmedHeight *int
+							if h, ok := meta["confirmed_block_height"].(float64); ok {
+								hInt := int(h)
+								confirmedHeight = &hInt
+							}
+							addContract(id, cache.BlockHeight, imageURL, "Smart Contract", visibleHash, meta, "", 0, metaString(meta, "confirmation_status"), confirmedHeight)
 						}
 					}
 				}
@@ -1931,7 +1939,7 @@ func (h *SearchHandler) searchData(query string) models.SearchResult {
 					if strings.HasPrefix(c.ContractID, "wish-") {
 						visibleHash = strings.TrimPrefix(c.ContractID, "wish-")
 					}
-					addContract(c.ContractID, blockHeight, "", "Smart Contract", visibleHash, c.Metadata, c.Title, c.TotalBudgetSats, c.Status)
+					addContract(c.ContractID, blockHeight, c.StegoImageURL, "Smart Contract", visibleHash, c.Metadata, c.Title, c.TotalBudgetSats, c.Status, c.ConfirmedBlockHeight)
 				}
 			}
 		}
