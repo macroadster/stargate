@@ -208,7 +208,7 @@ export default function DiscoverPage() {
   return (
     <div className="min-h-screen bg-app-main text-gray-900 dark:text-gray-100 page-discover">
       <AppHeader onInscribe={() => navigate('/')} />
-      <div className="container mx-auto px-6 py-10 space-y-8">
+      <div className="container mx-auto px-6 py-10 flex flex-col gap-8">
         <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-6">
           <div className="flex-1">
             <h1 className="text-4xl font-black page-title uppercase tracking-tight leading-none mb-2">Discover</h1>
@@ -282,7 +282,7 @@ export default function DiscoverPage() {
         </div>
 
         <div className="grid lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-2 space-y-4">
+          <div className="lg:col-span-2 flex flex-col gap-4">
             {proposals.map((p) => {
               const approved = (p.status || '').toLowerCase() === 'approved';
               const fundingMode = String(p.metadata?.funding_mode || '').toLowerCase();
@@ -315,7 +315,7 @@ export default function DiscoverPage() {
                     </div>
                   </div>
 
-                  <div className="mt-3 space-y-2">
+                  <div className="mt-3 flex flex-col gap-2">
                     {tasks.map((t) => {
                       const taskStatus = (t.status || 'pending').toLowerCase();
                       const statusBadgeClass = taskStatus === 'claimed' ? 'badge-secondary' : taskStatus === 'available' ? 'badge-success' : 'badge-warning';
@@ -369,7 +369,7 @@ export default function DiscoverPage() {
                                 if (!canResubmit) return null;
                                 
                                 return (
-                                  <div className="space-y-2">
+                                  <div className="flex flex-col gap-2">
                                     {submission && (
                                       <div className="flex items-center gap-2 mb-2">
                                         <span className="text-xs text-gray-500">Current submission:</span>
@@ -425,7 +425,7 @@ export default function DiscoverPage() {
                             </div>
                           )}
                         </div>
-                        <div className="text-right text-xs text-gray-500 space-y-1 min-w-[120px]">
+                        <div className="text-right text-xs text-gray-500 flex flex-col gap-1 min-w-[120px]">
                           <div>Published: {approved ? 'yes' : 'no'}</div>
                           <div>Created: {formatDate(p.created_at)}</div>
                           {t.active_claim_id && <div>Claim: {t.active_claim_id}</div>}
@@ -465,7 +465,7 @@ export default function DiscoverPage() {
             )}
           </div>
 
-          <div className="space-y-4">
+          <div className="flex flex-col gap-4">
             <div className="card-premium p-4 md:p-5">
               <div className="flex items-center justify-between">
                 <h4 className="font-semibold">My Work</h4>
@@ -479,7 +479,7 @@ export default function DiscoverPage() {
                 />
               </div>
               <div className="text-xs text-gray-500 mt-1">Filters tasks claimed by this AI.</div>
-              <div className="mt-3 space-y-2 max-h-[420px] overflow-y-auto pr-1">
+              <div className="mt-3 flex flex-col gap-2 max-h-[420px] overflow-y-auto pr-1">
                 {myTasks.map((t) => {
                   const taskStatus = (t.status || 'pending').toLowerCase();
                   const statusBadgeClass = taskStatus === 'claimed' ? 'badge-secondary' : taskStatus === 'completed' ? 'badge-success' : 'badge-warning';
@@ -495,7 +495,7 @@ export default function DiscoverPage() {
                     <div className="text-xs text-gray-500">Claimed: {formatDate(t.claimed_at)} • Expires: {formatCountdown(t.claim_expires_at)}</div>
                     <div className="text-xs text-gray-500">Budget: {t.budget_sats} sats</div>
                     {t.activeClaimId && submissionsByTask[t.activeClaimId] && (
-                      <div className="space-y-1 mt-2">
+                      <div className="flex flex-col gap-1 mt-2">
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="text-[11px] text-gray-500">Submission:</span>
                           <span className={`badge ${
@@ -591,7 +591,7 @@ function ActivityFeed() {
   }
 
   return (
-    <div className="space-y-2 max-h-[260px] overflow-y-auto pr-1">
+    <div className="flex flex-col gap-2 max-h-[260px] overflow-y-auto pr-1">
       {events.map((evt, idx) => (
         <div key={idx} className="card-premium p-2">
           <div className="flex items-center justify-between text-xs">

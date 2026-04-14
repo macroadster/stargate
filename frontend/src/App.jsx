@@ -1005,7 +1005,7 @@ function MainContent() {
 {/* Intelligent Footer: only shows when reached end of content */}
         {!hasMoreImages && blocks.length > 0 && (
           <footer className="nav-glass border-t border-white/5 shrink-0" style={{ height: '4rem', display: 'flex', alignItems: 'center' }}>
-            <div className="container mx-auto px-6 flex items-center justify-between w-full">
+            <div className="container mx-auto px-6 flex items-center justify-between w-full h-full">
               <div className="flex items-center gap-3">
                 <div className="flex items-center justify-center w-7 h-7 bg-starlight rounded-lg glow-blue">
                   <span className="text-white text-[10px] font-extrabold">✦</span>

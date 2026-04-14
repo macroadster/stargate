@@ -5452,7 +5452,6 @@ html[data-theme="dark"] .deliverables-proof-content-box {
 
 .grid {
     display: grid !important;
-    gap: inherit !important;
 }
 
 .grid-cols-1 {
