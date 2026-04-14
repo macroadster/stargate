@@ -146,8 +146,8 @@ const AppHeader = ({
             <div className="nav-desktop">
               <div className="nav-actions flex flex-row items-center gap-2 h-full">
                 {showSearch && (
-                  <div className="search-container mr-2">
-                    <Search className="search-icon w-4 h-4" />
+                  <div className="search has-icon mr-2">
+                    <Search className="icon-search w-4 h-4" />
                     <input
                       type="text"
                       placeholder="Search..."
@@ -158,7 +158,7 @@ const AppHeader = ({
                           onClearSearch?.();
                         }
                       }}
-                      className="search-input text-sm"
+                      className="input search-input text-sm"
                     />
                     {searchQuery && (
                       <button onClick={onClearSearch} className="search-clear">
@@ -257,8 +257,8 @@ const AppHeader = ({
         {/* Mobile Menu */}
         <div className={`nav-menu-mobile ${isMenuOpen ? "active" : ""}`}>
           {showSearch && (
-            <div className="search-container mb-6">
-              <Search className="search-icon w-4 h-4" />
+            <div className="search has-icon mb-6">
+              <Search className="icon-search w-4 h-4" />
               <input
                 type="text"
                 placeholder="Search..."
@@ -269,7 +269,7 @@ const AppHeader = ({
                     onClearSearch?.();
                   }
                 }}
-                className="search-input w-full"
+                className="input search-input w-full"
               />
               {searchQuery && (
                 <button onClick={onClearSearch} className="search-clear">

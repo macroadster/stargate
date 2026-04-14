@@ -17,13 +17,24 @@ footer.nav-glass {
     z-index: 0 !important;
 }
 
-.search-container {
+/* Search - quantumcss pattern (.search.has-icon) */
+.search {
     position: relative;
     display: flex;
     align-items: center;
 }
 
-.search-input {
+.search.has-icon > .icon-search,
+.search.has-icon > .search-icon {
+    position: absolute;
+    left: 0.75rem;
+    color: #64748b;
+    pointer-events: none;
+    z-index: 1;
+}
+
+.search.has-icon > .search-input,
+.search.has-icon > input.search-input {
     background: rgba(0, 0, 0, 0.2);
     border: 1px solid rgba(255, 255, 255, 0.2);
     border-radius: 0.5rem;
@@ -37,47 +48,37 @@ footer.nav-glass {
     width: 100%;
 }
 
-.search-input:focus {
+.search.has-icon > .search-input:focus,
+.search.has-icon > input.search-input:focus {
     border-color: #6366f1;
     box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
 }
 
-.search-icon {
-    position: absolute;
-    left: 0.75rem;
-    color: #64748b;
-    pointer-events: none;
-    z-index: 1;
-}
-
 @media (prefers-color-scheme: light) {
-    .search-input {
+    .search.has-icon > .search-input,
+    .search.has-icon > input.search-input {
         background: rgba(255, 255, 255, 0.8);
         border-color: #cbd5e1;
         color: #1e293b;
     }
-    .search-input:focus {
+    .search.has-icon > .search-input:focus,
+    .search.has-icon > input.search-input:focus {
         border-color: #4f46e5;
         box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.2);
     }
-    .search-icon {
-        color: #64748b;
-    }
 }
 
-html[data-theme="light"] .search-input {
+html[data-theme="light"] .search.has-icon > .search-input,
+html[data-theme="light"] .search.has-icon > input.search-input {
     background: rgba(255, 255, 255, 0.8);
     border-color: #cbd5e1;
     color: #1e293b;
 }
 
-html[data-theme="light"] .search-input:focus {
+html[data-theme="light"] .search.has-icon > .search-input:focus,
+html[data-theme="light"] .search.has-icon > input.search-input:focus {
     border-color: #4f46e5;
     box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.2);
-}
-
-html[data-theme="light"] .search-icon {
-    color: #64748b;
 }
 
 /* Search clear button */

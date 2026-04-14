@@ -613,7 +613,7 @@ function MainContent() {
   };
 
   return (
-    <div className="min-h-screen bg-app-main text-primary">
+    <div className="min-h-screen bg-app-main text-primary flex flex-col">
       <AppHeader
         onInscribe={() => setShowInscribeModal(true)}
         showSearch
@@ -629,7 +629,7 @@ function MainContent() {
         onToggleBrc20={() => setHideBrc20(!hideBrc20)}
       />
 
-      <div className="pt-0">
+      <div className="flex-1 pt-0">
         <div
           id="block-scroll"
           ref={scrollRef}
@@ -1004,7 +1004,7 @@ function MainContent() {
 
         {/* Intelligent Footer: only shows when reached end of content */}
         {!hasMoreImages && blocks.length > 0 && (
-          <footer className="nav-glass h-16 flex flex-row items-center border-t border-white/5 relative z-0 shrink-0 mt-auto">
+          <footer className="nav-glass h-16 flex flex-row items-center border-t border-white/5 shrink-0">
             <div className="container mx-auto px-6 h-full flex flex-row items-center justify-between gap-12">
               <div className="flex flex-row items-center gap-3">
                 <div className="flex items-center justify-center w-7 h-7 bg-starlight rounded-lg glow-blue">
