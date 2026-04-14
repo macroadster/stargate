@@ -12,6 +12,11 @@ html[data-theme="light"] .nav-glass {
     border-bottom-color: rgba(0, 0, 0, 0.1);
 }
 
+/* Footer overrides - ensure lower z-index than modals */
+footer.nav-glass {
+    z-index: 0 !important;
+}
+
 .search-container {
     position: relative;
     display: flex;
@@ -22,13 +27,14 @@ html[data-theme="light"] .nav-glass {
     background: rgba(0, 0, 0, 0.2);
     border: 1px solid rgba(255, 255, 255, 0.2);
     border-radius: 0.5rem;
-    padding: 0.5rem 2rem 0.5rem 2rem;
+    padding: 0.5rem 2rem 0.5rem 2.5rem;
     color: #e5e7eb;
     font-size: 0.875rem;
     outline: none;
     transition:
         border-color 0.2s,
         box-shadow 0.2s;
+    width: 100%;
 }
 
 .search-input:focus {
@@ -41,6 +47,7 @@ html[data-theme="light"] .nav-glass {
     left: 0.75rem;
     color: #64748b;
     pointer-events: none;
+    z-index: 1;
 }
 
 @media (prefers-color-scheme: light) {
@@ -156,12 +163,17 @@ html[data-theme="dark"] .search-clear:hover {
 .dropdown-menu {
     background: rgba(30, 41, 59, 0.95) !important;
     border: 1px solid rgba(255, 255, 255, 0.1) !important;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3) !important;
+    border-radius: 8px !important;
+    outline: none !important;
 }
 
 @media (prefers-color-scheme: light) {
     .dropdown-menu {
         background: rgba(255, 255, 255, 0.98) !important;
         border: 1px solid rgba(0, 0, 0, 0.1) !important;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15) !important;
+        border-radius: 8px !important;
     }
 }
 
@@ -5418,4 +5430,93 @@ html[data-theme="dark"] .deliverables-proof-content-header {
 html[data-theme="dark"] .deliverables-proof-content-box {
     background: #1f2937 !important;
     border-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+/* Grid layout fixes for quantumcss v1.11+ compatibility */
+.col-span-full {
+    grid-column: 1 / -1 !important;
+}
+
+.col-span-1 {
+    grid-column: span 1 / span 1 !important;
+}
+
+.col-span-2 {
+    grid-column: span 2 / span 2 !important;
+}
+
+.col-span-3 {
+    grid-column: span 3 / span 3 !important;
+}
+
+.grid {
+    display: grid !important;
+    gap: inherit !important;
+}
+
+.grid-cols-1 {
+    grid-template-columns: repeat(1, minmax(0, 1fr)) !important;
+}
+
+.grid-cols-2 {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+}
+
+.grid-cols-3 {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+}
+
+.grid-cols-4 {
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+}
+
+@media (min-width: 768px) {
+    .md\:col-span-1 {
+        grid-column: span 1 / span 1 !important;
+    }
+    .md\:col-span-2 {
+        grid-column: span 2 / span 2 !important;
+    }
+    .md\:col-span-3 {
+        grid-column: span 3 / span 3 !important;
+    }
+    .md\:grid-cols-1 {
+        grid-template-columns: repeat(1, minmax(0, 1fr)) !important;
+    }
+    .md\:grid-cols-2 {
+        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    }
+    .md\:grid-cols-3 {
+        grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    }
+    .md\:grid-cols-4 {
+        grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+    }
+}
+
+@media (min-width: 1024px) {
+    .lg\:col-span-1 {
+        grid-column: span 1 / span 1 !important;
+    }
+    .lg\:col-span-2 {
+        grid-column: span 2 / span 2 !important;
+    }
+    .lg\:col-span-3 {
+        grid-column: span 3 / span 3 !important;
+    }
+    .lg\:col-span-4 {
+        grid-column: span 4 / span 4 !important;
+    }
+    .lg\:grid-cols-1 {
+        grid-template-columns: repeat(1, minmax(0, 1fr)) !important;
+    }
+    .lg\:grid-cols-2 {
+        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    }
+    .lg\:grid-cols-3 {
+        grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    }
+    .lg\:grid-cols-4 {
+        grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+    }
 }
