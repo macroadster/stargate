@@ -613,7 +613,7 @@ function MainContent() {
   };
 
   return (
-    <div className="min-h-screen bg-app-main text-primary flex flex-col">
+    <div className="bg-app-main text-primary" style={{ display: 'grid', gridTemplateRows: 'auto 1fr auto', minHeight: '100vh' }}>
       <AppHeader
         onInscribe={() => setShowInscribeModal(true)}
         showSearch
@@ -629,7 +629,7 @@ function MainContent() {
         onToggleBrc20={() => setHideBrc20(!hideBrc20)}
       />
 
-      <div className="flex-1 pt-0">
+      <div className="pt-0" style={{ minHeight: 0, overflow: 'auto' }}>
         <div
           id="block-scroll"
           ref={scrollRef}
@@ -1002,18 +1002,18 @@ function MainContent() {
           )}
         </div>
 
-        {/* Intelligent Footer: only shows when reached end of content */}
+{/* Intelligent Footer: only shows when reached end of content */}
         {!hasMoreImages && blocks.length > 0 && (
-          <footer className="nav-glass h-16 flex flex-row items-center border-t border-white/5 shrink-0">
-            <div className="container mx-auto px-6 h-full flex flex-row items-center justify-between gap-12">
-              <div className="flex flex-row items-center gap-3">
+          <footer className="nav-glass border-t border-white/5 shrink-0" style={{ height: '4rem', display: 'flex', alignItems: 'center' }}>
+            <div className="container mx-auto px-6 flex items-center justify-between w-full">
+              <div className="flex items-center gap-3">
                 <div className="flex items-center justify-center w-7 h-7 bg-starlight rounded-lg glow-blue">
                   <span className="text-white text-[10px] font-extrabold">✦</span>
                 </div>
                  <span className="text-lg font-bold text-gradient-starlight">Starlight</span>
               </div>
 
-              <div className="flex flex-row items-center gap-8">
+              <div className="flex items-center gap-8">
                 <a
                   href="https://github.com/macroadster"
                   target="_blank"
@@ -1047,8 +1047,8 @@ function MainContent() {
                   💡 Are you a builder? Try our API!
                 </a>
              </div>
-           </footer>
-         )}
+          </footer>
+        )}
        </div>
 
       {showInscribeModal && (
