@@ -41,7 +41,7 @@ const AppHeader = ({
     if (useSystemTheme) {
       setTheme("light");
     } else if (isDarkMode) {
-      setTheme("system");
+      setTheme("auto");
     } else {
       setTheme("dark");
     }
@@ -57,9 +57,9 @@ const AppHeader = ({
   };
 
   const getThemeTitle = () => {
-    if (useSystemTheme) return "Theme: System (click for light)";
+    if (useSystemTheme) return "Theme: Auto (click for light)";
     return isDarkMode
-      ? "Theme: Dark (click for system)"
+      ? "Theme: Dark (click for auto)"
       : "Theme: Light (click for dark)";
   };
 

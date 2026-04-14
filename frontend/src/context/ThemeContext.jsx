@@ -3,14 +3,23 @@ import React, { createContext, useContext, useState, useEffect, useCallback } fr
 
 const ThemeContext = createContext(null);
 
+const migrateTheme = () => {
+  const saved = localStorage.getItem('theme');
+  if (saved === 'system') {
+    localStorage.setItem('theme', 'auto');
+  }
+};
+
 export const ThemeProvider = ({ children }) => {
+  migrateTheme();
+
   const getSystemTheme = useCallback(() => {
     return window.matchMedia('(prefers-color-scheme: dark)').matches;
   }, []);
 
   const [isDarkMode, setIsDarkMode] = useState(() => {
     const savedTheme = localStorage.getItem('theme');
-    if (savedTheme && savedTheme !== 'system') {
+    if (savedTheme && savedTheme !== 'auto') {
       return savedTheme === 'dark';
     }
     return getSystemTheme();
@@ -18,7 +27,7 @@ export const ThemeProvider = ({ children }) => {
 
   const [useSystemTheme, setUseSystemTheme] = useState(() => {
     const savedTheme = localStorage.getItem('theme');
-    return !savedTheme || savedTheme === 'system';
+    return !savedTheme || savedTheme === 'auto';
   });
 
   useEffect(() => {
@@ -54,10 +63,10 @@ export const ThemeProvider = ({ children }) => {
   }, []);
 
   const setTheme = useCallback((theme) => {
-    if (theme === 'system') {
+    if (theme === 'auto') {
       setUseSystemTheme(true);
       setIsDarkMode(getSystemTheme());
-      localStorage.setItem('theme', 'system');
+      localStorage.setItem('theme', 'auto');
     } else {
       setUseSystemTheme(false);
       setIsDarkMode(theme === 'dark');
