@@ -3427,6 +3427,7 @@ html[data-theme="light"] .deliverables-empty-subtitle {
     justify-content: space-between;
     gap: 1rem;
     flex-wrap: wrap;
+    width: 90%;
 }
 
 .deliverables-header-title {
@@ -3599,6 +3600,7 @@ html[data-theme="light"] .deliverables-count {
     font-size: 0.75rem;
     color: #9ca3af;
     flex-wrap: wrap;
+    width: 90%;
 }
 
 @media (prefers-color-scheme: light) {
@@ -3653,6 +3655,7 @@ html[data-theme="light"] .deliverables-bulk-bar {
     border-radius: 0.5rem;
     background: rgba(255, 255, 255, 0.05);
     overflow: hidden;
+    width: 90%;
 }
 
 @media (prefers-color-scheme: light) {
