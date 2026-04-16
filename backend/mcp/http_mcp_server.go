@@ -2266,6 +2266,13 @@ func (h *HTTPMCPServer) handleVerifyAuthChallenge(ctx context.Context, args map[
 		return nil, NewServiceUnavailableError("verify_auth_challenge", "API key issuer")
 	}
 
+	// Invalidate any existing API keys for this wallet before issuing a new one
+	if reissuer, ok := h.apiKeyIssuer.(auth.APIKeyWalletReissuer); ok {
+		if err := reissuer.InvalidateByWallet(wallet); err != nil {
+			return nil, NewInternalError("verify_auth_challenge", fmt.Sprintf("Failed to invalidate existing keys: %v", err))
+		}
+	}
+
 	apiKeyRec, err := h.apiKeyIssuer.Issue(email, strings.TrimSpace(wallet), "wallet-verify")
 	if err != nil {
 		return nil, NewInternalError("verify_auth_challenge", fmt.Sprintf("Failed to issue API key: %v", err))

@@ -35,6 +35,11 @@ type APIKeyIssuer interface {
 	Issue(email, wallet, source string) (APIKey, error)
 }
 
+// APIKeyWalletReissuer allows invalidating existing keys for a wallet before reissuing.
+type APIKeyWalletReissuer interface {
+	InvalidateByWallet(wallet string) error
+}
+
 // APIKeyStore provides in-memory API key validation/issuance.
 type APIKeyStore struct {
 	mu   sync.RWMutex
@@ -102,6 +107,22 @@ func (s *APIKeyStore) Get(key string) (APIKey, bool) {
 	defer s.mu.RUnlock()
 	rec, ok := s.keys[key]
 	return rec, ok
+}
+
+// InvalidateByWallet removes all API keys associated with a wallet address.
+func (s *APIKeyStore) InvalidateByWallet(wallet string) error {
+	if strings.TrimSpace(wallet) == "" {
+		return fmt.Errorf("wallet required")
+	}
+	normalizedWallet := strings.ToLower(strings.TrimSpace(wallet))
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for key, rec := range s.keys {
+		if strings.ToLower(rec.Wallet) == normalizedWallet {
+			delete(s.keys, key)
+		}
+	}
+	return nil
 }
 
 // Issue creates and stores a new API key.

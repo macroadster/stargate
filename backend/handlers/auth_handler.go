@@ -159,6 +159,15 @@ func (h *APIKeyHandler) HandleVerify(w http.ResponseWriter, r *http.Request) {
 		h.sendError(w, http.StatusForbidden, "invalid signature")
 		return
 	}
+
+	// Invalidate any existing API keys for this wallet before issuing a new one
+	if reissuer, ok := h.issuer.(auth.APIKeyWalletReissuer); ok {
+		if err := reissuer.InvalidateByWallet(body.Wallet); err != nil {
+			h.sendError(w, http.StatusInternalServerError, "failed to invalidate existing keys")
+			return
+		}
+	}
+
 	rec, err := h.issuer.Issue(body.Email, body.Wallet, "wallet-verify")
 	if err != nil {
 		h.sendError(w, http.StatusInternalServerError, "failed to issue api key")

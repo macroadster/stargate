@@ -158,6 +158,19 @@ RETURNING email, wallet_address, source, created_at
 	return rec, nil
 }
 
+// InvalidateByWallet removes all API keys associated with a wallet address.
+func (s *PGAPIKeyStore) InvalidateByWallet(wallet string) error {
+	if strings.TrimSpace(wallet) == "" {
+		return fmt.Errorf("wallet required")
+	}
+	normalizedWallet := strings.ToLower(strings.TrimSpace(wallet))
+
+	_, err := s.pool.Exec(context.Background(),
+		"DELETE FROM api_keys WHERE LOWER(wallet_address) = $1",
+		normalizedWallet)
+	return err
+}
+
 // Seed inserts a provided key if not empty.
 func (s *PGAPIKeyStore) Seed(key, email, source string) {
 	if key == "" {
