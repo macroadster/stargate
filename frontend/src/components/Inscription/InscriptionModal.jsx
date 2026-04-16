@@ -1183,9 +1183,9 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
                           <div className="flex flex-col gap-1">
                             <div className="flex items-center justify-between">
                               <span className="modal-data-label">Contract ID</span>
-                              <CopyButton text={inscription.id} />
+                              <CopyButton text={inscription.contract_id || inscription.id} />
                             </div>
-                            <span className="font-mono text-sm text-primary break-all">{inscription.id}</span>
+                            <span className="font-mono text-sm text-primary break-all">{inscription.contract_id || inscription.id}</span>
                           </div>
                           <div className="flex flex-col gap-1">
                             <div className="flex items-center justify-between">
@@ -2304,9 +2304,9 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
                           <span className="modal-blockchain-label">Transaction ID</span>
                           <div className="flex items-center gap-2">
                             <span className="modal-blockchain-mono">
-                              {inscription.tx_id ? inscription.tx_id.slice(0, 12) + '...' : 'TBD'}
+                              {(inscription.tx_id || inscription.id) ? (inscription.tx_id || inscription.id).slice(0, 12) + '...' : 'TBD'}
                             </span>
-                            <CopyButton text={inscription.tx_id || 'TBD'} />
+                            <CopyButton text={inscription.tx_id || inscription.id || 'TBD'} />
                           </div>
                         </div>
                         <div className="modal-blockchain-row">

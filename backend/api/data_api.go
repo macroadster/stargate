@@ -991,7 +991,13 @@ func buildContractInscriptions(contracts []bitcoin.SmartContractData, height int
 
 		idx := len(out) - 1
 		imageURLs[idx] = fmt.Sprintf("/api/block-image/%d/%s", height, fileName)
-		if meta != nil {
+		if meta == nil {
+			meta = make(map[string]any)
+		}
+		if contract.ContractID != "" {
+			meta["contract_id"] = contract.ContractID
+		}
+		if len(meta) > 0 {
 			metadata[idx] = meta
 		}
 	}

@@ -20,7 +20,8 @@ const mapContractToDisplayFormat = (contract) => {
 
   return {
     id: id,
-    tx_id: contract.tx_id || (contract.status === 'confirmed' ? contract.tx_id : 'TBD'),
+    contract_id: contract.contract_id || contract.id || '',
+    tx_id: contract.tx_id || contract.metadata?.transaction_id || id || '',
     mime_type: imageUrl ? 'image/png' : 'application/json',
     image_url: imageUrl,
     file_name: fileName,

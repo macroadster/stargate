@@ -4,6 +4,8 @@ import { API_BASE, CONTENT_BASE } from '../apiBase';
 const generateInscriptions = (inscriptions) => {
   return inscriptions.map((insc) => ({
     id: insc.id,
+    tx_id: insc.tx_id || insc.metadata?.transaction_id || insc.id || '',
+    contract_id: insc.contract_id || insc.metadata?.contract_id || '',
     type: insc.mime_type?.split('/')[1]?.toUpperCase() || 'UNKNOWN',
     thumbnail: insc.mime_type?.startsWith('image/') ? insc.image_url : null,
     gradient: 'from-indigo-500',
@@ -18,12 +20,14 @@ const generateInscriptions = (inscriptions) => {
     number: insc.number,
     address: insc.address,
     genesis_block_height: insc.genesis_block_height,
+    block_height: insc.block_height || insc.genesis_block_height || 0,
     mime_type: insc.mime_type,
     file_name: insc.file_name,
     file_path: insc.file_path,
     size_bytes: insc.size_bytes,
     image_url: insc.image_url,
-    text: insc.text, // Preserve the text content!
+    text: insc.text,
+    status: insc.status,
     metadata: insc.metadata
   }));
 };
