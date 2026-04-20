@@ -12,7 +12,7 @@ COPY frontend/ ./
 RUN npm run build
 
 # Stage 2: Build the Go backend binary
-FROM golang:1.23-alpine AS backend-builder
+FROM golang:1.25-alpine AS backend-builder
 WORKDIR /app/backend
 # Install build dependencies
 RUN apk add --no-cache git ca-certificates tzdata
@@ -49,7 +49,7 @@ COPY --from=backend-builder /out/stargate /usr/local/bin/stargate
 COPY --from=backend-builder /app/backend/docs ./docs
 COPY --from=backend-builder /app/backend/assets ./assets
 # Create necessary directories
-RUN mkdir -p /app/uploads /app/logs /app/ipfs_objects && \
+RUN mkdir -p /app/uploads /app/logs /app/ipfs_objects /app/ipfs_repo && \
     chown -R stargate:stargate /app
 
 # Set environment variables

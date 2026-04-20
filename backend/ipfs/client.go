@@ -16,7 +16,10 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/ipfs/go-cid"
 )
 
 var publicGateways = []string{
@@ -30,6 +33,7 @@ type Client struct {
 	apiURL     string
 	client     *http.Client
 	storageDir string
+	embedded   *EmbeddedNode
 }
 
 // IsEnabled returns true if IPFS is enabled globally
@@ -38,32 +42,77 @@ func IsEnabled() bool {
 	return strings.TrimSpace(os.Getenv("IPFS_ENABLED")) != "false"
 }
 
+var (
+	globalClient *Client
+	clientOnce   sync.Once
+)
+
 func NewClientFromEnv() *Client {
-	if !IsEnabled() {
-		return nil
-	}
-	apiURL := os.Getenv("IPFS_API_URL")
-	if apiURL == "" {
-		apiURL = "http://127.0.0.1:5001"
-	}
-
-	storageDir := os.Getenv("IPFS_STORAGE_DIR")
-	if storageDir == "" {
-		storageDir = "ipfs_objects"
-	}
-	_ = os.MkdirAll(storageDir, 0755)
-
-	timeout := 30 * time.Second
-	if raw := os.Getenv("IPFS_HTTP_TIMEOUT_SEC"); raw != "" {
-		if v, err := strconv.Atoi(strings.TrimSpace(raw)); err == nil && v > 0 {
-			timeout = time.Duration(v) * time.Second
+	clientOnce.Do(func() {
+		if !IsEnabled() {
+			return
 		}
-	}
-	return &Client{
-		apiURL:     strings.TrimRight(apiURL, "/"),
-		client:     &http.Client{Timeout: timeout},
-		storageDir: storageDir,
-	}
+		apiURL := os.Getenv("IPFS_API_URL")
+		if apiURL == "" {
+			apiURL = "http://127.0.0.1:5001"
+		}
+
+		storageDir := os.Getenv("IPFS_STORAGE_DIR")
+		if storageDir == "" {
+			storageDir = "ipfs_objects"
+		}
+		_ = os.MkdirAll(storageDir, 0755)
+
+		timeout := 30 * time.Second
+		if raw := os.Getenv("IPFS_HTTP_TIMEOUT_SEC"); raw != "" {
+			if v, err := strconv.Atoi(strings.TrimSpace(raw)); err == nil && v > 0 {
+				timeout = time.Duration(v) * time.Second
+			}
+		}
+
+		c := &Client{
+			apiURL:     strings.TrimRight(apiURL, "/"),
+			client:     &http.Client{Timeout: timeout},
+			storageDir: storageDir,
+		}
+
+		// Check if embedded node should be started
+		if strings.ToLower(os.Getenv("IPFS_EMBEDDED_ENABLED")) != "false" {
+			repoPath := os.Getenv("IPFS_EMBEDDED_REPO")
+			if repoPath == "" {
+				repoPath = "ipfs_repo"
+			}
+			_ = os.MkdirAll(repoPath, 0755)
+
+			listenAddr := os.Getenv("IPFS_EMBEDDED_LISTEN")
+			if listenAddr == "" {
+				listenAddr = "/ip4/0.0.0.0/tcp/4001"
+			}
+
+			bootstrapPeers := []string{
+				"/dnsaddr/bootstrap.libp2p.io/p2p/QmNnoo2uR3RvoU7GRM38YfLxH5WUR6kch9uDdtuL96Y96z",
+				"/dnsaddr/bootstrap.libp2p.io/p2p/QmZa1CCAxrCy9RLUX2YMjTyUDCNoS67g7S6pWtu99K86U",
+				"/dnsaddr/bootstrap.libp2p.io/p2p/QmbLHAnMo9UFnm7M3pkXWSTu9LOXSstM6CHeZCPX6G9c7h",
+			}
+			if envBootstrap := os.Getenv("IPFS_EMBEDDED_BOOTSTRAP"); envBootstrap != "" {
+				bootstrapPeers = strings.Split(envBootstrap, ",")
+			}
+
+			node, err := NewEmbeddedNode(context.Background(), NodeConfig{
+				RepoPath:    repoPath,
+				ListenAddrs: []string{listenAddr},
+				Bootstrap:   bootstrapPeers,
+			})
+			if err != nil {
+				log.Printf("Warning: failed to start embedded IPFS node: %v", err)
+			} else {
+				c.embedded = node
+			}
+		}
+		globalClient = c
+	})
+
+	return globalClient
 }
 
 func (c *Client) AddBytes(ctx context.Context, name string, data []byte) (string, error) {
@@ -71,20 +120,25 @@ func (c *Client) AddBytes(ctx context.Context, name string, data []byte) (string
 		return "", fmt.Errorf("IPFS client is disabled")
 	}
 
-	// Try local IPFS node first
+	// 1. Try embedded node first
+	if c.embedded != nil {
+		id, err := c.embedded.Add(ctx, bytes.NewReader(data))
+		if err == nil {
+			return id.String(), nil
+		}
+		log.Printf("Embedded IPFS add failed: %v, trying fallbacks", err)
+	}
+
+	// 2. Try local IPFS node API
 	cid, err := c.addStream(ctx, name, bytes.NewReader(data))
 	if err == nil {
 		return cid, nil
 	}
 
-	// Fallback to local storage if node is missing/down
+	// 3. Fallback to local storage
 	log.Printf("IPFS node unavailable for add (%v), storing locally in %s", err, c.storageDir)
-
-	// Simple SHA256-based CID simulation for local storage
 	hash := sha256.Sum256(data)
-	// We'll use a prefix that looks like a CID but is just our local hash
 	localCID := fmt.Sprintf("local-%x", hash)
-
 	target := filepath.Join(c.storageDir, localCID)
 	if err := os.WriteFile(target, data, 0644); err != nil {
 		return "", fmt.Errorf("failed to store IPFS object locally: %w", err)
@@ -97,6 +151,9 @@ func (c *Client) AddBytes(ctx context.Context, name string, data []byte) (string
 func (c *Client) CheckNode(ctx context.Context) error {
 	if c == nil {
 		return fmt.Errorf("IPFS client is disabled")
+	}
+	if c.embedded != nil {
+		return nil
 	}
 	reqURL := fmt.Sprintf("%s/api/v0/id", c.apiURL)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, nil)
@@ -172,22 +229,34 @@ func (c *Client) addStream(ctx context.Context, name string, reader io.Reader) (
 	return lastHash, nil
 }
 
-func (c *Client) Cat(ctx context.Context, cid string) ([]byte, error) {
+func (c *Client) Cat(ctx context.Context, cidStr string) ([]byte, error) {
 	if c == nil {
 		return nil, fmt.Errorf("IPFS client is disabled")
 	}
-	if strings.TrimSpace(cid) == "" {
+	if strings.TrimSpace(cidStr) == "" {
 		return nil, fmt.Errorf("ipfs cat missing cid")
 	}
 
-	// 1. Try local filesystem storage (objects we "added" while node was down)
-	localPath := filepath.Join(c.storageDir, cid)
+	// 1. Try embedded node first
+	if c.embedded != nil && !strings.HasPrefix(cidStr, "local-") {
+		id, err := cid.Parse(cidStr)
+		if err == nil {
+			rc, err := c.embedded.Cat(ctx, id)
+			if err == nil {
+				defer rc.Close()
+				return io.ReadAll(rc)
+			}
+		}
+	}
+
+	// 2. Try local filesystem storage (objects we "added" while node was down)
+	localPath := filepath.Join(c.storageDir, cidStr)
 	if data, err := os.ReadFile(localPath); err == nil {
 		return data, nil
 	}
 
-	// 2. Try local IPFS node (if configured/reachable)
-	reqURL := fmt.Sprintf("%s/api/v0/cat?arg=%s", c.apiURL, url.QueryEscape(cid))
+	// 3. Try local IPFS node API (if configured/reachable)
+	reqURL := fmt.Sprintf("%s/api/v0/cat?arg=%s", c.apiURL, url.QueryEscape(cidStr))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, nil)
 	if err == nil {
 		resp, err := c.client.Do(req)
@@ -199,12 +268,12 @@ func (c *Client) Cat(ctx context.Context, cid string) ([]byte, error) {
 		}
 	}
 
-	// 3. Try public IPFS gateways
-	if !strings.HasPrefix(cid, "local-") {
-		return c.catFromGateways(ctx, cid)
+	// 4. Try public IPFS gateways
+	if !strings.HasPrefix(cidStr, "local-") {
+		return c.catFromGateways(ctx, cidStr)
 	}
 
-	return nil, fmt.Errorf("ipfs cat failed: object %s not found locally or via gateways", cid)
+	return nil, fmt.Errorf("ipfs cat failed: object %s not found locally or via gateways", cidStr)
 }
 
 func (c *Client) catFromGateways(ctx context.Context, cid string) ([]byte, error) {
@@ -240,6 +309,15 @@ func (c *Client) PubsubPublish(ctx context.Context, topic string, message []byte
 	if strings.TrimSpace(topic) == "" {
 		return fmt.Errorf("ipfs pubsub missing topic")
 	}
+
+	// 1. Try embedded node first
+	if c.embedded != nil {
+		if err := c.embedded.PubsubPublish(ctx, topic, message); err == nil {
+			return nil
+		}
+	}
+
+	// 2. Try local IPFS node API
 	encodedTopic := url.QueryEscape(multibaseEncodeString(topic))
 	reqURL := fmt.Sprintf("%s/api/v0/pubsub/pub?arg=%s", c.apiURL, encodedTopic)
 
@@ -265,4 +343,37 @@ func (c *Client) PubsubPublish(ctx context.Context, topic string, message []byte
 		return nil // Non-blocking
 	}
 	return nil
+}
+
+// Close shuts down the IPFS client and embedded node
+func (c *Client) Close() error {
+	if c.embedded != nil {
+		return c.embedded.Close()
+	}
+	return nil
+}
+
+// PeerID returns the peer ID of the embedded node or local API node
+func (c *Client) PeerID(ctx context.Context) string {
+	if c.embedded != nil {
+		return c.embedded.PeerID()
+	}
+
+	reqURL := fmt.Sprintf("%s/api/v0/id", c.apiURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, nil)
+	if err != nil {
+		return ""
+	}
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	var payload struct {
+		ID string `json:"ID"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err == nil {
+		return payload.ID
+	}
+	return ""
 }

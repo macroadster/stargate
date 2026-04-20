@@ -372,14 +372,26 @@ func startMCPServices(escort *smart_contract.EscortService) {
 func main() {
 	log.Println("=== STARTING STARGATE BACKEND ===")
 
+	// Initialize MCP components (needed for both server and background)
+	store, apiKeyIssuer, apiKeyValidator, ingestionSvc, challengeStore := initializeMCPComponents()
+
+	// Initialize IPFS client (includes embedded node if enabled)
+	ipfsClient := ipfs.NewClientFromEnv()
+	defer func() {
+		if ipfsClient != nil {
+			log.Println("Shutting down IPFS client...")
+			_ = ipfsClient.Close()
+		}
+	}()
+
 	// Start HTTP server (includes MCP endpoints)
-	go runHTTPServer()
+	go runHTTPServer(store, apiKeyIssuer, apiKeyValidator, ingestionSvc, challengeStore, ipfsClient)
 
 	// Wait indefinitely
 	select {} // Block forever
 }
 
-func runHTTPServer() {
+func runHTTPServer(store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, apiKeyValidator auth.APIKeyValidator, ingestionSvc *services.IngestionService, challengeStore *auth.ChallengeStore, ipfsClient *ipfs.Client) {
 	log.Println("=== STARTING STARGATE HTTP SERVER ===")
 
 	// Initialize IPFS native storage
@@ -398,9 +410,6 @@ func runHTTPServer() {
 	if ipfsCfg.Enabled {
 		go mirror.startWithRetry(context.Background(), ipfsCfg)
 	}
-
-	// Initialize MCP components (for HTTP routes)
-	store, apiKeyIssuer, apiKeyValidator, ingestionSvc, challengeStore := initializeMCPComponents()
 
 	// Initialize dependency container
 	container := container.NewContainer(apiKeyIssuer, apiKeyValidator)
