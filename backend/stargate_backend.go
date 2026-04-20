@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"embed"
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -31,6 +33,9 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
+
+//go:embed assets/frontend/*
+var frontendAssets embed.FS
 
 func contentTypeForFormat(format string) string {
 	switch strings.ToLower(format) {
@@ -562,16 +567,45 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 	_ = os.MkdirAll(resultsDir, 0755)
 	mux.Handle("/sandbox/", http.StripPrefix("/sandbox/", http.FileServer(http.Dir(resultsDir))))
 
-	// Serve frontend files
+	// Serve frontend files from embedded FS
+	frontendFS, _ := fs.Sub(frontendAssets, "assets/frontend")
+	fileServer := http.FileServer(http.FS(frontendFS))
+
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/" {
-			http.ServeFile(w, r, "../index.html")
+		// Clean the path to prevent directory traversal
+		path := filepath.Clean(strings.TrimPrefix(r.URL.Path, "/"))
+		if path == "." || path == "" {
+			path = "index.html"
+		}
+
+		// Check if the file exists in the embedded FS
+		_, err := frontendFS.Open(path)
+		if err == nil {
+			fileServer.ServeHTTP(w, r)
 			return
 		}
-		if r.URL.Path == "/app.js" {
-			http.ServeFile(w, r, "../app.js")
-			return
+
+		// Fallback to index.html for SPA routing
+		// Only fallback if it doesn't look like an API or content request
+		if !strings.HasPrefix(r.URL.Path, "/api/") &&
+			!strings.HasPrefix(r.URL.Path, "/bitcoin/") &&
+			!strings.HasPrefix(r.URL.Path, "/mcp/") &&
+			!strings.HasPrefix(r.URL.Path, "/content/") &&
+			!strings.HasPrefix(r.URL.Path, "/uploads/") &&
+			!strings.HasPrefix(r.URL.Path, "/sandbox/") &&
+			!strings.HasPrefix(r.URL.Path, "/stego/") &&
+			!strings.HasPrefix(r.URL.Path, "/analyze/") &&
+			!strings.HasPrefix(r.URL.Path, "/generate/") &&
+			!strings.HasPrefix(r.URL.Path, "/metrics") &&
+			!strings.HasPrefix(r.URL.Path, "/swagger") {
+			indexContent, err := fs.ReadFile(frontendFS, "index.html")
+			if err == nil {
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				w.Write(indexContent)
+				return
+			}
 		}
+
 		http.NotFound(w, r)
 	})
 

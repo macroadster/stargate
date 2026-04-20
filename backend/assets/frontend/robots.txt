@@ -1,0 +1,11 @@
+# https://www.robotstxt.org/robotstxt.html
+User-agent: *
+Allow: /
+
+# Block common development/build files
+Disallow: /build/
+Disallow: /node_modules/
+
+# Sitemap location
+Sitemap: https://starlight-ai.freemyip.com/sitemap.xml
+

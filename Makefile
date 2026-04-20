@@ -6,16 +6,33 @@ PROPOSAL_ID ?=
 
 FRONTEND_IMAGE := stargate-frontend:latest
 BACKEND_IMAGE := stargate-backend:latest
+SINGLE_IMAGE := stargate:latest
 
-.PHONY: all frontend backend mcp-e2e
-all: frontend backend
+.PHONY: all frontend-legacy backend-legacy mcp-e2e single-binary docker-single-binary
+all: single-binary
 
-frontend:
-	@echo "Building frontend Docker image: $(FRONTEND_IMAGE)"
+docker-single-binary:
+	@echo "Building single Docker image: $(SINGLE_IMAGE)"
+	docker build -t $(SINGLE_IMAGE) -f Dockerfile.single .
+
+single-binary:
+	@echo "Building single binary project..."
+	@echo "1. Building frontend..."
+	@cd frontend && npm install && npm run build
+	@echo "2. Preparing assets..."
+	@mkdir -p backend/assets/frontend
+	@rm -rf backend/assets/frontend/*
+	@cp -rv frontend/build/* backend/assets/frontend/
+	@echo "3. Building backend binary..."
+	@cd backend && CGO_ENABLED=0 go build -o ../stargate .
+	@echo "Done! Binary produced as ./stargate"
+
+frontend-legacy:
+	@echo "Building frontend Docker image (LEGACY): $(FRONTEND_IMAGE)"
 	@cd frontend && docker build -t $(FRONTEND_IMAGE) .
 
-backend:
-	@echo "Building backend Docker image: $(BACKEND_IMAGE)"
+backend-legacy:
+	@echo "Building backend Docker image (LEGACY): $(BACKEND_IMAGE)"
 	@cd backend && docker build -t $(BACKEND_IMAGE) .
 
 mcp-e2e:
