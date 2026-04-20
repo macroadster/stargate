@@ -269,12 +269,23 @@ func initializeMCPComponents() (scmiddleware.Store, auth.APIKeyIssuer, auth.APIK
 			ingestionSvc = svc
 		}
 	} else {
-		// Use memory store
-		store = scstore.NewMemoryStore(claimTTL)
+		// Use SQLite store for embedded mode (persisted to disk)
+		dataDir := os.Getenv("STARGATE_DATA_DIR")
+		if dataDir == "" {
+			dataDir = "."
+		}
+		mcpDbPath := filepath.Join(dataDir, "mcp.db")
+		store, err = scstore.NewSQLiteStore(mcpDbPath, claimTTL, seed)
+		if err != nil {
+			log.Printf("failed to create SQLite MCP store (%v), falling back to memory store", err)
+			store = scstore.NewMemoryStore(claimTTL)
+		} else {
+			log.Printf("Using embedded SQLite MCP store at %s", mcpDbPath)
+		}
 	}
 
 	// Log the actual store type being used
-	actualStoreType := "memory"
+	actualStoreType := "sqlite"
 	if pgDsn != "" {
 		actualStoreType = "postgres"
 	}
@@ -303,27 +314,26 @@ func initializeMCPComponents() (scmiddleware.Store, auth.APIKeyIssuer, auth.APIK
 	return store, apiIssuer, apiValidator, ingestionSvc, challengeStore
 }
 
-// startMCPServices starts background services when using PostgreSQL
-func startMCPServices(escort *smart_contract.EscortService) {
+// startMCPServices starts background services for sync (works with PostgreSQL or embedded SQLite).
+func startMCPServices(escort *smart_contract.EscortService, store scmiddleware.Store) {
 	pgDsn := os.Getenv("STARGATE_PG_DSN")
-	if pgDsn == "" {
-		log.Printf("STARGATE_PG_DSN not set, skipping background services")
+
+	if store == nil {
+		log.Printf("no valid store available, skipping background services")
 		return
 	}
 
-	// Create a temporary store for sync services
-	ttlHours := 72
-	if raw := os.Getenv("STARGATE_DEFAULT_CLAIM_TTL_HOURS"); raw != "" {
-		if v, err := strconv.Atoi(raw); err == nil && v > 0 {
-			ttlHours = v
+	// Build ingestion DSN for sync
+	var ingestDsn string
+	if pgDsn != "" {
+		ingestDsn = pgDsn
+	} else {
+		// Use embedded SQLite for ingestion
+		dataDir := os.Getenv("STARGATE_DATA_DIR")
+		if dataDir == "" {
+			dataDir = "."
 		}
-	}
-	claimTTL := time.Duration(ttlHours) * time.Hour
-
-	store, err := scstore.NewPGStore(context.Background(), pgDsn, claimTTL, false)
-	if err != nil {
-		log.Printf("failed to create store for MCP services (%v), skipping background services", err)
-		return
+		ingestDsn = filepath.Join(dataDir, "ingestions.db")
 	}
 
 	// Start ingestion -> MCP sync
@@ -335,7 +345,7 @@ func startMCPServices(escort *smart_contract.EscortService) {
 			}
 		}
 
-		if err := scmiddleware.StartIngestionSync(context.Background(), pgDsn, store, syncInterval); err != nil {
+		if err := scmiddleware.StartIngestionSync(context.Background(), ingestDsn, store, syncInterval); err != nil {
 			log.Printf("ingestion sync disabled (init error): %v", err)
 		} else {
 			log.Printf("ingestion sync enabled (interval=%s)", syncInterval)
@@ -434,7 +444,7 @@ func runHTTPServer(store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, api
 
 	// Start MCP background services if using PostgreSQL AND MCP server is not running separately
 	if os.Getenv("STARGATE_MODE") != "mcp-only" && os.Getenv("STARGATE_MODE") != "both" {
-		startMCPServices(escort)
+		startMCPServices(escort, store)
 	} else {
 		log.Println("MCP background services skipped (will be handled by separate MCP process)")
 	}
