@@ -195,12 +195,47 @@ func (n *EmbeddedNode) Cat(ctx context.Context, c cid.Cid) (io.ReadCloser, error
 }
 
 // PubsubPublish publishes a message to a topic
-func (n *EmbeddedNode) PubsubPublish(ctx context.Context, topic string, data []byte) error {
-	t, err := n.getTopic(topic)
+func (n *EmbeddedNode) PubsubPublish(ctx context.Context, topicName string, data []byte) error {
+	t, err := n.getTopic(topicName)
 	if err != nil {
 		return err
 	}
 	return t.Publish(ctx, data)
+}
+
+// PubsubSubscribe subscribes to a topic and returns a channel of messages
+func (n *EmbeddedNode) PubsubSubscribe(ctx context.Context, topicName string) (<-chan []byte, error) {
+	t, err := n.getTopic(topicName)
+	if err != nil {
+		return nil, err
+	}
+
+	sub, err := t.Subscribe()
+	if err != nil {
+		return nil, err
+	}
+
+	out := make(chan []byte, 100)
+	go func() {
+		defer sub.Cancel()
+		for {
+			msg, err := sub.Next(n.ctx)
+			if err != nil {
+				if n.ctx.Err() == nil {
+					log.Printf("Pubsub subscription to %s error: %v", topicName, err)
+				}
+				close(out)
+				return
+			}
+			// Don't process our own messages
+			if msg.ReceivedFrom == n.host.ID() {
+				continue
+			}
+			out <- msg.Data
+		}
+	}()
+
+	return out, nil
 }
 
 func (n *EmbeddedNode) getTopic(name string) (*pubsub.Topic, error) {
