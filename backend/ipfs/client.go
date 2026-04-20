@@ -89,11 +89,7 @@ func NewClientFromEnv() *Client {
 				listenAddr = "/ip4/0.0.0.0/tcp/4001"
 			}
 
-			bootstrapPeers := []string{
-				"/dnsaddr/bootstrap.libp2p.io/p2p/QmNnoo2uR3RvoU7GRM38YfLxH5WUR6kch9uDdtuL96Y96z",
-				"/dnsaddr/bootstrap.libp2p.io/p2p/QmZa1CCAxrCy9RLUX2YMjTyUDCNoS67g7S6pWtu99K86U",
-				"/dnsaddr/bootstrap.libp2p.io/p2p/QmbLHAnMo9UFnm7M3pkXWSTu9LOXSstM6CHeZCPX6G9c7h",
-			}
+			var bootstrapPeers []string
 			if envBootstrap := os.Getenv("IPFS_EMBEDDED_BOOTSTRAP"); envBootstrap != "" {
 				bootstrapPeers = strings.Split(envBootstrap, ",")
 			}
@@ -343,6 +339,69 @@ func (c *Client) PubsubPublish(ctx context.Context, topic string, message []byte
 		return nil // Non-blocking
 	}
 	return nil
+}
+
+// PubsubSubscribe subscribes to a topic and returns a channel of message data.
+// It handles both embedded node and external HTTP API streaming.
+func (c *Client) PubsubSubscribe(ctx context.Context, topic string) (<-chan []byte, error) {
+	if c == nil {
+		return nil, fmt.Errorf("IPFS client is disabled")
+	}
+
+	// 1. Try embedded node first
+	if c.embedded != nil {
+		return c.embedded.PubsubSubscribe(ctx, topic)
+	}
+
+	// 2. Fallback to HTTP API streaming
+	encodedTopic := url.QueryEscape(multibaseEncodeString(topic))
+	reqURL := fmt.Sprintf("%s/api/v0/pubsub/sub?arg=%s", c.apiURL, encodedTopic)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		return nil, fmt.Errorf("IPFS pubsub sub failed with status %d", resp.StatusCode)
+	}
+
+	out := make(chan []byte, 100)
+	go func() {
+		defer resp.Body.Close()
+		defer close(out)
+
+		decoder := json.NewDecoder(resp.Body)
+		for {
+			var msg struct {
+				Data string `json:"data"`
+			}
+			if err := decoder.Decode(&msg); err != nil {
+				if ctx.Err() == nil {
+					log.Printf("IPFS HTTP pubsub decoder error: %v", err)
+				}
+				return
+			}
+
+			// External API usually sends base64/multibase data
+			data := decodeMultibasePayload([]byte(msg.Data))
+			if data == nil {
+				data = decodeBase64Payload(msg.Data)
+			}
+			if data == nil {
+				data = []byte(msg.Data)
+			}
+			out <- data
+		}
+	}()
+
+	return out, nil
 }
 
 // Close shuts down the IPFS client and embedded node
