@@ -28,3 +28,4 @@ backend/stargate-backend*
 .dolt/
 *.db
 .beads-credential-key
+\n# IPFS storage\nipfs_objects/\nipfs_repo/\n\n# Build\nstargate
