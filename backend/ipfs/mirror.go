@@ -269,12 +269,17 @@ func StartMirror(ctx context.Context, cfg MirrorConfig) (*Mirror, error) {
 
 	peerID, err := m.fetchPeerID(ctx)
 	if err != nil {
-		return nil, err
+		log.Printf("IPFS mirror: local node not reachable (%v), mirror will be in standby/fallback mode", err)
+		m.cfg.UploadEnabled = false
+		m.cfg.DownloadEnabled = false
+		return m, nil
 	}
 	m.peerID = peerID
 
 	if err := m.ensurePubsubReady(ctx); err != nil {
-		return nil, err
+		log.Printf("IPFS mirror: pubsub not supported or ready (%v), pubsub features disabled", err)
+		m.cfg.UploadEnabled = false
+		m.cfg.DownloadEnabled = false
 	}
 
 	log.Printf("IPFS mirror enabled (peer=%s topic=%s uploads=%s)", m.peerID, m.cfg.Topic, m.cfg.UploadsDir)

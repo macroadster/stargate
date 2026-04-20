@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"stargate-backend/ipfs"
 )
 
 type stegoPubsubConfig struct {
@@ -83,6 +85,22 @@ func loadStegoPubsubConfig() stegoPubsubConfig {
 	if topic == "" {
 		topic = "stargate-stego"
 	}
+
+	// Native support: check if local IPFS node is reachable for pubsub
+	if enabled {
+		client := ipfs.NewClientFromEnv()
+		if client == nil {
+			enabled = false
+		} else {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			if err := client.CheckNode(ctx); err != nil {
+				log.Printf("stego pubsub sync: local IPFS node not reachable (%v), disabling pubsub sync", err)
+				enabled = false
+			}
+		}
+	}
+
 	return stegoPubsubConfig{
 		Enabled:  enabled,
 		Topic:    topic,

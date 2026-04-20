@@ -93,6 +93,27 @@ func (c *Client) AddBytes(ctx context.Context, name string, data []byte) (string
 	return localCID, nil
 }
 
+// CheckNode returns nil if the IPFS node is reachable, otherwise returns an error.
+func (c *Client) CheckNode(ctx context.Context) error {
+	if c == nil {
+		return fmt.Errorf("IPFS client is disabled")
+	}
+	reqURL := fmt.Sprintf("%s/api/v0/id", c.apiURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("IPFS node returned status %d", resp.StatusCode)
+	}
+	return nil
+}
+
 func (c *Client) addStream(ctx context.Context, name string, reader io.Reader) (string, error) {
 	pr, pw := io.Pipe()
 	writer := multipart.NewWriter(pw)

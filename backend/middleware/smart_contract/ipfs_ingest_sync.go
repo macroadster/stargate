@@ -174,6 +174,22 @@ func loadIPFSIngestSyncConfig() ipfsIngestSyncConfig {
 	}
 	reconcileRecentBlocks := 6
 	reconcileMinInterval := 5 * time.Minute
+
+	// Native support: check if local IPFS node is reachable for pubsub
+	if enabled {
+		client := ipfs.NewClientFromEnv()
+		if client == nil {
+			enabled = false
+		} else {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			if err := client.CheckNode(ctx); err != nil {
+				log.Printf("ipfs ingestion sync: local IPFS node not reachable (%v), disabling pubsub sync", err)
+				enabled = false
+			}
+		}
+	}
+
 	return ipfsIngestSyncConfig{
 		Enabled:               enabled,
 		Interval:              interval,
