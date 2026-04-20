@@ -231,9 +231,20 @@ FROM mcp_contracts c
 	for rows.Next() {
 		var c smart_contract.Contract
 		var metadata, skillsStr []byte
+		var confirmedAtStr, createdAtStr sql.NullString
 		if err := rows.Scan(&c.ContractID, &c.Title, &c.TotalBudgetSats, &c.GoalsCount, &c.AvailableTasksCount,
-			&c.Status, &skillsStr, &c.StegoImageURL, &metadata, &c.ConfirmedBlockHeight, &c.ConfirmedAt, &c.CreatedAt); err != nil {
+			&c.Status, &skillsStr, &c.StegoImageURL, &metadata, &c.ConfirmedBlockHeight, &confirmedAtStr, &createdAtStr); err != nil {
 			return nil, err
+		}
+		if confirmedAtStr.Valid {
+			if t, err := time.Parse(time.RFC3339, confirmedAtStr.String); err == nil {
+				c.ConfirmedAt = &t
+			}
+		}
+		if createdAtStr.Valid {
+			if t, err := time.Parse(time.RFC3339, createdAtStr.String); err == nil {
+				c.CreatedAt = t
+			}
 		}
 		if len(metadata) > 0 {
 			_ = json.Unmarshal(metadata, &c.Metadata)
@@ -296,11 +307,22 @@ AND (? = '' OR claimed_by = ?)
 func scanTaskSQLite(rows *sql.Rows) (smart_contract.Task, error) {
 	var t smart_contract.Task
 	var skillsStr, requirementsStr, merkleProofStr []byte
+	var claimedAtStr, claimExpiresAtStr sql.NullString
 	err := rows.Scan(&t.TaskID, &t.ContractID, &t.GoalID, &t.Title, &t.Description, &t.BudgetSats,
-		&skillsStr, &t.Status, &t.ClaimedBy, &t.ClaimedAt, &t.ClaimExpires, &t.Difficulty,
+		&skillsStr, &t.Status, &t.ClaimedBy, &claimedAtStr, &claimExpiresAtStr, &t.Difficulty,
 		&t.EstimatedHours, &requirementsStr, &merkleProofStr)
 	if err != nil {
 		return t, err
+	}
+	if claimedAtStr.Valid {
+		if tm, err := time.Parse(time.RFC3339, claimedAtStr.String); err == nil {
+			t.ClaimedAt = &tm
+		}
+	}
+	if claimExpiresAtStr.Valid {
+		if tm, err := time.Parse(time.RFC3339, claimExpiresAtStr.String); err == nil {
+			t.ClaimExpires = &tm
+		}
 	}
 	if len(skillsStr) > 0 {
 		t.Skills = strings.Split(string(skillsStr), ",")
@@ -321,11 +343,22 @@ FROM mcp_tasks WHERE task_id=?
 `, id)
 	var t smart_contract.Task
 	var skillsStr, requirementsStr, merkleProofStr []byte
+	var claimedAtStr, claimExpiresAtStr sql.NullString
 	err := row.Scan(&t.TaskID, &t.ContractID, &t.GoalID, &t.Title, &t.Description, &t.BudgetSats,
-		&skillsStr, &t.Status, &t.ClaimedBy, &t.ClaimedAt, &t.ClaimExpires, &t.Difficulty,
+		&skillsStr, &t.Status, &t.ClaimedBy, &claimedAtStr, &claimExpiresAtStr, &t.Difficulty,
 		&t.EstimatedHours, &requirementsStr, &merkleProofStr)
 	if err != nil {
 		return t, ErrTaskNotFound
+	}
+	if claimedAtStr.Valid {
+		if tm, err := time.Parse(time.RFC3339, claimedAtStr.String); err == nil {
+			t.ClaimedAt = &tm
+		}
+	}
+	if claimExpiresAtStr.Valid {
+		if tm, err := time.Parse(time.RFC3339, claimExpiresAtStr.String); err == nil {
+			t.ClaimExpires = &tm
+		}
 	}
 	if len(skillsStr) > 0 {
 		t.Skills = strings.Split(string(skillsStr), ",")
@@ -342,15 +375,21 @@ FROM mcp_tasks WHERE task_id=?
 func (s *SQLiteStore) GetContract(id string) (smart_contract.Contract, error) {
 	var c smart_contract.Contract
 	var metadata, skillsStr []byte
+	var confirmedAtStr sql.NullString
 	err := s.db.QueryRowContext(context.Background(), `
 SELECT contract_id, title, total_budget_sats, goals_count,
        (SELECT COUNT(*) FROM mcp_tasks t WHERE t.contract_id = mcp_contracts.contract_id AND t.status = 'available') AS available_tasks_count,
        status, skills, stego_image_url, confirmed_block_height, confirmed_at, metadata
 FROM mcp_contracts WHERE contract_id=?
 `, id).Scan(&c.ContractID, &c.Title, &c.TotalBudgetSats, &c.GoalsCount, &c.AvailableTasksCount,
-		&c.Status, &skillsStr, &c.StegoImageURL, &c.ConfirmedBlockHeight, &c.ConfirmedAt, &metadata)
+		&c.Status, &skillsStr, &c.StegoImageURL, &c.ConfirmedBlockHeight, &confirmedAtStr, &metadata)
 	if err != nil {
 		return c, fmt.Errorf("contract %s not found", id)
+	}
+	if confirmedAtStr.Valid {
+		if t, err := time.Parse(time.RFC3339, confirmedAtStr.String); err == nil {
+			c.ConfirmedAt = &t
+		}
 	}
 	if len(metadata) > 0 {
 		_ = json.Unmarshal(metadata, &c.Metadata)
@@ -518,9 +557,20 @@ ORDER BY s.created_at DESC
 	var out []smart_contract.Submission
 	for rows.Next() {
 		var sub smart_contract.Submission
-		var delivJSON, proofJSON, rejectionReason, rejectionType, rejectedAt []byte
-		if err := rows.Scan(&sub.SubmissionID, &sub.ClaimID, &sub.TaskID, &sub.Status, &delivJSON, &proofJSON, &rejectionReason, &rejectionType, &rejectedAt, &sub.CreatedAt); err != nil {
+		var delivJSON, proofJSON, rejectionReason, rejectionType []byte
+		var rejectedAtStr, createdAtStr sql.NullString
+		if err := rows.Scan(&sub.SubmissionID, &sub.ClaimID, &sub.TaskID, &sub.Status, &delivJSON, &proofJSON, &rejectionReason, &rejectionType, &rejectedAtStr, &createdAtStr); err != nil {
 			return nil, err
+		}
+		if rejectedAtStr.Valid {
+			if t, err := time.Parse(time.RFC3339, rejectedAtStr.String); err == nil {
+				sub.RejectedAt = &t
+			}
+		}
+		if createdAtStr.Valid {
+			if t, err := time.Parse(time.RFC3339, createdAtStr.String); err == nil {
+				sub.CreatedAt = t
+			}
 		}
 		if len(delivJSON) > 0 {
 			_ = json.Unmarshal(delivJSON, &sub.Deliverables)
@@ -547,8 +597,19 @@ WHERE s.submission_id = ?
 	if rows.Next() {
 		var sub smart_contract.Submission
 		var delivJSON, proofJSON []byte
-		if err := rows.Scan(&sub.SubmissionID, &sub.ClaimID, &sub.TaskID, &sub.Status, &delivJSON, &proofJSON, &sub.RejectionReason, &sub.RejectionType, &sub.RejectedAt, &sub.CreatedAt); err != nil {
+		var rejectedAtStr, createdAtStr sql.NullString
+		if err := rows.Scan(&sub.SubmissionID, &sub.ClaimID, &sub.TaskID, &sub.Status, &delivJSON, &proofJSON, &sub.RejectionReason, &sub.RejectionType, &rejectedAtStr, &createdAtStr); err != nil {
 			return smart_contract.Submission{}, err
+		}
+		if rejectedAtStr.Valid {
+			if t, err := time.Parse(time.RFC3339, rejectedAtStr.String); err == nil {
+				sub.RejectedAt = &t
+			}
+		}
+		if createdAtStr.Valid {
+			if t, err := time.Parse(time.RFC3339, createdAtStr.String); err == nil {
+				sub.CreatedAt = t
+			}
 		}
 		if len(delivJSON) > 0 {
 			_ = json.Unmarshal(delivJSON, &sub.Deliverables)
@@ -847,8 +908,14 @@ func (s *SQLiteStore) ListProposals(ctx context.Context, filter smart_contract.P
 	for rows.Next() {
 		var p smart_contract.Proposal
 		var metadata []byte
-		if err := rows.Scan(&p.ID, &p.Title, &p.DescriptionMD, &p.VisiblePixelHash, &p.BudgetSats, &p.Status, &metadata, &p.CreatedAt); err != nil {
+		var createdAtStr sql.NullString
+		if err := rows.Scan(&p.ID, &p.Title, &p.DescriptionMD, &p.VisiblePixelHash, &p.BudgetSats, &p.Status, &metadata, &createdAtStr); err != nil {
 			return nil, err
+		}
+		if createdAtStr.Valid {
+			if t, err := time.Parse(time.RFC3339, createdAtStr.String); err == nil {
+				p.CreatedAt = t
+			}
 		}
 		if len(metadata) > 0 {
 			_ = json.Unmarshal(metadata, &p.Metadata)
@@ -861,12 +928,18 @@ func (s *SQLiteStore) ListProposals(ctx context.Context, filter smart_contract.P
 func (s *SQLiteStore) GetProposal(ctx context.Context, id string) (smart_contract.Proposal, error) {
 	var p smart_contract.Proposal
 	var metadata []byte
+	var createdAtStr sql.NullString
 	err := s.db.QueryRowContext(ctx, `
 SELECT id, title, description_md, visible_pixel_hash, budget_sats, status, metadata, created_at
 FROM mcp_proposals WHERE id=?
-`, id).Scan(&p.ID, &p.Title, &p.DescriptionMD, &p.VisiblePixelHash, &p.BudgetSats, &p.Status, &metadata, &p.CreatedAt)
+`, id).Scan(&p.ID, &p.Title, &p.DescriptionMD, &p.VisiblePixelHash, &p.BudgetSats, &p.Status, &metadata, &createdAtStr)
 	if err != nil {
 		return smart_contract.Proposal{}, fmt.Errorf("proposal %s not found", id)
+	}
+	if createdAtStr.Valid {
+		if t, err := time.Parse(time.RFC3339, createdAtStr.String); err == nil {
+			p.CreatedAt = t
+		}
 	}
 	if len(metadata) > 0 {
 		_ = json.Unmarshal(metadata, &p.Metadata)
@@ -1018,9 +1091,15 @@ FROM mcp_proposals WHERE id LIKE 'rework-%-%' AND metadata->>'contract_id' = ?
 	for rows.Next() {
 		var id, title, desc string
 		var metadata []byte
-		var createdAt time.Time
-		if err := rows.Scan(&id, &title, &desc, &metadata, &createdAt); err != nil {
+		var createdAtStr sql.NullString
+		if err := rows.Scan(&id, &title, &desc, &metadata, &createdAtStr); err != nil {
 			continue
+		}
+		var createdAt time.Time
+		if createdAtStr.Valid {
+			if t, err := time.Parse(time.RFC3339, createdAtStr.String); err == nil {
+				createdAt = t
+			}
 		}
 		reqs = append(reqs, smart_contract.ContractReworkRequest{
 			RequestID:  id,
