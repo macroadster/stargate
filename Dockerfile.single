@@ -49,7 +49,7 @@ COPY --from=backend-builder /out/stargate /usr/local/bin/stargate
 COPY --from=backend-builder /app/backend/docs ./docs
 COPY --from=backend-builder /app/backend/assets ./assets
 # Create necessary directories
-RUN mkdir -p /app/uploads /app/logs && \
+RUN mkdir -p /app/uploads /app/logs /app/ipfs_objects && \
     chown -R stargate:stargate /app
 
 # Set environment variables

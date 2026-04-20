@@ -382,6 +382,17 @@ func main() {
 func runHTTPServer() {
 	log.Println("=== STARTING STARGATE HTTP SERVER ===")
 
+	// Initialize IPFS native storage
+	ipfsStorageDir := os.Getenv("IPFS_STORAGE_DIR")
+	if ipfsStorageDir == "" {
+		ipfsStorageDir = "ipfs_objects"
+	}
+	if err := os.MkdirAll(ipfsStorageDir, 0755); err != nil {
+		log.Printf("Warning: failed to create IPFS storage directory %s: %v", ipfsStorageDir, err)
+	} else {
+		log.Printf("IPFS native storage initialized at: %s", ipfsStorageDir)
+	}
+
 	var mirror mirrorState
 	ipfsCfg := ipfs.LoadMirrorConfig()
 	if ipfsCfg.Enabled {
