@@ -24,7 +24,7 @@ single-binary:
 	@rm -rf backend/assets/frontend/*
 	@cp -rv frontend/build/* backend/assets/frontend/
 	@echo "3. Building backend binary..."
-	@cd backend && CGO_ENABLED=0 go build -o ../stargate .
+	@cd backend && CGO_ENABLED=1 go build -tags gms_pure_go -o ../stargate .
 	@echo "Done! Binary produced as ./stargate"
 
 frontend-legacy:
