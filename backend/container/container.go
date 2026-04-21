@@ -1,7 +1,6 @@
 package container
 
 import (
-	"context"
 	"log"
 	"os"
 	"path/filepath"
@@ -83,7 +82,7 @@ func NewContainer(apiKeyIssuer auth.APIKeyIssuer, apiKeyValidator auth.APIKeyVal
 	qrService := services.NewQRCodeService()
 	healthService := services.NewHealthService()
 	peerService := services.NewPeerService()
-	
+
 	var ingestionService *services.IngestionService
 	if pgDSN != "" {
 		ingestionService = initIngestionService(pgDSN)
@@ -102,30 +101,10 @@ func NewContainer(apiKeyIssuer auth.APIKeyIssuer, apiKeyValidator auth.APIKeyVal
 			dataStorage = pgStore
 		}
 	}
-	if storageType == "dolt" {
-		doltPath := os.Getenv("STARGATE_DOLT_PATH")
-		if doltPath == "" {
-			doltPath = filepath.Join(dataDir, "dolt")
-		}
-		doltCommitName := os.Getenv("STARGATE_DOLT_COMMIT_NAME")
-		if doltCommitName == "" {
-			doltCommitName = "Stargate Bot"
-		}
-		doltCommitEmail := os.Getenv("STARGATE_DOLT_COMMIT_EMAIL")
-		if doltCommitEmail == "" {
-			doltCommitEmail = "bot@stargate.local"
-		}
-		if doltStore, err := storage.NewDoltStorage(context.Background(), doltPath, doltCommitName, doltCommitEmail); err != nil {
-			log.Printf("Failed to init Dolt storage, falling back to filesystem: %v", err)
-		} else {
-			log.Printf("Using Dolt storage backend at %s", doltPath)
-			dataStorage = doltStore
-		}
-	}
 
 	// Initialize handlers
 	healthHandler := handlers.NewHealthHandler(healthService)
-        discoveryHandler := handlers.NewDiscoveryHandler(peerService)
+	discoveryHandler := handlers.NewDiscoveryHandler(peerService)
 	inscriptionHandler := handlers.NewInscriptionHandler(inscriptionService, ingestionService, apiKeyIssuer, apiKeyValidator)
 	blockHandler := handlers.NewBlockHandler(blockService)
 	// contractHandler will be set later with store

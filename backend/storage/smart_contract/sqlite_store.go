@@ -18,6 +18,24 @@ type SQLiteStore struct {
 	claimTTL time.Duration
 }
 
+func parseSQLiteTime(raw string) (*time.Time, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	layouts := []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02 15:04:05",
+	}
+	for _, layout := range layouts {
+		if t, err := time.Parse(layout, raw); err == nil {
+			return &t, nil
+		}
+	}
+	return nil, fmt.Errorf("parse sqlite time %q", raw)
+}
+
 func NewSQLiteStore(dbPath string, claimTTL time.Duration, seed bool) (*SQLiteStore, error) {
 	db, err := sql.Open("sqlite3", dbPath+"?_foreign_keys=on")
 	if err != nil {
@@ -237,13 +255,13 @@ FROM mcp_contracts c
 			return nil, err
 		}
 		if confirmedAtStr.Valid {
-			if t, err := time.Parse(time.RFC3339, confirmedAtStr.String); err == nil {
-				c.ConfirmedAt = &t
+			if t, err := parseSQLiteTime(confirmedAtStr.String); err == nil {
+				c.ConfirmedAt = t
 			}
 		}
 		if createdAtStr.Valid {
-			if t, err := time.Parse(time.RFC3339, createdAtStr.String); err == nil {
-				c.CreatedAt = t
+			if t, err := parseSQLiteTime(createdAtStr.String); err == nil && t != nil {
+				c.CreatedAt = *t
 			}
 		}
 		if len(metadata) > 0 {
@@ -315,13 +333,13 @@ func scanTaskSQLite(rows *sql.Rows) (smart_contract.Task, error) {
 		return t, err
 	}
 	if claimedAtStr.Valid {
-		if tm, err := time.Parse(time.RFC3339, claimedAtStr.String); err == nil {
-			t.ClaimedAt = &tm
+		if tm, err := parseSQLiteTime(claimedAtStr.String); err == nil {
+			t.ClaimedAt = tm
 		}
 	}
 	if claimExpiresAtStr.Valid {
-		if tm, err := time.Parse(time.RFC3339, claimExpiresAtStr.String); err == nil {
-			t.ClaimExpires = &tm
+		if tm, err := parseSQLiteTime(claimExpiresAtStr.String); err == nil {
+			t.ClaimExpires = tm
 		}
 	}
 	if len(skillsStr) > 0 {
@@ -351,13 +369,13 @@ FROM mcp_tasks WHERE task_id=?
 		return t, ErrTaskNotFound
 	}
 	if claimedAtStr.Valid {
-		if tm, err := time.Parse(time.RFC3339, claimedAtStr.String); err == nil {
-			t.ClaimedAt = &tm
+		if tm, err := parseSQLiteTime(claimedAtStr.String); err == nil {
+			t.ClaimedAt = tm
 		}
 	}
 	if claimExpiresAtStr.Valid {
-		if tm, err := time.Parse(time.RFC3339, claimExpiresAtStr.String); err == nil {
-			t.ClaimExpires = &tm
+		if tm, err := parseSQLiteTime(claimExpiresAtStr.String); err == nil {
+			t.ClaimExpires = tm
 		}
 	}
 	if len(skillsStr) > 0 {
@@ -387,8 +405,8 @@ FROM mcp_contracts WHERE contract_id=?
 		return c, fmt.Errorf("contract %s not found", id)
 	}
 	if confirmedAtStr.Valid {
-		if t, err := time.Parse(time.RFC3339, confirmedAtStr.String); err == nil {
-			c.ConfirmedAt = &t
+		if t, err := parseSQLiteTime(confirmedAtStr.String); err == nil {
+			c.ConfirmedAt = t
 		}
 	}
 	if len(metadata) > 0 {
@@ -411,13 +429,13 @@ FROM mcp_claims WHERE claim_id=?
 		return c, ErrClaimNotFound
 	}
 	if expiresAt.Valid {
-		if t, err := time.Parse(time.RFC3339, expiresAt.String); err == nil {
-			c.ExpiresAt = t
+		if t, err := parseSQLiteTime(expiresAt.String); err == nil && t != nil {
+			c.ExpiresAt = *t
 		}
 	}
 	if createdAt.Valid {
-		if t, err := time.Parse(time.RFC3339, createdAt.String); err == nil {
-			c.CreatedAt = t
+		if t, err := parseSQLiteTime(createdAt.String); err == nil && t != nil {
+			c.CreatedAt = *t
 		}
 	}
 	return c, nil
@@ -490,8 +508,8 @@ func (s *SQLiteStore) SubmitWork(claimID string, deliverables map[string]interfa
 		return smart_contract.Submission{}, fmt.Errorf("claim %s not active or submitted", claimID)
 	}
 	if expiresAt.Valid {
-		if t, err := time.Parse(time.RFC3339, expiresAt.String); err == nil {
-			if time.Now().After(t) {
+		if t, err := parseSQLiteTime(expiresAt.String); err == nil && t != nil {
+			if time.Now().After(*t) {
 				return smart_contract.Submission{}, fmt.Errorf("claim %s expired", claimID)
 			}
 		}
@@ -563,13 +581,13 @@ ORDER BY s.created_at DESC
 			return nil, err
 		}
 		if rejectedAtStr.Valid {
-			if t, err := time.Parse(time.RFC3339, rejectedAtStr.String); err == nil {
-				sub.RejectedAt = &t
+			if t, err := parseSQLiteTime(rejectedAtStr.String); err == nil {
+				sub.RejectedAt = t
 			}
 		}
 		if createdAtStr.Valid {
-			if t, err := time.Parse(time.RFC3339, createdAtStr.String); err == nil {
-				sub.CreatedAt = t
+			if t, err := parseSQLiteTime(createdAtStr.String); err == nil && t != nil {
+				sub.CreatedAt = *t
 			}
 		}
 		if len(delivJSON) > 0 {
@@ -602,13 +620,13 @@ WHERE s.submission_id = ?
 			return smart_contract.Submission{}, err
 		}
 		if rejectedAtStr.Valid {
-			if t, err := time.Parse(time.RFC3339, rejectedAtStr.String); err == nil {
-				sub.RejectedAt = &t
+			if t, err := parseSQLiteTime(rejectedAtStr.String); err == nil {
+				sub.RejectedAt = t
 			}
 		}
 		if createdAtStr.Valid {
-			if t, err := time.Parse(time.RFC3339, createdAtStr.String); err == nil {
-				sub.CreatedAt = t
+			if t, err := parseSQLiteTime(createdAtStr.String); err == nil && t != nil {
+				sub.CreatedAt = *t
 			}
 		}
 		if len(delivJSON) > 0 {
@@ -832,9 +850,21 @@ func (s *SQLiteStore) UpsertTask(ctx context.Context, t smart_contract.Task) err
 	taskSkills := strings.Join(t.Skills, ",")
 	_, err := s.db.ExecContext(ctx, `
 INSERT INTO mcp_tasks (task_id, contract_id, goal_id, title, description, budget_sats, skills, status, claimed_by, claimed_at, claim_expires_at, difficulty, estimated_hours, requirements, merkle_proof)
-VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT(task_id) DO UPDATE SET
+  contract_id = excluded.contract_id,
+  goal_id = excluded.goal_id,
+  title = excluded.title,
+  description = excluded.description,
+  budget_sats = excluded.budget_sats,
+  skills = excluded.skills,
   status = excluded.status,
+  claimed_by = COALESCE(excluded.claimed_by, mcp_tasks.claimed_by),
+  claimed_at = COALESCE(excluded.claimed_at, mcp_tasks.claimed_at),
+  claim_expires_at = COALESCE(excluded.claim_expires_at, mcp_tasks.claim_expires_at),
+  difficulty = excluded.difficulty,
+  estimated_hours = excluded.estimated_hours,
+  requirements = excluded.requirements,
   merkle_proof = COALESCE(excluded.merkle_proof, mcp_tasks.merkle_proof)
 `, t.TaskID, t.ContractID, t.GoalID, t.Title, t.Description, t.BudgetSats, taskSkills, t.Status, t.ClaimedBy, t.ClaimedAt, t.ClaimExpires, t.Difficulty, t.EstimatedHours, string(reqJSON), string(proofJSON))
 	return err
@@ -913,8 +943,8 @@ func (s *SQLiteStore) ListProposals(ctx context.Context, filter smart_contract.P
 			return nil, err
 		}
 		if createdAtStr.Valid {
-			if t, err := time.Parse(time.RFC3339, createdAtStr.String); err == nil {
-				p.CreatedAt = t
+			if t, err := parseSQLiteTime(createdAtStr.String); err == nil && t != nil {
+				p.CreatedAt = *t
 			}
 		}
 		if len(metadata) > 0 {
@@ -937,8 +967,8 @@ FROM mcp_proposals WHERE id=?
 		return smart_contract.Proposal{}, fmt.Errorf("proposal %s not found", id)
 	}
 	if createdAtStr.Valid {
-		if t, err := time.Parse(time.RFC3339, createdAtStr.String); err == nil {
-			p.CreatedAt = t
+		if t, err := parseSQLiteTime(createdAtStr.String); err == nil && t != nil {
+			p.CreatedAt = *t
 		}
 	}
 	if len(metadata) > 0 {
@@ -991,21 +1021,144 @@ func (s *SQLiteStore) UpdateProposalMetadata(ctx context.Context, id string, upd
 }
 
 func (s *SQLiteStore) ApproveProposal(ctx context.Context, id string) error {
-	_, err := s.GetProposal(ctx, id)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `UPDATE mcp_proposals SET status='approved' WHERE id=?`, id)
-	return err
+	defer tx.Rollback()
+
+	var metaJSON []byte
+	var currentStatus string
+	var visiblePixelHash string
+	if err := tx.QueryRowContext(ctx, `SELECT metadata, status, visible_pixel_hash FROM mcp_proposals WHERE id=?`, id).Scan(&metaJSON, &currentStatus, &visiblePixelHash); err != nil {
+		return err
+	}
+
+	if strings.EqualFold(currentStatus, "approved") || strings.EqualFold(currentStatus, "published") {
+		return fmt.Errorf("proposal %s is already %s", id, currentStatus)
+	}
+	if !strings.EqualFold(currentStatus, "pending") {
+		return fmt.Errorf("proposal %s must be pending to approve, current status: %s", id, currentStatus)
+	}
+
+	var meta map[string]interface{}
+	if len(metaJSON) > 0 {
+		if err := json.Unmarshal(metaJSON, &meta); err != nil {
+			return err
+		}
+	}
+	if meta == nil {
+		meta = map[string]interface{}{}
+	}
+	if strings.TrimSpace(visiblePixelHash) != "" {
+		if vph, ok := meta["visible_pixel_hash"].(string); !ok || strings.TrimSpace(vph) == "" {
+			meta["visible_pixel_hash"] = visiblePixelHash
+		}
+	}
+
+	proposal, err := s.GetProposal(ctx, id)
+	if err != nil {
+		return err
+	}
+	proposal.Metadata = meta
+	if strings.TrimSpace(proposal.VisiblePixelHash) == "" {
+		proposal.VisiblePixelHash = strings.TrimSpace(visiblePixelHash)
+	}
+	populateProposalTasks(&proposal)
+	if err := ValidateProposalForApproval(&proposal); err != nil {
+		return fmt.Errorf("proposal validation failed: %v", err)
+	}
+
+	contractID := contractIDFromMeta(meta, id)
+	normalizedContractID := NormalizeContractID(contractID)
+	wishContractID := "wish-" + normalizedContractID
+
+	var conflict int
+	if err := tx.QueryRowContext(ctx, `
+SELECT count(*) FROM mcp_proposals
+WHERE id<>? AND status IN ('approved','published')
+AND (
+  id IN (?, ?) OR
+  visible_pixel_hash IN (?, ?)
+)
+`, id, normalizedContractID, wishContractID, normalizedContractID, wishContractID).Scan(&conflict); err != nil {
+		return err
+	}
+	if conflict > 0 {
+		return fmt.Errorf("another proposal is already approved/published for contract %s", normalizedContractID)
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+UPDATE mcp_proposals SET status='rejected'
+WHERE id<>? AND status='pending' AND (
+  id IN (?, ?) OR
+  visible_pixel_hash IN (?, ?)
+)
+`, id, normalizedContractID, wishContractID, normalizedContractID, wishContractID); err != nil {
+		return err
+	}
+
+	var taskCount int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM mcp_tasks WHERE contract_id=?`, contractID).Scan(&taskCount); err != nil {
+		return err
+	}
+	if len(proposal.Tasks) == 0 && taskCount == 0 {
+		return fmt.Errorf("approved proposals must contain at least one task")
+	}
+
+	if _, err := tx.ExecContext(ctx, `UPDATE mcp_proposals SET status='approved' WHERE id=?`, id); err != nil {
+		return err
+	}
+
+	visible := strings.TrimSpace(visiblePixelHash)
+	if visible == "" {
+		if v, ok := meta["visible_pixel_hash"].(string); ok {
+			visible = strings.TrimSpace(v)
+		}
+	}
+	if visible != "" {
+		wishID := "wish-" + visible
+		if _, err := tx.ExecContext(ctx, `UPDATE mcp_contracts SET status='superseded' WHERE contract_id=?`, wishID); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
 }
 
 func (s *SQLiteStore) PublishProposal(ctx context.Context, id string) error {
-	_, err := s.GetProposal(ctx, id)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `UPDATE mcp_proposals SET status='published' WHERE id=?`, id)
-	return err
+	defer tx.Rollback()
+
+	var status string
+	var metaJSON []byte
+	if err := tx.QueryRowContext(ctx, `SELECT status, metadata FROM mcp_proposals WHERE id=?`, id).Scan(&status, &metaJSON); err != nil {
+		return err
+	}
+	if !strings.EqualFold(status, "approved") && !strings.EqualFold(status, "published") {
+		return fmt.Errorf("proposal %s must be approved before publish", id)
+	}
+
+	var meta map[string]interface{}
+	if len(metaJSON) > 0 {
+		_ = json.Unmarshal(metaJSON, &meta)
+	}
+	contractID := contractIDFromMeta(meta, id)
+
+	if _, err := tx.ExecContext(ctx, `UPDATE mcp_tasks SET status='published' WHERE contract_id=? AND status IN ('submitted','pending_review','claimed','approved')`, contractID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE mcp_claims SET status='complete' WHERE task_id IN (SELECT task_id FROM mcp_tasks WHERE contract_id=?) AND status IN ('submitted','pending_review','active','approved')`, contractID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE mcp_proposals SET status='published' WHERE id=?`, id); err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }
 
 func (s *SQLiteStore) UpdateSubmissionStatus(ctx context.Context, submissionID, status, reviewerNotes, rejectionType string) error {
@@ -1053,6 +1206,20 @@ func (s *SQLiteStore) DeleteWish(ctx context.Context, visiblePixelHash string) e
 }
 
 func (s *SQLiteStore) CreateContractReworkRequest(ctx context.Context, contractID, requester, notes string) (smart_contract.ContractReworkRequest, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return smart_contract.ContractReworkRequest{}, err
+	}
+	defer tx.Rollback()
+
+	var metadataBytes []byte
+	if err := tx.QueryRowContext(ctx, `SELECT metadata FROM mcp_contracts WHERE contract_id=?`, contractID).Scan(&metadataBytes); err != nil {
+		if err == sql.ErrNoRows {
+			return smart_contract.ContractReworkRequest{}, fmt.Errorf("contract %s not found", contractID)
+		}
+		return smart_contract.ContractReworkRequest{}, err
+	}
+
 	requestID := fmt.Sprintf("rework-%s-%d", contractID, time.Now().UnixNano())
 	now := time.Now()
 
@@ -1065,52 +1232,147 @@ func (s *SQLiteStore) CreateContractReworkRequest(ctx context.Context, contractI
 		CreatedAt:  now,
 	}
 
-	_, err := s.db.ExecContext(ctx, `
-INSERT INTO mcp_proposals (id, title, description_md, status, metadata, created_at)
-VALUES (?, ?, ?, 'rework', ?, datetime('now'))
-ON CONFLICT(id) DO UPDATE SET metadata = excluded.metadata
-`, requestID, "Contract Rework Request", notes, `{"requester":"`+requester+`","contract_id":"`+contractID+`"}`)
+	meta := map[string]interface{}{}
+	if len(metadataBytes) > 0 {
+		_ = json.Unmarshal(metadataBytes, &meta)
+	}
+	if meta == nil {
+		meta = map[string]interface{}{}
+	}
+	reworkReqs := []interface{}{}
+	if existing, ok := meta["rework_requests"].([]interface{}); ok {
+		reworkReqs = existing
+	}
+	reworkReqs = append(reworkReqs, map[string]interface{}{
+		"request_id":  reworkReq.RequestID,
+		"contract_id": reworkReq.ContractID,
+		"requester":   reworkReq.Requester,
+		"notes":       reworkReq.Notes,
+		"status":      reworkReq.Status,
+		"created_at":  reworkReq.CreatedAt.Format(time.RFC3339),
+	})
+	meta["rework_requests"] = reworkReqs
+	updatedMetadata, err := json.Marshal(meta)
 	if err != nil {
 		return smart_contract.ContractReworkRequest{}, err
 	}
 
+	if _, err := tx.ExecContext(ctx, `UPDATE mcp_contracts SET metadata=? WHERE contract_id=?`, string(updatedMetadata), contractID); err != nil {
+		return smart_contract.ContractReworkRequest{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE mcp_tasks SET status='rejected' WHERE contract_id=?`, contractID); err != nil {
+		return smart_contract.ContractReworkRequest{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return smart_contract.ContractReworkRequest{}, err
+	}
 	return reworkReq, nil
 }
 
 func (s *SQLiteStore) GetContractReworkRequests(ctx context.Context, contractID string) ([]smart_contract.ContractReworkRequest, error) {
-	rows, err := s.db.QueryContext(ctx, `
-SELECT id, title, description_md, metadata, created_at
-FROM mcp_proposals WHERE id LIKE 'rework-%-%' AND metadata->>'contract_id' = ?
-`, contractID)
-	if err != nil {
+	var metadataBytes []byte
+	if err := s.db.QueryRowContext(ctx, `SELECT metadata FROM mcp_contracts WHERE contract_id=?`, contractID).Scan(&metadataBytes); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("contract %s not found", contractID)
+		}
 		return nil, err
 	}
-	defer rows.Close()
-
 	var reqs []smart_contract.ContractReworkRequest
-	for rows.Next() {
-		var id, title, desc string
-		var metadata []byte
-		var createdAtStr sql.NullString
-		if err := rows.Scan(&id, &title, &desc, &metadata, &createdAtStr); err != nil {
-			continue
-		}
-		var createdAt time.Time
-		if createdAtStr.Valid {
-			if t, err := time.Parse(time.RFC3339, createdAtStr.String); err == nil {
-				createdAt = t
+	if len(metadataBytes) > 0 {
+		var meta map[string]interface{}
+		if err := json.Unmarshal(metadataBytes, &meta); err == nil {
+			if reworkReqs, ok := meta["rework_requests"].([]interface{}); ok {
+				for _, r := range reworkReqs {
+					rMap, ok := r.(map[string]interface{})
+					if !ok {
+						continue
+					}
+					req := smart_contract.ContractReworkRequest{}
+					if id, ok := rMap["request_id"].(string); ok {
+						req.RequestID = id
+					}
+					if cid, ok := rMap["contract_id"].(string); ok {
+						req.ContractID = cid
+					}
+					if requester, ok := rMap["requester"].(string); ok {
+						req.Requester = requester
+					}
+					if notes, ok := rMap["notes"].(string); ok {
+						req.Notes = notes
+					}
+					if status, ok := rMap["status"].(string); ok {
+						req.Status = status
+					}
+					if createdAt, ok := rMap["created_at"].(string); ok {
+						if t, err := parseSQLiteTime(createdAt); err == nil && t != nil {
+							req.CreatedAt = *t
+						}
+					}
+					if resolvedAt, ok := rMap["resolved_at"].(string); ok {
+						if t, err := parseSQLiteTime(resolvedAt); err == nil {
+							req.ResolvedAt = t
+						}
+					}
+					reqs = append(reqs, req)
+				}
 			}
 		}
-		reqs = append(reqs, smart_contract.ContractReworkRequest{
-			RequestID:  id,
-			ContractID: contractID,
-			Notes:     desc,
-			CreatedAt:  createdAt,
-		})
 	}
 	return reqs, nil
 }
 
 func (s *SQLiteStore) ResolveContractReworkRequest(ctx context.Context, contractID, requestID string) error {
-	return nil
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var metadataBytes []byte
+	if err := tx.QueryRowContext(ctx, `SELECT metadata FROM mcp_contracts WHERE contract_id=?`, contractID).Scan(&metadataBytes); err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("contract %s not found", contractID)
+		}
+		return err
+	}
+
+	meta := map[string]interface{}{}
+	if len(metadataBytes) > 0 {
+		_ = json.Unmarshal(metadataBytes, &meta)
+	}
+	if meta == nil {
+		meta = map[string]interface{}{}
+	}
+	reworkReqs := []interface{}{}
+	if existing, ok := meta["rework_requests"].([]interface{}); ok {
+		reworkReqs = existing
+	}
+
+	found := false
+	now := time.Now().Format(time.RFC3339)
+	for i, r := range reworkReqs {
+		rMap, ok := r.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if rid, ok := rMap["request_id"].(string); ok && rid == requestID {
+			rMap["status"] = "resolved"
+			rMap["resolved_at"] = now
+			reworkReqs[i] = rMap
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("rework request %s not found", requestID)
+	}
+	meta["rework_requests"] = reworkReqs
+	updatedMetadata, err := json.Marshal(meta)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE mcp_contracts SET metadata=? WHERE contract_id=?`, string(updatedMetadata), contractID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

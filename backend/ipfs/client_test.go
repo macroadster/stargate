@@ -4,10 +4,17 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 )
 
+func resetClientForTest() {
+	globalClient = nil
+	clientOnce = sync.Once{}
+}
+
 func TestClientEmbeddedNode(t *testing.T) {
+	resetClientForTest()
 	// Set up temporary repo
 	tmpRepo, err := os.MkdirTemp("", "ipfs-repo-*")
 	if err != nil {
@@ -19,7 +26,7 @@ func TestClientEmbeddedNode(t *testing.T) {
 	os.Setenv("IPFS_EMBEDDED_ENABLED", "true")
 	os.Setenv("IPFS_EMBEDDED_REPO", tmpRepo)
 	os.Setenv("IPFS_EMBEDDED_LISTEN", "/ip4/127.0.0.1/tcp/0") // Random port
-	os.Setenv("IPFS_API_URL", "http://127.0.0.1:9999") // Avoid local node
+	os.Setenv("IPFS_API_URL", "http://127.0.0.1:9999")        // Avoid local node
 
 	client := NewClientFromEnv()
 	if client == nil {
@@ -32,30 +39,31 @@ func TestClientEmbeddedNode(t *testing.T) {
 
 	ctx := context.Background()
 	testData := []byte("hello embedded ipfs")
-	
+
 	// Test AddBytes using embedded node
 	cid, err := client.AddBytes(ctx, "test.txt", testData)
 	if err != nil {
 		t.Fatalf("AddBytes failed: %v", err)
 	}
-	
+
 	if cid == "" {
 		t.Fatal("expected non-empty CID")
 	}
 	t.Logf("Added CID: %s", cid)
-	
+
 	// Test Cat using embedded node
 	data, err := client.Cat(ctx, cid)
 	if err != nil {
 		t.Fatalf("Cat failed: %v", err)
 	}
-	
+
 	if string(data) != string(testData) {
 		t.Errorf("expected %s, got %s", testData, data)
 	}
 }
 
 func TestClientNativeFallback(t *testing.T) {
+	resetClientForTest()
 	// Set up temporary storage
 	tmpDir, err := os.MkdirTemp("", "ipfs-test-*")
 	if err != nil {
@@ -76,17 +84,17 @@ func TestClientNativeFallback(t *testing.T) {
 
 	ctx := context.Background()
 	testData := []byte("hello native ipfs")
-	
+
 	// Test AddBytes fallback to local storage
 	cid, err := client.AddBytes(ctx, "test.txt", testData)
 	if err != nil {
 		t.Fatalf("AddBytes failed: %v", err)
 	}
-	
+
 	if cid == "" {
 		t.Fatal("expected non-empty CID")
 	}
-	
+
 	// Verify it's in the local storage dir
 	localPath := filepath.Join(tmpDir, cid)
 	if _, err := os.Stat(localPath); os.IsNotExist(err) {
@@ -98,7 +106,7 @@ func TestClientNativeFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Cat failed: %v", err)
 	}
-	
+
 	if string(data) != string(testData) {
 		t.Errorf("expected %s, got %s", testData, data)
 	}

@@ -255,6 +255,7 @@ func initializeMCPComponents() (scmiddleware.Store, auth.APIKeyIssuer, auth.APIK
 	var store scmiddleware.Store
 	var err error
 	var ingestionSvc *services.IngestionService
+	actualStoreType := "memory"
 
 	if pgDsn != "" {
 		// Use PostgreSQL store
@@ -262,6 +263,7 @@ func initializeMCPComponents() (scmiddleware.Store, auth.APIKeyIssuer, auth.APIK
 		if err != nil {
 			log.Fatalf("failed to connect to PostgreSQL (%v). Exiting to prevent data loss.", err)
 		}
+		actualStoreType = "postgres"
 		// PostgreSQL connected successfully, try to create ingestion service
 		if svc, serr := services.NewIngestionService(pgDsn); serr != nil {
 			log.Printf("ingestion service unavailable for proposal creation: %v", serr)
@@ -280,15 +282,11 @@ func initializeMCPComponents() (scmiddleware.Store, auth.APIKeyIssuer, auth.APIK
 			log.Printf("failed to create SQLite MCP store (%v), falling back to memory store", err)
 			store = scstore.NewMemoryStore(claimTTL)
 		} else {
+			actualStoreType = "sqlite"
 			log.Printf("Using embedded SQLite MCP store at %s", mcpDbPath)
 		}
 	}
 
-	// Log the actual store type being used
-	actualStoreType := "sqlite"
-	if pgDsn != "" {
-		actualStoreType = "postgres"
-	}
 	log.Printf("Components initialized with %s store", actualStoreType)
 
 	var apiIssuer auth.APIKeyIssuer
