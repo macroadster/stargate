@@ -3,7 +3,6 @@ package starlight
 import (
 	"fmt"
 	"log"
-	"os"
 	"sync"
 	"time"
 
@@ -55,7 +54,7 @@ func NewCircuitBreaker(maxFailures int, timeout time.Duration) *CircuitBreaker {
 	}
 }
 
-// InitializeScanner initializes the scanner with proper fallback logic
+// InitializeScanner initializes the scanner with native AlphaScanner
 func (sm *ScannerManager) InitializeScanner() error {
 	sm.mutex.Lock()
 	defer sm.mutex.Unlock()
@@ -64,23 +63,17 @@ func (sm *ScannerManager) InitializeScanner() error {
 		return nil
 	}
 
-	// Try to initialize proxy scanner first
-	baseURL := os.Getenv("STARGATE_PROXY_BASE")
-	if baseURL == "" {
-		baseURL = "http://localhost:8080"
+	// Initialize native AlphaScanner
+	alphaScanner := NewAlphaScanner()
+	initErr := alphaScanner.Initialize()
+	if initErr == nil {
+		sm.scanner = alphaScanner
+		sm.scannerType = "alpha"
+		sm.initialized = true
+		log.Printf("Initialized native AlphaScanner (Go)")
+		return nil
 	}
-	proxyScanner := NewProxyScanner(baseURL, os.Getenv("STARGATE_API_KEY"))
-	if proxyScanner != nil {
-		initErr := proxyScanner.Initialize()
-		if initErr == nil {
-			sm.scanner = proxyScanner
-			sm.scannerType = "proxy"
-			sm.initialized = true
-			log.Printf("Initialized proxy scanner (Python API)")
-			return nil
-		}
-		log.Printf("Proxy scanner initialization failed: %v, falling back to mock scanner", initErr)
-	}
+	log.Printf("AlphaScanner initialization failed: %v, falling back to mock scanner", initErr)
 
 	// Fallback to mock scanner
 	sm.scanner = NewMockStarlightScanner()

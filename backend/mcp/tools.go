@@ -503,7 +503,7 @@ func (h *HTTPMCPServer) getToolSchemasLegacy() map[string]interface{} {
 		},
 		"scan_transaction": map[string]interface{}{
 			"category":    ToolCategoryDiscovery,
-			"description": "Scan a Bitcoin transaction to extract inscribed skill. Looks up the transaction in the blocks directory, finds the associated image, and scans it with the starlight API to extract the steganographically hidden skill message.",
+			"description": "Scan a Bitcoin transaction to extract inscribed skill. Looks up the transaction in the blocks directory, finds the associated image, and uses the native Go scanner to extract the steganographically hidden skill message.",
 			"parameters": map[string]interface{}{
 				"transaction_id": map[string]interface{}{
 					"type":        "string",

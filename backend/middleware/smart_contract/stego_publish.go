@@ -1,17 +1,13 @@
 package smart_contract
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
-	"mime/multipart"
-	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -566,249 +562,96 @@ func formatStegoMetaValue(value interface{}) (string, bool) {
 }
 
 func (s *Server) inscribeStego(ctx context.Context, cfg stegoApprovalConfig, cover []byte, filename, method string, message []byte) ([]byte, string, error) {
-	if strings.TrimSpace(cfg.ProxyBase) == "" {
-		return nil, "", fmt.Errorf("stego proxy base not configured")
-	}
-
-	// Validate inputs before sending request
+	// Validate inputs
 	if len(cover) == 0 {
 		return nil, "", fmt.Errorf("cover image cannot be empty")
 	}
-	if strings.TrimSpace(filename) == "" {
-		return nil, "", fmt.Errorf("filename cannot be empty")
-	}
 	if strings.TrimSpace(method) == "" {
-		return nil, "", fmt.Errorf("method cannot be empty")
-	}
-	if len(message) == 0 {
-		return nil, "", fmt.Errorf("message cannot be empty")
+		method = "alpha"
 	}
 
-	var buf bytes.Buffer
-	writer := multipart.NewWriter(&buf)
-	part, err := writer.CreateFormFile("image", filename)
+	// NATIVE STEGANOGRAPHY (replacing proxy to starlight)
+	log.Printf("stego: performing native %s embedding", method)
+	inscribeResult, err := stego.Inscribe(cover, string(message), method)
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("native inscribe failed: %w", err)
 	}
-	if _, err := io.Copy(part, bytes.NewReader(cover)); err != nil {
-		return nil, "", err
-	}
-	if err := writer.WriteField("message", string(message)); err != nil {
-		return nil, "", err
-	}
-	if err := writer.WriteField("method", method); err != nil {
-		return nil, "", err
-	}
-	if err := writer.Close(); err != nil {
-		return nil, "", err
-	}
-	reqURL := fmt.Sprintf("%s/inscribe", strings.TrimRight(cfg.ProxyBase, "/"))
 
-	var lastErr error
-	var resp *http.Response
-	var body []byte
+	ingestionID := inscribeResult.ID
+	stegoBytes := inscribeResult.ImageBytes
+	stegoBase64 := inscribeResult.ImageBase64
 
-	// Retry inscribe with exponential backoff for transient failures
-	for attempt := 0; attempt < 3; attempt++ {
-		if attempt > 0 {
-			waitTime := time.Duration(attempt*attempt) * time.Second
-			if waitTime > 10*time.Second {
-				waitTime = 10 * time.Second
+	if s.ingestionSvc != nil {
+		ingestionRec := &services.IngestionRecord{
+			ID:            ingestionID,
+			ImageBase64:   stegoBase64,
+			Status:        "verified",
+			MessageLength: len(message),
+			Filename:      ingestionID, // Use hash for stealth
+			Method:        method,
+			Metadata: map[string]interface{}{
+				"native_stego": true,
+			},
+		}
+		if createErr := s.ingestionSvc.Create(*ingestionRec); createErr != nil {
+			log.Printf("stego: failed to create ingestion record for %s: %v", ingestionID, createErr)
+		}
+
+		uploadsDir := os.Getenv("UPLOADS_DIR")
+		if uploadsDir == "" {
+			uploadsDir = "/data/uploads"
+		}
+		_ = os.MkdirAll(uploadsDir, 0755)
+		uploadPath := filepath.Join(uploadsDir, ingestionID)
+		if writeErr := os.WriteFile(uploadPath, stegoBytes, 0644); writeErr != nil {
+			log.Printf("stego: failed to write stego image to %s: %v", uploadPath, writeErr)
+		} else {
+			log.Printf("stego: wrote stego image to %s (%d bytes)", uploadPath, len(stegoBytes))
+		}
+	}
+
+	// Handle IPFS mirror and announcement if enabled
+	topic := strings.TrimSpace(os.Getenv("IPFS_STEGO_TOPIC"))
+	if topic == "" {
+		topic = "stargate-stego"
+	}
+	
+	client := ipfs.NewClientFromEnv()
+	if client != nil {
+		pubCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		
+		ext := filepath.Ext(filename)
+		if ext == "" {
+			ext = ".png"
+		}
+		name := fmt.Sprintf("stego-%s%s", ingestionID, ext)
+		imageCID, err := client.AddBytes(pubCtx, name, stegoBytes)
+		if err == nil {
+			log.Printf("stego: ipfs added %s -> %s", ingestionID, imageCID)
+			ann := struct {
+				Type        string `json:"type"`
+				IngestionID string `json:"ingestion_id"`
+				ImageCID    string `json:"image_cid"`
+				Filename    string `json:"filename,omitempty"`
+				Method      string `json:"method,omitempty"`
+				Message     string `json:"message,omitempty"`
+				Timestamp   int64  `json:"timestamp"`
+			}{
+				Type:        "stego_ingest",
+				IngestionID: ingestionID,
+				ImageCID:    imageCID,
+				Filename:    filename,
+				Method:      method,
+				Message:     string(message),
+				Timestamp:   time.Now().Unix(),
 			}
-			log.Printf("inscribe retry attempt %d/%d after %v wait", attempt+1, 3, waitTime)
-			time.Sleep(waitTime)
-		}
-
-		// Create fresh request for each attempt
-		var buf bytes.Buffer
-		writer := multipart.NewWriter(&buf)
-		part, err := writer.CreateFormFile("image", filename)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		if _, err := io.Copy(part, bytes.NewReader(cover)); err != nil {
-			lastErr = err
-			continue
-		}
-		if err := writer.WriteField("message", string(message)); err != nil {
-			lastErr = err
-			continue
-		}
-		if err := writer.WriteField("method", method); err != nil {
-			lastErr = err
-			continue
-		}
-		if err := writer.Close(); err != nil {
-			lastErr = err
-			continue
-		}
-
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, &buf)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		req.Header.Set("Content-Type", writer.FormDataContentType())
-		if cfg.APIKey != "" {
-			req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
-		}
-
-		client := &http.Client{Timeout: cfg.InscribeTimeout}
-		resp, err = client.Do(req)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-
-		body, _ = io.ReadAll(resp.Body)
-		resp.Body.Close()
-
-		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			// Success!
-			break
-		}
-
-		// Log failure and continue to retry
-		lastErr = fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
-		log.Printf("inscribe attempt %d failed - URL: %s, Status: %s, Response: %s",
-			attempt+1, reqURL, resp.Status, strings.TrimSpace(string(body)))
-		log.Printf("inscribe request details - filename: %s, method: %s, message length: %d", filename, method, len(message))
-
-		// Don't retry on client errors (4xx) except 429 (rate limit)
-		if resp.StatusCode >= 400 && resp.StatusCode < 500 && resp.StatusCode != 429 {
-			break
-		}
-	}
-
-	if lastErr != nil {
-		return nil, "", fmt.Errorf("inscribe failed after retries: %w", lastErr)
-	}
-	var payload struct {
-		RequestID   string `json:"request_id"`
-		ID          string `json:"id"`
-		ImageSHA256 string `json:"image_sha256"`
-		ImageBase64 string `json:"image_base64"`
-	}
-	if err := json.Unmarshal(body, &payload); err != nil {
-		return nil, "", fmt.Errorf("inscribe response parse failed: %w", err)
-	}
-	ingestionID := strings.TrimSpace(payload.ImageSHA256)
-	if ingestionID == "" {
-		ingestionID = strings.TrimSpace(payload.ID)
-	}
-	if ingestionID == "" {
-		return nil, "", fmt.Errorf("inscribe response missing image_sha256 or id")
-	}
-	requestID := strings.TrimSpace(payload.RequestID)
-	if requestID == "" {
-		requestID = ingestionID
-	}
-
-	var stegoBytes []byte
-
-	if strings.TrimSpace(payload.ImageBase64) != "" {
-		log.Printf("stego: using image_base64 from inscribe response for %s", ingestionID)
-		var decodeErr error
-		stegoBytes, decodeErr = base64.StdEncoding.DecodeString(payload.ImageBase64)
-		if decodeErr != nil {
-			return nil, "", fmt.Errorf("failed to decode stego image from response: %w", decodeErr)
-		}
-
-		if s.ingestionSvc != nil {
-			ingestionRec := &services.IngestionRecord{
-				ID:            ingestionID,
-				ImageBase64:   payload.ImageBase64,
-				Status:        "verified",
-				MessageLength: len(message),
-				Filename:      ingestionID, // Use just the hash for stealth
-				Method:        method,
-				Metadata: map[string]interface{}{
-					"stego_request_id":   requestID,
-					"stego_ingestion_id": ingestionID,
-				},
-			}
-			if createErr := s.ingestionSvc.Create(*ingestionRec); createErr != nil {
-				log.Printf("stego: failed to create ingestion record for %s: %v", ingestionID, createErr)
-			} else {
-				log.Printf("stego: created ingestion record for %s with image data from response", ingestionID)
-			}
-
-			uploadsDir := os.Getenv("UPLOADS_DIR")
-			if uploadsDir == "" {
-				uploadsDir = "/data/uploads"
-			}
-			// Use just the hash as filename for stealth
-			uploadPath := filepath.Join(uploadsDir, ingestionID)
-			if writeErr := os.WriteFile(uploadPath, stegoBytes, 0644); writeErr != nil {
-				log.Printf("stego: failed to write stego image to %s: %v", uploadPath, writeErr)
-			} else {
-				log.Printf("stego: wrote stego image to %s (%d bytes)", uploadPath, len(stegoBytes))
-			}
-
-			topic := strings.TrimSpace(os.Getenv("IPFS_STEGO_TOPIC"))
-			if topic == "" {
-				topic = "stargate-stego"
-			}
-			if strings.TrimSpace(topic) != "" && len(stegoBytes) > 0 {
-				pubCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-				defer cancel()
-				client := ipfs.NewClientFromEnv()
-				if client == nil {
-					log.Printf("stego: IPFS disabled, skipping stego publish for %s", ingestionID)
-				} else {
-					ext := filepath.Ext(filename)
-					if ext == "" {
-						ext = ".png"
-					}
-					name := fmt.Sprintf("stego-%s%s", ingestionID, ext)
-					imageCID, err := client.AddBytes(pubCtx, name, stegoBytes)
-					if err != nil {
-						log.Printf("stego: ipfs add failed for %s: %v", ingestionID, err)
-					} else {
-						log.Printf("stego: ipfs added %s -> %s", ingestionID, imageCID)
-						ann := struct {
-							Type        string `json:"type"`
-							IngestionID string `json:"ingestion_id"`
-							ImageCID    string `json:"image_cid"`
-							Filename    string `json:"filename,omitempty"`
-							Method      string `json:"method,omitempty"`
-							Message     string `json:"message,omitempty"`
-							Timestamp   int64  `json:"timestamp"`
-						}{
-							Type:        "stego_ingest",
-							IngestionID: ingestionID,
-							ImageCID:    imageCID,
-							Filename:    filename,
-							Method:      method,
-							Message:     string(message),
-							Timestamp:   time.Now().Unix(),
-						}
-						if payload, err := json.Marshal(ann); err != nil {
-							log.Printf("stego: announce marshal failed: %v", err)
-						} else if err := client.PubsubPublish(pubCtx, topic, payload); err != nil {
-							log.Printf("stego: announce publish failed: %v", err)
-						} else {
-							log.Printf("stego: published announcement to topic %s", topic)
-						}
-					}
-				}
+			if payload, err := json.Marshal(ann); err == nil {
+				_ = client.PubsubPublish(pubCtx, topic, payload)
 			}
 		}
-	} else {
-		rec, waitErr := s.waitForIngestion(ctx, ingestionID, cfg.IngestTimeout, cfg.IngestPoll)
-		if waitErr != nil {
-			return nil, "", waitErr
-		}
-		if rec.ImageBase64 == "" {
-			return nil, "", fmt.Errorf("ingestion %s missing image payload", ingestionID)
-		}
-		var decodeErr error
-		stegoBytes, decodeErr = base64.StdEncoding.DecodeString(rec.ImageBase64)
-		if decodeErr != nil {
-			return nil, "", fmt.Errorf("failed to decode stego image: %w", decodeErr)
-		}
 	}
+
 	return stegoBytes, ingestionID, nil
 }
 

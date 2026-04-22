@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -9,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -18,6 +16,13 @@ import (
 	"strings"
 	"time"
 
+	_ "image/gif"
+	_ "image/jpeg"
+
+	_ "golang.org/x/image/bmp"
+	_ "golang.org/x/image/webp"
+
+	"stargate-backend/stego"
 	sc "stargate-backend/core/smart_contract"
 	"stargate-backend/ipfs"
 	scmiddleware "stargate-backend/middleware/smart_contract"
@@ -49,6 +54,7 @@ func (h *BaseHandler) sendJSON(w http.ResponseWriter, statusCode int, data inter
 
 // sendError sends an error response
 func (h *BaseHandler) sendError(w http.ResponseWriter, statusCode int, message string) {
+	log.Printf("ERROR: Status %d - %s", statusCode, message)
 	errorResp := models.NewErrorResponse(message, statusCode)
 	h.sendJSON(w, statusCode, errorResp)
 }
@@ -339,22 +345,18 @@ func (h *InscriptionHandler) fromIngestion(rec services.IngestionRecord) models.
 	}
 	_ = os.MkdirAll(uploadsDir, 0755)
 
-	filename := rec.Filename
-	if filename == "" {
-		filename = "inscription.png"
-	}
-	if !strings.HasPrefix(filename, rec.ID+"_") {
-		filename = fmt.Sprintf("%s_%s", rec.ID, filename)
-	}
+	// Use just the hash for consistency with HandleCreateInscription
+	filename := rec.ID
 	targetPath := security.SafeFilePath(uploadsDir, filename)
-	if _, err := os.Stat(targetPath); err == nil {
-		// ok
-	} else if isUploadTombstoned(uploadsDir, filepath.Base(filename)) {
-		targetPath = ""
-	} else if os.IsNotExist(err) {
-		if data, err := base64.StdEncoding.DecodeString(rec.ImageBase64); err == nil {
-			if err := os.WriteFile(targetPath, data, 0644); err != nil {
-				fmt.Printf("Failed to write ingestion image to %s: %v\n", targetPath, err)
+
+	if _, err := os.Stat(targetPath); os.IsNotExist(err) {
+		if rec.ImageBase64 != "" {
+			if data, err := base64.StdEncoding.DecodeString(rec.ImageBase64); err == nil {
+				if err := os.WriteFile(targetPath, data, 0644); err != nil {
+					fmt.Printf("Failed to write ingestion image to %s: %v\n", targetPath, err)
+				} else {
+					log.Printf("DEBUG: lazy-stored ingestion image to %s", targetPath)
+				}
 			}
 		}
 	}
@@ -876,267 +878,152 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 	wishTimestamp := time.Now().Unix()
 	embeddedMessage := appendWishTimestamp(text, wishTimestamp)
 
-	// Proxy to starlight /inscribe to avoid direct frontend → Python exposure
-	if h.proxyBase != "" {
-		fmt.Printf("DEBUG: Proxy path selected, proxyBase=%s\n", h.proxyBase)
-		var buf bytes.Buffer
-		writer := multipart.NewWriter(&buf)
-
-		// File part (required by starlight) - use io.Copy like working implementation
-		part, _ := writer.CreateFormFile("image", filename)
-		if len(imgBytes) > 0 {
-			io.Copy(part, bytes.NewReader(imgBytes))
-		} else {
-			// Use placeholder if no image provided
-			io.Copy(part, bytes.NewReader(placeholderPNG()))
-		}
-
-		// Message & method (simple text message like working implementation)
-		writer.WriteField("message", embeddedMessage)
-		writer.WriteField("method", method)
-		writer.Close()
-
-		proxyURL := fmt.Sprintf("%s/inscribe", strings.TrimRight(h.proxyBase, "/"))
-		req, _ := http.NewRequest(http.MethodPost, proxyURL, &buf)
-		req.Header.Set("Content-Type", writer.FormDataContentType())
-		if apiKey := os.Getenv("STARGATE_API_KEY"); apiKey != "" {
-			req.Header.Set("Authorization", "Bearer "+apiKey)
-		}
-
-		resp, err := http.DefaultClient.Do(req)
-		if err == nil && resp != nil {
-			defer resp.Body.Close()
-			body, _ := io.ReadAll(resp.Body)
-			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-				// First check if the response contains an error despite successful HTTP status
-				var errorResponse struct {
-					Success bool `json:"success"`
-					Error   struct {
-						Code    int    `json:"code"`
-						Error   string `json:"error"`
-						Message string `json:"message"`
-					} `json:"error"`
-				}
-
-				if err := json.Unmarshal(body, &errorResponse); err == nil && (errorResponse.Error.Code != 0 || errorResponse.Error.Error != "" || errorResponse.Error.Message != "") {
-					// Response contains error fields despite 200 status - forward it as proper error
-					errorCode := errorResponse.Error.Code
-					errorMessage := errorResponse.Error.Message
-					if errorMessage == "" {
-						errorMessage = errorResponse.Error.Error
-					}
-
-					// If no error code provided, use generic 400 error
-					if errorCode == 0 {
-						errorCode = http.StatusBadRequest
-					}
-					// If no error message provided, use generic message
-					if errorMessage == "" {
-						errorMessage = "Request failed"
-					}
-
-					h.sendError(w, errorCode, errorMessage)
-					return
-				}
-
-				// Parse Starlight response to extract stego hash and image
-				var starlightResponse struct {
-					RequestID   string `json:"request_id"`
-					ID          string `json:"id"`
-					ImageSHA256 string `json:"image_sha256"`
-					ImageBase64 string `json:"image_base64"`
-				}
-
-				if err := json.Unmarshal(body, &starlightResponse); err == nil && starlightResponse.ImageSHA256 != "" {
-					ingestionID := starlightResponse.ImageSHA256
-
-					// Record the wish creator
-					creatorKey := strings.TrimSpace(r.Header.Get("X-API-Key"))
-					if creatorKey == "" {
-						auth := r.Header.Get("Authorization")
-						if strings.HasPrefix(auth, "Bearer ") {
-							creatorKey = strings.TrimPrefix(auth, "Bearer ")
-						}
-					}
-					var creatorWallet string
-					if creatorKey != "" && h.apiKeyValidator != nil {
-						if apiKeyRec, ok := h.apiKeyValidator.Get(creatorKey); ok {
-							creatorWallet = strings.TrimSpace(apiKeyRec.Wallet)
-							log.Printf("DEBUG: Found creator wallet: %s", creatorWallet)
-						} else {
-							log.Printf("DEBUG: API key not found in validator")
-						}
-					}
-
-					meta := map[string]interface{}{
-						"embedded_message":     embeddedMessage,
-						"message":              text,
-						"wish_timestamp":       wishTimestamp,
-						"price":                price,
-						"price_unit":           priceUnit,
-						"address":              address,
-						"funding_mode":         fundingMode,
-						"starlight_request_id": starlightResponse.RequestID,
-						"creator_wallet":       creatorWallet,
-					}
-					if strings.EqualFold(priceUnit, "sats") {
-						meta["budget_sats"] = parsePriceSats(price)
-					}
-
-					if h.ingestionService != nil {
-						// Decode stego image from starlight response first - must succeed for security
-						stegoImgBytes, err := base64.StdEncoding.DecodeString(starlightResponse.ImageBase64)
-						if err != nil {
-							h.sendError(w, http.StatusInternalServerError, fmt.Sprintf("Critical: failed to decode stego image - cannot proceed securely: %v", err))
-							return
-						}
-
-						// Write stego image to uploads directory immediately
-						uploadsDir := os.Getenv("UPLOADS_DIR")
-						if uploadsDir == "" {
-							uploadsDir = "/data/uploads"
-						}
-						if err := os.MkdirAll(uploadsDir, 0755); err != nil {
-							h.sendError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to create uploads directory: %v", err))
-							return
-						}
-						// Use hash-only filename for stealth
-						imageFilename := ingestionID // Just the hash, no original filename
-						imagePath := security.SafeFilePath(uploadsDir, imageFilename)
-						if err := os.WriteFile(imagePath, stegoImgBytes, 0644); err != nil {
-							h.sendError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to write image to %s: %v", imagePath, err))
-							return
-						}
-
-						ingRec := services.IngestionRecord{
-							ID:            ingestionID,
-							Filename:      imageFilename,
-							Method:        method,
-							MessageLength: len(embeddedMessage),
-							ImageBase64:   starlightResponse.ImageBase64,
-							Metadata:      meta,
-							Status:        "pending",
-						}
-						if ingRec.Filename == "" {
-							ingRec.Filename = "inscription.png"
-						}
-						if err := h.ingestionService.Create(ingRec); err != nil {
-							fmt.Printf("Failed to create ingestion record for %s: %v\n", ingestionID, err)
-						}
-						// Publish announcement with verified stego image
-						publishPendingIngestAnnouncement(ingestionID, ingestionID, imageFilename, method, embeddedMessage, price, priceUnit, address, fundingMode, stegoImgBytes)
-					}
-
-					if h.store != nil {
-						// Determine title for both proposal and contract
-						proposalTitle := strings.TrimSpace(text)
-						if strings.HasPrefix(proposalTitle, "#") {
-							proposalTitle = strings.TrimSpace(strings.TrimLeft(proposalTitle, "#"))
-						}
-						if proposalTitle == "" {
-							proposalTitle = "Wish " + starlightResponse.ImageSHA256
-						}
-
-						// 1. Create Proposal (Optional, default TRUE unless skipped or seed fixtures disabled)
-						// Skip automatic proposal creation if STARGATE_SEED_FIXTURES=false
-						seedFixtures := true
-						if raw := os.Getenv("STARGATE_SEED_FIXTURES"); raw != "" {
-							if v, err := strconv.ParseBool(raw); err == nil {
-								seedFixtures = v
-							}
-						}
-
-						if !payload.SkipProposal && seedFixtures {
-							proposal := sc.Proposal{
-								ID:               starlightResponse.ImageSHA256,
-								Title:            proposalTitle,
-								DescriptionMD:    text,
-								VisiblePixelHash: starlightResponse.ImageSHA256,
-								BudgetSats:       parsePriceSats(price),
-								Status:           "pending",
-								CreatedAt:        time.Now(),
-								Metadata: map[string]any{
-									"starlight_request_id": starlightResponse.RequestID,
-									"funding_mode":         fundingMode,
-									"address":              address,
-									"price_unit":           priceUnit,
-									"creator_wallet":       creatorWallet,
-								},
-							}
-
-							if err := h.store.CreateProposal(context.Background(), proposal); err != nil {
-								fmt.Printf("Failed to create proposal for wish %s: %v\n", starlightResponse.ImageSHA256, err)
-							}
-						}
-
-						// 2. Create the "Wish Contract" so it appears in the marketplace
-						// This ensures the wish exists even if no proposal is created immediately
-						wishContract := sc.Contract{
-							ContractID:      "wish-" + starlightResponse.ImageSHA256,
-							Title:           proposalTitle,
-							TotalBudgetSats: parsePriceSats(price),
-							GoalsCount:      0,
-							Status:          "pending",
-						}
-
-						type upserter interface {
-							UpsertContractWithTasks(ctx context.Context, contract sc.Contract, tasks []sc.Task) error
-						}
-						if u, ok := h.store.(upserter); ok {
-							if err := u.UpsertContractWithTasks(context.Background(), wishContract, nil); err != nil {
-								fmt.Printf("Failed to create wish contract %s: %v\n", wishContract.ContractID, err)
-							}
-						}
-					}
-
-					h.sendSuccess(w, map[string]string{
-						"status":             "success",
-						"id":                 ingestionID,
-						"ingestion_id":       ingestionID,
-						"visible_pixel_hash": starlightResponse.ImageSHA256,
-					})
-					return
-				}
-
-				// If we got a 200 response but it doesn't match expected formats, treat it as an error
-				h.sendError(w, http.StatusInternalServerError, "Unexpected response format from inscription service")
-				return
-			}
-
-			// Starlight-api returned an error - forward the error to client with consistent JSON format
-			// Don't fall back to local inscription - that causes duplicate proposal creation
-			if resp.StatusCode >= 400 && resp.StatusCode < 500 {
-				// For client errors, try to extract message from JSON response
-				var errorResp struct {
-					Error   string `json:"error"`
-					Message string `json:"message"`
-				}
-				if json.Unmarshal(body, &errorResp) == nil {
-					message := errorResp.Error
-					if message == "" {
-						message = errorResp.Message
-					}
-					if message == "" {
-						message = "Proxy request failed"
-					}
-					h.sendError(w, resp.StatusCode, message)
-				} else {
-					h.sendError(w, resp.StatusCode, "Proxy request failed")
-				}
-			} else {
-				// For server errors, forward as-is
-				w.WriteHeader(resp.StatusCode)
-				w.Write(body)
-			}
-			return
-		}
-	}
-
-	// No legacy fallback - proxy is required for inscription creation
-	if h.proxyBase == "" {
-		h.sendError(w, http.StatusServiceUnavailable, "Inscription service not available - STARGATE_PROXY_BASE not configured")
+	// NATIVE STEGANOGRAPHY (replacing proxy to starlight)
+	inscribeResult, err := stego.Inscribe(imgBytes, embeddedMessage, method)
+	if err != nil {
+		h.sendError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to embed steganography: %v", err))
 		return
 	}
+
+	ingestionID := inscribeResult.ID
+	stegoImgBytes := inscribeResult.ImageBytes
+	stegoImageBase64 := inscribeResult.ImageBase64
+
+	// Record the wish creator
+	creatorKey := strings.TrimSpace(r.Header.Get("X-API-Key"))
+	if creatorKey == "" {
+		auth := r.Header.Get("Authorization")
+		if strings.HasPrefix(auth, "Bearer ") {
+			creatorKey = strings.TrimPrefix(auth, "Bearer ")
+		}
+	}
+	var creatorWallet string
+	if creatorKey != "" && h.apiKeyValidator != nil {
+		if apiKeyRec, ok := h.apiKeyValidator.Get(creatorKey); ok {
+			creatorWallet = strings.TrimSpace(apiKeyRec.Wallet)
+			log.Printf("DEBUG: Found creator wallet: %s", creatorWallet)
+		}
+	}
+
+	meta := map[string]interface{}{
+		"embedded_message": embeddedMessage,
+		"message":          text,
+		"wish_timestamp":   wishTimestamp,
+		"price":            price,
+		"price_unit":       priceUnit,
+		"address":          address,
+		"funding_mode":     fundingMode,
+		"creator_wallet":   creatorWallet,
+		"native_stego":     true,
+	}
+	if strings.EqualFold(priceUnit, "sats") {
+		meta["budget_sats"] = parsePriceSats(price)
+	}
+
+	// Write stego image to uploads directory
+	uploadsDir := os.Getenv("UPLOADS_DIR")
+	if uploadsDir == "" {
+		uploadsDir = "/data/uploads"
+	}
+	log.Printf("DEBUG: uploadsDir resolved to: %s", uploadsDir)
+	if err := os.MkdirAll(uploadsDir, 0755); err != nil {
+		h.sendError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to create uploads directory %s: %v", uploadsDir, err))
+		return
+	}
+	// Use hash-only filename for stealth
+	imageFilename := ingestionID
+	imagePath := security.SafeFilePath(uploadsDir, imageFilename)
+	log.Printf("DEBUG: Attempting to write stego image to %s (size: %d bytes)", imagePath, len(stegoImgBytes))
+	if err := os.WriteFile(imagePath, stegoImgBytes, 0644); err != nil {
+		h.sendError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to write image to %s: %v", imagePath, err))
+		return
+	}
+	log.Printf("DEBUG: Successfully stored stego image to %s", imagePath)
+
+	if h.ingestionService != nil {
+		log.Printf("DEBUG: Creating ingestion record for %s", ingestionID)
+		ingRec := services.IngestionRecord{
+			ID:            ingestionID,
+			Filename:      imageFilename,
+			Method:        "alpha",
+			MessageLength: len(embeddedMessage),
+			ImageBase64:   stegoImageBase64,
+			Metadata:      meta,
+			Status:        "pending",
+		}
+		if err := h.ingestionService.Create(ingRec); err != nil {
+			log.Printf("ERROR: Failed to create ingestion record for %s: %v", ingestionID, err)
+		}
+		// Publish announcement
+		log.Printf("DEBUG: Publishing pending ingest announcement for %s", ingestionID)
+		publishPendingIngestAnnouncement(ingestionID, ingestionID, imageFilename, "alpha", embeddedMessage, price, priceUnit, address, fundingMode, stegoImgBytes)
+	}
+
+	if h.store != nil {
+		log.Printf("DEBUG: Mirroring into store for %s", ingestionID)
+		proposalTitle := strings.TrimSpace(text)
+		if strings.HasPrefix(proposalTitle, "#") {
+			proposalTitle = strings.TrimSpace(strings.TrimLeft(proposalTitle, "#"))
+		}
+		if proposalTitle == "" {
+			proposalTitle = "Wish " + ingestionID
+		}
+
+		seedFixtures := true
+		if raw := os.Getenv("STARGATE_SEED_FIXTURES"); raw != "" {
+			if v, err := strconv.ParseBool(raw); err == nil {
+				seedFixtures = v
+			}
+		}
+
+		if !payload.SkipProposal && seedFixtures {
+			proposal := sc.Proposal{
+				ID:               ingestionID,
+				Title:            proposalTitle,
+				DescriptionMD:    text,
+				VisiblePixelHash: ingestionID,
+				BudgetSats:       parsePriceSats(price),
+				Status:           "pending",
+				CreatedAt:        time.Now(),
+				Metadata: map[string]any{
+					"funding_mode":   fundingMode,
+					"address":        address,
+					"price_unit":     priceUnit,
+					"creator_wallet": creatorWallet,
+					"native_stego":   true,
+				},
+			}
+
+			if err := h.store.CreateProposal(context.Background(), proposal); err != nil {
+				fmt.Printf("Failed to create proposal for wish %s: %v\n", ingestionID, err)
+			}
+		}
+
+		wishContract := sc.Contract{
+			ContractID:      "wish-" + ingestionID,
+			Title:           proposalTitle,
+			TotalBudgetSats: parsePriceSats(price),
+			GoalsCount:      0,
+			Status:          "pending",
+		}
+
+		type upserter interface {
+			UpsertContractWithTasks(ctx context.Context, contract sc.Contract, tasks []sc.Task) error
+		}
+		if u, ok := h.store.(upserter); ok {
+			if err := u.UpsertContractWithTasks(context.Background(), wishContract, nil); err != nil {
+				fmt.Printf("Failed to create wish contract %s: %v\n", wishContract.ContractID, err)
+			}
+		}
+	}
+
+	h.sendSuccess(w, map[string]string{
+		"status":             "success",
+		"id":                 ingestionID,
+		"ingestion_id":       ingestionID,
+		"visible_pixel_hash": ingestionID,
+	})
+	return
 }
 
 // HandleDeleteInscription handles deleting an inscription and its associated wish
