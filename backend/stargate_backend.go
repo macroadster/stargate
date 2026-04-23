@@ -300,6 +300,20 @@ func initializeMCPComponents() (scmiddleware.Store, auth.APIKeyIssuer, auth.APIK
 		}
 		pgKeys.SeedEnvironmentVariables()
 		apiIssuer, apiValidator = pgKeys, pgKeys
+	} else if actualStoreType == "sqlite" {
+		// Use SQLite-backed key store when using SQLite storage
+		dataDir := os.Getenv("STARGATE_DATA_DIR")
+		if dataDir == "" {
+			dataDir = "."
+		}
+		apiDbPath := filepath.Join(dataDir, "api_keys.db")
+		sqliteKeys, err := auth.NewSQLiteAPIKeyStore(apiDbPath)
+		if err != nil {
+			log.Fatalf("failed to initialize SQLite API key store (%v). Exiting to prevent data loss.", err)
+		}
+		sqliteKeys.SeedEnvironmentVariables()
+		apiIssuer, apiValidator = sqliteKeys, sqliteKeys
+		log.Printf("Using SQLite API key store at %s", apiDbPath)
 	} else {
 		// Only use memory store if explicitly requested or no PostgreSQL DSN
 		mem := auth.NewAPIKeyStore()
