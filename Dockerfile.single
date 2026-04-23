@@ -23,7 +23,6 @@ RUN go mod download
 COPY backend/ ./
 # Copy built frontend assets from Stage 1 into backend/assets/frontend
 COPY --from=frontend-builder /app/frontend/build ./assets/frontend
-# Build the application (the embed directive will pick up the frontend assets)
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
     -ldflags='-w -s -extldflags "-static"' \
     -a -installsuffix cgo \

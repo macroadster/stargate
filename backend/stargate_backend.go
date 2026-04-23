@@ -81,7 +81,7 @@ func detectMimeType(content []byte, filename string) string {
 		return "text/javascript"
 	case strings.HasSuffix(lowerName, ".css"):
 		return "text/css"
-	case strings.HasSuffix(lowerName, ".txt"):
+	case strings.HasSuffix(lowerName, ".txt"), strings.HasSuffix(lowerName, ".md"):
 		return "text/plain"
 	}
 
@@ -640,6 +640,15 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 			!strings.HasPrefix(r.URL.Path, "/generate/") &&
 			!strings.HasPrefix(r.URL.Path, "/metrics") &&
 			!strings.HasPrefix(r.URL.Path, "/swagger") {
+
+			// If the request has an extension and we reached here, the file was not found.
+			// Return 404 instead of index.html to avoid "raw HTML" in SPA fetches.
+			ext := filepath.Ext(path)
+			if ext != "" && ext != ".html" {
+				http.NotFound(w, r)
+				return
+			}
+
 			indexContent, err := fs.ReadFile(frontendFS, "index.html")
 			if err == nil {
 				w.Header().Set("Content-Type", "text/html; charset=utf-8")
