@@ -51,9 +51,6 @@ func (api *DataAPI) resolveBlocksDir() string {
 	if dir := os.Getenv("BLOCKS_DIR"); dir != "" {
 		return dir
 	}
-	if dir := os.Getenv("DATA_DIR"); dir != "" {
-		return dir
-	}
 	return "blocks"
 }
 

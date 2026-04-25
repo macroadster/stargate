@@ -65,9 +65,9 @@ func NewContainer(apiKeyIssuer auth.APIKeyIssuer, apiKeyValidator auth.APIKeyVal
 	contractCache := smart_contract.NewContractCache(contractCacheTTL, contractCacheSize)
 
 	// Initialize services
-	dataDir := "blocks"
-	if env := os.Getenv("BLOCKS_DIR"); env != "" {
-		dataDir = env
+	dataDir := os.Getenv("BLOCKS_DIR")
+	if dataDir == "" {
+		dataDir = "blocks"
 	}
 	inscriptionsFile := os.Getenv("INSCRIPTIONS_FILE")
 	if inscriptionsFile == "" {
@@ -78,7 +78,11 @@ func NewContainer(apiKeyIssuer auth.APIKeyIssuer, apiKeyValidator auth.APIKeyVal
 	}
 	inscriptionService := services.NewInscriptionService(inscriptionsFile)
 	blockService := services.NewBlockService()
-	contractService := services.NewSmartContractService("smart_contracts.json")
+	contractsFile := os.Getenv("SMART_CONTRACTS_FILE")
+	if contractsFile == "" {
+		contractsFile = "smart_contracts.json"
+	}
+	contractService := services.NewSmartContractService(contractsFile)
 	qrService := services.NewQRCodeService()
 	healthService := services.NewHealthService()
 	peerService := services.NewPeerService()

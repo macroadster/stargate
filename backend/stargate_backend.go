@@ -272,11 +272,14 @@ func initializeMCPComponents() (scmiddleware.Store, auth.APIKeyIssuer, auth.APIK
 		}
 	} else {
 		// Use SQLite store for embedded mode (persisted to disk)
-		dataDir := os.Getenv("STARGATE_DATA_DIR")
-		if dataDir == "" {
-			dataDir = "."
+		mcpDbPath := os.Getenv("STARGATE_MCP_DB")
+		if mcpDbPath == "" {
+			dataDir := os.Getenv("STARGATE_DATA_DIR")
+			if dataDir == "" {
+				dataDir = "."
+			}
+			mcpDbPath = filepath.Join(dataDir, "mcp.db")
 		}
-		mcpDbPath := filepath.Join(dataDir, "mcp.db")
 		store, err = scstore.NewSQLiteStore(mcpDbPath, claimTTL, seed)
 		if err != nil {
 			log.Printf("failed to create SQLite MCP store (%v), falling back to memory store", err)
@@ -302,11 +305,14 @@ func initializeMCPComponents() (scmiddleware.Store, auth.APIKeyIssuer, auth.APIK
 		apiIssuer, apiValidator = pgKeys, pgKeys
 	} else if actualStoreType == "sqlite" {
 		// Use SQLite-backed key store when using SQLite storage
-		dataDir := os.Getenv("STARGATE_DATA_DIR")
-		if dataDir == "" {
-			dataDir = "."
+		apiDbPath := os.Getenv("STARGATE_API_KEYS_DB")
+		if apiDbPath == "" {
+			dataDir := os.Getenv("STARGATE_DATA_DIR")
+			if dataDir == "" {
+				dataDir = "."
+			}
+			apiDbPath = filepath.Join(dataDir, "api_keys.db")
 		}
-		apiDbPath := filepath.Join(dataDir, "api_keys.db")
 		sqliteKeys, err := auth.NewSQLiteAPIKeyStore(apiDbPath)
 		if err != nil {
 			log.Fatalf("failed to initialize SQLite API key store (%v). Exiting to prevent data loss.", err)
@@ -341,11 +347,14 @@ func startMCPServices(escort *smart_contract.EscortService, store scmiddleware.S
 		ingestDsn = pgDsn
 	} else {
 		// Use embedded SQLite for ingestion
-		dataDir := os.Getenv("STARGATE_DATA_DIR")
-		if dataDir == "" {
-			dataDir = "."
+		ingestDsn = os.Getenv("STARGATE_INGESTIONS_DB")
+		if ingestDsn == "" {
+			dataDir := os.Getenv("STARGATE_DATA_DIR")
+			if dataDir == "" {
+				dataDir = "."
+			}
+			ingestDsn = filepath.Join(dataDir, "ingestions.db")
 		}
-		ingestDsn = filepath.Join(dataDir, "ingestions.db")
 	}
 
 	// Start ingestion -> MCP sync
@@ -391,8 +400,46 @@ func startMCPServices(escort *smart_contract.EscortService, store scmiddleware.S
 	}
 }
 
+// consolidateEnvironmentPaths ensures all data-related environment variables are consistent.
+func consolidateEnvironmentPaths() {
+	// Root data directory
+	dataDir := os.Getenv("STARGATE_DATA_DIR")
+	if dataDir == "" {
+		return
+	}
+
+	// Consolidate standard paths if not explicitly set
+	paths := map[string]string{
+		"BLOCKS_DIR":             "blocks",
+		"UPLOADS_DIR":            "uploads",
+		"IPFS_STORAGE_DIR":       "ipfs_objects",
+		"IPFS_EMBEDDED_REPO":     "ipfs_repo",
+		"SMART_CONTRACTS_FILE":   "smart_contracts.json",
+		"STARGATE_MCP_DB":        "sqlite/mcp.db",
+		"STARGATE_API_KEYS_DB":   "sqlite/api_keys.db",
+		"STARGATE_INGESTIONS_DB": "sqlite/ingestions.db",
+	}
+
+	// Ensure sqlite directory exists if we are using it
+	sqliteDir := filepath.Join(dataDir, "sqlite")
+	if err := os.MkdirAll(sqliteDir, 0755); err != nil {
+		log.Printf("Warning: failed to create sqlite directory %s: %v", sqliteDir, err)
+	}
+
+	for envVar, defaultSubdir := range paths {
+		if os.Getenv(envVar) == "" {
+			resolved := filepath.Join(dataDir, defaultSubdir)
+			os.Setenv(envVar, resolved)
+			log.Printf("Consolidated %s to %s", envVar, resolved)
+		}
+	}
+}
+
 func main() {
 	log.Println("=== STARTING STARGATE BACKEND ===")
+
+	// Ensure consistent data paths
+	consolidateEnvironmentPaths()
 
 	// Initialize MCP components (needed for both server and background)
 	store, apiKeyIssuer, apiKeyValidator, ingestionSvc, challengeStore := initializeMCPComponents()
