@@ -97,6 +97,7 @@ const InscribeModal = ({ onClose, onSuccess }) => {
           'Content-Type': 'application/json',
           'X-API-Key': auth.apiKey || ''
         },
+        credentials: 'include',
         body: JSON.stringify(payload)
       });
 

@@ -587,6 +587,7 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 	keyHandler := handlers.NewAPIKeyHandler(apiKeyIssuer, apiKeyValidator, challengeStore)
 	// mux.HandleFunc("/api/auth/register", keyHandler.HandleRegister) // DISABLED for security
 	mux.HandleFunc("/api/auth/login", keyHandler.HandleLogin)
+	mux.HandleFunc("/api/auth/logout", keyHandler.HandleLogout)
 	mux.HandleFunc("/api/auth/challenge", keyHandler.HandleChallenge)
 	mux.HandleFunc("/api/auth/verify", keyHandler.HandleVerify)
 

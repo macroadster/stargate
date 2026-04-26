@@ -146,7 +146,7 @@ function MainContent() {
         // If it's a proposal ID, we might need to find the associated contract first
         if (proposalId) {
           try {
-            const propRes = await fetch(`${API_BASE}/api/smart_contract/proposals/${proposalId}`, { headers });
+            const propRes = await fetch(`${API_BASE}/api/smart_contract/proposals/${proposalId}`, { headers, credentials: 'include' });
             if (propRes.ok) {
               proposalData = await propRes.json();
               searchId = proposalData.visible_pixel_hash || 
@@ -159,7 +159,7 @@ function MainContent() {
           }
         }
 
-        const response = await fetch(`${API_BASE}/api/search?q=${encodeURIComponent(searchId)}`, { headers });
+        const response = await fetch(`${API_BASE}/api/search?q=${encodeURIComponent(searchId)}`, { headers, credentials: 'include' });
         const data = await response.json();
         const payload = data?.data || data;
         

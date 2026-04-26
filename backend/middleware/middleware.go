@@ -297,9 +297,16 @@ func APIAuth(validator auth.APIKeyValidator) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			apiKey := r.Header.Get("X-API-Key")
 			if apiKey == "" {
-				auth := r.Header.Get("Authorization")
-				if strings.HasPrefix(auth, "Bearer ") {
-					apiKey = strings.TrimPrefix(auth, "Bearer ")
+				authHeader := r.Header.Get("Authorization")
+				if strings.HasPrefix(authHeader, "Bearer ") {
+					apiKey = strings.TrimPrefix(authHeader, "Bearer ")
+				}
+			}
+
+			// Check cookie if header is missing
+			if apiKey == "" {
+				if cookie, err := r.Cookie("X-API-Key"); err == nil {
+					apiKey = cookie.Value
 				}
 			}
 

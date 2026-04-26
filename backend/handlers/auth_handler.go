@@ -59,7 +59,8 @@ func (h *APIKeyHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !h.validator.Validate(strings.TrimSpace(body.APIKey)) {
+	apiKey := strings.TrimSpace(body.APIKey)
+	if !h.validator.Validate(apiKey) {
 		h.sendError(w, http.StatusForbidden, "invalid api key")
 		return
 	}
@@ -69,7 +70,7 @@ func (h *APIKeyHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		if getter, ok := h.validator.(interface {
 			Get(string) (auth.APIKey, bool)
 		}); ok {
-			if rec, ok := getter.Get(body.APIKey); ok {
+			if rec, ok := getter.Get(apiKey); ok {
 				if strings.TrimSpace(rec.Wallet) != "" && rec.Wallet != wallet {
 					h.sendError(w, http.StatusForbidden, "wallet already bound; rebind requires verification")
 					return
@@ -77,18 +78,41 @@ func (h *APIKeyHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if updater, ok := h.validator.(auth.APIKeyWalletUpdater); ok {
-			if _, err := updater.UpdateWallet(body.APIKey, wallet); err != nil {
+			if _, err := updater.UpdateWallet(apiKey, wallet); err != nil {
 				h.sendError(w, http.StatusInternalServerError, "failed to bind wallet to api key")
 				return
 			}
 		}
 	}
 
+	// Set httpOnly cookie for security
+	http.SetCookie(w, &http.Cookie{
+		Name:     "X-API-Key",
+		Value:    apiKey,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   false, // Set to true if using HTTPS
+		SameSite: http.SameSiteStrictMode,
+		MaxAge:   86400 * 30, // 30 days
+	})
+
 	h.sendSuccess(w, map[string]interface{}{
 		"valid":   true,
-		"api_key": body.APIKey,
+		"api_key": apiKey,
 		"wallet":  wallet,
 	})
+}
+
+// HandleLogout clears the API key cookie.
+func (h *APIKeyHandler) HandleLogout(w http.ResponseWriter, r *http.Request) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     "X-API-Key",
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		MaxAge:   -1,
+	})
+	h.sendSuccess(w, map[string]string{"status": "logged out"})
 }
 
 // HandleChallenge issues a nonce for wallet verification.
@@ -173,6 +197,18 @@ func (h *APIKeyHandler) HandleVerify(w http.ResponseWriter, r *http.Request) {
 		h.sendError(w, http.StatusInternalServerError, "failed to issue api key")
 		return
 	}
+
+	// Set httpOnly cookie for security
+	http.SetCookie(w, &http.Cookie{
+		Name:     "X-API-Key",
+		Value:    rec.Key,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   false, // Set to true if using HTTPS
+		SameSite: http.SameSiteStrictMode,
+		MaxAge:   86400 * 30, // 30 days
+	})
+
 	h.sendSuccess(w, map[string]interface{}{
 		"api_key":  rec.Key,
 		"wallet":   rec.Wallet,

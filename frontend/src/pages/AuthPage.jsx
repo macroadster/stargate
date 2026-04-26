@@ -2,10 +2,11 @@ import React, { useState } from 'react';
 import { QRCodeCanvas } from 'qrcode.react';
 import { API_BASE } from '../apiBase';
 import { useAuth } from '../context/AuthContext';
+import { apiFetch } from '../utils/api';
 import { useNavigate } from 'react-router-dom';
 
 export default function AuthPage() {
-  const { auth, signIn, getSavedWallets } = useAuth();
+  const { auth, signIn, getSavedWallets, deleteWalletKey } = useAuth();
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [apiKey, setApiKey] = useState(auth.apiKey || '');
@@ -39,7 +40,7 @@ export default function AuthPage() {
     try {
       const saved = savedWallets.find((k) => k.apiKey === loginKey);
       const walletToSend = wallet || saved?.wallet || '';
-      const res = await fetch(`${API_BASE}/api/auth/login`, {
+      const res = await apiFetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ api_key: loginKey, wallet_address: walletToSend })
@@ -61,7 +62,7 @@ export default function AuthPage() {
   const handleChallenge = async () => {
     setStatus('Requesting challenge...');
     try {
-      const res = await fetch(`${API_BASE}/api/auth/challenge`, {
+      const res = await apiFetch('/api/auth/challenge', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ wallet_address: wallet })
@@ -79,7 +80,7 @@ export default function AuthPage() {
   const handleVerify = async () => {
     setStatus('Verifying signature...');
     try {
-      const res = await fetch(`${API_BASE}/api/auth/verify`, {
+      const res = await apiFetch('/api/auth/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ wallet_address: wallet, signature, email })
@@ -104,18 +105,35 @@ export default function AuthPage() {
       {savedWallets.length > 0 && (
         <div className="mb-4">
           <label className="block text-sm mb-2 auth-card-label">Saved wallets</label>
-          <select
-            className="form-select w-full h-10 mb-2 px-3 rounded-lg"
-            onChange={(e) => setLoginKey(e.target.value)}
-            value={loginKey}
-          >
-            <option value="">Choose saved wallet</option>
-            {savedWallets.map((k) => (
-              <option key={k.wallet} value={k.apiKey}>
-                {(k.wallet || k.email || 'Key') + ' …' + k.apiKey.slice(-6)}
-              </option>
-            ))}
-          </select>
+          <div className="flex gap-2">
+            <select
+              className="form-select flex-1 h-10 px-3 rounded-lg"
+              onChange={(e) => setLoginKey(e.target.value)}
+              value={loginKey}
+            >
+              <option value="">Choose saved wallet</option>
+              {savedWallets.map((k) => (
+                <option key={k.wallet} value={k.apiKey}>
+                  {(k.wallet || k.email || 'Key').slice(0, 12) + '…' + k.apiKey.slice(-6)}
+                </option>
+              ))}
+            </select>
+            {loginKey && savedWallets.some(k => k.apiKey === loginKey) && (
+              <button 
+                onClick={() => {
+                  const s = savedWallets.find(k => k.apiKey === loginKey);
+                  if (s) {
+                    deleteWalletKey(s.wallet);
+                    setLoginKey('');
+                  }
+                }}
+                className="p-2 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
+                title="Delete saved key"
+              >
+                🗑️
+              </button>
+            )}
+          </div>
         </div>
       )}
       <label className="block text-sm mb-2 auth-card-label">API Key</label>
@@ -204,24 +222,26 @@ export default function AuthPage() {
   };
 
   return (
-    <div className="auth-page-container">
-      <div className="w-full max-w-xl space-y-4">
-        <div className="flex justify-center gap-3 text-sm">
+    <div className="auth-page-container pt-12">
+      <div className="w-full max-w-xl space-y-6">
+        <div className="flex justify-center gap-3">
           <button
-            className={`auth-tab ${view === 'login' ? 'auth-tab-active' : 'auth-tab-inactive'}`}
+            className={`px-6 py-2 rounded-full transition-all ${view === 'login' ? 'bg-starlight text-white shadow-lg glow-blue' : 'bg-white/5 text-gray-400 hover:text-white'}`}
             onClick={() => setView('login')}
           >
-            Sign In (API key)
+            Sign In
           </button>
           <button
-            className={`auth-tab ${view === 'wallet' ? 'auth-tab-active-wallet' : 'auth-tab-inactive'}`}
+            className={`px-6 py-2 rounded-full transition-all ${view === 'wallet' ? 'bg-indigo-600 text-white shadow-lg' : 'bg-white/5 text-gray-400 hover:text-white'}`}
             onClick={() => setView('wallet')}
           >
-            Wallet Challenge
+            Wallet Verification
           </button>
         </div>
 
-        {renderCard()}
+        <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+          {renderCard()}
+        </div>
       </div>
 
       {status && (
