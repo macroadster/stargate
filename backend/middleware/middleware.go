@@ -91,6 +91,28 @@ func SecurityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+
+		// Content Security Policy
+		// - connect-src 'self' prevents sending data to external domains
+		// - script-src 'self' 'unsafe-inline' 'unsafe-eval' (unsafe-eval is needed for wasm/sql.js)
+		// - worker-src 'self' blob: (needed for sql.js if used in a worker)
+		origin := r.Header.Get("Origin")
+		connectSrc := "connect-src 'self';"
+		if origin != "" && origin != "null" {
+			connectSrc = fmt.Sprintf("connect-src 'self' %s;", origin)
+		}
+
+		csp := fmt.Sprintf("default-src 'self'; "+
+			"script-src 'self' 'unsafe-inline' 'unsafe-eval'; "+
+			"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "+
+			"font-src 'self' https://fonts.gstatic.com; "+
+			"img-src 'self' data: blob: https:; "+
+			"%s "+
+			"worker-src 'self' blob:; "+
+			"frame-src 'self'; "+
+			"object-src 'none';", connectSrc)
+		w.Header().Set("Content-Security-Policy", csp)
+
 		next.ServeHTTP(w, r)
 	})
 }
