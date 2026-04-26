@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
@@ -86,12 +87,13 @@ func (h *APIKeyHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Set httpOnly cookie for security
+	secure := r.TLS != nil || os.Getenv("NODE_ENV") == "production"
 	http.SetCookie(w, &http.Cookie{
 		Name:     "X-API-Key",
 		Value:    apiKey,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   false, // Set to true if using HTTPS
+		Secure:   secure,
 		SameSite: http.SameSiteStrictMode,
 		MaxAge:   86400 * 30, // 30 days
 	})
@@ -199,12 +201,13 @@ func (h *APIKeyHandler) HandleVerify(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Set httpOnly cookie for security
+	secure := r.TLS != nil || os.Getenv("NODE_ENV") == "production"
 	http.SetCookie(w, &http.Cookie{
 		Name:     "X-API-Key",
 		Value:    rec.Key,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   false, // Set to true if using HTTPS
+		Secure:   secure,
 		SameSite: http.SameSiteStrictMode,
 		MaxAge:   86400 * 30, // 30 days
 	})
