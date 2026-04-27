@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { CheckCircle, XCircle, Clock, FileText, ExternalLink } from 'lucide-react';
 import { API_BASE } from '../../apiBase';
+import { apiFetch } from '../../utils/api';
 
 const SubmissionReview = ({ submissionId, onApprove, onReject, onClose }) => {
   const [submission, setSubmission] = useState(null);
@@ -11,7 +12,7 @@ const SubmissionReview = ({ submissionId, onApprove, onReject, onClose }) => {
   useEffect(() => {
     const fetchSubmission = async () => {
       try {
-        const response = await fetch(`${API_BASE}/api/smart_contract/submissions/${submissionId}`);
+        const response = await apiFetch(`/api/smart_contract/submissions/${submissionId}`);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const data = await response.json();
         setSubmission(data);

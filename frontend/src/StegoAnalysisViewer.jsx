@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Eye, Code, Shield, Download, Copy, Check } from 'lucide-react';
 import { API_BASE } from './apiBase';
+import { apiFetch } from './utils/api';
 
 const StegoAnalysisViewer = ({ contract, onClose, copiedText, copyToClipboard }) => {
   const [activeTab, setActiveTab] = useState('overview');
@@ -16,7 +17,7 @@ const StegoAnalysisViewer = ({ contract, onClose, copiedText, copyToClipboard })
   const fetchAnalysis = useCallback(async () => {
     setIsAnalyzing(true);
     try {
-      const response = await fetch(`${API_BASE}/api/contract-stego/${contract.contract_id}/analyze`);
+      const response = await apiFetch(`/api/contract-stego/${contract.contract_id}/analyze`);
       if (response.ok) {
         const data = await response.json();
         setAnalysis(data);

@@ -3,6 +3,8 @@ import { X } from 'lucide-react';
 import { API_BASE } from '../../apiBase';
 import { useAuth } from '../../context/AuthContext';
 
+import { apiFetch } from '../../utils/api';
+
 const InscribeModal = ({ onClose, onSuccess }) => {
   const { auth } = useAuth();
   const [step, setStep] = useState(1);
@@ -91,13 +93,12 @@ const InscribeModal = ({ onClose, onSuccess }) => {
         payload.filename = uploadImage.name;
       }
 
-      const response = await fetch(`${API_BASE}/api/inscribe`, {
+      const response = await apiFetch('/api/inscribe', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'X-API-Key': auth.apiKey || ''
         },
-        credentials: 'include',
         body: JSON.stringify(payload)
       });
 

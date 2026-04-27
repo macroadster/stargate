@@ -20,6 +20,7 @@ import { ThemeProvider } from './context/ThemeContext';
 import { useBlocks } from './hooks/useBlocks';
 import { useInscriptions } from './hooks/useInscriptions';
 import { API_BASE, CONTENT_BASE } from './apiBase';
+import { apiFetch } from './utils/api';
 
 import { useHorizontalScroll } from './hooks/useHorizontalScroll';
 
@@ -146,7 +147,7 @@ function MainContent() {
         // If it's a proposal ID, we might need to find the associated contract first
         if (proposalId) {
           try {
-            const propRes = await fetch(`${API_BASE}/api/smart_contract/proposals/${proposalId}`, { headers, credentials: 'include' });
+            const propRes = await apiFetch(`/api/smart_contract/proposals/${proposalId}`, { headers });
             if (propRes.ok) {
               proposalData = await propRes.json();
               searchId = proposalData.visible_pixel_hash || 
@@ -159,7 +160,7 @@ function MainContent() {
           }
         }
 
-        const response = await fetch(`${API_BASE}/api/search?q=${encodeURIComponent(searchId)}`, { headers, credentials: 'include' });
+        const response = await apiFetch(`/api/search?q=${encodeURIComponent(searchId)}`, { headers });
         const data = await response.json();
         const payload = data?.data || data;
         
@@ -280,7 +281,7 @@ function MainContent() {
         } else if (wishId || contractId) {
             // Fallback: Try direct inscription fetch
             try {
-                const directRes = await fetch(`${API_BASE}/api/data/inscriptions/${wishId || contractId}`);
+                const directRes = await apiFetch(`/api/data/inscriptions/${wishId || contractId}`);
                 if (directRes.ok) {
                     const directData = await directRes.json();
                     const ins = directData.inscription || directData;
@@ -413,7 +414,7 @@ function MainContent() {
     }
 
     try {
-      const response = await fetch(`${API_BASE}/api/search?q=${encodeURIComponent(query)}`);
+      const response = await apiFetch(`/api/search?q=${encodeURIComponent(query)}`);
       const data = await response.json();
       const payload = data?.data || data;
       setSearchResults(payload);

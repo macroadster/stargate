@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { API_BASE, CONTENT_BASE } from '../apiBase';
+import { apiFetch } from '../utils/api';
 
 const generateInscriptions = (inscriptions) => {
   return inscriptions.map((insc) => ({
@@ -93,7 +94,7 @@ export const useInscriptions = (selectedBlock) => {
         url.searchParams.set('cursor', cursor);
       }
 
-      const response = await fetch(url.toString());
+      const response = await apiFetch(url.toString());
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }

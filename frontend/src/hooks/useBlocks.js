@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { API_BASE } from '../apiBase';
+import { apiFetch } from '../utils/api';
 
 const generateBlock = (block) => {
   const now = Date.now();
@@ -79,7 +80,7 @@ export const useBlocks = () => {
       url.searchParams.set('limit', 20);
       if (cursor) url.searchParams.set('cursor_height', cursor);
 
-      const response = await fetch(url.toString());
+      const response = await apiFetch(url.toString());
       const data = await response.json();
 
       if (!response.ok) {
@@ -90,7 +91,7 @@ export const useBlocks = () => {
 
       if (!networkHeight || isPolling) {
         try {
-          const healthRes = await fetch(`${API_BASE}/bitcoin/v1/health`);
+          const healthRes = await apiFetch('/bitcoin/v1/health');
           if (healthRes.ok) {
             const healthData = await healthRes.json();
             networkHeight = healthData?.bitcoin?.block_height || healthData?.bitcoin?.blockHeight;
@@ -268,7 +269,7 @@ export const useBlocks = () => {
   useEffect(() => {
     const fetchNetwork = async () => {
       try {
-        const res = await fetch(`${API_BASE}/bitcoin/v1/health`);
+        const res = await apiFetch('/bitcoin/v1/health');
         if (!res.ok) return;
         const data = await res.json();
         const network = String(data?.network || '').toLowerCase();

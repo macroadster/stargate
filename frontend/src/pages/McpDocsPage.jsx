@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { API_BASE } from '../apiBase';
+import { apiFetch } from '../utils/api';
 import AppHeader from '../components/Common/AppHeader';
 
 export default function McpDocsPage() {
@@ -10,7 +11,7 @@ export default function McpDocsPage() {
   useEffect(() => {
     const loadDocs = async () => {
       try {
-        const response = await fetch(`${API_BASE}/mcp/docs`);
+        const response = await apiFetch('/mcp/docs');
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}`);
         }

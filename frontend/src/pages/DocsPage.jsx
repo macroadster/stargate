@@ -4,6 +4,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { FileText, Users, Bot, Book, Settings, HelpCircle, ChevronRight } from 'lucide-react';
 import AppHeader from '../components/Common/AppHeader';
+import { apiFetch } from '../utils/api';
 
 const DocsPage = () => {
   const navigate = useNavigate();
@@ -59,11 +60,11 @@ const DocsPage = () => {
         
         // Default to README.md if at root /docs
         const target = (!docPath || docPath === '') ? 'README.md' : docPath;
-        const response = await fetch(`/docs/${target}`);
+        const response = await apiFetch(`/docs/${target}`);
         
         if (!response.ok) {
           // Fallback: try loading from root if not found in /docs/ prefix (dev mode support)
-          const rootResponse = await fetch(`/${target}`);
+          const rootResponse = await apiFetch(`/${target}`);
           if (!rootResponse.ok) {
              throw new Error(`Documentation not found: ${target}`);
           }

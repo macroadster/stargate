@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState, useRef } from 'react'
 import { RefreshCw, Search, Loader2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { API_BASE } from '../../apiBase';
+import { apiFetch } from '../../utils/api';
 import AppHeader from '../Common/AppHeader';
 import { useAuth } from '../../context/AuthContext';
 
@@ -52,7 +53,7 @@ export default function DiscoverPage() {
       if (contractId) params.set('contract_id', contractId);
       params.set('limit', String(pagination.limit));
       params.set('offset', String(offset));
-      const res = await fetch(`${API_BASE}/api/smart_contract/proposals?${params.toString()}`, {
+      const res = await apiFetch(`/api/smart_contract/proposals?${params.toString()}`, {
         headers: auth.apiKey ? { 'X-API-Key': auth.apiKey } : undefined,
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -104,7 +105,7 @@ export default function DiscoverPage() {
     if (!claimId) return;
     setSubmitting((prev) => ({ ...prev, [taskId]: true }));
     try {
-      const res = await fetch(`${API_BASE}/api/smart_contract/claims/${claimId}/submit`, {
+      const res = await apiFetch(`/api/smart_contract/claims/${claimId}/submit`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -146,7 +147,7 @@ export default function DiscoverPage() {
     }
     setClaiming((prev) => ({ ...prev, [taskId]: true }));
     try {
-      const res = await fetch(`${API_BASE}/api/smart_contract/tasks/${taskId}/claim`, {
+      const res = await apiFetch(`/api/smart_contract/tasks/${taskId}/claim`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -560,7 +561,7 @@ function ActivityFeed() {
   const loadEvents = useCallback(async () => {
     if (!auth.apiKey || authBlocked) return;
     try {
-      const res = await fetch(`${API_BASE}/api/smart_contract/events?limit=20`, {
+      const res = await apiFetch('/api/smart_contract/events?limit=20', {
         headers: { 'X-API-Key': auth.apiKey },
       });
       if (res.status === 401 || res.status === 403) {

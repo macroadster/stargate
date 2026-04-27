@@ -5,6 +5,7 @@ import CopyButton from '../Common/CopyButton';
 import SafeQrCodeCanvas from '../Common/SafeQrCodeCanvas';
 import DeliverablesReview from '../Review/DeliverablesReview';
 import { API_BASE } from '../../apiBase';
+import { apiFetch } from '../../utils/api';
 import { useAuth } from '../../context/AuthContext';
 
 // QR version 40-L max byte capacity (base64 uses byte mode).
@@ -88,7 +89,7 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
 
     const fetchNetwork = async () => {
       try {
-        const response = await fetch(`${API_BASE}/bitcoin/v1/health`);
+        const response = await apiFetch('/bitcoin/v1/health');
         if (response.ok) {
           const data = await response.json();
           if (!walletGuess) {
@@ -444,7 +445,7 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
         ...(options.headers || {}),
         ...(auth.apiKey ? { 'X-API-Key': auth.apiKey } : {}),
       };
-      return await fetch(url, { ...options, headers, signal: controller.signal });
+      return await apiFetch(url, { ...options, headers, signal: controller.signal });
     } finally {
       clearTimeout(timer);
     }
@@ -850,8 +851,8 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
     const fetchReworkRequests = async () => {
       setIsLoadingRework(true);
       try {
-        const res = await fetch(
-          `${API_BASE}/api/smart_contract/contracts/${inscription.id}/rework`,
+        const res = await apiFetch(
+          `/api/smart_contract/contracts/${inscription.id}/rework`,
           { headers: { 'X-API-Key': auth.apiKey } }
         );
         if (res.ok) {
@@ -1003,7 +1004,7 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
         change_address: !isRaiseFund && psbtForm.changeAddress?.trim() ? psbtForm.changeAddress.trim() : undefined,
         split_psbt: isRaiseFund ? true : undefined,
       };
-      const res = await fetch(`${API_BASE}/api/smart_contract/contracts/${contractId}/psbt`, {
+      const res = await apiFetch(`/api/smart_contract/contracts/${contractId}/psbt`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -2175,8 +2176,8 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
                               }
                               setIsSubmittingRework(true);
                               try {
-                                const res = await fetch(
-                                  `${API_BASE}/api/smart_contract/contracts/${inscription.id}/rework`,
+                                const res = await apiFetch(
+                                  `/api/smart_contract/contracts/${inscription.id}/rework`,
                                   {
                                     method: 'POST',
                                     headers: {
@@ -2193,8 +2194,8 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
                                 setReworkNotes('');
                                 setShowReworkForm(false);
                                 // Refresh rework requests
-                                const reworkRes = await fetch(
-                                  `${API_BASE}/api/smart_contract/contracts/${inscription.id}/rework`,
+                                const reworkRes = await apiFetch(
+                                  `/api/smart_contract/contracts/${inscription.id}/rework`,
                                   { headers: { 'X-API-Key': auth.apiKey } }
                                 );
                                 if (reworkRes.ok) {
@@ -2251,8 +2252,8 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
                                 <button
                                   onClick={async () => {
                                     try {
-                                      const res = await fetch(
-                                        `${API_BASE}/api/smart_contract/contracts/${inscription.id}/rework/${req.request_id}`,
+                                      const res = await apiFetch(
+                                        `/api/smart_contract/contracts/${inscription.id}/rework/${req.request_id}`,
                                         {
                                           method: 'PATCH',
                                           headers: { 'X-API-Key': auth.apiKey },
@@ -2260,10 +2261,11 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
                                       );
                                       if (res.ok) {
                                         // Refresh rework requests
-                                        const reworkRes = await fetch(
-                                          `${API_BASE}/api/smart_contract/contracts/${inscription.id}/rework`,
+                                        const reworkRes = await apiFetch(
+                                          `/api/smart_contract/contracts/${inscription.id}/rework`,
                                           { headers: { 'X-API-Key': auth.apiKey } }
                                         );
+
                                         if (reworkRes.ok) {
                                           const data = await reworkRes.json();
                                           setReworkRequests(data.rework_requests || []);

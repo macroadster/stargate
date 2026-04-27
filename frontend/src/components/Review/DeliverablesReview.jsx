@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import { CheckCircle, XCircle, Clock, ExternalLink, Filter, ChevronDown, ChevronUp, Eye, FileText, Code, Columns, List } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { API_BASE } from '../../apiBase';
+import { apiFetch } from '../../utils/api';
 import CopyButton from '../Common/CopyButton';
 import { useAuth } from '../../context/AuthContext';
 
@@ -167,8 +168,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
   };
 
   const performReviewRequest = async (submissionId, action) => {
-    const reviewUrl = `${API_BASE}/api/smart_contract/submissions/${submissionId}/review`;
-    const res = await fetch(reviewUrl, {
+    const res = await apiFetch(`/api/smart_contract/submissions/${submissionId}/review`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -259,7 +259,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
     
     setLoadingProof(prev => ({ ...prev, [submissionId]: true }));
     try {
-      const response = await fetch(proofUrl);
+      const response = await apiFetch(proofUrl);
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       
       const contentType = response.headers.get('content-type') || '';

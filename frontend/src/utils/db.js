@@ -64,6 +64,9 @@ export async function initDB() {
       if (oldKey) {
         db.run("INSERT OR REPLACE INTO auth_state (id, api_key, wallet, email) VALUES (1, ?, ?, ?)", 
           [oldKey, oldWallet || '', oldEmail || '']);
+        localStorage.removeItem('X-API-Key');
+        localStorage.removeItem('X-Wallet-Address');
+        localStorage.removeItem('X-User-Email');
       }
       
       const oldMap = localStorage.getItem('X-Wallet-Key-Map');
@@ -74,6 +77,7 @@ export async function initDB() {
             db.run("INSERT OR REPLACE INTO wallet_keys (wallet, api_key, email, last_used) VALUES (?, ?, ?, ?)",
               [wallet, data.apiKey, data.email || '', data.lastUsed || Date.now()]);
           }
+          localStorage.removeItem('X-Wallet-Key-Map');
         } catch (e) {
           console.error("Failed to migrate wallet map", e);
         }

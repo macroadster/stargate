@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef } from 'react';
 import { API_BASE, CONTENT_BASE } from '../apiBase';
+import { apiFetch } from '../utils/api';
 
 const mapContractToDisplayFormat = (contract) => {
   const rawUrl = contract.stego_image_url || contract.imageData || '';
@@ -68,7 +69,7 @@ export const useContracts = () => {
         url.searchParams.set('cursor_date', cursor);
         url.searchParams.set('cursor_type', 'before');
       }
-      const res = await fetch(url.toString());
+      const res = await apiFetch(url.toString());
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       

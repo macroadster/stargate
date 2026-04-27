@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import InscriptionCard from '../Inscription/InscriptionCard';
 import { API_BASE } from '../../apiBase';
+import { apiFetch } from '../../utils/api';
 
 const OpenContractsView = ({ setSelectedInscription, refreshKey }) => {
   const [pendingTxs, setPendingTxs] = useState([]);
@@ -12,7 +13,7 @@ const OpenContractsView = ({ setSelectedInscription, refreshKey }) => {
     loadingRef.current = true;
     setIsLoading(true);
     try {
-      const response = await fetch(`${API_BASE}/api/open-contracts`);
+      const response = await apiFetch('/api/open-contracts');
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const data = await response.json();
       const raw = data?.data?.transactions ?? data;
