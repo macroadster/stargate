@@ -84,6 +84,9 @@ func NewIngestionService(dsn string) (*IngestionService, error) {
 }
 
 func (s *IngestionService) ensureSchema(ctx context.Context) error {
+	// For now ingestion is Postgres-only. When we add SQLite support
+	// we will add GetIngestionSchema("sqlite") here (using TEXT/INTEGER
+	// instead of JSONB/BIGSERIAL + datetime('now')).
 	schema := fmt.Sprintf(`
 CREATE TABLE IF NOT EXISTS %s (
   id TEXT PRIMARY KEY,
@@ -114,6 +117,15 @@ CREATE INDEX IF NOT EXISTS starlight_ingest_updates_status_idx
 	_, err := s.db.ExecContext(ctx, schema)
 	return err
 }
+
+// GetIngestionSchema is the extension point for future SQLite support
+// (currently only the Postgres dialect is implemented).
+func GetIngestionSchema(dialect string) string {
+	// For Phase 4 we keep the logic inside ensureSchema.
+	// A full dialect switch will be added when SQLite ingestion is implemented.
+	return "postgres" // placeholder
+}
+
 
 // All the method implementations follow (Create, Get, GetBy*, Update*,
 // List*, Delete, Enqueue*, Claim*, Mark*...)

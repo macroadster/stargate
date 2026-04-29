@@ -59,92 +59,9 @@ func NewSQLiteStore(dbPath string, claimTTL time.Duration, seed bool) (*SQLiteSt
 }
 
 func (s *SQLiteStore) initSchema(ctx context.Context) error {
-	schema := `
-CREATE TABLE IF NOT EXISTS mcp_contracts (
-  contract_id TEXT PRIMARY KEY,
-  title TEXT,
-  total_budget_sats INTEGER,
-  goals_count INTEGER,
-  available_tasks_count INTEGER,
-  status TEXT,
-  skills TEXT,
-  stego_image_url TEXT,
-  confirmed_block_height INTEGER,
-  confirmed_at TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  metadata TEXT DEFAULT '{}'
-);
-CREATE INDEX IF NOT EXISTS idx_mcp_contracts_confirmed_height ON mcp_contracts(confirmed_block_height DESC);
-CREATE INDEX IF NOT EXISTS idx_mcp_contracts_confirmed_at ON mcp_contracts(confirmed_at DESC);
-CREATE INDEX IF NOT EXISTS idx_mcp_contracts_created_at ON mcp_contracts(created_at DESC);
-
-CREATE TABLE IF NOT EXISTS mcp_tasks (
-  task_id TEXT PRIMARY KEY,
-  contract_id TEXT,
-  goal_id TEXT,
-  title TEXT,
-  description TEXT,
-  budget_sats INTEGER,
-  skills TEXT,
-  status TEXT,
-  claimed_by TEXT,
-  claimed_at TEXT,
-  claim_expires_at TEXT,
-  difficulty TEXT,
-  estimated_hours INTEGER,
-  requirements TEXT,
-  merkle_proof TEXT,
-  FOREIGN KEY (contract_id) REFERENCES mcp_contracts(contract_id) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS mcp_claims (
-  claim_id TEXT PRIMARY KEY,
-  task_id TEXT,
-  ai_identifier TEXT,
-  status TEXT,
-  expires_at TEXT,
-  created_at TEXT,
-  FOREIGN KEY (task_id) REFERENCES mcp_tasks(task_id) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS mcp_submissions (
-  submission_id TEXT PRIMARY KEY,
-  claim_id TEXT,
-  task_id TEXT,
-  status TEXT NOT NULL,
-  deliverables TEXT,
-  completion_proof TEXT,
-  rejection_reason TEXT,
-  rejection_type TEXT,
-  rejected_at TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  FOREIGN KEY (claim_id) REFERENCES mcp_claims(claim_id) ON DELETE CASCADE
-);
-CREATE INDEX IF NOT EXISTS idx_mcp_submissions_claim_id ON mcp_submissions(claim_id);
-CREATE INDEX IF NOT EXISTS idx_mcp_submissions_task_id ON mcp_submissions(task_id);
-CREATE INDEX IF NOT EXISTS idx_mcp_submissions_status ON mcp_submissions(status);
-CREATE INDEX IF NOT EXISTS idx_mcp_submissions_created_at ON mcp_submissions(created_at DESC);
-
-CREATE TABLE IF NOT EXISTS mcp_proposals (
-  id TEXT PRIMARY KEY,
-  title TEXT NOT NULL,
-  description_md TEXT NOT NULL,
-  visible_pixel_hash TEXT,
-  budget_sats INTEGER DEFAULT 0,
-  status TEXT NOT NULL DEFAULT 'pending',
-  metadata TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-CREATE INDEX IF NOT EXISTS idx_mcp_proposals_status ON mcp_proposals(status);
-CREATE INDEX IF NOT EXISTS idx_mcp_tasks_contract_status ON mcp_tasks(contract_id, status);
-
-CREATE TABLE IF NOT EXISTS mcp_escort_status (
-  task_id TEXT PRIMARY KEY,
-  proof_status TEXT,
-  last_checked TEXT,
-  payload TEXT
-);
-`
+	// Use the single source of truth defined in schema.go.
+	// This eliminates the previous massive duplication with the PG schema.
+	schema := GetMCPSchema("sqlite")
 	_, err := s.db.ExecContext(ctx, schema)
 	return err
 }
