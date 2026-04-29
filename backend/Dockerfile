@@ -46,7 +46,9 @@ RUN mkdir -p /app/frontend /app/uploads /app/logs && \
     chown -R stargate:stargate /app
 
 # Set environment variables
-ENV STARGATE_STORAGE=filesystem
+# sqlite is the recommended durable default for single-binary / container deployments.
+# memory is available when you want a completely ephemeral process (debugging / tests).
+ENV STARGATE_STORAGE=sqlite
 ENV GIN_MODE=release
 
 EXPOSE 3001

@@ -29,7 +29,6 @@ import (
 	"stargate-backend/starlight"
 	"stargate-backend/storage"
 	auth "stargate-backend/storage/auth"
-	scstore "stargate-backend/storage/smart_contract"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -229,107 +228,36 @@ func findImagePath(height string, filename string) (string, bool) {
 	return "", false
 }
 
-// initializeMCPComponents sets up the MCP components needed for HTTP access
+// initializeMCPComponents is now a thin compatibility wrapper around the
+// unified storage factory (Phase 7 cleanup).
+//
+// All storage decisions (MCP store, API keys, Ingestion, Data layer, caches)
+// are made in one place: storage.LoadStorageConfigFromEnv() + NewAllStores().
+// This removes ~100 lines of duplicated env-parsing and backend-selection logic.
+//
+// memory mode: fast ephemeral (in-memory keys + RAM cache) — excellent for
+// debugging business logic and unit tests.
+// sqlite mode: durable embedded single-binary (recommended default).
+// No hybrid (filesystem JSON + sqlite) is supported — it would duplicate data.
 func initializeMCPComponents() (scmiddleware.Store, auth.APIKeyIssuer, auth.APIKeyValidator, *services.IngestionService, *auth.ChallengeStore) {
-	// Configuration
-	pgDsn := os.Getenv("STARGATE_PG_DSN")
+	cfg := storage.LoadStorageConfigFromEnv()
 
-	// TTL configuration
-	ttlHours := 72
-	if raw := os.Getenv("STARGATE_DEFAULT_CLAIM_TTL_HOURS"); raw != "" {
-		if v, err := strconv.Atoi(raw); err == nil && v > 0 {
-			ttlHours = v
-		}
-	}
-	claimTTL := time.Duration(ttlHours) * time.Hour
-
-	// Seed configuration
-	seed := true
-	if raw := os.Getenv("STARGATE_SEED_FIXTURES"); raw != "" {
-		if v, err := strconv.ParseBool(raw); err == nil {
-			seed = v
-		}
+	allStores, err := storage.NewAllStores(cfg)
+	if err != nil {
+		log.Fatalf("failed to initialize unified storage (STARGATE_STORAGE=%s): %v", cfg.Type, err)
 	}
 
-	// Initialize store
-	var store scmiddleware.Store
-	var err error
-	var ingestionSvc *services.IngestionService
-	actualStoreType := "memory"
+	// The MCP/SmartContract Store is the one passed around as scmiddleware.Store
+	mcpStore := allStores.SmartContractStore
 
-	if pgDsn != "" {
-		// Use PostgreSQL store
-		store, err = scstore.NewPGStore(context.Background(), pgDsn, claimTTL, seed)
-		if err != nil {
-			log.Fatalf("failed to connect to PostgreSQL (%v). Exiting to prevent data loss.", err)
-		}
-		actualStoreType = "postgres"
-		// PostgreSQL connected successfully, try to create ingestion service
-		if svc, serr := services.NewIngestionService(pgDsn); serr != nil {
-			log.Printf("ingestion service unavailable for proposal creation: %v", serr)
-		} else {
-			ingestionSvc = svc
-		}
-	} else {
-		// Use SQLite store for embedded mode (persisted to disk)
-		mcpDbPath := os.Getenv("STARGATE_MCP_DB")
-		if mcpDbPath == "" {
-			dataDir := os.Getenv("STARGATE_DATA_DIR")
-			if dataDir == "" {
-				dataDir = "."
-			}
-			mcpDbPath = filepath.Join(dataDir, "mcp.db")
-		}
-		store, err = scstore.NewSQLiteStore(mcpDbPath, claimTTL, seed)
-		if err != nil {
-			log.Printf("failed to create SQLite MCP store (%v), falling back to memory store", err)
-			store = scstore.NewMemoryStore(claimTTL)
-		} else {
-			actualStoreType = "sqlite"
-			log.Printf("Using embedded SQLite MCP store at %s", mcpDbPath)
-		}
-	}
-
-	log.Printf("Components initialized with %s store", actualStoreType)
-
-	var apiIssuer auth.APIKeyIssuer
-	var apiValidator auth.APIKeyValidator
-
-	// Use Postgres-backed key store when DSN available
-	if pgDsn != "" {
-		pgKeys, err := auth.NewPGAPIKeyStore(context.Background(), pgDsn)
-		if err != nil {
-			log.Fatalf("failed to initialize PostgreSQL API key store (%v). Exiting to prevent data loss.", err)
-		}
-		pgKeys.SeedEnvironmentVariables()
-		apiIssuer, apiValidator = pgKeys, pgKeys
-	} else if actualStoreType == "sqlite" {
-		// Use SQLite-backed key store when using SQLite storage
-		apiDbPath := os.Getenv("STARGATE_API_KEYS_DB")
-		if apiDbPath == "" {
-			dataDir := os.Getenv("STARGATE_DATA_DIR")
-			if dataDir == "" {
-				dataDir = "."
-			}
-			apiDbPath = filepath.Join(dataDir, "api_keys.db")
-		}
-		sqliteKeys, err := auth.NewSQLiteAPIKeyStore(apiDbPath)
-		if err != nil {
-			log.Fatalf("failed to initialize SQLite API key store (%v). Exiting to prevent data loss.", err)
-		}
-		sqliteKeys.SeedEnvironmentVariables()
-		apiIssuer, apiValidator = sqliteKeys, sqliteKeys
-		log.Printf("Using SQLite API key store at %s", apiDbPath)
-	} else {
-		// Only use memory store if explicitly requested or no PostgreSQL DSN
-		mem := auth.NewAPIKeyStore()
-		mem.SeedEnvironmentVariables()
-		apiIssuer, apiValidator = mem, mem
-	}
-
-	challengeStore := auth.NewChallengeStore(10 * time.Minute)
-
-	return store, apiIssuer, apiValidator, ingestionSvc, challengeStore
+	// For backward compatibility with the old return signature we still return
+	// the pieces that the rest of main expects.
+	// DataStorage and ContractCache are also available on allStores if needed.
+	return mcpStore,
+		allStores.APIKeyIssuer,
+		allStores.APIKeyValidator,
+		allStores.IngestionService,
+		allStores.ChallengeStore
 }
 
 // startMCPServices starts background services for sync (works with PostgreSQL or embedded SQLite).

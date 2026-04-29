@@ -22,6 +22,18 @@ const (
 // StorageConfig holds all parameters needed to initialize every storage
 // backend in a consistent way. It is the single source of truth for
 // STARGATE_STORAGE-driven decisions.
+//
+// Supported modes (Phase 6/7 clarification):
+//   - sqlite   : durable embedded single-binary distribution (mcp.db + api_keys.db +
+//                blocks.db for inscription metadata). Recommended default.
+//   - memory   : ephemeral in-memory (API keys + RAM cache). Intended for ease of
+//                debugging business logic and fast unit tests. No durable files.
+//   - postgres : shared durable production backend.
+//   - filesystem: legacy explicit mode (kept for compatibility).
+//
+// There is deliberately no "hybrid" mode (filesystem JSON primary + sqlite cache).
+// It would duplicate data and waste disk space. When using sqlite, the block
+// metadata lives authoritatively in the SQLite block_scans table.
 type StorageConfig struct {
 	Type StorageType
 

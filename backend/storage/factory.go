@@ -76,7 +76,9 @@ func NewAllStores(cfg StorageConfig) (*AllStores, error) {
 			all.DataStorage = ds
 		}
 	default:
-		// memory (and any unknown) → fast filesystem + RAM cache (ideal for unit tests)
+		// memory (and any unknown) → fast filesystem + RAM cache.
+		// Explicitly intended for ease of debugging business logic and unit tests
+		// (as clarified: no hybrid JSON+sqlite mode is supported — it duplicates data).
 		all.DataStorage = NewDataStorage(cfg.DataDir)
 	}
 
