@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"log"
+	"path/filepath"
 	"time"
 
 	"stargate-backend/services"
@@ -63,9 +64,19 @@ func NewAllStores(cfg StorageConfig) (*AllStores, error) {
 		}
 	case StorageFilesystem:
 		all.DataStorage = NewDataStorage(cfg.DataDir)
+	case StorageSQLite:
+		// Use SQLite for block metadata (block_scans table) — consistent durable
+		// embedded storage together with mcp.db and api_keys.db.
+		sqliteBlocksPath := filepath.Join(cfg.SQLiteDir, "blocks.db")
+		if ds, err := NewSQLiteDataStorage(sqliteBlocksPath); err != nil {
+			log.Printf("failed to init SQLiteDataStorage (%v), falling back to filesystem", err)
+			all.DataStorage = NewDataStorage(cfg.DataDir)
+		} else {
+			log.Printf("Using SQLiteDataStorage for block/inscription metadata at %s", sqliteBlocksPath)
+			all.DataStorage = ds
+		}
 	default:
-		// sqlite and memory modes currently keep the proven filesystem data layer
-		// (SQLite data layer can be added in a follow-up)
+		// memory (and any unknown) → fast filesystem + RAM cache (ideal for unit tests)
 		all.DataStorage = NewDataStorage(cfg.DataDir)
 	}
 
