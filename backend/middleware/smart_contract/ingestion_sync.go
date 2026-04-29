@@ -58,12 +58,9 @@ func publishProposalEvent(ctx context.Context, proposal smart_contract.Proposal)
 }
 
 // StartIngestionSync polls starlight_ingestions for pending records, validates embedded payloads,
-// and upserts contracts/tasks into the MCP store. It requires a Postgres-backed store.
+// and upserts contracts/tasks into the MCP store using the generic Store interface.
+// It now works with any backend (memory, sqlite, postgres) that implements Store.
 func StartIngestionSync(ctx context.Context, dsn string, store Store, interval time.Duration) error {
-	pgStore, ok := store.(*scstore.PGStore)
-	if !ok {
-		return errors.New("ingestion sync requires Postgres store")
-	}
 	ingest, err := services.NewIngestionService(dsn)
 	if err != nil {
 		return fmt.Errorf("init ingestion service: %w", err)
@@ -77,7 +74,7 @@ func StartIngestionSync(ctx context.Context, dsn string, store Store, interval t
 			case <-ctx.Done():
 				return
 			case <-t.C:
-				if err := syncOnce(ctx, ingest, pgStore); err != nil {
+				if err := syncOnce(ctx, ingest, store); err != nil {
 					log.Printf("ingestion sync error: %v", err)
 				}
 			}
@@ -110,7 +107,7 @@ type embeddedContract struct {
 	Tasks               []embeddedTask `json:"tasks"`
 }
 
-func syncOnce(ctx context.Context, ingest *services.IngestionService, store *scstore.PGStore) error {
+func syncOnce(ctx context.Context, ingest *services.IngestionService, store Store) error {
 	recs, err := ingest.ListRecent("pending", 25)
 	if err != nil {
 		return err
@@ -131,7 +128,7 @@ func syncOnce(ctx context.Context, ingest *services.IngestionService, store *scs
 	return nil
 }
 
-func processRecord(ctx context.Context, rec services.IngestionRecord, ingest *services.IngestionService, store *scstore.PGStore) error {
+func processRecord(ctx context.Context, rec services.IngestionRecord, ingest *services.IngestionService, store Store) error {
 	meta := copyMeta(rec.Metadata)
 	raw, _ := meta["embedded_message"].(string)
 	if normalized, updatedMeta, err := normalizeEmbedded(raw, meta); err == nil {

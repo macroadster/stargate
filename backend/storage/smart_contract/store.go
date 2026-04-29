@@ -49,4 +49,8 @@ type Store interface {
 	CreateContractReworkRequest(ctx context.Context, contractID, requester, notes string) (smart_contract.ContractReworkRequest, error)
 	GetContractReworkRequests(ctx context.Context, contractID string) ([]smart_contract.ContractReworkRequest, error)
 	ResolveContractReworkRequest(ctx context.Context, contractID, requestID string) error
+
+	// UpsertContractWithTasks is used by ingestion sync and proposal flows.
+	// All implementations (Memory, SQLite, PG) provide it.
+	UpsertContractWithTasks(ctx context.Context, contract smart_contract.Contract, tasks []smart_contract.Task) error
 }

@@ -727,9 +727,9 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 	blockMonitor.SetIPFSUnpin(func(ctx context.Context, path string) error {
 		return mirror.UnpinPath(ctx, path)
 	})
-	if sweepStore, ok := store.(bitcoin.SweepTaskStore); ok {
-		blockMonitor.SetSweepDependencies(sweepStore, bitcoin.NewMempoolClient())
-	}
+	// All Store implementations (Memory, SQLite, PG) now satisfy bitcoin.SweepTaskStore
+	// because the required methods are part of the core Store interface (Phase 5).
+	blockMonitor.SetSweepDependencies(store, bitcoin.NewMempoolClient())
 	if err := scmiddleware.StartIPFSIngestionSync(context.Background(), ingestionSvc, store, func(ctx context.Context, recent int) error {
 		return blockMonitor.ReconcileRecentBlocks(ctx, recent)
 	}); err != nil {
