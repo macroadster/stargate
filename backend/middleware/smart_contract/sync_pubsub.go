@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"stargate-backend/ipfs"
+	"stargate-backend/storage/ipfs"
 )
 
 type syncPubsubConfig struct {

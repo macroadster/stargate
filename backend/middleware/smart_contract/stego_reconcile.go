@@ -24,7 +24,7 @@ import (
 	"github.com/btcsuite/btcd/txscript"
 
 	"stargate-backend/core/smart_contract"
-	"stargate-backend/ipfs"
+	"stargate-backend/storage/ipfs"
 	"stargate-backend/services"
 	"stargate-backend/stego"
 )

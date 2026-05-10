@@ -67,7 +67,7 @@ func NewContainer(apiKeyIssuer auth.APIKeyIssuer, apiKeyValidator auth.APIKeyVal
 	// Initialize services
 	dataDir := os.Getenv("BLOCKS_DIR")
 	if dataDir == "" {
-		dataDir = "blocks"
+		dataDir = storage.DefaultPath("blocks")
 	}
 	inscriptionsFile := os.Getenv("INSCRIPTIONS_FILE")
 	if inscriptionsFile == "" {
@@ -80,7 +80,7 @@ func NewContainer(apiKeyIssuer auth.APIKeyIssuer, apiKeyValidator auth.APIKeyVal
 	blockService := services.NewBlockService()
 	contractsFile := os.Getenv("SMART_CONTRACTS_FILE")
 	if contractsFile == "" {
-		contractsFile = "smart_contracts.json"
+		contractsFile = storage.DefaultPath("smart_contracts.json")
 	}
 	contractService := services.NewSmartContractService(contractsFile)
 	qrService := services.NewQRCodeService()

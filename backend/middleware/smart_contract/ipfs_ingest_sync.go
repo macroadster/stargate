@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"stargate-backend/core/smart_contract"
-	"stargate-backend/ipfs"
+	"stargate-backend/storage/ipfs"
 	"stargate-backend/services"
 	"stargate-backend/stego"
 )

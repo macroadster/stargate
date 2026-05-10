@@ -37,7 +37,7 @@ func isValidSQLiteTableName(name string) bool {
 // NewSQLiteDataStorage opens a SQLite database file for block metadata storage.
 func NewSQLiteDataStorage(dbPath string) (*SQLiteDataStorage, error) {
 	if dbPath == "" {
-		dbPath = "blocks.db"
+		dbPath = DefaultPath("blocks.db")
 	}
 	if dir := filepath.Dir(dbPath); dir != "." && dir != "" {
 		_ = os.MkdirAll(dir, 0755)

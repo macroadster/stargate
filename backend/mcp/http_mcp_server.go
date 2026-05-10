@@ -25,6 +25,7 @@ import (
 	"stargate-backend/services"
 	"stargate-backend/starlight"
 	auth "stargate-backend/storage/auth"
+	"stargate-backend/storage"
 	scstore "stargate-backend/storage/smart_contract"
 
 	"github.com/btcsuite/btcd/btcutil"
@@ -1160,7 +1161,7 @@ func (h *HTTPMCPServer) handleScanTransaction(ctx context.Context, args map[stri
 
 	baseDir := os.Getenv("BLOCKS_DIR")
 	if baseDir == "" {
-		baseDir = "blocks"
+		baseDir = storage.DefaultPath("blocks")
 	}
 
 	// First try old block directory structure: BLOCKS_DIR/{blockHeight}_*/

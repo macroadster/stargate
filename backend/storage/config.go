@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"time"
+
+	"stargate-backend/storage/datadir"
 )
 
 // StorageType identifies the backend persistence mode.
@@ -147,6 +149,12 @@ func LoadStorageConfigFromEnv() StorageConfig {
 
 	return cfg
 }
+
+// DefaultDataDir returns the root data directory (delegates to datadir.Default).
+func DefaultDataDir() string { return datadir.Default() }
+
+// DefaultPath returns a path under the default data directory.
+func DefaultPath(subpath string) string { return datadir.Path(subpath) }
 
 func getPGDSN() string {
 	if d := os.Getenv("STARGATE_PG_DSN"); d != "" {

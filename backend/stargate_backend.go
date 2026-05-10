@@ -21,7 +21,7 @@ import (
 	"stargate-backend/container"
 	"stargate-backend/core/smart_contract"
 	"stargate-backend/handlers"
-	"stargate-backend/ipfs"
+	"stargate-backend/storage/ipfs"
 	"stargate-backend/mcp"
 	"stargate-backend/middleware"
 	scmiddleware "stargate-backend/middleware/smart_contract"
@@ -210,7 +210,7 @@ func customUploadsHandler(uploadsDir string) http.HandlerFunc {
 func findImagePath(height string, filename string) (string, bool) {
 	baseDir := os.Getenv("BLOCKS_DIR")
 	if baseDir == "" {
-		baseDir = "blocks"
+		baseDir = storage.DefaultPath("blocks")
 	}
 
 	// Try explicit directory pattern first (height_*)

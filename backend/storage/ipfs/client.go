@@ -19,6 +19,8 @@ import (
 	"sync"
 	"time"
 
+	"stargate-backend/storage/datadir"
+
 	"github.com/ipfs/go-cid"
 )
 
@@ -59,7 +61,7 @@ func NewClientFromEnv() *Client {
 
 		storageDir := os.Getenv("IPFS_STORAGE_DIR")
 		if storageDir == "" {
-			storageDir = "ipfs_objects"
+			storageDir = datadir.Path("ipfs_objects")
 		}
 		_ = os.MkdirAll(storageDir, 0755)
 
@@ -80,7 +82,7 @@ func NewClientFromEnv() *Client {
 		if strings.ToLower(os.Getenv("IPFS_EMBEDDED_ENABLED")) != "false" {
 			repoPath := os.Getenv("IPFS_EMBEDDED_REPO")
 			if repoPath == "" {
-				repoPath = "ipfs_repo"
+				repoPath = datadir.Path("ipfs_repo")
 			}
 			_ = os.MkdirAll(repoPath, 0755)
 

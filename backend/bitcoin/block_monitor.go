@@ -25,7 +25,7 @@ import (
 
 	"stargate-backend/core"
 	"stargate-backend/core/smart_contract"
-	"stargate-backend/ipfs"
+	"stargate-backend/storage/ipfs"
 	"stargate-backend/security"
 	"stargate-backend/services"
 )

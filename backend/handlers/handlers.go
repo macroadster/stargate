@@ -26,7 +26,7 @@ import (
 
 	"stargate-backend/stego"
 	sc "stargate-backend/core/smart_contract"
-	"stargate-backend/ipfs"
+	"stargate-backend/storage/ipfs"
 	scmiddleware "stargate-backend/middleware/smart_contract"
 	"stargate-backend/models"
 	"stargate-backend/security"

@@ -22,7 +22,7 @@ import (
 	"golang.org/x/crypto/ripemd160"
 	"stargate-backend/bitcoin"
 	"stargate-backend/core/smart_contract"
-	"stargate-backend/ipfs"
+	"stargate-backend/storage/ipfs"
 	"stargate-backend/services"
 	auth "stargate-backend/storage/auth"
 	scstore "stargate-backend/storage/smart_contract"
