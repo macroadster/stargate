@@ -91,7 +91,7 @@ func LoadStorageConfigFromEnv() StorageConfig {
 	// 3. Directories
 	cfg.DataDir = os.Getenv("STARGATE_DATA_DIR")
 	if cfg.DataDir == "" {
-		cfg.DataDir = "."
+		cfg.DataDir = "data"
 	}
 	cfg.SQLiteDir = filepath.Join(cfg.DataDir, "sqlite")
 	_ = os.MkdirAll(cfg.SQLiteDir, 0755) // best effort

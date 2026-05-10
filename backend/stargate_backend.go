@@ -284,7 +284,7 @@ func startMCPServices(escort *smart_contract.EscortService, store scmiddleware.S
 		if ingestDsn == "" {
 			dataDir := os.Getenv("STARGATE_DATA_DIR")
 			if dataDir == "" {
-				dataDir = "."
+				dataDir = "data"
 			}
 			ingestDsn = filepath.Join(dataDir, "ingestions.db")
 		}
@@ -338,7 +338,7 @@ func consolidateEnvironmentPaths() {
 	// Root data directory
 	dataDir := os.Getenv("STARGATE_DATA_DIR")
 	if dataDir == "" {
-		return
+		dataDir = "data"
 	}
 
 	// Consolidate standard paths if not explicitly set
