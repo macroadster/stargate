@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -8,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -878,16 +880,116 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 	wishTimestamp := time.Now().Unix()
 	embeddedMessage := appendWishTimestamp(text, wishTimestamp)
 
-	// NATIVE STEGANOGRAPHY (replacing proxy to starlight)
-	inscribeResult, err := stego.Inscribe(imgBytes, embeddedMessage, method)
-	if err != nil {
-		h.sendError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to embed steganography: %v", err))
-		return
-	}
+	// Steganography: proxy to starlight if configured, otherwise native Go
+	var ingestionID string
+	var stegoImgBytes []byte
+	var stegoImageBase64 string
+	var starlightRequestID string
 
-	ingestionID := inscribeResult.ID
-	stegoImgBytes := inscribeResult.ImageBytes
-	stegoImageBase64 := inscribeResult.ImageBase64
+	if h.proxyBase != "" {
+		// Proxy to starlight /inscribe
+		log.Printf("DEBUG: Proxy path selected, proxyBase=%s", h.proxyBase)
+		var buf bytes.Buffer
+		writer := multipart.NewWriter(&buf)
+
+		part, _ := writer.CreateFormFile("image", filename)
+		if len(imgBytes) > 0 {
+			io.Copy(part, bytes.NewReader(imgBytes))
+		} else {
+			io.Copy(part, bytes.NewReader(placeholderPNG()))
+		}
+
+		writer.WriteField("message", embeddedMessage)
+		writer.WriteField("method", method)
+		writer.Close()
+
+		proxyURL := fmt.Sprintf("%s/inscribe", strings.TrimRight(h.proxyBase, "/"))
+		proxyReq, _ := http.NewRequest(http.MethodPost, proxyURL, &buf)
+		proxyReq.Header.Set("Content-Type", writer.FormDataContentType())
+		if apiKey := os.Getenv("STARGATE_API_KEY"); apiKey != "" {
+			proxyReq.Header.Set("Authorization", "Bearer "+apiKey)
+		}
+
+		resp, err := http.DefaultClient.Do(proxyReq)
+		if err != nil {
+			h.sendError(w, http.StatusBadGateway, fmt.Sprintf("Proxy request to starlight failed: %v", err))
+			return
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			var errorResp struct {
+				Error   string `json:"error"`
+				Message string `json:"message"`
+			}
+			msg := "Proxy request failed"
+			if json.Unmarshal(body, &errorResp) == nil {
+				if errorResp.Message != "" {
+					msg = errorResp.Message
+				} else if errorResp.Error != "" {
+					msg = errorResp.Error
+				}
+			}
+			h.sendError(w, resp.StatusCode, msg)
+			return
+		}
+
+		// Check for error fields embedded in a 200 response
+		var errorCheck struct {
+			Error struct {
+				Code    int    `json:"code"`
+				Error   string `json:"error"`
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if json.Unmarshal(body, &errorCheck) == nil && (errorCheck.Error.Code != 0 || errorCheck.Error.Error != "" || errorCheck.Error.Message != "") {
+			code := errorCheck.Error.Code
+			msg := errorCheck.Error.Message
+			if msg == "" {
+				msg = errorCheck.Error.Error
+			}
+			if code == 0 {
+				code = http.StatusBadRequest
+			}
+			if msg == "" {
+				msg = "Request failed"
+			}
+			h.sendError(w, code, msg)
+			return
+		}
+
+		var starlightResp struct {
+			RequestID   string `json:"request_id"`
+			ID          string `json:"id"`
+			ImageSHA256 string `json:"image_sha256"`
+			ImageBase64 string `json:"image_base64"`
+		}
+		if err := json.Unmarshal(body, &starlightResp); err != nil || starlightResp.ImageSHA256 == "" {
+			h.sendError(w, http.StatusInternalServerError, "Unexpected response format from inscription service")
+			return
+		}
+
+		ingestionID = starlightResp.ImageSHA256
+		starlightRequestID = starlightResp.RequestID
+		stegoImgBytes, err = base64.StdEncoding.DecodeString(starlightResp.ImageBase64)
+		if err != nil {
+			h.sendError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to decode stego image from proxy: %v", err))
+			return
+		}
+		stegoImageBase64 = starlightResp.ImageBase64
+	} else {
+		// Native steganography (no proxy configured)
+		log.Printf("DEBUG: Native stego path selected")
+		inscribeResult, err := stego.Inscribe(imgBytes, embeddedMessage, method)
+		if err != nil {
+			h.sendError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to embed steganography: %v", err))
+			return
+		}
+		ingestionID = inscribeResult.ID
+		stegoImgBytes = inscribeResult.ImageBytes
+		stegoImageBase64 = inscribeResult.ImageBase64
+	}
 
 	// Record the wish creator
 	creatorKey := strings.TrimSpace(r.Header.Get("X-API-Key"))
@@ -914,7 +1016,11 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 		"address":          address,
 		"funding_mode":     fundingMode,
 		"creator_wallet":   creatorWallet,
-		"native_stego":     true,
+	}
+	if starlightRequestID != "" {
+		meta["starlight_request_id"] = starlightRequestID
+	} else {
+		meta["native_stego"] = true
 	}
 	if strings.EqualFold(priceUnit, "sats") {
 		meta["budget_sats"] = parsePriceSats(price)
@@ -990,7 +1096,6 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 					"address":        address,
 					"price_unit":     priceUnit,
 					"creator_wallet": creatorWallet,
-					"native_stego":   true,
 				},
 			}
 

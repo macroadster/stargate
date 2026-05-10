@@ -29,6 +29,7 @@ import (
 	"stargate-backend/starlight"
 	"stargate-backend/storage"
 	auth "stargate-backend/storage/auth"
+	scstore "stargate-backend/storage/smart_contract"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -249,6 +250,10 @@ func initializeMCPComponents() (scmiddleware.Store, auth.APIKeyIssuer, auth.APIK
 
 	// The MCP/SmartContract Store is the one passed around as scmiddleware.Store
 	mcpStore := allStores.SmartContractStore
+
+	if _, ok := mcpStore.(*scstore.MemoryStore); ok {
+		log.Printf("Components initialized with memory store")
+	}
 
 	// For backward compatibility with the old return signature we still return
 	// the pieces that the rest of main expects.

@@ -126,7 +126,7 @@ func NewAllStores(cfg StorageConfig) (*AllStores, error) {
 			var err error
 			mcpStore, err = scstore.NewSQLiteStore(cfg.MCPDBPath, cfg.ClaimTTL, cfg.SeedFixtures)
 			if err != nil {
-				log.Printf("failed to create SQLite MCP store (%v), falling back to memory", err)
+				log.Printf("failed to create SQLite MCP store (%v), falling back to memory store", err)
 				mcpStore = scstore.NewMemoryStore(cfg.ClaimTTL)
 				actualType = "memory"
 			} else {
@@ -134,14 +134,27 @@ func NewAllStores(cfg StorageConfig) (*AllStores, error) {
 				log.Printf("Using embedded SQLite MCP store at %s", cfg.MCPDBPath)
 			}
 
-			// SQLite-backed API keys
-			sqliteKeys, err := auth.NewSQLiteAPIKeyStore(cfg.APIKeysDBPath)
-			if err != nil {
-				log.Fatalf("failed to initialize SQLite API key store (%v). Exiting to prevent data loss.", err)
+			if actualType == "memory" {
+				// MCP store already fell back to memory — use in-memory API keys too
+				memKeys := auth.NewAPIKeyStore()
+				memKeys.SeedEnvironmentVariables()
+				apiIssuer, apiValidator = memKeys, memKeys
+			} else {
+				// SQLite-backed API keys
+				sqliteKeys, err := auth.NewSQLiteAPIKeyStore(cfg.APIKeysDBPath)
+				if err != nil {
+					log.Printf("failed to initialize SQLite API key store (%v), falling back to memory store", err)
+					memKeys := auth.NewAPIKeyStore()
+					memKeys.SeedEnvironmentVariables()
+					apiIssuer, apiValidator = memKeys, memKeys
+					// Downgrade overall type since we couldn't persist keys either
+					actualType = "memory"
+				} else {
+					sqliteKeys.SeedEnvironmentVariables()
+					apiIssuer, apiValidator = sqliteKeys, sqliteKeys
+					log.Printf("Using SQLite API key store at %s", cfg.APIKeysDBPath)
+				}
 			}
-			sqliteKeys.SeedEnvironmentVariables()
-			apiIssuer, apiValidator = sqliteKeys, sqliteKeys
-			log.Printf("Using SQLite API key store at %s", cfg.APIKeysDBPath)
 
 			// Ingestion via SQLite path (still uses its own DB file for now)
 			// For full consistency we would pass the ingestions DB path; keeping
