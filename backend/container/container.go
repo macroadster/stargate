@@ -88,11 +88,19 @@ func NewContainer(apiKeyIssuer auth.APIKeyIssuer, apiKeyValidator auth.APIKeyVal
 	peerService := services.NewPeerService()
 
 	var ingestionService *services.IngestionService
-	if pgDSN != "" {
-		ingestionService = initIngestionService(pgDSN)
-	} else {
-		log.Printf("ingestion service disabled: STARGATE_PG_DSN not set")
+	ingestionDSN := pgDSN
+	if ingestionDSN == "" {
+		// Fall back to SQLite ingestion database
+		ingestionDSN = os.Getenv("STARGATE_INGESTIONS_DB")
+		if ingestionDSN == "" {
+			dataDir := os.Getenv("STARGATE_DATA_DIR")
+			if dataDir == "" {
+				dataDir = "data"
+			}
+			ingestionDSN = filepath.Join(dataDir, "sqlite", "ingestions.db")
+		}
 	}
+	ingestionService = initIngestionService(ingestionDSN)
 
 	// Data storage selection
 	var dataStorage storage.ExtendedDataStorage

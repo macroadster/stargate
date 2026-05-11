@@ -7,9 +7,9 @@ package ingestion
 // source of truth under the storage package as part of the STARGATE_STORAGE
 // unification effort.
 //
-// Currently PostgreSQL-only (pgx + JSONB + advisory locking patterns).
-// SQLite support and a StorageConfig-driven constructor will be added in a
-// follow-up within the same epic.
+// Supports both PostgreSQL (pgx) and SQLite (mattn/go-sqlite3) backends.
+// The dialect is auto-detected from the DSN: file paths and strings ending
+// in ".db" use SQLite; everything else uses Postgres.
 
 import (
 	"context"
@@ -18,9 +18,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"strings"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 var ingestionTablePattern = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
@@ -44,28 +46,59 @@ type IngestUpdateRow struct {
 	Attempts int
 }
 
-// IngestionService is the PostgreSQL-backed ingestion persistence service.
+// IngestionService is the ingestion persistence service (Postgres or SQLite).
 type IngestionService struct {
 	db        *sql.DB
 	tableName string
+	dialect   string // "postgres" or "sqlite"
 }
 
 func isValidIngestionTableName(name string) bool {
 	return ingestionTablePattern.MatchString(name)
 }
 
-// NewIngestionService creates a new IngestionService (Postgres only).
-// This is the canonical constructor; the old services.NewIngestionService
-// will become a thin compatibility wrapper.
+// isSQLiteDSN returns true when the DSN looks like a SQLite file path
+// rather than a Postgres connection string.
+func isSQLiteDSN(dsn string) bool {
+	if strings.HasSuffix(dsn, ".db") || strings.HasSuffix(dsn, ".sqlite") || strings.HasSuffix(dsn, ".sqlite3") {
+		return true
+	}
+	if strings.HasPrefix(dsn, "/") || strings.HasPrefix(dsn, "./") || strings.HasPrefix(dsn, "../") {
+		return true
+	}
+	// Postgres DSNs contain "://" or start with "host="/"postgres"
+	if strings.Contains(dsn, "://") || strings.HasPrefix(dsn, "host=") || strings.HasPrefix(dsn, "postgres") {
+		return false
+	}
+	// File paths without slashes but with path separators (e.g. "data/ingestions.db")
+	if strings.Contains(dsn, "/") && !strings.Contains(dsn, " ") {
+		return true
+	}
+	return false
+}
+
+// NewIngestionService creates a new IngestionService.
+// The backend dialect is auto-detected from the DSN: file paths use SQLite,
+// connection strings use Postgres.
 func NewIngestionService(dsn string) (*IngestionService, error) {
-	db, err := sql.Open("pgx", dsn)
+	dialect := "postgres"
+	driver := "pgx"
+	if isSQLiteDSN(dsn) {
+		dialect = "sqlite"
+		driver = "sqlite3"
+		dsn = dsn + "?_foreign_keys=on"
+	}
+
+	db, err := sql.Open(driver, dsn)
 	if err != nil {
-		return nil, fmt.Errorf("open pgx: %w", err)
+		return nil, fmt.Errorf("open %s: %w", driver, err)
 	}
 	db.SetMaxOpenConns(20)
 	db.SetMaxIdleConns(10)
 	db.SetConnMaxLifetime(1 * time.Hour)
-	db.SetConnMaxIdleTime(30 * time.Minute)
+	if dialect == "postgres" {
+		db.SetConnMaxIdleTime(30 * time.Minute)
+	}
 
 	tableName := "starlight_ingestions"
 	if !isValidIngestionTableName(tableName) {
@@ -75,6 +108,7 @@ func NewIngestionService(dsn string) (*IngestionService, error) {
 	s := &IngestionService{
 		db:        db,
 		tableName: tableName,
+		dialect:   dialect,
 	}
 	if err := s.ensureSchema(context.Background()); err != nil {
 		db.Close()
@@ -84,10 +118,37 @@ func NewIngestionService(dsn string) (*IngestionService, error) {
 }
 
 func (s *IngestionService) ensureSchema(ctx context.Context) error {
-	// For now ingestion is Postgres-only. When we add SQLite support
-	// we will add GetIngestionSchema("sqlite") here (using TEXT/INTEGER
-	// instead of JSONB/BIGSERIAL + datetime('now')).
-	schema := fmt.Sprintf(`
+	var schema string
+	if s.dialect == "sqlite" {
+		schema = fmt.Sprintf(`
+CREATE TABLE IF NOT EXISTS %s (
+  id TEXT PRIMARY KEY,
+  filename TEXT NOT NULL,
+  method TEXT NOT NULL,
+  message_length INT NOT NULL,
+  image_base64 TEXT NOT NULL,
+  metadata TEXT DEFAULT '{}',
+  status TEXT NOT NULL DEFAULT 'pending',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS starlight_ingest_updates (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ingestion_id TEXT,
+  visible_pixel_hash TEXT,
+  proposal_id TEXT,
+  payload TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  attempts INT NOT NULL DEFAULT 0,
+  last_error TEXT,
+  next_retry_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS starlight_ingest_updates_status_idx
+  ON starlight_ingest_updates (status, next_retry_at);
+`, s.tableName)
+	} else {
+		schema = fmt.Sprintf(`
 CREATE TABLE IF NOT EXISTS %s (
   id TEXT PRIMARY KEY,
   filename TEXT NOT NULL,
@@ -114,16 +175,17 @@ CREATE TABLE IF NOT EXISTS starlight_ingest_updates (
 CREATE INDEX IF NOT EXISTS starlight_ingest_updates_status_idx
   ON starlight_ingest_updates (status, next_retry_at);
 `, s.tableName)
+	}
 	_, err := s.db.ExecContext(ctx, schema)
 	return err
 }
 
-// GetIngestionSchema is the extension point for future SQLite support
-// (currently only the Postgres dialect is implemented).
+// GetIngestionSchema returns the dialect name for the given DSN.
 func GetIngestionSchema(dialect string) string {
-	// For Phase 4 we keep the logic inside ensureSchema.
-	// A full dialect switch will be added when SQLite ingestion is implemented.
-	return "postgres" // placeholder
+	if dialect == "sqlite" {
+		return "sqlite"
+	}
+	return "postgres"
 }
 
 
@@ -143,11 +205,19 @@ func (s *IngestionService) Create(rec IngestionRecord) error {
 		return err
 	}
 	metadataParam := string(metadataJSON)
-	query := fmt.Sprintf(`
+	var query string
+	if s.dialect == "sqlite" {
+		query = fmt.Sprintf(`
+INSERT OR IGNORE INTO %s (id, filename, method, message_length, image_base64, metadata, status)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+`, s.tableName)
+	} else {
+		query = fmt.Sprintf(`
 INSERT INTO %s (id, filename, method, message_length, image_base64, metadata, status)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
 ON CONFLICT (id) DO NOTHING;
 `, s.tableName)
+	}
 	_, err = s.db.Exec(query, rec.ID, rec.Filename, rec.Method, rec.MessageLength, rec.ImageBase64, metadataParam, rec.Status)
 	return err
 }
@@ -167,13 +237,24 @@ func (s *IngestionService) Get(id string) (*IngestionRecord, error) {
 }
 
 func (s *IngestionService) GetByImageAndMessage(imageBase64, message string) (*IngestionRecord, error) {
-	query := fmt.Sprintf(`
+	var query string
+	if s.dialect == "sqlite" {
+		query = fmt.Sprintf(`
+SELECT id, filename, method, message_length, image_base64, metadata, status, created_at
+FROM %s
+WHERE image_base64 = $1
+  AND (json_extract(metadata, '$.embedded_message') = $2 OR json_extract(metadata, '$.message') = $2)
+LIMIT 1
+`, s.tableName)
+	} else {
+		query = fmt.Sprintf(`
 SELECT id, filename, method, message_length, image_base64, metadata, status, created_at
 FROM %s
 WHERE image_base64 = $1
   AND (metadata->>'embedded_message' = $2 OR metadata->>'message' = $2)
 LIMIT 1
 `, s.tableName)
+	}
 
 	var rec IngestionRecord
 	var metadataRaw []byte
@@ -185,7 +266,18 @@ LIMIT 1
 }
 
 func (s *IngestionService) GetByFilenameAndMessage(filename, message string) (*IngestionRecord, error) {
-	query := fmt.Sprintf(`
+	var query string
+	if s.dialect == "sqlite" {
+		query = fmt.Sprintf(`
+SELECT id, filename, method, message_length, image_base64, metadata, status, created_at
+FROM %s
+WHERE filename = $1
+  AND (json_extract(metadata, '$.embedded_message') = $2 OR json_extract(metadata, '$.message') = $2)
+ORDER BY created_at DESC
+LIMIT 1
+`, s.tableName)
+	} else {
+		query = fmt.Sprintf(`
 SELECT id, filename, method, message_length, image_base64, metadata, status, created_at
 FROM %s
 WHERE filename = $1
@@ -193,6 +285,7 @@ WHERE filename = $1
 ORDER BY created_at DESC
 LIMIT 1
 `, s.tableName)
+	}
 
 	var rec IngestionRecord
 	var metadataRaw []byte
@@ -204,12 +297,22 @@ LIMIT 1
 }
 
 func (s *IngestionService) UpdateStatusWithNote(id, status, note string) error {
-	query := fmt.Sprintf(`
+	var query string
+	if s.dialect == "sqlite" {
+		query = fmt.Sprintf(`
+UPDATE %s
+SET status = $2,
+    metadata = json_set(COALESCE(metadata, '{}'), '$.validation', $3)
+WHERE id = $1
+`, s.tableName)
+	} else {
+		query = fmt.Sprintf(`
 UPDATE %s
 SET status = $2,
     metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('validation', $3::text)
 WHERE id = $1
 `, s.tableName)
+	}
 	_, err := s.db.Exec(query, id, status, note)
 	return err
 }
@@ -222,7 +325,20 @@ func (s *IngestionService) UpdateFromIngest(id string, rec IngestionRecord) erro
 	if err != nil {
 		return err
 	}
-	query := fmt.Sprintf(`
+	var query string
+	if s.dialect == "sqlite" {
+		query = fmt.Sprintf(`
+UPDATE %s
+SET filename = $2,
+    method = $3,
+    message_length = $4,
+    image_base64 = $5,
+    metadata = json_patch(COALESCE(metadata, '{}'), $6),
+    status = $7
+WHERE id = $1
+`, s.tableName)
+	} else {
+		query = fmt.Sprintf(`
 UPDATE %s
 SET filename = $2,
     method = $3,
@@ -232,6 +348,7 @@ SET filename = $2,
     status = $7
 WHERE id = $1
 `, s.tableName)
+	}
 	_, err = s.db.Exec(query, id, rec.Filename, rec.Method, rec.MessageLength, rec.ImageBase64, string(metadataJSON), rec.Status)
 	return err
 }
@@ -244,11 +361,20 @@ func (s *IngestionService) UpdateMetadata(id string, updates map[string]interfac
 	if err != nil {
 		return err
 	}
-	query := fmt.Sprintf(`
+	var query string
+	if s.dialect == "sqlite" {
+		query = fmt.Sprintf(`
+UPDATE %s
+SET metadata = json_patch(COALESCE(metadata, '{}'), $2)
+WHERE id = $1
+`, s.tableName)
+	} else {
+		query = fmt.Sprintf(`
 UPDATE %s
 SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb
 WHERE id = $1
 `, s.tableName)
+	}
 	_, err = s.db.Exec(query, id, string(updatesJSON))
 	return err
 }
@@ -328,13 +454,30 @@ func (s *IngestionService) ListByIDs(ids []string) ([]IngestionRecord, error) {
 		return nil, fmt.Errorf("ingestion service is in memory-only mode (no database)")
 	}
 
-	query := fmt.Sprintf(`
+	var rows *sql.Rows
+	var err error
+	if s.dialect == "sqlite" {
+		// Build IN clause with positional params for SQLite
+		placeholders := make([]string, len(ids))
+		args := make([]interface{}, len(ids))
+		for i, id := range ids {
+			placeholders[i] = fmt.Sprintf("$%d", i+1)
+			args[i] = id
+		}
+		query := fmt.Sprintf(`
+SELECT id, filename, method, message_length, image_base64, metadata, status, created_at
+FROM %s
+WHERE id IN (%s)
+`, s.tableName, strings.Join(placeholders, ","))
+		rows, err = s.db.Query(query, args...)
+	} else {
+		query := fmt.Sprintf(`
 SELECT id, filename, method, message_length, image_base64, metadata, status, created_at
 FROM %s
 WHERE id = ANY($1)
 `, s.tableName)
-
-	rows, err := s.db.Query(query, ids)
+		rows, err = s.db.Query(query, ids)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -406,6 +549,52 @@ func (s *IngestionService) ClaimIngestUpdates(ctx context.Context, limit int) ([
 	if limit <= 0 {
 		limit = 25
 	}
+	if s.dialect == "sqlite" {
+		// SQLite lacks FOR UPDATE SKIP LOCKED and CTE+UPDATE RETURNING.
+		// Use a two-step select-then-update within a transaction.
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return nil, err
+		}
+		defer tx.Rollback()
+
+		selQuery := `
+SELECT id, payload, attempts FROM starlight_ingest_updates
+WHERE status IN ('pending', 'retry')
+  AND (next_retry_at IS NULL OR next_retry_at <= datetime('now'))
+ORDER BY created_at ASC
+LIMIT $1
+`
+		rows, err := tx.QueryContext(ctx, selQuery, limit)
+		if err != nil {
+			return nil, err
+		}
+		var out []IngestUpdateRow
+		for rows.Next() {
+			var row IngestUpdateRow
+			if err := rows.Scan(&row.ID, &row.Payload, &row.Attempts); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			out = append(out, row)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		for i := range out {
+			out[i].Attempts++
+			_, err := tx.ExecContext(ctx, `
+UPDATE starlight_ingest_updates
+SET status = 'processing', attempts = $2, updated_at = datetime('now')
+WHERE id = $1`, out[i].ID, out[i].Attempts)
+			if err != nil {
+				return nil, err
+			}
+		}
+		return out, tx.Commit()
+	}
+
 	query := `
 WITH picked AS (
   SELECT id
@@ -441,40 +630,52 @@ RETURNING id, payload, attempts
 }
 
 func (s *IngestionService) MarkIngestUpdateApplied(ctx context.Context, id int64) error {
-	query := `
+	now := "now()"
+	if s.dialect == "sqlite" {
+		now = "datetime('now')"
+	}
+	query := fmt.Sprintf(`
 UPDATE starlight_ingest_updates
 SET status = 'applied',
     last_error = NULL,
     next_retry_at = NULL,
-    updated_at = now()
+    updated_at = %s
 WHERE id = $1
-`
+`, now)
 	_, err := s.db.ExecContext(ctx, query, id)
 	return err
 }
 
 func (s *IngestionService) MarkIngestUpdateRetry(ctx context.Context, id int64, lastErr string, delay time.Duration) error {
 	nextRetry := time.Now().Add(delay)
-	query := `
+	now := "now()"
+	if s.dialect == "sqlite" {
+		now = "datetime('now')"
+	}
+	query := fmt.Sprintf(`
 UPDATE starlight_ingest_updates
 SET status = 'retry',
     last_error = $2,
     next_retry_at = $3,
-    updated_at = now()
+    updated_at = %s
 WHERE id = $1
-`
+`, now)
 	_, err := s.db.ExecContext(ctx, query, id, lastErr, nextRetry)
 	return err
 }
 
 func (s *IngestionService) MarkIngestUpdateFailed(ctx context.Context, id int64, lastErr string) error {
-	query := `
+	now := "now()"
+	if s.dialect == "sqlite" {
+		now = "datetime('now')"
+	}
+	query := fmt.Sprintf(`
 UPDATE starlight_ingest_updates
 SET status = 'failed',
     last_error = $2,
-    updated_at = now()
+    updated_at = %s
 WHERE id = $1
-`
+`, now)
 	_, err := s.db.ExecContext(ctx, query, id, lastErr)
 	return err
 }

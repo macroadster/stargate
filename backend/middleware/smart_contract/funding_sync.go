@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"stargate-backend/bitcoin"
-	scstore "stargate-backend/storage/smart_contract"
 
 	"stargate-backend/core/smart_contract"
 )
@@ -138,10 +137,6 @@ func (m *mockFundingProvider) FetchProof(ctx context.Context, task smart_contrac
 
 // StartFundingSync periodically refreshes provisional proofs using the provider.
 func StartFundingSync(ctx context.Context, store Store, provider FundingProvider, escort *smart_contract.EscortService, interval time.Duration) error {
-	pgStore, ok := store.(*scstore.PGStore)
-	if !ok {
-		return errors.New("funding sync requires Postgres store")
-	}
 	mempool := bitcoin.NewMempoolClient()
 	go func() {
 		t := time.NewTicker(interval)
@@ -151,7 +146,7 @@ func StartFundingSync(ctx context.Context, store Store, provider FundingProvider
 			case <-ctx.Done():
 				return
 			case <-t.C:
-				if err := refreshProofs(ctx, pgStore, provider, escort, mempool); err != nil {
+				if err := refreshProofs(ctx, store, provider, escort, mempool); err != nil {
 					log.Printf("funding sync error: %v", err)
 				}
 			}
@@ -160,7 +155,7 @@ func StartFundingSync(ctx context.Context, store Store, provider FundingProvider
 	return nil
 }
 
-func refreshProofs(ctx context.Context, store *scstore.PGStore, provider FundingProvider, escort *smart_contract.EscortService, mempool *bitcoin.MempoolClient) error {
+func refreshProofs(ctx context.Context, store Store, provider FundingProvider, escort *smart_contract.EscortService, mempool *bitcoin.MempoolClient) error {
 	// Only process tasks with activity in the last 24 hours to reduce processing load
 	twentyFourHoursAgo := time.Now().Add(-24 * time.Hour)
 	tasks, err := store.ListTasks(smart_contract.TaskFilter{

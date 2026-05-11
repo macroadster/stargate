@@ -5,7 +5,7 @@ FROM node:22-alpine AS frontend-builder
 WORKDIR /app/frontend
 # Copy package files first for better layer caching
 COPY frontend/package.json frontend/package-lock.json ./
-RUN npm ci && npm cache clean --force
+RUN mkdir -p public && npm ci && npm cache clean --force
 # Copy frontend source code
 COPY frontend/ ./
 # Build the application

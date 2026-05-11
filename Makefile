@@ -8,12 +8,12 @@ FRONTEND_IMAGE := stargate-frontend:latest
 BACKEND_IMAGE := stargate-backend:latest
 SINGLE_IMAGE := stargate:latest
 
-.PHONY: all frontend-legacy backend-legacy mcp-e2e single-binary docker-single-binary
+.PHONY: all frontend-legacy backend-legacy mcp-e2e single-binary docker
 all: single-binary
 
-docker-single-binary:
+docker:
 	@echo "Building single Docker image: $(SINGLE_IMAGE)"
-	docker build -t $(SINGLE_IMAGE) -f Dockerfile.single .
+	docker build -t $(SINGLE_IMAGE) .
 
 single-binary:
 	@echo "Building single binary project..."
