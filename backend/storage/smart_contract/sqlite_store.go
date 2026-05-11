@@ -242,12 +242,15 @@ AND (? = '' OR claimed_by = ?)
 func scanTaskSQLite(rows *sql.Rows) (smart_contract.Task, error) {
 	var t smart_contract.Task
 	var skillsStr, requirementsStr, merkleProofStr []byte
-	var claimedAtStr, claimExpiresAtStr sql.NullString
+	var claimedBy, claimedAtStr, claimExpiresAtStr sql.NullString
 	err := rows.Scan(&t.TaskID, &t.ContractID, &t.GoalID, &t.Title, &t.Description, &t.BudgetSats,
-		&skillsStr, &t.Status, &t.ClaimedBy, &claimedAtStr, &claimExpiresAtStr, &t.Difficulty,
+		&skillsStr, &t.Status, &claimedBy, &claimedAtStr, &claimExpiresAtStr, &t.Difficulty,
 		&t.EstimatedHours, &requirementsStr, &merkleProofStr)
 	if err != nil {
 		return t, err
+	}
+	if claimedBy.Valid {
+		t.ClaimedBy = claimedBy.String
 	}
 	if claimedAtStr.Valid {
 		if tm, err := parseSQLiteTime(claimedAtStr.String); err == nil {
@@ -278,12 +281,15 @@ FROM mcp_tasks WHERE task_id=?
 `, id)
 	var t smart_contract.Task
 	var skillsStr, requirementsStr, merkleProofStr []byte
-	var claimedAtStr, claimExpiresAtStr sql.NullString
+	var claimedBy, claimedAtStr, claimExpiresAtStr sql.NullString
 	err := row.Scan(&t.TaskID, &t.ContractID, &t.GoalID, &t.Title, &t.Description, &t.BudgetSats,
-		&skillsStr, &t.Status, &t.ClaimedBy, &claimedAtStr, &claimExpiresAtStr, &t.Difficulty,
+		&skillsStr, &t.Status, &claimedBy, &claimedAtStr, &claimExpiresAtStr, &t.Difficulty,
 		&t.EstimatedHours, &requirementsStr, &merkleProofStr)
 	if err != nil {
 		return t, ErrTaskNotFound
+	}
+	if claimedBy.Valid {
+		t.ClaimedBy = claimedBy.String
 	}
 	if claimedAtStr.Valid {
 		if tm, err := parseSQLiteTime(claimedAtStr.String); err == nil {
