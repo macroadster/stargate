@@ -1,0 +1,30 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - navigation [ref=e5]:
+      - generic [ref=e6]:
+        - generic [ref=e7]:
+          - button "✦ Starlight" [ref=e8] [cursor=pointer]:
+            - generic [ref=e10]: ✦
+            - heading "Starlight" [level=1] [ref=e11]
+          - list [ref=e13]:
+            - listitem [ref=e14]:
+              - button "Inscribe" [ref=e15]
+            - listitem [ref=e16]:
+              - button "Blocks" [ref=e17]
+            - listitem [ref=e18]:
+              - button "Contracts" [ref=e19]
+            - listitem [ref=e20]:
+              - button "Discover" [ref=e21]
+            - listitem [ref=e22]:
+              - button "Documents" [ref=e23]
+        - generic [ref=e26]:
+          - 'button "Theme: Auto (click for light)" [ref=e27] [cursor=pointer]':
+            - img [ref=e28]
+          - button "More options" [ref=e31] [cursor=pointer]:
+            - img [ref=e32]
+  - generic [ref=e36]:
+    - generic [ref=e37]:
+      - heading "Contracts" [level=1] [ref=e38]
+      - paragraph [ref=e39]: Newest contracts first, with infinite scroll.
+    - generic [ref=e40]: Unable to load contracts. Please retry.
+    - generic [ref=e41]: Scroll for more

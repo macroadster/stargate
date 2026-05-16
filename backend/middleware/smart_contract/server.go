@@ -766,6 +766,13 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		} else {
 			commitmentLockAddr = primaryPayer
 		}
+	case "product":
+		// Product commitment: hashlock is deferred to delivery time (stego reconciliation).
+		// No commitment output in the funding PSBT; the hash will be based on the
+		// final delivered product image rather than the original wish image.
+		commitmentSats = 0
+		commitmentLockAddr = primaryPayer
+		log.Printf("DEBUG: commitment_target=product, deferring commitment to delivery (commitmentSats=0)")
 	default:
 		Error(w, http.StatusBadRequest, "invalid commitment_target")
 		return
@@ -878,7 +885,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 			}
 			if len(raiseFundTasksByWallet[wallet]) > 0 {
 				for _, taskID := range raiseFundTasksByWallet[wallet] {
-					if err := s.updateTaskCommitmentProof(r.Context(), taskID, splitRes, pixelBytes); err != nil {
+					if err := s.updateTaskCommitmentProof(r.Context(), taskID, splitRes, pixelBytes, commitmentTarget); err != nil {
 						log.Printf("psbt: failed to update task proof for %s: %v", taskID, err)
 					}
 				}
@@ -1014,12 +1021,12 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		}()
 	}
 	if taskID := strings.TrimSpace(body.TaskID); taskID != "" {
-		if err := s.updateTaskCommitmentProof(r.Context(), taskID, res, pixelBytes); err != nil {
+		if err := s.updateTaskCommitmentProof(r.Context(), taskID, res, pixelBytes, commitmentTarget); err != nil {
 			log.Printf("psbt: failed to update task proof for %s: %v", taskID, err)
 		}
 	} else if isRaiseFund(fundingMode) && len(raiseFundTaskIDs) > 0 {
 		for _, taskID := range raiseFundTaskIDs {
-			if err := s.updateTaskCommitmentProof(r.Context(), taskID, res, pixelBytes); err != nil {
+			if err := s.updateTaskCommitmentProof(r.Context(), taskID, res, pixelBytes, commitmentTarget); err != nil {
 				log.Printf("psbt: failed to update task proof for %s: %v", taskID, err)
 			}
 		}
@@ -1619,7 +1626,7 @@ func buildScriptHashes(scripts [][]byte) ([]string, []string) {
 	return shaHashes, hash160s
 }
 
-func (s *Server) updateTaskCommitmentProof(ctx context.Context, taskID string, res *bitcoin.PSBTResult, pixelBytes []byte) error {
+func (s *Server) updateTaskCommitmentProof(ctx context.Context, taskID string, res *bitcoin.PSBTResult, pixelBytes []byte, commitmentTarget string) error {
 	task, err := s.store.GetTask(taskID)
 	if err != nil {
 		return err
@@ -1657,6 +1664,13 @@ func (s *Server) updateTaskCommitmentProof(ctx context.Context, taskID string, r
 	}
 	if len(pixelBytes) == 32 {
 		proof.CommitmentPixelHash = hex.EncodeToString(pixelBytes)
+	}
+	// Track commitment source: "product" means hashlock deferred to delivery,
+	// "donation" means funded at PSBT time with wish image hash.
+	if commitmentTarget == "product" {
+		proof.CommitmentSource = "product"
+	} else if proof.CommitmentSource == "" {
+		proof.CommitmentSource = "wish"
 	}
 	return s.store.UpdateTaskProof(ctx, taskID, proof)
 }
