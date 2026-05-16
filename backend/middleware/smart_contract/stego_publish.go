@@ -224,7 +224,19 @@ func (s *Server) publishStegoForProposal(ctx context.Context, proposalID string,
 			manifestCreatedAt = v
 		}
 	}
-	sandboxHash := strings.TrimSpace(toString(meta["sandbox_tarball_hash"]))
+	// Compute sandbox tarball hash at publish time so it captures the final
+	// state of all submitted artifacts across every task/agent, not a partial
+	// snapshot from a single submit_work call.
+	sandboxHash := ""
+	uploadsDir := strings.TrimSpace(os.Getenv("UPLOADS_DIR"))
+	if uploadsDir == "" {
+		uploadsDir = "/data/uploads"
+	}
+	sandboxDir := filepath.Join(uploadsDir, "results", scstore.NormalizeContractID(proposalID))
+	if h, err := stego.HashSandboxDir(sandboxDir); err == nil {
+		sandboxHash = h
+		log.Printf("stego publish: sandbox tarball hash for %s: %s", proposalID, sandboxHash)
+	}
 	manifestBytes, err := stego.BuildManifestYAML(stego.Manifest{
 		SchemaVersion:    cfg.ManifestSchema,
 		ProposalID:       proposalID,

@@ -24,7 +24,6 @@ import (
 	scmiddleware "stargate-backend/middleware/smart_contract"
 	"stargate-backend/services"
 	"stargate-backend/starlight"
-	"stargate-backend/stego"
 	auth "stargate-backend/storage/auth"
 	"stargate-backend/storage"
 	scstore "stargate-backend/storage/smart_contract"
@@ -2043,15 +2042,6 @@ func (h *HTTPMCPServer) handleSubmitWork(ctx context.Context, args map[string]in
 
 			// Update deliverables with processed artifact info
 			deliverables["artifacts_uploaded"] = processedArtifacts
-
-			// Compute deterministic sandbox tarball hash for verifiable provenance.
-			// This hash ties the exact delivered artifacts to the product image via stego.
-			if sandboxHash, err := stego.HashSandboxDir(resultsDir); err == nil {
-				deliverables["sandbox_tarball_hash"] = sandboxHash
-				log.Printf("submit_work: sandbox tarball hash for %s: %s", subDir, sandboxHash)
-			} else {
-				log.Printf("submit_work: sandbox hash computation failed for %s: %v", subDir, err)
-			}
 		}
 	}
 
@@ -2071,26 +2061,6 @@ func (h *HTTPMCPServer) handleSubmitWork(ctx context.Context, args map[string]in
 			return nil, NewSubmitWorkError("ALREADY_SUBMITTED", "Work has already been submitted for this claim", "claim_id")
 		}
 		return nil, NewInternalError("submit_work", fmt.Sprintf("Failed to submit work: %v", err))
-	}
-
-	// Propagate sandbox_tarball_hash to the proposal metadata so it gets
-	// embedded into the stego manifest on the next publish cycle.
-	if sandboxHash, ok := deliverables["sandbox_tarball_hash"].(string); ok && sandboxHash != "" {
-		if claim, err := h.store.GetClaim(claimID); err == nil {
-			if task, err := h.store.GetTask(claim.TaskID); err == nil {
-				if proposal, err := h.store.GetProposal(ctx, task.ContractID); err == nil {
-					meta := proposal.Metadata
-					if meta == nil {
-						meta = map[string]interface{}{}
-					}
-					meta["sandbox_tarball_hash"] = sandboxHash
-					proposal.Metadata = meta
-					if err := h.store.UpdateProposal(ctx, proposal); err != nil {
-						log.Printf("submit_work: failed to update proposal with sandbox hash: %v", err)
-					}
-				}
-			}
-		}
 	}
 
 	result := map[string]interface{}{
