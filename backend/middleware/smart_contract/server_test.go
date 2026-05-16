@@ -237,6 +237,170 @@ func TestContractPSBTResponseIncludesEffectiveChangeAddress(t *testing.T) {
 	})
 }
 
+// TestContractPSBTProductTargetDefersCommitment verifies that commitment_target="product"
+// produces a valid PSBT with no commitment output (commitmentSats forced to 0),
+// deferring the commitment to delivery time when the product image is available.
+func TestContractPSBTProductTargetDefersCommitment(t *testing.T) {
+	store := scstore.NewMemoryStore(72 * 60 * 60)
+	payerWallet := mustTestnetAddress(t, 1)
+	contractorWallet := mustTestnetAddress(t, 2)
+	apiKey := "psbt-product-key"
+
+	rawTxHex, txID := mustFundingTx(t, payerWallet, 5000)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/address/"+payerWallet+"/utxo", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]map[string]interface{}{
+			{
+				"txid":  txID,
+				"vout":  0,
+				"value": 5000,
+				"status": map[string]interface{}{
+					"confirmed": true,
+				},
+			},
+		})
+	})
+	mux.HandleFunc("/tx/"+txID+"/raw", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(rawTxHex))
+	})
+	mempoolServer := httptest.NewServer(mux)
+	defer mempoolServer.Close()
+	t.Setenv("MEMPOOL_API_BASE", mempoolServer.URL)
+
+	server := NewServer(store, &mockAPIKeyStore{
+		keys: map[string]auth.APIKey{
+			apiKey: {Key: apiKey, Wallet: payerWallet},
+		},
+	}, nil)
+
+	contract := smart_contract.Contract{
+		ContractID:      "contract-product-target",
+		Title:           "Product commitment test",
+		Status:          "open",
+		TotalBudgetSats: 1000,
+	}
+	if err := store.UpsertContractWithTasks(context.Background(), contract, nil); err != nil {
+		t.Fatalf("failed to seed contract: %v", err)
+	}
+
+	// Request with commitment_target=product — should succeed and produce no commitment output
+	body := `{
+		"contractor_wallet":"` + contractorWallet + `",
+		"pixel_hash":"` + strings.Repeat("a", 64) + `",
+		"commitment_target":"product"
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/api/smart_contract/contracts/"+contract.ContractID+"/psbt", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-API-Key", apiKey)
+	rec := httptest.NewRecorder()
+
+	server.handleContracts(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	// commitment_sats should be 0 — no commitment output in the PSBT
+	commitSats, _ := resp["commitment_sats"].(float64)
+	if commitSats != 0 {
+		t.Errorf("commitment_sats = %v, want 0 for product target", commitSats)
+	}
+
+	// commitment_script should be empty — no hashlock output created
+	commitScript, _ := resp["commitment_script"].(string)
+	if commitScript != "" {
+		t.Errorf("commitment_script should be empty for product target, got %q", commitScript)
+	}
+}
+
+// TestContractPSBTProductTargetStoresSourceOnTask verifies that when a taskID is
+// provided with commitment_target="product", the task's MerkleProof.CommitmentSource
+// is set to "product".
+func TestContractPSBTProductTargetStoresSourceOnTask(t *testing.T) {
+	store := scstore.NewMemoryStore(72 * 60 * 60)
+	payerWallet := mustTestnetAddress(t, 1)
+	contractorWallet := mustTestnetAddress(t, 2)
+	apiKey := "psbt-product-task-key"
+
+	rawTxHex, txID := mustFundingTx(t, payerWallet, 5000)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/address/"+payerWallet+"/utxo", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]map[string]interface{}{
+			{
+				"txid":  txID,
+				"vout":  0,
+				"value": 5000,
+				"status": map[string]interface{}{
+					"confirmed": true,
+				},
+			},
+		})
+	})
+	mux.HandleFunc("/tx/"+txID+"/raw", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(rawTxHex))
+	})
+	mempoolServer := httptest.NewServer(mux)
+	defer mempoolServer.Close()
+	t.Setenv("MEMPOOL_API_BASE", mempoolServer.URL)
+
+	server := NewServer(store, &mockAPIKeyStore{
+		keys: map[string]auth.APIKey{
+			apiKey: {Key: apiKey, Wallet: payerWallet},
+		},
+	}, nil)
+
+	contractID := "contract-product-task"
+	taskID := "task-product-source"
+	store.UpsertContractWithTasks(context.Background(), smart_contract.Contract{
+		ContractID:      contractID,
+		Title:           "Product task test",
+		Status:          "open",
+		TotalBudgetSats: 1000,
+	}, []smart_contract.Task{
+		{
+			TaskID:     taskID,
+			ContractID: contractID,
+			GoalID:     contractID,
+			Title:      "Test task",
+			Status:     "available",
+			BudgetSats: 1000,
+		},
+	})
+
+	body := `{
+		"contractor_wallet":"` + contractorWallet + `",
+		"pixel_hash":"` + strings.Repeat("a", 64) + `",
+		"commitment_target":"product",
+		"task_id":"` + taskID + `"
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/api/smart_contract/contracts/"+contractID+"/psbt", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-API-Key", apiKey)
+	rec := httptest.NewRecorder()
+
+	server.handleContracts(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	task, err := store.GetTask(taskID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if task.MerkleProof == nil {
+		t.Fatal("expected MerkleProof to be set on task")
+	}
+	if task.MerkleProof.CommitmentSource != "product" {
+		t.Errorf("CommitmentSource = %q, want \"product\"", task.MerkleProof.CommitmentSource)
+	}
+}
+
 func mustTestnetAddress(t *testing.T, fill byte) string {
 	t.Helper()
 	hash := bytes.Repeat([]byte{fill}, 20)

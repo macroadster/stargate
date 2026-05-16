@@ -75,3 +75,164 @@ func TestUpsertContractFromStegoPayload(t *testing.T) {
 		t.Fatalf("expected tasks to be stored for contract")
 	}
 }
+
+// TestUpsertStegoUsesProductHashWhenNoDonation verifies that when there is no
+// pre-existing funded donation commitment (CommitmentSats == 0), the reconciler
+// uses the stegoHash (product image hash) for the hashlock, not the manifest's
+// VisiblePixelHash (original wish image hash).
+func TestUpsertStegoUsesProductHashWhenNoDonation(t *testing.T) {
+	store := scstore.NewMemoryStore(0)
+	server := &Server{store: store}
+	ctx := context.Background()
+
+	visibleHash := strings.Repeat("a", 64) // original wish image hash
+	stegoHash := strings.Repeat("c", 64)   // delivered product image hash
+
+	payload := stego.Payload{
+		SchemaVersion: 1,
+		Proposal: stego.PayloadProposal{
+			ID:               "proposal-product-hash",
+			Title:            "Product Hash Test",
+			BudgetSats:       1000,
+			VisiblePixelHash: visibleHash,
+			CreatedAt:        time.Now().Unix(),
+		},
+		Tasks: []stego.PayloadTask{
+			{
+				TaskID:           "task-product-1",
+				Title:            "Task 1",
+				BudgetSats:       1000,
+				ContractorWallet: "tb1qcontractor",
+			},
+		},
+	}
+	manifest := stego.Manifest{
+		SchemaVersion:    1,
+		ProposalID:       payload.Proposal.ID,
+		VisiblePixelHash: visibleHash,
+		PayloadCID:       "bafypayload",
+		CreatedAt:        time.Now().Unix(),
+		Issuer:           "tester",
+	}
+
+	err := server.upsertContractFromStegoPayload(ctx, "contract-product", "stegocid", stegoHash, manifest, payload)
+	if err != nil {
+		t.Fatalf("upsertContractFromStegoPayload: %v", err)
+	}
+
+	tasks, err := store.ListTasks(core.TaskFilter{ContractID: "contract-product"})
+	if err != nil || len(tasks) == 0 {
+		t.Fatalf("no tasks created: %v", err)
+	}
+
+	proof := tasks[0].MerkleProof
+	if proof == nil {
+		t.Fatalf("expected MerkleProof to be set")
+	}
+
+	// CommitmentPixelHash should be the stegoHash (product), not visibleHash (wish)
+	if proof.CommitmentPixelHash != stegoHash {
+		t.Errorf("CommitmentPixelHash = %q, want stegoHash %q", proof.CommitmentPixelHash, stegoHash)
+	}
+	if proof.CommitmentSource != "product" {
+		t.Errorf("CommitmentSource = %q, want \"product\"", proof.CommitmentSource)
+	}
+	// VisiblePixelHash should still reflect the original wish image
+	if proof.VisiblePixelHash != visibleHash {
+		t.Errorf("VisiblePixelHash = %q, want original %q", proof.VisiblePixelHash, visibleHash)
+	}
+}
+
+// TestUpsertStegoPreservesWishHashWhenDonationExists verifies that when a task
+// already has a funded donation commitment (CommitmentSats > 0), the reconciler
+// preserves the original wish image hash for the hashlock.
+func TestUpsertStegoPreservesWishHashWhenDonationExists(t *testing.T) {
+	store := scstore.NewMemoryStore(0)
+	server := &Server{store: store}
+	ctx := context.Background()
+
+	visibleHash := strings.Repeat("a", 64)
+	stegoHash := strings.Repeat("c", 64)
+	contractID := "contract-donation-exists"
+
+	// Pre-create task with a funded donation commitment
+	store.CreateProposal(ctx, core.Proposal{
+		ID:               "proposal-donation",
+		Title:            "Donation Test",
+		VisiblePixelHash: visibleHash,
+		BudgetSats:       1000,
+		Status:           "approved",
+		CreatedAt:        time.Now(),
+	})
+	store.UpsertContractWithTasks(ctx, core.Contract{
+		ContractID: contractID,
+		Title:      "Donation Test",
+		Status:     "active",
+	}, []core.Task{
+		{
+			TaskID:           "task-donation-1",
+			ContractID:       contractID,
+			GoalID:           contractID,
+			Title:            "Funded Task",
+			Status:           "available",
+			ContractorWallet: "tb1qcontractor",
+			MerkleProof: &core.MerkleProof{
+				CommitmentSats:      1000,
+				VisiblePixelHash:    visibleHash,
+				CommitmentPixelHash: visibleHash,
+				CommitmentSource:    "wish",
+			},
+		},
+	})
+
+	payload := stego.Payload{
+		SchemaVersion: 1,
+		Proposal: stego.PayloadProposal{
+			ID:               "proposal-donation",
+			Title:            "Donation Test",
+			BudgetSats:       1000,
+			VisiblePixelHash: visibleHash,
+			CreatedAt:        time.Now().Unix(),
+		},
+		Tasks: []stego.PayloadTask{
+			{
+				TaskID:           "task-donation-1",
+				Title:            "Funded Task",
+				BudgetSats:       1000,
+				ContractorWallet: "tb1qcontractor",
+			},
+		},
+	}
+	manifest := stego.Manifest{
+		SchemaVersion:    1,
+		ProposalID:       "proposal-donation",
+		VisiblePixelHash: visibleHash,
+		PayloadCID:       "bafypayload2",
+		CreatedAt:        time.Now().Unix(),
+		Issuer:           "tester",
+	}
+
+	err := server.upsertContractFromStegoPayload(ctx, contractID, "stegocid2", stegoHash, manifest, payload)
+	if err != nil {
+		t.Fatalf("upsertContractFromStegoPayload: %v", err)
+	}
+
+	tasks, _ := store.ListTasks(core.TaskFilter{ContractID: contractID})
+	if len(tasks) == 0 {
+		t.Fatalf("no tasks found")
+	}
+
+	proof := tasks[0].MerkleProof
+	if proof == nil {
+		t.Fatalf("expected MerkleProof")
+	}
+
+	// With funded donation, should keep the wish hash, NOT switch to product hash
+	if proof.CommitmentSource != "wish" {
+		t.Errorf("CommitmentSource = %q, want \"wish\" (donation was funded)", proof.CommitmentSource)
+	}
+	// CommitmentSats should be preserved
+	if proof.CommitmentSats != 1000 {
+		t.Errorf("CommitmentSats = %d, want 1000 (should be preserved)", proof.CommitmentSats)
+	}
+}
