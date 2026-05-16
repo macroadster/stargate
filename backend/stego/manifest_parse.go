@@ -23,6 +23,7 @@ func ParseManifestYAML(data []byte) (Manifest, error) {
 	raw.VisiblePixelHash = strings.TrimSpace(raw.VisiblePixelHash)
 	raw.PayloadCID = strings.TrimSpace(raw.PayloadCID)
 	raw.TasksCID = strings.TrimSpace(raw.TasksCID)
+	raw.SandboxHash = strings.TrimSpace(raw.SandboxHash)
 	raw.Issuer = strings.TrimSpace(raw.Issuer)
 	raw.ContractID = strings.TrimSpace(raw.ContractID)
 	if raw.ProposalID == "" {

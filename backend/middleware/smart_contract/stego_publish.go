@@ -224,10 +224,12 @@ func (s *Server) publishStegoForProposal(ctx context.Context, proposalID string,
 			manifestCreatedAt = v
 		}
 	}
+	sandboxHash := strings.TrimSpace(toString(meta["sandbox_tarball_hash"]))
 	manifestBytes, err := stego.BuildManifestYAML(stego.Manifest{
 		SchemaVersion:    cfg.ManifestSchema,
 		ProposalID:       proposalID,
 		VisiblePixelHash: visibleHash,
+		SandboxHash:      sandboxHash,
 		PayloadCID:       payloadCID,
 		CreatedAt:        manifestCreatedAt,
 		Issuer:           cfg.Issuer,
