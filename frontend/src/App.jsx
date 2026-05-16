@@ -61,6 +61,7 @@ function MainContent() {
     blocks,
     selectedBlock,
     isUserNavigating,
+    isInitializing,
     handleBlockSelect: originalHandleBlockSelect,
     setSelectedBlock,
     setIsUserNavigating,
@@ -93,6 +94,11 @@ function MainContent() {
     isLoading: isLoadingInscriptions,
     error: inscriptionsError
   } = useInscriptions(selectedBlock);
+
+  // Show scanning panel only before any real blocks have arrived.
+  const milestoneHeights = new Set([0, 174923, 210000, 420000, 481824, 630000, 709632, 840000]);
+  const scannedBlocks = blocks.filter(b => !b.isFuture && !milestoneHeights.has(b.height));
+  const isEarlyScanning = scannedBlocks.length === 0;
 
 
 
@@ -926,6 +932,44 @@ function MainContent() {
                 </div>
               )}
             </div>
+          ) : isEarlyScanning && !selectedBlock?.isFuture ? (
+            <div className="flex flex-col items-center justify-center py-20 text-center">
+              <div className="sync-pulse-ring mb-8">
+                <div className="text-6xl">&#x26D3;</div>
+              </div>
+              <h2 className="text-3xl font-bold mb-3 text-primary">
+                {isInitializing ? 'Connecting to Bitcoin Network' : 'Waiting for Blocks'}
+              </h2>
+              <p className="text-secondary text-lg mb-6 max-w-md">
+                {isInitializing
+                  ? 'Establishing connection to your Bitcoin node and checking network status...'
+                  : 'Your node is syncing and processing blocks. Blocks will appear here automatically as they are scanned.'}
+              </p>
+              <div className="flex items-center gap-3 text-secondary text-sm">
+                <div className="spinner border-2" style={{ width: '1rem', height: '1rem' }} />
+                <span>{isInitializing ? 'Initializing...' : 'Waiting for first blocks...'}</span>
+              </div>
+              <div className="mt-10 starlight-card p-6 max-w-sm text-left">
+                <h3 className="text-sm font-semibold text-primary mb-3">What's happening?</h3>
+                <ul className="space-y-2 text-xs text-secondary">
+                  <li className="flex items-start gap-2">
+                    <span className="text-success mt-0.5">&#x2713;</span>
+                    <span>Starlight is connected to your Bitcoin node</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="sync-dot">&#x25CF;</span>
+                    <span>Block scanner is processing the chain</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="text-secondary mt-0.5">&#x25CB;</span>
+                    <span>Blocks and contracts will be indexed</span>
+                  </li>
+                </ul>
+                <p className="text-xs text-secondary mt-4 border-t border-white/10 pt-3">
+                  This is normal on a fresh install. Content will appear automatically once scanning catches up.
+                </p>
+              </div>
+            </div>
           ) : selectedBlock && (
             <>
               <div className="mb-8">
@@ -948,7 +992,7 @@ function MainContent() {
                 </div>
               </div>
 
-              {selectedBlock.isFuture ? (
+              {(selectedBlock.isFuture || blocks.some(b => b.isFuture && b.height === selectedBlock.height)) ? (
                 <OpenContractsView
                   setSelectedInscription={setSelectedInscription}
                   refreshKey={pendingRefreshKey}

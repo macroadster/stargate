@@ -116,6 +116,34 @@ html[data-theme="dark"] .search-clear:hover {
     color: #f1f5f9;
 }
 
+/* Sync pulse animation for initializing state */
+@keyframes syncRingPulse {
+    0% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.4); }
+    70% { box-shadow: 0 0 0 20px rgba(99, 102, 241, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0); }
+}
+
+.sync-pulse-ring {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 6rem;
+    height: 6rem;
+    border-radius: 50%;
+    background: rgba(99, 102, 241, 0.1);
+    animation: syncRingPulse 2s ease-in-out infinite;
+}
+
+@keyframes syncDot {
+    0%, 100% { color: #fbbf24; }
+    50% { color: #f59e0b; opacity: 0.5; }
+}
+
+.sync-dot {
+    animation: syncDot 1.5s ease-in-out infinite;
+    margin-top: 0.125rem;
+}
+
 /* Block slide-in animation */
 @keyframes blockSlideIn {
     0% {

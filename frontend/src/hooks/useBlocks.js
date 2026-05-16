@@ -48,6 +48,7 @@ export const useBlocks = () => {
   const [nextCursor, setNextCursor] = useState(null);
   const [hasMore, setHasMore] = useState(true);
   const [showHistorical, setShowHistorical] = useState(null);
+  const [isInitializing, setIsInitializing] = useState(true);
   const loadingRef = useRef(false);
   const blocksRef = useRef([]);
   const latestHeightRef = useRef(null);
@@ -216,6 +217,7 @@ export const useBlocks = () => {
 
       blocksRef.current = deduped;
       setBlocks(deduped);
+      setIsInitializing(false);
       setNextCursor(data.next_cursor || null);
       setHasMore(Boolean(data.has_more));
 
@@ -252,6 +254,7 @@ export const useBlocks = () => {
     } catch (error) {
       console.error('Error fetching blocks:', error);
       setBlocks([]);
+      setIsInitializing(false);
       if (!selectedBlockRef.current && !isPolling) {
         setSelectedBlock(null);
       }
@@ -374,6 +377,7 @@ export const useBlocks = () => {
     blocks,
     selectedBlock,
     isUserNavigating,
+    isInitializing,
     handleBlockSelect,
     setSelectedBlock,
     setIsUserNavigating,
