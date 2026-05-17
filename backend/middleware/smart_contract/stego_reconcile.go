@@ -8,6 +8,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"image"
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
 	"io"
 	"log"
 	"mime/multipart"
@@ -282,9 +286,15 @@ func (s *Server) reconcileStegoFromIPFS(ctx context.Context, stegoCID string, ex
 	}, nil
 }
 
-func extractStegoManifest(ctx context.Context, image []byte, cfg stegoReconcileConfig) ([]byte, error) {
+func extractStegoManifest(ctx context.Context, imageData []byte, cfg stegoReconcileConfig) ([]byte, error) {
+	// Try native Go extraction first (no external proxy needed).
+	if payload, err := extractStegoNative(imageData); err == nil && len(payload) > 0 {
+		return payload, nil
+	}
+
+	// Fall back to HTTP proxy scanner if configured.
 	if strings.TrimSpace(cfg.ProxyBase) == "" {
-		return nil, fmt.Errorf("stego proxy base not configured")
+		return nil, fmt.Errorf("native extraction found no message and stego proxy not configured")
 	}
 	var buf bytes.Buffer
 	writer := multipart.NewWriter(&buf)
@@ -292,7 +302,7 @@ func extractStegoManifest(ctx context.Context, image []byte, cfg stegoReconcileC
 	if err != nil {
 		return nil, err
 	}
-	if _, err := io.Copy(part, bytes.NewReader(image)); err != nil {
+	if _, err := io.Copy(part, bytes.NewReader(imageData)); err != nil {
 		return nil, err
 	}
 	writer.WriteField("extract_message", "true")
@@ -344,6 +354,15 @@ func extractStegoManifest(ctx context.Context, image []byte, cfg stegoReconcileC
 		return nil, fmt.Errorf("stego extract returned empty message")
 	}
 	return []byte(extracted), nil
+}
+
+// extractStegoNative uses the built-in Go alpha-channel extractor.
+func extractStegoNative(imageData []byte) ([]byte, error) {
+	img, _, err := image.Decode(bytes.NewReader(imageData))
+	if err != nil {
+		return nil, err
+	}
+	return stego.ExtractAlpha(img)
 }
 
 func (s *Server) ensureStegoIngestion(ctx context.Context, contractID, stegoCID, stegoHash string, stegoBytes []byte, manifest stego.Manifest) {
