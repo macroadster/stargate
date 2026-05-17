@@ -743,6 +743,20 @@ ON CONFLICT(claim_id) DO UPDATE SET
 }
 
 func (s *SQLiteStore) SyncSubmission(ctx context.Context, sub smart_contract.Submission) error {
+	// Ensure parent chain exists so FK constraints are satisfied.
+	// During cross-node sync, submissions may arrive before their claim/task/contract.
+	if sub.TaskID != "" {
+		s.db.ExecContext(ctx, `INSERT OR IGNORE INTO mcp_contracts (contract_id, status, created_at) VALUES (?, 'pending', datetime('now'))`, sub.TaskID)
+		s.db.ExecContext(ctx, `INSERT OR IGNORE INTO mcp_tasks (task_id, contract_id, status) VALUES (?, ?, 'available')`, sub.TaskID, sub.TaskID)
+	}
+	if sub.ClaimID != "" {
+		taskID := sub.TaskID
+		if taskID == "" {
+			taskID = sub.ClaimID
+		}
+		s.db.ExecContext(ctx, `INSERT OR IGNORE INTO mcp_claims (claim_id, task_id, status, created_at) VALUES (?, ?, 'active', datetime('now'))`, sub.ClaimID, taskID)
+	}
+
 	if sub.Deliverables != nil {
 		delete(sub.Deliverables, "status")
 	}
@@ -765,6 +779,11 @@ ON CONFLICT(submission_id) DO UPDATE SET
 }
 
 func (s *SQLiteStore) UpsertTask(ctx context.Context, t smart_contract.Task) error {
+	// Ensure parent contract exists so the FK constraint is satisfied.
+	// During cross-node sync, tasks may arrive before their contracts.
+	if t.ContractID != "" {
+		s.db.ExecContext(ctx, `INSERT OR IGNORE INTO mcp_contracts (contract_id, status, created_at) VALUES (?, 'pending', datetime('now'))`, t.ContractID)
+	}
 	reqJSON, _ := json.Marshal(t.Requirements)
 	var proofJSON []byte
 	if t.MerkleProof != nil {
