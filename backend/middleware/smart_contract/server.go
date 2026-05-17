@@ -941,6 +941,17 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		if proposalID != "" {
 			s.updateProposalMetadataBestEffort(r.Context(), proposalID, commitmentMeta)
 		}
+		if proposalID != "" {
+			publishPixelHash := strings.TrimSpace(body.PixelHash)
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+				defer cancel()
+				if err := s.maybePublishStegoForProposal(ctx, proposalID); err != nil {
+					log.Printf("stego publish on split psbt failed for proposal %s: %v", proposalID, err)
+				}
+				s.publishPendingStegoIngest(ctx, proposalID, publishPixelHash)
+			}()
+		}
 		JSON(w, http.StatusOK, map[string]interface{}{
 			"psbts":           psbtEntries,
 			"funding_mode":    fundingMode,
@@ -1130,7 +1141,10 @@ func (s *Server) publishIngestUpdate(ctx context.Context, proposalID, ingestionI
 
 func (s *Server) publishPendingStegoIngest(ctx context.Context, proposalID, visiblePixelHash string) {
 	topic := strings.TrimSpace(os.Getenv("IPFS_MIRROR_TOPIC"))
-	if topic == "" || s.store == nil {
+	if topic == "" {
+		topic = "stargate-uploads"
+	}
+	if s.store == nil {
 		return
 	}
 	proposalID = strings.TrimSpace(proposalID)

@@ -6,10 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
-	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -124,11 +121,10 @@ func StartIPFSIngestionSync(ctx context.Context, ingest *services.IngestionServi
 		queueWake:     make(chan struct{}, 1),
 	}
 	client := ipfs.NewClientFromEnv()
-	streamClient := &http.Client{}
 	go ipfsIngestProcessUpdateQueue(ctx, ingest, store, reconcileFn, cfg, state)
 	go func() {
 		for {
-			if err := ipfsIngestSubscribe(ctx, ingest, store, reconcileFn, cfg, state, client, streamClient); err != nil {
+			if err := ipfsIngestSubscribe(ctx, ingest, store, reconcileFn, cfg, state, client); err != nil {
 				if ctx.Err() != nil {
 					return
 				}
@@ -141,7 +137,9 @@ func StartIPFSIngestionSync(ctx context.Context, ingest *services.IngestionServi
 }
 
 func loadIPFSIngestSyncConfig() ipfsIngestSyncConfig {
-	enabled := strings.EqualFold(strings.TrimSpace(os.Getenv("IPFS_INGEST_SYNC_ENABLED")), "true")
+	// Default to enabled when IPFS is enabled; only disable with explicit "false"
+	raw := strings.TrimSpace(os.Getenv("IPFS_INGEST_SYNC_ENABLED"))
+	enabled := !strings.EqualFold(raw, "false")
 	// Check global IPFS disable flag
 	if !ipfs.IsEnabled() {
 		enabled = false
@@ -202,34 +200,24 @@ func loadIPFSIngestSyncConfig() ipfsIngestSyncConfig {
 	}
 }
 
-func ipfsIngestSubscribe(ctx context.Context, ingest *services.IngestionService, store Store, reconcileFn IngestReconcileFunc, cfg ipfsIngestSyncConfig, state *ipfsIngestSyncState, client *ipfs.Client, streamClient *http.Client) error {
-	reqURL := fmt.Sprintf("%s/api/v0/pubsub/sub?arg=%s", strings.TrimRight(cfg.APIURL, "/"), url.QueryEscape(multibaseEncodeString(cfg.Topic)))
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, nil)
+func ipfsIngestSubscribe(ctx context.Context, ingest *services.IngestionService, store Store, reconcileFn IngestReconcileFunc, cfg ipfsIngestSyncConfig, state *ipfsIngestSyncState, client *ipfs.Client) error {
+	// Use the IPFS client's PubsubSubscribe (routes through embedded node when available)
+	ch, err := client.PubsubSubscribe(ctx, cfg.Topic)
 	if err != nil {
 		return err
 	}
 
-	resp, err := streamClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		if len(body) == 0 {
-			return fmt.Errorf("pubsub subscribe failed: %s", resp.Status)
-		}
-		return fmt.Errorf("pubsub subscribe failed: %s: %s", resp.Status, strings.TrimSpace(string(body)))
-	}
-
-	decoder := json.NewDecoder(resp.Body)
-	for {
+	for data := range ch {
+		// The channel delivers raw message payloads; try to decode as pubsub wrapper first
+		var dataStr string
 		var msg pubsubMessage
-		if err := decoder.Decode(&msg); err != nil {
-			return err
+		if json.Unmarshal(data, &msg) == nil && msg.Data != "" {
+			dataStr = msg.Data
+		} else {
+			dataStr = string(data)
 		}
-		announcement, err := parsePendingIngestAnnouncement(msg.Data)
+
+		announcement, err := parsePendingIngestAnnouncement(dataStr)
 		if err != nil {
 			log.Printf("ipfs ingestion sync message decode failed: %v", err)
 			continue
@@ -240,7 +228,7 @@ func ipfsIngestSubscribe(ctx context.Context, ingest *services.IngestionService,
 			}
 			continue
 		}
-		update, err := parseIngestUpdateAnnouncement(msg.Data)
+		update, err := parseIngestUpdateAnnouncement(dataStr)
 		if err != nil {
 			log.Printf("ipfs ingestion sync message decode failed: %v", err)
 			continue
@@ -252,7 +240,7 @@ func ipfsIngestSubscribe(ctx context.Context, ingest *services.IngestionService,
 			signalIngestUpdateQueue(state)
 			continue
 		}
-		manifestCID, err := extractManifestCID(msg.Data)
+		manifestCID, err := extractManifestCID(dataStr)
 		if err != nil {
 			log.Printf("ipfs ingestion sync message decode failed: %v", err)
 			continue
@@ -266,6 +254,7 @@ func ipfsIngestSubscribe(ctx context.Context, ingest *services.IngestionService,
 		}
 		state.lastManifest = manifestCID
 	}
+	return nil
 }
 
 func ipfsIngestProcessManifest(ctx context.Context, ingest *services.IngestionService, store Store, cfg ipfsIngestSyncConfig, state *ipfsIngestSyncState, client *ipfs.Client, manifestCID string) error {
@@ -306,11 +295,13 @@ func ipfsIngestProcessManifest(ctx context.Context, ingest *services.IngestionSe
 		}
 		manifestBytes, err := extractStegoManifest(ctx, blob, reconcileCfg)
 		if err != nil {
+			log.Printf("ipfs ingestion sync: stego extraction failed for %s (%s): %v", entry.CID, entry.Path, err)
 			state.lastSeen[entry.CID] = entry.ModTime
 			continue
 		}
 		stegoManifest, err := stego.ParseManifestYAML(manifestBytes)
 		if err != nil {
+			log.Printf("ipfs ingestion sync: manifest parse failed for %s (%s): %v", entry.CID, entry.Path, err)
 			state.lastSeen[entry.CID] = entry.ModTime
 			continue
 		}
@@ -1023,6 +1014,11 @@ func isImageFile(path string) bool {
 	ext := strings.ToLower(filepath.Ext(path))
 	switch ext {
 	case ".png", ".jpg", ".jpeg", ".webp":
+		return true
+	case "":
+		// Stego images in uploads are hash-named without extensions
+		// (e.g. "341a6c2b..."). Treat extensionless files as potential
+		// images so the stego extraction pipeline can inspect them.
 		return true
 	default:
 		return false

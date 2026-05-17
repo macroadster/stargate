@@ -59,7 +59,7 @@ type stegoAnnouncement struct {
 }
 
 func loadStegoApprovalConfig() stegoApprovalConfig {
-	enabled := strings.EqualFold(strings.TrimSpace(os.Getenv("STARGATE_STEGO_APPROVAL_ENABLED")), "true")
+	enabled := !strings.EqualFold(strings.TrimSpace(os.Getenv("STARGATE_STEGO_APPROVAL_ENABLED")), "false")
 	proxyBase := strings.TrimSpace(os.Getenv("STARGATE_PROXY_BASE"))
 	if proxyBase == "" {
 		proxyBase = "http://localhost:8080"
@@ -123,12 +123,14 @@ func loadStegoApprovalConfig() stegoApprovalConfig {
 }
 
 func (s *Server) maybePublishStegoForProposal(ctx context.Context, proposalID string) error {
+	log.Printf("stego publish: starting for proposal %s", proposalID)
 	cfg := loadStegoApprovalConfig()
 	if !cfg.Enabled {
+		log.Printf("stego publish: DISABLED via STARGATE_STEGO_APPROVAL_ENABLED for proposal %s", proposalID)
 		return nil
 	}
 	if !ipfs.IsEnabled() {
-		log.Printf("stego approval: IPFS disabled, skipping for proposal %s", proposalID)
+		log.Printf("stego publish: IPFS disabled, skipping for proposal %s", proposalID)
 		return nil
 	}
 	timeout := cfg.InscribeTimeout + cfg.IngestTimeout + (5 * time.Second)
@@ -165,6 +167,8 @@ func (s *Server) publishStegoForProposal(ctx context.Context, proposalID string,
 	if strings.TrimSpace(toString(meta["stego_contract_id"])) != "" &&
 		strings.TrimSpace(toString(meta["stego_image_cid"])) != "" &&
 		(commitmentLock == "" || commitmentLock == stegoCommitmentLock) {
+		log.Printf("stego publish: already published for proposal %s (contract=%s cid=%s), skipping",
+			proposalID, toString(meta["stego_contract_id"]), toString(meta["stego_image_cid"]))
 		return nil
 	}
 	ingestionID := strings.TrimSpace(toString(meta["ingestion_id"]))
@@ -224,18 +228,35 @@ func (s *Server) publishStegoForProposal(ctx context.Context, proposalID string,
 			manifestCreatedAt = v
 		}
 	}
-	// Compute sandbox tarball hash at publish time so it captures the final
-	// state of all submitted artifacts across every task/agent, not a partial
-	// snapshot from a single submit_work call.
+	// Build sandbox tarball at publish time so it captures the final state of
+	// all submitted artifacts across every task/agent, not a partial snapshot
+	// from a single submit_work call.  The tarball is written to disk and
+	// uploaded to IPFS so peers can retrieve the full artifact set.
 	sandboxHash := ""
 	uploadsDir := strings.TrimSpace(os.Getenv("UPLOADS_DIR"))
 	if uploadsDir == "" {
 		uploadsDir = "/data/uploads"
 	}
 	sandboxDir := filepath.Join(uploadsDir, "results", scstore.NormalizeContractID(proposalID))
-	if h, err := stego.HashSandboxDir(sandboxDir); err == nil {
+	tarballPath := filepath.Join(uploadsDir, fmt.Sprintf("sandbox-%s.tar", scstore.NormalizeContractID(proposalID)))
+	if h, err := stego.WriteSandboxTarball(sandboxDir, tarballPath); err == nil {
 		sandboxHash = h
-		log.Printf("stego publish: sandbox tarball hash for %s: %s", proposalID, sandboxHash)
+		log.Printf("stego publish: sandbox tarball for %s written to %s (hash=%s)", proposalID, tarballPath, sandboxHash)
+		// Upload the tarball to IPFS
+		if tarballData, readErr := os.ReadFile(tarballPath); readErr == nil {
+			tarballName := fmt.Sprintf("sandbox-%s.tar", scstore.NormalizeContractID(proposalID))
+			if tarballCID, addErr := ipfsClient.AddBytes(ctx, tarballName, tarballData); addErr == nil {
+				meta["sandbox_tarball_cid"] = tarballCID
+				log.Printf("stego publish: sandbox tarball uploaded to IPFS: %s", tarballCID)
+			} else {
+				log.Printf("stego publish: failed to upload sandbox tarball to IPFS: %v", addErr)
+			}
+		} else {
+			log.Printf("stego publish: failed to read sandbox tarball for IPFS upload: %v", readErr)
+		}
+	} else {
+		// Sandbox dir may not exist yet (no results submitted) — that's OK
+		log.Printf("stego publish: sandbox tarball skipped for %s: %v", proposalID, err)
 	}
 	manifestBytes, err := stego.BuildManifestYAML(stego.Manifest{
 		SchemaVersion:    cfg.ManifestSchema,

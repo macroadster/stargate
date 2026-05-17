@@ -41,6 +41,7 @@ type Mirror struct {
 	cfg            MirrorConfig
 	client         *http.Client
 	streamClient   *http.Client
+	ipfsClient     *Client
 	peerID         string
 	lastPublished  string
 	lastPublishAt  time.Time
@@ -226,7 +227,7 @@ func LoadMirrorConfig() MirrorConfig {
 	}
 
 	return MirrorConfig{
-		Enabled:           envBool("IPFS_MIRROR_ENABLED", false),
+		Enabled:           envBool("IPFS_MIRROR_ENABLED", true),
 		UploadEnabled:     envBool("IPFS_MIRROR_UPLOAD_ENABLED", true),
 		DownloadEnabled:   envBool("IPFS_MIRROR_DOWNLOAD_ENABLED", true),
 		APIURL:            envString("IPFS_API_URL", "http://127.0.0.1:5001"),
@@ -258,10 +259,13 @@ func StartMirror(ctx context.Context, cfg MirrorConfig) (*Mirror, error) {
 		cfg.APIURL = "http://127.0.0.1:5001"
 	}
 
+	ipfsClient := NewClientFromEnv()
+
 	m := &Mirror{
 		cfg:          cfg,
 		client:       &http.Client{Timeout: cfg.HTTPTimeout},
 		streamClient: &http.Client{},
+		ipfsClient:   ipfsClient,
 		knownFiles:   make(map[string]fileState),
 		deletedFiles: make(map[string]bool),
 	}
@@ -295,6 +299,11 @@ func StartMirror(ctx context.Context, cfg MirrorConfig) (*Mirror, error) {
 }
 
 func (m *Mirror) ensurePubsubReady(ctx context.Context) error {
+	// Embedded node always has pubsub available
+	if m.ipfsClient != nil && m.ipfsClient.embedded != nil {
+		return nil
+	}
+
 	reqURL := fmt.Sprintf("%s/api/v0/pubsub/ls", strings.TrimRight(m.cfg.APIURL, "/"))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, nil)
 	if err != nil {
@@ -364,7 +373,13 @@ func (m *Mirror) scanAndAdd(ctx context.Context) (bool, error) {
 		if walkErr != nil {
 			return walkErr
 		}
+		// Skip subdirectories entirely — only root-level stego images and
+		// tarballs belong in IPFS.  Execution-result trees (results/wish-*)
+		// and other nested content must not be mirrored.
 		if entry.IsDir() {
+			if path != m.cfg.UploadsDir {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		if m.cfg.MaxFiles > 0 && count >= m.cfg.MaxFiles {
@@ -480,6 +495,40 @@ func (m *Mirror) createManifest(ctx context.Context) (string, error) {
 }
 
 func (m *Mirror) subscribeOnce(ctx context.Context) error {
+	// Use the global IPFS client for pubsub when embedded node is available
+	if m.ipfsClient != nil && m.ipfsClient.embedded != nil {
+		ch, err := m.ipfsClient.PubsubSubscribe(ctx, m.cfg.Topic)
+		if err != nil {
+			return err
+		}
+		for data := range ch {
+			var msg pubsubMessage
+			if json.Unmarshal(data, &msg) == nil && msg.From == m.peerID {
+				continue
+			}
+			// Try as raw announcement first, then as pubsub message wrapper
+			encoded := string(data)
+			if msg.Data != "" {
+				encoded = msg.Data
+			}
+			manifestCID, err := m.extractManifestCID(encoded)
+			if err != nil {
+				log.Printf("IPFS mirror message decode failed: %v", err)
+				continue
+			}
+			if manifestCID == "" || manifestCID == m.lastSeenRemote {
+				continue
+			}
+			if err := m.processManifest(ctx, manifestCID); err != nil {
+				log.Printf("IPFS mirror sync failed: %v", err)
+			} else {
+				m.lastSeenRemote = manifestCID
+			}
+		}
+		return nil
+	}
+
+	// Fallback to direct HTTP API
 	reqURL := fmt.Sprintf("%s/api/v0/pubsub/sub?arg=%s", strings.TrimRight(m.cfg.APIURL, "/"), url.QueryEscape(multibaseEncodeString(m.cfg.Topic)))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, nil)
 	if err != nil {
@@ -709,6 +758,14 @@ func decodeBase64Payload(encoded string) []byte {
 }
 
 func (m *Mirror) fetchPeerID(ctx context.Context) (string, error) {
+	// Try the global IPFS client first (uses embedded node when available)
+	if m.ipfsClient != nil {
+		if id := m.ipfsClient.PeerID(ctx); id != "" {
+			return id, nil
+		}
+	}
+
+	// Fallback to direct HTTP API
 	reqURL := fmt.Sprintf("%s/api/v0/id", strings.TrimRight(m.cfg.APIURL, "/"))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, nil)
 	if err != nil {
@@ -734,6 +791,12 @@ func (m *Mirror) fetchPeerID(ctx context.Context) (string, error) {
 }
 
 func (m *Mirror) pubsubPublish(ctx context.Context, message []byte) error {
+	// Use the global IPFS client when embedded node is available
+	if m.ipfsClient != nil {
+		return m.ipfsClient.PubsubPublish(ctx, m.cfg.Topic, message)
+	}
+
+	// Fallback to direct HTTP API
 	topic := url.QueryEscape(multibaseEncodeString(m.cfg.Topic))
 	reqURL := fmt.Sprintf("%s/api/v0/pubsub/pub?arg=%s", strings.TrimRight(m.cfg.APIURL, "/"), topic)
 
@@ -778,6 +841,15 @@ func multipartBody(fieldName string, filename string, payload []byte) (io.Reader
 }
 
 func (m *Mirror) addFile(ctx context.Context, path string, name string) (string, error) {
+	// Use the global IPFS client when available (tries embedded node first)
+	if m.ipfsClient != nil {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return "", err
+		}
+		return m.ipfsClient.AddBytes(ctx, name, data)
+	}
+
 	file, err := os.Open(path)
 	if err != nil {
 		return "", err
@@ -788,6 +860,10 @@ func (m *Mirror) addFile(ctx context.Context, path string, name string) (string,
 }
 
 func (m *Mirror) addBytes(ctx context.Context, name string, data []byte) (string, error) {
+	// Use the global IPFS client when available (tries embedded node first)
+	if m.ipfsClient != nil {
+		return m.ipfsClient.AddBytes(ctx, name, data)
+	}
 	return m.addStream(ctx, name, bytes.NewReader(data))
 }
 
@@ -860,6 +936,12 @@ func (m *Mirror) unpinCID(ctx context.Context, cid string) error {
 }
 
 func (m *Mirror) cat(ctx context.Context, cid string) ([]byte, error) {
+	// Use the global IPFS client when available (tries embedded node first)
+	if m.ipfsClient != nil {
+		return m.ipfsClient.Cat(ctx, cid)
+	}
+
+	// Fallback to direct HTTP API
 	reqURL := fmt.Sprintf("%s/api/v0/cat?arg=%s", strings.TrimRight(m.cfg.APIURL, "/"), url.QueryEscape(cid))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, nil)
 	if err != nil {
@@ -874,6 +956,17 @@ func (m *Mirror) cat(ctx context.Context, cid string) ([]byte, error) {
 }
 
 func (m *Mirror) catToWriter(ctx context.Context, cid string, w io.Writer) error {
+	// Use the global IPFS client when available (tries embedded node first)
+	if m.ipfsClient != nil {
+		data, err := m.ipfsClient.Cat(ctx, cid)
+		if err != nil {
+			return err
+		}
+		_, err = w.Write(data)
+		return err
+	}
+
+	// Fallback to direct HTTP API
 	reqURL := fmt.Sprintf("%s/api/v0/cat?arg=%s", strings.TrimRight(m.cfg.APIURL, "/"), url.QueryEscape(cid))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, nil)
 	if err != nil {

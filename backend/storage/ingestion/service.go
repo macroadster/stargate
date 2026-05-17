@@ -229,7 +229,7 @@ func (s *IngestionService) Get(id string) (*IngestionRecord, error) {
 	query := fmt.Sprintf(`SELECT id, filename, method, message_length, image_base64, metadata, status, created_at FROM %s WHERE id=$1`, s.tableName)
 	var rec IngestionRecord
 	var metadataRaw []byte
-	if err := s.db.QueryRow(query, id).Scan(&rec.ID, &rec.Filename, &rec.Method, &rec.MessageLength, &rec.ImageBase64, metadataRaw, &rec.Status, &rec.CreatedAt); err != nil {
+	if err := s.db.QueryRow(query, id).Scan(&rec.ID, &rec.Filename, &rec.Method, &rec.MessageLength, &rec.ImageBase64, &metadataRaw, &rec.Status, &rec.CreatedAt); err != nil {
 		return nil, err
 	}
 	rec.Metadata, _ = fromJSONB(metadataRaw)
@@ -258,7 +258,7 @@ LIMIT 1
 
 	var rec IngestionRecord
 	var metadataRaw []byte
-	if err := s.db.QueryRow(query, imageBase64, message).Scan(&rec.ID, &rec.Filename, &rec.Method, &rec.MessageLength, &rec.ImageBase64, metadataRaw, &rec.Status, &rec.CreatedAt); err != nil {
+	if err := s.db.QueryRow(query, imageBase64, message).Scan(&rec.ID, &rec.Filename, &rec.Method, &rec.MessageLength, &rec.ImageBase64, &metadataRaw, &rec.Status, &rec.CreatedAt); err != nil {
 		return nil, err
 	}
 	rec.Metadata, _ = fromJSONB(metadataRaw)
@@ -289,7 +289,7 @@ LIMIT 1
 
 	var rec IngestionRecord
 	var metadataRaw []byte
-	if err := s.db.QueryRow(query, filename, message).Scan(&rec.ID, &rec.Filename, &rec.Method, &rec.MessageLength, &rec.ImageBase64, metadataRaw, &rec.Status, &rec.CreatedAt); err != nil {
+	if err := s.db.QueryRow(query, filename, message).Scan(&rec.ID, &rec.Filename, &rec.Method, &rec.MessageLength, &rec.ImageBase64, &metadataRaw, &rec.Status, &rec.CreatedAt); err != nil {
 		return nil, err
 	}
 	rec.Metadata, _ = fromJSONB(metadataRaw)
@@ -437,7 +437,7 @@ func (s *IngestionService) ListRecent(status string, limit int) ([]IngestionReco
 	for rows.Next() {
 		var rec IngestionRecord
 		var metadataRaw []byte
-		if err := rows.Scan(&rec.ID, &rec.Filename, &rec.Method, &rec.MessageLength, &rec.ImageBase64, metadataRaw, &rec.Status, &rec.CreatedAt); err != nil {
+		if err := rows.Scan(&rec.ID, &rec.Filename, &rec.Method, &rec.MessageLength, &rec.ImageBase64, &metadataRaw, &rec.Status, &rec.CreatedAt); err != nil {
 			return nil, err
 		}
 		rec.Metadata, _ = fromJSONB(metadataRaw)
@@ -487,7 +487,7 @@ WHERE id = ANY($1)
 	for rows.Next() {
 		var rec IngestionRecord
 		var metadataRaw []byte
-		if err := rows.Scan(&rec.ID, &rec.Filename, &rec.Method, &rec.MessageLength, &rec.ImageBase64, metadataRaw, &rec.Status, &rec.CreatedAt); err != nil {
+		if err := rows.Scan(&rec.ID, &rec.Filename, &rec.Method, &rec.MessageLength, &rec.ImageBase64, &metadataRaw, &rec.Status, &rec.CreatedAt); err != nil {
 			return nil, err
 		}
 		rec.Metadata, _ = fromJSONB(metadataRaw)

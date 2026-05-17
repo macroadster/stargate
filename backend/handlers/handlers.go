@@ -1075,14 +1075,7 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 			proposalTitle = "Wish " + ingestionID
 		}
 
-		seedFixtures := true
-		if raw := os.Getenv("STARGATE_SEED_FIXTURES"); raw != "" {
-			if v, err := strconv.ParseBool(raw); err == nil {
-				seedFixtures = v
-			}
-		}
-
-		if !payload.SkipProposal && seedFixtures {
+		if !payload.SkipProposal {
 			proposal := sc.Proposal{
 				ID:               ingestionID,
 				Title:            proposalTitle,
