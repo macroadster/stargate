@@ -46,6 +46,27 @@ type IngestUpdateRow struct {
 	Attempts int
 }
 
+// scanTime parses a created_at value that may be a time.Time (Postgres) or
+// a string (SQLite).  Returns zero time on failure.
+func scanTime(v interface{}) time.Time {
+	switch val := v.(type) {
+	case time.Time:
+		return val
+	case string:
+		for _, layout := range []string{
+			time.RFC3339Nano,
+			time.RFC3339,
+			"2006-01-02T15:04:05",
+			"2006-01-02 15:04:05",
+		} {
+			if t, err := time.Parse(layout, val); err == nil {
+				return t
+			}
+		}
+	}
+	return time.Time{}
+}
+
 // IngestionService is the ingestion persistence service (Postgres or SQLite).
 type IngestionService struct {
 	db        *sql.DB
@@ -229,9 +250,11 @@ func (s *IngestionService) Get(id string) (*IngestionRecord, error) {
 	query := fmt.Sprintf(`SELECT id, filename, method, message_length, image_base64, metadata, status, created_at FROM %s WHERE id=$1`, s.tableName)
 	var rec IngestionRecord
 	var metadataRaw []byte
-	if err := s.db.QueryRow(query, id).Scan(&rec.ID, &rec.Filename, &rec.Method, &rec.MessageLength, &rec.ImageBase64, &metadataRaw, &rec.Status, &rec.CreatedAt); err != nil {
+	var createdAtRaw interface{}
+	if err := s.db.QueryRow(query, id).Scan(&rec.ID, &rec.Filename, &rec.Method, &rec.MessageLength, &rec.ImageBase64, &metadataRaw, &rec.Status, &createdAtRaw); err != nil {
 		return nil, err
 	}
+	rec.CreatedAt = scanTime(createdAtRaw)
 	rec.Metadata, _ = fromJSONB(metadataRaw)
 	return &rec, nil
 }
@@ -258,9 +281,11 @@ LIMIT 1
 
 	var rec IngestionRecord
 	var metadataRaw []byte
-	if err := s.db.QueryRow(query, imageBase64, message).Scan(&rec.ID, &rec.Filename, &rec.Method, &rec.MessageLength, &rec.ImageBase64, &metadataRaw, &rec.Status, &rec.CreatedAt); err != nil {
+	var createdAtRaw interface{}
+	if err := s.db.QueryRow(query, imageBase64, message).Scan(&rec.ID, &rec.Filename, &rec.Method, &rec.MessageLength, &rec.ImageBase64, &metadataRaw, &rec.Status, &createdAtRaw); err != nil {
 		return nil, err
 	}
+	rec.CreatedAt = scanTime(createdAtRaw)
 	rec.Metadata, _ = fromJSONB(metadataRaw)
 	return &rec, nil
 }
@@ -289,9 +314,11 @@ LIMIT 1
 
 	var rec IngestionRecord
 	var metadataRaw []byte
-	if err := s.db.QueryRow(query, filename, message).Scan(&rec.ID, &rec.Filename, &rec.Method, &rec.MessageLength, &rec.ImageBase64, &metadataRaw, &rec.Status, &rec.CreatedAt); err != nil {
+	var createdAtRaw interface{}
+	if err := s.db.QueryRow(query, filename, message).Scan(&rec.ID, &rec.Filename, &rec.Method, &rec.MessageLength, &rec.ImageBase64, &metadataRaw, &rec.Status, &createdAtRaw); err != nil {
 		return nil, err
 	}
+	rec.CreatedAt = scanTime(createdAtRaw)
 	rec.Metadata, _ = fromJSONB(metadataRaw)
 	return &rec, nil
 }
@@ -437,9 +464,11 @@ func (s *IngestionService) ListRecent(status string, limit int) ([]IngestionReco
 	for rows.Next() {
 		var rec IngestionRecord
 		var metadataRaw []byte
-		if err := rows.Scan(&rec.ID, &rec.Filename, &rec.Method, &rec.MessageLength, &rec.ImageBase64, &metadataRaw, &rec.Status, &rec.CreatedAt); err != nil {
+		var createdAtRaw interface{}
+		if err := rows.Scan(&rec.ID, &rec.Filename, &rec.Method, &rec.MessageLength, &rec.ImageBase64, &metadataRaw, &rec.Status, &createdAtRaw); err != nil {
 			return nil, err
 		}
+		rec.CreatedAt = scanTime(createdAtRaw)
 		rec.Metadata, _ = fromJSONB(metadataRaw)
 		recs = append(recs, rec)
 	}
@@ -487,9 +516,11 @@ WHERE id = ANY($1)
 	for rows.Next() {
 		var rec IngestionRecord
 		var metadataRaw []byte
-		if err := rows.Scan(&rec.ID, &rec.Filename, &rec.Method, &rec.MessageLength, &rec.ImageBase64, &metadataRaw, &rec.Status, &rec.CreatedAt); err != nil {
+		var createdAtRaw interface{}
+		if err := rows.Scan(&rec.ID, &rec.Filename, &rec.Method, &rec.MessageLength, &rec.ImageBase64, &metadataRaw, &rec.Status, &createdAtRaw); err != nil {
 			return nil, err
 		}
+		rec.CreatedAt = scanTime(createdAtRaw)
 		rec.Metadata, _ = fromJSONB(metadataRaw)
 		recs = append(recs, rec)
 	}
