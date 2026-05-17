@@ -156,10 +156,13 @@ func NewAllStores(cfg StorageConfig) (*AllStores, error) {
 				}
 			}
 
-			// Ingestion via SQLite path (still uses its own DB file for now)
-			// For full consistency we would pass the ingestions DB path; keeping
-			// existing behaviour in this skeleton.
-			// ingestSvc remains nil unless PG is present.
+			// Ingestion via SQLite
+			if svc, serr := services.NewIngestionService(cfg.IngestionsDBPath); serr != nil {
+				log.Printf("ingestion service (sqlite) unavailable: %v", serr)
+			} else {
+				ingestSvc = svc
+				log.Printf("Using SQLite ingestion service at %s", cfg.IngestionsDBPath)
+			}
 
 		} else {
 			// Pure memory
