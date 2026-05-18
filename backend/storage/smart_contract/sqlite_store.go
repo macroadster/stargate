@@ -843,10 +843,24 @@ func (s *SQLiteStore) CreateProposal(ctx context.Context, p smart_contract.Propo
 		p.Status = "pending"
 	}
 
-	metadata, _ := json.Marshal(p.Metadata)
+	metaMap := p.Metadata
+	if metaMap == nil {
+		metaMap = map[string]interface{}{}
+	}
+	if len(p.Tasks) > 0 && (p.Status == "" || strings.EqualFold(p.Status, "pending")) {
+		metaMap["suggested_tasks"] = p.Tasks
+	}
+	metadata, _ := json.Marshal(metaMap)
 	_, err := s.db.ExecContext(ctx, `
 INSERT INTO mcp_proposals (id, title, description_md, visible_pixel_hash, budget_sats, status, metadata, created_at)
 VALUES (?,?,?,?,?,?,?,?)
+ON CONFLICT(id) DO UPDATE SET
+  status = excluded.status,
+  metadata = excluded.metadata,
+  title = excluded.title,
+  description_md = excluded.description_md,
+  visible_pixel_hash = excluded.visible_pixel_hash,
+  budget_sats = excluded.budget_sats
 `, p.ID, p.Title, p.DescriptionMD, p.VisiblePixelHash, p.BudgetSats, p.Status, string(metadata), p.CreatedAt.Format(time.RFC3339))
 	return err
 }

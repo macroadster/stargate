@@ -352,20 +352,27 @@ func (s *IngestionService) UpdateFromIngest(id string, rec IngestionRecord) erro
 	if err != nil {
 		return err
 	}
-	var query string
 	if s.dialect == "sqlite" {
-		query = fmt.Sprintf(`
+		// SQLite json_patch requires 3.39+; go-sqlite3 v1.14.8 bundles 3.36.
+		// Merge in Go instead: read existing metadata, merge, write back.
+		merged, err := s.mergeMetadataSQLite(id, rec.Metadata)
+		if err != nil {
+			return err
+		}
+		query := fmt.Sprintf(`
 UPDATE %s
 SET filename = $2,
     method = $3,
     message_length = $4,
     image_base64 = $5,
-    metadata = json_patch(COALESCE(metadata, '{}'), $6),
+    metadata = $6,
     status = $7
 WHERE id = $1
 `, s.tableName)
-	} else {
-		query = fmt.Sprintf(`
+		_, err = s.db.Exec(query, id, rec.Filename, rec.Method, rec.MessageLength, rec.ImageBase64, merged, rec.Status)
+		return err
+	}
+	query := fmt.Sprintf(`
 UPDATE %s
 SET filename = $2,
     method = $3,
@@ -375,7 +382,6 @@ SET filename = $2,
     status = $7
 WHERE id = $1
 `, s.tableName)
-	}
 	_, err = s.db.Exec(query, id, rec.Filename, rec.Method, rec.MessageLength, rec.ImageBase64, string(metadataJSON), rec.Status)
 	return err
 }
@@ -384,24 +390,30 @@ func (s *IngestionService) UpdateMetadata(id string, updates map[string]interfac
 	if id == "" {
 		return fmt.Errorf("missing id")
 	}
+	if s.dialect == "sqlite" {
+		// SQLite json_patch requires 3.39+; go-sqlite3 v1.14.8 bundles 3.36.
+		// Merge in Go instead.
+		merged, err := s.mergeMetadataSQLite(id, updates)
+		if err != nil {
+			return err
+		}
+		query := fmt.Sprintf(`
+UPDATE %s
+SET metadata = $2
+WHERE id = $1
+`, s.tableName)
+		_, err = s.db.Exec(query, id, merged)
+		return err
+	}
 	updatesJSON, err := toJSONB(updates)
 	if err != nil {
 		return err
 	}
-	var query string
-	if s.dialect == "sqlite" {
-		query = fmt.Sprintf(`
-UPDATE %s
-SET metadata = json_patch(COALESCE(metadata, '{}'), $2)
-WHERE id = $1
-`, s.tableName)
-	} else {
-		query = fmt.Sprintf(`
+	query := fmt.Sprintf(`
 UPDATE %s
 SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb
 WHERE id = $1
 `, s.tableName)
-	}
 	_, err = s.db.Exec(query, id, string(updatesJSON))
 	return err
 }
@@ -542,6 +554,27 @@ func (s *IngestionService) Delete(ctx context.Context, id string) error {
 		return fmt.Errorf("delete ingestion: %w", err)
 	}
 	return tx.Commit()
+}
+
+// mergeMetadataSQLite reads existing metadata for a row, merges the updates
+// in Go, and returns the serialized JSON string.  This replaces the SQLite
+// json_patch() call which requires SQLite 3.39+ (go-sqlite3 v1.14.8 bundles 3.36).
+func (s *IngestionService) mergeMetadataSQLite(id string, updates map[string]interface{}) (string, error) {
+	var raw []byte
+	query := fmt.Sprintf(`SELECT metadata FROM %s WHERE id = $1`, s.tableName)
+	if err := s.db.QueryRow(query, id).Scan(&raw); err != nil {
+		// Row may not exist yet; start with empty object.
+		raw = []byte(`{}`)
+	}
+	existing, _ := fromJSONB(raw)
+	for k, v := range updates {
+		existing[k] = v
+	}
+	out, err := json.Marshal(existing)
+	if err != nil {
+		return "{}", err
+	}
+	return string(out), nil
 }
 
 // JSON helpers
