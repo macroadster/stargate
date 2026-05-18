@@ -125,9 +125,9 @@ func (s *SQLiteStore) containsSkill(all []string, skills []string) bool {
 
 func (s *SQLiteStore) ListContracts(filter smart_contract.ContractFilter) ([]smart_contract.Contract, error) {
 	baseSelect := `
-SELECT c.contract_id, c.title, c.total_budget_sats, c.goals_count,
+SELECT c.contract_id, COALESCE(c.title, ''), COALESCE(c.total_budget_sats, 0), COALESCE(c.goals_count, 0),
 	(SELECT COUNT(*) FROM mcp_tasks t WHERE t.contract_id = c.contract_id AND t.status = 'available') AS available_tasks_count,
-	c.status, c.skills, c.stego_image_url, c.metadata, c.confirmed_block_height, c.confirmed_at, c.created_at
+	COALESCE(c.status, 'pending'), c.skills, COALESCE(c.stego_image_url, ''), c.metadata, c.confirmed_block_height, c.confirmed_at, c.created_at
 FROM mcp_contracts c
 `
 
@@ -318,9 +318,9 @@ func (s *SQLiteStore) GetContract(id string) (smart_contract.Contract, error) {
 	var metadata, skillsStr []byte
 	var confirmedAtStr sql.NullString
 	err := s.db.QueryRowContext(context.Background(), `
-SELECT contract_id, title, total_budget_sats, goals_count,
+SELECT contract_id, COALESCE(title, ''), COALESCE(total_budget_sats, 0), COALESCE(goals_count, 0),
        (SELECT COUNT(*) FROM mcp_tasks t WHERE t.contract_id = mcp_contracts.contract_id AND t.status = 'available') AS available_tasks_count,
-       status, skills, stego_image_url, confirmed_block_height, confirmed_at, metadata
+       COALESCE(status, 'pending'), skills, COALESCE(stego_image_url, ''), confirmed_block_height, confirmed_at, metadata
 FROM mcp_contracts WHERE contract_id=?
 `, id).Scan(&c.ContractID, &c.Title, &c.TotalBudgetSats, &c.GoalsCount, &c.AvailableTasksCount,
 		&c.Status, &skillsStr, &c.StegoImageURL, &c.ConfirmedBlockHeight, &confirmedAtStr, &metadata)
