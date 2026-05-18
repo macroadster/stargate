@@ -301,7 +301,8 @@ func ipfsIngestProcessManifest(ctx context.Context, ingest *services.IngestionSe
 		}
 		stegoManifest, err := stego.ParseManifestYAML(manifestBytes)
 		if err != nil {
-			log.Printf("ipfs ingestion sync: manifest parse failed for %s (%s): %v", entry.CID, entry.Path, err)
+			// Not a manifest — likely a plain-text wish message embedded via stego.
+			// This is expected and not an error; skip silently.
 			state.lastSeen[entry.CID] = entry.ModTime
 			continue
 		}
