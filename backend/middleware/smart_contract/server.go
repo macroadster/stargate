@@ -2956,14 +2956,17 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 				Error(w, http.StatusBadRequest, err.Error())
 				return
 			}
-			// Generate stego payload immediately for wish creation.
-			log.Printf("CRITICAL: About to call maybePublishStegoForProposal for proposal %s, ingestion %s", proposal.ID, body.IngestionID)
-			if err := s.maybePublishStegoForProposal(r.Context(), proposal.ID); err != nil {
-				log.Printf("CRITICAL: maybePublishStegoForProposal failed for proposal %s: %v", proposal.ID, err)
-				Error(w, http.StatusBadRequest, err.Error())
-				return
-			}
-			log.Printf("CRITICAL: maybePublishStegoForProposal succeeded for proposal %s", proposal.ID)
+			// Async stego publishing - doesn't block proposal creation response
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+				defer cancel()
+				log.Printf("stego publish: starting async for proposal %s, ingestion %s", proposal.ID, body.IngestionID)
+				if err := s.maybePublishStegoForProposal(ctx, proposal.ID); err != nil {
+					log.Printf("stego publish failed async for proposal %s: %v", proposal.ID, err)
+				} else {
+					log.Printf("stego publish succeeded async for proposal %s", proposal.ID)
+				}
+			}()
 			s.recordEvent(smart_contract.Event{
 				Type:      "proposal_create",
 				EntityID:  proposal.ID,
@@ -2974,7 +2977,7 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 			JSON(w, http.StatusCreated, map[string]interface{}{
 				"proposal_id": proposal.ID,
 				"status":      proposal.Status,
-				"message":     "proposal created from pending ingestion",
+				"message":     "proposal created from pending ingestion; stego publishing in progress",
 			})
 			return
 		}
