@@ -55,8 +55,11 @@ type BlockMonitor struct {
 	maxRetries    int
 	retryDelay    time.Duration
 
+	// Callbacks
+	onBlockProcessed []func(height int64)
+
 	// Statistics
-	blocksProcessed     int64
+	blocksProcessed int64
 	totalTransactions   int64
 	totalImages         int64
 	totalStegoContracts int64
@@ -248,6 +251,11 @@ func (bm *BlockMonitor) SetStegoReconciler(reconciler StegoReconciler) {
 
 func (bm *BlockMonitor) SetIPFSUnpin(unpin func(context.Context, string) error) {
 	bm.unpinPath = unpin
+}
+
+// OnBlockProcessed registers a callback invoked after a block is successfully processed.
+func (bm *BlockMonitor) OnBlockProcessed(fn func(height int64)) {
+	bm.onBlockProcessed = append(bm.onBlockProcessed, fn)
 }
 
 func blocksDirFromEnv() string {
@@ -817,6 +825,10 @@ func (bm *BlockMonitor) ProcessBlock(height int64) error {
 
 	log.Printf("Successfully processed block %d in %v: %d txs, %d images, %d inscriptions, %d stego detected",
 		height, processingTime, len(parsedBlock.Transactions), len(parsedBlock.Images), len(inscriptions), bm.countStegoImages(scanResults))
+
+	for _, fn := range bm.onBlockProcessed {
+		fn(height)
+	}
 
 	return nil
 }

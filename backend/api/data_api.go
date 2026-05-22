@@ -1302,8 +1302,6 @@ func (api *DataAPI) HandleContent(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodOptions {
 		return
 	}
-	// Rebuild the tx index on each request to pick up newly processed blocks.
-	api.buildTxIndex()
 	path := strings.TrimPrefix(r.URL.Path, "/content/")
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 	if len(parts) == 0 || parts[0] == "" {
@@ -1980,6 +1978,26 @@ func (api *DataAPI) buildTxIndex() {
 	}
 	api.txMu.Lock()
 	api.txIndex = newIndex
+	api.txMu.Unlock()
+}
+
+// IndexBlock incrementally adds a single block's inscriptions to the tx index.
+// Designed to be called from BlockMonitor.OnBlockProcessed.
+func (api *DataAPI) IndexBlock(height int64) {
+	block, err := api.loadBlock(height)
+	if err != nil {
+		return
+	}
+	inscriptions := block.Inscriptions
+	if len(inscriptions) == 0 && len(block.SmartContracts) > 0 {
+		inscriptions, _, _ = buildContractInscriptions(block.SmartContracts, block.BlockHeight)
+	}
+	api.txMu.Lock()
+	for _, ins := range inscriptions {
+		if ins.TxID != "" {
+			api.txIndex[normalizeTxID(ins.TxID)] = height
+		}
+	}
 	api.txMu.Unlock()
 }
 

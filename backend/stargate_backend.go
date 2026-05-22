@@ -720,6 +720,11 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 		bitcoinAPI,
 	)
 
+	// Keep the content tx index in sync as new blocks arrive.
+	if blockMonitor != nil {
+		blockMonitor.OnBlockProcessed(dataAPI.IndexBlock)
+	}
+
 	mux.HandleFunc("/api/data/block/", dataAPI.HandleGetBlockData)
 	mux.HandleFunc("/api/data/blocks", dataAPI.HandleGetRecentBlocks)
 	mux.HandleFunc("/api/data/block-summaries", dataAPI.HandleGetBlockSummaries)
