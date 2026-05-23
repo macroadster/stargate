@@ -88,9 +88,19 @@ func Recovery(next http.Handler) http.Handler {
 func SecurityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload")
-		w.Header().Set("X-Frame-Options", "SAMEORIGIN")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
+
+		// Sandbox paths serve user-generated HTML apps that need full web
+		// capabilities (external scripts, remote APIs). Skip the restrictive
+		// CSP and allow framing so the modal iframe preview works too.
+		if strings.HasPrefix(r.URL.Path, "/sandbox/") {
+			w.Header().Set("X-Frame-Options", "ALLOWALL")
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		w.Header().Set("X-Frame-Options", "SAMEORIGIN")
 		w.Header().Set("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
 
 		// Content Security Policy
@@ -110,7 +120,7 @@ func SecurityHeaders(next http.Handler) http.Handler {
 			"img-src 'self' data: blob: https:; "+
 			"%s "+
 			"worker-src 'self' blob:; "+
-			"frame-src 'self'; "+
+			"frame-src 'self' blob:; "+
 			"object-src 'none';", connectSrc)
 		w.Header().Set("Content-Security-Policy", csp)
 

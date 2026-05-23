@@ -1903,13 +1903,13 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
                           title="inscription-sandbox"
                           src={sandboxSrc || undefined}
                           srcDoc={sandboxSrc ? undefined : inlineDoc}
-                          sandbox=""
+                          sandbox="allow-scripts"
                           referrerPolicy="no-referrer"
                           className="modal-sandbox-iframe"
                         />
                       </div>
                       <div className="modal-data-label mt-2">
-                        Rendered in an isolated sandbox (scripts/DOM access blocked).
+                        Rendered in an isolated sandbox (scripts enabled, DOM access restricted).
                       </div>
                     </div>
                   )}
