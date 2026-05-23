@@ -636,7 +636,7 @@ function MainContent() {
         onToggleBrc20={() => setHideBrc20(!hideBrc20)}
       />
 
-      <div className="pt-0" style={{ minHeight: 0, overflow: 'auto' }}>
+      <div className="pt-0" style={{ minHeight: 0, overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
         <div
           id="block-scroll"
           ref={scrollRef}
@@ -659,7 +659,7 @@ function MainContent() {
           ))}
         </div>
 
-        <div className="w-full px-4 sm:px-6 lg:px-8 xl:px-12 py-8">
+        <div className="w-full px-4 sm:px-6 lg:px-8 xl:px-12 py-8" style={{ flex: 1 }}>
           {searchResults !== null ? (
             <div className="mb-8">
               <h2 className="text-4xl font-bold mb-4 text-primary">Search Results</h2>
