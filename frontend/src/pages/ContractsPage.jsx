@@ -77,7 +77,6 @@ export default function ContractsPage() {
               className="group text-left cursor-pointer"
             >
               <div className="contract-card transition-all duration-300 hover:shadow-xl hover:translate-y-[-5px]">
-                <div className="relative">
                   {contract.image_url ? (
                     <img
                       src={contract.image_url}
@@ -93,40 +92,27 @@ export default function ContractsPage() {
                       </div>
                     </div>
                   )}
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent opacity-90" />
-                  <div className="absolute bottom-0 left-0 right-0 p-4 text-white">
-                    <div className="text-[10px] font-black uppercase tracking-[0.2em] text-white/70 flex justify-between items-center">
-                      <span>Block #{contract.block_height || 'Pending'}</span>
-                      {contract.metadata?.status && (
-                        <span className="badge badge-primary">
-                          {contract.metadata.status}
-                        </span>
-                      )}
-                    </div>
-                    <div className="text-lg font-semibold leading-snug mt-1">
-                      {contract.headline}
-                    </div>
-                  </div>
-                </div>
-                <div className="p-3 space-y-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="contract-id text-xs text-gray-500 dark:text-gray-400 truncate flex-1">
-                      ID: {contract.id}
-                    </div>
-                    {contract.metadata?.visible_pixel_hash && (
-                      <div className="contract-hash text-[10px] text-starlight font-mono font-bold">
-                        HASH: {contract.metadata.visible_pixel_hash.slice(0, 8)}
-                      </div>
+                <div className="contract-card-info">
+                  <div className="flex items-center justify-between gap-2 mb-1">
+                    <span className="text-[10px] font-black uppercase tracking-[0.2em] opacity-70">
+                      Block #{contract.block_height || 'Pending'}
+                    </span>
+                    {contract.metadata?.status && (
+                      <span className="badge badge-primary" style={{ fontSize: '0.6rem' }}>
+                        {contract.metadata.status}
+                      </span>
                     )}
                   </div>
-                  <div className="flex items-center gap-3 text-xs text-gray-600 dark:text-gray-400">
-                    <div className="flex items-center gap-1">
-                      <span className="text-starlight">💰</span>
-                      <span>{(contract.metadata?.total_budget / 1e8 || 0).toFixed(4)} BTC</span>
+                  <div className="text-sm font-semibold leading-snug mb-2 line-clamp-2">
+                    {contract.headline}
+                  </div>
+                  <div className="flex items-center justify-between gap-2 text-xs opacity-60">
+                    <div className="contract-id truncate flex-1 font-mono">
+                      {contract.id?.slice(0, 12)}…
                     </div>
-                    <div className="flex items-center gap-1">
-                      <span className="text-starlight">📋</span>
-                      <span>{contract.metadata?.available_tasks || 0} tasks</span>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <span>💰 {(contract.metadata?.total_budget / 1e8 || 0).toFixed(4)} BTC</span>
+                      <span>📋 {contract.metadata?.available_tasks || 0}</span>
                     </div>
                   </div>
                 </div>

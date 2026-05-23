@@ -1060,6 +1060,24 @@ html[data-theme="light"] .badge {
     object-fit: cover;
 }
 
+.contract-card-info {
+    padding: 0.75rem;
+    background: #0a0a0a;
+    color: #f1f5f9;
+}
+
+@media (prefers-color-scheme: light) {
+    .contract-card-info {
+        background: #1e293b;
+        color: #f1f5f9;
+    }
+}
+
+html[data-theme="light"] .contract-card-info {
+    background: #1e293b;
+    color: #f1f5f9;
+}
+
 @media (prefers-color-scheme: dark) {
     .contract-card {
         background: #0d1117;
