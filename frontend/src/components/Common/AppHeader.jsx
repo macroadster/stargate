@@ -246,10 +246,12 @@ const AppHeader = ({
 
             <button
               onClick={() => setIsMenuOpen(!isMenuOpen)}
-              className={`hamburger md:hidden ${isMenuOpen ? "active" : ""} bg-transparent border-none`}
+              className={`hamburger md:hidden ${isMenuOpen ? "active" : ""}`}
               aria-label="Toggle menu"
             >
-              <Menu className="w-6 h-6" style={{ color: "currentColor" }} />
+              <span />
+              <span />
+              <span />
             </button>
           </div>
         </div>
@@ -257,7 +259,7 @@ const AppHeader = ({
         {/* Mobile Menu */}
         <div className={`nav-menu-mobile ${isMenuOpen ? "active" : ""}`}>
           {showSearch && (
-            <div className="search has-icon mb-6">
+            <div className="search has-icon">
               <Search className="icon-search w-4 h-4" />
               <input
                 type="text"
@@ -352,28 +354,36 @@ const AppHeader = ({
             )}
           </ul>
 
-          <div className="mt-6 pt-6 border-t border-white/10 flex flex-col gap-4">
-            {auth?.apiKey && (
-              <div className="flex justify-center">
-                <div className="badge badge-success text-xs px-3 py-1 rounded-full truncate max-w-full">
+          <div className="mt-6 pt-6 flex flex-row items-center justify-between px-4 pb-4">
+            {auth?.apiKey ? (
+              <>
+                <div className="badge badge-success text-xs px-3 py-1 rounded-full truncate">
                   {auth.wallet || auth.email || "Connected"}
                 </div>
-              </div>
-            )}
-
-            <div className="flex flex-row items-center justify-between">
-              {auth?.apiKey ? (
-                <button
-                  onClick={() => {
-                    signOut();
-                    setIsMenuOpen(false);
-                  }}
-                  className="nav-link text-error p-2 bg-transparent border-none"
-                  title="Sign Out"
-                >
-                  <LogOut className="w-5 h-5" />
-                </button>
-              ) : (
+                <div className="flex items-center gap-2">
+                  {showThemeToggle && (
+                    <button
+                      onClick={cycleTheme}
+                      className="nav-link p-2 bg-transparent border-none"
+                      title={getThemeTitle()}
+                    >
+                      {getThemeIcon()}
+                    </button>
+                  )}
+                  <button
+                    onClick={() => {
+                      signOut();
+                      setIsMenuOpen(false);
+                    }}
+                    className="nav-link text-error p-2 bg-transparent border-none"
+                    title="Sign Out"
+                  >
+                    <LogOut className="w-5 h-5" />
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
                 <button
                   onClick={() => {
                     navigate("/auth");
@@ -383,18 +393,17 @@ const AppHeader = ({
                 >
                   Sign In
                 </button>
-              )}
-
-              {showThemeToggle && (
-                <button
-                  onClick={cycleTheme}
-                  className="nav-link p-2 bg-transparent border-none"
-                  title={getThemeTitle()}
-                >
-                  {getThemeIcon()}
-                </button>
-              )}
-            </div>
+                {showThemeToggle && (
+                  <button
+                    onClick={cycleTheme}
+                    className="nav-link p-2 bg-transparent border-none"
+                    title={getThemeTitle()}
+                  >
+                    {getThemeIcon()}
+                  </button>
+                )}
+              </>
+            )}
           </div>
         </div>
       </nav>

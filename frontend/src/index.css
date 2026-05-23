@@ -674,14 +674,144 @@ html[data-theme="light"] .auth-tab-inactive {
     margin-bottom: -2px;
 }
 
-/* Mobile menu overflow fix */
-.nav-menu-mobile {
-    overflow-y: auto !important;
-    max-height: calc(100vh - 80px) !important;
+/* ================================================================
+   Mobile menu — polished to match quantum nav-header drawer style.
+   Hamburger → X animation, smooth max-height reveal, button styling
+   to match quantum's nav-menu-mobile a targets.
+   ================================================================ */
+
+/* Hamburger → X (quantum .hamburger.active only recolors bars) */
+.hamburger.active span:nth-child(1) {
+    transform: translateY(6px) rotate(45deg);
+}
+.hamburger.active span:nth-child(2) {
+    opacity: 0;
+}
+.hamburger.active span:nth-child(3) {
+    transform: translateY(-6px) rotate(-45deg);
 }
 
-.nav-menu-mobile:not(.active) {
-    display: none !important;
+/* Smooth max-height reveal instead of display:none toggle */
+.nav-menu-mobile {
+    display: block !important;
+    max-height: 0;
+    overflow: hidden;
+    opacity: 0;
+    padding: 0 !important;
+    transition: max-height 0.3s ease, opacity 0.25s ease;
+    top: 4rem !important;
+    backdrop-filter: blur(24px) saturate(180%);
+    -webkit-backdrop-filter: blur(24px) saturate(180%);
+    border-bottom-color: transparent !important;
+    background: rgba(2, 6, 23, 1) !important;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+}
+
+html[data-theme="light"] .nav-menu-mobile {
+    background: rgba(255, 255, 255, 1) !important;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
+}
+@media (prefers-color-scheme: light) {
+    .nav-menu-mobile {
+        background: rgba(255, 255, 255, 1) !important;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
+    }
+}
+
+.nav-menu-mobile.active {
+    max-height: calc(100vh - 4rem);
+    overflow-y: auto;
+    opacity: 1;
+    padding: 0.75rem 0 !important;
+    border-bottom-color: hsla(0, 0%, 100%, 0.08) !important;
+}
+
+/* Nav list spacing */
+.nav-menu-mobile .nav-list.vertical {
+    gap: 0.25rem !important;
+    padding: 0 1rem !important;
+    margin: 0;
+}
+
+/* Style buttons like quantum nav-drawer-inner a */
+.nav-menu-mobile .nav-link {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    padding: 0.65rem 0.85rem;
+    border-radius: 0.625rem;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--q-text-primary, #f1f5f9);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    text-align: left;
+    text-decoration: none;
+    position: relative;
+    transition: background 0.2s, color 0.2s;
+}
+
+.nav-menu-mobile .nav-link:hover {
+    background: hsla(0, 0%, 100%, 0.06);
+    color: var(--q-color-starlight-blue, #00d4ff);
+}
+
+.nav-menu-mobile .nav-link:active {
+    background: hsla(0, 0%, 100%, 0.1);
+}
+
+html[data-theme="light"] .nav-menu-mobile .nav-link { color: #1e293b; }
+html[data-theme="light"] .nav-menu-mobile .nav-link:hover {
+    background: rgba(0, 0, 0, 0.04);
+    color: var(--q-color-starlight-blue, #00a3cc);
+}
+@media (prefers-color-scheme: light) {
+    .nav-menu-mobile .nav-link { color: #1e293b; }
+    .nav-menu-mobile .nav-link:hover {
+        background: rgba(0, 0, 0, 0.04);
+        color: var(--q-color-starlight-blue, #00a3cc);
+    }
+}
+
+/* Hover underline glow — matches quantum nav-menu-mobile a::after */
+.nav-menu-mobile .nav-link::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 0;
+    height: 2px;
+    background: var(--q-color-starlight-blue, #00d4ff);
+    transition: width 0.35s ease, box-shadow 0.35s ease;
+    border-radius: 1px;
+}
+
+.nav-menu-mobile .nav-link:hover::after {
+    width: 70%;
+    box-shadow: 0 0 8px color-mix(in srgb, var(--q-color-starlight-blue, #00d4ff), transparent 50%);
+}
+
+/* Bottom action bar */
+.nav-menu-mobile .mt-6.pt-6 {
+    margin-top: 0 !important;
+    padding: 0.5rem 1rem 0.75rem !important;
+    border-top: 1px solid hsla(0, 0%, 100%, 0.08);
+}
+html[data-theme="light"] .nav-menu-mobile .mt-6.pt-6 {
+    border-top-color: rgba(0, 0, 0, 0.08);
+}
+
+/* Search inside mobile menu */
+.nav-menu-mobile .search.has-icon {
+    margin: 0.25rem 1rem 0.5rem;
+}
+
+/* Remove quantum's last-child border in mobile menu */
+.nav-menu-mobile .nav-list.vertical li:last-child {
+    padding-top: 0;
+    border-top: none;
 }
 
 /* Custom Scrollbar for specific sections */
