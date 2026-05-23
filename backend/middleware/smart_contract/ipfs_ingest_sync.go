@@ -89,11 +89,13 @@ type pendingIngestAnnouncement struct {
 }
 
 type announcementTask struct {
-	TaskID      string   `json:"task_id"`
-	Title       string   `json:"title"`
-	Description string   `json:"description"`
-	BudgetSats  int64    `json:"budget_sats"`
-	Skills      []string `json:"skills,omitempty"`
+	TaskID           string   `json:"task_id"`
+	Title            string   `json:"title"`
+	Description      string   `json:"description"`
+	BudgetSats       int64    `json:"budget_sats"`
+	Skills           []string `json:"skills,omitempty"`
+	Status           string   `json:"status,omitempty"`
+	ContractorWallet string   `json:"contractor_wallet,omitempty"`
 }
 
 type ingestUpdateAnnouncement struct {

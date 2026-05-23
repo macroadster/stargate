@@ -427,16 +427,21 @@ func buildProposalFromReplicatedTasks(ingestionID, tasksJSON string, meta map[st
 		if taskID == "" {
 			taskID = fmt.Sprintf("%s-task-%d", contractID, len(scTasks)+1)
 		}
+		status := t.Status
+		if status == "" {
+			status = "available"
+		}
 		scTasks = append(scTasks, smart_contract.Task{
-			TaskID:      taskID,
-			ContractID:  contractID,
-			GoalID:      "wish",
-			Title:       t.Title,
-			Description: t.Description,
-			BudgetSats:  t.BudgetSats,
-			Skills:      t.Skills,
-			Status:      "available",
-			MerkleProof: defaultProof,
+			TaskID:           taskID,
+			ContractID:       contractID,
+			GoalID:           "wish",
+			Title:            t.Title,
+			Description:      t.Description,
+			BudgetSats:       t.BudgetSats,
+			Skills:           t.Skills,
+			Status:           status,
+			ContractorWallet: t.ContractorWallet,
+			MerkleProof:      defaultProof,
 		})
 	}
 

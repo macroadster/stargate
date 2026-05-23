@@ -23,6 +23,7 @@ type PayloadTask struct {
 	Description      string   `json:"description"`
 	BudgetSats       int64    `json:"budget_sats"`
 	Skills           []string `json:"skills_required,omitempty"`
+	Status           string   `json:"status,omitempty"`
 	ContractorWallet string   `json:"contractor_wallet,omitempty"`
 }
 

@@ -116,7 +116,7 @@ func loadStegoApprovalConfig() stegoApprovalConfig {
 		IngestPoll:      ingestPoll,
 		IngestTimeout:   ingestTimeout,
 		InscribeTimeout: inscribeTimeout,
-		PayloadSchema:   1,
+		PayloadSchema:   2,
 		ManifestSchema:  1,
 		PayloadMaxTasks: 2000,
 	}
@@ -548,6 +548,7 @@ func buildStegoTasks(p smart_contract.Proposal, meta map[string]interface{}, max
 			Description:      t.Description,
 			BudgetSats:       t.BudgetSats,
 			Skills:           t.Skills,
+			Status:           t.Status,
 			ContractorWallet: t.ContractorWallet,
 		})
 	}

@@ -1233,11 +1233,13 @@ func (s *Server) publishPendingStegoIngest(ctx context.Context, proposalID, visi
 	// without depending on IPFS payload fetch
 	for _, t := range p.Tasks {
 		announcement.Tasks = append(announcement.Tasks, announcementTask{
-			TaskID:      t.TaskID,
-			Title:       t.Title,
-			Description: t.Description,
-			BudgetSats:  t.BudgetSats,
-			Skills:      t.Skills,
+			TaskID:           t.TaskID,
+			Title:            t.Title,
+			Description:      t.Description,
+			BudgetSats:       t.BudgetSats,
+			Skills:           t.Skills,
+			Status:           t.Status,
+			ContractorWallet: t.ContractorWallet,
 		})
 	}
 	payload, err := json.Marshal(announcement)

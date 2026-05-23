@@ -531,6 +531,10 @@ func (s *Server) upsertContractFromStegoPayload(ctx context.Context, contractID,
 			}
 		}
 
+		status := t.Status
+		if status == "" {
+			status = "available"
+		}
 		tasks = append(tasks, smart_contract.Task{
 			TaskID:           t.TaskID,
 			ContractID:       contractID,
@@ -539,7 +543,7 @@ func (s *Server) upsertContractFromStegoPayload(ctx context.Context, contractID,
 			Description:      t.Description,
 			BudgetSats:       t.BudgetSats,
 			Skills:           t.Skills,
-			Status:           "available",
+			Status:           status,
 			ContractorWallet: t.ContractorWallet,
 			MerkleProof:      merkleProof,
 		})
