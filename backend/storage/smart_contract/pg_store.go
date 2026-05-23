@@ -390,7 +390,9 @@ FROM mcp_tasks WHERE contract_id = ANY($1)
 		liveTasks[t.TaskID] = t
 	}
 
-	if len(p.Tasks) == 0 {
+	if len(p.Tasks) == 0 || len(liveTasks) > len(p.Tasks) {
+		// DB tasks are authoritative — replace auto-generated placeholder tasks
+		p.Tasks = make([]smart_contract.Task, 0, len(liveTasks))
 		for _, t := range liveTasks {
 			p.Tasks = append(p.Tasks, t)
 		}
@@ -2011,16 +2013,23 @@ func scanTask(scanner interface {
 }) (smart_contract.Task, error) {
 	var t smart_contract.Task
 	var reqJSON, proofJSON []byte
-	var claimedBy sql.NullString
+	var claimedBy, difficulty sql.NullString
 	var claimedAt, claimExpires sql.NullTime
+	var estimatedHours sql.NullInt32
 	if err := scanner.Scan(
 		&t.TaskID, &t.ContractID, &t.GoalID, &t.Title, &t.Description, &t.BudgetSats, &t.Skills, &t.Status,
-		&claimedBy, &claimedAt, &claimExpires, &t.Difficulty, &t.EstimatedHours, &reqJSON, &proofJSON,
+		&claimedBy, &claimedAt, &claimExpires, &difficulty, &estimatedHours, &reqJSON, &proofJSON,
 	); err != nil {
 		return smart_contract.Task{}, err
 	}
 	if claimedBy.Valid {
 		t.ClaimedBy = claimedBy.String
+	}
+	if difficulty.Valid {
+		t.Difficulty = difficulty.String
+	}
+	if estimatedHours.Valid {
+		t.EstimatedHours = int(estimatedHours.Int32)
 	}
 	if claimedAt.Valid {
 		c := claimedAt.Time

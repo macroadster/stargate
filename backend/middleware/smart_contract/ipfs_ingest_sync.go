@@ -80,6 +80,20 @@ type pendingIngestAnnouncement struct {
 	Address          string `json:"address,omitempty"`
 	FundingMode      string `json:"funding_mode,omitempty"`
 	Timestamp        int64  `json:"timestamp"`
+	// Proposal/task data for peer replication (so peers don't depend on IPFS payload fetch)
+	ProposalTitle string              `json:"proposal_title,omitempty"`
+	ProposalDesc  string              `json:"proposal_desc,omitempty"`
+	BudgetSats    int64               `json:"budget_sats,omitempty"`
+	PayloadCID    string              `json:"payload_cid,omitempty"`
+	Tasks         []announcementTask  `json:"tasks,omitempty"`
+}
+
+type announcementTask struct {
+	TaskID      string   `json:"task_id"`
+	Title       string   `json:"title"`
+	Description string   `json:"description"`
+	BudgetSats  int64    `json:"budget_sats"`
+	Skills      []string `json:"skills,omitempty"`
 }
 
 type ingestUpdateAnnouncement struct {
@@ -572,6 +586,24 @@ func ipfsIngestProcessPending(ctx context.Context, ingest *services.IngestionSer
 	}
 	if strings.EqualFold(ann.PriceUnit, "sats") {
 		meta["budget_sats"] = priceSatsFromString(ann.Price)
+	}
+	// Store proposal/task data from announcement for peer replication
+	if ann.ProposalTitle != "" {
+		meta["proposal_title"] = ann.ProposalTitle
+	}
+	if ann.ProposalDesc != "" {
+		meta["proposal_description_md"] = ann.ProposalDesc
+	}
+	if ann.BudgetSats > 0 {
+		meta["proposal_budget_sats"] = fmt.Sprintf("%d", ann.BudgetSats)
+	}
+	if ann.PayloadCID != "" {
+		meta["stego_payload_cid"] = ann.PayloadCID
+	}
+	if len(ann.Tasks) > 0 {
+		if taskJSON, err := json.Marshal(ann.Tasks); err == nil {
+			meta["proposal_tasks_json"] = string(taskJSON)
+		}
 	}
 	if existing, err := ingest.Get(id); err == nil && existing != nil {
 		_ = ingest.UpdateMetadata(id, meta)

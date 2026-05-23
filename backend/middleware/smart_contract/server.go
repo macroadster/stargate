@@ -1224,6 +1224,21 @@ func (s *Server) publishPendingStegoIngest(ctx context.Context, proposalID, visi
 		Address:          strings.TrimSpace(toString(meta["funding_address"])),
 		FundingMode:      strings.TrimSpace(toString(meta["funding_mode"])),
 		Timestamp:        time.Now().Unix(),
+		ProposalTitle:    strings.TrimSpace(p.Title),
+		ProposalDesc:     strings.TrimSpace(p.DescriptionMD),
+		BudgetSats:       p.BudgetSats,
+		PayloadCID:       strings.TrimSpace(toString(meta["stego_payload_cid"])),
+	}
+	// Include structured task data so peers can create proper proposals
+	// without depending on IPFS payload fetch
+	for _, t := range p.Tasks {
+		announcement.Tasks = append(announcement.Tasks, announcementTask{
+			TaskID:      t.TaskID,
+			Title:       t.Title,
+			Description: t.Description,
+			BudgetSats:  t.BudgetSats,
+			Skills:      t.Skills,
+		})
 	}
 	payload, err := json.Marshal(announcement)
 	if err != nil {

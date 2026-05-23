@@ -1597,7 +1597,9 @@ FROM mcp_tasks WHERE contract_id IN (`+strings.Join(placeholders, ",")+`)
 		return
 	}
 
-	if len(p.Tasks) == 0 {
+	if len(p.Tasks) == 0 || len(liveTasks) > len(p.Tasks) {
+		// DB tasks are authoritative — replace auto-generated placeholder tasks
+		p.Tasks = make([]smart_contract.Task, 0, len(liveTasks))
 		for _, t := range liveTasks {
 			p.Tasks = append(p.Tasks, t)
 		}

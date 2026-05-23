@@ -159,6 +159,36 @@ func processRecord(ctx context.Context, rec services.IngestionRecord, ingest *se
 		}
 	}
 
+	// Check for structured proposal/task data from peer replication (IPFS announcement).
+	// This is the most reliable path: the source node includes parsed task data.
+	if tasksJSON, ok := meta["proposal_tasks_json"].(string); ok && tasksJSON != "" {
+		proposal, err := buildProposalFromReplicatedTasks(rec.ID, tasksJSON, meta, raw, rec.ImageBase64)
+		if err == nil && len(proposal.Tasks) > 0 {
+			if err := store.CreateProposal(ctx, proposal); err != nil {
+				log.Printf("replicated proposal create failed for %s: %v", proposal.ID, err)
+			} else {
+				if err := publishProposalEvent(ctx, proposal); err != nil {
+					log.Printf("failed to publish proposal create event for %s: %v", proposal.ID, err)
+				}
+				if proposal.ID != "" {
+					wishContract := smart_contract.Contract{
+						ContractID:          proposal.ID,
+						Title:               proposal.Title,
+						TotalBudgetSats:     proposal.BudgetSats,
+						GoalsCount:          len(proposal.Tasks),
+						AvailableTasksCount: len(proposal.Tasks),
+						Status:              proposal.Status,
+						Skills:              proposal.Tasks[0].Skills,
+					}
+					if err := store.UpsertContractWithTasks(ctx, wishContract, proposal.Tasks); err != nil {
+						log.Printf("wish contract creation failed for %s: %v", proposal.ID, err)
+					}
+				}
+				return ingest.UpdateStatusWithNote(rec.ID, "verified", "proposal and contract created from replicated tasks; awaiting approval")
+			}
+		}
+	}
+
 	// Try JSON contract first.
 	contract, tasks, err := parseEmbeddedContract(raw)
 	if err != nil || contract.ContractID == "" || len(tasks) == 0 {
@@ -342,6 +372,93 @@ func parseMarkdownProposal(ingestionID, markdown string, meta map[string]interfa
 		Status:           "pending",
 		CreatedAt:        time.Now(),
 		Tasks:            tasks,
+		Metadata:         meta,
+	}, nil
+}
+
+// buildProposalFromReplicatedTasks creates a proposal using structured task data
+// received from a peer node's IPFS announcement. This avoids depending on IPFS
+// payload fetch for task data.
+func buildProposalFromReplicatedTasks(ingestionID, tasksJSON string, meta map[string]interface{}, wishText, imageBase64 string) (smart_contract.Proposal, error) {
+	var tasks []announcementTask
+	if err := json.Unmarshal([]byte(tasksJSON), &tasks); err != nil {
+		return smart_contract.Proposal{}, fmt.Errorf("parse replicated tasks: %w", err)
+	}
+	if len(tasks) == 0 {
+		return smart_contract.Proposal{}, fmt.Errorf("no tasks in replicated data")
+	}
+
+	visibleHash := strings.TrimSpace(metaString(meta["visible_pixel_hash"]))
+	contractIDBase := visibleHash
+	if contractIDBase == "" {
+		contractIDBase = strings.TrimSpace(ingestionID)
+	}
+	contractID := contractIDBase
+	if contractID != "" && !strings.HasPrefix(contractID, "wish-") {
+		contractID = fmt.Sprintf("wish-%s", contractID)
+	}
+
+	title := strings.TrimSpace(metaString(meta["proposal_title"]))
+	if title == "" {
+		title = strings.TrimSpace(wishText)
+	}
+	if title == "" {
+		title = fmt.Sprintf("Wish %s", ingestionID)
+	}
+
+	descMD := strings.TrimSpace(metaString(meta["proposal_description_md"]))
+	if descMD == "" {
+		descMD = strings.TrimSpace(wishText)
+	}
+
+	budget := budgetFromMeta(meta)
+	fundingAddr := scstore.FundingAddressFromMeta(meta)
+
+	defaultProof := &smart_contract.MerkleProof{
+		VisiblePixelHash:   visibleHash,
+		FundedAmountSats:   budget,
+		FundingAddress:     fundingAddr,
+		ConfirmationStatus: "provisional",
+	}
+
+	var scTasks []smart_contract.Task
+	for _, t := range tasks {
+		taskID := t.TaskID
+		if taskID == "" {
+			taskID = fmt.Sprintf("%s-task-%d", contractID, len(scTasks)+1)
+		}
+		scTasks = append(scTasks, smart_contract.Task{
+			TaskID:      taskID,
+			ContractID:  contractID,
+			GoalID:      "wish",
+			Title:       t.Title,
+			Description: t.Description,
+			BudgetSats:  t.BudgetSats,
+			Skills:      t.Skills,
+			Status:      "available",
+			MerkleProof: defaultProof,
+		})
+	}
+
+	if meta == nil {
+		meta = map[string]interface{}{}
+	}
+	meta["budget_sats"] = budget
+	meta["funding_address"] = fundingAddr
+	if visibleHash != "" {
+		meta["visible_pixel_hash"] = visibleHash
+		meta["stego_contract_id"] = visibleHash
+	}
+
+	return smart_contract.Proposal{
+		ID:               contractID,
+		Title:            title,
+		DescriptionMD:    descMD,
+		VisiblePixelHash: visibleHash,
+		BudgetSats:       budget,
+		Status:           "pending",
+		CreatedAt:        time.Now(),
+		Tasks:            scTasks,
 		Metadata:         meta,
 	}, nil
 }

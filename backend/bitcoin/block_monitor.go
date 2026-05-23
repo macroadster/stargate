@@ -2618,6 +2618,9 @@ func (bm *BlockMonitor) maybeReconcileStego(rec *services.IngestionRecord) {
 		stegoCID = strings.TrimSpace(stringFromAny(meta["stego_cid"]))
 	}
 	if stegoCID == "" {
+		stegoCID = strings.TrimSpace(stringFromAny(meta["ipfs_image_cid"]))
+	}
+	if stegoCID == "" {
 		return
 	}
 	if strings.TrimSpace(stringFromAny(meta["stego_reconciled_at"])) != "" {
