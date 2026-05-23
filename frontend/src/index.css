@@ -5632,6 +5632,17 @@ html[data-theme="dark"] .dark\:border-gray-600 { border-color: #475569 !importan
     background-image: linear-gradient(to bottom right, var(--tw-gradient-from, transparent), var(--tw-gradient-to, transparent));
 }
 
+/* Constrain badges inside narrow block cards (w-40 = 160px, content = 128px).
+   Quantum 1.13.0 badges use uppercase + letter-spacing + 0.75rem padding
+   which makes text like "NO INSCRIPTIONS" wider than the content area. */
+.w-40 .card .badge {
+    letter-spacing: normal;
+    padding-inline: 0.5rem;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
 /* ================================================================
    Missing utility classes in quantumcss 1.13.0
    ================================================================ */
@@ -5703,21 +5714,16 @@ footer.nav-glass:hover {
     padding-left: 2.25rem !important;
 }
 
-/* Custom dropdown arrow for select inside search-container */
+/* Custom dropdown arrow for select inside search-container.
+   Must also reset appearance since the appearance-none utility
+   class doesn't exist in quantum CSS 1.13.0. */
 .search-container select.search-input {
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    appearance: none;
     background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3E%3Cpath stroke='%2364748b' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m6 8 4 4 4-4'/%3E%3C/svg%3E");
     background-position: right 0.5rem center;
     background-repeat: no-repeat;
     background-size: 1.25rem;
     padding-right: 2rem;
-}
-
-/* Hide native number input spinners for consistent look */
-.search-container input[type="number"]::-webkit-inner-spin-button,
-.search-container input[type="number"]::-webkit-outer-spin-button {
-    -webkit-appearance: none;
-    margin: 0;
-}
-.search-container input[type="number"] {
-    -moz-appearance: textfield;
 }
