@@ -565,7 +565,9 @@ func ipfsIngestProcessPending(ctx context.Context, ingest *services.IngestionSer
 		"visible_pixel_hash": ann.VisiblePixelHash,
 		"ipfs_image_cid":     ann.ImageCID,
 	}
-	if strings.EqualFold(strings.TrimSpace(ann.Method), "stego") {
+	method := strings.ToLower(strings.TrimSpace(ann.Method))
+	if method == "stego" || method == "alpha" || method == "lsb" || method == "exif" || method == "palette" ||
+		strings.HasPrefix(strings.ToLower(strings.TrimSpace(ann.Filename)), "stego") {
 		meta["stego_image_cid"] = ann.ImageCID
 	}
 	if strings.EqualFold(ann.PriceUnit, "sats") {

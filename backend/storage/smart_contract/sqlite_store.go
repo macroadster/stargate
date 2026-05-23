@@ -777,9 +777,10 @@ func (s *SQLiteStore) ConfirmContract(ctx context.Context, contractID string, bl
 		_ = json.Unmarshal(existingMeta, &meta)
 	}
 	meta["confirmed_txid"] = txid
+	meta["confirmed_block_height"] = blockHeight
 	updatedMeta, _ := json.Marshal(meta)
 
-	_, err := s.db.ExecContext(ctx, `
+	res, err := s.db.ExecContext(ctx, `
 UPDATE mcp_contracts 
 SET status='confirmed', confirmed_block_height=?, confirmed_at=datetime('now'), 
     stego_image_url=COALESCE(?, stego_image_url),
@@ -790,9 +791,36 @@ WHERE contract_id=?
 		return err
 	}
 
-	// Update matching proposals to confirmed (mirrors PG behavior)
+	// If the confirmed contract doesn't exist yet (peer node case), create it from the wish contract
 	normalized := NormalizeContractID(contractID)
 	wishID := "wish-" + normalized
+	if rowsAffected, _ := res.RowsAffected(); rowsAffected == 0 {
+		// Try to bootstrap the confirmed contract from the wish contract data
+		var wishTitle string
+		var wishBudget int64
+		var wishGoals, wishAvail int
+		var wishSkills, wishMeta []byte
+		err := s.db.QueryRowContext(ctx, `
+SELECT COALESCE(title, ''), COALESCE(total_budget_sats, 0), COALESCE(goals_count, 0), COALESCE(available_tasks_count, 0), skills, COALESCE(metadata, '{}')
+FROM mcp_contracts WHERE contract_id=?`, wishID).Scan(&wishTitle, &wishBudget, &wishGoals, &wishAvail, &wishSkills, &wishMeta)
+		if err == nil {
+			_, _ = s.db.ExecContext(ctx, `
+INSERT INTO mcp_contracts (contract_id, title, total_budget_sats, goals_count, available_tasks_count, status, skills, stego_image_url, confirmed_block_height, confirmed_at, created_at, metadata)
+VALUES (?,?,?,?,?,'confirmed',?,?,?,datetime('now'),datetime('now'),?)
+`, normalized, wishTitle, wishBudget, wishGoals, wishAvail, string(wishSkills), stegoImageURL, blockHeight, string(updatedMeta))
+			// Copy tasks from wish contract to confirmed contract
+			_, _ = s.db.ExecContext(ctx, `
+INSERT OR IGNORE INTO mcp_tasks (task_id, contract_id, goal_id, title, description, budget_sats, skills, status, claimed_by, claimed_at, claim_expires_at, difficulty, estimated_hours, requirements, merkle_proof)
+SELECT replace(task_id, ?, ?) AS task_id, ? AS contract_id, goal_id, title, description, budget_sats, skills, status, claimed_by, claimed_at, claim_expires_at, difficulty, estimated_hours, requirements, merkle_proof
+FROM mcp_tasks WHERE contract_id=?
+`, wishID, normalized, normalized, wishID)
+		}
+	}
+
+	// Supersede the wish contract (peer nodes don't run archiveWishContract)
+	_, _ = s.db.ExecContext(ctx, `UPDATE mcp_contracts SET status='superseded' WHERE contract_id=? AND status<>'superseded'`, wishID)
+
+	// Update matching proposals to confirmed (mirrors PG behavior)
 	_, err = s.db.ExecContext(ctx, `
 UPDATE mcp_proposals SET status='confirmed'
 WHERE status='approved' AND (

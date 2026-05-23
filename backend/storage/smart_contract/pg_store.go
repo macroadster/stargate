@@ -1448,7 +1448,7 @@ func (s *PGStore) ConfirmContract(ctx context.Context, contractID string, blockH
 	}
 
 	// Update status and confirmation tracking, including metadata with confirmed_txid
-	_, err = s.pool.Exec(ctx, `
+	tag, err := s.pool.Exec(ctx, `
 UPDATE mcp_contracts 
 SET status='confirmed', confirmed_block_height=$2, confirmed_at=NOW(), 
     stego_image_url=COALESCE($3, stego_image_url),
@@ -1458,9 +1458,26 @@ WHERE contract_id=$1`, contractID, blockHeight, stegoImageURL, txid)
 		return err
 	}
 
-	// Handle proposal status updates for confirmed contracts
+	// If the confirmed contract doesn't exist yet (peer node case), create it from the wish contract
 	normalized := NormalizeContractID(contractID)
 	wishID := "wish-" + normalized
+	if tag.RowsAffected() == 0 {
+		_, _ = s.pool.Exec(ctx, `
+INSERT INTO mcp_contracts (contract_id, title, total_budget_sats, goals_count, available_tasks_count, status, skills, stego_image_url, confirmed_block_height, confirmed_at, created_at, metadata)
+SELECT $1, COALESCE(title, ''), COALESCE(total_budget_sats, 0), 1, 0, 'confirmed', skills, $2, $3, NOW(), NOW(),
+       jsonb_set(COALESCE(metadata, '{}'::jsonb), '{confirmed_txid}', to_jsonb($4::text))
+FROM mcp_contracts WHERE contract_id=$5
+ON CONFLICT(contract_id) DO UPDATE SET
+  status='confirmed', confirmed_block_height=$3, confirmed_at=NOW(),
+  stego_image_url=COALESCE($2, mcp_contracts.stego_image_url),
+  metadata = jsonb_set(COALESCE(mcp_contracts.metadata, '{}'::jsonb), '{confirmed_txid}', to_jsonb($4::text))
+`, normalized, stegoImageURL, blockHeight, txid, wishID)
+	}
+
+	// Supersede the wish contract (peer nodes don't run archiveWishContract)
+	_, _ = s.pool.Exec(ctx, `UPDATE mcp_contracts SET status='superseded' WHERE contract_id=$1 AND status<>'superseded'`, wishID)
+
+	// Handle proposal status updates for confirmed contracts
 	_, err = s.pool.Exec(ctx, `
 UPDATE mcp_proposals SET status='confirmed'
 WHERE status='approved' AND (

@@ -645,9 +645,21 @@ func (s *MemoryStore) ConfirmContract(ctx context.Context, contractID string, bl
 	if contractID == "" {
 		return nil
 	}
+
+	normalized := NormalizeContractID(contractID)
+	wishID := "wish-" + normalized
+	imageFile := contractID
+	stegoImageURL := fmt.Sprintf("/api/block-image/%d/%s", blockHeight, imageFile)
+
 	contract, ok := s.contracts[contractID]
 	if !ok {
-		return fmt.Errorf("contract %s not found", contractID)
+		// If the confirmed contract doesn't exist, bootstrap from the wish contract
+		if wishContract, wok := s.contracts[wishID]; wok {
+			contract = wishContract
+			contract.ContractID = normalized
+		} else {
+			return fmt.Errorf("contract %s not found", contractID)
+		}
 	}
 	contract.Status = "confirmed"
 	contract.ConfirmedBlockHeight = &blockHeight
@@ -660,12 +672,15 @@ func (s *MemoryStore) ConfirmContract(ctx context.Context, contractID string, bl
 	}
 	contract.Metadata["confirmed_txid"] = txid
 
-	// Use contract_id directly (stealthy design)
-	imageFile := contractID
-	contract.StegoImageURL = fmt.Sprintf("/api/block-image/%d/%s", blockHeight, imageFile)
+	contract.StegoImageURL = stegoImageURL
 	s.contracts[contractID] = contract
 
-	normalized := NormalizeContractID(contractID)
+	// Supersede the wish contract
+	if wishContract, wok := s.contracts[wishID]; wok && wishContract.Status != "superseded" {
+		wishContract.Status = "superseded"
+		s.contracts[wishID] = wishContract
+	}
+
 	for id, proposal := range s.proposals {
 		proposalCID := NormalizeContractID(contractIDFromMeta(proposal.Metadata, proposal.ID))
 		if proposalCID == normalized && strings.EqualFold(proposal.Status, "approved") {

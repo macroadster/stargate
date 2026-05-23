@@ -1173,7 +1173,7 @@ func (s *Server) publishPendingStegoIngest(ctx context.Context, proposalID, visi
 	if visible == "" {
 		return
 	}
-	message := strings.TrimSpace(p.DescriptionMD)
+	var message string
 	if s.ingestionSvc != nil && visible != "" {
 		rec, err := s.ingestionSvc.Get(visible)
 		if (err != nil || rec == nil) && !strings.HasPrefix(visible, "wish-") {
