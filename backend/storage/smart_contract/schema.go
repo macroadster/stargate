@@ -44,7 +44,8 @@ CREATE TABLE IF NOT EXISTS ` + TableContracts + ` (
   stego_image_url TEXT,
   confirmed_block_height INTEGER,
   confirmed_at TIMESTAMPTZ,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  metadata JSONB DEFAULT '{}'::jsonb
 );
 
 -- Tasks

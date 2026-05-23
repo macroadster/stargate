@@ -334,6 +334,42 @@ FROM mcp_contracts WHERE contract_id=?
 	}
 	if len(metadata) > 0 {
 		_ = json.Unmarshal(metadata, &c.Metadata)
+		// Hydrate rework requests from metadata (mirrors PG GetContract)
+		if c.Metadata != nil {
+			if reworkReqs, ok := c.Metadata["rework_requests"].([]interface{}); ok {
+				for _, r := range reworkReqs {
+					if rMap, ok := r.(map[string]interface{}); ok {
+						req := smart_contract.ContractReworkRequest{}
+						if id, ok := rMap["request_id"].(string); ok {
+							req.RequestID = id
+						}
+						if contractID, ok := rMap["contract_id"].(string); ok {
+							req.ContractID = contractID
+						}
+						if requester, ok := rMap["requester"].(string); ok {
+							req.Requester = requester
+						}
+						if notes, ok := rMap["notes"].(string); ok {
+							req.Notes = notes
+						}
+						if status, ok := rMap["status"].(string); ok {
+							req.Status = status
+						}
+						if createdAt, ok := rMap["created_at"].(string); ok {
+							if t, err := time.Parse(time.RFC3339, createdAt); err == nil {
+								req.CreatedAt = t
+							}
+						}
+						if resolvedAt, ok := rMap["resolved_at"].(string); ok {
+							if t, err := time.Parse(time.RFC3339, resolvedAt); err == nil {
+								req.ResolvedAt = &t
+							}
+						}
+						c.ReworkRequests = append(c.ReworkRequests, req)
+					}
+				}
+			}
+		}
 	}
 	if len(skillsStr) > 0 {
 		c.Skills = strings.Split(string(skillsStr), ",")
@@ -666,24 +702,35 @@ ON CONFLICT(contract_id) DO UPDATE SET
 
 	for _, t := range tasks {
 		reqJSON, _ := json.Marshal(t.Requirements)
-		var proofJSON []byte
+		var proofStr *string
 		if t.MerkleProof != nil {
-			proofJSON, _ = json.Marshal(t.MerkleProof)
+			proofJSON, _ := json.Marshal(t.MerkleProof)
+			s := string(proofJSON)
+			proofStr = &s
 		}
 		taskSkills := strings.Join(t.Skills, ",")
 		_, err := tx.ExecContext(ctx, `
 INSERT INTO mcp_tasks (task_id, contract_id, goal_id, title, description, budget_sats, skills, status, claimed_by, claimed_at, claim_expires_at, difficulty, estimated_hours, requirements, merkle_proof)
 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT(task_id) DO UPDATE SET
+  contract_id = excluded.contract_id,
+  goal_id = excluded.goal_id,
   title = excluded.title,
   description = excluded.description,
   budget_sats = excluded.budget_sats,
   skills = excluded.skills,
-  status = excluded.status,
+  status = CASE
+    WHEN excluded.status = 'available' THEN 'available'
+    ELSE mcp_tasks.status
+  END,
+  claimed_by = COALESCE(excluded.claimed_by, mcp_tasks.claimed_by),
+  claimed_at = COALESCE(excluded.claimed_at, mcp_tasks.claimed_at),
+  claim_expires_at = COALESCE(excluded.claim_expires_at, mcp_tasks.claim_expires_at),
   difficulty = excluded.difficulty,
   estimated_hours = excluded.estimated_hours,
-  requirements = excluded.requirements
-`, t.TaskID, t.ContractID, t.GoalID, t.Title, t.Description, t.BudgetSats, taskSkills, t.Status, t.ClaimedBy, t.ClaimedAt, t.ClaimExpires, t.Difficulty, t.EstimatedHours, string(reqJSON), string(proofJSON))
+  requirements = excluded.requirements,
+  merkle_proof = COALESCE(excluded.merkle_proof, mcp_tasks.merkle_proof)
+`, t.TaskID, t.ContractID, t.GoalID, t.Title, t.Description, t.BudgetSats, taskSkills, t.Status, t.ClaimedBy, t.ClaimedAt, t.ClaimExpires, t.Difficulty, t.EstimatedHours, string(reqJSON), proofStr)
 		if err != nil {
 			return err
 		}
@@ -722,12 +769,38 @@ func (s *SQLiteStore) ConfirmContract(ctx context.Context, contractID string, bl
 
 	stegoImageURL := fmt.Sprintf("/api/block-image/%d/%s", blockHeight, contractID)
 
+	// Read existing metadata, merge confirmed_txid, write back (mirrors PG jsonb_set)
+	var existingMeta []byte
+	_ = s.db.QueryRowContext(ctx, `SELECT COALESCE(metadata, '{}') FROM mcp_contracts WHERE contract_id=?`, contractID).Scan(&existingMeta)
+	meta := map[string]interface{}{}
+	if len(existingMeta) > 0 {
+		_ = json.Unmarshal(existingMeta, &meta)
+	}
+	meta["confirmed_txid"] = txid
+	updatedMeta, _ := json.Marshal(meta)
+
 	_, err := s.db.ExecContext(ctx, `
 UPDATE mcp_contracts 
 SET status='confirmed', confirmed_block_height=?, confirmed_at=datetime('now'), 
-    stego_image_url=COALESCE(?, stego_image_url)
+    stego_image_url=COALESCE(?, stego_image_url),
+    metadata=?
 WHERE contract_id=?
-`, blockHeight, stegoImageURL, contractID)
+`, blockHeight, stegoImageURL, string(updatedMeta), contractID)
+	if err != nil {
+		return err
+	}
+
+	// Update matching proposals to confirmed (mirrors PG behavior)
+	normalized := NormalizeContractID(contractID)
+	wishID := "wish-" + normalized
+	_, err = s.db.ExecContext(ctx, `
+UPDATE mcp_proposals SET status='confirmed'
+WHERE status='approved' AND (
+  json_extract(metadata, '$.contract_id') IN (?, ?) OR
+  json_extract(metadata, '$.ingestion_id') IN (?, ?) OR
+  json_extract(metadata, '$.visible_pixel_hash') IN (?, ?) OR
+  id IN (?, ?)
+)`, normalized, wishID, normalized, wishID, normalized, wishID, normalized, wishID)
 	return err
 }
 
@@ -835,19 +908,66 @@ func (s *SQLiteStore) CreateProposal(ctx context.Context, p smart_contract.Propo
 		}
 	}
 
+	// Validate contract_id vs visible_pixel_hash consistency (mirrors PG)
+	if metaContract, ok := p.Metadata["contract_id"].(string); ok {
+		metaContract = strings.TrimSpace(metaContract)
+		if metaContract != "" {
+			if metaHash, ok2 := p.Metadata["visible_pixel_hash"].(string); ok2 {
+				metaHash = strings.TrimSpace(metaHash)
+				normalizedContract := strings.TrimPrefix(metaContract, "wish-")
+				if metaHash != "" && metaHash != normalizedContract {
+					return fmt.Errorf("visible_pixel_hash must match contract_id when both are set (normalized: %s)", normalizedContract)
+				}
+			}
+		}
+	}
+
 	if err := ValidateProposalInput(&p); err != nil {
 		return fmt.Errorf("proposal validation failed: %v", err)
 	}
 
+	// Validate status field (mirrors PG)
 	if p.Status == "" {
 		p.Status = "pending"
+	} else if !isValidProposalStatus(p.Status) {
+		return fmt.Errorf("invalid proposal status: %s (must be one of: pending, approved, rejected, published)", p.Status)
+	}
+
+	// Check for duplicate visible_pixel_hash with approved/published status (mirrors PG)
+	visibleHash := strings.TrimSpace(p.VisiblePixelHash)
+	if visibleHash == "" {
+		if v, ok := p.Metadata["visible_pixel_hash"].(string); ok {
+			visibleHash = strings.TrimSpace(v)
+		}
+	}
+	if visibleHash != "" {
+		var conflictID string
+		err := s.db.QueryRowContext(ctx, `
+		SELECT id FROM mcp_proposals
+		WHERE visible_pixel_hash=? AND id<>?
+		AND status IN ('approved','published')
+		LIMIT 1
+		`, visibleHash, p.ID).Scan(&conflictID)
+		if err == nil && conflictID != "" {
+			return fmt.Errorf("a proposal with visible_pixel_hash=%s is already approved/published (id=%s)", visibleHash, conflictID)
+		}
+
+		// Safeguard: Maximum 5 proposals per wish (mirrors PG)
+		var count int
+		err = s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM mcp_proposals
+		WHERE visible_pixel_hash=? AND id<>?
+		`, visibleHash, p.ID).Scan(&count)
+		if err == nil && count >= 5 {
+			return fmt.Errorf("maximum of 5 proposals reached for wish %s", visibleHash)
+		}
 	}
 
 	metaMap := p.Metadata
 	if metaMap == nil {
 		metaMap = map[string]interface{}{}
 	}
-	if len(p.Tasks) > 0 && (p.Status == "" || strings.EqualFold(p.Status, "pending")) {
+	if len(p.Tasks) > 0 {
 		metaMap["suggested_tasks"] = p.Tasks
 	}
 	metadata, _ := json.Marshal(metaMap)
@@ -862,7 +982,29 @@ ON CONFLICT(id) DO UPDATE SET
   visible_pixel_hash = excluded.visible_pixel_hash,
   budget_sats = excluded.budget_sats
 `, p.ID, p.Title, p.DescriptionMD, p.VisiblePixelHash, p.BudgetSats, p.Status, string(metadata), p.CreatedAt.Format(time.RFC3339))
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Supersede matching wish contract when proposal is approved/published (mirrors PG)
+	if strings.EqualFold(p.Status, "approved") || strings.EqualFold(p.Status, "published") {
+		visible := strings.TrimSpace(p.VisiblePixelHash)
+		if visible == "" {
+			if v, ok := p.Metadata["visible_pixel_hash"].(string); ok {
+				visible = strings.TrimSpace(v)
+			}
+		}
+		if visible == "" {
+			if v, ok := p.Metadata["contract_id"].(string); ok {
+				visible = strings.TrimSpace(v)
+			}
+		}
+		if visible != "" {
+			wishID := "wish-" + visible
+			_, _ = s.db.ExecContext(ctx, `UPDATE mcp_contracts SET status='superseded' WHERE contract_id=?`, wishID)
+		}
+	}
+	return nil
 }
 
 func (s *SQLiteStore) ListProposals(ctx context.Context, filter smart_contract.ProposalFilter) ([]smart_contract.Proposal, error) {
@@ -906,7 +1048,46 @@ func (s *SQLiteStore) ListProposals(ctx context.Context, filter smart_contract.P
 		if len(metadata) > 0 {
 			_ = json.Unmarshal(metadata, &p.Metadata)
 		}
+		populateProposalTasks(&p)
+		s.hydrateProposalTasks(ctx, &p)
+
+		// Filter by ContractID (mirrors PG: match against multiple metadata fields)
+		if filter.ContractID != "" {
+			var candidates []string
+			if v, ok := p.Metadata["contract_id"].(string); ok {
+				candidates = append(candidates, v)
+			}
+			if v, ok := p.Metadata["ingestion_id"].(string); ok {
+				candidates = append(candidates, v)
+			}
+			if v, ok := p.Metadata["visible_pixel_hash"].(string); ok {
+				candidates = append(candidates, v)
+			}
+			candidates = append(candidates, p.VisiblePixelHash, p.ID)
+			match := false
+			for _, candidate := range candidates {
+				if strings.TrimSpace(candidate) == strings.TrimSpace(filter.ContractID) {
+					match = true
+					break
+				}
+			}
+			if !match {
+				continue
+			}
+		}
+		if filter.MinBudget > 0 && p.BudgetSats < filter.MinBudget {
+			continue
+		}
+		if len(filter.Skills) > 0 && !proposalHasSkills(p, filter.Skills) {
+			continue
+		}
 		out = append(out, p)
+	}
+	if filter.Offset > 0 && filter.Offset < len(out) {
+		out = out[filter.Offset:]
+	}
+	if filter.MaxResults > 0 && filter.MaxResults < len(out) {
+		out = out[:filter.MaxResults]
 	}
 	return out, rows.Err()
 }
@@ -930,6 +1111,8 @@ FROM mcp_proposals WHERE id=?
 	if len(metadata) > 0 {
 		_ = json.Unmarshal(metadata, &p.Metadata)
 	}
+	populateProposalTasks(&p)
+	s.hydrateProposalTasks(ctx, &p)
 	return p, nil
 }
 
@@ -1331,4 +1514,86 @@ func (s *SQLiteStore) ResolveContractReworkRequest(ctx context.Context, contract
 		return err
 	}
 	return tx.Commit()
+}
+
+// hydrateProposalTasks enriches proposal tasks with live statuses from the DB.
+// Mirrors PGStore.hydrateProposalTasks.
+func (s *SQLiteStore) hydrateProposalTasks(ctx context.Context, p *smart_contract.Proposal) {
+	if p == nil {
+		return
+	}
+	contractIDs := []string{}
+	if cid, ok := p.Metadata["contract_id"].(string); ok && strings.TrimSpace(cid) != "" {
+		contractIDs = append(contractIDs, cid)
+	}
+	if cid, ok := p.Metadata["visible_pixel_hash"].(string); ok && strings.TrimSpace(cid) != "" {
+		contractIDs = append(contractIDs, cid)
+	}
+	if cid, ok := p.Metadata["ingestion_id"].(string); ok && strings.TrimSpace(cid) != "" {
+		contractIDs = append(contractIDs, cid)
+	}
+	if strings.TrimSpace(p.ID) != "" {
+		contractIDs = append(contractIDs, p.ID)
+	}
+	if len(contractIDs) == 0 {
+		return
+	}
+
+	// Build IN clause for SQLite
+	placeholders := make([]string, len(contractIDs))
+	args := make([]interface{}, len(contractIDs))
+	for i, id := range contractIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+
+	rows, err := s.db.QueryContext(ctx, `
+SELECT task_id, contract_id, goal_id, title, description, budget_sats, skills, status,
+       claimed_by, claimed_at, claim_expires_at, difficulty, estimated_hours, requirements, merkle_proof
+FROM mcp_tasks WHERE contract_id IN (`+strings.Join(placeholders, ",")+`)
+`, args...)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+
+	liveTasks := make(map[string]smart_contract.Task)
+	for rows.Next() {
+		t, err := scanTaskSQLite(rows)
+		if err != nil {
+			continue
+		}
+		liveTasks[t.TaskID] = t
+	}
+	if len(liveTasks) == 0 {
+		return
+	}
+
+	if len(p.Tasks) == 0 {
+		for _, t := range liveTasks {
+			p.Tasks = append(p.Tasks, t)
+		}
+		return
+	}
+
+	for i, t := range p.Tasks {
+		if lt, ok := liveTasks[t.TaskID]; ok {
+			p.Tasks[i].Status = lt.Status
+			p.Tasks[i].ClaimedBy = lt.ClaimedBy
+			p.Tasks[i].ClaimedAt = lt.ClaimedAt
+			p.Tasks[i].ClaimExpires = lt.ClaimExpires
+			if lt.MerkleProof != nil {
+				p.Tasks[i].MerkleProof = lt.MerkleProof
+				if strings.TrimSpace(p.Tasks[i].ContractorWallet) == "" && strings.TrimSpace(lt.MerkleProof.ContractorWallet) != "" {
+					p.Tasks[i].ContractorWallet = strings.TrimSpace(lt.MerkleProof.ContractorWallet)
+				}
+			}
+			if strings.TrimSpace(lt.ContractorWallet) != "" {
+				p.Tasks[i].ContractorWallet = strings.TrimSpace(lt.ContractorWallet)
+			}
+			if len(lt.Skills) > 0 {
+				p.Tasks[i].Skills = lt.Skills
+			}
+		}
+	}
 }

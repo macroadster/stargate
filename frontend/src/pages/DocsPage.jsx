@@ -183,7 +183,14 @@ const DocsPage = () => {
                       components={{
                         a: ({ href, children, ...props }) => {
                           if (href && (href.startsWith('/') || href.startsWith('.'))) {
-                            return <Link to={href} {...props}>{children}</Link>;
+                            let resolved = href;
+                            if (href.startsWith('.')) {
+                              // Resolve relative links against /docs/ to avoid
+                              // /docs/README.md/USER_GUIDE.md style mis-resolution
+                              const filename = href.split('/').pop();
+                              resolved = `/docs/${filename}`;
+                            }
+                            return <Link to={resolved} {...props}>{children}</Link>;
                           }
                           return <a href={href} target="_blank" rel="noopener noreferrer" {...props}>{children}</a>;
                         }
