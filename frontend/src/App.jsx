@@ -1011,7 +1011,7 @@ function MainContent() {
                   )}
 
                    {filteredInscriptions.length === 0 && isLoadingInscriptions && (
-                     <div className="starlight-gallery">
+                     <div className="gallery">
                        {Array.from({ length: 6 }).map((_, i) => (
                          <div key={i} className="aspect-square rounded-2xl bg-white/5 animate-pulse" />
                        ))}
@@ -1025,7 +1025,7 @@ function MainContent() {
                     )}
 
                      {filteredInscriptions.length > 0 && (
-                       <div className="starlight-gallery">
+                       <div className="gallery">
                          {filteredInscriptions.map((inscription, idx) => (
                            <div key={idx} className="gallery-item">
                              <InscriptionCard
