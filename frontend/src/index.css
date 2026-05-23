@@ -5822,9 +5822,20 @@ footer.nav-glass {
     position: relative !important;
     flex-direction: row !important;
     border-bottom: none !important;
+    overflow: hidden;
 }
+/* Prevent hover from changing footer background (quantum nav-glass:hover
+   sets background-color to --q-color-border-strong which looks wrong) */
 footer.nav-glass:hover {
-    background-color: inherit !important;
+    background-color: rgba(255, 255, 255, 0.15) !important;
+}
+@media (prefers-color-scheme: light) {
+    footer.nav-glass:hover {
+        background-color: rgba(255, 255, 255, 0.48) !important;
+    }
+}
+html[data-theme="light"] footer.nav-glass:hover {
+    background-color: rgba(255, 255, 255, 0.48) !important;
 }
 
 /* ================================================================

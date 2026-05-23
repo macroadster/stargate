@@ -949,7 +949,7 @@ function MainContent() {
                 <div className="spinner border-2" style={{ width: '1rem', height: '1rem' }} />
                 <span>{isInitializing ? 'Initializing...' : 'Waiting for first blocks...'}</span>
               </div>
-              <div className="mt-10 starlight-card p-6 max-w-sm text-left">
+              <div className="mt-10 card p-6 max-w-sm text-left">
                 <h3 className="text-sm font-semibold text-primary mb-3">What's happening?</h3>
                 <ul className="space-y-2 text-xs text-secondary">
                   <li className="flex items-start gap-2">
@@ -1058,12 +1058,12 @@ function MainContent() {
                  <span className="text-lg font-bold text-gradient-starlight">Starlight</span>
               </div>
 
-              <div className="flex items-center gap-8">
+              <div className="flex items-center gap-4">
                 <a
                   href="https://github.com/macroadster"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="nav-link p-0 text-secondary hover:text-primary"
+                  className="nav-link p-0 text-muted"
                   title="GitHub"
                 >
                   <Github className="w-5 h-5" />
@@ -1072,7 +1072,7 @@ function MainContent() {
                   href="https://x.com/howssatoshi"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="nav-link p-0 text-muted hover:text-primary"
+                  className="nav-link p-0 text-muted"
                   title="X (Twitter)"
                 >
                   <span className="text-xl font-bold leading-none">𝕏</span>
@@ -1081,7 +1081,7 @@ function MainContent() {
                   href="https://www.linkedin.com/in/eric-yang-182a377/"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="nav-link p-0 text-muted hover:text-primary"
+                  className="nav-link p-0 text-muted"
                   title="LinkedIn"
                 >
                   <Linkedin className="w-5 h-5" />
