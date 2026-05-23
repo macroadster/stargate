@@ -127,7 +127,7 @@ const BlockCard = ({ block, onClick, isSelected }) => {
       }`}
       title={undefined}
     >
-      <div className={`starlight-card relative p-4 cursor-pointer transition-transform ${getGlowClass()} ${
+      <div className={`card relative p-4 cursor-pointer transition-transform ${getGlowClass()} ${
         isSelected ? 'border-2 border-primary scale-105' : 'hover:scale-105'
       } ${block.isFuture ? 'border-2 border-warning' : ''}`}>
         {/* Notification badges at top */}
@@ -194,7 +194,7 @@ const BlockCard = ({ block, onClick, isSelected }) => {
             <div>{formatTimeAgo(block.timestamp)}</div>
             <div>{`${txCount} transaction${txCount === 1 ? '' : 's'}`}</div>
           </div>
-          <div className="flex items-center gap-2 mb-2 text-xs">
+          <div className="flex items-center justify-center gap-2 mb-2 text-xs">
             {smartContractCount > 0 ? (
               <span className="badge badge-primary">
                 {smartContractCount} smart contract{smartContractCount === 1 ? '' : 's'}

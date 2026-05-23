@@ -803,9 +803,15 @@ html[data-theme="light"] .nav-menu-mobile .mt-6.pt-6 {
     border-top-color: rgba(0, 0, 0, 0.08);
 }
 
-/* Search inside mobile menu */
+/* Search inside mobile menu — prevent overflow */
 .nav-menu-mobile .search.has-icon {
     margin: 0.25rem 1rem 0.5rem;
+    max-width: calc(100% - 2rem);
+    overflow: hidden;
+}
+.nav-menu-mobile .search-input {
+    box-sizing: border-box !important;
+    min-width: 0;
 }
 
 /* Remove quantum's last-child border in mobile menu */
