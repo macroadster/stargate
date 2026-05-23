@@ -91,11 +91,9 @@ const AppHeader = ({
           <div className="flex flex-row items-center gap-8">
             <button
               onClick={() => navigate("/")}
-              className="flex flex-row items-center gap-3 p-0 bg-transparent border-none cursor-pointer group"
+              className="flex flex-row items-center gap-2 p-0 bg-transparent border-none cursor-pointer group"
             >
-              <div className="flex items-center justify-center w-8 h-8 bg-starlight rounded-lg glow-blue group-hover:scale-105 transition-transform">
-                <span className="text-white text-lg font-extrabold">✦</span>
-              </div>
+              <i className="icon-starlight header-logo-icon" />
               <span className="text-2xl font-bold text-gradient-starlight">
                 Starlight
               </span>

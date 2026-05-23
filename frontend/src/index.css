@@ -638,6 +638,33 @@ html[data-theme="light"] .auth-tab-inactive {
     }
 }
 
+/* ================================================================
+   Header nav polish — thinner font, icon logo, animated underline
+   ================================================================ */
+
+/* Thinner menu font (quantum default is 600) */
+.starlight-nav .nav-link {
+    font-weight: 400;
+}
+
+/* Starlight icon logo in header */
+.header-logo-icon {
+    width: 1.75rem;
+    height: 1.75rem;
+    background: linear-gradient(135deg, #ffb38a 40%, #00d4ff 100%);
+    transition: transform 0.2s ease;
+}
+.group:hover .header-logo-icon {
+    transform: scale(1.08);
+}
+
+/* Animated underline — quantum uses --q-duration-slow which is undefined,
+   so the transition never fires. Override with explicit timing. */
+.starlight-nav .nav-link::after {
+    transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+                box-shadow 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
 /* Custom transitions and specialized utilities not in Quantum */
 .nav-link svg {
     color: currentColor;

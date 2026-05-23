@@ -1051,11 +1051,9 @@ function MainContent() {
         {!hasMoreImages && blocks.length > 0 && (
           <footer className="nav-glass border-t border-white/5 shrink-0" style={{ height: '4rem', display: 'flex', alignItems: 'center' }}>
             <div className="container mx-auto px-6 flex items-center justify-between w-full h-full">
-              <div className="flex items-center gap-3">
-                <div className="flex items-center justify-center w-7 h-7 bg-starlight rounded-lg glow-blue">
-                  <span className="text-white text-[10px] font-extrabold">✦</span>
-                </div>
-                 <span className="text-lg font-bold text-gradient-starlight">Starlight</span>
+              <div className="flex items-center gap-2">
+                <i className="icon-starlight header-logo-icon" style={{ width: '1.25rem', height: '1.25rem' }} />
+                <span className="text-lg font-bold text-gradient-starlight">Starlight</span>
               </div>
 
               <div className="flex items-center gap-4">
