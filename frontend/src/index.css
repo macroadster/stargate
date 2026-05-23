@@ -5638,9 +5638,6 @@ html[data-theme="dark"] .dark\:border-gray-600 { border-color: #475569 !importan
 .w-40 .card .badge {
     letter-spacing: normal;
     padding-inline: 0.5rem;
-    max-width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
 }
 
 /* ================================================================
