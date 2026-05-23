@@ -12,11 +12,6 @@ html[data-theme="light"] .nav-glass {
     border-bottom-color: rgba(0, 0, 0, 0.1);
 }
 
-/* Footer overrides - ensure lower z-index than modals */
-footer.nav-glass {
-    z-index: 0 !important;
-}
-
 /* Search - quantumcss pattern (.search.has-icon) */
 .search {
     position: relative;
@@ -164,7 +159,7 @@ html[data-theme="dark"] .search-clear:hover {
     animation: blockSlideIn 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
 }
 
-.block-slide-in .starlight-card {
+.block-slide-in .card {
     box-shadow:
         0 0 20px rgba(251, 191, 36, 0.4),
         0 0 40px rgba(251, 191, 36, 0.2);
@@ -184,7 +179,7 @@ html[data-theme="dark"] .search-clear:hover {
     }
 }
 
-.block-slide-in .starlight-card {
+.block-slide-in .card {
     animation: glowPulse 0.8s ease-in-out 2;
 }
 
@@ -652,7 +647,7 @@ html[data-theme="light"] .auth-tab-inactive {
     background: transparent !important;
 }
 .nav-link:hover {
-    color: var(--color-starlight-blue) !important;
+    color: var(--q-color-starlight-blue) !important;
 }
 .nav-link:focus {
     outline: none !important;
@@ -5550,4 +5545,143 @@ html[data-theme="dark"] .deliverables-proof-content-box {
     .lg\:grid-cols-4 {
         grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
     }
+    .lg\:flex-row {
+        flex-direction: row !important;
+    }
+    .lg\:block {
+        display: block !important;
+    }
+    .lg\:text-xl {
+        font-size: 1.25rem !important;
+        line-height: 1.75rem !important;
+    }
+    .lg\:px-8 {
+        padding-left: 2rem !important;
+        padding-right: 2rem !important;
+    }
+    .lg\:px-10 {
+        padding-left: 2.5rem !important;
+        padding-right: 2.5rem !important;
+    }
+    .lg\:py-10 {
+        padding-top: 2.5rem !important;
+        padding-bottom: 2.5rem !important;
+    }
+}
+
+@media (min-width: 640px) {
+    .sm\:px-6 {
+        padding-left: 1.5rem !important;
+        padding-right: 1.5rem !important;
+    }
+    .sm\:grid-cols-2 {
+        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    }
+    .sm\:min-h-\[350px\] {
+        min-height: 350px !important;
+    }
+}
+
+@media (min-width: 1280px) {
+    .xl\:px-12 {
+        padding-left: 3rem !important;
+        padding-right: 3rem !important;
+    }
+    .xl\:min-h-\[400px\] {
+        min-height: 400px !important;
+    }
+}
+
+/* Arbitrary value utilities */
+.min-h-\[280px\] { min-height: 280px; }
+.min-h-\[200px\] { min-height: 200px; }
+.text-\[9px\] { font-size: 9px; }
+.text-\[11px\] { font-size: 11px; }
+
+/* Dark mode utilities for InscriptionCard */
+html[data-theme="dark"] .dark\:border-gray-800 { border-color: #1e293b !important; }
+html[data-theme="dark"] .dark\:bg-gray-900 { background-color: #0f172a !important; }
+html[data-theme="dark"] .dark\:bg-gray-800 { background-color: #1e293b !important; }
+html[data-theme="dark"] .dark\:text-gray-200 { color: #e2e8f0 !important; }
+html[data-theme="dark"] .dark\:text-gray-400 { color: #94a3b8 !important; }
+html[data-theme="dark"] .dark\:from-gray-700 { --tw-gradient-from: #334155; --gradient-from: #334155; }
+html[data-theme="dark"] .dark\:to-gray-800 { --tw-gradient-to: #1e293b; --gradient-to: #1e293b; }
+html[data-theme="dark"] .dark\:bg-blue-900\/60 { background-color: rgb(30 58 138 / 0.6) !important; }
+html[data-theme="dark"] .dark\:text-blue-200 { color: #bfdbfe !important; }
+html[data-theme="dark"] .dark\:border-gray-600 { border-color: #475569 !important; }
+
+@media (prefers-color-scheme: dark) {
+    .dark\:border-gray-800 { border-color: #1e293b !important; }
+    .dark\:bg-gray-900 { background-color: #0f172a !important; }
+    .dark\:bg-gray-800 { background-color: #1e293b !important; }
+    .dark\:text-gray-200 { color: #e2e8f0 !important; }
+    .dark\:text-gray-400 { color: #94a3b8 !important; }
+    .dark\:from-gray-700 { --tw-gradient-from: #334155; --gradient-from: #334155; }
+    .dark\:to-gray-800 { --tw-gradient-to: #1e293b; --gradient-to: #1e293b; }
+    .dark\:bg-blue-900\/60 { background-color: rgb(30 58 138 / 0.6) !important; }
+    .dark\:text-blue-200 { color: #bfdbfe !important; }
+    .dark\:border-gray-600 { border-color: #475569 !important; }
+}
+
+/* Gradient color utilities */
+.from-gray-100 { --tw-gradient-from: #f1f5f9; }
+.from-gray-200 { --tw-gradient-from: #e2e8f0; }
+.to-gray-200 { --tw-gradient-to: #e2e8f0; }
+.to-gray-800 { --tw-gradient-to: #1e293b; }
+.bg-gradient-to-br {
+    background-image: linear-gradient(to bottom right, var(--tw-gradient-from, transparent), var(--tw-gradient-to, transparent));
+}
+
+/* Fix card overflow for block cards - allow positioned badges to be visible */
+.card { overflow: visible !important; }
+
+/* ================================================================
+   Missing utility classes in quantumcss 1.13.0
+   ================================================================ */
+
+/* Spacing: py-6, py-8 missing (py-4 and py-12 exist) */
+.py-6 { padding-top: 1.5rem; padding-bottom: 1.5rem; }
+.py-8 { padding-top: 2rem; padding-bottom: 2rem; }
+
+/* Sizing: w-40 missing (w-32 exists) */
+.w-40 { width: 10rem; }
+
+/* Layout: whitespace-nowrap, shrink-0 missing */
+.whitespace-nowrap { white-space: nowrap; }
+.shrink-0 { flex-shrink: 0; }
+
+/* Opacity: opacity-75 missing */
+.opacity-75 { opacity: 0.75; }
+
+/* Border colors: border-primary, border-warning missing */
+.border-primary { border-color: var(--q-color-primary, #6366f1); }
+.border-warning { border-color: #fbbf24; }
+
+/* text-warning only defined for light theme in quantum CSS - add dark/default */
+.text-warning { color: #fbbf24; }
+
+/* ================================================================
+   Slash-notation opacity classes → quantum CSS uses underscores
+   (e.g. bg-white_5), but JSX uses Tailwind slash notation (bg-white/5)
+   ================================================================ */
+.bg-white\/5 { background-color: hsla(0, 0%, 100%, 0.05); }
+.bg-white\/10 { background-color: hsla(0, 0%, 100%, 0.1); }
+.hover\:bg-white\/10:hover { background-color: hsla(0, 0%, 100%, 0.1); }
+.border-white\/5 { border-color: hsla(0, 0%, 100%, 0.05); }
+.border-white\/10 { border-color: hsla(0, 0%, 100%, 0.1); }
+.border-white\/20 { border-color: hsla(0, 0%, 100%, 0.2); }
+
+/* ================================================================
+   Footer nav-glass overrides
+   quantum 1.13.0 nav-glass adds flex-direction:column, position:sticky,
+   border-bottom, and hover bg change - all wrong for a footer
+   ================================================================ */
+footer.nav-glass {
+    z-index: 0 !important;
+    position: relative !important;
+    flex-direction: row !important;
+    border-bottom: none !important;
+}
+footer.nav-glass:hover {
+    background-color: inherit !important;
 }

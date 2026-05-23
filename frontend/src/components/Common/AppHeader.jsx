@@ -96,9 +96,9 @@ const AppHeader = ({
               <div className="flex items-center justify-center w-8 h-8 bg-starlight rounded-lg glow-blue group-hover:scale-105 transition-transform">
                 <span className="text-white text-lg font-extrabold">✦</span>
               </div>
-              <h1 className="text-2xl font-bold text-gradient-starlight m-0">
+              <span className="text-2xl font-bold text-gradient-starlight">
                 Starlight
-              </h1>
+              </span>
             </button>
 
             <div className="nav-desktop">
