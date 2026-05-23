@@ -645,6 +645,7 @@ html[data-theme="light"] .auth-tab-inactive {
 /* Thinner menu font (quantum default is 600) */
 .starlight-nav .nav-link {
     font-weight: 400;
+    cursor: pointer;
 }
 
 /* Starlight icon logo in header */
