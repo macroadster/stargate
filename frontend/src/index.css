@@ -5632,9 +5632,6 @@ html[data-theme="dark"] .dark\:border-gray-600 { border-color: #475569 !importan
     background-image: linear-gradient(to bottom right, var(--tw-gradient-from, transparent), var(--tw-gradient-to, transparent));
 }
 
-/* Fix card overflow for block cards - allow positioned badges to be visible */
-.card { overflow: visible !important; }
-
 /* ================================================================
    Missing utility classes in quantumcss 1.13.0
    ================================================================ */
@@ -5684,4 +5681,43 @@ footer.nav-glass {
 }
 footer.nav-glass:hover {
     background-color: inherit !important;
+}
+
+/* ================================================================
+   Discover page filter controls
+   ================================================================ */
+
+/* Position search icon inside .search-container (quantum only styles .search) */
+.search-container .search-icon {
+    position: absolute;
+    left: 0.75rem;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--q-text-muted, #64748b);
+    pointer-events: none;
+    z-index: 1;
+}
+
+/* Add left padding to input when sibling of search-icon */
+.search-container .search-icon ~ .search-input {
+    padding-left: 2.25rem !important;
+}
+
+/* Custom dropdown arrow for select inside search-container */
+.search-container select.search-input {
+    background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3E%3Cpath stroke='%2364748b' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m6 8 4 4 4-4'/%3E%3C/svg%3E");
+    background-position: right 0.5rem center;
+    background-repeat: no-repeat;
+    background-size: 1.25rem;
+    padding-right: 2rem;
+}
+
+/* Hide native number input spinners for consistent look */
+.search-container input[type="number"]::-webkit-inner-spin-button,
+.search-container input[type="number"]::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+.search-container input[type="number"] {
+    -moz-appearance: textfield;
 }
