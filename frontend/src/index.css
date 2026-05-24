@@ -1484,7 +1484,8 @@ html[data-theme="light"] .deliverables-value {
     font-size: 0.75rem;
     color: #e5e7eb;
     white-space: pre-wrap;
-    overflow-x: auto;
+    word-break: break-word;
+    overflow-wrap: anywhere;
     max-width: 100%;
 }
 
@@ -3886,6 +3887,7 @@ html[data-theme="light"] .deliverables-card {
 .deliverables-card-header {
     padding: 1rem;
     border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    overflow: hidden;
 }
 
 @media (prefers-color-scheme: light) {
@@ -4016,6 +4018,8 @@ html[data-theme="light"] .deliverables-task-meta {
     border-radius: 0.5rem;
     padding: 0.75rem;
     color: #e5e7eb;
+    overflow-x: auto;
+    max-width: 100%;
 }
 
 @media (prefers-color-scheme: light) {
@@ -4233,6 +4237,7 @@ html[data-theme="light"] .deliverables-compare-header {
     padding: 0.75rem;
     background: #1f2937;
     box-sizing: border-box;
+    overflow: hidden;
 }
 
 @media (prefers-color-scheme: light) {
@@ -5836,8 +5841,11 @@ html[data-theme="dark"] .dark\:border-gray-600 { border-color: #475569 !importan
    Missing utility classes in quantumcss 1.13.0
    ================================================================ */
 
-/* Spacing: space-y-3, py-6, py-8 missing */
-.space-y-3 > :not(:first-child) { margin-top: 0.75rem; }
+/* Spacing: space-y-1, space-y-3, space-y-4, space-y-6, py-6, py-8 missing */
+.space-y-1 > * + * { margin-top: 0.25rem; }
+.space-y-3 > * + * { margin-top: 0.75rem; }
+.space-y-4 > * + * { margin-top: 1rem; }
+.space-y-6 > * + * { margin-top: 1.5rem; }
 .py-6 { padding-top: 1.5rem; padding-bottom: 1.5rem; }
 .py-8 { padding-top: 2rem; padding-bottom: 2rem; }
 
