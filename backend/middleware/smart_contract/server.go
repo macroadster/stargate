@@ -187,7 +187,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/smart_contract/submissions/", s.authWrap(s.handleSubmissions))
 
 	// Event endpoints
-	mux.HandleFunc("/api/smart_contract/events", s.authWrap(s.handleEvents))
+	mux.HandleFunc("/api/smart_contract/events", s.authWrapReadOnly(s.handleEvents))
 
 	// Stego endpoints (still using original handlers for now)
 	mux.HandleFunc("/api/smart_contract/stego/reconcile", s.authWrap(s.handleStegoReconcile))
