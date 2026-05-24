@@ -1011,7 +1011,7 @@ function MainContent() {
                   )}
 
                    {filteredInscriptions.length === 0 && isLoadingInscriptions && (
-                     <div className="gallery">
+                     <div className="contracts-grid">
                        {Array.from({ length: 6 }).map((_, i) => (
                          <div key={i} className="aspect-square rounded-2xl bg-white/5 animate-pulse" />
                        ))}
@@ -1025,14 +1025,13 @@ function MainContent() {
                     )}
 
                      {filteredInscriptions.length > 0 && (
-                       <div className="gallery">
+                       <div className="contracts-grid">
                          {filteredInscriptions.map((inscription, idx) => (
-                           <div key={idx} className="gallery-item">
                              <InscriptionCard
+                               key={idx}
                                inscription={inscription}
                                onClick={setSelectedInscription}
                              />
-                           </div>
                          ))}
                           {hasMoreImages && (
                             <div ref={sentinelRef} className="flex justify-center py-8 col-span-full">
