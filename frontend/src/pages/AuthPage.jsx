@@ -226,7 +226,7 @@ export default function AuthPage() {
       <div className="w-full max-w-xl space-y-6">
         <div className="flex justify-center gap-3">
           <button
-            className={`px-6 py-2 rounded-full transition-all ${view === 'login' ? 'bg-starlight text-white shadow-lg glow-blue' : 'bg-white/5 text-gray-400 hover:text-white'}`}
+            className={`px-6 py-2 rounded-full transition-all ${view === 'login' ? 'bg-indigo-600 text-white shadow-lg' : 'bg-white/5 text-gray-400 hover:text-white'}`}
             onClick={() => setView('login')}
           >
             Sign In

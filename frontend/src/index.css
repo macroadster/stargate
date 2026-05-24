@@ -382,6 +382,7 @@ html[data-theme="light"] .auth-page-container {
     box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
     background: rgba(30, 41, 59, 0.8);
     border: 1px solid rgba(255, 255, 255, 0.1);
+    min-height: 24rem;
 }
 
 @media (prefers-color-scheme: light) {
