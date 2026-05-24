@@ -399,9 +399,9 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
 
     if (!hasMarkdown) {
       return (
-        <pre className="text-sm text-gray-800 dark:text-gray-100 whitespace-pre-wrap">
+        <div className="text-sm text-gray-800 dark:text-gray-100 whitespace-pre-wrap break-words">
           {safeContent}
-        </pre>
+        </div>
       );
     }
 
@@ -708,9 +708,9 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
                             <div className="deliverables-compare-notes-label">Notes</div>
                             <div className="deliverables-compare-notes-box">
                               {isExpanded ? renderMarkdown(notes || 'No notes provided.') : (
-                                <pre className="deliverables-notes-preview">
+                                <div className="deliverables-notes-preview">
                                   {preview || 'No notes provided.'}
-                                </pre>
+                                </div>
                               )}
                             </div>
                             {notes && notes.length > 0 && (
@@ -864,9 +864,9 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
                         <span>Words: {wordCount}</span>
                         <span>Status: {statusText}</span>
                       </div>
-                      <pre className="deliverables-notes-preview">
+                      <div className="deliverables-notes-preview">
                         {preview || 'No notes provided.'}
-                      </pre>
+                      </div>
                     </div>
                   );
                 })()}

@@ -1486,7 +1486,6 @@ html[data-theme="light"] .deliverables-value {
     white-space: pre-wrap;
     word-break: break-word;
     overflow-wrap: anywhere;
-    max-width: 100%;
 }
 
 @media (prefers-color-scheme: light) {
