@@ -68,6 +68,14 @@ type MerkleProof struct {
 	CommitmentVout         uint32      `json:"commitment_vout,omitempty"`
 	CommitmentSats         int64       `json:"commitment_sats,omitempty"`
 	CommitmentSource       string      `json:"commitment_source,omitempty"` // "wish" (original image) | "product" (delivered stego image)
+	ProductPixelHash       string      `json:"product_pixel_hash,omitempty"`
+	RecommitTxID           string      `json:"recommit_tx_id,omitempty"`
+	RecommitVout           uint32      `json:"recommit_vout,omitempty"`
+	RecommitSats           int64       `json:"recommit_sats,omitempty"`
+	RecommitRedeemScript   string      `json:"recommit_redeem_script,omitempty"`
+	RecommitRedeemHash     string      `json:"recommit_redeem_hash,omitempty"`
+	RecommitAddress        string      `json:"recommit_address,omitempty"`
+	RecommitStatus         string      `json:"recommit_status,omitempty"` // "" | "broadcast" | "confirmed"
 	SweepTxID              string      `json:"sweep_tx_id,omitempty"`
 	SweepStatus            string      `json:"sweep_status,omitempty"`
 	SweepError             string      `json:"sweep_error,omitempty"`

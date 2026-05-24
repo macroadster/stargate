@@ -1877,20 +1877,34 @@ func (bm *BlockMonitor) confirmAndSweepContractTasks(contractID, txid string, bl
 		if proof == nil {
 			continue
 		}
-		if proof.TxID == "" || strings.TrimSpace(proof.TxID) != strings.TrimSpace(txid) {
+		// Match original funding txid → confirm the proof.
+		if proof.TxID != "" && strings.TrimSpace(proof.TxID) == strings.TrimSpace(txid) {
+			if proof.ConfirmationStatus != "confirmed" {
+				now := time.Now()
+				proof.ConfirmationStatus = "confirmed"
+				proof.ConfirmedAt = &now
+				proof.BlockHeight = blockHeight
+				if err := bm.sweepStore.UpdateTaskProof(context.Background(), task.TaskID, proof); err != nil {
+					log.Printf("oracle reconcile: failed to confirm proof for %s: %v", task.TaskID, err)
+				}
+			}
+			if err := SweepCommitmentIfReady(context.Background(), bm.sweepStore, bm.sweepMempool, task, proof); err != nil {
+				log.Printf("oracle reconcile: sweep error for %s: %v", task.TaskID, err)
+			}
 			continue
 		}
-		if proof.ConfirmationStatus != "confirmed" {
-			now := time.Now()
-			proof.ConfirmationStatus = "confirmed"
-			proof.ConfirmedAt = &now
-			proof.BlockHeight = blockHeight
-			if err := bm.sweepStore.UpdateTaskProof(context.Background(), task.TaskID, proof); err != nil {
-				log.Printf("oracle reconcile: failed to confirm proof for %s: %v", task.TaskID, err)
+		// Match recommitment txid → confirm phase-1 and trigger phase-2 sweep.
+		if proof.RecommitTxID != "" && strings.TrimSpace(proof.RecommitTxID) == strings.TrimSpace(txid) {
+			if proof.RecommitStatus != "confirmed" {
+				proof.RecommitStatus = "confirmed"
+				log.Printf("oracle reconcile: confirmed recommitment tx %s for task %s", txid, task.TaskID)
+				if err := bm.sweepStore.UpdateTaskProof(context.Background(), task.TaskID, proof); err != nil {
+					log.Printf("oracle reconcile: failed to confirm recommitment for %s: %v", task.TaskID, err)
+				}
 			}
-		}
-		if err := SweepCommitmentIfReady(context.Background(), bm.sweepStore, bm.sweepMempool, task, proof); err != nil {
-			log.Printf("oracle reconcile: sweep error for %s: %v", task.TaskID, err)
+			if err := SweepCommitmentIfReady(context.Background(), bm.sweepStore, bm.sweepMempool, task, proof); err != nil {
+				log.Printf("oracle reconcile: phase2 sweep error for %s: %v", task.TaskID, err)
+			}
 		}
 	}
 }
@@ -2049,10 +2063,9 @@ func ingestionCandidateBuckets(rec services.IngestionRecord, params *chaincfg.Pa
 	if v := stringFromAny(rec.Metadata["pixel_hash"]); v != "" {
 		appendPrimary(v)
 	}
-	// NOTE: payout_script_hash* candidates were removed because they are
-	// SHA256/Hash160 of Bitcoin payment scripts (P2WPKH etc.), not contract
-	// identity hashes.  Including them created a large false-positive surface
-	// where unrelated transactions could collide with fallback candidates.
+	if v := stringFromAny(rec.Metadata["product_hash"]); v != "" {
+		appendPrimary(v)
+	}
 
 	return primary, fallback
 }
@@ -2194,6 +2207,9 @@ func isIdentityHash(rec *services.IngestionRecord, hash string, params *chaincfg
 		return true
 	}
 	if v := commitmentScriptHashFromMeta(*rec, params); normalizeHex(v) == hash {
+		return true
+	}
+	if v := normalizeHex(stringFromAny(rec.Metadata["product_hash"])); v != "" && v == hash {
 		return true
 	}
 	return false

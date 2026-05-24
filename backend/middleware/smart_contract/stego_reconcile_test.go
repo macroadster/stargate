@@ -76,11 +76,10 @@ func TestUpsertContractFromStegoPayload(t *testing.T) {
 	}
 }
 
-// TestUpsertStegoUsesProductHashWhenNoDonation verifies that when there is no
-// pre-existing funded donation commitment (CommitmentSats == 0), the reconciler
-// uses the stegoHash (product image hash) for the hashlock, not the manifest's
-// VisiblePixelHash (original wish image hash).
-func TestUpsertStegoUsesProductHashWhenNoDonation(t *testing.T) {
+// TestUpsertStegoSetsProductPixelHash verifies that the reconciler always sets
+// ProductPixelHash to the stegoHash (product image) and CommitmentPixelHash to
+// the visibleHash (wish image) for the two-phase recommitment sweep.
+func TestUpsertStegoSetsProductPixelHash(t *testing.T) {
 	store := scstore.NewMemoryStore(0)
 	server := &Server{store: store}
 	ctx := context.Background()
@@ -130,12 +129,16 @@ func TestUpsertStegoUsesProductHashWhenNoDonation(t *testing.T) {
 		t.Fatalf("expected MerkleProof to be set")
 	}
 
-	// CommitmentPixelHash should be the stegoHash (product), not visibleHash (wish)
-	if proof.CommitmentPixelHash != stegoHash {
-		t.Errorf("CommitmentPixelHash = %q, want stegoHash %q", proof.CommitmentPixelHash, stegoHash)
+	// CommitmentPixelHash should be the visibleHash (wish image) for the on-chain hashlock
+	if proof.CommitmentPixelHash != visibleHash {
+		t.Errorf("CommitmentPixelHash = %q, want visibleHash %q", proof.CommitmentPixelHash, visibleHash)
 	}
-	if proof.CommitmentSource != "product" {
-		t.Errorf("CommitmentSource = %q, want \"product\"", proof.CommitmentSource)
+	if proof.CommitmentSource != "wish" {
+		t.Errorf("CommitmentSource = %q, want \"wish\"", proof.CommitmentSource)
+	}
+	// ProductPixelHash should be the stegoHash (product image) for two-phase recommitment
+	if proof.ProductPixelHash != stegoHash {
+		t.Errorf("ProductPixelHash = %q, want stegoHash %q", proof.ProductPixelHash, stegoHash)
 	}
 	// VisiblePixelHash should still reflect the original wish image
 	if proof.VisiblePixelHash != visibleHash {
@@ -227,9 +230,16 @@ func TestUpsertStegoPreservesWishHashWhenDonationExists(t *testing.T) {
 		t.Fatalf("expected MerkleProof")
 	}
 
-	// With funded donation, should keep the wish hash, NOT switch to product hash
+	// With funded donation, should keep the wish hash for the on-chain hashlock
 	if proof.CommitmentSource != "wish" {
 		t.Errorf("CommitmentSource = %q, want \"wish\" (donation was funded)", proof.CommitmentSource)
+	}
+	if proof.CommitmentPixelHash != visibleHash {
+		t.Errorf("CommitmentPixelHash = %q, want visibleHash %q", proof.CommitmentPixelHash, visibleHash)
+	}
+	// ProductPixelHash should always be set to stegoHash for two-phase recommitment
+	if proof.ProductPixelHash != stegoHash {
+		t.Errorf("ProductPixelHash = %q, want stegoHash %q", proof.ProductPixelHash, stegoHash)
 	}
 	// CommitmentSats should be preserved
 	if proof.CommitmentSats != 1000 {

@@ -460,18 +460,10 @@ func (s *Server) upsertContractFromStegoPayload(ctx context.Context, contractID,
 		// Update MerkleProof for commitment script - use hashlock script for donation sweeping
 		// Do NOT overwrite with P2WPKH since contractors are paid directly via PSBT payouts
 		if strings.TrimSpace(t.ContractorWallet) != "" {
-			// Determine which hash to use for the hashlock commitment.
-			// If the task already has a funded donation commitment (CommitmentSats > 0),
-			// preserve the original wish image hash. Otherwise, use the delivered
-			// product image hash (stegoHash) so the commitment is tied to the actual artifact.
+			// The PSBT donation commitment uses the wish image hash (VisiblePixelHash).
+			// The product image hash (stegoHash) is stored separately in ProductPixelHash
+			// for the two-phase sweep: wish-hashlock → product-hashlock → donation addr.
 			commitmentHashHex := manifest.VisiblePixelHash
-			commitmentSource := "wish"
-			if merkleProof == nil || merkleProof.CommitmentSats == 0 {
-				// No funded donation commitment — use the product image hash
-				commitmentHashHex = stegoHash
-				commitmentSource = "product"
-				log.Printf("stego reconcile: using product image hash for task %s (no donation commitment)", t.TaskID)
-			}
 			pixelHashBytes, err := hex.DecodeString(commitmentHashHex)
 			if err != nil {
 				log.Printf("stego reconcile: failed to decode commitment hash for task %s: %v", t.TaskID, err)
@@ -490,8 +482,9 @@ func (s *Server) upsertContractFromStegoPayload(ctx context.Context, contractID,
 					scriptHash := sha256.Sum256(redeemScript)
 					contractorProof := &smart_contract.MerkleProof{
 						VisiblePixelHash:       manifest.VisiblePixelHash,
-						CommitmentPixelHash:    commitmentHashHex, // preimage: product hash or wish hash
-						CommitmentSource:       commitmentSource,
+						CommitmentPixelHash:    commitmentHashHex,
+						CommitmentSource:       "wish",
+						ProductPixelHash:       stegoHash, // product hash for two-phase recommitment sweep
 						ContractorWallet:       t.ContractorWallet,
 						CommitmentAddress:      t.ContractorWallet, // Use contractor wallet as display address
 						CommitmentRedeemScript: hex.EncodeToString(redeemScript),
@@ -523,6 +516,7 @@ func (s *Server) upsertContractFromStegoPayload(ctx context.Context, contractID,
 						merkleProof.VisiblePixelHash = contractorProof.VisiblePixelHash
 						merkleProof.CommitmentPixelHash = contractorProof.CommitmentPixelHash
 						merkleProof.CommitmentSource = contractorProof.CommitmentSource
+						merkleProof.ProductPixelHash = stegoHash
 						if merkleProof.SeenAt.IsZero() {
 							merkleProof.SeenAt = contractorProof.SeenAt
 						}

@@ -93,13 +93,16 @@ func TestSweepSkipsMissingCommitmentData(t *testing.T) {
 	}
 }
 
-func TestSweepSkipsNonDonationCommitment(t *testing.T) {
+func TestSweepPhase1TriggeredByProductHash(t *testing.T) {
+	// When ProductPixelHash is set and RecommitStatus is empty, phase 1 should
+	// be attempted (will fail without mempool but should attempt, not skip).
 	store := newMockSweepStore()
 	donationAddr := "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx"
 	t.Setenv("STARLIGHT_DONATION_ADDRESS", donationAddr)
 
-	preimageHex := strings.Repeat("ab", 32)
-	scriptHex, err := buildTestRedeemScript(preimageHex)
+	wishPreimageHex := strings.Repeat("ab", 32)
+	productHashHex := strings.Repeat("cd", 32)
+	scriptHex, err := buildTestRedeemScript(wishPreimageHex)
 	if err != nil {
 		t.Fatalf("buildTestRedeemScript: %v", err)
 	}
@@ -109,19 +112,77 @@ func TestSweepSkipsNonDonationCommitment(t *testing.T) {
 		TxID:                   strings.Repeat("ff", 32),
 		CommitmentVout:         1,
 		CommitmentRedeemScript: scriptHex,
-		CommitmentPixelHash:    preimageHex,
-		CommitmentAddress:      "tb1qsomeotheraddress_not_donation",
-		CommitmentSource:       "product",
+		CommitmentPixelHash:    wishPreimageHex,
+		ProductPixelHash:       productHashHex,
+		CommitmentSource:       "wish",
 	}
 	task := smart_contract.Task{TaskID: "t5"}
+	// Will fail at mempool fetch (nil client) but should attempt phase1, not skip.
 	_ = SweepCommitmentIfReady(context.Background(), store, nil, task, proof)
 
 	p := store.proofs["t5"]
-	if p == nil || p.SweepStatus != "skipped" {
-		t.Fatalf("expected skipped for non-donation address, got %+v", p)
+	if p == nil {
+		t.Fatal("expected proof update for phase1 attempt")
 	}
-	if !strings.Contains(p.SweepError, "non-donation") {
-		t.Errorf("expected non-donation skip reason, got %q", p.SweepError)
+	// Should be marked failed (nil mempool) not skipped
+	if p.SweepStatus != "failed" {
+		t.Errorf("expected failed status (nil mempool), got %q", p.SweepStatus)
+	}
+}
+
+func TestSweepPhase2AfterRecommitConfirmed(t *testing.T) {
+	// When RecommitStatus is "confirmed", phase 2 should be attempted.
+	store := newMockSweepStore()
+	donationAddr := "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx"
+	t.Setenv("STARLIGHT_DONATION_ADDRESS", donationAddr)
+
+	productHashHex := strings.Repeat("cd", 32)
+	productScriptHex, err := buildTestRedeemScript(productHashHex)
+	if err != nil {
+		t.Fatalf("buildTestRedeemScript: %v", err)
+	}
+
+	proof := &smart_contract.MerkleProof{
+		ConfirmationStatus:     "confirmed",
+		TxID:                   strings.Repeat("ff", 32),
+		CommitmentVout:         1,
+		CommitmentPixelHash:    strings.Repeat("ab", 32),
+		ProductPixelHash:       productHashHex,
+		RecommitTxID:           strings.Repeat("ee", 32),
+		RecommitVout:           0,
+		RecommitRedeemScript:   productScriptHex,
+		RecommitStatus:         "confirmed",
+		CommitmentSource:       "wish",
+	}
+	task := smart_contract.Task{TaskID: "t5b"}
+	// Will fail at mempool fetch (nil client) but should attempt phase2.
+	_ = SweepCommitmentIfReady(context.Background(), store, nil, task, proof)
+
+	p := store.proofs["t5b"]
+	if p == nil {
+		t.Fatal("expected proof update for phase2 attempt")
+	}
+	if p.SweepStatus != "failed" {
+		t.Errorf("expected failed status (nil mempool), got %q", p.SweepStatus)
+	}
+}
+
+func TestSweepWaitsForRecommitConfirmation(t *testing.T) {
+	// When RecommitStatus is "broadcast", sweep should wait (no proof update).
+	store := newMockSweepStore()
+	t.Setenv("STARLIGHT_DONATION_ADDRESS", "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx")
+
+	proof := &smart_contract.MerkleProof{
+		ConfirmationStatus: "confirmed",
+		ProductPixelHash:   strings.Repeat("cd", 32),
+		RecommitTxID:       strings.Repeat("ee", 32),
+		RecommitStatus:     "broadcast",
+	}
+	task := smart_contract.Task{TaskID: "t5c"}
+	_ = SweepCommitmentIfReady(context.Background(), store, nil, task, proof)
+
+	if _, ok := store.proofs["t5c"]; ok {
+		t.Fatal("should not update proof while waiting for recommit confirmation")
 	}
 }
 
