@@ -1566,7 +1566,7 @@ func resolvePixelHashFromIngestion(rec *services.IngestionRecord, normalize func
 		return nil
 	}
 
-	for _, key := range []string{"pixel_hash", "payout_script_hash", "visible_pixel_hash"} {
+	for _, key := range []string{"pixel_hash", "visible_pixel_hash"} {
 		if v, ok := rec.Metadata[key].(string); ok {
 			if b, err := hex.DecodeString(strings.TrimSpace(v)); err == nil {
 				if normalized := normalize(b); normalized != nil {

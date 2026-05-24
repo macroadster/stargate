@@ -1711,7 +1711,9 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 		}
 
 		if match, matchType, matchedHash := matchWitnessHash(tx, primaryCandidates, fallbackCandidates); match != nil {
-			if existingID, ok := matchedTxIDs[tx.TxID]; ok && existingID != match.ID {
+			if !isIdentityHash(match, matchedHash, bm.networkParams()) {
+				log.Printf("oracle reconcile: rejecting witness_hash match for %s: hash %s is not an identity hash of the ingestion record", match.ID, matchedHash)
+			} else if existingID, ok := matchedTxIDs[tx.TxID]; ok && existingID != match.ID {
 				log.Printf("oracle reconcile: skipping %s match for %s (tx %s already matched by funding_txid)", matchType, match.ID, tx.TxID)
 			} else {
 				destPath, err := bm.moveIngestionImageWithFilename(blockDir, match, blockImageFilename(match, tx.TxID))
@@ -2047,47 +2049,10 @@ func ingestionCandidateBuckets(rec services.IngestionRecord, params *chaincfg.Pa
 	if v := stringFromAny(rec.Metadata["pixel_hash"]); v != "" {
 		appendPrimary(v)
 	}
-	if v := stringFromAny(rec.Metadata["payout_script_hash"]); v != "" {
-		appendFallback(v)
-	}
-	switch hashes := rec.Metadata["payout_script_hashes"].(type) {
-	case []string:
-		for _, hash := range hashes {
-			appendFallback(hash)
-		}
-	case []any:
-		for _, hash := range hashes {
-			appendFallback(fmt.Sprintf("%v", hash))
-		}
-	case string:
-		for _, hash := range strings.Split(hashes, ",") {
-			appendFallback(hash)
-		}
-	}
-	if v := stringFromAny(rec.Metadata["payout_script_hash160"]); v != "" {
-		appendFallback(v)
-	}
-	switch hashes := rec.Metadata["payout_script_hash160s"].(type) {
-	case []string:
-		for _, hash := range hashes {
-			appendFallback(hash)
-		}
-	case []any:
-		for _, hash := range hashes {
-			appendFallback(fmt.Sprintf("%v", hash))
-		}
-	case string:
-		for _, hash := range strings.Split(hashes, ",") {
-			appendFallback(hash)
-		}
-	}
-
-	if rec.ImageBase64 != "" {
-		if data, err := base64.StdEncoding.DecodeString(rec.ImageBase64); err == nil {
-			sum := sha256.Sum256(data)
-			appendFallback(hex.EncodeToString(sum[:]))
-		}
-	}
+	// NOTE: payout_script_hash* candidates were removed because they are
+	// SHA256/Hash160 of Bitcoin payment scripts (P2WPKH etc.), not contract
+	// identity hashes.  Including them created a large false-positive surface
+	// where unrelated transactions could collide with fallback candidates.
 
 	return primary, fallback
 }
@@ -2213,11 +2178,39 @@ func matchWitnessCandidates(inputWitnesses [][][]byte, candidates map[string]*se
 	return nil, "", ""
 }
 
+// isIdentityHash returns true if hash is a known contract-identity hash of the
+// ingestion record (visible_pixel_hash, pixel_hash, or commitment_script_hash).
+// Used to reject witness matches against incidental fallback hashes (e.g. rec.ID
+// or filename prefix) that are not cryptographic contract identifiers.
+func isIdentityHash(rec *services.IngestionRecord, hash string, params *chaincfg.Params) bool {
+	hash = normalizeHex(hash)
+	if hash == "" {
+		return false
+	}
+	if v := normalizeHex(stringFromAny(rec.Metadata["visible_pixel_hash"])); v != "" && v == hash {
+		return true
+	}
+	if v := normalizeHex(stringFromAny(rec.Metadata["pixel_hash"])); v != "" && v == hash {
+		return true
+	}
+	if v := commitmentScriptHashFromMeta(*rec, params); normalizeHex(v) == hash {
+		return true
+	}
+	return false
+}
+
 func witnessHashes(item []byte) []string {
 	if len(item) == 0 {
 		return nil
 	}
-	seen := make(map[string]struct{}, 6)
+	// Only emit the two hash variants that Stargate actually uses for matching:
+	//  1. Raw hex of 32-byte items (the hashlock preimage = visible_pixel_hash).
+	//  2. SHA256 of the item (matches commitment_script_hash for redeem scripts).
+	//
+	// Hash160 and the text-decode path were removed because they created a
+	// broad false-positive surface where unrelated witness items could collide
+	// with ingestion candidate hashes.
+	seen := make(map[string]struct{}, 2)
 	add := func(value string) {
 		if value == "" {
 			return
@@ -2228,24 +2221,16 @@ func witnessHashes(item []byte) []string {
 		seen[value] = struct{}{}
 	}
 
+	// 32-byte items are SHA256 preimages (visible_pixel_hash) — emit raw hex.
+	// 20-byte items are Hash160 values — emit raw hex.
 	if len(item) == 32 || len(item) == 20 {
 		add(hex.EncodeToString(item))
 	}
-	sum := sha256.Sum256(item)
-	add(hex.EncodeToString(sum[:]))
-	add(hex.EncodeToString(btcutil.Hash160(item)))
 
-	asText := normalizeHex(strings.TrimSpace(string(item)))
-	if asText != "" && (len(asText) == 64 || len(asText) == 40) {
-		if decoded, err := hex.DecodeString(asText); err == nil {
-			add(asText)
-			if len(decoded) == 32 || len(decoded) == 20 {
-				add(hex.EncodeToString(decoded))
-			}
-			decodedSum := sha256.Sum256(decoded)
-			add(hex.EncodeToString(decodedSum[:]))
-			add(hex.EncodeToString(btcutil.Hash160(decoded)))
-		}
+	// Items > 32 bytes may be redeem scripts; SHA256 matches commitment_script_hash.
+	if len(item) > 32 {
+		sum := sha256.Sum256(item)
+		add(hex.EncodeToString(sum[:]))
 	}
 
 	out := make([]string, 0, len(seen))
@@ -2814,7 +2799,7 @@ func visiblePixelHash(imageBytes []byte, message string) string {
 		return ""
 	}
 	sum := sha256.Sum256(imageBytes)
-	return fmt.Sprintf("%x", sum[:8])
+	return fmt.Sprintf("%x", sum[:])
 }
 
 func normalizeHex(value string) string {
