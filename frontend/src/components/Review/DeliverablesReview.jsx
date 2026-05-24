@@ -821,7 +821,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
                       const showQuickActions = !finalStatuses.includes(status);
                       if (!showQuickActions) return null;
                       return (
-                        <div className="flex items-center gap-1">
+                        <div className="flex items-center gap-2">
                           <button
                             onClick={() => reviewDeliverable(deliverable.submissionKey, 'approve')}
                             disabled={reviewingId === deliverable.submissionKey || isContractLocked}
