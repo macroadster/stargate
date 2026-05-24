@@ -650,3 +650,182 @@ MCP UPDATE:
 ---
 
 **This pseudo-code provides the foundation for implementing Starlight's Bitcoin-backed AI task marketplace with cryptographic verification at every step.**
+
+---
+
+## 12. Implemented: Two-Phase Donation Sweep (Hashlock P2WSH)
+
+> **Status: Implemented** — commit `54cb24a` on `feature/single-binary`
+
+This section documents the **actually implemented** donation commitment mechanism. Unlike the theoretical designs above (multisig, Taproot, DLCs), this uses bare hashlock P2WSH scripts that require no signatures — only knowledge of the preimage.
+
+### 12.1 Design Goal
+
+When a contract is funded and a product is delivered, a portion of the funding (the "donation commitment") should be provably locked on-chain using the **wish image** hash, then re-locked using the **product image** hash, and finally swept to the project's donation wallet. This creates a two-phase cryptographic proof chain:
+
+```
+wish-image-hash  →  product-image-hash  →  donation wallet
+```
+
+### 12.2 PSBT Output Structure
+
+When a funder builds a PSBT with `CommitmentSats > 0`:
+
+```
+Output 0..N:   P2WPKH  — contractor payouts (direct to wallet addresses)
+Output N+1:    P2WSH   — hashlock donation commitment (wish image)
+Output N+2:    P2WPKH  — change (if any)
+```
+
+The donation commitment output (N+1) uses a bare hashlock redeem script:
+
+```bitcoin-script
+# Redeem Script (wish-hash hashlock)
+OP_SHA256
+<SHA256(wish_pixel_hash_bytes)>    # double-SHA256: SHA256 of the raw wish image pixel hash
+OP_EQUAL
+
+# Spending witness: [wish_pixel_hash_bytes, redeem_script]
+# Anyone who knows the wish image preimage can spend this UTXO.
+```
+
+The `wish_pixel_hash` is `manifest.VisiblePixelHash` — the SHA256 of the visible pixel data of the wish image. The lock hash is `SHA256(wish_pixel_hash_bytes)`, making it a double-hash commitment.
+
+**Source**: `backend/bitcoin/psbt_builder.go` → `buildHashlockRedeemScript()`, `buildCommitmentScript()`
+
+### 12.3 Two-Phase Sweep Flow
+
+```
+┌──────────────────────────────────────────────────────────┐
+│  PSBT Funding TX (confirmed on-chain)                    │
+│                                                          │
+│  Output N+1: P2WSH hashlock                              │
+│    Lock: OP_SHA256 <SHA256(wish_hash)> OP_EQUAL           │
+│    Value: commitment_sats                                │
+└────────────────────────┬─────────────────────────────────┘
+                         │
+          Phase 1: Recommit (wish → product)
+                         │
+                         ▼
+┌──────────────────────────────────────────────────────────┐
+│  Recommit TX                                             │
+│                                                          │
+│  Input: spends wish-hash UTXO                            │
+│    Witness: [wish_pixel_hash_bytes, wish_redeem_script]  │
+│                                                          │
+│  Output 0: P2WSH hashlock                                │
+│    Lock: OP_SHA256 <SHA256(product_hash)> OP_EQUAL        │
+│    Value: commitment_sats − fee                          │
+└────────────────────────┬─────────────────────────────────┘
+                         │
+          Phase 2: Final sweep (product → donation)
+                         │
+                         ▼
+┌──────────────────────────────────────────────────────────┐
+│  Sweep TX                                                │
+│                                                          │
+│  Input: spends product-hash UTXO                         │
+│    Witness: [product_pixel_hash_bytes, product_redeem]   │
+│                                                          │
+│  Output 0: P2WPKH                                        │
+│    Destination: STARLIGHT_DONATION_ADDRESS                │
+│    Value: commitment_sats − 2×fee                        │
+└──────────────────────────────────────────────────────────┘
+```
+
+### 12.4 Phase Routing Logic
+
+`SweepCommitmentIfReady()` in `commitment_sweep_auto.go` routes based on proof state:
+
+| Condition | Action |
+|---|---|
+| `ProductPixelHash` set, `RecommitStatus == ""` | **Phase 1**: build recommit tx (wish → product hashlock) |
+| `ProductPixelHash` set, `RecommitStatus == "broadcast"` | **Wait**: recommit tx in mempool, not yet confirmed |
+| `ProductPixelHash` set, `RecommitStatus == "confirmed"` | **Phase 2**: sweep product hashlock → donation address |
+| `ProductPixelHash` empty | **Direct sweep** (legacy): wish hashlock → donation address |
+
+### 12.5 On-Chain Detection
+
+The block monitor (`block_monitor.go` → `reconcileOracleIngestions`) detects both transactions:
+
+**Funding TX detection** — matched via:
+- `funding_txid` in ingestion metadata (O(1) lookup)
+- `visible_pixel_hash` in transaction witness data
+- `commitment_script_hash` from output script matching
+
+**Recommit TX detection** — matched via:
+- The recommit TX's witness reveals `wish_pixel_hash_bytes` (the preimage)
+- `witnessHashes()` extracts the 32-byte preimage as hex
+- This matches `visible_pixel_hash` in the ingestion candidate list
+- `confirmAndSweepContractTasks()` then matches `proof.RecommitTxID == tx.TxID`
+
+Both detection paths use `ingestionCandidateBuckets()` which loads from `ListRecent("", 500)` — this includes already-confirmed ingestions, ensuring the recommit TX is discoverable even after the funding TX was confirmed in an earlier block.
+
+### 12.6 Data Model
+
+Fields on `MerkleProof` (in `core/smart_contract/types.go`):
+
+```
+# Wish-hash commitment (set during PSBT construction / stego reconciliation)
+CommitmentPixelHash     — wish image pixel hash (hex, 64 chars)
+CommitmentRedeemScript  — wish hashlock redeem script (hex)
+CommitmentRedeemHash    — SHA256 of the redeem script (hex)
+CommitmentVout          — output index of the wish hashlock in funding TX
+CommitmentSats          — sats locked in the wish hashlock
+
+# Product-hash recommitment (set during phase 1 broadcast)
+ProductPixelHash        — product image pixel hash (hex, 64 chars)
+RecommitTxID            — txid of the phase 1 recommit transaction
+RecommitVout            — output index of the product hashlock
+RecommitRedeemScript    — product hashlock redeem script (hex)
+RecommitRedeemHash      — SHA256 of the product redeem script (hex)
+RecommitAddress         — P2WSH address of the product hashlock
+RecommitSats            — sats in the product hashlock output
+RecommitStatus          — "", "broadcast", "confirmed"
+RecommitBroadcastAt     — timestamp of phase 1 broadcast
+RecommitConfirmedAt     — timestamp of phase 1 confirmation
+
+# Final sweep (set during phase 2 broadcast / confirmation)
+SweepTxID               — txid of the final sweep to donation address
+SweepStatus             — "", "broadcast", "confirmed", "skipped", "failed"
+SweepAttemptedAt        — timestamp of last sweep attempt
+SweepError              — error message if failed/skipped
+```
+
+### 12.7 Stego Reconciliation
+
+When a product is delivered via steganography (`stego_reconcile.go` → `upsertContractFromStegoPayload`):
+
+- `CommitmentPixelHash` = `manifest.VisiblePixelHash` (wish image hash — used as preimage for the existing wish hashlock)
+- `ProductPixelHash` = `stegoHash` (SHA256 of the delivered product stego image — used as preimage for the new product hashlock)
+- `CommitmentSource` = `"wish"` (indicates the commitment was built from the wish image)
+
+This separation ensures the PSBT's wish-hash hashlock is spendable with the wish preimage, while the product hash is stored for the recommitment phase.
+
+### 12.8 Edge Cases
+
+**No donation (`CommitmentSats == 0`)**: PSBT builder skips the hashlock output entirely. No `CommitmentRedeemScript` or `CommitmentVout` is set. Phase 1 guard detects empty commitment data and marks `SweepStatus = "skipped"`.
+
+**Dust threshold**: If the commitment amount minus fees falls below 546 sats at any phase, `BuildRecommitSweepTx` / `BuildCommitmentSweepTx` returns "output below dust" and the sweep is marked "skipped".
+
+**Backward compatibility**: Existing contracts without `ProductPixelHash` fall through to `sweepDirect` — the original single-phase sweep that sends the wish hashlock directly to the donation address.
+
+**No `STARLIGHT_DONATION_ADDRESS`**: If the env var is empty, all sweeps are marked "skipped" immediately.
+
+### 12.9 Security Considerations
+
+- **Bare hashlock (no signature)**: Anyone who knows the preimage can spend the UTXO. The wish image preimage is derivable from the published wish image. The product image preimage is derivable from the delivered product. This is acceptable because the donation commitment is intended to be swept by the system, not held as a secure store of value.
+- **No timelock / refund path**: There is no `OP_CHECKLOCKTIMEVERIFY` or refund mechanism. If the system fails to sweep, the sats remain locked forever (recoverable only by someone who knows or can derive the preimage).
+- **Double-hash commitment**: The redeem script uses `SHA256(preimage)` where the preimage is itself a SHA256 hash, creating a double-hash barrier. However, since preimages are derived from published images, this is a proof-of-knowledge mechanism, not a security boundary.
+
+### 12.10 Source Files
+
+| File | Role |
+|---|---|
+| `backend/bitcoin/psbt_builder.go` | PSBT construction, `buildHashlockRedeemScript()` |
+| `backend/bitcoin/commitment_sweep.go` | `BuildCommitmentSweepTx()`, `BuildRecommitSweepTx()` |
+| `backend/bitcoin/commitment_sweep_auto.go` | `SweepCommitmentIfReady()`, phase routing |
+| `backend/bitcoin/block_monitor.go` | On-chain detection, `confirmAndSweepContractTasks()` |
+| `backend/middleware/smart_contract/stego_reconcile.go` | Sets `ProductPixelHash` and `CommitmentPixelHash` |
+| `backend/middleware/smart_contract/funding_sync.go` | Periodic proof refresh and sweep trigger |
+| `backend/core/smart_contract/types.go` | `MerkleProof` struct with all commitment fields |
