@@ -208,19 +208,9 @@ func (s *Server) publishStegoForProposal(ctx context.Context, proposalID string,
 	if p.VisiblePixelHash != visibleHash {
 		p.VisiblePixelHash = visibleHash
 	}
-	payload := buildStegoPayload(p, meta, cfg.PayloadSchema, cfg.PayloadMaxTasks)
-	payloadBytes, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Errorf("failed to marshal stego payload: %w", err)
-	}
 	ipfsClient := ipfs.NewClientFromEnv()
 	if ipfsClient == nil {
 		return fmt.Errorf("IPFS client is disabled - cannot publish stego")
-	}
-	payloadName := fmt.Sprintf("proposal-%s-payload.json", proposalID)
-	payloadCID, err := ipfsClient.AddBytes(ctx, payloadName, payloadBytes)
-	if err != nil {
-		return fmt.Errorf("ipfs payload add failed: %w", err)
 	}
 	manifestCreatedAt := time.Now().Unix()
 	if raw := strings.TrimSpace(toString(meta["stego_manifest_created_at"])); raw != "" {
@@ -258,17 +248,17 @@ func (s *Server) publishStegoForProposal(ctx context.Context, proposalID string,
 		// Sandbox dir may not exist yet (no results submitted) — that's OK
 		log.Printf("stego publish: sandbox tarball skipped for %s: %v", proposalID, err)
 	}
-	manifestBytes, err := stego.BuildManifestYAML(stego.Manifest{
-		SchemaVersion:    cfg.ManifestSchema,
-		ProposalID:       proposalID,
-		VisiblePixelHash: visibleHash,
-		SandboxHash:      sandboxHash,
-		PayloadCID:       payloadCID,
-		CreatedAt:        manifestCreatedAt,
-		Issuer:           cfg.Issuer,
-	})
+	// Schema v2: embed the full payload JSON directly in the alpha channel.
+	// No separate IPFS file needed — peers extract everything from the image.
+	payload := buildStegoPayload(p, meta, cfg.PayloadSchema, cfg.PayloadMaxTasks)
+	payload.ProposalID = proposalID
+	payload.VisiblePixelHash = visibleHash
+	payload.Issuer = cfg.Issuer
+	payload.CreatedAt = manifestCreatedAt
+	payload.SandboxHash = sandboxHash
+	manifestBytes, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("failed to build manifest: %w", err)
+		return fmt.Errorf("failed to marshal embedded payload: %w", err)
 	}
 	method := strings.TrimSpace(coverRec.Method)
 	if method == "" {
@@ -292,7 +282,7 @@ func (s *Server) publishStegoForProposal(ctx context.Context, proposalID string,
 	if err != nil {
 		return fmt.Errorf("ipfs stego add failed: %w", err)
 	}
-	meta["stego_payload_cid"] = payloadCID
+	meta["stego_payload_cid"] = "inline" // v2: payload embedded in stego image
 	meta["stego_image_cid"] = stegoCID
 	meta["stego_contract_id"] = contractID
 	meta["stego_manifest_created_at"] = strconv.FormatInt(manifestCreatedAt, 10)
@@ -306,7 +296,7 @@ func (s *Server) publishStegoForProposal(ctx context.Context, proposalID string,
 	}
 	if s.ingestionSvc != nil && ingestionID != "" {
 		updates := map[string]interface{}{
-			"stego_payload_cid":          payloadCID,
+			"stego_payload_cid":          "inline",
 			"stego_image_cid":            stegoCID,
 			"stego_contract_id":          contractID,
 			"stego_manifest_created_at":  strconv.FormatInt(manifestCreatedAt, 10),
@@ -328,7 +318,6 @@ func (s *Server) publishStegoForProposal(ctx context.Context, proposalID string,
 			ExpectedHash:     visibleHash,
 			ProposalID:       proposalID,
 			VisiblePixelHash: visibleHash,
-			PayloadCID:       payloadCID,
 			Issuer:           cfg.Issuer,
 			Timestamp:        time.Now().Unix(),
 		}

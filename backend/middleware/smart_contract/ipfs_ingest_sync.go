@@ -135,11 +135,11 @@ func IngestDownloadedFile(ctx context.Context, filePath string, cid string, inge
 		return
 	}
 	reconcileCfg := loadStegoReconcileConfig()
-	manifestBytes, err := extractStegoManifest(ctx, blob, reconcileCfg)
+	rawBytes, err := extractStegoManifest(ctx, blob, reconcileCfg)
 	if err != nil {
 		return // not a stego image — normal, skip silently
 	}
-	stegoManifest, err := stego.ParseManifestYAML(manifestBytes)
+	stegoManifest, payload, err := stego.ParseEmbedded(rawBytes)
 	if err != nil {
 		return // not a proper manifest — skip
 	}
@@ -150,19 +150,18 @@ func IngestDownloadedFile(ctx context.Context, filePath string, cid string, inge
 	if id == "" {
 		return
 	}
-	// Fetch payload from IPFS (payload CID is referenced inside the manifest)
-	client := ipfs.NewClientFromEnv()
-	var payload stego.Payload
-	var payloadMeta map[string]interface{}
-	if client != nil {
-		loaded, err := fetchStegoPayload(ctx, client, stegoManifest.PayloadCID)
-		if err != nil {
-			log.Printf("mirror ingest: payload fetch %s: %v", stegoManifest.PayloadCID, err)
-		} else {
-			payload = loaded
-			payloadMeta = payloadMetadataMap(payload)
+	// v1 fallback: payload was not inline — fetch from IPFS
+	if payload.SchemaVersion == 0 && stegoManifest.PayloadCID != "" {
+		client := ipfs.NewClientFromEnv()
+		if client != nil {
+			if loaded, err := fetchStegoPayload(ctx, client, stegoManifest.PayloadCID); err != nil {
+				log.Printf("mirror ingest: payload fetch %s: %v", stegoManifest.PayloadCID, err)
+			} else {
+				payload = loaded
+			}
 		}
 	}
+	payloadMeta := payloadMetadataMap(payload)
 	// Ensure proposal exists in MCP store
 	if store != nil {
 		if err := ensureProposalFromStegoPayload(ctx, store, cid, stegoManifest, payload); err != nil {
@@ -192,7 +191,7 @@ func IngestDownloadedFile(ctx context.Context, filePath string, cid string, inge
 		ID:            id,
 		Filename:      filepath.Base(filePath),
 		Method:        getStegoMethodForFilename(filePath),
-		MessageLength: len(manifestBytes),
+		MessageLength: len(rawBytes),
 		ImageBase64:   base64.StdEncoding.EncodeToString(blob),
 		Metadata: map[string]interface{}{
 			"stego_image_cid":            cid,
@@ -200,7 +199,6 @@ func IngestDownloadedFile(ctx context.Context, filePath string, cid string, inge
 			"stego_manifest_issuer":      stegoManifest.Issuer,
 			"stego_manifest_created_at":  stegoManifest.CreatedAt,
 			"stego_manifest_proposal_id": stegoManifest.ProposalID,
-			"stego_manifest_yaml":        string(manifestBytes),
 			"visible_pixel_hash":         stegoManifest.VisiblePixelHash,
 		},
 		Status: "verified",
@@ -408,16 +406,15 @@ func ipfsIngestProcessManifest(ctx context.Context, ingest *services.IngestionSe
 		if err != nil {
 			continue
 		}
-		manifestBytes, err := extractStegoManifest(ctx, blob, reconcileCfg)
+		rawBytes, err := extractStegoManifest(ctx, blob, reconcileCfg)
 		if err != nil {
 			log.Printf("ipfs ingestion sync: stego extraction failed for %s (%s): %v", entry.CID, entry.Path, err)
 			state.lastSeen[entry.CID] = entry.ModTime
 			continue
 		}
-		stegoManifest, err := stego.ParseManifestYAML(manifestBytes)
+		stegoManifest, payload, err := stego.ParseEmbedded(rawBytes)
 		if err != nil {
 			// Not a manifest — likely a plain-text wish message embedded via stego.
-			// This is expected and not an error; skip silently.
 			state.lastSeen[entry.CID] = entry.ModTime
 			continue
 		}
@@ -429,20 +426,18 @@ func ipfsIngestProcessManifest(ctx context.Context, ingest *services.IngestionSe
 			state.lastSeen[entry.CID] = entry.ModTime
 			continue
 		}
-		var payload stego.Payload
-		var payloadMeta map[string]interface{}
-		if store != nil || ingest != nil {
-			loaded, err := fetchStegoPayload(ctx, client, stegoManifest.PayloadCID)
-			if err != nil {
+		// v1 fallback: payload was not inline — fetch from IPFS
+		if payload.SchemaVersion == 0 && stegoManifest.PayloadCID != "" {
+			if loaded, err := fetchStegoPayload(ctx, client, stegoManifest.PayloadCID); err != nil {
 				log.Printf("ipfs ingestion sync payload fetch failed: %v", err)
 			} else {
 				payload = loaded
-				payloadMeta = payloadMetadataMap(payload)
-				if store != nil {
-					if err := ensureProposalFromStegoPayload(ctx, store, entry.CID, stegoManifest, payload); err != nil {
-						log.Printf("ipfs ingestion sync proposal upsert failed: %v", err)
-					}
-				}
+			}
+		}
+		payloadMeta := payloadMetadataMap(payload)
+		if store != nil {
+			if err := ensureProposalFromStegoPayload(ctx, store, entry.CID, stegoManifest, payload); err != nil {
+				log.Printf("ipfs ingestion sync proposal upsert failed: %v", err)
 			}
 		}
 		if existing, err := ingest.Get(id); err == nil && existing != nil {
@@ -468,8 +463,8 @@ func ipfsIngestProcessManifest(ctx context.Context, ingest *services.IngestionSe
 		rec := services.IngestionRecord{
 			ID:            id,
 			Filename:      filepath.Base(entry.Path),
-			Method:        getStegoMethodForFilename(entry.Path), // Use appropriate method based on image format
-			MessageLength: len(manifestBytes),
+			Method:        getStegoMethodForFilename(entry.Path),
+			MessageLength: len(rawBytes),
 			ImageBase64:   base64.StdEncoding.EncodeToString(blob),
 			Metadata: map[string]interface{}{
 				"stego_image_cid":            entry.CID,
@@ -477,7 +472,6 @@ func ipfsIngestProcessManifest(ctx context.Context, ingest *services.IngestionSe
 				"stego_manifest_issuer":      stegoManifest.Issuer,
 				"stego_manifest_created_at":  stegoManifest.CreatedAt,
 				"stego_manifest_proposal_id": stegoManifest.ProposalID,
-				"stego_manifest_yaml":        string(manifestBytes),
 				"visible_pixel_hash":         stegoManifest.VisiblePixelHash,
 			},
 			Status: "verified",

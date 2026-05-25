@@ -1,11 +1,24 @@
 package stego
 
-// Payload captures the off-chain proposal/task data referenced by a stego manifest.
+// Payload captures the proposal/task data embedded in a stego image.
+//
+// Schema v2 embeds the full payload (including manifest fields) as JSON
+// directly in the alpha channel — no separate IPFS file needed.
+// Schema v1 (legacy) only embedded a YAML manifest pointer; the payload
+// lived in a separate IPFS object referenced by PayloadCID.
 type Payload struct {
 	SchemaVersion int             `json:"schema_version"`
 	Proposal      PayloadProposal `json:"proposal"`
 	Tasks         []PayloadTask   `json:"tasks,omitempty"`
 	Metadata      []MetadataEntry `json:"metadata,omitempty"`
+
+	// Manifest fields (v2 inline — previously in separate YAML manifest)
+	ProposalID       string `json:"proposal_id,omitempty"`
+	VisiblePixelHash string `json:"visible_pixel_hash,omitempty"`
+	Issuer           string `json:"issuer,omitempty"`
+	CreatedAt        int64  `json:"created_at,omitempty"`
+	SandboxHash      string `json:"sandbox_hash,omitempty"`
+	ContractID       string `json:"contract_id,omitempty"`
 }
 
 type PayloadProposal struct {

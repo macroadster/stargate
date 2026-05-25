@@ -192,20 +192,33 @@ func (s *Server) ReconcileStegoWithAnnouncement(ctx context.Context, ann *stegoA
 	}
 	log.Printf("stego: wrote stego image to %s (%d bytes)", uploadPath, len(stegoBytes))
 
-	// Build manifest from announcement data
-	manifest := stego.Manifest{
-		SchemaVersion:    1,
-		ProposalID:       ann.ProposalID,
-		VisiblePixelHash: ann.VisiblePixelHash,
-		PayloadCID:       ann.PayloadCID,
-		CreatedAt:        time.Now().Unix(),
-		Issuer:           ann.Issuer,
+	// Extract manifest + payload directly from the stego image.
+	// v2 images contain the full payload inline (JSON); v1 images
+	// only have a YAML manifest and require an IPFS fetch for the payload.
+	rawBytes, err := extractStegoManifest(ctx, stegoBytes, loadStegoReconcileConfig())
+	if err != nil {
+		return fmt.Errorf("stego extraction failed: %w", err)
 	}
-
-	// Download payload from IPFS
-	var payload stego.Payload
-	if ann.PayloadCID != "" {
-		payloadBytes, err := ipfsClient.Cat(ctx, ann.PayloadCID)
+	manifest, payload, err := stego.ParseEmbedded(rawBytes)
+	if err != nil {
+		return fmt.Errorf("stego parse failed: %w", err)
+	}
+	// Fall back to announcement fields when extraction gives empty manifest
+	if manifest.ProposalID == "" {
+		manifest.ProposalID = ann.ProposalID
+	}
+	if manifest.VisiblePixelHash == "" {
+		manifest.VisiblePixelHash = ann.VisiblePixelHash
+	}
+	if manifest.Issuer == "" {
+		manifest.Issuer = ann.Issuer
+	}
+	if manifest.CreatedAt <= 0 {
+		manifest.CreatedAt = time.Now().Unix()
+	}
+	// v1 fallback: payload was not inline — fetch from IPFS
+	if payload.SchemaVersion == 0 && manifest.PayloadCID != "" {
+		payloadBytes, err := ipfsClient.Cat(ctx, manifest.PayloadCID)
 		if err != nil {
 			return fmt.Errorf("ipfs cat payload failed: %w", err)
 		}
@@ -253,11 +266,11 @@ func (s *Server) reconcileStegoFromIPFS(ctx context.Context, stegoCID string, ex
 	if expectedHash != "" && !strings.EqualFold(expectedHash, stegoHash) {
 		return stegoReconcileResponse{}, fmt.Errorf("stego hash mismatch: expected %s got %s", expectedHash, stegoHash)
 	}
-	manifestBytes, err := extractStegoManifest(ctx, stegoBytes, loadStegoReconcileConfig())
+	rawBytes, err := extractStegoManifest(ctx, stegoBytes, loadStegoReconcileConfig())
 	if err != nil {
 		return stegoReconcileResponse{}, err
 	}
-	manifest, err := stego.ParseManifestYAML(manifestBytes)
+	manifest, payload, err := stego.ParseEmbedded(rawBytes)
 	if err != nil {
 		return stegoReconcileResponse{}, err
 	}
@@ -265,13 +278,15 @@ func (s *Server) reconcileStegoFromIPFS(ctx context.Context, stegoCID string, ex
 	if contractID == "" {
 		return stegoReconcileResponse{}, fmt.Errorf("manifest visible_pixel_hash missing")
 	}
-	payloadBytes, err := ipfsClient.Cat(ctx, manifest.PayloadCID)
-	if err != nil {
-		return stegoReconcileResponse{}, fmt.Errorf("ipfs cat payload failed: %w", err)
-	}
-	var payload stego.Payload
-	if err := json.Unmarshal(payloadBytes, &payload); err != nil {
-		return stegoReconcileResponse{}, fmt.Errorf("payload json decode failed: %w", err)
+	// v1 fallback: payload was not inline — fetch from IPFS
+	if payload.SchemaVersion == 0 && manifest.PayloadCID != "" {
+		payloadBytes, err := ipfsClient.Cat(ctx, manifest.PayloadCID)
+		if err != nil {
+			return stegoReconcileResponse{}, fmt.Errorf("ipfs cat payload failed: %w", err)
+		}
+		if err := json.Unmarshal(payloadBytes, &payload); err != nil {
+			return stegoReconcileResponse{}, fmt.Errorf("payload json decode failed: %w", err)
+		}
 	}
 	if err := s.upsertContractFromStegoPayload(ctx, contractID, stegoCID, stegoHash, manifest, payload); err != nil {
 		return stegoReconcileResponse{}, err
