@@ -1,6 +1,7 @@
 package smart_contract
 
 import (
+	"archive/tar"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -28,9 +29,10 @@ import (
 	"github.com/btcsuite/btcd/txscript"
 
 	"stargate-backend/core/smart_contract"
-	"stargate-backend/storage/ipfs"
 	"stargate-backend/services"
 	"stargate-backend/stego"
+	"stargate-backend/storage/ipfs"
+	scstore "stargate-backend/storage/smart_contract"
 )
 
 type stegoReconcileRequest struct {
@@ -241,6 +243,25 @@ func (s *Server) ReconcileStegoWithAnnouncement(ctx context.Context, ann *stegoA
 
 	// Ensure stego ingestion record
 	s.ensureStegoIngestion(ctx, contractID, ann.StegoCID, stegoHash, stegoBytes, manifest)
+
+	// If the announcement carries sandbox_tarball_cid that wasn't in the
+	// payload metadata, persist it so downloadSandboxArtifacts can find it.
+	if cid := strings.TrimSpace(ann.SandboxTarballCID); cid != "" {
+		proposalID := strings.TrimSpace(manifest.ProposalID)
+		if proposalID == "" {
+			proposalID = contractID
+		}
+		if p, err := s.store.GetProposal(ctx, proposalID); err == nil {
+			pmeta := copyMeta(p.Metadata)
+			if pmeta == nil {
+				pmeta = map[string]interface{}{}
+			}
+			if strings.TrimSpace(toString(pmeta["sandbox_tarball_cid"])) == "" {
+				pmeta["sandbox_tarball_cid"] = cid
+				_ = s.store.UpdateProposalMetadata(ctx, p.ID, pmeta)
+			}
+		}
+	}
 
 	log.Printf("stego: reconciled from announcement: contract_id=%s, stego_cid=%s", contractID, ann.StegoCID)
 	return nil
@@ -479,6 +500,15 @@ func (s *Server) upsertContractFromStegoPayload(ctx context.Context, contractID,
 		"origin_proposal_id":        manifest.ProposalID,
 		"visible_pixel_hash":        manifest.VisiblePixelHash,
 	}
+	// Propagate sandbox artifact metadata so peers can download on confirmation.
+	if manifest.SandboxHash != "" {
+		meta["sandbox_hash"] = manifest.SandboxHash
+	}
+	for _, entry := range payload.Metadata {
+		if entry.Key == "sandbox_tarball_cid" && strings.TrimSpace(entry.Value) != "" {
+			meta["sandbox_tarball_cid"] = entry.Value
+		}
+	}
 	if payload.Proposal.Title == "" {
 		payload.Proposal.Title = "Stego Contract " + contractID
 	}
@@ -636,6 +666,130 @@ func (s *Server) upsertContractFromStegoPayload(ctx context.Context, contractID,
 		return nil
 	}
 	return fmt.Errorf("store does not support contract upsert")
+}
+
+// downloadSandboxArtifacts fetches and extracts the sandbox tarball for a
+// confirmed contract.  It looks up sandbox_tarball_cid and sandbox_hash from
+// the associated proposal metadata, downloads the tarball from IPFS, verifies
+// the hash, and extracts the files to $UPLOADS_DIR/results/<contract-id>/.
+// The function is idempotent — if the results directory already exists and
+// passes hash verification, the download is skipped.
+func (s *Server) downloadSandboxArtifacts(ctx context.Context, contractID string) {
+	if s.store == nil || contractID == "" {
+		return
+	}
+	normalizedID := scstore.NormalizeContractID(contractID)
+	if normalizedID == "" {
+		return
+	}
+
+	// Find sandbox metadata from the proposal associated with this contract.
+	var sandboxCID, sandboxHash string
+	if p, err := s.store.GetProposal(ctx, contractID); err == nil && p.Metadata != nil {
+		sandboxCID = strings.TrimSpace(toString(p.Metadata["sandbox_tarball_cid"]))
+		sandboxHash = strings.TrimSpace(toString(p.Metadata["sandbox_hash"]))
+	}
+	if sandboxCID == "" {
+		// Try listing proposals by contract ID.
+		if proposals, err := s.store.ListProposals(ctx, smart_contract.ProposalFilter{ContractID: contractID}); err == nil {
+			for _, p := range proposals {
+				if cid := strings.TrimSpace(toString(p.Metadata["sandbox_tarball_cid"])); cid != "" {
+					sandboxCID = cid
+					sandboxHash = strings.TrimSpace(toString(p.Metadata["sandbox_hash"]))
+					break
+				}
+			}
+		}
+	}
+	if sandboxCID == "" {
+		log.Printf("sandbox: no tarball CID found for contract %s, skipping", contractID)
+		return
+	}
+
+	uploadsDir := strings.TrimSpace(os.Getenv("UPLOADS_DIR"))
+	if uploadsDir == "" {
+		uploadsDir = "/data/uploads"
+	}
+	resultsDir := filepath.Join(uploadsDir, "results", normalizedID)
+
+	// If results already exist and match the expected hash, skip download.
+	if info, err := os.Stat(resultsDir); err == nil && info.IsDir() {
+		if sandboxHash != "" {
+			if err := stego.VerifySandboxHash(resultsDir, sandboxHash); err == nil {
+				log.Printf("sandbox: artifacts already present and verified for %s", contractID)
+				return
+			}
+			log.Printf("sandbox: artifacts present but hash mismatch for %s, re-downloading", contractID)
+		} else {
+			log.Printf("sandbox: artifacts already present for %s (no hash to verify)", contractID)
+			return
+		}
+	}
+
+	ipfsClient := ipfs.NewClientFromEnv()
+	if ipfsClient == nil {
+		log.Printf("sandbox: IPFS disabled, cannot download artifacts for %s", contractID)
+		return
+	}
+
+	tarballBytes, err := ipfsClient.Cat(ctx, sandboxCID)
+	if err != nil {
+		log.Printf("sandbox: failed to download tarball %s for %s: %v", sandboxCID, contractID, err)
+		return
+	}
+
+	// Verify tarball hash before extracting.
+	if sandboxHash != "" {
+		sum := sha256.Sum256(tarballBytes)
+		actual := hex.EncodeToString(sum[:])
+		if !strings.EqualFold(actual, sandboxHash) {
+			log.Printf("sandbox: hash mismatch for %s: expected %s got %s", contractID, sandboxHash, actual)
+			return
+		}
+	}
+
+	// Extract tarball to results directory.
+	if err := os.MkdirAll(resultsDir, 0755); err != nil {
+		log.Printf("sandbox: failed to create results dir %s: %v", resultsDir, err)
+		return
+	}
+	tr := tar.NewReader(bytes.NewReader(tarballBytes))
+	fileCount := 0
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			log.Printf("sandbox: tar read error for %s: %v", contractID, err)
+			return
+		}
+		if hdr.Typeflag != tar.TypeReg {
+			continue
+		}
+		outPath := filepath.Join(resultsDir, filepath.FromSlash(hdr.Name))
+		// Guard against path traversal.
+		if !strings.HasPrefix(filepath.Clean(outPath), filepath.Clean(resultsDir)) {
+			log.Printf("sandbox: skipping path traversal in tarball: %s", hdr.Name)
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(outPath), 0755); err != nil {
+			log.Printf("sandbox: mkdir failed for %s: %v", outPath, err)
+			continue
+		}
+		data, err := io.ReadAll(tr)
+		if err != nil {
+			log.Printf("sandbox: read entry %s failed: %v", hdr.Name, err)
+			continue
+		}
+		if err := os.WriteFile(outPath, data, 0644); err != nil {
+			log.Printf("sandbox: write %s failed: %v", outPath, err)
+			continue
+		}
+		fileCount++
+	}
+
+	log.Printf("sandbox: downloaded and extracted %d files for contract %s from %s", fileCount, contractID, sandboxCID)
 }
 
 

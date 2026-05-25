@@ -48,14 +48,15 @@ type stegoTaskPayload = stego.PayloadTask
 type stegoMetadataEntry = stego.MetadataEntry
 
 type stegoAnnouncement struct {
-	Type             string `json:"type"`
-	StegoCID         string `json:"stego_cid"`
-	ExpectedHash     string `json:"expected_hash,omitempty"`
-	ProposalID       string `json:"proposal_id,omitempty"`
-	VisiblePixelHash string `json:"visible_pixel_hash,omitempty"`
-	PayloadCID       string `json:"payload_cid,omitempty"`
-	Issuer           string `json:"issuer,omitempty"`
-	Timestamp        int64  `json:"timestamp"`
+	Type              string `json:"type"`
+	StegoCID          string `json:"stego_cid"`
+	ExpectedHash      string `json:"expected_hash,omitempty"`
+	ProposalID        string `json:"proposal_id,omitempty"`
+	VisiblePixelHash  string `json:"visible_pixel_hash,omitempty"`
+	PayloadCID        string `json:"payload_cid,omitempty"`
+	Issuer            string `json:"issuer,omitempty"`
+	SandboxTarballCID string `json:"sandbox_tarball_cid,omitempty"`
+	Timestamp         int64  `json:"timestamp"`
 }
 
 func loadStegoApprovalConfig() stegoApprovalConfig {
@@ -313,13 +314,14 @@ func (s *Server) publishStegoForProposal(ctx context.Context, proposalID string,
 	}
 	if cfg.AnnounceEnabled && strings.TrimSpace(cfg.AnnounceTopic) != "" {
 		announce := stegoAnnouncement{
-			Type:             "stego",
-			StegoCID:         stegoCID,
-			ExpectedHash:     visibleHash,
-			ProposalID:       proposalID,
-			VisiblePixelHash: visibleHash,
-			Issuer:           cfg.Issuer,
-			Timestamp:        time.Now().Unix(),
+			Type:              "stego",
+			StegoCID:          stegoCID,
+			ExpectedHash:      visibleHash,
+			ProposalID:        proposalID,
+			VisiblePixelHash:  visibleHash,
+			Issuer:            cfg.Issuer,
+			SandboxTarballCID: strings.TrimSpace(toString(meta["sandbox_tarball_cid"])),
+			Timestamp:         time.Now().Unix(),
 		}
 		if payload, err := json.Marshal(announce); err != nil {
 			log.Printf("stego announce marshal failed: %v", err)

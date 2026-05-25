@@ -2409,6 +2409,11 @@ func (s *Server) processEvent(evt smart_contract.Event, shouldPublish bool) {
 	if shouldPublish {
 		go s.publishSyncEvent(evt)
 	}
+
+	// When the local oracle confirms a contract, download sandbox artifacts.
+	if evt.Type == "contract_confirmed" && evt.EntityID != "" {
+		go s.downloadSandboxArtifacts(context.Background(), evt.EntityID)
+	}
 }
 
 func (s *Server) publishSyncEvent(evt smart_contract.Event) {
@@ -2567,6 +2572,8 @@ func (s *Server) ReconcileSyncAnnouncement(ctx context.Context, ann *syncAnnounc
 	case "contract_confirmed":
 		if ann.Contract != nil {
 			err = s.store.UpdateContractStatus(ctx, ann.Contract.ContractID, "confirmed")
+			// Download sandbox artifacts from IPFS now that the contract is confirmed.
+			go s.downloadSandboxArtifacts(context.Background(), ann.Contract.ContractID)
 		}
 	case "submit":
 		if ann.Submission != nil {
