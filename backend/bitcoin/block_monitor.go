@@ -1683,14 +1683,17 @@ func (bm *BlockMonitor) reconcileIngestionContracts(blockDir string, parsedBlock
 }
 
 func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *ParsedBlock, smartContracts []SmartContractData, blockHeight int64) []SmartContractData {
-	if bm.ingestion == nil || len(parsedBlock.Transactions) == 0 {
+	if len(parsedBlock.Transactions) == 0 {
 		return smartContracts
 	}
 
-	recs, err := bm.ingestion.ListRecent("", 500)
-	if err != nil {
-		log.Printf("oracle reconcile: failed to list ingestions: %v", err)
-		return smartContracts
+	var recs []services.IngestionRecord
+	if bm.ingestion != nil {
+		var err error
+		recs, err = bm.ingestion.ListRecent("", 500)
+		if err != nil {
+			log.Printf("oracle reconcile: failed to list ingestions: %v", err)
+		}
 	}
 
 	primaryCandidates := make(map[string]*services.IngestionRecord, len(recs))
@@ -1714,11 +1717,22 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 		}
 
 	}
+	// Also add candidates from proposals (MCP store).  Proposals are replicated
+	// more reliably than ingestion records (via MCP event pubsub), so a peer node
+	// may have a proposal with visible_pixel_hash but no matching ingestion record.
+	proposalCandidates := bm.proposalCandidates(primaryCandidates)
+	for hash, rec := range proposalCandidates {
+		if _, exists := primaryCandidates[hash]; !exists {
+			primaryCandidates[hash] = rec
+			candidatesByID[rec.ID] = append(candidatesByID[rec.ID], hash)
+		}
+	}
+
 	if len(primaryCandidates) == 0 && len(fallbackCandidates) == 0 && len(txidMatches) == 0 {
 		return smartContracts
 	}
 
-	log.Printf("oracle reconcile: %d primary hashes, %d fallback hashes, %d funding txids across %d ingestions", len(primaryCandidates), len(fallbackCandidates), len(txidMatches), len(recs))
+	log.Printf("oracle reconcile: %d primary hashes, %d fallback hashes, %d funding txids across %d ingestions (+%d from proposals)", len(primaryCandidates), len(fallbackCandidates), len(txidMatches), len(recs), len(proposalCandidates))
 
 	for _, tx := range parsedBlock.Transactions {
 		if match, ok := txidMatches[tx.TxID]; ok && match != nil {
@@ -2198,6 +2212,56 @@ func ingestionCandidateBuckets(rec services.IngestionRecord, params *chaincfg.Pa
 	}
 
 	return primary, fallback
+}
+
+// proposalLister is an optional interface satisfied by MCP stores that can
+// list proposals.  Used to build OP_RETURN candidates from proposals when
+// the peer's ingestion records are incomplete.
+type proposalLister interface {
+	ListProposals(ctx context.Context, filter smart_contract.ProposalFilter) ([]smart_contract.Proposal, error)
+}
+
+// proposalCandidates builds synthetic IngestionRecord entries from proposals
+// whose visible_pixel_hash isn't already present in the existing candidate map.
+// This ensures the OP_RETURN matching works even when the peer received the
+// proposal (via MCP sync) but not the ingestion record (via IPFS ingest sync).
+func (bm *BlockMonitor) proposalCandidates(existing map[string]*services.IngestionRecord) map[string]*services.IngestionRecord {
+	pl, ok := bm.sweepStore.(proposalLister)
+	if !ok || pl == nil {
+		return nil
+	}
+	proposals, err := pl.ListProposals(context.Background(), smart_contract.ProposalFilter{
+		MaxResults: 500,
+	})
+	if err != nil {
+		return nil
+	}
+	out := make(map[string]*services.IngestionRecord)
+	for _, p := range proposals {
+		hash := normalizeHex(strings.TrimSpace(p.VisiblePixelHash))
+		if hash == "" || len(hash) != 64 {
+			continue
+		}
+		if _, covered := existing[hash]; covered {
+			continue
+		}
+		// Use the visible_pixel_hash as the record ID (same convention as
+		// ipfsIngestProcessManifest).
+		id := hash
+		if strings.TrimSpace(p.ID) != "" && !strings.HasPrefix(p.ID, "proposal-") && !strings.HasPrefix(p.ID, "wish-") {
+			id = p.ID
+		}
+		rec := &services.IngestionRecord{
+			ID:       id,
+			Filename: "",
+			Metadata: map[string]interface{}{
+				"visible_pixel_hash": hash,
+				"source":             "proposal",
+			},
+		}
+		out[hash] = rec
+	}
+	return out
 }
 
 func hashPrefixFromFilename(filename string) string {
