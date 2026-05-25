@@ -19,6 +19,7 @@ type stegoPubsubConfig struct {
 	Topic    string
 	APIURL   string
 	Interval time.Duration
+	Issuer   string
 }
 
 type stegoPubsubState struct {
@@ -82,11 +83,24 @@ func loadStegoPubsubConfig() stegoPubsubConfig {
 		}
 	}
 
+	issuer := strings.TrimSpace(os.Getenv("STARGATE_STEGO_ISSUER"))
+	if issuer == "" {
+		issuer = strings.TrimSpace(os.Getenv("STARGATE_INSTANCE_ID"))
+	}
+	if issuer == "" {
+		if host, err := os.Hostname(); err == nil && strings.TrimSpace(host) != "" {
+			issuer = host
+		} else {
+			issuer = "stargate"
+		}
+	}
+
 	return stegoPubsubConfig{
 		Enabled:  enabled,
 		Topic:    topic,
 		APIURL:   "",
 		Interval: interval,
+		Issuer:   issuer,
 	}
 }
 
@@ -117,6 +131,11 @@ func stegoPubsubSubscribe(ctx context.Context, server *Server, cfg stegoPubsubCo
 				continue
 			}
 			if announcement == nil || strings.TrimSpace(announcement.StegoCID) == "" {
+				continue
+			}
+			// Skip self-published announcements to prevent self-echo reconciliation
+			if strings.TrimSpace(announcement.Issuer) != "" && announcement.Issuer == cfg.Issuer {
+				log.Printf("stego pubsub: skipping self-published announcement (issuer=%s)", announcement.Issuer)
 				continue
 			}
 			seenAt := announcement.Timestamp

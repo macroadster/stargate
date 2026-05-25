@@ -504,12 +504,21 @@ func (s *Server) upsertContractFromStegoPayload(ctx context.Context, contractID,
 	if err := s.store.CreateProposal(ctx, proposal); err != nil {
 		return fmt.Errorf("create proposal failed: %w", err)
 	}
+	// Preserve confirmed/completed/superseded status if the contract already exists
+	// at a more advanced lifecycle stage (prevents self-echo regression).
+	contractStatus := "active"
+	if existing, err := s.store.GetContract(contractID); err == nil {
+		switch strings.ToLower(existing.Status) {
+		case "confirmed", "completed", "superseded":
+			contractStatus = existing.Status
+		}
+	}
 	contract := smart_contract.Contract{
 		ContractID:      contractID,
 		Title:           proposal.Title,
 		TotalBudgetSats: proposal.BudgetSats,
 		GoalsCount:      1,
-		Status:          "active",
+		Status:          contractStatus,
 	}
 	tasks := make([]smart_contract.Task, 0, len(payload.Tasks))
 	for _, t := range payload.Tasks {

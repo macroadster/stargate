@@ -779,47 +779,8 @@ func (s *Server) inscribeStego(ctx context.Context, cfg stegoApprovalConfig, cov
 		}
 	}
 
-	// Handle IPFS mirror and announcement if enabled
-	topic := strings.TrimSpace(os.Getenv("IPFS_STEGO_TOPIC"))
-	if topic == "" {
-		topic = "stargate-stego"
-	}
-
-	ipfsClient := ipfs.NewClientFromEnv()
-	if ipfsClient != nil {
-		pubCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-
-		ext := filepath.Ext(filename)
-		if ext == "" {
-			ext = ".png"
-		}
-		name := fmt.Sprintf("stego-%s%s", ingestionID, ext)
-		imageCID, err := ipfsClient.AddBytes(pubCtx, name, stegoBytes)
-		if err == nil {
-			log.Printf("stego: ipfs added %s -> %s", ingestionID, imageCID)
-			ann := struct {
-				Type        string `json:"type"`
-				IngestionID string `json:"ingestion_id"`
-				ImageCID    string `json:"image_cid"`
-				Filename    string `json:"filename,omitempty"`
-				Method      string `json:"method,omitempty"`
-				Message     string `json:"message,omitempty"`
-				Timestamp   int64  `json:"timestamp"`
-			}{
-				Type:        "stego_ingest",
-				IngestionID: ingestionID,
-				ImageCID:    imageCID,
-				Filename:    filename,
-				Method:      method,
-				Message:     string(message),
-				Timestamp:   time.Now().Unix(),
-			}
-			if annPayload, err := json.Marshal(ann); err == nil {
-				_ = ipfsClient.PubsubPublish(pubCtx, topic, annPayload)
-			}
-		}
-	}
+	// NOTE: IPFS upload and stego announcement are handled by the caller
+	// (publishStegoForProposal) to avoid duplicate files and self-echo issues.
 
 	return stegoBytes, ingestionID, nil
 }
