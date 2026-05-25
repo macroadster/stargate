@@ -207,16 +207,22 @@ ON CONFLICT (contract_id) DO NOTHING
 	}
 
 	for _, t := range tasks {
-		reqJSON, _ := json.Marshal(t.Requirements)
-		var proofJSON []byte
+		var reqArg, proofArg *string
+		if reqJSON, err := json.Marshal(t.Requirements); err == nil {
+			s := string(reqJSON)
+			reqArg = &s
+		}
 		if t.MerkleProof != nil {
-			proofJSON, _ = json.Marshal(t.MerkleProof)
+			if proofJSON, err := json.Marshal(t.MerkleProof); err == nil {
+				s := string(proofJSON)
+				proofArg = &s
+			}
 		}
 		_, err := s.pool.Exec(ctx, `
 INSERT INTO mcp_tasks (task_id, contract_id, goal_id, title, description, budget_sats, skills, status, difficulty, estimated_hours, requirements, merkle_proof)
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
 ON CONFLICT (task_id) DO NOTHING
-`, t.TaskID, t.ContractID, t.GoalID, t.Title, t.Description, t.BudgetSats, t.Skills, t.Status, t.Difficulty, t.EstimatedHours, string(reqJSON), string(proofJSON))
+`, t.TaskID, t.ContractID, t.GoalID, t.Title, t.Description, t.BudgetSats, t.Skills, t.Status, t.Difficulty, t.EstimatedHours, reqArg, proofArg)
 		if err != nil {
 			return err
 		}
@@ -1241,12 +1247,20 @@ ON CONFLICT (contract_id) DO UPDATE SET
 	}
 
 	for _, t := range tasks {
-		reqJSON, _ := json.Marshal(t.Requirements)
-		var proofJSON []byte
+		// Encode JSONB parameters as *string so that nil → SQL NULL
+		// (letting COALESCE preserve existing data), while non-nil values
+		// produce a valid JSON string.  Previously string(nil) produced ""
+		// which Postgres rejects as invalid JSONB (SQLSTATE 22P02).
+		var reqArg, proofArg *string
+		if reqJSON, err := json.Marshal(t.Requirements); err == nil {
+			s := string(reqJSON)
+			reqArg = &s
+		}
 		if t.MerkleProof != nil {
-			proofJSON, _ = json.Marshal(t.MerkleProof)
-		} else {
-			proofJSON = nil // Use nil instead of "null" to let COALESCE preserve existing data
+			if proofJSON, err := json.Marshal(t.MerkleProof); err == nil {
+				s := string(proofJSON)
+				proofArg = &s
+			}
 		}
 		_, err := tx.Exec(ctx, `
 INSERT INTO mcp_tasks (task_id, contract_id, goal_id, title, description, budget_sats, skills, status, claimed_by, claimed_at, claim_expires_at, difficulty, estimated_hours, requirements, merkle_proof)
@@ -1269,7 +1283,7 @@ ON CONFLICT (task_id) DO UPDATE SET
   estimated_hours = EXCLUDED.estimated_hours,
   requirements = EXCLUDED.requirements,
   merkle_proof = COALESCE(EXCLUDED.merkle_proof, mcp_tasks.merkle_proof)
-`, t.TaskID, t.ContractID, t.GoalID, t.Title, t.Description, t.BudgetSats, t.Skills, t.Status, t.ClaimedBy, t.ClaimedAt, t.ClaimExpires, t.Difficulty, t.EstimatedHours, string(reqJSON), string(proofJSON))
+`, t.TaskID, t.ContractID, t.GoalID, t.Title, t.Description, t.BudgetSats, t.Skills, t.Status, t.ClaimedBy, t.ClaimedAt, t.ClaimExpires, t.Difficulty, t.EstimatedHours, reqArg, proofArg)
 		if err != nil {
 			return err
 		}
@@ -1325,9 +1339,15 @@ func (s *PGStore) SyncSubmission(ctx context.Context, sub smart_contract.Submiss
 		delete(sub.CompletionProof, "status")
 	}
 
-	delivJSON, _ := json.Marshal(sub.Deliverables)
-
-	proofJSON, _ := json.Marshal(sub.CompletionProof)
+	var delivArg, proofArg *string
+	if delivJSON, err := json.Marshal(sub.Deliverables); err == nil && sub.Deliverables != nil {
+		s := string(delivJSON)
+		delivArg = &s
+	}
+	if proofJSON, err := json.Marshal(sub.CompletionProof); err == nil && sub.CompletionProof != nil {
+		s := string(proofJSON)
+		proofArg = &s
+	}
 	_, err := s.pool.Exec(ctx, `
 INSERT INTO mcp_submissions (submission_id, claim_id, task_id, status, deliverables, completion_proof, rejection_reason, rejection_type, rejected_at, created_at)
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
@@ -1339,7 +1359,7 @@ ON CONFLICT (submission_id) DO UPDATE SET
   rejection_type = EXCLUDED.rejection_type,
   rejected_at = EXCLUDED.rejected_at,
   task_id = EXCLUDED.task_id
-`, sub.SubmissionID, sub.ClaimID, sub.TaskID, sub.Status, string(delivJSON), string(proofJSON), sub.RejectionReason, sub.RejectionType, sub.RejectedAt, sub.CreatedAt)
+`, sub.SubmissionID, sub.ClaimID, sub.TaskID, sub.Status, delivArg, proofArg, sub.RejectionReason, sub.RejectionType, sub.RejectedAt, sub.CreatedAt)
 	return err
 }
 
@@ -1365,10 +1385,16 @@ WHERE task_id=$1 AND claimed_by IS NOT NULL
 		}
 	}
 
-	reqJSON, _ := json.Marshal(t.Requirements)
-	var proofJSON []byte
+	var reqArg, proofArg *string
+	if reqJSON, err := json.Marshal(t.Requirements); err == nil {
+		s := string(reqJSON)
+		reqArg = &s
+	}
 	if t.MerkleProof != nil {
-		proofJSON, _ = json.Marshal(t.MerkleProof)
+		if proofJSON, err := json.Marshal(t.MerkleProof); err == nil {
+			s := string(proofJSON)
+			proofArg = &s
+		}
 	}
 	_, err := s.pool.Exec(ctx, `
 INSERT INTO mcp_tasks (task_id, contract_id, goal_id, title, description, budget_sats, skills, status, claimed_by, claimed_at, claim_expires_at, difficulty, estimated_hours, requirements, merkle_proof)
@@ -1379,7 +1405,7 @@ ON CONFLICT (task_id) DO UPDATE SET
   claimed_at = COALESCE(EXCLUDED.claimed_at, mcp_tasks.claimed_at),
   claim_expires_at = COALESCE(EXCLUDED.claim_expires_at, mcp_tasks.claim_expires_at),
   merkle_proof = COALESCE(EXCLUDED.merkle_proof, mcp_tasks.merkle_proof)
- `, t.TaskID, t.ContractID, t.GoalID, t.Title, t.Description, t.BudgetSats, t.Skills, t.Status, t.ClaimedBy, t.ClaimedAt, t.ClaimExpires, t.Difficulty, t.EstimatedHours, string(reqJSON), string(proofJSON))
+ `, t.TaskID, t.ContractID, t.GoalID, t.Title, t.Description, t.BudgetSats, t.Skills, t.Status, t.ClaimedBy, t.ClaimedAt, t.ClaimExpires, t.Difficulty, t.EstimatedHours, reqArg, proofArg)
 	return err
 }
 
@@ -2208,15 +2234,21 @@ func (s *PGStore) UpdateSubmission(ctx context.Context, sub smart_contract.Submi
 		delete(sub.CompletionProof, "status")
 	}
 
-	delivJSON, _ := json.Marshal(sub.Deliverables)
-
-	proofJSON, _ := json.Marshal(sub.CompletionProof)
+	var delivArg, proofArg *string
+	if delivJSON, err := json.Marshal(sub.Deliverables); err == nil && sub.Deliverables != nil {
+		s := string(delivJSON)
+		delivArg = &s
+	}
+	if proofJSON, err := json.Marshal(sub.CompletionProof); err == nil && sub.CompletionProof != nil {
+		s := string(proofJSON)
+		proofArg = &s
+	}
 
 	_, err := s.pool.Exec(ctx, `
 UPDATE mcp_submissions
 SET status=$2, deliverables=$3, completion_proof=$4, rejection_reason=$5, rejection_type=$6, rejected_at=$7, task_id=$8
 WHERE submission_id=$1
-`, sub.SubmissionID, sub.Status, string(delivJSON), string(proofJSON), sub.RejectionReason, sub.RejectionType, sub.RejectedAt, sub.TaskID)
+`, sub.SubmissionID, sub.Status, delivArg, proofArg, sub.RejectionReason, sub.RejectionType, sub.RejectedAt, sub.TaskID)
 
 	return err
 }
