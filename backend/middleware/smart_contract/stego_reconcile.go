@@ -398,6 +398,59 @@ func (s *Server) ensureStegoIngestion(ctx context.Context, contractID, stegoCID,
 	}
 }
 
+// fillProofFromIngestion populates missing funding fields on a MerkleProof
+// from the ingestion record's metadata.  Peer nodes receive funding_txid,
+// commitment_vout, and commitment_sats via IPFS announcement into the
+// ingestion record, but these are not present in the stego manifest used to
+// build the initial proof.
+func (s *Server) fillProofFromIngestion(contractID string, proof *smart_contract.MerkleProof) {
+	if s.ingestionSvc == nil || proof == nil || contractID == "" {
+		return
+	}
+	rec, err := s.ingestionSvc.Get(contractID)
+	if err != nil || rec == nil || rec.Metadata == nil {
+		return
+	}
+	if proof.TxID == "" {
+		if v := stringFromAny(rec.Metadata["funding_txid"]); v != "" {
+			proof.TxID = v
+			log.Printf("stego reconcile: filled TxID=%s from ingestion for %s", v, contractID)
+		}
+	}
+	if proof.CommitmentVout == 0 {
+		switch v := rec.Metadata["commitment_vout"].(type) {
+		case float64:
+			if v > 0 {
+				proof.CommitmentVout = uint32(v)
+			}
+		case int:
+			if v > 0 {
+				proof.CommitmentVout = uint32(v)
+			}
+		case int64:
+			if v > 0 {
+				proof.CommitmentVout = uint32(v)
+			}
+		}
+	}
+	if proof.CommitmentSats == 0 {
+		switch v := rec.Metadata["commitment_sats"].(type) {
+		case float64:
+			if v > 0 {
+				proof.CommitmentSats = int64(v)
+			}
+		case int:
+			if v > 0 {
+				proof.CommitmentSats = int64(v)
+			}
+		case int64:
+			if v > 0 {
+				proof.CommitmentSats = v
+			}
+		}
+	}
+}
+
 func (s *Server) upsertContractFromStegoPayload(ctx context.Context, contractID, stegoCID, stegoHash string, manifest stego.Manifest, payload stego.Payload) error {
 	if contractID == "" {
 		return fmt.Errorf("contract id missing")
@@ -506,6 +559,12 @@ func (s *Server) upsertContractFromStegoPayload(ctx context.Context, contractID,
 							contractorProof.CommitmentVout = existingTask.MerkleProof.CommitmentVout
 							contractorProof.CommitmentSats = existingTask.MerkleProof.CommitmentSats
 						}
+						// Fill funding fields from ingestion metadata if still
+						// missing (peer nodes receive funding info via IPFS
+						// announcement but the task proof may not have it yet).
+						if contractorProof.TxID == "" || contractorProof.CommitmentVout == 0 {
+							s.fillProofFromIngestion(contractID, contractorProof)
+						}
 						merkleProof = contractorProof
 					} else {
 						// Update contractor-specific fields while preserving existing data
@@ -519,6 +578,10 @@ func (s *Server) upsertContractFromStegoPayload(ctx context.Context, contractID,
 						merkleProof.ProductPixelHash = stegoHash
 						if merkleProof.SeenAt.IsZero() {
 							merkleProof.SeenAt = contractorProof.SeenAt
+						}
+						// Backfill funding fields that may have arrived later via IPFS.
+						if merkleProof.TxID == "" || merkleProof.CommitmentVout == 0 {
+							s.fillProofFromIngestion(contractID, merkleProof)
 						}
 					}
 				}

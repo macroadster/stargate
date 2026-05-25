@@ -67,8 +67,8 @@ type BlockMonitor struct {
 	lastProcessTime     time.Duration
 }
 
-const reconcileSweepInterval = 20 * time.Minute
-const reconcileSweepBlocks = 6
+const reconcileSweepInterval = 10 * time.Minute
+const reconcileSweepBlocks = 20
 
 // BlockData represents comprehensive block data stored to disk
 type BlockData struct {
