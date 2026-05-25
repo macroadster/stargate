@@ -601,9 +601,6 @@ func (s *Server) inscribeStego(ctx context.Context, cfg stegoApprovalConfig, cov
 
 	var ingestionID string
 	var stegoBytes []byte
-	var stegoBase64 string
-	var metaNativeStego bool
-
 	if strings.TrimSpace(cfg.ProxyBase) != "" {
 		// PROXY PATH: call starlight /inscribe with retry
 		log.Printf("stego: proxy path selected, proxyBase=%s", cfg.ProxyBase)
@@ -717,7 +714,6 @@ func (s *Server) inscribeStego(ctx context.Context, cfg stegoApprovalConfig, cov
 			if decodeErr != nil {
 				return nil, "", fmt.Errorf("failed to decode stego image from response: %w", decodeErr)
 			}
-			stegoBase64 = payload.ImageBase64
 		} else {
 			// Fallback: wait for ingestion to populate image
 			rec, waitErr := s.waitForIngestion(ctx, ingestionID, cfg.IngestTimeout, cfg.IngestPoll)
@@ -732,7 +728,6 @@ func (s *Server) inscribeStego(ctx context.Context, cfg stegoApprovalConfig, cov
 			if decodeErr != nil {
 				return nil, "", fmt.Errorf("failed to decode stego image: %w", decodeErr)
 			}
-			stegoBase64 = rec.ImageBase64
 		}
 	} else {
 		// NATIVE PATH: use local Go stego module
@@ -743,44 +738,11 @@ func (s *Server) inscribeStego(ctx context.Context, cfg stegoApprovalConfig, cov
 		}
 		ingestionID = inscribeResult.ID
 		stegoBytes = inscribeResult.ImageBytes
-		stegoBase64 = inscribeResult.ImageBase64
-		metaNativeStego = true
 	}
 
-	// Shared post-processing: ingestion record, uploads, IPFS
-	if s.ingestionSvc != nil {
-		meta := map[string]interface{}{}
-		if metaNativeStego {
-			meta["native_stego"] = true
-		}
-		ingestionRec := &services.IngestionRecord{
-			ID:            ingestionID,
-			ImageBase64:   stegoBase64,
-			Status:        "verified",
-			MessageLength: len(message),
-			Filename:      ingestionID,
-			Method:        method,
-			Metadata:      meta,
-		}
-		if createErr := s.ingestionSvc.Create(*ingestionRec); createErr != nil {
-			log.Printf("stego: failed to create ingestion record for %s: %v", ingestionID, createErr)
-		}
-
-		uploadsDir := os.Getenv("UPLOADS_DIR")
-		if uploadsDir == "" {
-			uploadsDir = "/data/uploads"
-		}
-		_ = os.MkdirAll(uploadsDir, 0755)
-		uploadPath := filepath.Join(uploadsDir, ingestionID)
-		if writeErr := os.WriteFile(uploadPath, stegoBytes, 0644); writeErr != nil {
-			log.Printf("stego: failed to write stego image to %s: %v", uploadPath, writeErr)
-		} else {
-			log.Printf("stego: wrote stego image to %s (%d bytes)", uploadPath, len(stegoBytes))
-		}
-	}
-
-	// NOTE: IPFS upload and stego announcement are handled by the caller
-	// (publishStegoForProposal) to avoid duplicate files and self-echo issues.
+	// NOTE: IPFS upload, ingestion records, and stego announcement are handled
+	// by the caller (publishStegoForProposal). Writing the product stego to
+	// disk here would create a duplicate file alongside the wish stego.
 
 	return stegoBytes, ingestionID, nil
 }
