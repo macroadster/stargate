@@ -2108,23 +2108,20 @@ func commitmentScriptHashFromMeta(rec services.IngestionRecord, params *chaincfg
 	if len(visible) != 64 {
 		return ""
 	}
-	lockAddr := strings.TrimSpace(stringFromAny(rec.Metadata["commitment_lock_address"]))
-	if lockAddr == "" {
-		return ""
-	}
 	pixelBytes, err := hex.DecodeString(visible)
 	if err != nil {
 		return ""
 	}
-	addr, err := btcutil.DecodeAddress(lockAddr, params)
+	// The hashlock redeem script is OP_SHA256 <SHA256(pixelHash)> OP_EQUAL —
+	// it depends only on visible_pixel_hash, not on any address.  Peer nodes
+	// that receive the contract via stego announcement don't have
+	// commitment_lock_address, so we compute the script hash directly.
+	redeemScript, err := buildHashlockRedeemScript(pixelBytes)
 	if err != nil {
 		return ""
 	}
-	_, _, redeemScriptHash, _, err := buildCommitmentScript(params, pixelBytes, addr)
-	if err != nil || len(redeemScriptHash) == 0 {
-		return ""
-	}
-	return hex.EncodeToString(redeemScriptHash)
+	scriptHash := sha256.Sum256(redeemScript)
+	return hex.EncodeToString(scriptHash[:])
 }
 
 func matchOracleOutput(script []byte, params *chaincfg.Params, candidates map[string]*services.IngestionRecord) (*services.IngestionRecord, string, string) {
