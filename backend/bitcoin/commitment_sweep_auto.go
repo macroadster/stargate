@@ -1,6 +1,7 @@
 package bitcoin
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"log"
@@ -11,9 +12,35 @@ import (
 
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
+	"github.com/btcsuite/btcd/wire"
 
 	"stargate-backend/core/smart_contract"
 )
+
+// isAlreadyInChainErr returns true when a broadcast error indicates the
+// transaction was already mined (Bitcoin Core RPC code -27).  The node may
+// phrase this as "Transaction already in block chain" or "Transaction outputs
+// already in utxo set" depending on version.
+func isAlreadyInChainErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "already in") && (strings.Contains(msg, "block chain") || strings.Contains(msg, "utxo set"))
+}
+
+// txidFromRawHex computes the txid of a serialised transaction.
+func txidFromRawHex(rawHex string) string {
+	raw, err := hex.DecodeString(strings.TrimSpace(rawHex))
+	if err != nil {
+		return ""
+	}
+	var msgTx wire.MsgTx
+	if err := msgTx.Deserialize(bytes.NewReader(raw)); err != nil {
+		return ""
+	}
+	return msgTx.TxHash().String()
+}
 
 // SweepStore persists updates to task proofs after sweep attempts.
 type SweepStore interface {
@@ -127,6 +154,21 @@ func sweepPhase1Recommit(ctx context.Context, store SweepStore, mempool *Mempool
 
 	txid, err := mempool.BroadcastTx(res.RawTxHex)
 	if err != nil {
+		if isAlreadyInChainErr(err) {
+			// Transaction was already confirmed — record as confirmed directly.
+			txid = txidFromRawHex(res.RawTxHex)
+			log.Printf("commitment sweep phase1: recommit tx already confirmed for task %s (tx %s)", task.TaskID, txid)
+			proof.RecommitTxID = txid
+			proof.RecommitVout = res.Vout
+			proof.RecommitSats = res.OutputSats
+			proof.RecommitRedeemScript = hex.EncodeToString(res.RedeemScript)
+			proof.RecommitRedeemHash = hex.EncodeToString(res.RedeemScriptHash)
+			proof.RecommitAddress = res.P2WSHAddr
+			proof.RecommitStatus = "confirmed"
+			now := time.Now()
+			proof.RecommitConfirmedAt = &now
+			return store.UpdateTaskProof(ctx, task.TaskID, proof)
+		}
 		log.Printf("commitment sweep phase1 ERROR: broadcast failed for task %s: %v", task.TaskID, err)
 		return markSweepStatus(ctx, store, task.TaskID, proof, "failed", err.Error())
 	}
@@ -186,6 +228,16 @@ func sweepPhase2(ctx context.Context, store SweepStore, mempool *MempoolClient, 
 
 	txid, err := mempool.BroadcastTx(res.RawTxHex)
 	if err != nil {
+		if isAlreadyInChainErr(err) {
+			txid = txidFromRawHex(res.RawTxHex)
+			log.Printf("commitment sweep phase2: sweep tx already confirmed for task %s (tx %s)", task.TaskID, txid)
+			proof.SweepTxID = txid
+			proof.SweepStatus = "confirmed"
+			now := time.Now()
+			proof.SweepAttemptedAt = &now
+			proof.SweepError = ""
+			return store.UpdateTaskProof(ctx, task.TaskID, proof)
+		}
 		log.Printf("commitment sweep phase2 ERROR: broadcast failed for task %s: %v", task.TaskID, err)
 		return markSweepStatus(ctx, store, task.TaskID, proof, "failed", err.Error())
 	}
@@ -249,6 +301,16 @@ func sweepDirect(ctx context.Context, store SweepStore, mempool *MempoolClient, 
 
 	txid, err := mempool.BroadcastTx(res.RawTxHex)
 	if err != nil {
+		if isAlreadyInChainErr(err) {
+			txid = txidFromRawHex(res.RawTxHex)
+			log.Printf("commitment sweep: sweep tx already confirmed for task %s (tx %s)", task.TaskID, txid)
+			proof.SweepTxID = txid
+			proof.SweepStatus = "confirmed"
+			now := time.Now()
+			proof.SweepAttemptedAt = &now
+			proof.SweepError = ""
+			return store.UpdateTaskProof(ctx, task.TaskID, proof)
+		}
 		log.Printf("commitment sweep ERROR: Failed to broadcast tx for task %s: %v", task.TaskID, err)
 		return markSweepStatus(ctx, store, task.TaskID, proof, "failed", err.Error())
 	}

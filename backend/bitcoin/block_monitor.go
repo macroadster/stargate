@@ -1897,6 +1897,8 @@ func (bm *BlockMonitor) confirmAndSweepContractTasks(contractID, txid string, bl
 		if proof.RecommitTxID != "" && strings.TrimSpace(proof.RecommitTxID) == strings.TrimSpace(txid) {
 			if proof.RecommitStatus != "confirmed" {
 				proof.RecommitStatus = "confirmed"
+				now := time.Now()
+				proof.RecommitConfirmedAt = &now
 				log.Printf("oracle reconcile: confirmed recommitment tx %s for task %s", txid, task.TaskID)
 				if err := bm.sweepStore.UpdateTaskProof(context.Background(), task.TaskID, proof); err != nil {
 					log.Printf("oracle reconcile: failed to confirm recommitment for %s: %v", task.TaskID, err)
@@ -1904,6 +1906,18 @@ func (bm *BlockMonitor) confirmAndSweepContractTasks(contractID, txid string, bl
 			}
 			if err := SweepCommitmentIfReady(context.Background(), bm.sweepStore, bm.sweepMempool, task, proof); err != nil {
 				log.Printf("oracle reconcile: phase2 sweep error for %s: %v", task.TaskID, err)
+			}
+			continue
+		}
+		// Match sweep txid → confirm final sweep.
+		if proof.SweepTxID != "" && strings.TrimSpace(proof.SweepTxID) == strings.TrimSpace(txid) {
+			if proof.SweepStatus != "confirmed" {
+				proof.SweepStatus = "confirmed"
+				proof.SweepError = ""
+				log.Printf("oracle reconcile: confirmed sweep tx %s for task %s", txid, task.TaskID)
+				if err := bm.sweepStore.UpdateTaskProof(context.Background(), task.TaskID, proof); err != nil {
+					log.Printf("oracle reconcile: failed to confirm sweep for %s: %v", task.TaskID, err)
+				}
 			}
 		}
 	}
