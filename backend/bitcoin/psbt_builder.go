@@ -20,9 +20,11 @@ type PSBTRequest struct {
 	PayerAddress      btcutil.Address
 	PayerAddresses    []btcutil.Address
 	TargetValueSats   int64
-	PixelHash         []byte
-	CommitmentSats    int64
-	CommitmentAddress btcutil.Address
+	PixelHash         []byte   // Wish image hash (32 bytes) — used for OP_RETURN proof
+	ProductPixelHash  []byte   // Product image hash (32 bytes) — used for OP_RETURN proof
+	CommitmentSats    int64    // Sats sent directly to DonationAddress
+	DonationAddress   btcutil.Address // Direct P2WPKH donation recipient
+	CommitmentAddress btcutil.Address // Deprecated: kept for backward compat, use DonationAddress
 	ContractorAddress btcutil.Address
 	Payouts           []PayoutOutput
 	FeeRateSatPerVB   int64
@@ -49,11 +51,15 @@ type PSBTResult struct {
 	PayoutScripts    [][]byte
 	PayoutAmounts    []int64
 	CommitmentSats   int64
-	CommitmentScript []byte
-	CommitmentVout   uint32
-	RedeemScript     []byte
-	RedeemScriptHash []byte
-	CommitmentAddr   string
+	CommitmentScript []byte   // Deprecated: was P2WSH hashlock, now donation P2WPKH script
+	CommitmentVout   uint32   // Deprecated: use DonationVout
+	RedeemScript     []byte   // Deprecated: no longer used (no hashlock)
+	RedeemScriptHash []byte   // Deprecated: no longer used (no hashlock)
+	CommitmentAddr   string   // Deprecated: use DonationAddr
+	DonationVout     uint32   // Vout index of the direct donation P2WPKH output
+	DonationAddr     string   // Donation address (P2WPKH)
+	OPReturnScript   []byte   // OP_RETURN script with wish_hash || product_hash
+	OPReturnVout     uint32   // Vout index of the OP_RETURN output
 	FundingTxID      string
 }
 
@@ -183,14 +189,24 @@ func BuildFundingPSBT(client *MempoolClient, params *chaincfg.Params, req PSBTRe
 	var redeemScript []byte
 	var redeemScriptHash []byte
 	var commitmentAddr string
-	// Only create commitment when BOTH pixelHash is provided AND commitmentSats > 0
-	if len(req.PixelHash) > 0 && req.CommitmentSats > 0 {
+	var donation *donationOutputs
+	// New path: direct donation + OP_RETURN proof (no hashlock, no sweeping)
+	if req.DonationAddress != nil && len(req.PixelHash) > 0 && req.CommitmentSats > 0 {
+		donation, err = buildDonationOutputs(params, req.PixelHash, req.ProductPixelHash, req.DonationAddress)
+		if err != nil {
+			return nil, err
+		}
+		commitmentSats = req.CommitmentSats
+		if commitmentSats < 546 {
+			commitmentSats = 546
+		}
+	} else if len(req.PixelHash) > 0 && req.CommitmentSats > 0 {
+		// Legacy path: P2WSH hashlock (backward compat for old callers)
 		commitmentScript, redeemScript, redeemScriptHash, commitmentAddr, err = buildCommitmentScript(params, req.PixelHash, req.CommitmentAddress)
 		if err != nil {
 			return nil, err
 		}
 		commitmentSats = req.CommitmentSats
-		// Apply minimum for donations (must be > 0 to reach here)
 		if commitmentSats < 546 {
 			commitmentSats = 546
 		}
@@ -209,10 +225,11 @@ func BuildFundingPSBT(client *MempoolClient, params *chaincfg.Params, req PSBTRe
 		selected = append(selected, u)
 		selectedValue += u.utxo.Value
 		estimatedInputVBytes += estimateInputVBytes(u.address)
-		// Two outputs when change is expected, otherwise one.
 		outputCount := int64(len(payoutScripts))
-		if commitmentScript != nil {
-			outputCount++
+		if donation != nil {
+			outputCount += 2 // donation P2WPKH + OP_RETURN
+		} else if commitmentScript != nil {
+			outputCount++ // legacy hashlock
 		}
 		if changeAddr != nil && selectedValue > requiredValue {
 			outputCount++
@@ -251,8 +268,10 @@ func BuildFundingPSBT(client *MempoolClient, params *chaincfg.Params, req PSBTRe
 	}
 
 	outputCount := int64(len(payoutScripts))
-	if commitmentScript != nil {
-		outputCount++
+	if donation != nil {
+		outputCount += 2 // donation P2WPKH + OP_RETURN
+	} else if commitmentScript != nil {
+		outputCount++ // legacy hashlock
 	}
 	fee := estimateFee(actualInputVBytes, outputCount, req.FeeRateSatPerVB)
 	change := selectedValue - requiredValue - fee
@@ -268,6 +287,8 @@ func BuildFundingPSBT(client *MempoolClient, params *chaincfg.Params, req PSBTRe
 
 	tx := wire.NewMsgTx(2)
 	var commitmentVout uint32
+	var donationVout uint32
+	var opReturnVout uint32
 	for _, u := range selected {
 		hash, err := chainhashFromStr(u.utxo.TxID)
 		if err != nil {
@@ -280,8 +301,17 @@ func BuildFundingPSBT(client *MempoolClient, params *chaincfg.Params, req PSBTRe
 	for i, script := range payoutScripts {
 		tx.AddTxOut(&wire.TxOut{Value: payoutAmounts[i], PkScript: script})
 	}
-	// Only add commitment output if commitment_sats > 0 (avoids dust outputs)
-	if commitmentScript != nil && commitmentSats > 0 {
+	if donation != nil && commitmentSats > 0 {
+		// New path: direct donation P2WPKH + OP_RETURN proof
+		donationVout = uint32(len(tx.TxOut))
+		commitmentVout = donationVout // backward compat alias
+		tx.AddTxOut(&wire.TxOut{Value: commitmentSats, PkScript: donation.donationScript})
+		opReturnVout = uint32(len(tx.TxOut))
+		tx.AddTxOut(&wire.TxOut{Value: 0, PkScript: donation.opReturnScript})
+		commitmentScript = donation.donationScript
+		commitmentAddr = donation.donationAddr
+	} else if commitmentScript != nil && commitmentSats > 0 {
+		// Legacy hashlock path
 		commitmentVout = uint32(len(tx.TxOut))
 		tx.AddTxOut(&wire.TxOut{Value: commitmentSats, PkScript: commitmentScript})
 	}
@@ -340,7 +370,7 @@ func BuildFundingPSBT(client *MempoolClient, params *chaincfg.Params, req PSBTRe
 		fundingTxID = tx.TxHash().String()
 	}
 
-	return &PSBTResult{
+	result := &PSBTResult{
 		EncodedBase64:    base64.StdEncoding.EncodeToString(psbtBytes),
 		EncodedHex:       hex.EncodeToString(psbtBytes),
 		FeeSats:          fee,
@@ -358,7 +388,14 @@ func BuildFundingPSBT(client *MempoolClient, params *chaincfg.Params, req PSBTRe
 		RedeemScriptHash: redeemScriptHash,
 		CommitmentAddr:   commitmentAddr,
 		FundingTxID:      fundingTxID,
-	}, nil
+	}
+	if donation != nil {
+		result.DonationVout = donationVout
+		result.DonationAddr = donation.donationAddr
+		result.OPReturnScript = donation.opReturnScript
+		result.OPReturnVout = opReturnVout
+	}
+	return result, nil
 }
 
 // BuildRaiseFundPSBT builds a multi-payer PSBT with per-payer change outputs.
@@ -410,6 +447,10 @@ func BuildRaiseFundPSBT(client *MempoolClient, params *chaincfg.Params, payers [
 	var redeemScript []byte
 	var redeemScriptHash []byte
 	var commitmentAddr string
+	var donation *donationOutputs
+	// Note: BuildRaiseFundPSBT doesn't yet receive DonationAddress/ProductPixelHash
+	// so it always falls through to the legacy path.  When the caller is updated,
+	// it will use the donation path automatically.
 	if len(pixelHash) > 0 {
 		commitmentScript, redeemScript, redeemScriptHash, commitmentAddr, err = buildCommitmentScript(params, pixelHash, commitmentAddress)
 		if err != nil {
@@ -422,6 +463,7 @@ func BuildRaiseFundPSBT(client *MempoolClient, params *chaincfg.Params, payers [
 			commitmentSats = 546
 		}
 	}
+	_ = donation // will be used when BuildRaiseFundPSBT is updated to accept DonationAddress
 
 	addNextUTXO := func(sel *payerSelection) error {
 		if sel.nextIndex >= len(sel.candidates) {
@@ -664,18 +706,63 @@ func buildPayoutScripts(req PSBTRequest) ([][]byte, []int64, error) {
 	return [][]byte{script}, []int64{req.TargetValueSats}, nil
 }
 
+// donationOutputs holds the two outputs replacing the old P2WSH hashlock:
+// a direct P2WPKH payment to the donation address and an OP_RETURN proof.
+type donationOutputs struct {
+	donationScript []byte // P2WPKH pkScript for the donation address
+	donationAddr   string
+	opReturnScript []byte // OP_RETURN <wish_hash(32)><product_hash(32)>
+}
+
+// buildDonationOutputs builds a direct P2WPKH donation output and an OP_RETURN
+// proof output containing wish_hash || product_hash.  This replaces the old
+// P2WSH hashlock approach — no sweeping required.
+func buildDonationOutputs(params *chaincfg.Params, wishHash, productHash []byte, donationAddr btcutil.Address) (*donationOutputs, error) {
+	if donationAddr == nil {
+		return nil, fmt.Errorf("donation address required")
+	}
+
+	// Build P2WPKH script for donation address.
+	donationScript, err := txscript.PayToAddrScript(donationAddr)
+	if err != nil {
+		return nil, fmt.Errorf("donation script: %w", err)
+	}
+
+	// Build OP_RETURN: wish_hash(32) || product_hash(32).
+	// If product hash is missing (backward compat), just use wish hash.
+	var payload []byte
+	if len(wishHash) == 32 {
+		payload = append(payload, wishHash...)
+	}
+	if len(productHash) == 32 {
+		payload = append(payload, productHash...)
+	}
+	if len(payload) == 0 {
+		return nil, fmt.Errorf("at least one 32-byte hash required for OP_RETURN")
+	}
+
+	opReturnBuilder := txscript.NewScriptBuilder()
+	opReturnBuilder.AddOp(txscript.OP_RETURN)
+	opReturnBuilder.AddData(payload)
+	opReturnScript, err := opReturnBuilder.Script()
+	if err != nil {
+		return nil, fmt.Errorf("op_return script: %w", err)
+	}
+
+	return &donationOutputs{
+		donationScript: donationScript,
+		donationAddr:   donationAddr.EncodeAddress(),
+		opReturnScript: opReturnScript,
+	}, nil
+}
+
+// buildCommitmentScript is kept for backward compatibility with code that
+// still references the old hashlock path.  New code should use buildDonationOutputs.
 func buildCommitmentScript(params *chaincfg.Params, pixelHash []byte, commitmentAddress btcutil.Address) ([]byte, []byte, []byte, string, error) {
 	if len(pixelHash) != 32 {
 		return nil, nil, nil, "", fmt.Errorf("pixel hash must be 32 bytes for P2WSH hashlock")
 	}
-	var redeemScript []byte
-	var err error
-	// Both donation and contractor commitments should be hashlock-only (no signature required)
-	// commitmentAddress is used for display purposes only, not for script construction
-	redeemScript, err = buildHashlockRedeemScript(pixelHash)
-	if err != nil {
-		return nil, nil, nil, "", err
-	}
+	redeemScript, err := buildHashlockRedeemScript(pixelHash)
 	if err != nil {
 		return nil, nil, nil, "", err
 	}

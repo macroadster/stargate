@@ -663,6 +663,8 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 	// All Store implementations (Memory, SQLite, PG) now satisfy bitcoin.SweepTaskStore
 	// because the required methods are part of the core Store interface (Phase 5).
 	blockMonitor.SetSweepDependencies(store, bitcoin.NewMempoolClient())
+	// OP_RETURN-based matching: block monitor discovers contracts during normal
+	// block processing — no event-driven reconciliation needed.
 	if err := scmiddleware.StartIPFSIngestionSync(context.Background(), ingestionSvc, store, func(ctx context.Context, recent int) error {
 		return blockMonitor.ReconcileRecentBlocks(ctx, recent)
 	}); err != nil {

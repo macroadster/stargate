@@ -224,9 +224,9 @@ func refreshProofs(ctx context.Context, store Store, provider FundingProvider, e
 			}
 		}
 
-		if err := bitcoin.SweepCommitmentIfReady(ctx, store, mempool, t, proof); err != nil {
-			log.Printf("commitment sweep error for %s: %v", t.TaskID, err)
-		}
+		// OP_RETURN donation flow: donation is paid directly in the PSBT,
+		// so no sweep is needed. Legacy hashlock contracts can still be
+		// swept manually via the /api/smart_contract/sweep endpoint.
 	}
 	return nil
 }

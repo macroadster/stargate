@@ -37,14 +37,16 @@ type Server struct {
 	eventsMu     sync.Mutex
 	listenersMu  sync.Mutex
 	listeners    []chan smart_contract.Event
-	mempool      *bitcoin.MempoolClient
-	escort       *smart_contract.EscortService
+	mempool            *bitcoin.MempoolClient
+	escort             *smart_contract.EscortService
 }
 
 // SetEscortService sets the escort service for the server.
 func (s *Server) SetEscortService(escort *smart_contract.EscortService) {
 	s.escort = escort
 }
+
+
 
 // proposalCreateBody captures POST payload for creating proposals.
 type ProposalCreateBody struct {
@@ -505,6 +507,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		ChangeAddress    string   `json:"change_address"`
 		BudgetSats       int64    `json:"budget_sats"`
 		PixelHash        string   `json:"pixel_hash"`
+		ProductPixelHash string   `json:"product_pixel_hash"`
 		CommitmentSats   int64    `json:"commitment_sats"`
 		FeeRate          int64    `json:"fee_rate_sats_vb"`
 		UsePixelHash     *bool    `json:"use_pixel_hash"`
@@ -739,11 +742,28 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		}
 	}
 
+	// Resolve product pixel hash for OP_RETURN proof.
+	var productPixelBytes []byte
+	if ph := strings.TrimSpace(body.ProductPixelHash); ph != "" {
+		productPixelBytes = decodePixelHex(ph)
+	}
+	// Fall back to task MerkleProof.ProductPixelHash if not provided explicitly.
+	if productPixelBytes == nil {
+		tasks, _ := s.store.ListTasks(smart_contract.TaskFilter{ContractID: contractID, Limit: 1})
+		for _, t := range tasks {
+			if t.MerkleProof != nil && len(strings.TrimSpace(t.MerkleProof.ProductPixelHash)) == 64 {
+				productPixelBytes = decodePixelHex(t.MerkleProof.ProductPixelHash)
+				break
+			}
+		}
+	}
+
 	commitmentTarget := strings.ToLower(strings.TrimSpace(body.CommitmentTarget))
 	if commitmentTarget == "" {
 		commitmentTarget = "funding"
 	}
 	var commitmentLockAddr btcutil.Address
+	var donationAddr btcutil.Address // New: direct donation P2WPKH (no hashlock)
 	switch commitmentTarget {
 	case "donation":
 		donation := strings.TrimSpace(os.Getenv("STARLIGHT_DONATION_ADDRESS"))
@@ -751,11 +771,12 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 			Error(w, http.StatusBadRequest, "donation address not configured")
 			return
 		}
-		commitmentLockAddr, err = btcutil.DecodeAddress(donation, params)
+		donationAddr, err = btcutil.DecodeAddress(donation, params)
 		if err != nil {
 			Error(w, http.StatusBadRequest, fmt.Sprintf("invalid donation address: %v", err))
 			return
 		}
+		commitmentLockAddr = donationAddr // backward compat for metadata
 	case "funding":
 		if isRaiseFund(fundingMode) {
 			if fundraiserAddr == nil {
@@ -861,7 +882,9 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 				PayerAddress:      payerTarget.Address,
 				TargetValueSats:   target,
 				PixelHash:         pixelBytes,
+				ProductPixelHash:  productPixelBytes,
 				CommitmentSats:    commitmentSats,
+				DonationAddress:   donationAddr,
 				CommitmentAddress: commitmentLockAddr,
 				Payouts:           payerPayouts,
 				FeeRateSatPerVB:   body.FeeRate,
@@ -986,7 +1009,9 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 			PayerAddresses:    payerAddresses,
 			TargetValueSats:   target,
 			PixelHash:         pixelBytes,
+			ProductPixelHash:  productPixelBytes,
 			CommitmentSats:    commitmentSats,
+			DonationAddress:   donationAddr,
 			CommitmentAddress: commitmentLockAddr,
 			ContractorAddress: contractorAddr,
 			Payouts:           payouts,

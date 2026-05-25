@@ -619,3 +619,5 @@ func (s *Server) upsertContractFromStegoPayload(ctx context.Context, contractID,
 	}
 	return fmt.Errorf("store does not support contract upsert")
 }
+
+

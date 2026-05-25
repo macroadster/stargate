@@ -67,8 +67,12 @@ type BlockMonitor struct {
 	lastProcessTime     time.Duration
 }
 
-const reconcileSweepInterval = 10 * time.Minute
-const reconcileSweepBlocks = 20
+// reconcileSweepInterval / reconcileSweepBlocks control the periodic safety-net
+// rescan.  With OP_RETURN-based matching, the block monitor discovers contracts
+// during normal forward processing.  This loop is a low-frequency fallback for
+// edge cases (node restart mid-block, reorgs).
+const reconcileSweepInterval = 60 * time.Minute
+const reconcileSweepBlocks = 3
 
 // BlockData represents comprehensive block data stored to disk
 type BlockData struct {
@@ -142,6 +146,8 @@ type StegoReconcilerFunc func(ctx context.Context, stegoCID, expectedHash string
 func (fn StegoReconcilerFunc) ReconcileStego(ctx context.Context, stegoCID, expectedHash string) error {
 	return fn(ctx, stegoCID, expectedHash)
 }
+
+
 
 // BlockMetadata contains processing metadata
 type BlockMetadata struct {
@@ -350,24 +356,9 @@ func (bm *BlockMonitor) monitorLoop() {
 }
 
 func (bm *BlockMonitor) reconcileSweepLoop() {
-	if reconcileSweepBlocks <= 0 || reconcileSweepInterval <= 0 {
-		return
-	}
-	ticker := time.NewTicker(reconcileSweepInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ticker.C:
-			if bm.ingestion == nil {
-				continue
-			}
-			if err := bm.ReconcileRecentBlocks(context.Background(), reconcileSweepBlocks); err != nil {
-				log.Printf("reconcile sweep failed: %v", err)
-			}
-		case <-bm.stopChan:
-			return
-		}
-	}
+	// OP_RETURN donation flow: the funding transaction IS the final transaction.
+	// No sweep or recommitment is needed, so the periodic reconcile loop is disabled.
+	log.Printf("reconcile sweep loop disabled — OP_RETURN donation flow supersedes hashlock sweep")
 }
 
 // updateRecentBlocksSummary creates a recent blocks summary file for frontend
@@ -858,6 +849,68 @@ func (bm *BlockMonitor) ReconcileRecentBlocks(ctx context.Context, count int) er
 		}
 	}
 	return nil
+}
+
+
+
+// fetchTxStatus fetches a transaction from the blockchain API and returns the
+// raw JSON map, block height, and whether the tx is confirmed.
+func (bm *BlockMonitor) fetchTxStatus(txid string) (map[string]any, int64, bool, error) {
+	if bm.bitcoinClient == nil {
+		return nil, 0, false, fmt.Errorf("bitcoin client not configured")
+	}
+	url := fmt.Sprintf("%s/tx/%s", strings.TrimSpace(bm.bitcoinClient.baseURL), txid)
+	resp, err := bm.bitcoinClient.httpClient.Get(url)
+	if err != nil {
+		return nil, 0, false, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, 0, false, nil // tx not found — unconfirmed or invalid
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, 0, false, fmt.Errorf("status %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, 0, false, err
+	}
+	var txData map[string]any
+	if err := json.Unmarshal(body, &txData); err != nil {
+		return nil, 0, false, err
+	}
+	statusMap, _ := txData["status"].(map[string]any)
+	if statusMap == nil {
+		return txData, 0, false, nil
+	}
+	confirmed, _ := statusMap["confirmed"].(bool)
+	if !confirmed {
+		return txData, 0, false, nil
+	}
+	height, _ := statusMap["block_height"].(float64)
+	return txData, int64(height), true, nil
+}
+
+// parseTxOutputsFromJSON builds a minimal Transaction from the Esplora JSON,
+// containing only TxID and Outputs (ScriptPubKey + Value).  This is sufficient
+// for updateTaskFundingProofsFromTx and confirmContractTasks.
+func (bm *BlockMonitor) parseTxOutputsFromJSON(txid string, txJSON map[string]any) Transaction {
+	tx := Transaction{TxID: txid}
+	vouts, _ := txJSON["vout"].([]any)
+	for _, v := range vouts {
+		vout, _ := v.(map[string]any)
+		if vout == nil {
+			continue
+		}
+		scriptHex, _ := vout["scriptpubkey"].(string)
+		scriptBytes, _ := hex.DecodeString(scriptHex)
+		value, _ := vout["value"].(float64)
+		tx.Outputs = append(tx.Outputs, TxOutput{
+			ScriptPubKey: scriptBytes,
+			Value:        int64(value),
+		})
+	}
+	return tx
 }
 
 // saveBlockData saves raw block data to files
@@ -1700,7 +1753,7 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 				})
 				bm.markIngestionConfirmed(match, tx.TxID, blockHeight, imageFile, imagePath)
 				bm.updateTaskFundingProofsFromTx(match.ID, tx, blockHeight)
-				bm.confirmAndSweepContractTasks(match.ID, tx.TxID, blockHeight)
+				bm.confirmContractTasks(match.ID, tx.TxID, blockHeight)
 				for _, candidate := range candidatesByID[match.ID] {
 					delete(primaryCandidates, candidate)
 					delete(fallbackCandidates, candidate)
@@ -1708,6 +1761,69 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 				delete(txidMatches, tx.TxID)
 				matchedTxIDs[tx.TxID] = match.ID
 			}
+		}
+
+		// OP_RETURN matching: scan outputs for wish_hash || product_hash proof.
+		// This is the primary matching path for new-style transactions that use
+		// direct donation + OP_RETURN instead of P2WSH hashlocks.
+		for _, output := range tx.Outputs {
+			wishHash, productHash, ok := parseOPReturnHashes(output.ScriptPubKey)
+			if !ok {
+				continue
+			}
+			// Try matching wish_hash against primary candidates.
+			match := primaryCandidates[wishHash]
+			if match == nil && productHash != "" {
+				match = primaryCandidates[productHash]
+			}
+			if match == nil {
+				match = fallbackCandidates[wishHash]
+			}
+			if match == nil {
+				continue
+			}
+			if _, ok := matchedTxIDs[tx.TxID]; ok {
+				continue // already matched by funding_txid
+			}
+			destPath, err := bm.moveIngestionImageWithFilename(blockDir, match, blockImageFilename(match, tx.TxID))
+			if err != nil {
+				log.Printf("oracle reconcile: failed to move ingestion image for %s: %v", match.ID, err)
+				bm.maybeReconcileStego(match)
+				continue
+			}
+			bm.maybeReconcileStego(match)
+			log.Printf("oracle reconcile: matched ingestion %s via OP_RETURN wish=%s product=%s in tx %s", match.ID, wishHash, productHash, tx.TxID)
+			imageFile := filepath.Base(destPath)
+			imagePath := filepath.Join("images", imageFile)
+			contractMeta := map[string]any{
+				"tx_id":              tx.TxID,
+				"block_height":       blockHeight,
+				"match_type":         "op_return",
+				"wish_hash":          wishHash,
+				"product_hash":       productHash,
+				"image_file":         imageFile,
+				"image_path":         imagePath,
+				"ingestion_id":       match.ID,
+				"visible_pixel_hash": stringFromAny(match.Metadata["visible_pixel_hash"]),
+			}
+			mergeIngestionMetadata(contractMeta, match.Metadata)
+			applyStegoMetadata(contractMeta, match.Metadata)
+			smartContracts = upsertContractByID(smartContracts, SmartContractData{
+				ContractID:  match.ID,
+				BlockHeight: blockHeight,
+				ImagePath:   imagePath,
+				Confidence:  0,
+				Metadata:    contractMeta,
+			})
+			bm.markIngestionConfirmed(match, tx.TxID, blockHeight, imageFile, imagePath)
+			bm.updateTaskFundingProofsFromTx(match.ID, tx, blockHeight)
+			bm.confirmContractTasks(match.ID, tx.TxID, blockHeight)
+			for _, candidate := range candidatesByID[match.ID] {
+				delete(primaryCandidates, candidate)
+				delete(fallbackCandidates, candidate)
+			}
+			matchedTxIDs[tx.TxID] = match.ID
+			break // one OP_RETURN match per tx
 		}
 
 		if match, matchType, matchedHash := matchWitnessHash(tx, primaryCandidates, fallbackCandidates); match != nil {
@@ -1746,7 +1862,7 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 					})
 					bm.markIngestionConfirmed(match, tx.TxID, blockHeight, imageFile, imagePath)
 					bm.updateTaskFundingProofsFromTx(match.ID, tx, blockHeight)
-					bm.confirmAndSweepContractTasks(match.ID, tx.TxID, blockHeight)
+					bm.confirmContractTasks(match.ID, tx.TxID, blockHeight)
 					for _, candidate := range candidatesByID[match.ID] {
 						delete(primaryCandidates, candidate)
 						delete(fallbackCandidates, candidate)
@@ -1803,7 +1919,7 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 			})
 			bm.markIngestionConfirmed(match, tx.TxID, blockHeight, imageFile, imagePath)
 			bm.updateTaskFundingProofsFromTx(match.ID, tx, blockHeight)
-			bm.confirmAndSweepContractTasks(match.ID, tx.TxID, blockHeight)
+			bm.confirmContractTasks(match.ID, tx.TxID, blockHeight)
 
 			for _, candidate := range candidatesByID[match.ID] {
 				delete(primaryCandidates, candidate)
@@ -1813,6 +1929,33 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 	}
 
 	return smartContracts
+}
+
+// parseOPReturnHashes extracts wish_hash and product_hash from an OP_RETURN
+// output.  Returns (wishHash, productHash, ok).  The expected format is:
+//   OP_RETURN <push 64 bytes: wish_hash(32) || product_hash(32)>
+// or with just a wish hash (32 bytes).
+func parseOPReturnHashes(script []byte) (string, string, bool) {
+	if len(script) < 2 || script[0] != txscript.OP_RETURN {
+		return "", "", false
+	}
+	// Disassemble the script to get the data pushes.
+	tokenizer := txscript.MakeScriptTokenizer(0, script[1:])
+	var data []byte
+	for tokenizer.Next() {
+		data = append(data, tokenizer.Data()...)
+	}
+	if tokenizer.Err() != nil {
+		return "", "", false
+	}
+	switch len(data) {
+	case 64: // wish_hash(32) || product_hash(32)
+		return hex.EncodeToString(data[:32]), hex.EncodeToString(data[32:64]), true
+	case 32: // wish_hash only
+		return hex.EncodeToString(data[:32]), "", true
+	default:
+		return "", "", false
+	}
 }
 
 func fundingTxIDsFromMeta(meta map[string]any) []string {
@@ -1858,11 +2001,13 @@ func (bm *BlockMonitor) SetSweepDependencies(store SweepTaskStore, mempool *Memp
 	bm.sweepMempool = mempool
 }
 
-func (bm *BlockMonitor) confirmAndSweepContractTasks(contractID, txid string, blockHeight int64) {
-	if bm.sweepStore == nil || bm.sweepMempool == nil || strings.TrimSpace(contractID) == "" || strings.TrimSpace(txid) == "" {
+// confirmContractTasks marks task proofs as confirmed for the given contract.
+// This is the new-style path for OP_RETURN transactions where donation is paid
+// directly — no sweeping is needed.
+func (bm *BlockMonitor) confirmContractTasks(contractID, txid string, blockHeight int64) {
+	if bm.sweepStore == nil || strings.TrimSpace(contractID) == "" || strings.TrimSpace(txid) == "" {
 		return
 	}
-	// Also filter by recent activity for efficiency, even though we're already filtering by contract
 	twentyFourHoursAgo := time.Now().Add(-24 * time.Hour)
 	tasks, err := bm.sweepStore.ListTasks(smart_contract.TaskFilter{
 		ContractID:        contractID,
@@ -1875,53 +2020,28 @@ func (bm *BlockMonitor) confirmAndSweepContractTasks(contractID, txid string, bl
 	for _, task := range tasks {
 		proof := task.MerkleProof
 		if proof == nil {
-			continue
+			proof = &smart_contract.MerkleProof{}
 		}
-		// Match original funding txid → confirm the proof.
-		if proof.TxID != "" && strings.TrimSpace(proof.TxID) == strings.TrimSpace(txid) {
-			if proof.ConfirmationStatus != "confirmed" {
-				now := time.Now()
-				proof.ConfirmationStatus = "confirmed"
-				proof.ConfirmedAt = &now
-				proof.BlockHeight = blockHeight
-				if err := bm.sweepStore.UpdateTaskProof(context.Background(), task.TaskID, proof); err != nil {
-					log.Printf("oracle reconcile: failed to confirm proof for %s: %v", task.TaskID, err)
-				}
-			}
-			if err := SweepCommitmentIfReady(context.Background(), bm.sweepStore, bm.sweepMempool, task, proof); err != nil {
-				log.Printf("oracle reconcile: sweep error for %s: %v", task.TaskID, err)
-			}
-			continue
+		if proof.TxID == "" {
+			proof.TxID = txid
 		}
-		// Match recommitment txid → confirm phase-1 and trigger phase-2 sweep.
-		if proof.RecommitTxID != "" && strings.TrimSpace(proof.RecommitTxID) == strings.TrimSpace(txid) {
-			if proof.RecommitStatus != "confirmed" {
-				proof.RecommitStatus = "confirmed"
-				now := time.Now()
-				proof.RecommitConfirmedAt = &now
-				log.Printf("oracle reconcile: confirmed recommitment tx %s for task %s", txid, task.TaskID)
-				if err := bm.sweepStore.UpdateTaskProof(context.Background(), task.TaskID, proof); err != nil {
-					log.Printf("oracle reconcile: failed to confirm recommitment for %s: %v", task.TaskID, err)
-				}
-			}
-			if err := SweepCommitmentIfReady(context.Background(), bm.sweepStore, bm.sweepMempool, task, proof); err != nil {
-				log.Printf("oracle reconcile: phase2 sweep error for %s: %v", task.TaskID, err)
-			}
-			continue
-		}
-		// Match sweep txid → confirm final sweep.
-		if proof.SweepTxID != "" && strings.TrimSpace(proof.SweepTxID) == strings.TrimSpace(txid) {
-			if proof.SweepStatus != "confirmed" {
-				proof.SweepStatus = "confirmed"
-				proof.SweepError = ""
-				log.Printf("oracle reconcile: confirmed sweep tx %s for task %s", txid, task.TaskID)
-				if err := bm.sweepStore.UpdateTaskProof(context.Background(), task.TaskID, proof); err != nil {
-					log.Printf("oracle reconcile: failed to confirm sweep for %s: %v", task.TaskID, err)
-				}
+		if proof.ConfirmationStatus != "confirmed" {
+			now := time.Now()
+			proof.ConfirmationStatus = "confirmed"
+			proof.ConfirmedAt = &now
+			proof.BlockHeight = blockHeight
+			// Mark sweep as not needed — donation was paid directly in the PSBT.
+			proof.SweepStatus = "direct"
+			if err := bm.sweepStore.UpdateTaskProof(context.Background(), task.TaskID, proof); err != nil {
+				log.Printf("oracle reconcile: failed to confirm proof for %s: %v", task.TaskID, err)
+			} else {
+				log.Printf("oracle reconcile: confirmed task %s via OP_RETURN (direct donation, no sweep needed)", task.TaskID)
 			}
 		}
 	}
 }
+
+
 
 func (bm *BlockMonitor) updateTaskFundingProofsFromTx(contractID string, tx Transaction, blockHeight int64) {
 	if bm.sweepStore == nil || strings.TrimSpace(contractID) == "" {
@@ -2000,10 +2120,6 @@ func (bm *BlockMonitor) updateTaskFundingProofsFromTx(contractID string, tx Tran
 			}
 			if err := bm.sweepStore.UpdateTaskProof(context.Background(), task.TaskID, proof); err != nil {
 				log.Printf("oracle reconcile: failed to update funding proof for %s: %v", task.TaskID, err)
-				continue
-			}
-			if err := SweepCommitmentIfReady(context.Background(), bm.sweepStore, bm.sweepMempool, task, proof); err != nil {
-				log.Printf("oracle reconcile: sweep error for %s: %v", task.TaskID, err)
 			}
 		}
 	}
