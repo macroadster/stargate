@@ -35,20 +35,40 @@ type MirrorConfig struct {
 	ManifestVersion   int
 	ManifestFileName  string
 	AnnouncementLabel string
+	// OnFileDownloaded is copied to the Mirror before goroutines start,
+	// so there is no race between the subscribe loop and callback setup.
+	OnFileDownloaded func(ctx context.Context, ev FileDownloadedEvent)
+}
+
+// FileDownloadedEvent is passed to the OnFileDownloaded callback when the
+// mirror finishes downloading a new file from a remote peer.
+type FileDownloadedEvent struct {
+	Path     string // relative path within UploadsDir
+	CID      string // IPFS CID
+	FilePath string // absolute path on disk
+	Size     int64
 }
 
 type Mirror struct {
-	cfg            MirrorConfig
-	client         *http.Client
-	streamClient   *http.Client
-	ipfsClient     *Client
-	peerID         string
-	lastPublished  string
-	lastPublishAt  time.Time
-	lastSeenRemote string
-	mu             sync.Mutex
-	knownFiles     map[string]fileState
-	deletedFiles   map[string]bool
+	cfg              MirrorConfig
+	client           *http.Client
+	streamClient     *http.Client
+	ipfsClient       *Client
+	peerID           string
+	lastPublished    string
+	lastPublishAt    time.Time
+	lastSeenRemote   string
+	mu               sync.Mutex
+	knownFiles       map[string]fileState
+	deletedFiles     map[string]bool
+	onFileDownloaded func(ctx context.Context, ev FileDownloadedEvent)
+}
+
+// OnFileDownloaded registers a callback invoked every time the mirror
+// downloads a new file.  Use this to trigger ingestion without a separate
+// IPFS pubsub subscription.
+func (m *Mirror) OnFileDownloaded(fn func(ctx context.Context, ev FileDownloadedEvent)) {
+	m.onFileDownloaded = fn
 }
 
 type fileState struct {
@@ -267,7 +287,8 @@ func StartMirror(ctx context.Context, cfg MirrorConfig) (*Mirror, error) {
 		streamClient: &http.Client{},
 		ipfsClient:   ipfsClient,
 		knownFiles:   make(map[string]fileState),
-		deletedFiles: make(map[string]bool),
+		deletedFiles:     make(map[string]bool),
+		onFileDownloaded: cfg.OnFileDownloaded,
 	}
 	m.loadDeleted()
 
@@ -666,7 +687,17 @@ func (m *Mirror) downloadEntry(ctx context.Context, entry manifestEntry) (bool, 
 		ModTime: entry.ModTime,
 		CID:     entry.CID,
 	}
+	fn := m.onFileDownloaded
 	m.mu.Unlock()
+
+	if fn != nil {
+		fn(ctx, FileDownloadedEvent{
+			Path:     entry.Path,
+			CID:      entry.CID,
+			FilePath: target,
+			Size:     entry.Size,
+		})
+	}
 
 	return true, nil
 }

@@ -118,6 +118,105 @@ type ingestUpdateAnnouncement struct {
 	Timestamp            int64    `json:"timestamp"`
 }
 
+// IngestDownloadedFile is called by the IPFS mirror's OnFileDownloaded callback.
+// It reads the file from disk (already downloaded), runs stego extraction, and
+// creates an ingestion record + proposal if a valid manifest is found.
+// This replaces the redundant pubsub→re-fetch path for mirrored files.
+func IngestDownloadedFile(ctx context.Context, filePath string, cid string, ingest *services.IngestionService, store Store) {
+	if ingest == nil {
+		return
+	}
+	if !isImageFile(filePath) {
+		return
+	}
+	blob, err := os.ReadFile(filePath)
+	if err != nil {
+		log.Printf("mirror ingest: read %s: %v", filePath, err)
+		return
+	}
+	reconcileCfg := loadStegoReconcileConfig()
+	manifestBytes, err := extractStegoManifest(ctx, blob, reconcileCfg)
+	if err != nil {
+		return // not a stego image — normal, skip silently
+	}
+	stegoManifest, err := stego.ParseManifestYAML(manifestBytes)
+	if err != nil {
+		return // not a proper manifest — skip
+	}
+	id := strings.TrimSpace(stegoManifest.VisiblePixelHash)
+	if id == "" {
+		id = strings.TrimSpace(stegoManifest.ProposalID)
+	}
+	if id == "" {
+		return
+	}
+	// Fetch payload from IPFS (payload CID is referenced inside the manifest)
+	client := ipfs.NewClientFromEnv()
+	var payload stego.Payload
+	var payloadMeta map[string]interface{}
+	if client != nil {
+		loaded, err := fetchStegoPayload(ctx, client, stegoManifest.PayloadCID)
+		if err != nil {
+			log.Printf("mirror ingest: payload fetch %s: %v", stegoManifest.PayloadCID, err)
+		} else {
+			payload = loaded
+			payloadMeta = payloadMetadataMap(payload)
+		}
+	}
+	// Ensure proposal exists in MCP store
+	if store != nil {
+		if err := ensureProposalFromStegoPayload(ctx, store, cid, stegoManifest, payload); err != nil {
+			log.Printf("mirror ingest: proposal upsert: %v", err)
+		}
+	}
+	// Create or update ingestion record
+	if existing, err := ingest.Get(id); err == nil && existing != nil {
+		metaUpdates := map[string]interface{}{
+			"stego_image_cid":            cid,
+			"stego_payload_cid":          stegoManifest.PayloadCID,
+			"stego_manifest_issuer":      stegoManifest.Issuer,
+			"stego_manifest_created_at":  stegoManifest.CreatedAt,
+			"stego_manifest_proposal_id": stegoManifest.ProposalID,
+			"visible_pixel_hash":         stegoManifest.VisiblePixelHash,
+		}
+		for k, v := range payloadMeta {
+			if _, ok := metaUpdates[k]; !ok {
+				metaUpdates[k] = v
+			}
+		}
+		_ = ingest.UpdateMetadata(id, metaUpdates)
+		log.Printf("mirror ingest: updated %s (cid=%s)", id, cid)
+		return
+	}
+	rec := services.IngestionRecord{
+		ID:            id,
+		Filename:      filepath.Base(filePath),
+		Method:        getStegoMethodForFilename(filePath),
+		MessageLength: len(manifestBytes),
+		ImageBase64:   base64.StdEncoding.EncodeToString(blob),
+		Metadata: map[string]interface{}{
+			"stego_image_cid":            cid,
+			"stego_payload_cid":          stegoManifest.PayloadCID,
+			"stego_manifest_issuer":      stegoManifest.Issuer,
+			"stego_manifest_created_at":  stegoManifest.CreatedAt,
+			"stego_manifest_proposal_id": stegoManifest.ProposalID,
+			"stego_manifest_yaml":        string(manifestBytes),
+			"visible_pixel_hash":         stegoManifest.VisiblePixelHash,
+		},
+		Status: "verified",
+	}
+	for k, v := range payloadMeta {
+		if _, ok := rec.Metadata[k]; !ok {
+			rec.Metadata[k] = v
+		}
+	}
+	if err := ingest.Create(rec); err != nil {
+		log.Printf("mirror ingest: create %s: %v", id, err)
+	} else {
+		log.Printf("mirror ingest: created %s (cid=%s)", id, cid)
+	}
+}
+
 // StartIPFSIngestionSync subscribes to IPFS mirror announcements and creates ingestion records for stego images.
 func StartIPFSIngestionSync(ctx context.Context, ingest *services.IngestionService, store Store, reconcileFn IngestReconcileFunc) error {
 	if ingest == nil {

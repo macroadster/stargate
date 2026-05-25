@@ -409,6 +409,11 @@ func runHTTPServer(store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, api
 
 	var mirror mirrorState
 	ipfsCfg := ipfs.LoadMirrorConfig()
+	// When the mirror downloads a new file, trigger ingestion immediately
+	// instead of relying on a separate pubsub re-fetch cycle.
+	ipfsCfg.OnFileDownloaded = func(ctx context.Context, ev ipfs.FileDownloadedEvent) {
+		scmiddleware.IngestDownloadedFile(ctx, ev.FilePath, ev.CID, ingestionSvc, store)
+	}
 	if ipfsCfg.Enabled {
 		go mirror.startWithRetry(context.Background(), ipfsCfg)
 	}
