@@ -700,6 +700,21 @@ func ipfsIngestProcessPending(ctx context.Context, ingest *services.IngestionSer
 			meta["proposal_tasks_json"] = string(taskJSON)
 		}
 	}
+	// Write wish image to disk so the /uploads/ endpoint can serve it.
+	uploadsDir := strings.TrimSpace(os.Getenv("UPLOADS_DIR"))
+	if uploadsDir == "" {
+		uploadsDir = "/data/uploads"
+	}
+	_ = os.MkdirAll(uploadsDir, 0755)
+	uploadPath := filepath.Join(uploadsDir, id)
+	if _, statErr := os.Stat(uploadPath); statErr != nil {
+		if writeErr := os.WriteFile(uploadPath, imageBytes, 0644); writeErr != nil {
+			log.Printf("ipfs ingestion sync: failed to write wish image to %s: %v", uploadPath, writeErr)
+		} else {
+			log.Printf("ipfs ingestion sync: wrote wish image to %s (%d bytes)", uploadPath, len(imageBytes))
+		}
+	}
+
 	if existing, err := ingest.Get(id); err == nil && existing != nil {
 		_ = ingest.UpdateMetadata(id, meta)
 		state.lastSeen[ann.ImageCID] = seenAt
