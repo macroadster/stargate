@@ -176,17 +176,15 @@ func (s *Server) ReconcileStegoWithAnnouncement(ctx context.Context, ann *stegoA
 		return fmt.Errorf("ipfs cat stego failed: %w", err)
 	}
 
-	// Write stego image to /data/uploads with hash-only filename for stealth
+	// Write stego image to /data/uploads using SHA256 as filename (matches
+	// inscribeStego convention so mirror sync doesn't create duplicates).
+	sum := sha256.Sum256(stegoBytes)
+	stegoHash := hex.EncodeToString(sum[:])
 	uploadsDir := strings.TrimSpace(os.Getenv("UPLOADS_DIR"))
 	if uploadsDir == "" {
 		uploadsDir = "/data/uploads"
 	}
-	// Use the CID hash as filename (remove any extension for stealth)
-	filename := ann.StegoCID
-	if parts := strings.Split(ann.StegoCID, "."); len(parts) > 1 {
-		filename = parts[0] // Remove extension if present
-	}
-	uploadPath := filepath.Join(uploadsDir, filename)
+	uploadPath := filepath.Join(uploadsDir, stegoHash)
 	if err := os.WriteFile(uploadPath, stegoBytes, 0644); err != nil {
 		return fmt.Errorf("failed to write stego image: %w", err)
 	}
@@ -235,10 +233,6 @@ func (s *Server) ReconcileStegoWithAnnouncement(ctx context.Context, ann *stegoA
 	if contractID == "" {
 		return fmt.Errorf("unable to determine contract ID from announcement")
 	}
-
-	// Create hash of stego image
-	sum := sha256.Sum256(stegoBytes)
-	stegoHash := hex.EncodeToString(sum[:])
 
 	// Upsert contract from payload
 	if err := s.upsertContractFromStegoPayload(ctx, contractID, ann.StegoCID, stegoHash, manifest, payload); err != nil {
