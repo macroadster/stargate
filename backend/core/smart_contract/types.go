@@ -76,6 +76,8 @@ type MerkleProof struct {
 	RecommitRedeemHash     string      `json:"recommit_redeem_hash,omitempty"`
 	RecommitAddress        string      `json:"recommit_address,omitempty"`
 	RecommitStatus         string      `json:"recommit_status,omitempty"` // "" | "broadcast" | "confirmed"
+	RecommitBroadcastAt    *time.Time  `json:"recommit_broadcast_at,omitempty"`
+	RecommitConfirmedAt    *time.Time  `json:"recommit_confirmed_at,omitempty"`
 	SweepTxID              string      `json:"sweep_tx_id,omitempty"`
 	SweepStatus            string      `json:"sweep_status,omitempty"`
 	SweepError             string      `json:"sweep_error,omitempty"`
