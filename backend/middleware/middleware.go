@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	auth "stargate-backend/storage/auth"
@@ -128,15 +129,20 @@ func SecurityHeaders(next http.Handler) http.Handler {
 	})
 }
 
-// Timeout middleware
+// Timeout middleware. Uses a mutex-protected response writer so that when the
+// timeout fires the handler goroutine can no longer write to the real
+// connection. This prevents the "wrote more than the declared Content-Length"
+// race that previously caused goroutine leaks and crash loops.
 func Timeout(timeout time.Duration) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Skip timeout for streaming endpoints
+			// Skip timeout for streaming endpoints and health probes.
 			if r.Header.Get("Accept") == "text/event-stream" ||
 				strings.Contains(r.URL.Path, "/chat/stream") ||
 				strings.Contains(r.URL.Path, "/mcp/events") ||
-				strings.Contains(r.URL.Path, "/smart_contract/events") {
+				strings.Contains(r.URL.Path, "/smart_contract/events") ||
+				r.URL.Path == "/api/health" ||
+				r.URL.Path == "/bitcoin/v1/health" {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -146,8 +152,7 @@ func Timeout(timeout time.Duration) func(http.Handler) http.Handler {
 
 			r = r.WithContext(ctx)
 
-			// Wrap response writer to track if data was sent
-			tracked := &timeoutTrackingWriter{ResponseWriter: w}
+			tracked := &timeoutTrackingWriter{w: w}
 
 			done := make(chan struct{})
 			go func() {
@@ -159,9 +164,14 @@ func Timeout(timeout time.Duration) func(http.Handler) http.Handler {
 			case <-done:
 				// Request completed normally
 			case <-ctx.Done():
-				// Request timed out
-				// Only write error if response hasn't been committed yet
-				if !tracked.committed {
+				// Set timedOut under the lock so the handler goroutine
+				// can no longer write to the real ResponseWriter.
+				tracked.mu.Lock()
+				alreadyCommitted := tracked.committed
+				tracked.timedOut = true
+				tracked.mu.Unlock()
+
+				if !alreadyCommitted {
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(http.StatusRequestTimeout)
 
@@ -181,32 +191,53 @@ func Timeout(timeout time.Duration) func(http.Handler) http.Handler {
 	}
 }
 
+// timeoutTrackingWriter wraps an http.ResponseWriter with a mutex so that
+// after a timeout, the handler goroutine's writes are silently discarded
+// instead of racing with the timeout response.
 type timeoutTrackingWriter struct {
-	http.ResponseWriter
+	w          http.ResponseWriter
+	mu         sync.Mutex
 	committed  bool
+	timedOut   bool
 	statusCode int
 }
 
+func (tw *timeoutTrackingWriter) Header() http.Header {
+	return tw.w.Header()
+}
+
 func (tw *timeoutTrackingWriter) WriteHeader(statusCode int) {
+	tw.mu.Lock()
+	defer tw.mu.Unlock()
+	if tw.timedOut || tw.committed {
+		return
+	}
 	tw.committed = true
 	tw.statusCode = statusCode
-	tw.ResponseWriter.WriteHeader(statusCode)
+	tw.w.WriteHeader(statusCode)
 }
 
 func (tw *timeoutTrackingWriter) Write(b []byte) (int, error) {
+	tw.mu.Lock()
+	defer tw.mu.Unlock()
+	if tw.timedOut {
+		return 0, http.ErrHandlerTimeout
+	}
 	if !tw.committed {
 		tw.statusCode = http.StatusOK
-		tw.ResponseWriter.WriteHeader(http.StatusOK)
+		tw.w.WriteHeader(http.StatusOK)
 		tw.committed = true
 	}
-	return tw.ResponseWriter.Write(b)
+	return tw.w.Write(b)
 }
 
 func (tw *timeoutTrackingWriter) Flush() {
-	if tw.ResponseWriter == nil {
+	tw.mu.Lock()
+	defer tw.mu.Unlock()
+	if tw.timedOut {
 		return
 	}
-	if f, ok := tw.ResponseWriter.(http.Flusher); ok {
+	if f, ok := tw.w.(http.Flusher); ok {
 		f.Flush()
 	}
 }
