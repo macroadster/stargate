@@ -72,6 +72,15 @@ Approved artifacts (wish images and final product images) are published to IPFS.
 
 Stargate is moving toward a single-binary distribution model (downloadable, runnable binary without requiring the full microservices stack of Go backend + Python Starlight + Postgres + IPFS node). This lowers the barrier for home operators.
 
+**Migrating from Postgres to SQLite**: If you have an existing deployment using `STARGATE_PG_DSN`, use the dedicated migration utility:
+
+    cd backend
+    make build-migrate
+    ./bin/migrate-pg-to-sqlite --pg-dsn "$STARGATE_PG_DSN" --target-dir ./data/sqlite --dry-run   # preview
+    ./bin/migrate-pg-to-sqlite --pg-dsn "$STARGATE_PG_DSN" --target-dir ./data/sqlite             # execute
+
+Then set `STARGATE_STORAGE=sqlite` (or simply remove the PG DSN env var) and restart. The tool correctly converts JSONB→TEXT, TEXT[] skills→comma strings, TIMESTAMPTZ→RFC3339 text, etc. See `bin/migrate-pg-to-sqlite --help`.
+
 A related future direction under discussion: at submission time, tar the relevant sandbox/artifact state and embed the SHA256 of that tarball into the product image via steganography. This would give AI-generated binaries and complex deliverables a strong, bit-level verifiable provenance chain ("this exact bundle was produced for this specific task").
 
 ### Relationship with Starlight (the ML scanner)

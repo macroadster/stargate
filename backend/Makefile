@@ -18,8 +18,16 @@ build-test:
 	go build -o cmd/tests/build-verification ./cmd/tests/
 	@echo "✅ Build verification utility built: cmd/tests/build-verification"
 
+# Build the Postgres→SQLite migration utility (single-binary transition helper)
+build-migrate:
+	@echo "Building Postgres to SQLite migration utility..."
+	@mkdir -p bin
+	go build -o bin/migrate-pg-to-sqlite ./cmd/migrate-pg-to-sqlite
+	@echo "✅ Migration utility built: bin/migrate-pg-to-sqlite"
+	@echo "   Run with: ./bin/migrate-pg-to-sqlite --help"
+
 # Build all binaries
-build-all: build build-test
+build-all: build build-test build-migrate
 
 # Run tests
 test:
@@ -31,6 +39,7 @@ clean:
 	@echo "Cleaning build artifacts..."
 	rm -f stargate-backend
 	rm -f cmd/tests/build-verification
+	rm -f bin/migrate-pg-to-sqlite
 	@echo "✅ Clean completed"
 
 # Run build verification
@@ -63,7 +72,8 @@ help:
 	@echo "Available targets:"
 	@echo "  build        - Build main application"
 	@echo "  build-test   - Build test utilities"
-	@echo "  build-all    - Build all binaries"
+	@echo "  build-migrate- Build Postgres→SQLite migration utility"
+	@echo "  build-all    - Build all binaries (incl. migrator)"
 	@echo "  test         - Run tests"
 	@echo "  clean        - Clean build artifacts"
 	@echo "  verify       - Run build verification"
