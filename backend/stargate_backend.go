@@ -306,8 +306,10 @@ func startMCPServices(escort *smart_contract.EscortService, store scmiddleware.S
 		}
 	}
 
-	// Start funding proof refresher
-	if os.Getenv("STARGATE_ENABLE_FUNDING_SYNC") != "false" {
+	// Start funding proof refresher (opt-in only; disabled by default since
+	// the direct PSBT payment flow + block monitor makes external proof
+	// refresh unnecessary for most deployments).
+	if os.Getenv("STARGATE_ENABLE_FUNDING_SYNC") == "true" {
 		fundingInterval := 60 * time.Second
 		if raw := os.Getenv("STARGATE_FUNDING_SYNC_INTERVAL_SEC"); raw != "" {
 			if v, err := strconv.Atoi(raw); err == nil && v > 0 {
@@ -330,6 +332,8 @@ func startMCPServices(escort *smart_contract.EscortService, store scmiddleware.S
 		} else {
 			log.Printf("funding sync enabled (interval=%s, provider=%s)", fundingInterval, fundingProvider)
 		}
+	} else {
+		log.Printf("funding sync disabled (default; set STARGATE_ENABLE_FUNDING_SYNC=true to enable)")
 	}
 }
 

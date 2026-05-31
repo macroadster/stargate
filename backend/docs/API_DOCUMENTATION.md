@@ -660,10 +660,10 @@ MCP_DEFAULT_CLAIM_TTL_HOURS=72             # Task claim expiration time
 MCP_SEED_FIXTURES=true                     # Whether to seed with test data
 MCP_ENABLE_INGEST_SYNC=true                 # Enable ingestion sync
 MCP_INGEST_SYNC_INTERVAL_SEC=30            # Ingestion sync interval
-MCP_ENABLE_FUNDING_SYNC=true               # Enable funding sync
-MCP_FUNDING_SYNC_INTERVAL_SEC=60           # Funding sync interval
-MCP_FUNDING_PROVIDER=mock                  # Funding provider: mock or blockstream
-MCP_FUNDING_API_BASE=https://blockstream.info/api  # Funding API base URL
+STARGATE_ENABLE_FUNDING_SYNC=true          # Enable funding sync (opt-in; disabled by default)
+STARGATE_FUNDING_SYNC_INTERVAL_SEC=60      # Funding sync interval (only used when enabled)
+STARGATE_FUNDING_PROVIDER=mock             # Funding provider: mock or blockstream
+STARGATE_FUNDING_API_BASE=https://blockstream.info/api  # Funding API base URL
 
 # Server Configuration
 PORT=3001
