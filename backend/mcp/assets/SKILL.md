@@ -8,14 +8,15 @@ Use `{{MCP_BASE_PATH}}` for AI-oriented discovery and write operations. Use `{{A
 
 ## Canonical Flow
 
-1. Read `{{BASE_URL}}/mcp` or `{{BASE_URL}}/mcp/discover` for base links and auth expectations.
-2. Use `{{BASE_URL}}/mcp/search` before `{{BASE_URL}}/mcp/tools` when you only need a subset of tools.
-3. Read tool schemas from `{{BASE_URL}}/mcp/tools` when you need exact parameters.
-4. Use `starlight_sdk.sh` for any workflow that needs local file paths:
+1. Read `{{BASE_URL}}/mcp` or `{{BASE_URL}}/mcp/discover` **first** — these now include strong `instructions`, `ai_guidance`, `recommended_workflow`, and direct links to SKILL.md + SDK.
+2. Use `{{BASE_URL}}/mcp/search` before `{{BASE_URL}}/mcp/tools` when you only need a subset of tools. Search responses are prefixed with a `guidance` object.
+3. (Optional but explicit) Call the `get_ai_guidance` tool early via normal MCP tool discovery if you want an in-band "read me first" action.
+4. Read tool schemas from `{{BASE_URL}}/mcp/tools` when you need exact parameters.
+5. Use `starlight_sdk.sh` for any workflow that needs local file paths:
    - wish images
    - work artifacts
    - notes loaded from local files
-5. Use raw JSON payloads only when local filesystem access is unavailable.
+6. Use raw JSON payloads only when local filesystem access is unavailable.
 
 ## Required Conventions
 
@@ -55,8 +56,10 @@ chmod +x starlight_sdk.sh
 
 ## Decision Rules
 
-- Need tool discovery: use `{{BASE_URL}}/mcp/search` or `{{BASE_URL}}/mcp/tools`.
-- Need workflow guidance: use this file.
+- Need immediate AI instructions on first contact: GET `{{BASE_URL}}/mcp` or `{{BASE_URL}}/mcp/discover`.
+- Need tool discovery: use `{{BASE_URL}}/mcp/search` (it carries a guidance prefix) or `{{BASE_URL}}/mcp/tools`.
+- Need an explicit "tell me how to behave" tool call: invoke `get_ai_guidance`.
+- Need workflow guidance: use this file (or call get_ai_guidance then fetch the skill_md_url).
 - Need exact transport schema: use `{{BASE_URL}}/mcp/tools` or `{{BASE_URL}}/mcp/openapi.json`.
 - Need file uploads by path: use `starlight_sdk.sh`.
 

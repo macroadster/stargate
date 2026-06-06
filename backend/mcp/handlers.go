@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -66,40 +67,44 @@ func (h *HTTPMCPServer) handleIndex(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("MCP-Session-Id", sessionID)
 	w.Header().Set("Accept", "application/json, text/event-stream")
+
+	// Build rich AI guidance block (injected early for agents)
+	ai := h.guidance.GetAIGuidance(base)
+
+	result := map[string]interface{}{
+		"protocolVersion": "2025-03-26",
+		"capabilities": map[string]interface{}{
+			"tools": map[string]bool{
+				"list": true,
+				"call": true,
+			},
+			"resources": map[string]bool{
+				"list": false,
+				"read": false,
+			},
+			"prompts": map[string]bool{
+				"list": false,
+				"get":  false,
+			},
+			"logging":   map[string]bool{},
+			"streaming": map[string]bool{"accept": true},
+		},
+		"serverInfo": map[string]string{
+			"name":    "starlight",
+			"version": "2026.06",
+		},
+		"instructions":        ai.Instructions,
+		"skill_md_url":        ai.SkillMDURL,
+		"sdk_url":             ai.SDKURL,
+		"recommended_workflow": ai.RecommendedWorkflow,
+		"ai_guidance":         ai.AIGuidance,
+		"links":               ai.Links,
+	}
+
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"jsonrpc": "2.0",
 		"id":      nil,
-		"result": map[string]interface{}{
-			"protocolVersion": "2025-03-26",
-			"capabilities": map[string]interface{}{
-				"tools": map[string]bool{
-					"list": true,
-					"call": true,
-				},
-				"resources": map[string]bool{
-					"list": false,
-					"read": false,
-				},
-				"prompts": map[string]bool{
-					"list": false,
-					"get":  false,
-				},
-				"logging":   map[string]bool{},
-				"streaming": map[string]bool{"accept": true},
-			},
-			"serverInfo": map[string]string{
-				"name":    "starlight",
-				"version": "1.0.0",
-			},
-			"instructions": "Use POST /mcp with JSON-RPC to call tools. Pass 'sessionId' in MCP-Session-Id header for Streamable HTTP.",
-			"links": map[string]string{
-				"docs":   base + "/mcp/docs",
-				"skill":  base + "/mcp/SKILL.md",
-				"sdk":    base + "/mcp/starlight_sdk.sh",
-				"tools":  base + "/mcp/tools",
-				"events": base + "/mcp/events",
-			},
-		},
+		"result":  result,
 	})
 }
 
@@ -116,8 +121,18 @@ func (h *HTTPMCPServer) handleDiscover(w http.ResponseWriter, r *http.Request) {
 		toolNames = append(toolNames, name)
 	}
 	sort.Strings(toolNames)
+
+	// Inject early AI guidance at the top level (highest impact discovery endpoint)
+	ai := h.guidance.GetAIGuidance(base)
+
 	resp := map[string]interface{}{
-		"version": "1.0",
+		"version":        "2026.06",
+		"instructions":   ai.Instructions,
+		"skill_md_url":   ai.SkillMDURL,
+		"sdk_url":        ai.SDKURL,
+		"ai_guidance":    ai.AIGuidance,
+		"recommended_workflow": ai.RecommendedWorkflow,
+		"links":          ai.Links,
 		"base_urls": map[string]string{
 			"api": base + "/api/smart_contract",
 			"mcp": base + "/mcp",
@@ -161,7 +176,7 @@ func (h *HTTPMCPServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"status":    "healthy",
 		"timestamp": time.Now().Format(time.RFC3339),
-		"version":   "1.0.0",
+		"version":   "2026.06",
 		"service":   "stargate-mcp",
 		"endpoints": []string{"/mcp", "/mcp/tools", "/mcp/call", "/mcp/docs", "/mcp/SKILL.md", "/mcp/starlight_sdk.sh"},
 		"components": map[string]string{
@@ -172,6 +187,25 @@ func (h *HTTPMCPServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 			"smart_contract_svc": fmt.Sprintf("%t", h.smartContractSvc != nil),
 		},
 	})
+}
+
+// handleGetAIGuidanceTool is the implementation for the get_ai_guidance MCP tool.
+// It returns the structured guidance plus links. Agents are directed to fetch /mcp/SKILL.md for the full canonical markdown.
+func (h *HTTPMCPServer) handleGetAIGuidanceTool(ctx context.Context, args map[string]interface{}, r *http.Request) (interface{}, error) {
+	base := h.externalBaseURL(r)
+	ai := h.guidance.GetAIGuidance(base)
+
+	// Also surface a short pointer to the full content
+	return map[string]interface{}{
+		"guidance":            ai,
+		"full_skill_md_url":   ai.SkillMDURL,
+		"full_sdk_url":        ai.SDKURL,
+		"note":                "Fetch the complete canonical workflow from the skill_md_url. This tool exists so agents can explicitly request guidance via the normal tool discovery path.",
+		"recommended_next": []string{
+			"GET " + ai.SkillMDURL,
+			"Download " + ai.SDKURL + " for file operations",
+		},
+	}, nil
 }
 
 func (h *HTTPMCPServer) handleEventsProxy(w http.ResponseWriter, r *http.Request) {
@@ -442,8 +476,19 @@ func (h *HTTPMCPServer) handleToolSearch(w http.ResponseWriter, r *http.Request)
 
 	results := h.searchTools(query, category, limit)
 
+	// Prefix search results with AI guidance so agents see the "read SKILL.md + use SDK" directive
+	// as early as possible in the primary discovery path (search_tool / use_tool flows).
+	base := h.externalBaseURL(r)
+	ai := h.guidance.GetAIGuidance(base)
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
+		"guidance": map[string]interface{}{
+			"message":       "Starlight MCP AI Guidance: Read " + ai.SkillMDURL + " before using tools. For local files/artifacts, strongly prefer the starlight_sdk.sh wrapper over raw tool calls. See the 'ai_guidance' section at the root /mcp or /mcp/discover endpoint.",
+			"sdk_recommended": true,
+			"sdk_download":  ai.SDKURL,
+			"skill_md":      ai.SkillMDURL,
+		},
 		"query":    query,
 		"category": category,
 		"limit":    limit,

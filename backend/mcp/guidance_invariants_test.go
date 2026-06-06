@@ -243,4 +243,42 @@ func TestMCPGuidanceInvariants(t *testing.T) {
 			t.Error("agent_assets should include sdk reference")
 		}
 	})
+
+	t.Run("root /mcp GET includes strong AI guidance fields", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("GET", "/mcp", nil)
+		r.Host = "starlight-ai.freemyip.com"
+		server.handleIndex(w, r)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+		body := w.Body.String()
+		for _, key := range []string{"instructions", "skill_md_url", "sdk_url", "ai_guidance", "recommended_workflow", "links"} {
+			if !strings.Contains(body, `"`+key+`"`) {
+				t.Errorf("root /mcp response missing key %q", key)
+			}
+		}
+		if !strings.Contains(body, "SKILL.md") {
+			t.Errorf("root instructions must reference SKILL.md")
+		}
+	})
+
+	t.Run("/mcp/discover includes AI guidance at top level", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("GET", "/mcp/discover", nil)
+		r.Host = "starlight-ai.freemyip.com"
+		server.handleDiscover(w, r)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+		body := w.Body.String()
+		if !strings.Contains(body, `"instructions"`) || !strings.Contains(body, `"ai_guidance"`) {
+			t.Fatalf("/mcp/discover must surface instructions and ai_guidance at top level")
+		}
+		if !strings.Contains(body, "starlight_sdk.sh") {
+			t.Fatalf("discover must advertise the SDK URL")
+		}
+	})
 }

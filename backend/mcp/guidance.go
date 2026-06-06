@@ -104,12 +104,62 @@ type GuidanceManifest struct {
 	WorkflowHints    []WorkflowHint             `json:"workflow_hints"`
 }
 
+// AIGuidance captures the early-discovery directives for AI agents.
+// This is injected into root /mcp and /mcp/discover responses, and prefixes /mcp/search.
+type AIGuidance struct {
+	Instructions        string                 `json:"instructions"`
+	SkillMDURL          string                 `json:"skill_md_url"`
+	SDKURL              string                 `json:"sdk_url"`
+	RecommendedWorkflow []string               `json:"recommended_workflow"`
+	AIGuidance          map[string]interface{} `json:"ai_guidance"`
+	Links               map[string]string      `json:"links"`
+}
+
+// GetAIGuidance returns a ready-to-embed guidance block for root discovery endpoints.
+// It uses the request-derived baseURL so URLs are correct behind proxies.
+func (m *GuidanceManifest) GetAIGuidance(baseURL string) AIGuidance {
+	mcpBase := baseURL + "/mcp"
+	skillURL := mcpBase + "/SKILL.md"
+	sdkURL := mcpBase + "/starlight_sdk.sh"
+
+	return AIGuidance{
+		Instructions: "AI agents: Read the full guidance at /mcp/SKILL.md before performing any actions. For operations that involve local files (images, messages, build artifacts, index.html, etc.), download and use the starlight_sdk.sh script. Direct JSON construction of file content is discouraged.",
+		SkillMDURL:   skillURL,
+		SDKURL:       sdkURL,
+		RecommendedWorkflow: []string{
+			"Read /mcp/SKILL.md (or fetch the content)",
+			"Download starlight_sdk.sh for file/artifact operations",
+			"Use /mcp/search for tool discovery (preferred for agents)",
+			"Use the SDK bridge for create_wish / submit_work when local paths are involved",
+		},
+		AIGuidance: map[string]interface{}{
+			"summary": "Use the SDK for file-heavy workflows. Use wallet-based auth (get_auth_challenge + verify_auth_challenge). Prefer structured markdown in proposals. Use search before listing all tools.",
+			"key_rules": []string{
+				"Download starlight_sdk.sh for create_wish / submit_work with local paths",
+				"Use --artifact and --artifact-root flags when submitting build outputs",
+				"Always provide visible_pixel_hash when creating proposals tied to wishes",
+				"Check submission status via list_submissions after submit_work",
+			},
+		},
+		Links: map[string]string{
+			"skill_md":  skillURL,
+			"sdk":       sdkURL,
+			"search":    mcpBase + "/search",
+			"tools":     mcpBase + "/tools",
+			"discover":  mcpBase + "/discover",
+			"docs":      mcpBase + "/docs",
+			"openapi":   mcpBase + "/openapi.json",
+			"chat":      mcpBase + "/chat",
+		},
+	}
+}
+
 func NewGuidanceManifest(baseURL string) *GuidanceManifest {
 	mcpBase := baseURL + "/mcp"
 	apiBase := baseURL + "/api"
 
 	manifest := &GuidanceManifest{
-		Version:          "1.0",
+		Version:          "2026.06",
 		BaseURL:          baseURL,
 		Categories:       Categories,
 		PreferredClients: PreferredClients,
@@ -306,6 +356,17 @@ func NewGuidanceManifest(baseURL string) *GuidanceManifest {
 				},
 			},
 			{
+				Name:         "get_ai_guidance",
+				Category:     ToolCategoryDiscovery,
+				Description:  "Returns the canonical SKILL.md content and usage instructions for AI agents using this MCP server. Call this early if you have not yet read the guidance. Always safe to call (no auth required).",
+				AuthRequired: false,
+				Keywords:     []string{"guidance", "skill", "sdk", "instructions", "ai", "help", "start", "workflow"},
+				Parameters:   map[string]*ParameterSchema{},
+				Examples: []ToolExample{
+					{Description: "Fetch AI guidance and SKILL.md summary + links", Arguments: map[string]interface{}{}},
+				},
+			},
+			{
 				Name:         "list_tasks",
 				Category:     ToolCategoryDiscovery,
 				Description:  "List available tasks with filtering options and pagination",
@@ -381,7 +442,7 @@ func NewGuidanceManifest(baseURL string) *GuidanceManifest {
 			{
 				Name:         "claim_task",
 				Category:     ToolCategoryWrite,
-				Description:  "Claim a task for work by an AI agent",
+				Description:  "Claim a task for work by an AI agent. See /mcp/SKILL.md for the recommended end-to-end workflow (auth \u2192 claim \u2192 submit).",
 				AuthRequired: true,
 				Keywords:     []string{"claim", "task", "work", "start"},
 				Parameters: map[string]*ParameterSchema{
@@ -398,7 +459,7 @@ func NewGuidanceManifest(baseURL string) *GuidanceManifest {
 			{
 				Name:            "submit_work",
 				Category:        ToolCategoryWrite,
-				Description:     "Submit completed work for a claimed task with optional file attachments",
+				Description:     "Submit completed work for a claimed task with optional file attachments. **For local files, use the starlight_sdk.sh wrapper (see /mcp/SKILL.md) instead of passing large content in the JSON payload.** The SDK handles proper artifact encoding and relative paths.",
 				AuthRequired:    true,
 				PreferredClient: "starlight_sdk.sh",
 				DocsHint:        "Use /mcp/SKILL.md and /mcp/starlight_sdk.sh for path-based file uploads.",
@@ -474,7 +535,7 @@ func NewGuidanceManifest(baseURL string) *GuidanceManifest {
 			{
 				Name:         "create_proposal",
 				Category:     ToolCategoryWrite,
-				Description:  "Create a new proposal tied to a wish. Use structured task sections (### Task X: Title) for automatic task creation.",
+				Description:  "Create a new proposal tied to a wish. Use structured task sections (### Task X: Title) for automatic task creation. See /mcp/SKILL.md for AI agent best practices. Always provide visible_pixel_hash (the wish/contract pixel hash) when the proposal is tied to an existing wish.",
 				AuthRequired: true,
 				Keywords:     []string{"proposal", "create", "wish", "competition"},
 				Parameters: map[string]*ParameterSchema{
@@ -511,7 +572,7 @@ func NewGuidanceManifest(baseURL string) *GuidanceManifest {
 			{
 				Name:            "create_wish",
 				Category:        ToolCategoryWrite,
-				Description:     "Create a new wish (request for work) by inscribing a message. This creates a pending wish contract.",
+				Description:     "Create a new wish (request for work) by inscribing a message. This creates a pending wish contract. **When providing images or message files from the local filesystem, prefer the starlight_sdk.sh bridge (see /mcp/SKILL.md) which handles base64 encoding automatically.**",
 				AuthRequired:    true,
 				PreferredClient: "starlight_sdk.sh",
 				DocsHint:        "Use /mcp/SKILL.md and /mcp/starlight_sdk.sh for local image uploads.",
@@ -697,7 +758,7 @@ func NewGuidanceManifest(baseURL string) *GuidanceManifest {
 			{
 				Name:         "get_auth_challenge",
 				Category:     ToolCategoryDiscovery,
-				Description:  "Get a cryptographic challenge for wallet verification with AI-friendly options",
+				Description:  "Get a cryptographic challenge for wallet verification with AI-friendly options. Pair with verify_auth_challenge to obtain an API key (X-API-Key or Bearer). See /mcp/SKILL.md for auth flow.",
 				AuthRequired: false,
 				Keywords:     []string{"auth", "wallet", "challenge", "verification"},
 				Parameters: map[string]*ParameterSchema{
@@ -735,7 +796,7 @@ func NewGuidanceManifest(baseURL string) *GuidanceManifest {
 			{
 				Name:         "verify_auth_challenge",
 				Category:     ToolCategoryWrite,
-				Description:  "Verify wallet signature and receive API key with detailed error reporting",
+				Description:  "Verify wallet signature and receive API key with detailed error reporting. The resulting key is used for all write tools. See /mcp/SKILL.md for the wallet auth sequence.",
 				AuthRequired: true,
 				Keywords:     []string{"verify", "wallet", "signature", "api_key"},
 				Parameters: map[string]*ParameterSchema{

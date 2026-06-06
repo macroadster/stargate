@@ -613,6 +613,8 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 		return h.handleScanTransaction(ctx, args)
 	case "get_scanner_info":
 		return h.handleGetScannerInfo(ctx, args)
+	case "get_ai_guidance":
+		return h.handleGetAIGuidanceTool(ctx, args, r)
 	case "get_auth_challenge":
 		return h.handleGetAuthChallenge(ctx, args)
 	case "verify_auth_challenge":
