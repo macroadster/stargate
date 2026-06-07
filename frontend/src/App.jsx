@@ -52,7 +52,7 @@ function MainContent() {
   const [searchResults, setSearchResults] = useState(null);
   const [copiedText, setCopiedText] = useState('');
   const sentinelRef = useRef(null);
-  const [hideBrc20, setHideBrc20] = useState(true);
+  const [hideText, setHideText] = useState(true);
   const [pendingRefreshKey, setPendingRefreshKey] = useState(0);
   const { elRef: scrollRef, isDragging } = useHorizontalScroll();
   const prevBlocksLengthRef = useRef(0);
@@ -100,14 +100,35 @@ function MainContent() {
   const scannedBlocks = blocks.filter(b => !b.isFuture && !milestoneHeights.has(b.height));
   const isEarlyScanning = scannedBlocks.length === 0;
 
-
-
   const filteredInscriptions = inscriptions.filter((inscription) => {
-    if (!hideBrc20) return true;
-    const text = inscription.text || '';
-    const name = inscription.file_name || '';
-    const isBrc = text.toLowerCase().includes('brc-20') || text.toLowerCase().includes('brc20') || name.toLowerCase().includes('brc-20') || name.toLowerCase().includes('brc20');
-    return !isBrc;
+    if (!hideText) return true;
+
+    const mime = (inscription.mime_type || '').toLowerCase();
+    const hasTextContent = !!(inscription.text || inscription.metadata?.extracted_message);
+    const fileName = (inscription.file_name || '').toLowerCase();
+    const url = (inscription.image_url || inscription.thumbnail || '').toLowerCase();
+    const urlLooksLikeTextFile = url.endsWith('.txt');
+
+    // Obviously text by mime or common text protocol filenames (BRC-20, .bitmap, json, etc.)
+    const isObviouslyText = mime.startsWith('text/') ||
+                            mime.includes('json') ||
+                            fileName.endsWith('.json') ||
+                            fileName.endsWith('.txt') ||
+                            fileName.endsWith('.bitmap') ||
+                            fileName.endsWith('.md') ||
+                            fileName.includes('brc-20') ||
+                            fileName.includes('brc20');
+
+    // Visual image if: declares image mime, or served from the app's image asset path,
+    // or has a content url but is not obviously text (allows images that have odd mime in summary data).
+    const isBlockImage = url.includes('/block-image/');
+    const hasContentUrl = !!url && !urlLooksLikeTextFile;
+    const isActuallyImageFile = (mime.includes('image') || isBlockImage || (hasContentUrl && !isObviouslyText)) && !urlLooksLikeTextFile;
+
+    // Hide text inscriptions. Keep visuals (incl. stego images that carry extracted messages).
+    const isTextInscription = isObviouslyText || (hasTextContent && !isActuallyImageFile);
+
+    return !isTextInscription;
   });
 
   // Track if we're navigating via URL to prevent loops
@@ -631,9 +652,9 @@ function MainContent() {
         }}
         onClearSearch={clearSearch}
         renderInlineSearch={renderInlineSearch}
-        showBrcToggle
-        hideBrc20={hideBrc20}
-        onToggleBrc20={() => setHideBrc20(!hideBrc20)}
+        showTextToggle
+        hideText={hideText}
+        onToggleText={() => setHideText(!hideText)}
       />
 
       <div className="pt-0" style={{ minHeight: 0, overflow: 'auto', display: 'flex', flexDirection: 'column' }}>

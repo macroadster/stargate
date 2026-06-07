@@ -47,7 +47,26 @@ const InscriptionCard = ({ inscription, onClick }) => {
   const mime = (inscription.mime_type || '').toLowerCase();
   const hasTextContent = inscription.text || inscription.metadata?.extracted_message;
   const textContent = inscription.text || inscription.metadata?.extracted_message || '';
-  const isActuallyImageFile = mime.includes('image') && !((inscription.image_url || '').endsWith('.txt'));
+  const fileName = (inscription.file_name || '').toLowerCase();
+  const url = (inscription.image_url || inscription.thumbnail || '').toLowerCase();
+  const urlLooksLikeTextFile = url.endsWith('.txt');
+
+  // Obviously text (don't try to render as img, show text/emoji instead)
+  const isObviouslyText = mime.startsWith('text/') ||
+                          mime.includes('json') ||
+                          fileName.endsWith('.json') ||
+                          fileName.endsWith('.txt') ||
+                          fileName.endsWith('.bitmap') ||
+                          fileName.endsWith('.md') ||
+                          fileName.includes('brc-20') ||
+                          fileName.includes('brc20');
+
+  const isBlockImage = url.includes('/block-image/');
+  const hasContentUrl = !!url && !urlLooksLikeTextFile;
+  // Treat as displayable image if mime/block-image, or has a content url but isn't obviously text.
+  // This lets real images render (even if summary mime is odd) while preventing text items from
+  // attempting <img> (they fall through to text snippet or emoji).
+  const isActuallyImageFile = (mime.includes('image') || isBlockImage || (hasContentUrl && !isObviouslyText)) && !urlLooksLikeTextFile;
   const isTextMime = mime.startsWith('text/');
   const isHtmlContent = mime.includes('text/html') || mime.includes('application/xhtml');
   const isSvgContent = mime === 'image/svg+xml' || (mime.includes('svg') && mime.includes('xml'));

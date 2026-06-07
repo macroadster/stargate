@@ -8,7 +8,7 @@ const generateInscriptions = (inscriptions) => {
     tx_id: insc.tx_id || insc.metadata?.transaction_id || insc.id || '',
     contract_id: insc.contract_id || insc.metadata?.contract_id || '',
     type: insc.mime_type?.split('/')[1]?.toUpperCase() || 'UNKNOWN',
-    thumbnail: insc.mime_type?.startsWith('image/') ? insc.image_url : null,
+    thumbnail: (insc.mime_type || '').toLowerCase().includes('image') ? insc.image_url : null,
     gradient: 'from-indigo-500',
     hasMultiple: false,
     contractType: insc.contract_type || 'Steganographic Contract',
@@ -145,7 +145,16 @@ export const useInscriptions = (selectedBlock) => {
           file_name: image.file_name,
           file_path: image.file_path,
           size_bytes: image.size_bytes,
-          image_url: `${CONTENT_BASE}/content/${image.tx_id || image.id}${typeof image.input_index === 'number' ? `?witness=${image.input_index}` : ''}`,
+          image_url: (() => {
+            const raw = image.image_url || '';
+            if (raw) {
+              if (/^https?:\/\//i.test(raw)) return raw;
+              // Server may return relative like "/content/..." or "/api/block-image/..."
+              return `${CONTENT_BASE}${raw.startsWith('/') ? '' : '/'}${raw}`;
+            }
+            // Fallback for legacy/regular inscriptions: construct /content/ URL
+            return `${CONTENT_BASE}/content/${image.tx_id || image.id}${typeof image.input_index === 'number' ? `?witness=${image.input_index}` : ''}`;
+          })(),
           metadata: {
             ...baseMetadata,
             confidence: scanResult.confidence,

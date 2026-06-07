@@ -21,9 +21,9 @@ const AppHeader = ({
   onSearchChange,
   onClearSearch,
   renderInlineSearch,
-  showBrcToggle = false,
-  hideBrc20 = true,
-  onToggleBrc20,
+  showTextToggle = false,
+  hideText = true,
+  onToggleText,
   showThemeToggle = true,
   isDarkMode: propIsDarkMode,
 }) => {
@@ -192,16 +192,16 @@ const AppHeader = ({
                     className="dropdown-menu active"
                     style={{ right: 0, left: "auto" }}
                   >
-                    {showBrcToggle && (
+                    {showTextToggle && (
                       <button
                         onClick={() => {
-                          onToggleBrc20?.();
+                          onToggleText?.();
                           setIsDropdownOpen(false);
                         }}
                         className="dropdown-item flex flex-row items-center justify-between"
                       >
-                        <span>Hide BRC-20</span>
-                        {hideBrc20 && (
+                        <span>Hide text</span>
+                        {hideText && (
                           <Check className="w-4 h-4 text-primary" />
                         )}
                       </button>
@@ -336,17 +336,17 @@ const AppHeader = ({
                 Documents
               </button>
             </li>
-            {showBrcToggle && (
+            {showTextToggle && (
               <li>
                 <button
                   onClick={() => {
-                    onToggleBrc20?.();
+                    onToggleText?.();
                     setIsMenuOpen(false);
                   }}
                   className="nav-link flex flex-row items-center justify-between"
                 >
-                  <span>Hide BRC-20</span>
-                  {hideBrc20 && <Check className="w-4 h-4 text-primary" />}
+                  <span>Hide text</span>
+                  {hideText && <Check className="w-4 h-4 text-primary" />}
                 </button>
               </li>
             )}

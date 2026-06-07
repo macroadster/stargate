@@ -426,13 +426,29 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
   const isContractLocked = isConfirmedContract || isFundingConfirmed || hasFundingTxId;
   const normalizeAddress = (value) => (value || '').trim().toLowerCase();
   
+  const mime = (inscription.mime_type || '').toLowerCase();
+  const fileName = (inscription.file_name || '').toLowerCase();
+  const url = (inscription.image_url || inscription.thumbnail || '').toLowerCase();
+  const urlLooksLikeTextFile = url.endsWith('.txt');
+
+  const isObviouslyText = mime.startsWith('text/') ||
+                          mime.includes('json') ||
+                          fileName.endsWith('.json') ||
+                          fileName.endsWith('.txt') ||
+                          fileName.endsWith('.bitmap') ||
+                          fileName.endsWith('.md') ||
+                          fileName.includes('brc-20') ||
+                          fileName.includes('brc20');
+
+  const isBlockImage = url.includes('/block-image/');
+  const hasContentUrl = !!url && !urlLooksLikeTextFile;
+  // Same heuristic as the hide filter and card: attempt the large image in the modal
+  // for real visuals, but not for obvious text items.
   const isActuallyImageFile =
-    inscription.mime_type?.includes('image') &&
-    !inscription.image_url?.endsWith('.txt') &&
-    (inscription.image_url || inscription.thumbnail);
+    (mime.includes('image') || isBlockImage || (hasContentUrl && !isObviouslyText)) &&
+    !urlLooksLikeTextFile;
   const modalImageSource = isActuallyImageFile ? (inscription.thumbnail || inscription.image_url) : null;
   const scanImageSource = modalImageSource || inscription.image_url || inscription.thumbnail || '';
-  const mime = (inscription.mime_type || '').toLowerCase();
   const isHtmlContent = mime.includes('text/html') || mime.includes('application/xhtml');
   const isSvgContent = mime === 'image/svg+xml' || (mime.includes('svg') && mime.includes('xml'));
   const sandboxSrc = inscription.image_url || inscription.thumbnail;
@@ -1116,8 +1132,8 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
                     <div className="modal-identity-image modal-placeholder flex items-center justify-center">
                       <div className="text-6xl text-center">
                         {inscription.contract_type === 'Steganographic Contract' ? '🎨' :
-                         inscription.mime_type?.includes('text') ? '📄' :
-                         inscription.mime_type?.includes('image') ? '🖼️' : '📦'}
+                         (inscription.mime_type || '').toLowerCase().includes('text') ? '📄' :
+                         (inscription.mime_type || '').toLowerCase().includes('image') ? '🖼️' : '📦'}
                       </div>
                     </div>
                   )}
@@ -1140,8 +1156,8 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
                   <div className="modal-identity-image modal-placeholder flex items-center justify-center">
                     <div className="text-6xl text-center">
                       {inscription.contract_type === 'Steganographic Contract' ? '🎨' :
-                       inscription.mime_type?.includes('text') ? '📄' :
-                       inscription.mime_type?.includes('image') ? '🖼️' : '📦'}
+                       (inscription.mime_type || '').toLowerCase().includes('text') ? '📄' :
+                       (inscription.mime_type || '').toLowerCase().includes('image') ? '🖼️' : '📦'}
                     </div>
                   </div>
                 )
