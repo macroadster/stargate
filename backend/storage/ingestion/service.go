@@ -7,7 +7,7 @@ package ingestion
 // source of truth under the storage package as part of the STARGATE_STORAGE
 // unification effort.
 //
-// Supports both PostgreSQL (pgx) and SQLite (mattn/go-sqlite3) backends.
+// Supports both PostgreSQL (pgx) and SQLite (modernc.org/sqlite pure-Go) backends.
 // The dialect is auto-detected from the DSN: file paths and strings ending
 // in ".db" use SQLite; everything else uses Postgres.
 
@@ -22,7 +22,7 @@ import (
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 var ingestionTablePattern = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
@@ -106,7 +106,7 @@ func NewIngestionService(dsn string) (*IngestionService, error) {
 	driver := "pgx"
 	if isSQLiteDSN(dsn) {
 		dialect = "sqlite"
-		driver = "sqlite3"
+		driver = "sqlite"
 		dsn = dsn + "?_foreign_keys=on"
 	}
 
@@ -353,7 +353,7 @@ func (s *IngestionService) UpdateFromIngest(id string, rec IngestionRecord) erro
 		return err
 	}
 	if s.dialect == "sqlite" {
-		// SQLite json_patch requires 3.39+; go-sqlite3 v1.14.8 bundles 3.36.
+		// SQLite json_patch requires 3.39+; modernc.org/sqlite provides a recent version.
 		// Merge in Go instead: read existing metadata, merge, write back.
 		merged, err := s.mergeMetadataSQLite(id, rec.Metadata)
 		if err != nil {
@@ -391,7 +391,7 @@ func (s *IngestionService) UpdateMetadata(id string, updates map[string]interfac
 		return fmt.Errorf("missing id")
 	}
 	if s.dialect == "sqlite" {
-		// SQLite json_patch requires 3.39+; go-sqlite3 v1.14.8 bundles 3.36.
+		// SQLite json_patch requires 3.39+; modernc.org/sqlite provides a recent version.
 		// Merge in Go instead.
 		merged, err := s.mergeMetadataSQLite(id, updates)
 		if err != nil {
@@ -558,7 +558,7 @@ func (s *IngestionService) Delete(ctx context.Context, id string) error {
 
 // mergeMetadataSQLite reads existing metadata for a row, merges the updates
 // in Go, and returns the serialized JSON string.  This replaces the SQLite
-// json_patch() call which requires SQLite 3.39+ (go-sqlite3 v1.14.8 bundles 3.36).
+// json_patch() call (not available in all builds).
 func (s *IngestionService) mergeMetadataSQLite(id string, updates map[string]interface{}) (string, error) {
 	var raw []byte
 	query := fmt.Sprintf(`SELECT metadata FROM %s WHERE id = $1`, s.tableName)

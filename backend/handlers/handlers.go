@@ -612,7 +612,10 @@ func stripWishTimestamp(message string) string {
 }
 
 func computeVisiblePixelHash(imageBytes []byte, text string) string {
-	sum := sha256.Sum256(imageBytes)
+	// Include text (message) in hash if provided, for uniqueness of wish/inscription
+	// (previously ignored the text param, now uses both for Cat 6.6)
+	input := append(imageBytes, []byte(text)...)
+	sum := sha256.Sum256(input)
 	return fmt.Sprintf("%x", sum[:])
 }
 
@@ -875,6 +878,12 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 		if filename == "" {
 			filename = "placeholder.png"
 		}
+	}
+	// For inscription, only alpha is supported (detection supports all 5).
+	// Return clear 400 instead of silent downgrade (Cat 6.1).
+	if method != "" && method != "auto" && method != "alpha" {
+		h.sendError(w, http.StatusBadRequest, "only alpha method is supported for inscription")
+		return
 	}
 	method = resolveStegoMethod(method, filename, imgBytes)
 	wishTimestamp := time.Now().Unix()

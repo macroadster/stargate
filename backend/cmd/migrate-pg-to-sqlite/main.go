@@ -45,7 +45,7 @@ import (
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 
 	scstore "stargate-backend/storage/smart_contract"
 )
@@ -294,7 +294,7 @@ func checkTargetsEmptyOrDie(groups map[string]bool) {
 		if _, err := os.Stat(ch.path); os.IsNotExist(err) {
 			continue // fresh file = ok
 		}
-		db, err := sql.Open("sqlite3", ch.path+"?_foreign_keys=on")
+		db, err := sql.Open("sqlite", ch.path+"?_foreign_keys=on")
 		if err != nil {
 			continue
 		}
@@ -312,7 +312,7 @@ func checkTargetsEmptyOrDie(groups map[string]bool) {
 func migrateMCP(src *sql.DB) {
 	log.Printf("→ Migrating MCP tables (smart contracts, tasks, proposals...)")
 
-	db, err := sql.Open("sqlite3", pathMCP+"?_foreign_keys=on")
+	db, err := sql.Open("sqlite", pathMCP+"?_foreign_keys=on")
 	if err != nil {
 		log.Fatalf("open target mcp.db: %v", err)
 	}
@@ -498,7 +498,7 @@ func adaptValue(v interface{}) interface{} {
 func migrateAPIKeys(src *sql.DB) {
 	log.Printf("→ Migrating api_keys table")
 
-	db, err := sql.Open("sqlite3", pathKeys+"?_foreign_keys=on")
+	db, err := sql.Open("sqlite", pathKeys+"?_foreign_keys=on")
 	if err != nil {
 		log.Fatalf("open target api_keys.db: %v", err)
 	}
@@ -549,7 +549,7 @@ CREATE INDEX IF NOT EXISTS idx_api_keys_wallet ON api_keys(wallet_address);
 func migrateIngestion(src *sql.DB) {
 	log.Printf("→ Migrating ingestion tables (ingestions + updates)")
 
-	db, err := sql.Open("sqlite3", pathIngest+"?_foreign_keys=on")
+	db, err := sql.Open("sqlite", pathIngest+"?_foreign_keys=on")
 	if err != nil {
 		log.Fatalf("open target ingestions.db: %v", err)
 	}
@@ -634,7 +634,7 @@ CREATE INDEX IF NOT EXISTS starlight_ingest_updates_status_idx
 func migrateBlockScans(src *sql.DB) {
 	log.Printf("→ Migrating block_scans (block metadata index)")
 
-	db, err := sql.Open("sqlite3", pathBlocks+"?_journal_mode=WAL")
+	db, err := sql.Open("sqlite", pathBlocks+"?_journal_mode=WAL")
 	if err != nil {
 		log.Fatalf("open target blocks.db: %v", err)
 	}
@@ -890,7 +890,7 @@ func verifyMigration(sourceCounts sourceCounts) {
 		if ch.want == 0 {
 			continue // nothing to verify
 		}
-		db, err := sql.Open("sqlite3", ch.path+"?_foreign_keys=on")
+		db, err := sql.Open("sqlite", ch.path+"?_foreign_keys=on")
 		if err != nil {
 			log.Printf("  VERIFY FAIL %s: cannot open: %v", ch.name, err)
 			allOK = false

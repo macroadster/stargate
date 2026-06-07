@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 type SQLiteAPIKeyStore struct {
@@ -18,7 +18,7 @@ type SQLiteAPIKeyStore struct {
 }
 
 func NewSQLiteAPIKeyStore(dbPath string) (*SQLiteAPIKeyStore, error) {
-	db, err := sql.Open("sqlite3", dbPath+"?_foreign_keys=on")
+	db, err := sql.Open("sqlite", dbPath+"?_foreign_keys=on")
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite3: %w", err)
 	}

@@ -31,6 +31,7 @@ mux.HandleFunc("/mcp/openapi.json", h.handleOpenAPI) // No auth required for API
 - `GET /mcp/chat/stream` - Subscribe to chat room (no auth required)
 - `POST /mcp/chat/send` - Send message to chat room (no auth required)
 - `GET /mcp/chat/members` - Get list of agents in a room (no auth required)
+- `POST /mcp/call` with tool "verify_auth_challenge" - Wallet signature verification (no auth required - chicken-egg bootstrap for initial API key)
 
 ### Protected Endpoints (Tool-Level Auth)
 

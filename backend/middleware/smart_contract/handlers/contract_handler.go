@@ -133,8 +133,26 @@ func (h *ContractHandler) handleGetContracts(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// Standardize on MCP-style response shape (Cat 4.4) for consistency across handlers.
+	hasMore := false
+	if filter.Limit > 0 && len(contracts) == filter.Limit {
+		checkFilter := filter
+		checkFilter.Offset = filter.Offset + filter.Limit
+		checkFilter.Limit = 1
+		more, merr := h.store.ListContracts(checkFilter)
+		if merr == nil && len(more) > 0 {
+			hasMore = true
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(contracts)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"contracts": contracts,
+		"total":     len(contracts),
+		"limit":     filter.Limit,
+		"offset":    filter.Offset,
+		"has_more":  hasMore,
+	})
 }
 
 // handleCreateContract handles POST /contracts

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 	"stargate-backend/core/smart_contract"
 )
 
@@ -37,7 +37,7 @@ func parseSQLiteTime(raw string) (*time.Time, error) {
 }
 
 func NewSQLiteStore(dbPath string, claimTTL time.Duration, seed bool) (*SQLiteStore, error) {
-	db, err := sql.Open("sqlite3", dbPath+"?_foreign_keys=on")
+	db, err := sql.Open("sqlite", dbPath+"?_foreign_keys=on")
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite3: %w", err)
 	}
@@ -152,6 +152,11 @@ FROM mcp_contracts c
 	orderBy := "ORDER BY c.confirmed_block_height DESC NULLS LAST, c.created_at DESC, c.contract_id DESC"
 	if filter.Limit > 0 {
 		orderBy += fmt.Sprintf(" LIMIT %d", filter.Limit)
+		if filter.Offset > 0 {
+			orderBy += fmt.Sprintf(" OFFSET %d", filter.Offset)
+		}
+	} else if filter.Offset > 0 {
+		orderBy += fmt.Sprintf(" OFFSET %d", filter.Offset)
 	}
 
 	query := baseSelect + " " + whereClause + " " + orderBy
@@ -193,9 +198,7 @@ FROM mcp_contracts c
 		allContracts = append(allContracts, c)
 	}
 
-	if filter.Offset > 0 && filter.Offset < len(allContracts) {
-		allContracts = allContracts[filter.Offset:]
-	}
+	// Offset now handled in SQL (Cat 4.3). Removed post-processing slice that caused zero results when Offset >= Limit.
 
 	return allContracts, nil
 }
@@ -412,7 +415,9 @@ func (s *SQLiteStore) ClaimTask(taskID, walletAddress string, estimatedCompletio
 	if err != nil {
 		return smart_contract.Claim{}, ErrTaskNotFound
 	}
-	if taskStatus != "available" && taskStatus != "approved" {
+	// Only "available" tasks can be claimed. "approved" (and other terminal states) are blocked,
+	// matching MemoryStore behavior (and PGStore). This fixes the divergence noted in Cat 4.1.
+	if taskStatus != "available" {
 		return smart_contract.Claim{}, ErrTaskUnavailable
 	}
 
@@ -422,6 +427,36 @@ func (s *SQLiteStore) ClaimTask(taskID, walletAddress string, estimatedCompletio
 	}
 
 	now := time.Now()
+
+	// Idempotency + conflict check: look for existing claims on this task (matching MemoryStore and PGStore behavior)
+	rows, err := tx.Query(`SELECT claim_id, task_id, ai_identifier, status, expires_at, created_at FROM mcp_claims WHERE task_id=?`, taskID)
+	if err != nil {
+		return smart_contract.Claim{}, err
+	}
+	defer rows.Close()
+
+	var existingActiveClaim *smart_contract.Claim
+	for rows.Next() {
+		var c smart_contract.Claim
+		var expiresStr string
+		if err := rows.Scan(&c.ClaimID, &c.TaskID, &c.AiIdentifier, &c.Status, &expiresStr, &c.CreatedAt); err != nil {
+			return smart_contract.Claim{}, err
+		}
+		if t, perr := parseSQLiteTime(expiresStr); perr == nil && t != nil {
+			c.ExpiresAt = *t
+		}
+		if c.Status == "active" && now.Before(c.ExpiresAt) {
+			if strings.EqualFold(c.AiIdentifier, normalizedWallet) {
+				// IDEMPOTENT: same wallet re-claiming active task
+				return c, nil
+			}
+			existingActiveClaim = &c
+		}
+	}
+	if existingActiveClaim != nil {
+		return smart_contract.Claim{}, ErrTaskTaken
+	}
+
 	expires := now.Add(s.claimTTL)
 
 	claimID := fmt.Sprintf("CLAIM-%d", time.Now().UnixNano())
@@ -625,10 +660,35 @@ LIMIT 1
 		"claimed_at":        task.ClaimedAt,
 		"time_remaining_hr": nil,
 	}
+
+	// Compute submission attempts (unified with MemoryStore for Cat 4.2)
+	var submissionAttempts int
+	_ = s.db.QueryRowContext(context.Background(), `
+		SELECT COUNT(*) FROM mcp_submissions s
+		JOIN mcp_claims c ON c.claim_id = s.claim_id
+		WHERE c.task_id = ?
+	`, taskID).Scan(&submissionAttempts)
+	resp["submission_attempts"] = submissionAttempts
+
 	if claim.ClaimID != "" {
 		remaining := time.Until(claim.ExpiresAt).Hours()
 		resp["time_remaining_hr"] = remaining
 		resp["claim_id"] = claim.ClaimID
+
+		// Status override logic extracted/shared in spirit (Cat 4.2). Match MemoryStore behavior.
+		final := strings.EqualFold(task.Status, "published") || strings.EqualFold(task.Status, "approved") || strings.EqualFold(task.Status, "completed")
+		switch strings.ToLower(claim.Status) {
+		case "submitted", "pending_review":
+			if !final {
+				resp["status"] = "submitted"
+			}
+		case "active":
+			if !final && (task.Status == "" || strings.EqualFold(task.Status, "available") || strings.EqualFold(task.Status, "approved")) {
+				resp["status"] = "claimed"
+			}
+		case "complete":
+			resp["status"] = "approved"
+		}
 	}
 	return resp, nil
 }

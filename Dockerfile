@@ -12,9 +12,12 @@ COPY frontend/ ./
 RUN npm run build
 
 # Stage 2: Build the Go backend binary
+# CGO disabled; we use modernc.org/sqlite (pure Go) so no C compiler or libc
+# dependencies are needed in the builder. This keeps the image small and
+# portable.
 FROM golang:1.25-alpine AS backend-builder
 WORKDIR /app/backend
-# Install build dependencies
+# Install build dependencies (no CGO needed for modernc.org/sqlite)
 RUN apk add --no-cache git ca-certificates tzdata
 # Copy go mod files for dependency caching
 COPY backend/go.mod backend/go.sum ./
@@ -24,8 +27,7 @@ COPY backend/ ./
 # Copy built frontend assets from Stage 1 into backend/assets/frontend
 COPY --from=frontend-builder /app/frontend/build ./assets/frontend
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
-    -ldflags='-w -s -extldflags "-static"' \
-    -a -installsuffix cgo \
+    -ldflags='-w -s' \
     -o /out/stargate .
 
 # Stage 3: Final lightweight image
@@ -52,8 +54,10 @@ RUN mkdir -p /app/uploads /app/logs /app/ipfs_objects /app/ipfs_repo && \
     chown -R stargate:stargate /app
 
 # Set environment variables
-ENV STARGATE_STORAGE=filesystem
-ENV GIN_MODE=release
+# sqlite is the recommended durable default for single-binary / container deployments.
+# memory is available when you want a completely ephemeral process (debugging / tests).
+ENV STARGATE_STORAGE=sqlite
+# GIN_MODE removed: the project uses net/http + http.ServeMux (no Gin framework)
 
 EXPOSE 3001
 

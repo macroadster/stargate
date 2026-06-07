@@ -1072,6 +1072,60 @@ func (h *HTTPMCPServer) handleOpenAPI(w http.ResponseWriter, r *http.Request) {
 					},
 				},
 			},
+			"/search": map[string]interface{}{
+				"get": map[string]interface{}{
+					"summary":     "Search MCP tools",
+					"description": "Search for tools by query and optional category. No auth required.",
+				},
+			},
+			"/discover": map[string]interface{}{
+				"get": map[string]interface{}{
+					"summary":     "Discover MCP endpoints and tools",
+					"description": "Returns discovery information including base URLs, skill docs, and available tools. No auth required.",
+				},
+			},
+			"/docs": map[string]interface{}{
+				"get": map[string]interface{}{
+					"summary":     "MCP HTML documentation",
+					"description": "Interactive HTML documentation for the MCP API. No auth required.",
+				},
+			},
+			"/health": map[string]interface{}{
+				"get": map[string]interface{}{
+					"summary":     "MCP health check",
+					"description": "Health endpoint for the MCP server. No auth required.",
+				},
+			},
+			"/events": map[string]interface{}{
+				"get": map[string]interface{}{
+					"summary":     "MCP events stream (SSE)",
+					"description": "Server-Sent Events stream for real-time MCP events. No auth required.",
+				},
+			},
+			"/SKILL.md": map[string]interface{}{
+				"get": map[string]interface{}{
+					"summary":     "Canonical agent workflow documentation",
+					"description": "Markdown skill file for agents. No auth required.",
+				},
+			},
+			"/starlight_sdk.sh": map[string]interface{}{
+				"get": map[string]interface{}{
+					"summary":     "Starlight SDK script",
+					"description": "Downloadable shell script wrapper for local MCP usage. No auth required.",
+				},
+			},
+			"/openapi.json": map[string]interface{}{
+				"get": map[string]interface{}{
+					"summary":     "OpenAPI specification",
+					"description": "This OpenAPI spec. No auth required.",
+				},
+			},
+			"/mcp": map[string]interface{}{
+				"get": map[string]interface{}{
+					"summary":     "MCP index / info",
+					"description": "MCP server index page or info. No auth required.",
+				},
+			},
 		},
 	}
 	w.Header().Set("Content-Type", "application/json")

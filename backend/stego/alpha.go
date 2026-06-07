@@ -30,13 +30,15 @@ type InscribeResult struct {
 // Inscribe embeds a message into an image using the specified method.
 // Currently only "alpha" method is implemented natively.
 func Inscribe(cover []byte, message string, method string) (*InscribeResult, error) {
+	// Detection supports all 5 methods (alpha, palette, lsb.rgb, exif, raw) for scanning images
+	// inscribed by other tools or future methods. However, inscription (writing) only supports
+	// "alpha" method. Callers requesting non-alpha for inscription get a clear error instead
+	// of silent downgrade (per Cat 6.1 reconciliation).
 	if method == "" || method == "auto" {
-		method = "alpha" // Default to alpha as requested
-	}
-
-	if method != "alpha" {
-		// For single-binary migration, we default to alpha if others are not yet implemented
 		method = "alpha"
+	}
+	if method != "alpha" {
+		return nil, fmt.Errorf("only alpha method is supported for inscription (detection supports: alpha, palette, lsb.rgb, exif, raw)")
 	}
 
 	img, _, err := image.Decode(bytes.NewReader(cover))

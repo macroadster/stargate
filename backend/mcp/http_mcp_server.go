@@ -183,6 +183,7 @@ type HTTPMCPServer struct {
 	httpClient       *http.Client
 	baseURL          string
 	proxyBase        string
+	rateLimiterMu    sync.Mutex
 	rateLimiter      map[string][]time.Time
 	challengeStore   *auth.ChallengeStore
 	network          string
@@ -564,7 +565,8 @@ func (h *HTTPMCPServer) toolRequiresAuth(toolName string) bool {
 		"validate_address":      false, // No auth required - AI debugging tool
 		"get_task":              false, // No auth required - discovery tool
 		"list_submissions":      false, // No auth required - discovery tool
-		"build_psbt":            true,  // Auth required - payer address derived from API key
+		"build_psbt":                    true,  // Auth required - payer address derived from API key
+		"create_contract_rework_request": true,
 	}
 	return authenticatedTools[toolName]
 }
@@ -631,6 +633,8 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 		return h.handleChatStreamTool(ctx, args, r)
 	case "chat_members":
 		return h.handleChatMembersTool(ctx, args)
+	case "get_proposal":
+		return h.handleGetProposal(ctx, args)
 	default:
 		return nil, fmt.Errorf("unknown tool: %s", toolName)
 	}
@@ -751,6 +755,21 @@ func (h *HTTPMCPServer) handleListProposals(ctx context.Context, args map[string
 		"offset":    filter.Offset,
 		"has_more":  hasMore,
 	}, nil
+}
+
+func (h *HTTPMCPServer) handleGetProposal(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	id, _ := args["proposal_id"].(string)
+	if id == "" {
+		id, _ = args["id"].(string)
+	}
+	if id == "" {
+		return nil, fmt.Errorf("proposal_id (or id) is required")
+	}
+	p, err := h.store.GetProposal(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return p, nil
 }
 
 func (h *HTTPMCPServer) handleClaimTask(ctx context.Context, args map[string]interface{}, apiKey string) (interface{}, error) {

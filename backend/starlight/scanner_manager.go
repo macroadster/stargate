@@ -233,21 +233,26 @@ func (sm *ScannerManager) ExtractMessage(imageData []byte, method string) (*core
 	return result, nil
 }
 
-// CanExecute checks if circuit breaker allows execution
+// CanExecute checks if circuit breaker allows execution.
+// Performs lazy auto-transition from "open" to "half-open" after timeout
+// using check-then-upgrade lock pattern to avoid data races.
 func (cb *CircuitBreaker) CanExecute() bool {
 	cb.mutex.RLock()
-	defer cb.mutex.RUnlock()
-
-	switch cb.state {
-	case "closed":
-		return true
-	case "open":
-		return time.Since(cb.lastFailure) > cb.timeout
-	case "half-open":
-		return true
-	default:
-		return false
+	if cb.state != "open" || time.Since(cb.lastFailure) <= cb.timeout {
+		allowed := cb.state == "closed" || cb.state == "half-open"
+		cb.mutex.RUnlock()
+		return allowed
 	}
+	// Timeout elapsed: upgrade to write lock for safe state transition
+	cb.mutex.RUnlock()
+	cb.mutex.Lock()
+	defer cb.mutex.Unlock()
+
+	// Re-check under exclusive lock (another goroutine may have transitioned)
+	if cb.state == "open" && time.Since(cb.lastFailure) > cb.timeout {
+		cb.state = "half-open"
+	}
+	return true
 }
 
 // RecordSuccess records a successful operation
@@ -272,16 +277,11 @@ func (cb *CircuitBreaker) RecordFailure() {
 	}
 }
 
-// GetState returns current state of circuit breaker
+// GetState returns current state of circuit breaker (pure read, no side effects).
+// State transitions (e.g. open -> half-open) are handled in CanExecute().
 func (cb *CircuitBreaker) GetState() string {
 	cb.mutex.RLock()
 	defer cb.mutex.RUnlock()
-
-	// Auto-transition from open to half-open after timeout
-	if cb.state == "open" && time.Since(cb.lastFailure) > cb.timeout {
-		cb.state = "half-open"
-	}
-
 	return cb.state
 }
 

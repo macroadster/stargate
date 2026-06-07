@@ -1,7 +1,9 @@
-FROM golang:1.23-alpine AS builder
+# CGO disabled; using modernc.org/sqlite (pure Go implementation).
+# No gcc or libc-dev needed in the builder.
+FROM golang:1.25-alpine AS builder
 WORKDIR /app
 
-# Install build dependencies
+# Install build dependencies (pure-Go SQLite, no CGO)
 RUN apk add --no-cache git ca-certificates tzdata
 
 # Copy go mod files for dependency caching
@@ -15,8 +17,7 @@ COPY . .
 
 # Build the application
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
-    -ldflags='-w -s -extldflags "-static"' \
-    -a -installsuffix cgo \
+    -ldflags='-w -s' \
     -o /out/stargate . && \
     # Clean up build caches to reduce image size (correct command)
     go clean -cache && \
@@ -48,14 +49,16 @@ RUN mkdir -p /app/frontend /app/uploads /app/logs && \
 # Set environment variables
 # sqlite is the recommended durable default for single-binary / container deployments.
 # memory is available when you want a completely ephemeral process (debugging / tests).
+# sqlite is the recommended durable default for single-binary / container deployments.
+# memory is available when you want a completely ephemeral process (debugging / tests).
 ENV STARGATE_STORAGE=sqlite
-ENV GIN_MODE=release
+# GIN_MODE removed: the project uses net/http + http.ServeMux (no Gin framework)
 
 EXPOSE 3001
 
 USER stargate
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:3001/health || exit 1
+    CMD wget --no-verbose --tries=1 --spider http://localhost:3001/api/health || exit 1
 
 ENTRYPOINT ["/usr/local/bin/stargate"]

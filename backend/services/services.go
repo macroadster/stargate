@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/skip2/go-qrcode"
+	"stargate-backend/core"
 	"stargate-backend/models"
 )
 
@@ -235,34 +236,34 @@ func NewSmartContractService(contractsFile string) *SmartContractService {
 }
 
 // loadContracts loads contracts from file without locking
-func (s *SmartContractService) loadContracts() ([]models.SmartContractImage, error) {
-	var contracts []models.SmartContractImage
+func (s *SmartContractService) loadContracts() ([]core.SmartContractImage, error) {
+	var contracts []core.SmartContractImage
 
 	file, err := os.Open(s.contractsFile)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return []models.SmartContractImage{}, nil
+			return []core.SmartContractImage{}, nil
 		}
 		return nil, fmt.Errorf("failed to open contracts file: %w", err)
 	}
 	defer file.Close()
 
 	if err := json.NewDecoder(file).Decode(&contracts); err != nil {
-		return []models.SmartContractImage{}, fmt.Errorf("failed to decode contracts: %w", err)
+		return []core.SmartContractImage{}, fmt.Errorf("failed to decode contracts: %w", err)
 	}
 
 	return contracts, nil
 }
 
 // GetAllContracts retrieves all smart contracts
-func (s *SmartContractService) GetAllContracts() ([]models.SmartContractImage, error) {
+func (s *SmartContractService) GetAllContracts() ([]core.SmartContractImage, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.loadContracts()
 }
 
 // CreateContract creates a new smart contract
-func (s *SmartContractService) CreateContract(req models.CreateContractRequest) (*models.SmartContractImage, error) {
+func (s *SmartContractService) CreateContract(req models.CreateContractRequest) (*core.SmartContractImage, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -276,8 +277,8 @@ func (s *SmartContractService) CreateContract(req models.CreateContractRequest) 
 	stegoFilename := fmt.Sprintf("stego_%s.png", req.ContractID)
 	stegoURL := fmt.Sprintf("/uploads/stego-images/%s", stegoFilename)
 
-	// Create contract
-	contract := &models.SmartContractImage{
+	// Create contract (using canonical core type)
+	contract := &core.SmartContractImage{
 		ContractID:   req.ContractID,
 		BlockHeight:  req.BlockHeight,
 		StegoImage:   stegoURL,
@@ -298,7 +299,7 @@ func (s *SmartContractService) CreateContract(req models.CreateContractRequest) 
 }
 
 // GetContractByID retrieves a contract by ID
-func (s *SmartContractService) GetContractByID(contractID string) (*models.SmartContractImage, error) {
+func (s *SmartContractService) GetContractByID(contractID string) (*core.SmartContractImage, error) {
 	contracts, err := s.GetAllContracts()
 	if err != nil {
 		return nil, err
@@ -314,7 +315,7 @@ func (s *SmartContractService) GetContractByID(contractID string) (*models.Smart
 }
 
 // saveContracts saves contracts to file
-func (s *SmartContractService) saveContracts(contracts []models.SmartContractImage) error {
+func (s *SmartContractService) saveContracts(contracts []core.SmartContractImage) error {
 	if err := os.MkdirAll(filepath.Dir(s.contractsFile), 0755); err != nil {
 		return fmt.Errorf("failed to create contracts directory: %w", err)
 	}
@@ -365,12 +366,15 @@ func NewHealthService() *HealthService {
 	return &HealthService{}
 }
 
-// GetHealthStatus returns current health status
-func (s *HealthService) GetHealthStatus() *models.HealthResponse {
-	return &models.HealthResponse{
+// GetHealthStatus returns current health status using the canonical core type.
+func (s *HealthService) GetHealthStatus() *core.HealthResponse {
+	now := time.Now().UTC().Format(time.RFC3339)
+	return &core.HealthResponse{
 		Status:    "healthy",
-		Message:   "Backend is running (restored version with full functionality)",
-		Timestamp: time.Now().Unix(),
+		Timestamp: now,
+		Version:   "1.0.0",
+		// Scanner and Bitcoin info can be enriched by callers that have the data
+		// (see core.NewHealthResponse for the rich constructor used by scanner paths).
 	}
 }
 

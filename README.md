@@ -116,24 +116,26 @@ Starlight (the Python AI steganalysis system) is the approval oracle. Multiple d
 ## 🛠 Tech Stack
 
 ### Frontend
-- **React 19** - Modern React with hooks
-- **Tailwind CSS** - Utility-first CSS framework
+- **React 19** - Modern React with hooks and JSX
+- **@howssatoshi/quantumcss** - Utility-first CSS (QuantumCSS)
 - **Lucide React** - Beautiful icons
 - **QRCode Canvas** - QR code generation
-- **Create React App** - Build tooling
+- **Vite** - Fast build tooling (not CRA)
 
 ### Backend
-- **Go 1.21** - High-performance backend
-- **net/http** - HTTP server
+- **Go 1.25.7** - High-performance backend (single-binary model)
+- **net/http** - HTTP server + http.ServeMux
 - **encoding/json** - JSON handling
-- **File I/O** - Persistent storage
+- **modernc.org/sqlite** (pure-Go) + pgx - Storage (CGO disabled)
+- **File I/O + IPFS** - Persistent + distributed storage
 
 ## 🚀 Installation
 
 ### Prerequisites
 - Node.js 18+ and npm
-- Go 1.21+
+- Go 1.25+
 - Git
+- Docker (for unified image builds via `make docker`)
 
 ### Local Backend (no containers)
 ```bash
@@ -195,36 +197,47 @@ IPFS_API_URL=http://127.0.0.1:5001
 - Find blocks by height (e.g., `870000`) or hash
 - Find contracts by ID
 
-## 🔌 API Endpoints
+## 🔌 API Endpoints (selected; backend has 30+ routes including full MCP at /mcp/* and smart contract at /api/smart_contract/*)
 
-### Blocks
-- `GET /api/blocks` - Recent Bitcoin blocks
+### Core
+- `GET /api/health` - Health check
+- `POST /api/inscribe` - Create inscription/wish (JSON: message, image_base64, etc.)
+- `GET /api/open-contracts` - Pending/open contracts
 
-### Inscriptions
-- `GET /api/inscriptions` - Recent Ordinal inscriptions
-- `GET /api/inscription/{id}/content` - Inscription image content
+### Bitcoin / Data
+- `GET /api/blocks` - Recent blocks
+- `GET /bitcoin/v1/scan/transaction` - Scan tx for stego
+- `GET /bitcoin/v1/info` - Scanner info
 
-### Inscription Creation
-- `POST /api/inscribe` - Create new inscription (multipart form)
-- `GET /api/open-contracts` - View open contracts
+### MCP / Smart Contracts (main coordination)
+- `GET /mcp/tools` , `POST /mcp/call` (tool-level auth for writes)
+- `GET /mcp/docs` , `/mcp/openapi.json` (public)
+- `GET /mcp/chat/stream` etc.
 
 ### Search
-- `GET /api/search?q=query` - Search inscriptions, transactions, blocks, contracts, and proposals
+- `GET /api/search?q=...` - Search across inscriptions, txs, blocks, contracts, proposals
+
+See `backend/docs/API_DOCUMENTATION.md` and `/api/docs` for full OpenAPI.
 
 ## 📁 Project Structure
 
 ```
-starlight/
-├── frontend/                # React application
-│   ├── src/
-│   │   ├── App.js           # Main application component
-│   │   ├── index.js         # React entry point
-│   │   └── index.css        # Global styles
+stargate/
+├── frontend/                # React + Vite (JSX)
+│   ├── src/                 # .jsx sources
+│   │   ├── App.jsx
+│   │   └── ...
 │   └── public/
-├── backend/                 # Go server
-│   ├── stargate_backend.go  # Server implementation
-│   ├── go.mod               # Go modules
-│   └── uploads/             # Stored inscription images
+├── backend/                 # Go (single-binary, CGO=0 + pure sqlite)
+│   ├── starlight_backend.go
+│   ├── storage/ (unified)
+│   ├── mcp/
+│   ├── stego/
+│   ├── handlers/
+│   ├── go.mod
+│   └── ...
+├── Dockerfile (unified)
+├── Makefile
 └── README.md
 ```
 
@@ -249,12 +262,13 @@ MIT License - see LICENSE file for details
 
 ## 🙏 Acknowledgments
 
-- [Hiro Systems](https://hiro.so) for Ordinals API
-- [Mempool.space](https://mempool.space) for Bitcoin data
-- [Tailwind CSS](https://tailwindcss.com) for styling
+- Bitcoin raw block data via local parser + mempool client (no longer Hiro)
+- [Mempool.space](https://mempool.space) inspiration for explorer UX
+- [QuantumCSS](https://github.com/howssatoshi/quantumcss) for styling
 - [Lucide](https://lucide.dev) for icons
+- [modernc.org/sqlite](https://modernc.org/sqlite) for pure-Go embedded DB
 
 ---
 
-**Stargate** - Illuminating the world of Bitcoin Ordinals ✨</content>
+**Stargate** - Bitcoin-native coordination for wishes, work, and verifiable proofs ✨</content>
 <parameter name="filePath">README.md

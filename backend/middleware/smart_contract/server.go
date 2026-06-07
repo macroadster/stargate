@@ -308,9 +308,18 @@ func (s *Server) handleContracts(w http.ResponseWriter, r *http.Request) {
 				}
 				contracts = filtered
 			}
+			// Standardize on MCP-style full pagination shape (Cat 4.4)
+			hasMore := false
+			// Note: this handler's filter may not have Limit/Offset set in all paths; has_more is best-effort
+			if len(contracts) > 0 {
+				// simplistic; real has_more would require extra query
+			}
 			JSON(w, http.StatusOK, map[string]interface{}{
-				"contracts":   contracts,
-				"total_count": len(contracts),
+				"contracts": contracts,
+				"total":     len(contracts),
+				"limit":     0, // unknown in this path
+				"offset":    0,
+				"has_more":  hasMore,
 			})
 			return
 		}

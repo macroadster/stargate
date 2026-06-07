@@ -188,9 +188,9 @@ For more details, see README.md and QUICKSTART.md.
 1. **File issues for remaining work** - Create issues for anything that needs follow-up
 2. **Run quality gates** (if code changed) - Tests, linters, builds
 3. **DEPLOY AND VERIFY IN CLUSTER** - Mandatory for all code changes:
-   - Build Docker images: `make backend` / `make frontend`
-   - Deploy to cluster: Follow "Deployment Workflow"
-   - Verify: Check logs and pod image IDs
+   - Build the single-binary Docker image: `make docker` (produces `stargate:latest`)
+   - Deploy/upgrade via Helm (starlight-helm stack): Follow "Deployment Workflow"
+   - Verify: Check logs and pod image IDs (the chart now deploys the unified `stargate` container)
 4. **Update issue status** - Close finished work, update in-progress items
 5. **PUSH TO REMOTE** - This is MANDATORY:
    ```bash
@@ -227,11 +227,12 @@ For more details, see README.md and QUICKSTART.md.
    go test ./...
    ```
 
-2. **Build Docker images**:
+2. **Build Docker image** (single-binary model):
    ```bash
-   make frontend  # Build stargate-frontend:latest Docker image
-   make backend   # Build stargate-backend:latest Docker image
+   make docker   # Build stargate:latest (unified binary with embedded frontend)
    ```
+
+   Legacy separate images are still available via `make backend-legacy` / `make frontend-legacy` if needed during transition.
 
 3. **Deploy to cluster** (see Deployment Workflow section)
 
@@ -255,67 +256,75 @@ go test -run TestSpecificFunction  # Run single test
 
 When you need to deploy code changes:
 
-**Deploy local Docker images (for testing)**
+**Deploy local Docker image (single-binary) for testing**
 ```bash
-# 1. Build locally
-make backend
-make frontend
+# 1. Build the unified image locally
+make docker   # Builds stargate:latest (single binary containing frontend + backend)
 
-# 2. Update deployment to use local images
-kubectl rollout restart deployment/stargate-backend -n default
-kubectl rollout restart deployment/stargate-frontend -n default
+# 2. Upgrade the starlight-helm stack (adjust path/chart name to your checkout)
+cd ../starlight-helm   # or the location of your starlight-helm chart
+helm upgrade --install starlight-stack . \
+  --set stargate.image.repository=stargate \
+  --set stargate.image.tag=latest \
+  --set stargate.image.pullPolicy=Never \
+  # (or the equivalent values your chart uses under the stargate: section)
 
-# 3. Wait for rollout
-kubectl wait --for=condition=available --timeout=60s deployment/stargate-backend -n default
-kubectl wait --for=condition=available --timeout=60s deployment/stargate-frontend -n default
+# 3. Wait for rollout (Helm handles the underlying Deployment/StatefulSet)
+helm upgrade --install ...   # (re-run or use kubectl rollout status on the resources created by the chart)
 ```
 
-**VERIFYING DEPLOYMENT:**
+**VERIFYING DEPLOYMENT (Helm-based single-binary stack):**
 ```bash
-# Check running pods
-kubectl get pods -n default
+# Check running pods (use labels from your Helm release)
+kubectl get pods -l app.kubernetes.io/instance=starlight-stack   # common Helm label; adjust if your chart uses different selectors
+# or
+kubectl get pods | grep -E 'starlight|stargate'
 
-# Get new pod name
-kubectl get pods -n default | grep stargate-backend | grep Running | awk '{print $1}'
+# Get a pod (the chart typically creates pods running the unified 'stargate' container)
+POD=$(kubectl get pods -l app.kubernetes.io/instance=starlight-stack -o name | head -1)
 
 # Check actual image deployed
-kubectl describe pod <pod-name> -n default | grep "Image ID:"
-# Should show: stargate-backend:latest (local) or macroadster/stargate-backend:latest (Docker Hub)
+kubectl describe $POD | grep -E "Image:|Image ID:"
+# Should show: stargate:latest (local) or your-registry/stargate:...
 
-# Verify image ID matches what you built
-docker images | grep stargate-backend  # Note the Image ID (SHA256)
+# Verify image ID matches what you just built
+docker images | grep stargate   # Note the Image ID (SHA256)
 ```
 
 Use https://starlight.local for testing deployed changes
 
-**DEPLOYMENT RULES:**
+**DEPLOYMENT RULES (single-binary + Helm era):**
 
-1. **NEVER assume `make backend` automatically deploys** - it only builds locally
-2. **NEVER blame "image not deployed" without verifying** - check actual pod image
-3. **ALWAYS verify deployment** with `kubectl get pods` and `kubectl describe pod <name>`
-4. **If deployment uses Docker Hub images**, you must push there first
-5. **If using local images**, set `imagePullPolicy: Never` in deployment
+1. **NEVER assume `make docker` automatically deploys** - it only builds the local `stargate:latest` image
+2. **NEVER blame "image not deployed" without verifying** - check actual pod image via the Helm release
+3. **ALWAYS verify deployment** with `helm list`, `kubectl get pods -l ...` (from the chart) and `kubectl describe pod`
+4. **If deployment uses Docker Hub images**, you must push there first (or use your registry)
+5. **If using local images**, set the corresponding `image.pullPolicy: Never` (or equivalent) via Helm `--set` / values override
+6. The legacy separate `stargate-backend` / `stargate-frontend` Deployments and `make backend` / `make frontend` paths are deprecated in favor of the unified single-binary image.
 
 ### Troubleshooting Common Issues
 
 **"Changes not visible after deployment"**
 ```bash
-# Get pod name and check image ID
-kubectl get pods -n default | grep stargate-backend | grep Running | awk '{print $1}'
-kubectl describe pod <pod-name> -n default | grep -A 5 "Image:" | grep "Image ID:"
-docker images | grep stargate-backend  # Compare Image IDs
+# Get pod(s) managed by the Helm release and check image ID
+kubectl get pods -l app.kubernetes.io/instance=starlight-stack
+POD=$(kubectl get pods -l app.kubernetes.io/instance=starlight-stack -o name | head -1)
+kubectl describe $POD | grep -A 5 "Image:" | grep "Image ID:"
+docker images | grep stargate   # Compare Image IDs (look for the unified stargate image)
 ```
 
 **"Pod keeps crashing with ImagePullBackOff"**
-- Verify image exists locally: `docker images | grep stargate-backend`
-- If using local images, ensure `imagePullPolicy: Never` is set
-- If using Docker Hub, verify image exists: `docker pull macroadster/stargate-backend:latest`
+- Verify image exists locally: `docker images | grep stargate`
+- If using local images with the Helm chart, ensure you passed `image.pullPolicy=Never` (or the chart's equivalent key) on upgrade
+- If using a remote registry, verify the image was pushed: `docker pull .../stargate:latest`
 
 **"Old code still running"**
 ```bash
-kubectl get deployment stargate-backend -n default -o yaml | grep image:
-kubectl rollout restart deployment/stargate-backend -n default
-kubectl rollout status deployment/stargate-backend -n default
+# Inspect the resources created by your Helm release (Deployment, etc.)
+helm get manifest starlight-stack | grep -A 20 "kind: Deployment" | grep -E 'image:|name:'
+# or
+kubectl get deployment -l app.kubernetes.io/instance=starlight-stack -o yaml | grep image:
+helm upgrade --install starlight-stack . ...   # re-apply with updated image settings
 ```
 
 **"Approval still times out after deployment"**

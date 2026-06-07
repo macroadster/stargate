@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 	"stargate-backend/bitcoin"
 )
 
@@ -43,7 +43,7 @@ func NewSQLiteDataStorage(dbPath string) (*SQLiteDataStorage, error) {
 		_ = os.MkdirAll(dir, 0755)
 	}
 
-	db, err := sql.Open("sqlite3", dbPath+"?_foreign_keys=on&_journal_mode=WAL")
+	db, err := sql.Open("sqlite", dbPath+"?_foreign_keys=on&_journal_mode=WAL")
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite3 data: %w", err)
 	}

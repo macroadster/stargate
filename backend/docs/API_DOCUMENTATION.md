@@ -22,7 +22,7 @@ The MCP API requires an API key sent via the `X-API-Key` header:
 X-API-Key: your-api-key-here
 ```
 
-Set the `MCP_API_KEY` environment variable to configure the required key.
+Set the `STARGATE_API_KEY` environment variable to configure the required key.
 
 ### Other APIs
 Most other endpoints do not require authentication, but this may change in future versions.
@@ -652,15 +652,15 @@ Some endpoints may have rate limiting applied. Check response headers for:
 Key environment variables for configuration:
 
 ```bash
-# MCP Configuration
-MCP_API_KEY=your-api-key                    # API key for MCP authentication
-MCP_PG_DSN=postgresql://user:pass@localhost/db  # PostgreSQL connection string
-MCP_STORE_DRIVER=memory                     # Store type: memory or postgres
-MCP_DEFAULT_CLAIM_TTL_HOURS=72             # Task claim expiration time
-MCP_SEED_FIXTURES=true                     # Whether to seed with test data
-MCP_ENABLE_INGEST_SYNC=true                 # Enable ingestion sync
-MCP_INGEST_SYNC_INTERVAL_SEC=30            # Ingestion sync interval
-STARGATE_ENABLE_FUNDING_SYNC=true          # Enable funding sync (opt-in; disabled by default)
+# MCP / Smart Contract Configuration (STARGATE_ prefix)
+STARGATE_API_KEY=your-api-key                    # API key for MCP authentication
+STARGATE_PG_DSN=postgresql://user:pass@localhost/db  # PostgreSQL connection string
+STARGATE_STORE_DRIVER=sqlite                   # Store type: sqlite (default for single-binary), memory, postgres
+STARGATE_DEFAULT_CLAIM_TTL_HOURS=72            # Task claim expiration time
+STARGATE_SEED_FIXTURES=true                    # Whether to seed with test data
+STARGATE_ENABLE_INGEST_SYNC=true               # Enable ingestion sync
+STARGATE_INGEST_SYNC_INTERVAL_SEC=30           # Ingestion sync interval
+STARGATE_ENABLE_FUNDING_SYNC=true              # Enable funding sync (opt-in; disabled by default)
 STARGATE_FUNDING_SYNC_INTERVAL_SEC=60      # Funding sync interval (only used when enabled)
 STARGATE_FUNDING_PROVIDER=mock             # Funding provider: mock or blockstream
 STARGATE_FUNDING_API_BASE=https://blockstream.info/api  # Funding API base URL
@@ -686,25 +686,28 @@ IPFS_HTTP_TIMEOUT_SEC=30
 
 ### Store Configuration
 
-The MCP server supports two storage backends:
+The MCP/smart-contract server supports SQLite (default for single-binary durable use), memory (for tests), and postgres.
 
-#### Memory Store (Default)
-- **Usage**: `MCP_STORE_DRIVER=memory` (or unset)
-- **Features**: In-memory storage with mocked test data
-- **Use Case**: Development, testing, demonstrations
-- **Data Persistence**: No (lost on restart)
+#### SQLite Store (Recommended Default)
+- **Usage**: `STARGATE_STORE_DRIVER=sqlite` (or unset)
+- **Features**: Durable embedded SQLite (mcp.db + api_keys + blocks + ingestions). Pure-Go driver (no CGO).
+- **Use Case**: Single-binary deployments, production embedded.
+- **Data Persistence**: Yes (files under STARGATE_DATA_DIR/sqlite/)
+
+#### Memory Store (Ephemeral)
+- **Usage**: `STARGATE_STORE_DRIVER=memory`
+- **Features**: In-memory only, fast.
+- **Use Case**: Unit tests, quick dev, no persistence.
 
 #### PostgreSQL Store
-- **Usage**: `MCP_STORE_DRIVER=postgres` with `MCP_PG_DSN` set
-- **Features**: Persistent storage, production-ready
-- **Use Case**: Production environments
+- **Usage**: `STARGATE_STORE_DRIVER=postgres` with `STARGATE_PG_DSN`
+- **Features**: Shared durable, for clustered setups.
 - **Data Persistence**: Yes
-- **Fallback**: Falls back to memory store if PostgreSQL connection fails
 
-Example PostgreSQL setup:
+Example Postgres:
 ```bash
-export MCP_STORE_DRIVER=postgres
-export MCP_PG_DSN="postgresql://user:password@localhost:5432/stargate?sslmode=disable"
+export STARGATE_STORE_DRIVER=postgres
+export STARGATE_PG_DSN="postgresql://user:password@localhost:5432/stargate?sslmode=disable"
 ```
 
 ### Testing Endpoints

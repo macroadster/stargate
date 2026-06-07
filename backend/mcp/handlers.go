@@ -430,15 +430,20 @@ func (h *HTTPMCPServer) handleToolCall(w http.ResponseWriter, r *http.Request) {
 
 	if h.toolRequiresAuth(req.Tool) {
 		if apiKey == "" {
-			h.writeHTTPError(w, http.StatusUnauthorized, "API_KEY_REQUIRED", "API key required", "Tool '"+req.Tool+"' requires authentication. Send X-API-Key or Authorization: Bearer <key>.")
+			h.writeStructuredErrorJSONRPC(w, NewUnauthorizedError(req.Tool, "API key required. Tool '"+req.Tool+"' requires authentication. Send X-API-Key or Authorization: Bearer <key>."))
 			return
 		}
 		if h.apiKeyStore != nil && !h.apiKeyStore.Validate(apiKey) {
-			h.writeHTTPError(w, http.StatusForbidden, "API_KEY_INVALID", "Invalid API key", "Double-check the X-API-Key header value.")
+			h.writeStructuredErrorJSONRPC(w, NewUnauthorizedError(req.Tool, "Invalid API key. Double-check the X-API-Key header value."))
 			return
 		}
 		if h.apiKeyStore != nil && !h.checkRateLimit(apiKey) {
-			h.writeHTTPError(w, http.StatusTooManyRequests, "RATE_LIMITED", "Rate limit exceeded", "Retry after a short delay.")
+			h.writeStructuredErrorJSONRPC(w, &ToolError{
+				Code:    ErrCodeRateLimited,
+				Message: "Rate limit exceeded. Retry after a short delay.",
+				Tool:    req.Tool,
+				HttpStatus: 429,
+			})
 			return
 		}
 	}

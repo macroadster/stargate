@@ -1,6 +1,10 @@
 package mcp
 
-import "strings"
+import (
+	"strings"
+
+	"stargate-backend/core/smart_contract"
+)
 
 // ToolMetadata contains lightweight metadata for search
 type ToolMetadata struct {
@@ -31,7 +35,7 @@ func (h *HTTPMCPServer) getToolSchemasLegacy() map[string]interface{} {
 				"status": map[string]interface{}{
 					"type":        "string",
 					"description": "Filter contracts by status",
-					"enum":        []string{"active", "pending", "completed"},
+					"enum":        []string{smart_contract.StatusActive, smart_contract.StatusPending, smart_contract.StatusCompleted},
 				},
 				"creator": map[string]interface{}{
 					"type":        "string",
@@ -80,7 +84,7 @@ func (h *HTTPMCPServer) getToolSchemasLegacy() map[string]interface{} {
 				"status": map[string]interface{}{
 					"type":        "string",
 					"description": "Filter by contract status",
-					"enum":        []string{"pending", "active", "all"},
+					"enum":        []string{smart_contract.ProposalStatusPending, smart_contract.StatusActive, smart_contract.StatusAll},
 					"default":     "pending",
 				},
 			},
@@ -195,7 +199,7 @@ func (h *HTTPMCPServer) getToolSchemasLegacy() map[string]interface{} {
 				"status": map[string]interface{}{
 					"type":        "string",
 					"description": "Filter by task status",
-					"enum":        []string{"available", "claimed", "completed"},
+					"enum":        []string{smart_contract.TaskStatusAvailable, smart_contract.TaskStatusClaimed, smart_contract.TaskStatusCompleted},
 				},
 				"limit": map[string]interface{}{
 					"type":        "integer",
@@ -234,7 +238,7 @@ func (h *HTTPMCPServer) getToolSchemasLegacy() map[string]interface{} {
 				"status": map[string]interface{}{
 					"type":        "string",
 					"description": "Filter by submission status",
-					"enum":        []string{"pending_review", "reviewed", "approved", "rejected"},
+					"enum":        []string{smart_contract.SubmissionStatusPendingReview, smart_contract.SubmissionStatusReviewed, smart_contract.SubmissionStatusApproved, smart_contract.SubmissionStatusRejected},
 				},
 				"limit": map[string]interface{}{
 					"type":        "integer",
@@ -419,6 +423,7 @@ func (h *HTTPMCPServer) getToolSchemasLegacy() map[string]interface{} {
 				"visible_pixel_hash": map[string]interface{}{
 					"type":        "string",
 					"description": "Visible pixel hash (wish id)",
+					"required":    true,
 				},
 				"ingestion_id": map[string]interface{}{
 					"type":        "string",
@@ -715,6 +720,43 @@ func (h *HTTPMCPServer) getToolSchemasLegacy() map[string]interface{} {
 						"signature":      "base64_or_hex_signature...",
 						"detailed":       true,
 					},
+				},
+			},
+		},
+		"chat_send": map[string]interface{}{
+			"category":    ToolCategoryWrite,
+			"description": "Send a message in an MCP chat session",
+			"parameters": map[string]interface{}{
+				"session_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Chat session ID",
+					"required":    true,
+				},
+				"message": map[string]interface{}{
+					"type":        "string",
+					"description": "Message content",
+					"required":    true,
+				},
+			},
+		},
+		"chat_stream": map[string]interface{}{
+			"category":    ToolCategoryDiscovery,
+			"description": "Open a streaming chat session",
+			"parameters": map[string]interface{}{
+				"session_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Chat session ID (optional to create new)",
+				},
+			},
+		},
+		"chat_members": map[string]interface{}{
+			"category":    ToolCategoryDiscovery,
+			"description": "List members in a chat session",
+			"parameters": map[string]interface{}{
+				"session_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Chat session ID",
+					"required":    true,
 				},
 			},
 		},

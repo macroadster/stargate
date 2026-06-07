@@ -1,6 +1,10 @@
 package models
 
-import "time"
+import (
+	"fmt"
+
+	"stargate-backend/core"
+)
 
 // InscriptionRequest represents an inscription creation request
 type InscriptionRequest struct {
@@ -18,15 +22,9 @@ type InscriptionRequest struct {
 	AvailableTasks   int     `json:"availableTasks,omitempty"`
 }
 
-// SmartContractImage represents a smart contract with steganographic image
-type SmartContractImage struct {
-	ContractID       string                 `json:"contract_id"`
-	BlockHeight      int64                  `json:"block_height"`
-	StegoImage       string                 `json:"stego_image_url"`
-	ContractType     string                 `json:"contract_type"`
-	VisiblePixelHash string                 `json:"visible_pixel_hash,omitempty"`
-	Metadata         map[string]interface{} `json:"metadata"`
-}
+// SmartContractImage is an alias to the canonical definition in core (see core/types.go).
+// This preserves compatibility for any external references while eliminating the duplicate.
+type SmartContractImage = core.SmartContractImage
 
 // ContractMetadata represents smart contract metadata
 type ContractMetadata struct {
@@ -79,21 +77,13 @@ type SearchResultItem struct {
 	StegoImageURL        string                 `json:"stego_image_url,omitempty"`
 }
 
-// HealthResponse represents health check response
-type HealthResponse struct {
-	Status    string `json:"status"`
-	Message   string `json:"message"`
-	Timestamp int64  `json:"timestamp"`
-}
+// HealthResponse is an alias to the canonical definition in core (richer shape with Version/Scanner/Bitcoin + RFC3339 timestamp).
+// Old simple {Message + unix ts} shape removed as part of type unification.
+type HealthResponse = core.HealthResponse
 
-// ErrorResponse represents API error response
-type ErrorResponse struct {
-	Error     string `json:"error"`
-	Message   string `json:"message,omitempty"`
-	Code      int    `json:"code,omitempty"`
-	Hint      string `json:"hint,omitempty"`
-	Timestamp string `json:"timestamp,omitempty"`
-}
+// ErrorResponse is an alias to the canonical (rich, nested) definition in core.
+// The old flat {error, code:int, hint} shape is retired in favor of the unified core one.
+type ErrorResponse = core.ErrorResponse
 
 // SuccessResponse represents API success response
 type SuccessResponse struct {
@@ -145,9 +135,10 @@ type PendingTransactionsResponse struct {
 }
 
 // SmartContractsResponse represents smart contracts response
+// Uses the canonical core.SmartContractImage (unified type definition).
 type SmartContractsResponse struct {
-	Results []SmartContractImage `json:"results"`
-	Total   int                  `json:"total"`
+	Results []core.SmartContractImage `json:"results"`
+	Total   int                       `json:"total"`
 }
 
 // APIResponse represents a generic API response
@@ -166,24 +157,27 @@ func NewSuccessResponse(data interface{}) *APIResponse {
 	}
 }
 
-// NewErrorResponse creates an error response
+// NewErrorResponse creates an error response using the canonical core error shape (nested details).
+// The int code is stringified for the unified core.ErrorDetails.Code field.
 func NewErrorResponse(error string, code int) *APIResponse {
+	coreErr := core.NewErrorResponse(fmt.Sprintf("%d", code), error, "", map[string]interface{}{})
+	// core.NewErrorResponse populates Timestamp + the nested structure.
+	// We embed it directly into the legacy APIResponse envelope for the inscription paths.
 	return &APIResponse{
 		Success: false,
-		Error: &ErrorResponse{
-			Error:     error,
-			Message:   error,
-			Code:      code,
-			Timestamp: time.Now().UTC().Format(time.RFC3339),
-		},
+		Error:   &coreErr, // *core.ErrorResponse via alias
 	}
 }
 
-// NewErrorResponseWithHint creates an error response with a hint.
+// NewErrorResponseWithHint creates an error response with a hint (stored in Details for the canonical shape).
 func NewErrorResponseWithHint(error string, code int, hint string) *APIResponse {
 	resp := NewErrorResponse(error, code)
 	if resp != nil && resp.Error != nil {
-		resp.Error.Hint = hint
+		// Attach hint into the canonical details map (core shape has no top-level Hint).
+		if resp.Error.Error.Details == nil {
+			resp.Error.Error.Details = map[string]interface{}{}
+		}
+		resp.Error.Error.Details["hint"] = hint
 	}
 	return resp
 }

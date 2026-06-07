@@ -142,10 +142,27 @@ func (h *TaskHandler) handleTaskStatus(w http.ResponseWriter, r *http.Request, t
 }
 
 // handleClaimTask handles POST /tasks/{id}/claim
+// Wired to store for basic extraction (Cat 6.2 cleanup).
 func (h *TaskHandler) handleClaimTask(w http.ResponseWriter, r *http.Request, taskID string) {
-	// TODO: Implement task claiming logic
-	// This needs to be extracted from the original handleClaimTask function
-	middleware.Error(w, http.StatusNotImplemented, "task claiming not yet extracted")
+	// Parse request for wallet etc. Simplified wiring.
+	var req struct {
+		Wallet string `json:"wallet"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		middleware.Error(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+	if req.Wallet == "" {
+		middleware.Error(w, http.StatusBadRequest, "wallet required")
+		return
+	}
+	claim, err := h.store.ClaimTask(taskID, req.Wallet, nil)
+	if err != nil {
+		middleware.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(claim)
 }
 
 // Helper functions
