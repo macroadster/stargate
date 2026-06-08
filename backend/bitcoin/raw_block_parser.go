@@ -537,12 +537,13 @@ func (p *BitcoinParser) extractImages(transactions []Transaction) []ExtractedIma
 				// Fallback to image detection for non-Ordinals payloads.
 				if imageType, imageData := detectImage(witness); imageType != "" {
 					image := ExtractedImageData{
-						TxID:      tx.TxID,
-						Format:    imageType,
-						SizeBytes: len(imageData),
-						FileName:  fmt.Sprintf("%s_img_%d.%s", tx.TxID[:16], itemIdx, imageType),
-						FilePath:  fmt.Sprintf("images/%s", fmt.Sprintf("%s_img_%d.%s", tx.TxID[:16], itemIdx, imageType)),
-						Data:      imageData,
+						TxID:        tx.TxID,
+						Format:      imageType,
+						ContentType: fmt.Sprintf("image/%s", imageType),
+						SizeBytes:   len(imageData),
+						FileName:    fmt.Sprintf("%s_img_%d.%s", tx.TxID[:16], itemIdx, imageType),
+						FilePath:    fmt.Sprintf("images/%s", fmt.Sprintf("%s_img_%d.%s", tx.TxID[:16], itemIdx, imageType)),
+						Data:        imageData,
 					}
 					if dedupImage(&image, seen) {
 						images = append(images, image)
@@ -579,12 +580,13 @@ func (p *BitcoinParser) extractImages(transactions []Transaction) []ExtractedIma
 			imageType, imageData := detectImage(witness)
 			if imageType != "" {
 				image := ExtractedImageData{
-					TxID:      tx.TxID,
-					Format:    imageType,
-					SizeBytes: len(imageData),
-					FileName:  fmt.Sprintf("%s_img_%d.%s", tx.TxID[:16], i, imageType),
-					FilePath:  fmt.Sprintf("images/%s", fmt.Sprintf("%s_img_%d.%s", tx.TxID[:16], i, imageType)),
-					Data:      imageData,
+					TxID:        tx.TxID,
+					Format:      imageType,
+					ContentType: fmt.Sprintf("image/%s", imageType),
+					SizeBytes:   len(imageData),
+					FileName:    fmt.Sprintf("%s_img_%d.%s", tx.TxID[:16], i, imageType),
+					FilePath:    fmt.Sprintf("images/%s", fmt.Sprintf("%s_img_%d.%s", tx.TxID[:16], i, imageType)),
+					Data:        imageData,
 				}
 				if dedupImage(&image, seen) {
 					images = append(images, image)
@@ -647,12 +649,13 @@ func (p *BitcoinParser) extractImages(transactions []Transaction) []ExtractedIma
 				// Fallback to raw image signature detection
 				if imageType, imageData := detectImage(payload); imageType != "" {
 					image := ExtractedImageData{
-						TxID:      tx.TxID,
-						Format:    imageType,
-						SizeBytes: len(imageData),
-						FileName:  fmt.Sprintf("%s_opret_%d_%d.%s", tx.TxID[:16], outIdx, pIdx, imageType),
-						FilePath:  fmt.Sprintf("images/%s", fmt.Sprintf("%s_opret_%d_%d.%s", tx.TxID[:16], outIdx, pIdx, imageType)),
-						Data:      imageData,
+						TxID:        tx.TxID,
+						Format:      imageType,
+						ContentType: fmt.Sprintf("image/%s", imageType),
+						SizeBytes:   len(imageData),
+						FileName:    fmt.Sprintf("%s_opret_%d_%d.%s", tx.TxID[:16], outIdx, pIdx, imageType),
+						FilePath:    fmt.Sprintf("images/%s", fmt.Sprintf("%s_opret_%d_%d.%s", tx.TxID[:16], outIdx, pIdx, imageType)),
+						Data:        imageData,
 					}
 					images = append(images, image)
 					log.Printf("Found OP_RETURN %s image in tx %s output %d", imageType, tx.TxID[:16], outIdx)

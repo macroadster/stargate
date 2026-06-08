@@ -93,7 +93,7 @@ function MainContent() {
     loadMoreInscriptions,
     isLoading: isLoadingInscriptions,
     error: inscriptionsError
-  } = useInscriptions(selectedBlock);
+  } = useInscriptions(selectedBlock, hideText);
 
   // Show scanning panel only before any real blocks have arrived.
   const milestoneHeights = new Set([0, 174923, 210000, 420000, 481824, 630000, 709632, 840000]);
@@ -119,11 +119,21 @@ function MainContent() {
                             fileName.includes('brc-20') ||
                             fileName.includes('brc20');
 
+    // Recognize images even if backend gave bare "jpeg"/"png" (instead of "image/jpeg")
+    // or the filename has a standard image extension. This keeps real image inscriptions
+    // visible in the grid when "hide text" is on, and prevents "unknown" type display.
+    const isImageByMimeOrName =
+      mime.includes('image') ||
+      ['jpeg', 'jpg', 'png', 'gif', 'webp', 'avif', 'bmp', 'svg'].includes(mime) ||
+      fileName.endsWith('.jpeg') || fileName.endsWith('.jpg') || fileName.endsWith('.png') ||
+      fileName.endsWith('.gif') || fileName.endsWith('.webp') || fileName.endsWith('.avif') ||
+      fileName.endsWith('.bmp') || fileName.endsWith('.svg');
+
     // Visual image if: declares image mime, or served from the app's image asset path,
     // or has a content url but is not obviously text (allows images that have odd mime in summary data).
     const isBlockImage = url.includes('/block-image/');
     const hasContentUrl = !!url && !urlLooksLikeTextFile;
-    const isActuallyImageFile = (mime.includes('image') || isBlockImage || (hasContentUrl && !isObviouslyText)) && !urlLooksLikeTextFile;
+    const isActuallyImageFile = (isImageByMimeOrName || isBlockImage || (hasContentUrl && !isObviouslyText)) && !urlLooksLikeTextFile;
 
     // Hide text inscriptions. Keep visuals (incl. stego images that carry extracted messages).
     const isTextInscription = isObviouslyText || (hasTextContent && !isActuallyImageFile);

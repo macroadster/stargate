@@ -35,7 +35,7 @@ const generateBlock = (block) => {
     witness_image_count: block.images ? block.images.length : 0,
     hasBRC20: false,
     has_images: hasImages,
-    thumbnail: hasImages ? '🎨' : null,
+    thumbnail: block.thumbnail_url || block.thumbnailUrl || (hasImages ? '🎨' : null),
     tx_count: txCount,
     witness_images: block.images || []
   };

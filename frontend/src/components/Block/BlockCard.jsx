@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 
 const BlockCard = ({ block, onClick, isSelected }) => {
   const stegoCount = block.steganography_summary?.stego_count || 0;
@@ -155,7 +155,7 @@ const BlockCard = ({ block, onClick, isSelected }) => {
           return null;
         })()}
         
-        <div className="h-32 flex items-center justify-center">
+        <div className="h-32 flex items-center justify-center bg-gray-100 dark:bg-gray-800 rounded overflow-hidden">
           {(() => {
             const historical = getHistoricalSignificance(block.height);
             if (historical) {
@@ -163,6 +163,23 @@ const BlockCard = ({ block, onClick, isSelected }) => {
                 <div className="text-center">
                   <div className="text-5xl">{historical.emoji}</div>
                 </div>
+              );
+            }
+            const thumb = block.thumbnail;
+            const isUrl = typeof thumb === 'string' && (thumb.startsWith('/') || thumb.startsWith('http'));
+            if (isUrl) {
+              return (
+                <img
+                  src={thumb}
+                  alt={`Block ${block.height}`}
+                  className="w-full h-full object-contain"
+                  loading="lazy"
+                  onError={(e) => {
+                    // Hide broken image, show fallback emoji below via sibling
+                    e.target.style.display = 'none';
+                    if (e.target.nextSibling) e.target.nextSibling.style.display = 'flex';
+                  }}
+                />
               );
             }
             if (hasSmartContracts) {
@@ -175,10 +192,20 @@ const BlockCard = ({ block, onClick, isSelected }) => {
             if (hasWitnessImages) {
               return <div className="text-5xl">🖼️</div>;
             }
-            if (block.thumbnail) {
+            if (block.thumbnail && !isUrl) {
               return <div className="text-5xl">{block.thumbnail}</div>;
             }
             return <div className="text-5xl">⛏️</div>;
+          })()}
+          {/* Fallback emoji shown when thumbnail image fails to load */}
+          {(() => {
+            const thumb = block.thumbnail;
+            const isUrl = typeof thumb === 'string' && (thumb.startsWith('/') || thumb.startsWith('http'));
+            if (isUrl) {
+              const fb = hasSmartContracts ? '🎨' : (hasWitnessImages ? '🖼️' : '⛏️');
+              return <div className="text-5xl hidden items-center justify-center">{fb}</div>;
+            }
+            return null;
           })()}
         </div>
         

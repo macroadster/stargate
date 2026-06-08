@@ -444,8 +444,14 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
   const hasContentUrl = !!url && !urlLooksLikeTextFile;
   // Same heuristic as the hide filter and card: attempt the large image in the modal
   // for real visuals, but not for obvious text items.
+  const isImageByMimeOrName =
+    mime.includes('image') ||
+    ['jpeg', 'jpg', 'png', 'gif', 'webp', 'avif', 'bmp', 'svg'].includes(mime) ||
+    fileName.endsWith('.jpeg') || fileName.endsWith('.jpg') || fileName.endsWith('.png') ||
+    fileName.endsWith('.gif') || fileName.endsWith('.webp') || fileName.endsWith('.avif') ||
+    fileName.endsWith('.bmp') || fileName.endsWith('.svg');
   const isActuallyImageFile =
-    (mime.includes('image') || isBlockImage || (hasContentUrl && !isObviouslyText)) &&
+    (isImageByMimeOrName || isBlockImage || (hasContentUrl && !isObviouslyText)) &&
     !urlLooksLikeTextFile;
   const modalImageSource = isActuallyImageFile ? (inscription.thumbnail || inscription.image_url) : null;
   const scanImageSource = modalImageSource || inscription.image_url || inscription.thumbnail || '';

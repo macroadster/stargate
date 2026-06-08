@@ -33,7 +33,7 @@ const generateInscriptions = (inscriptions) => {
   }));
 };
 
-export const useInscriptions = (selectedBlock) => {
+export const useInscriptions = (selectedBlock, hideText = false) => {
   const [inscriptions, setInscriptions] = useState([]);
   const [currentInscriptions, setCurrentInscriptions] = useState([]);
   const [allInscriptions, setAllInscriptions] = useState([]);
@@ -42,6 +42,7 @@ export const useInscriptions = (selectedBlock) => {
   const [totalImages, setTotalImages] = useState(0);
   const [filterMode, setFilterMode] = useState('all'); // 'all' or 'text'
   const [lastFetchedHeight, setLastFetchedHeight] = useState(null);
+  const [lastHideText, setLastHideText] = useState(null);
   const [nextCursor, setNextCursor] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -68,13 +69,14 @@ export const useInscriptions = (selectedBlock) => {
       setHasMoreImages(false);
       setTotalImages(0);
       setLastFetchedHeight(selectedBlock.height);
+      setLastHideText(hideText);
       setNextCursor(null);
       setError(null);
       return;
     }
     if (isLoading) return;
-    if (!cursor && lastFetchedHeight === selectedBlock.height) return;
-    if (!cursor && lastFetchedHeight !== selectedBlock.height) {
+    if (!cursor && lastFetchedHeight === selectedBlock.height && lastHideText === hideText) return;
+    if (!cursor && (lastFetchedHeight !== selectedBlock.height || lastHideText !== hideText)) {
       allInscriptionsRef.current = [];
       setAllInscriptions([]);
       setInscriptions([]);
@@ -89,6 +91,8 @@ export const useInscriptions = (selectedBlock) => {
       url.searchParams.set('fields', 'summary');
       if (filterMode === 'text') {
         url.searchParams.set('filter', 'text');
+      } else if (hideText) {
+        url.searchParams.set('filter', 'image');
       }
       if (cursor) {
         url.searchParams.set('cursor', cursor);
@@ -187,6 +191,7 @@ export const useInscriptions = (selectedBlock) => {
       setHasMoreImages(Boolean(data.has_more));
       setInscriptions(filteredInscriptions);
       setLastFetchedHeight(selectedBlock.height);
+      setLastHideText(hideText);
       setNextCursor(data.next_cursor || null);
       setError(null);
     } catch (error) {
@@ -199,6 +204,7 @@ export const useInscriptions = (selectedBlock) => {
         setTotalImages(0);
         setHasMoreImages(false);
         setLastFetchedHeight(selectedBlock.height);
+        setLastHideText(hideText);
         setNextCursor(null);
         setIsLoading(false);
         setError(null);
@@ -213,7 +219,7 @@ export const useInscriptions = (selectedBlock) => {
     } finally {
       setIsLoading(false);
     }
-  }, [selectedBlock, filterMode, lastFetchedHeight, isLoading]);
+  }, [selectedBlock, filterMode, hideText, lastFetchedHeight, isLoading]);
 
   const loadMoreInscriptions = () => {
     if (!hasMoreImages || !nextCursor) return;

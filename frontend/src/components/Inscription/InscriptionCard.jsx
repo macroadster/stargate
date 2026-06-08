@@ -61,12 +61,22 @@ const InscriptionCard = ({ inscription, onClick }) => {
                           fileName.includes('brc-20') ||
                           fileName.includes('brc20');
 
+  // Recognize images even if backend gave bare "jpeg"/"png" (instead of "image/jpeg")
+  // or the filename has a standard image extension. This keeps real image inscriptions
+  // visible when "hide text" is on, and prevents "unknown" type display.
+  const isImageByMimeOrName =
+    mime.includes('image') ||
+    ['jpeg', 'jpg', 'png', 'gif', 'webp', 'avif', 'bmp', 'svg'].includes(mime) ||
+    fileName.endsWith('.jpeg') || fileName.endsWith('.jpg') || fileName.endsWith('.png') ||
+    fileName.endsWith('.gif') || fileName.endsWith('.webp') || fileName.endsWith('.avif') ||
+    fileName.endsWith('.bmp') || fileName.endsWith('.svg');
+
   const isBlockImage = url.includes('/block-image/');
   const hasContentUrl = !!url && !urlLooksLikeTextFile;
   // Treat as displayable image if mime/block-image, or has a content url but isn't obviously text.
   // This lets real images render (even if summary mime is odd) while preventing text items from
   // attempting <img> (they fall through to text snippet or emoji).
-  const isActuallyImageFile = (mime.includes('image') || isBlockImage || (hasContentUrl && !isObviouslyText)) && !urlLooksLikeTextFile;
+  const isActuallyImageFile = (isImageByMimeOrName || isBlockImage || (hasContentUrl && !isObviouslyText)) && !urlLooksLikeTextFile;
   const isTextMime = mime.startsWith('text/');
   const isHtmlContent = mime.includes('text/html') || mime.includes('application/xhtml');
   const isSvgContent = mime === 'image/svg+xml' || (mime.includes('svg') && mime.includes('xml'));
