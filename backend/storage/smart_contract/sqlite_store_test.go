@@ -212,7 +212,7 @@ func TestSQLiteStoreProposalWorkflowValidation(t *testing.T) {
 				ContractID: visibleHash,
 				Title:      "Task A",
 				BudgetSats: 1000,
-				Status:     "approved",
+				Status:     "available",
 			},
 		},
 	}
@@ -233,7 +233,7 @@ func TestSQLiteStoreProposalWorkflowValidation(t *testing.T) {
 				ContractID: visibleHash,
 				Title:      "Task B",
 				BudgetSats: 1000,
-				Status:     "approved",
+				Status:     "available",
 			},
 		},
 	}
