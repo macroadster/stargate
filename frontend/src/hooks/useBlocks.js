@@ -271,8 +271,13 @@ export const useBlocks = () => {
             setSelectedBlock({ ...match });
           }
         } else {
-          // Block not in list yet - create/update placeholder if needed
+          // Block not in list yet - create/update placeholder if needed.
+          // IMPORTANT: has_images must be undefined (not false) for non-future
+          // blocks so useInscriptions will still attempt to fetch data from the
+          // API. Setting false causes useInscriptions to bail immediately.
           const targetHeight = manualSelectedHeight.current;
+          const networkH = networkBlockHeightRef.current;
+          const isFuture = networkH && targetHeight > networkH;
           if (selectedBlockRef.current?.height !== targetHeight) {
             setSelectedBlock({
               height: targetHeight,
@@ -283,9 +288,10 @@ export const useBlocks = () => {
               smart_contract_count: 0,
               witness_image_count: 0,
               hasBRC20: false,
-              has_images: false,
+              has_images: isFuture ? false : undefined,
               smart_contracts: [],
-              witness_images: []
+              witness_images: [],
+              isFuture: !!isFuture
             });
           }
           // Schedule fetchBlocksAround after loadingRef is released.
