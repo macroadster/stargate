@@ -1226,7 +1226,7 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
                           {inscription.block_height > 0 && (
                             <div className="flex flex-col gap-1">
                               <span className="modal-data-label">Block Height</span>
-                              <span className="text-primary">{inscription.block_height}</span>
+                              <a href={`/block/${inscription.block_height}`} className="text-primary hover:underline cursor-pointer">{inscription.block_height}</a>
                             </div>
                           )}
                         </div>
@@ -2336,7 +2336,11 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
                         <div className="modal-blockchain-row">
                           <span className="modal-blockchain-label">Block Height</span>
                           <span className="modal-blockchain-value font-semibold">
-                            {inscription.block_height || inscription.genesis_block_height || 'Unknown'}
+                            {(inscription.block_height || inscription.genesis_block_height) ? (
+                              <a href={`/block/${inscription.block_height || inscription.genesis_block_height}`} className="text-primary hover:underline cursor-pointer">
+                                {inscription.block_height || inscription.genesis_block_height}
+                              </a>
+                            ) : 'Unknown'}
                           </span>
                         </div>
                         <div className="modal-blockchain-row">
