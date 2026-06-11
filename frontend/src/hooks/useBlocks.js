@@ -51,6 +51,9 @@ export const useBlocks = () => {
   const [showHistorical, setShowHistorical] = useState(null);
   const [isInitializing, setIsInitializing] = useState(true);
   const loadingRef = useRef(false);
+  const loadingOlderRef = useRef(false);
+  const olderCursorRef = useRef(null);
+  const hasMoreOlderRef = useRef(true);
   const blocksRef = useRef([]);
   const latestHeightRef = useRef(null);
   const newBlockTimeoutRef = useRef(null);
@@ -246,8 +249,17 @@ export const useBlocks = () => {
       blocksRef.current = deduped;
       setBlocks(deduped);
       setIsInitializing(false);
-      setNextCursor(data.next_cursor || null);
-      setHasMore(Boolean(data.has_more));
+
+      // Only update the older-blocks cursor when this is the initial load
+      // (no cursor yet) or an explicit cursor-based fetch. Polling (isPolling
+      // with no cursor) must NOT overwrite it or the user loses their scroll
+      // position into history.
+      if (!isPolling || cursor) {
+        setNextCursor(data.next_cursor || null);
+        setHasMore(Boolean(data.has_more));
+        olderCursorRef.current = data.next_cursor || null;
+        hasMoreOlderRef.current = Boolean(data.has_more);
+      }
 
       // Keep a user-selected block pinned even as new data loads.
       if (manualSelectedHeight.current) {
@@ -291,11 +303,50 @@ export const useBlocks = () => {
     }
   }, [showHistorical]);
 
-  const loadMoreBlocks = useCallback(() => {
-    if (!hasMore || !nextCursor) return;
-    if (loadingRef.current) return;
-    fetchBlocks(nextCursor, true);
-  }, [fetchBlocks, hasMore, nextCursor]);
+  // loadMoreBlocks uses its own cursor (olderCursorRef) that is independent
+  // of the 2-minute polling cycle. Polling fetches tip blocks and must never
+  // reset the scroll-into-history cursor.
+  const loadMoreBlocks = useCallback(async () => {
+    if (!hasMoreOlderRef.current || !olderCursorRef.current) return;
+    if (loadingOlderRef.current || loadingRef.current) return;
+    loadingOlderRef.current = true;
+    try {
+      const url = new URL(`${API_BASE}/api/data/block-summaries`);
+      url.searchParams.set('limit', 20);
+      url.searchParams.set('cursor_height', olderCursorRef.current);
+
+      const response = await apiFetch(url.toString());
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json();
+
+      const blocksData = data.blocks || [];
+      const olderBlocks = Array.isArray(blocksData)
+        ? blocksData.map(generateBlock).filter(b => b.height)
+        : [];
+
+      // Anchor around the lowest currently-loaded real block so the window
+      // expands downward (into history) rather than evicting what the user sees.
+      const realBlocks = blocksRef.current.filter(b => !b.isFuture);
+      const lowestLoaded = realBlocks.length > 0
+        ? realBlocks[realBlocks.length - 1].height
+        : null;
+      let deduped = mergeAndTrim(blocksRef.current, olderBlocks, lowestLoaded);
+      deduped = addSpecialBlocks(deduped, networkBlockHeightRef.current);
+
+      blocksRef.current = deduped;
+      setBlocks(deduped);
+
+      // Advance the older-blocks cursor
+      olderCursorRef.current = data.next_cursor || null;
+      hasMoreOlderRef.current = Boolean(data.has_more);
+      setNextCursor(data.next_cursor || null);
+      setHasMore(Boolean(data.has_more));
+    } catch (error) {
+      console.error('Error loading older blocks:', error);
+    } finally {
+      loadingOlderRef.current = false;
+    }
+  }, [showHistorical]);
 
   // Fetch blocks around a specific height (for URL navigation to distant blocks).
   // Replaces the current window with blocks centered on targetHeight.
@@ -343,6 +394,11 @@ export const useBlocks = () => {
       blocksRef.current = deduped;
       setBlocks(deduped);
       setIsInitializing(false);
+
+      // Update the older-blocks cursor so the user can continue scrolling
+      // from this new position
+      olderCursorRef.current = data.next_cursor || null;
+      hasMoreOlderRef.current = Boolean(data.has_more);
       setNextCursor(data.next_cursor || null);
       setHasMore(Boolean(data.has_more));
 
