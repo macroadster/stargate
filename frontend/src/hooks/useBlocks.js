@@ -54,6 +54,8 @@ export const useBlocks = () => {
   const loadingOlderRef = useRef(false);
   const olderCursorRef = useRef(null);
   const hasMoreOlderRef = useRef(true);
+  const pendingFetchAroundRef = useRef(null);
+  const fetchBlocksAroundRef = useRef(null);
   const blocksRef = useRef([]);
   const latestHeightRef = useRef(null);
   const newBlockTimeoutRef = useRef(null);
@@ -286,6 +288,12 @@ export const useBlocks = () => {
               witness_images: []
             });
           }
+          // Schedule fetchBlocksAround after loadingRef is released.
+          // This handles the race on initial load: the URL effect calls
+          // setManualHeight → fetchBlocksAround, but fetchBlocks is still
+          // running so fetchBlocksAround bails. Once fetchBlocks finishes,
+          // we retry.
+          pendingFetchAroundRef.current = targetHeight;
         }
       } else if (!selectedBlockRef.current && deduped.length && !isPolling) {
         setIsUserNavigating(false);
@@ -300,6 +308,14 @@ export const useBlocks = () => {
       }
     } finally {
       loadingRef.current = false;
+      // Drain any pending fetchBlocksAround that was blocked by this fetch.
+      // This handles the race on initial page load: URL effect calls
+      // setManualHeight → fetchBlocksAround while fetchBlocks is still running.
+      const pending = pendingFetchAroundRef.current;
+      if (pending !== null) {
+        pendingFetchAroundRef.current = null;
+        setTimeout(() => fetchBlocksAroundRef.current?.(pending), 0);
+      }
     }
   }, [showHistorical]);
 
@@ -413,6 +429,10 @@ export const useBlocks = () => {
       loadingRef.current = false;
     }
   }, [showHistorical]);
+
+  // Keep ref in sync so the deferred setTimeout in fetchBlocks always
+  // calls the latest version.
+  fetchBlocksAroundRef.current = fetchBlocksAround;
 
   // Load newer blocks when scrolling left past the current window.
   const loadNewerBlocks = useCallback(() => {
