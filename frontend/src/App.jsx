@@ -62,11 +62,13 @@ function MainContent() {
     selectedBlock,
     isUserNavigating,
     isInitializing,
+    hasNewer,
     handleBlockSelect: originalHandleBlockSelect,
     setSelectedBlock,
     setIsUserNavigating,
     setManualHeight,
     loadMoreBlocks,
+    loadNewerBlocks,
     refreshBlocks
   } = useBlocks();
 
@@ -165,6 +167,17 @@ function MainContent() {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [height, searchResults]);
+
+  // Scroll the target block card into view after blocks load from URL navigation
+  useEffect(() => {
+    if (!selectedBlock || !scrollRef.current) return;
+    // Only auto-scroll when navigating via URL (within 3s of URL navigation)
+    if (Date.now() - lastUrlNavTimeRef.current > 3000) return;
+    const card = scrollRef.current.querySelector(`[data-block-id="${selectedBlock.height}"]`);
+    if (card) {
+      card.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+    }
+  }, [blocks, selectedBlock, scrollRef]);
 
   // Handle deep linking for wishes, contracts, and proposals
   useEffect(() => {
@@ -675,8 +688,13 @@ function MainContent() {
           style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
           onScroll={(e) => {
             const el = e.currentTarget;
+            // Load older blocks when scrolling right to the end
             if (el.scrollLeft + el.clientWidth >= el.scrollWidth - 50) {
               loadMoreBlocks();
+            }
+            // Load newer blocks when scrolling left to the beginning
+            if (el.scrollLeft <= 50 && hasNewer) {
+              loadNewerBlocks();
             }
           }}
         >

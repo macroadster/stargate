@@ -47,6 +47,7 @@ export const useBlocks = () => {
   const [isUserNavigating, setIsUserNavigating] = useState(false);
   const [nextCursor, setNextCursor] = useState(null);
   const [hasMore, setHasMore] = useState(true);
+  const [hasNewer, setHasNewer] = useState(false);
   const [showHistorical, setShowHistorical] = useState(null);
   const [isInitializing, setIsInitializing] = useState(true);
   const loadingRef = useRef(false);
@@ -68,13 +69,110 @@ export const useBlocks = () => {
     840000  // Halving #4
   ]);
 
+  // Maximum blocks to keep in memory at any time (sliding window).
+  // ~500 blocks ≈ ~3.5 days of Bitcoin blocks — keeps memory bounded.
+  const MAX_WINDOW = 500;
+
+  const milestoneMeta = {
+    0: {
+      timestamp: 1231006505,
+      hash: '000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f',
+      tx_count: 1
+    },
+    174923: {
+      timestamp: new Date('2010-05-22T00:00:00Z').getTime() / 1000,
+      hash: 'pizza-day',
+      tx_count: 5
+    },
+    210000: { hash: 'halving-1', tx_count: 700, timestamp: new Date('2012-11-28T15:00:00Z').getTime() / 1000 },
+    420000: { hash: 'halving-2', tx_count: 1600, timestamp: new Date('2016-07-09T17:00:00Z').getTime() / 1000 },
+    481824: { hash: 'segwit', tx_count: 2000, timestamp: new Date('2017-08-24T00:00:00Z').getTime() / 1000 },
+    630000: { hash: 'halving-3', tx_count: 2500, timestamp: new Date('2020-05-11T19:00:00Z').getTime() / 1000 },
+    709632: { hash: 'taproot', tx_count: 2100, timestamp: new Date('2021-11-14T05:00:00Z').getTime() / 1000 },
+    840000: { hash: 'halving-4', tx_count: 3100, timestamp: new Date('2024-04-20T00:00:00Z').getTime() / 1000 }
+  };
+
+  // Merge new blocks into the existing list, deduplicate, sort descending,
+  // and apply sliding window around `anchorHeight` (defaults to highest loaded block).
+  const mergeAndTrim = (existing, incoming, anchorHeight = null) => {
+    const combined = [...existing, ...incoming];
+    const seen = new Set();
+    let deduped = combined.filter((b) => {
+      if (seen.has(b.height)) return false;
+      seen.add(b.height);
+      return true;
+    }).sort((a, b) => b.height - a.height);
+
+    // Sliding window: keep MAX_WINDOW blocks centered around the anchor.
+    if (deduped.length > MAX_WINDOW) {
+      const anchor = anchorHeight ?? deduped[0]?.height ?? 0;
+      const anchorIdx = deduped.findIndex(b => b.height <= anchor);
+      const idx = Math.max(0, anchorIdx);
+      // Keep ~60% of the window below the anchor and ~40% above for natural scrolling bias
+      const above = Math.min(idx, Math.floor(MAX_WINDOW * 0.4));
+      const start = idx - above;
+      deduped = deduped.slice(start, start + MAX_WINDOW);
+    }
+
+    return deduped;
+  };
+
+  // Add milestone and future blocks to the list.
+  const addSpecialBlocks = (deduped, networkHeight) => {
+    // Always include milestone blocks (on mainnet)
+    if (showHistorical === true) {
+      pinnedMilestones.current.forEach((height) => {
+        if (!deduped.some((b) => b.height === height)) {
+          const meta = milestoneMeta[height] || {};
+          deduped.push({
+            height,
+            timestamp: meta.timestamp || (height === 0 ? 1231006505 : Date.now() - 600000 * 10),
+            hash: meta.hash || (height === 0 ? '000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f' : `milestone-${height}`),
+            inscriptionCount: 0,
+            smart_contract_count: 0,
+            witness_image_count: 0,
+            hasBRC20: false,
+            thumbnail: null,
+            tx_count: meta.tx_count || 0,
+            smart_contracts: [],
+            witness_images: [],
+            isGenesis: height === 0,
+            has_images: false
+          });
+        }
+      });
+    }
+
+    if (networkHeight && networkHeight > 0) {
+      const futureHeight = networkHeight + 1;
+      const existingFuture = deduped.find((b) => b.isFuture);
+      const futureTimestamp = existingFuture?.timestamp || Math.floor(Date.now() / 1000) + 600;
+      deduped = deduped.filter((b) => !b.isFuture);
+      deduped.push({
+        height: futureHeight,
+        timestamp: futureTimestamp,
+        hash: 'pending...',
+        inscriptionCount: 0,
+        smart_contract_count: 0,
+        witness_image_count: 0,
+        hasBRC20: false,
+        thumbnail: null,
+        tx_count: 0,
+        smart_contracts: [],
+        witness_images: [],
+        isFuture: true
+      });
+    }
+
+    return deduped.sort((a, b) => b.height - a.height);
+  };
+
   const fetchBlocks = useCallback(async (cursor = null, isPolling = false) => {
     if (loadingRef.current) return;
     if (showHistorical === null) {
       console.log('Waiting for network check (showHistorical is null)');
       return;
     }
-    console.log('fetchBlocks called, showHistorical:', showHistorical, 'networkChecked:', networkCheckedRef.current, 'isPolling:', isPolling);
     loadingRef.current = true;
     try {
       const url = new URL(`${API_BASE}/api/data/block-summaries`);
@@ -98,7 +196,6 @@ export const useBlocks = () => {
             networkHeight = healthData?.bitcoin?.block_height || healthData?.bitcoin?.blockHeight;
             if (networkHeight) {
               networkBlockHeightRef.current = networkHeight;
-              console.log('Network height set to:', networkHeight);
             }
           }
         } catch (healthError) {
@@ -107,90 +204,21 @@ export const useBlocks = () => {
       }
 
       const blocksData = data.blocks || [];
-
       const recentBlocks = Array.isArray(blocksData)
-        ? blocksData
-            .map(generateBlock)
-            .filter(b => b.height)
+        ? blocksData.map(generateBlock).filter(b => b.height)
         : [];
 
-      const combined = [...blocksRef.current, ...recentBlocks];
-      const seenFinal = new Set();
-      let deduped = combined.filter((b) => {
-        if (seenFinal.has(b.height)) return false;
-        seenFinal.add(b.height);
-        return true;
-      }).sort((a, b) => b.height - a.height);
+      // When loading older blocks via cursor, anchor the window around the
+      // currently selected block so we don't evict what the user is viewing.
+      const anchor = manualSelectedHeight.current || selectedBlockRef.current?.height || null;
+      let deduped = mergeAndTrim(blocksRef.current, recentBlocks, anchor);
+      deduped = addSpecialBlocks(deduped, networkHeight);
 
-      // Limit to last 200 blocks to prevent memory accumulation
-      deduped = deduped.slice(0, 200);
-
-      // Always include milestone blocks
-      const milestoneMeta = {
-        0: {
-          timestamp: 1231006505,
-          hash: '000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f',
-          tx_count: 1
-        },
-        174923: {
-          // Pizza Day block approximate timestamp/tx count
-          timestamp: new Date('2010-05-22T00:00:00Z').getTime() / 1000,
-          hash: 'pizza-day',
-          tx_count: 5
-        },
-        210000: { hash: 'halving-1', tx_count: 700, timestamp: new Date('2012-11-28T15:00:00Z').getTime() / 1000 },
-        420000: { hash: 'halving-2', tx_count: 1600, timestamp: new Date('2016-07-09T17:00:00Z').getTime() / 1000 },
-        481824: { hash: 'segwit', tx_count: 2000, timestamp: new Date('2017-08-24T00:00:00Z').getTime() / 1000 },
-        630000: { hash: 'halving-3', tx_count: 2500, timestamp: new Date('2020-05-11T19:00:00Z').getTime() / 1000 },
-        709632: { hash: 'taproot', tx_count: 2100, timestamp: new Date('2021-11-14T05:00:00Z').getTime() / 1000 },
-        840000: { hash: 'halving-4', tx_count: 3100, timestamp: new Date('2024-04-20T00:00:00Z').getTime() / 1000 }
-      };
-
-      if (showHistorical === true) {
-        pinnedMilestones.current.forEach((height) => {
-          if (!deduped.some((b) => b.height === height)) {
-            const meta = milestoneMeta[height] || {};
-            deduped.push({
-              height,
-              timestamp: meta.timestamp || (height === 0 ? 1231006505 : Date.now() - 600000 * 10),
-              hash: meta.hash || (height === 0 ? '000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f' : `milestone-${height}`),
-              inscriptionCount: 0,
-              smart_contract_count: 0,
-              witness_image_count: 0,
-              hasBRC20: false,
-              thumbnail: null,
-              tx_count: meta.tx_count || 0,
-              smart_contracts: [],
-              witness_images: [],
-              isGenesis: height === 0,
-              has_images: false
-            });
-          }
-        });
+      // Track whether there are newer blocks above our window
+      if (networkHeight && deduped.length > 0) {
+        const highestReal = deduped.find(b => !b.isFuture);
+        setHasNewer(highestReal && highestReal.height < networkHeight);
       }
-
-      if (networkHeight && networkHeight > 0) {
-        const futureHeight = networkHeight + 1;
-        const existingFuture = deduped.find((b) => b.isFuture);
-        const futureTimestamp = existingFuture?.timestamp || Math.floor(Date.now() / 1000) + 600;
-        deduped = deduped.filter((b) => !b.isFuture);
-        deduped.push({
-          height: futureHeight,
-          timestamp: futureTimestamp,
-          hash: 'pending...',
-          inscriptionCount: 0,
-          smart_contract_count: 0,
-          witness_image_count: 0,
-          hasBRC20: false,
-          thumbnail: null,
-          tx_count: 0,
-          smart_contracts: [],
-          witness_images: [],
-          isFuture: true
-        });
-      }
-
-      deduped = deduped.sort((a, b) => b.height - a.height);
 
       const topBlock = deduped.find((b) => !b.isFuture && typeof b.height === 'number');
       let newHeight = null;
@@ -268,6 +296,82 @@ export const useBlocks = () => {
     if (loadingRef.current) return;
     fetchBlocks(nextCursor, true);
   }, [fetchBlocks, hasMore, nextCursor]);
+
+  // Fetch blocks around a specific height (for URL navigation to distant blocks).
+  // Replaces the current window with blocks centered on targetHeight.
+  const fetchBlocksAround = useCallback(async (targetHeight) => {
+    if (loadingRef.current) return;
+    if (showHistorical === null) return;
+    loadingRef.current = true;
+    try {
+      // Fetch blocks starting at targetHeight + some buffer above
+      const cursorAbove = targetHeight + 11; // fetch a page starting just above target
+      const url = new URL(`${API_BASE}/api/data/block-summaries`);
+      url.searchParams.set('limit', 40);
+      url.searchParams.set('cursor_height', cursorAbove);
+
+      const response = await apiFetch(url.toString());
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json();
+
+      let networkHeight = networkBlockHeightRef.current;
+      if (!networkHeight) {
+        try {
+          const healthRes = await apiFetch('/bitcoin/v1/health');
+          if (healthRes.ok) {
+            const healthData = await healthRes.json();
+            networkHeight = healthData?.bitcoin?.block_height || healthData?.bitcoin?.blockHeight;
+            if (networkHeight) networkBlockHeightRef.current = networkHeight;
+          }
+        } catch (e) { /* ignore */ }
+      }
+
+      const blocksData = data.blocks || [];
+      const fetchedBlocks = Array.isArray(blocksData)
+        ? blocksData.map(generateBlock).filter(b => b.height)
+        : [];
+
+      // Replace the window, anchored around targetHeight
+      let deduped = mergeAndTrim(blocksRef.current, fetchedBlocks, targetHeight);
+      deduped = addSpecialBlocks(deduped, networkHeight);
+
+      if (networkHeight) {
+        const highestReal = deduped.find(b => !b.isFuture);
+        setHasNewer(highestReal && highestReal.height < networkHeight);
+      }
+
+      blocksRef.current = deduped;
+      setBlocks(deduped);
+      setIsInitializing(false);
+      setNextCursor(data.next_cursor || null);
+      setHasMore(Boolean(data.has_more));
+
+      // Update selected block with real data if available
+      const match = deduped.find(b => b.height === targetHeight);
+      if (match && manualSelectedHeight.current === targetHeight) {
+        setSelectedBlock({ ...match });
+      }
+    } catch (error) {
+      console.error('Error fetching blocks around height:', error);
+    } finally {
+      loadingRef.current = false;
+    }
+  }, [showHistorical]);
+
+  // Load newer blocks when scrolling left past the current window.
+  const loadNewerBlocks = useCallback(() => {
+    if (loadingRef.current) return;
+    const realBlocks = blocksRef.current.filter(b => !b.isFuture);
+    if (realBlocks.length === 0) return;
+    const highestLoaded = realBlocks[0].height;
+    const networkHeight = networkBlockHeightRef.current;
+    if (networkHeight && highestLoaded >= networkHeight) {
+      setHasNewer(false);
+      return;
+    }
+    // Fetch blocks starting above our current highest
+    fetchBlocksAround(highestLoaded + 20);
+  }, [fetchBlocksAround]);
 
   useEffect(() => {
     const fetchNetwork = async () => {
@@ -351,7 +455,7 @@ export const useBlocks = () => {
     if (existingBlock) {
       setSelectedBlock({ ...existingBlock });
     } else {
-      // Create placeholder block
+      // Create placeholder block immediately so UI is responsive
       // For future blocks, set isFuture=true and has_images=false to skip fetching and show OpenContractsView
       // For non-future blocks, leave has_images undefined so useInscriptions will fetch the data
       setSelectedBlock({
@@ -368,6 +472,11 @@ export const useBlocks = () => {
         witness_images: [],
         isFuture: isFutureBlock
       });
+      // For non-future blocks, fetch real data around the target height
+      // so the scroller shows surrounding blocks and we get real block metadata
+      if (!isFutureBlock) {
+        fetchBlocksAround(height);
+      }
     }
   };
 
@@ -378,11 +487,13 @@ export const useBlocks = () => {
     selectedBlock,
     isUserNavigating,
     isInitializing,
+    hasNewer,
     handleBlockSelect,
     setSelectedBlock,
     setIsUserNavigating,
     setManualHeight,
     loadMoreBlocks,
+    loadNewerBlocks,
     refreshBlocks
   };
 };
