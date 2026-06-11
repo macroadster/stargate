@@ -842,20 +842,57 @@ func (api *DataAPI) HandleGetBlockInscriptionsPaginated(w http.ResponseWriter, r
 	}
 	if filter == "text" {
 		var filtered []bitcoin.InscriptionData
-		for _, ins := range inscriptions {
+		newImageOverrides := map[int]string{}
+		newMetaOverrides := map[int]map[string]any{}
+		for i, ins := range inscriptions {
 			if strings.HasPrefix(strings.ToLower(ins.ContentType), "text/") || ins.Content != "" {
+				idx := len(filtered)
 				filtered = append(filtered, ins)
+				if v, ok := imageURLOverrides[i]; ok {
+					newImageOverrides[idx] = v
+				}
+				if v, ok := metadataOverrides[i]; ok {
+					newMetaOverrides[idx] = v
+				}
 			}
 		}
 		inscriptions = filtered
+		imageURLOverrides = newImageOverrides
+		metadataOverrides = newMetaOverrides
 	} else if filter == "image" {
 		var filtered []bitcoin.InscriptionData
-		for _, ins := range inscriptions {
-			if isImageLikeInscription(ins) {
+		newImageOverrides := map[int]string{}
+		newMetaOverrides := map[int]map[string]any{}
+		for i, ins := range inscriptions {
+			// An inscription is image-like if:
+			// 1. It has an image content type or image file extension, OR
+			// 2. It has a block-image URL override (smart contract images), OR
+			// 3. Sniffing the actual file on disk reveals an image type
+			isImage := isImageLikeInscription(ins)
+			if !isImage {
+				if override, ok := imageURLOverrides[i]; ok && strings.Contains(override, "/block-image/") {
+					isImage = true
+				}
+			}
+			if !isImage && ins.FilePath != "" {
+				if sniffed := api.sniffContentType(height, ins.FilePath); strings.HasPrefix(sniffed, "image/") {
+					isImage = true
+				}
+			}
+			if isImage {
+				idx := len(filtered)
 				filtered = append(filtered, ins)
+				if v, ok := imageURLOverrides[i]; ok {
+					newImageOverrides[idx] = v
+				}
+				if v, ok := metadataOverrides[i]; ok {
+					newMetaOverrides[idx] = v
+				}
 			}
 		}
 		inscriptions = filtered
+		imageURLOverrides = newImageOverrides
+		metadataOverrides = newMetaOverrides
 	}
 
 	start := cursor
