@@ -8,6 +8,19 @@ import (
 	"testing"
 )
 
+func TestMain(m *testing.M) {
+	// By default, force stub executor in this test package so that
+	// go test ./agents does not hang on real (interactive/long-running) AI CLIs
+	// even when they are present in PATH.
+	//
+	// Set STARGATE_ALLOW_REAL_EXECUTOR=1 if you want to exercise real tools
+	// during testing.
+	if os.Getenv("STARGATE_ALLOW_REAL_EXECUTOR") == "" {
+		os.Setenv("STARGATE_AGENT_EXECUTOR", "stub")
+	}
+	os.Exit(m.Run())
+}
+
 func TestStubExecutor_Execute(t *testing.T) {
 	dir := t.TempDir()
 	e := NewStubExecutor(dir)
@@ -218,13 +231,15 @@ func TestStubExecutor_EnsureIndexHTMLExisting(t *testing.T) {
 }
 
 func TestAutoDetectExecutor_IsAvailable(t *testing.T) {
+	// Force stub so this test never tries to invoke a real (potentially hanging) tool
+	os.Setenv("STARGATE_AGENT_EXECUTOR", "stub")
+	defer os.Unsetenv("STARGATE_AGENT_EXECUTOR")
+
 	e := NewAutoDetectExecutor("")
 	available := e.IsAvailable()
 
-	if !available {
-		t.Log("AutoDetectExecutor: no tool detected in PATH (expected in CI)")
-	} else {
-		t.Logf("AutoDetectExecutor detected: %s at %s", e.detectedName, e.detectedBinary)
+	if available {
+		t.Error("expected no tool when STARGATE_AGENT_EXECUTOR=stub")
 	}
 }
 
@@ -346,10 +361,11 @@ func TestAutoDetectExecutor_ForcedExecutor(t *testing.T) {
 	prev := os.Getenv("STARGATE_AGENT_EXECUTOR")
 	defer os.Setenv("STARGATE_AGENT_EXECUTOR", prev)
 
+	// Using a nonexistent name should result in no detection (falls back to stub behavior)
 	os.Setenv("STARGATE_AGENT_EXECUTOR", "nonexistent-tool-xyz")
 	e := NewAutoDetectExecutor("")
 	if e.detectedBinary != "" {
-		t.Logf("forced executor not found, fell back to auto-detect: %s", e.detectedName)
+		t.Errorf("expected no binary for nonexistent forced tool, got %s", e.detectedBinary)
 	}
 }
 

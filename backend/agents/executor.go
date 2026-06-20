@@ -256,17 +256,32 @@ func NewAutoDetectExecutor(uploadsDir string) *AutoDetectExecutor {
 }
 
 func (e *AutoDetectExecutor) detect() {
-	// Allow forcing a specific tool via environment variable
-	if forced := os.Getenv("STARGATE_AGENT_EXECUTOR"); forced != "" {
+	forced := os.Getenv("STARGATE_AGENT_EXECUTOR")
+
+	// Explicit stub / disabled mode (very useful in tests)
+	if forced == "stub" || forced == "none" {
+		e.detectedName = ""
+		e.detectedBinary = ""
+		return
+	}
+
+	// Allow forcing a *specific* tool
+	if forced != "" {
 		if p, err := exec.LookPath(forced); err == nil {
 			e.detectedName = forced
 			e.detectedBinary = p
 			log.Printf("agents/executor: using forced executor %s at %s (from STARGATE_AGENT_EXECUTOR)", forced, p)
 			return
 		}
-		log.Printf("agents/executor: STARGATE_AGENT_EXECUTOR=%s not found in PATH, falling back to auto-detect", forced)
+		// Forced to a name that doesn't exist → do not fall back to auto-detect.
+		// Treat as "no executor available" (will fall back to stub behavior in Execute).
+		e.detectedName = forced
+		e.detectedBinary = ""
+		log.Printf("agents/executor: STARGATE_AGENT_EXECUTOR=%s not found in PATH (no auto fallback)", forced)
+		return
 	}
 
+	// Normal auto-detection
 	for _, name := range supportedTools {
 		if p, err := exec.LookPath(name); err == nil {
 			e.detectedName = name
@@ -448,7 +463,16 @@ func (e *AutoDetectExecutor) invokeTool(ctx context.Context, fullPrompt, workdir
 
 	log.Printf("agents/executor: executing %s in %s args=%v", e.detectedName, workdir, args)
 
-	combinedOut, err := cmd.CombinedOutput()
+	// Safety timeout: prevent individual tool invocations from hanging the whole test suite or agent loop forever.
+	// Real tools (especially TUIs) can take time or get stuck on auth/background work.
+	execCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+
+	safeCmd := exec.CommandContext(execCtx, e.detectedBinary, args...)
+	safeCmd.Dir = workdir
+	safeCmd.Env = cmd.Env
+
+	combinedOut, err := safeCmd.CombinedOutput()
 
 	// Best-effort cleanup of prompt file
 	if promptFile != "" {
@@ -456,11 +480,9 @@ func (e *AutoDetectExecutor) invokeTool(ctx context.Context, fullPrompt, workdir
 	}
 
 	if err != nil {
-		// Include exit information for better debugging
 		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() != 0 {
 			log.Printf("agents/executor: %s exited with code %d", e.detectedName, exitErr.ExitCode())
 		}
-		// Still return the output we got (many tools print useful partial results on failure)
 		return string(combinedOut), fmt.Errorf("%s failed: %w\noutput:\n%s", e.detectedName, err, combinedOut)
 	}
 
