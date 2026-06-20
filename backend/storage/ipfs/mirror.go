@@ -242,9 +242,6 @@ func (m *Mirror) persistDeletedLocked() {
 
 func LoadMirrorConfig() MirrorConfig {
 	uploadsDir := os.Getenv("UPLOADS_DIR")
-	if uploadsDir == "" {
-		uploadsDir = "/data/uploads"
-	}
 
 	return MirrorConfig{
 		Enabled:           envBool("IPFS_MIRROR_ENABLED", true),

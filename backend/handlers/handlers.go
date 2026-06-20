@@ -342,9 +342,6 @@ func (h *InscriptionHandler) HandleGetInscriptions(w http.ResponseWriter, r *htt
 
 func (h *InscriptionHandler) fromIngestion(rec services.IngestionRecord) models.InscriptionRequest {
 	uploadsDir := os.Getenv("UPLOADS_DIR")
-	if uploadsDir == "" {
-		uploadsDir = "/data/uploads"
-	}
 	_ = os.MkdirAll(uploadsDir, 0755)
 
 	// Use just the hash for consistency with HandleCreateInscription
@@ -384,9 +381,6 @@ func (h *InscriptionHandler) fromIngestion(rec services.IngestionRecord) models.
 
 func (h *InscriptionHandler) fromContract(c sc.Contract) models.InscriptionRequest {
 	uploadsDir := os.Getenv("UPLOADS_DIR")
-	if uploadsDir == "" {
-		uploadsDir = "/data/uploads"
-	}
 	imagePath := ""
 	timestamp := int64(0)
 
@@ -459,9 +453,6 @@ func (h *InscriptionHandler) fromContract(c sc.Contract) models.InscriptionReque
 
 func (h *InscriptionHandler) fromProposal(p sc.Proposal) models.InscriptionRequest {
 	uploadsDir := os.Getenv("UPLOADS_DIR")
-	if uploadsDir == "" {
-		uploadsDir = "/data/uploads"
-	}
 	imagePath := ""
 	baseID := baseContractID(p.ID)
 	if baseID == "" {
@@ -688,9 +679,6 @@ func isMethodCompatible(method, ext string) bool {
 // ensureIngestionImageFile writes the base64 image to uploads dir if missing and returns the path.
 func ensureIngestionImageFile(rec services.IngestionRecord) (string, error) {
 	uploadsDir := os.Getenv("UPLOADS_DIR")
-	if uploadsDir == "" {
-		uploadsDir = "/data/uploads"
-	}
 	if err := os.MkdirAll(uploadsDir, 0755); err != nil {
 		return "", err
 	}
@@ -1037,9 +1025,6 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 
 	// Write stego image to uploads directory
 	uploadsDir := os.Getenv("UPLOADS_DIR")
-	if uploadsDir == "" {
-		uploadsDir = "/data/uploads"
-	}
 	log.Printf("DEBUG: uploadsDir resolved to: %s", uploadsDir)
 	if err := os.MkdirAll(uploadsDir, 0755); err != nil {
 		h.sendError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to create uploads directory %s: %v", uploadsDir, err))

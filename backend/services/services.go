@@ -76,9 +76,6 @@ func (s *InscriptionService) CreateInscription(req models.InscribeRequest, file 
 
 	// Create uploads directory if it doesn't exist
 	uploadsDir := os.Getenv("UPLOADS_DIR")
-	if uploadsDir == "" {
-		uploadsDir = "/data/uploads"
-	}
 	if err := os.MkdirAll(uploadsDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create uploads directory: %w", err)
 	}

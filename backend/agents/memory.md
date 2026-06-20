@@ -29,3 +29,9 @@ The `UpdateProposal` stores always overwrote the caller-provided `Status` with t
 
 ### Changes Made
 - `README.md`: Updated line 107 (Tailwind CSS → QuantumCSS), lines 226-260 (updated project structure with all actual backend packages and frontend subdirectories)
+
+## Session 3 (2026-06-20)
+
+### Work Done
+- Closed stargate-wgo.8.1 and stargate-wgo.10 — both were already fixed in code (commits 9984959, b583e10) but never closed in bd.
+- Verified no remaining ready work in `bd ready`.

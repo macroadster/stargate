@@ -1954,9 +1954,6 @@ func (h *HTTPMCPServer) handleSubmitWork(ctx context.Context, args map[string]in
 		if ok {
 			// Get uploads directory
 			uploadsDir := os.Getenv("UPLOADS_DIR")
-			if uploadsDir == "" {
-				uploadsDir = "/data/uploads"
-			}
 
 			// Create results directory: UPLOADS_DIR/results/[contract_id]
 			// Look up the contract/task relationship to get contract_id for file organization

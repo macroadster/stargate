@@ -2593,9 +2593,6 @@ func (bm *BlockMonitor) moveIngestionImage(blockDir string, rec *services.Ingest
 
 func (bm *BlockMonitor) moveIngestionImageWithFilename(blockDir string, rec *services.IngestionRecord, destFilename string) (string, error) {
 	uploadsDir := os.Getenv("UPLOADS_DIR")
-	if uploadsDir == "" {
-		uploadsDir = "/data/uploads"
-	}
 	filename := strings.TrimSpace(rec.Filename)
 	if filename == "" {
 		filename = "inscription" // Stealthy: no extension
@@ -2696,9 +2693,6 @@ func (bm *BlockMonitor) stegoImagePath(rec *services.IngestionRecord) (string, b
 		return "", false
 	}
 	uploadsDir := os.Getenv("UPLOADS_DIR")
-	if uploadsDir == "" {
-		uploadsDir = "/data/uploads"
-	}
 	// First try hash-only filename (new stealth naming)
 	hashPath := filepath.Join(uploadsDir, stegoCID)
 	if _, err := os.Stat(hashPath); err == nil {
@@ -2764,9 +2758,6 @@ func (bm *BlockMonitor) unpinUploadPath(path string) {
 		}
 	}
 	uploadsDir := os.Getenv("UPLOADS_DIR")
-	if uploadsDir == "" {
-		uploadsDir = "/data/uploads"
-	}
 	if rel, err := filepath.Rel(uploadsDir, path); err == nil && rel != "." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)) && rel != ".." {
 		_ = os.Remove(path)
 	}
@@ -2781,9 +2772,6 @@ func (bm *BlockMonitor) cleanupUploadArtifacts(rec *services.IngestionRecord) {
 		return
 	}
 	uploadsDir := os.Getenv("UPLOADS_DIR")
-	if uploadsDir == "" {
-		uploadsDir = "/data/uploads"
-	}
 	// First try hash-only filename (new stealth naming)
 	hashPath := filepath.Join(uploadsDir, id)
 	if _, err := os.Stat(hashPath); err == nil {

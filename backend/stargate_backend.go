@@ -602,9 +602,6 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 
 	// Serve uploaded files with proper MIME type detection
 	uploadsDir := os.Getenv("UPLOADS_DIR")
-	if uploadsDir == "" {
-		uploadsDir = "/data/uploads"
-	}
 	_ = os.MkdirAll(uploadsDir, 0755)
 	mux.HandleFunc("/uploads/", customUploadsHandler(uploadsDir))
 
