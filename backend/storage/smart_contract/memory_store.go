@@ -367,7 +367,7 @@ func (s *MemoryStore) ClaimTask(taskID, walletAddress string, estimatedCompletio
 	}
 
 	// New claim checks
-	if strings.EqualFold(task.Status, "approved") || strings.EqualFold(task.Status, "completed") || strings.EqualFold(task.Status, "published") || strings.EqualFold(task.Status, "claimed") || strings.EqualFold(task.Status, "submitted") {
+	if strings.EqualFold(task.Status, "approved") || strings.EqualFold(task.Status, "completed") || strings.EqualFold(task.Status, "published") || strings.EqualFold(task.Status, "submitted") {
 		return smart_contract.Claim{}, ErrTaskUnavailable
 	}
 

@@ -415,9 +415,9 @@ func (s *SQLiteStore) ClaimTask(taskID, walletAddress string, estimatedCompletio
 	if err != nil {
 		return smart_contract.Claim{}, ErrTaskNotFound
 	}
-	// Only "available" tasks can be claimed. "approved" (and other terminal states) are blocked,
-	// matching MemoryStore behavior (and PGStore). This fixes the divergence noted in Cat 4.1.
-	if taskStatus != "available" {
+	// Tasks that are "available" or "claimed" (by the same agent for re-claim) can be claimed.
+	// Other terminal states are blocked.
+	if taskStatus != "available" && taskStatus != "claimed" {
 		return smart_contract.Claim{}, ErrTaskUnavailable
 	}
 
@@ -438,12 +438,15 @@ func (s *SQLiteStore) ClaimTask(taskID, walletAddress string, estimatedCompletio
 	var existingActiveClaim *smart_contract.Claim
 	for rows.Next() {
 		var c smart_contract.Claim
-		var expiresStr string
-		if err := rows.Scan(&c.ClaimID, &c.TaskID, &c.AiIdentifier, &c.Status, &expiresStr, &c.CreatedAt); err != nil {
+		var expiresStr, createdStr string
+		if err := rows.Scan(&c.ClaimID, &c.TaskID, &c.AiIdentifier, &c.Status, &expiresStr, &createdStr); err != nil {
 			return smart_contract.Claim{}, err
 		}
 		if t, perr := parseSQLiteTime(expiresStr); perr == nil && t != nil {
 			c.ExpiresAt = *t
+		}
+		if t, perr := parseSQLiteTime(createdStr); perr == nil && t != nil {
+			c.CreatedAt = *t
 		}
 		if c.Status == "active" && now.Before(c.ExpiresAt) {
 			if strings.EqualFold(c.AiIdentifier, normalizedWallet) {
@@ -492,17 +495,23 @@ UPDATE mcp_tasks SET status='claimed', claimed_by=?, claimed_at=?, claim_expires
 
 func (s *SQLiteStore) SubmitWork(claimID string, deliverables map[string]interface{}, proof map[string]interface{}) (smart_contract.Submission, error) {
 	var claim smart_contract.Claim
-	var expiresAt sql.NullString
+	var expiresAt, createdAt sql.NullString
 	err := s.db.QueryRowContext(context.Background(), `SELECT claim_id, task_id, ai_identifier, status, expires_at, created_at FROM mcp_claims WHERE claim_id=?`, claimID).
-		Scan(&claim.ClaimID, &claim.TaskID, &claim.AiIdentifier, &claim.Status, &expiresAt, &claim.CreatedAt)
+		Scan(&claim.ClaimID, &claim.TaskID, &claim.AiIdentifier, &claim.Status, &expiresAt, &createdAt)
 	if err != nil {
 		return smart_contract.Submission{}, ErrClaimNotFound
+	}
+	if createdAt.Valid {
+		if t, err := parseSQLiteTime(createdAt.String); err == nil && t != nil {
+			claim.CreatedAt = *t
+		}
 	}
 	if claim.Status != "active" && claim.Status != "submitted" {
 		return smart_contract.Submission{}, fmt.Errorf("claim %s not active or submitted", claimID)
 	}
 	if expiresAt.Valid {
 		if t, err := parseSQLiteTime(expiresAt.String); err == nil && t != nil {
+			claim.ExpiresAt = *t
 			if time.Now().After(*t) {
 				return smart_contract.Submission{}, fmt.Errorf("claim %s expired", claimID)
 			}
@@ -641,15 +650,27 @@ func (s *SQLiteStore) TaskStatus(taskID string) (map[string]interface{}, error) 
 	}
 
 	var claim smart_contract.Claim
+	var expiresAt, createdAt sql.NullString
 	err = s.db.QueryRowContext(context.Background(), `
 SELECT claim_id, task_id, ai_identifier, status, expires_at, created_at
 FROM mcp_claims
 WHERE task_id=? AND status IN ('active','submitted','pending_review')
 ORDER BY created_at DESC
 LIMIT 1
-`, taskID).Scan(&claim.ClaimID, &claim.TaskID, &claim.AiIdentifier, &claim.Status, &claim.ExpiresAt, &claim.CreatedAt)
+`, taskID).Scan(&claim.ClaimID, &claim.TaskID, &claim.AiIdentifier, &claim.Status, &expiresAt, &createdAt)
 	if err != nil {
 		claim = smart_contract.Claim{}
+	} else {
+		if expiresAt.Valid {
+			if t, err := parseSQLiteTime(expiresAt.String); err == nil && t != nil {
+				claim.ExpiresAt = *t
+			}
+		}
+		if createdAt.Valid {
+			if t, err := parseSQLiteTime(createdAt.String); err == nil && t != nil {
+				claim.CreatedAt = *t
+			}
+		}
 	}
 
 	resp := map[string]interface{}{

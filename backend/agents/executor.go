@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -473,25 +474,27 @@ func (e *AutoDetectExecutor) invokeTool(ctx context.Context, fullPrompt, workdir
 		args = appendModelFlag(args, e.detectedName, e.model)
 	}
 
-	cmd := exec.CommandContext(ctx, e.detectedBinary, args...)
+	// Execution timeout for the tool. Default is generous (30 minutes) to allow real AI coding work.
+	// Can be overridden with STARGATE_AGENT_MAX_EXECUTION_SECONDS.
+	timeout := 30 * time.Minute
+	if v := os.Getenv("STARGATE_AGENT_MAX_EXECUTION_SECONDS"); v != "" {
+		if secs, err := strconv.Atoi(v); err == nil && secs > 0 {
+			timeout = time.Duration(secs) * time.Second
+		}
+	}
+	execCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(execCtx, e.detectedBinary, args...)
 	cmd.Dir = workdir
 	cmd.Env = append(os.Environ(),
 		"AGENT_WORKDIR="+workdir,
 		"WORK_DIR="+workdir,
 	)
 
-	log.Printf("agents/executor: executing %s in %s args=%v", e.detectedName, workdir, args)
+	log.Printf("agents/executor: executing %s in %s args=%v (timeout %s)", e.detectedName, workdir, args, timeout)
 
-	// Safety timeout: prevent individual tool invocations from hanging the whole test suite or agent loop forever.
-	// Real tools (especially TUIs) can take time or get stuck on auth/background work.
-	execCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
-	defer cancel()
-
-	safeCmd := exec.CommandContext(execCtx, e.detectedBinary, args...)
-	safeCmd.Dir = workdir
-	safeCmd.Env = cmd.Env
-
-	combinedOut, err := safeCmd.CombinedOutput()
+	combinedOut, err := cmd.CombinedOutput()
 
 	// Best-effort cleanup of prompt file
 	if promptFile != "" {
@@ -499,8 +502,12 @@ func (e *AutoDetectExecutor) invokeTool(ctx context.Context, fullPrompt, workdir
 	}
 
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() != 0 {
+		if exitErr, ok := err.(*exec.ExitError); ok {
 			log.Printf("agents/executor: %s exited with code %d", e.detectedName, exitErr.ExitCode())
+			if exitErr.ExitCode() == -1 || strings.Contains(err.Error(), "killed") || strings.Contains(err.Error(), "signal") {
+				// Likely killed by our safety timeout or OOM
+				log.Printf("agents/executor: %s appears to have been killed (timeout or external signal). Consider increasing STARGATE_AGENT_MAX_EXECUTION_SECONDS", e.detectedName)
+			}
 		}
 		return string(combinedOut), fmt.Errorf("%s failed: %w\noutput:\n%s", e.detectedName, err, combinedOut)
 	}

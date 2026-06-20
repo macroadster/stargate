@@ -285,14 +285,34 @@ func (w *Worker) ProcessTask(task smart_contract.Task) bool {
 	status := strings.ToLower(task.Status)
 	existingClaim := task.ActiveClaimID
 
-	if existingClaim != "" && (status == "claimed" || status == "rework" || status == "rejected") {
-		claimID = existingClaim
-		log.Printf("agents/worker: resuming task %s with existing claim %s", taskID, claimID)
-	} else if status == "available" || status == "rejected" || status == "rework" {
-		log.Printf("agents/worker: claiming task %s (rework=%v)", taskID, rejectionFeedback != "")
+	claimedBy := strings.ToLower(task.ClaimedBy)
+	isOurs := claimedBy == strings.ToLower(w.aiID) || (w.donation != "" && claimedBy == strings.ToLower(w.donation))
+
+	// Robust resume for tasks that are already claimed by us (including after a previous killed execution)
+	// Also support "submitted" by us for retrying failed submissions.
+	if (status == "claimed" || status == "rework" || status == "rejected" || status == "submitted") && isOurs {
+		if existingClaim == "" {
+			existingClaim = w.findMyExistingClaim(task)
+		}
+		if existingClaim == "" {
+			// Fallback: query fresh task status which includes claim_id for active/submitted claims
+			if details := w.getTaskStatus(taskID); details != nil {
+				if c := getString(details, "claim_id"); c != "" {
+					existingClaim = c
+				}
+			}
+		}
+		if existingClaim != "" {
+			claimID = existingClaim
+			log.Printf("agents/worker: resuming task %s with existing claim %s", taskID, claimID)
+		}
+	}
+
+	if claimID == "" && (status == "available" || status == "rejected" || status == "rework" || ((status == "claimed" || status == "submitted") && isOurs)) {
+		log.Printf("agents/worker: claiming/reclaiming task %s (rework=%v, status=%s)", taskID, rejectionFeedback != "", status)
 		claim, err := w.store.ClaimTask(taskID, w.aiID, nil)
 		if err != nil {
-			log.Printf("agents/worker: claim failed for %s: %v", taskID, err)
+			log.Printf("agents/worker: claim/reclaim failed for %s: %v", taskID, err)
 			// Try to find if we already own it
 			if existing := w.findMyExistingClaim(task); existing != "" {
 				claimID = existing
@@ -303,7 +323,19 @@ func (w *Worker) ProcessTask(task smart_contract.Task) bool {
 	}
 
 	if claimID == "" {
-		log.Printf("agents/worker: could not secure claim for task %s", taskID)
+		// Last resort: even if not in our "resume" list, if it's ours try one more time via task status
+		if isOurs {
+			if details := w.getTaskStatus(taskID); details != nil {
+				if c := getString(details, "claim_id"); c != "" {
+					claimID = c
+					log.Printf("agents/worker: recovered claim_id %s for our task %s via TaskStatus", claimID, taskID)
+				}
+			}
+		}
+	}
+
+	if claimID == "" {
+		log.Printf("agents/worker: could not secure claim for task %s (status=%s, isOurs=%v)", taskID, status, isOurs)
 		return false
 	}
 
@@ -355,6 +387,15 @@ func (w *Worker) findMyExistingClaim(task smart_contract.Task) string {
 			}
 		}
 	}
+
+	// Fallback for sqlite (and others) where ListTasks scan does not populate ActiveClaimID:
+	// TaskStatus does a direct latest claim query and returns "claim_id".
+	if details := w.getTaskStatus(task.TaskID); details != nil {
+		if c := getString(details, "claim_id"); c != "" {
+			return c
+		}
+	}
+
 	return ""
 }
 

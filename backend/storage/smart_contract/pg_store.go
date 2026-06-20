@@ -816,8 +816,8 @@ FROM mcp_tasks WHERE task_id=$1 FOR UPDATE
 		return *activeClaim, tx.Commit(ctx)
 	}
 
-	// New claim logic: task must be available
-	if strings.EqualFold(task.Status, "approved") || strings.EqualFold(task.Status, "completed") || strings.EqualFold(task.Status, "published") || strings.EqualFold(task.Status, "claimed") || strings.EqualFold(task.Status, "submitted") {
+	// New claim logic: task must be available or claimed (for re-claim by same agent)
+	if strings.EqualFold(task.Status, "approved") || strings.EqualFold(task.Status, "completed") || strings.EqualFold(task.Status, "published") || strings.EqualFold(task.Status, "submitted") {
 		return smart_contract.Claim{}, ErrTaskUnavailable
 	}
 
