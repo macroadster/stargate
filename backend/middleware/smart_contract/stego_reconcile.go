@@ -183,9 +183,6 @@ func (s *Server) ReconcileStegoWithAnnouncement(ctx context.Context, ann *stegoA
 	sum := sha256.Sum256(stegoBytes)
 	stegoHash := hex.EncodeToString(sum[:])
 	uploadsDir := strings.TrimSpace(os.Getenv("UPLOADS_DIR"))
-	if uploadsDir == "" {
-		uploadsDir = "/data/uploads"
-	}
 	uploadPath := filepath.Join(uploadsDir, stegoHash)
 	if err := os.WriteFile(uploadPath, stegoBytes, 0644); err != nil {
 		return fmt.Errorf("failed to write stego image: %w", err)
@@ -707,9 +704,6 @@ func (s *Server) downloadSandboxArtifacts(ctx context.Context, contractID string
 	}
 
 	uploadsDir := strings.TrimSpace(os.Getenv("UPLOADS_DIR"))
-	if uploadsDir == "" {
-		uploadsDir = "/data/uploads"
-	}
 	resultsDir := filepath.Join(uploadsDir, "results", normalizedID)
 
 	// If results already exist and match the expected hash, skip download.

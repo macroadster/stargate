@@ -702,9 +702,6 @@ func ipfsIngestProcessPending(ctx context.Context, ingest *services.IngestionSer
 	}
 	// Write wish image to disk so the /uploads/ endpoint can serve it.
 	uploadsDir := strings.TrimSpace(os.Getenv("UPLOADS_DIR"))
-	if uploadsDir == "" {
-		uploadsDir = "/data/uploads"
-	}
 	_ = os.MkdirAll(uploadsDir, 0755)
 	uploadPath := filepath.Join(uploadsDir, id)
 	if _, statErr := os.Stat(uploadPath); statErr != nil {

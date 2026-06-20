@@ -225,9 +225,6 @@ func (s *Server) publishStegoForProposal(ctx context.Context, proposalID string,
 	// uploaded to IPFS so peers can retrieve the full artifact set.
 	sandboxHash := ""
 	uploadsDir := strings.TrimSpace(os.Getenv("UPLOADS_DIR"))
-	if uploadsDir == "" {
-		uploadsDir = "/data/uploads"
-	}
 	sandboxDir := filepath.Join(uploadsDir, "results", scstore.NormalizeContractID(proposalID))
 	tarballPath := filepath.Join(uploadsDir, fmt.Sprintf("sandbox-%s.tar", scstore.NormalizeContractID(proposalID)))
 	if h, err := stego.WriteSandboxTarball(sandboxDir, tarballPath); err == nil {
