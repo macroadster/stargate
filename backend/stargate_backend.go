@@ -455,11 +455,20 @@ func runHTTPServer(store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, api
 	// This brings the former Python starlight.agents orchestration logic into stargate.
 	agentCfg := agents.LoadConfig()
 	if agentCfg.Enabled {
-		agentOrch := agents.NewOrchestrator(agentCfg, store, nil /* stub executor */)
+		// Propagate executor config from LoadConfig into env so NewAutoDetectExecutor picks it up
+		if agentCfg.ExecutorTool != "" {
+			os.Setenv("STARGATE_AGENT_EXECUTOR", agentCfg.ExecutorTool)
+		}
+		if agentCfg.ExecutorModel != "" {
+			os.Setenv("STARGATE_AGENT_EXECUTOR_MODEL", agentCfg.ExecutorModel)
+		}
+
+		agentOrch := agents.NewOrchestrator(agentCfg, store, nil)
 		agentOrch.Start(context.Background())
 		// Note: orchestrator runs until process exit for now (matches other background services).
 		// If a full shutdown path is added later, call agentOrch.Stop() on termination.
-		log.Printf("Built-in agents enabled (watcher=%v, worker=%v)", agentCfg.WatcherEnabled, agentCfg.WorkerEnabled)
+		log.Printf("Built-in agents enabled (watcher=%v, worker=%v, tool=%s, model=%s)",
+			agentCfg.WatcherEnabled, agentCfg.WorkerEnabled, agentCfg.ExecutorTool, agentCfg.ExecutorModel)
 	} else {
 		log.Println("Built-in agents disabled (set STARGATE_AGENT_ENABLED=true to enable)")
 	}

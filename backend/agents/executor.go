@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -39,6 +40,7 @@ type ExecutionResult struct {
 //   - StubExecutor: safe placeholder (no external tools required)
 //   - AutoDetectExecutor: automatically detects opencode, claude, grok, agy, or codex
 //     in $PATH and runs the task using the first available binary.
+//   - MockExecutor (for tests): records requests and returns canned results.
 type Executor interface {
 	Execute(ctx context.Context, req ExecutionRequest) (ExecutionResult, error)
 }
@@ -244,13 +246,17 @@ type AutoDetectExecutor struct {
 	uploadsDir     string
 	detectedBinary string // full path or name
 	detectedName   string // e.g. "opencode"
+	model          string // optional model override
 }
 
 func NewAutoDetectExecutor(uploadsDir string) *AutoDetectExecutor {
 	if uploadsDir == "" {
 		uploadsDir = os.Getenv("UPLOADS_DIR")
 	}
-	e := &AutoDetectExecutor{uploadsDir: uploadsDir}
+	e := &AutoDetectExecutor{
+		uploadsDir: uploadsDir,
+		model:      os.Getenv("STARGATE_AGENT_EXECUTOR_MODEL"),
+	}
 	e.detect()
 	return e
 }
@@ -390,6 +396,14 @@ Follow security guidelines in AGENTS.md - only allowed imports and operations.
 Focus on delivering working solutions, not theoretical discussions.
 `, req.Description, skillsStr)
 
+	// Optional: allow injecting extra system instructions from a file for better templating/customization.
+	// Set STARGATE_AGENT_SYSTEM_PROMPT=/path/to/prompt.txt
+	if tmplPath := os.Getenv("STARGATE_AGENT_SYSTEM_PROMPT"); tmplPath != "" {
+		if data, err := os.ReadFile(tmplPath); err == nil && len(data) > 0 {
+			baseInstruction = string(data) + "\n\n" + baseInstruction
+		}
+	}
+
 	workType := "NEW WORK"
 	if req.RejectionFeedback != "" {
 		workType = "REWORK"
@@ -454,6 +468,11 @@ func (e *AutoDetectExecutor) invokeTool(ctx context.Context, fullPrompt, workdir
 
 	args := spec.buildArgs(fullPrompt, workdir, promptFile)
 
+	// Inject model if configured and the tool likely supports it
+	if e.model != "" {
+		args = appendModelFlag(args, e.detectedName, e.model)
+	}
+
 	cmd := exec.CommandContext(ctx, e.detectedBinary, args...)
 	cmd.Dir = workdir
 	cmd.Env = append(os.Environ(),
@@ -489,6 +508,25 @@ func (e *AutoDetectExecutor) invokeTool(ctx context.Context, fullPrompt, workdir
 	return string(combinedOut), nil
 }
 
+// appendModelFlag adds a model flag to args for tools that support -m / --model.
+// This is a best-effort injection to support STARGATE_AGENT_EXECUTOR_MODEL.
+func appendModelFlag(args []string, toolName, model string) []string {
+	// Don't duplicate if already present
+	for _, a := range args {
+		if a == "-m" || a == "--model" || strings.HasPrefix(a, "--model=") {
+			return args
+		}
+	}
+
+	switch toolName {
+	case "opencode", "grok", "codex", "claude", "agy":
+		// Most support -m or --model
+		return append(args, "--model", model)
+	default:
+		return append(args, "-m", model)
+	}
+}
+
 func (e *AutoDetectExecutor) ensureFrontend(workdir, hash, publicURL, resultFilename string) {
 	indexPath := filepath.Join(workdir, "index.html")
 	if _, err := os.Stat(indexPath); err == nil {
@@ -515,4 +553,25 @@ func (e *AutoDetectExecutor) ensureFrontend(workdir, hash, publicURL, resultFile
 </html>`, hash, hash, e.detectedName, publicURL, resultFilename)
 
 	_ = os.WriteFile(indexPath, []byte(content), 0644)
+}
+
+// MockExecutor is useful for unit tests. It records the last request and returns
+// a predictable result without spawning any external processes.
+type MockExecutor struct {
+	LastReq  ExecutionRequest
+	Response ExecutionResult
+	Err      error
+}
+
+func (m *MockExecutor) Execute(ctx context.Context, req ExecutionRequest) (ExecutionResult, error) {
+	m.LastReq = req
+	if m.Response.Notes == "" && m.Err == nil {
+		m.Response = ExecutionResult{
+			Notes:           "# Mock Task Report\n\nCompleted by MockExecutor for: " + req.Title,
+			ResultFile:      "/uploads/results/mock/" + req.TaskID + ".md",
+			ArtifactsDir:    "/uploads/results/mock/",
+			CompletionProof: "mock-" + req.TaskID,
+		}
+	}
+	return m.Response, m.Err
 }

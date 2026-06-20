@@ -21,6 +21,10 @@ type Config struct {
 	MaxProposalsPerCycle  int
 	MaxProposalsPerWish   int
 	MaxCycles             int
+
+	// Executor configuration
+	ExecutorTool  string // force a specific tool (opencode, grok, etc.) or "stub"
+	ExecutorModel string // model override for tools that support -m / --model
 }
 
 // DefaultConfig returns reasonable defaults.
@@ -35,6 +39,7 @@ func DefaultConfig() Config {
 		MaxProposalsPerCycle: 1,
 		MaxProposalsPerWish:  5,
 		MaxCycles:            10000,
+		// Executor defaults are empty; auto-detection will be used
 	}
 }
 
@@ -94,6 +99,18 @@ func LoadConfig() Config {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			cfg.MaxCycles = n
 		}
+	}
+
+	// Executor tool override (e.g. "grok", "claude", "stub")
+	if v := os.Getenv("STARGATE_AGENT_EXECUTOR"); v != "" {
+		cfg.ExecutorTool = strings.TrimSpace(v)
+	}
+
+	// Model override (passed as -m/--model to supported tools)
+	if v := os.Getenv("STARGATE_AGENT_EXECUTOR_MODEL"); v != "" {
+		cfg.ExecutorModel = strings.TrimSpace(v)
+	} else if v := os.Getenv("STARGATE_EXECUTOR_MODEL"); v != "" {
+		cfg.ExecutorModel = strings.TrimSpace(v)
 	}
 
 	return cfg
