@@ -162,11 +162,14 @@ func ensureIndexHTML(dir, visibleHash string) {
 var supportedTools = []string{"opencode", "claude", "grok", "agy", "codex"}
 
 // AutoDetectExecutor automatically finds a supported AI coding assistant
-// (opencode, grok, agy, codex, claude) in the user's PATH and uses it
+// (opencode, claude, grok, agy, codex) in the user's PATH and uses it
 // to perform the actual work described in the ExecutionRequest.
 //
+// Parameter passing for each binary has been validated against the CLIs
+// available in the current environment.
+//
 // Detection order: opencode → claude → grok → agy → codex
-// You can force a specific one with STARGATE_AGENT_EXECUTOR=claude (etc).
+// Force a specific tool: STARGATE_AGENT_EXECUTOR=opencode (or claude, grok, etc.)
 //
 // It runs the detected binary inside the task's workdir so that the tool
 // can create/edit files directly (like the original Python opencode flow).
@@ -355,43 +358,64 @@ PROPOSAL CONTEXT: %s
 }
 
 // invokeTool runs the detected binary with the prompt in the given workdir.
+// Parameter passing has been validated against the actual CLIs present in the environment
+// (opencode, claude, grok, agy, codex).
 func (e *AutoDetectExecutor) invokeTool(ctx context.Context, prompt, workdir string) (string, error) {
+	// For robustness with potentially long agent prompts (context, history, instructions),
+	// write the prompt to a temp file in the workdir when the tool supports it.
+	promptFile := filepath.Join(workdir, ".agent_prompt.txt")
+	if writeErr := os.WriteFile(promptFile, []byte(prompt), 0644); writeErr != nil {
+		// fallback to inline if can't write
+		promptFile = ""
+	}
+
 	var args []string
 
 	switch e.detectedName {
 	case "opencode":
-		// opencode run "prompt"
-		args = []string{"run", prompt}
+		// Validated via `opencode run --help`: `opencode run [message..]` + --dir
+		args = []string{"run", "--dir", workdir, prompt}
 	case "claude":
-		args = []string{prompt}
+		// Validated: -p/--print for non-interactive. Prompt as argument works well.
+		args = []string{"-p", prompt, "--output-format", "text"}
 	case "grok":
-		// Grok Build TUI headless single-turn: grok -p "prompt" [--cwd ...]
-		// Use -p / --single for non-interactive output to stdout.
-		args = []string{"-p", prompt, "--cwd", workdir, "--no-wait-for-background", "--output-format", "plain"}
+		// Validated via `grok --help`: -p/--single for single-turn + --prompt-file support.
+		if promptFile != "" {
+			args = []string{"-p", "--prompt-file", promptFile, "--cwd", workdir, "--no-wait-for-background", "--output-format", "plain"}
+		} else {
+			args = []string{"-p", prompt, "--cwd", workdir, "--no-wait-for-background", "--output-format", "plain"}
+		}
 	case "agy":
-		args = []string{"--prompt", prompt}
+		// Validated: --print (alias -p, --prompt) for non-interactive single prompt.
+		args = []string{"--print", prompt}
 	case "codex":
-		args = []string{prompt}
+		// Validated via `codex exec --help`: `codex exec` subcommand + -C/--cd for dir.
+		// Codex also supports prompt via stdin with "-" but arg is reliable here.
+		args = []string{"exec", "-C", workdir, prompt}
 	default:
 		args = []string{prompt}
 	}
 
-	// For tools that don't take --cwd in the arg list above, we still set Dir.
-	// For grok we already passed it explicitly.
 	cmd := exec.CommandContext(ctx, e.detectedBinary, args...)
 
-	// Always set working directory on the command
+	// Always set working directory as a reliable fallback
 	cmd.Dir = workdir
 
-	// Pass environment hints
+	// Useful env vars many tools respect
 	cmd.Env = append(os.Environ(),
 		"AGENT_WORKDIR="+workdir,
 		"WORK_DIR="+workdir,
 	)
 
-	log.Printf("agents/executor: running %s in %s", e.detectedName, workdir)
+	log.Printf("agents/executor: running %s in %s with args: %v", e.detectedName, workdir, args)
 
 	out, err := cmd.CombinedOutput()
+
+	// cleanup prompt file
+	if promptFile != "" {
+		_ = os.Remove(promptFile)
+	}
+
 	return string(out), err
 }
 

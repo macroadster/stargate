@@ -83,7 +83,7 @@ func (fs *FileState) PutSet(key string, values map[string]bool) {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
 
-	arr := make([]string, 0, len(values))
+	arr := make([]interface{}, 0, len(values))
 	for k := range values {
 		arr = append(arr, k)
 	}
@@ -110,5 +110,10 @@ func (fs *FileState) GetMap(key string) map[string]string {
 func (fs *FileState) PutMap(key string, m map[string]string) {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
-	fs.data[key] = m
+
+	mm := make(map[string]interface{}, len(m))
+	for k, v := range m {
+		mm[k] = v
+	}
+	fs.data[key] = mm
 }

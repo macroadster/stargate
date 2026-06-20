@@ -559,6 +559,7 @@ func NewGuidanceManifest(baseURL string) *GuidanceManifest {
 					"visible_pixel_hash": {
 						Type:        "string",
 						Description: "Visible pixel hash (wish id)",
+						Required:    true,
 					},
 					"ingestion_id": {
 						Type:        "string",

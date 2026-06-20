@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"stargate-backend/core/smart_contract"
@@ -47,6 +48,98 @@ func TestWatcherAuditsAndAutoApproves(t *testing.T) {
 	if len(props) > 0 && props[0].Status == "pending" {
 		t.Errorf("expected proposal to be approved or published, still '%s'", props[0].Status)
 	}
+}
+
+func TestWatcherValidateBudgetSanity(t *testing.T) {
+	cfg := DefaultConfig()
+	store := scstore.NewMemoryStore(0)
+	w := NewWatcher(cfg, store)
+
+	ok, reason := w.validateBudgetSanity(smart_contract.Proposal{BudgetSats: 0}, 1000)
+	if ok || reason == "" {
+		t.Error("expected rejection for zero budget")
+	}
+
+	ok, reason = w.validateBudgetSanity(smart_contract.Proposal{BudgetSats: 101}, 10)
+	if ok || reason == "" {
+		t.Errorf("expected rejection for budget > 10x contract budget, got ok=%v reason=%s", ok, reason)
+	}
+
+	ok, reason = w.validateBudgetSanity(smart_contract.Proposal{BudgetSats: 1_000_000_000}, 1000)
+	if ok || reason == "" {
+		t.Error("expected rejection for extremely high budget")
+	}
+
+	ok, reason = w.validateBudgetSanity(smart_contract.Proposal{BudgetSats: 500}, 1000)
+	if !ok {
+		t.Errorf("expected approval for reasonable budget, got reason: %s", reason)
+	}
+}
+
+func TestWatcherShouldAutoApprove(t *testing.T) {
+	w1 := NewWatcher(DefaultConfig(), scstore.NewMemoryStore(0))
+	if w1.shouldAutoApprove() {
+		t.Error("should not auto-approve without donation address")
+	}
+
+	cfg2 := DefaultConfig()
+	cfg2.DonationAddress = "bc1qtest"
+	w2 := NewWatcher(cfg2, scstore.NewMemoryStore(0))
+	if !w2.shouldAutoApprove() {
+		t.Error("should auto-approve with donation address")
+	}
+}
+
+func TestWatcherAuditProposal(t *testing.T) {
+	cfg := DefaultConfig()
+	store := scstore.NewMemoryStore(0)
+	w := NewWatcher(cfg, store)
+
+	ok, reason := w.auditProposal(context.Background(), smart_contract.Proposal{
+		Title:         "Short",
+		DescriptionMD: "Too short",
+	})
+	if ok {
+		t.Error("expected rejection for short description")
+	}
+	if !strings.Contains(reason, "detail") {
+		t.Errorf("expected reason about detail, got: %s", reason)
+	}
+
+	ok, reason = w.auditProposal(context.Background(), smart_contract.Proposal{
+		Title:         "This is a joke proposal for fun",
+		DescriptionMD: "### Task 1: Do something\nThis is a joke test with sufficient length to pass the minimum check.",
+	})
+	if ok {
+		t.Error("expected rejection for joke content")
+	}
+}
+
+func TestWatcherIsRecursiveProposal(t *testing.T) {
+	cfg := DefaultConfig()
+	store := scstore.NewMemoryStore(0)
+	w := NewWatcher(cfg, store)
+
+	if !w.isRecursiveProposal(smart_contract.Proposal{
+		Title:         "Create a proposal for the proposal",
+		DescriptionMD: "I will create another proposal.",
+	}) {
+		t.Error("expected recursive detection")
+	}
+
+	if w.isRecursiveProposal(smart_contract.Proposal{
+		Title:         "Build a todo app",
+		DescriptionMD: "### Task 1: Implement features",
+	}) {
+		t.Error("non-recursive proposal flagged as recursive")
+	}
+}
+
+func TestWatcherCheckResources(t *testing.T) {
+	cfg := DefaultConfig()
+	store := scstore.NewMemoryStore(0)
+	w := NewWatcher(cfg, store)
+	w.checkResources()
 }
 
 func TestWatcherRejectsBadProposal(t *testing.T) {
