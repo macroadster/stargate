@@ -33,13 +33,31 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
 # Stage 3: Final lightweight image
 FROM debian:bookworm-slim
 
-# Install runtime dependencies
-RUN apt-get update && apt-get install -y \
+# Install runtime dependencies, Node.js (required by opencode), and bundle opencode CLI.
+# This enables the built-in agent (AutoDetectExecutor) to drive real AI coding tools
+# when STARGATE_AGENT_EXECUTOR=opencode (or auto-detected). No opencode.json is bundled.
+RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     tzdata \
     wget \
+    curl \
+    gnupg \
+    git \
+    build-essential \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
+    && npm install -g npm@latest \
     && rm -rf /var/lib/apt/lists/* \
-    && useradd -m -u 1000 -s /bin/bash stargate
+    && apt-get clean
+
+# Install OpenCode CLI into /opt/opencode and expose via /usr/local/bin
+RUN curl -fsSL https://opencode.ai/install | bash \
+    && mv /root/.opencode /opt/opencode \
+    && ln -s /opt/opencode/bin/opencode /usr/local/bin/opencode \
+    && chmod -R 755 /opt/opencode
+
+# Create non-root runtime user
+RUN useradd -m -u 1000 -s /bin/bash stargate
 
 WORKDIR /app
 
@@ -49,14 +67,17 @@ COPY --from=backend-builder /out/stargate /usr/local/bin/stargate
 # Copy documentation and assets
 COPY --from=backend-builder /app/backend/docs ./docs
 COPY --from=backend-builder /app/backend/assets ./assets
-# Create necessary directories
+
+# Create necessary directories and set ownership (include opencode and home for the user)
 RUN mkdir -p /app/uploads /app/logs /app/ipfs_objects /app/ipfs_repo && \
-    chown -R stargate:stargate /app
+    chown -R stargate:stargate /app /opt/opencode /home/stargate
 
 # Set environment variables
 # sqlite is the recommended durable default for single-binary / container deployments.
 # memory is available when you want a completely ephemeral process (debugging / tests).
 ENV STARGATE_STORAGE=sqlite
+# HOME is set so opencode (and similar tools) can locate user config and state if needed.
+ENV HOME=/home/stargate
 # GIN_MODE removed: the project uses net/http + http.ServeMux (no Gin framework)
 
 EXPOSE 3001

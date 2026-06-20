@@ -94,6 +94,74 @@ Starlight (the Python AI steganalysis system) is the approval oracle. Multiple d
 - The donation mechanism is intentionally voluntary and non-rent-seeking.
 - Work is ongoing to better align the hashlock preimage source with the "product image" rule and to improve single-binary packaging.
 
+## Built-in Autonomous Agents
+
+Stargate ships with a complete Go-native agent orchestration system (the functionality previously lived in the separate Python `starlight.agents` module).
+
+When enabled, the orchestrator runs inside the same process as the rest of the backend and can:
+
+- Discover open wishes/contracts and create proposals
+- Audit pending proposals (recursive detection, budget sanity, scope, quality heuristics)
+- Audit submissions and approve/rework/reject them
+- Claim tasks, execute work using a detected AI coding CLI, and submit results
+- Handle rework requests, continuation work, and persistent memory (`memory.md`)
+- Write artifacts + a navigation `index.html` into the task sandbox under `UPLOADS_DIR/results/<hash>/`
+
+### Supported Execution Tools (auto-detected from $PATH)
+
+The `AutoDetectExecutor` looks for these binaries (in priority order):
+
+- `opencode` (strongly recommended)
+- `claude`
+- `grok`
+- `agy`
+- `codex`
+
+If none are found (or you force it), a safe **stub executor** is used that still produces reports and `index.html`.
+
+### Key Environment Variables
+
+```bash
+# Master switch (default: true)
+STARGATE_AGENT_ENABLED=true
+
+# Enable the two roles independently
+STARGATE_AGENT_WATCHER_ENABLED=true   # proposal + submission audits
+STARGATE_AGENT_WORKER_ENABLED=true    # wish → proposals + task execution
+
+STARGATE_AGENT_AI_IDENTIFIER="my-stargate-agent"
+STARGATE_AGENT_POLL_INTERVAL=60
+
+# Force a specific tool (or "stub")
+STARGATE_AGENT_EXECUTOR=opencode
+# or
+STARGATE_AGENT_EXECUTOR=stub
+
+# Model override (injected as --model / -m where supported)
+STARGATE_AGENT_EXECUTOR_MODEL=claude-3-5-sonnet-20241022
+
+# Optional: provide a custom base system prompt
+STARGATE_AGENT_SYSTEM_PROMPT=/etc/stargate/agent-prompt.txt
+```
+
+See `backend/agents/config.go` and `backend/agents/executor.go` for the full set of supported variables and how arguments are constructed for each tool.
+
+### How to Run with a Real Tool
+
+1. Install one of the supported CLIs (e.g. `opencode`).
+2. Make sure it is in `$PATH` and can reach your Stargate MCP endpoint (via its own config, e.g. `opencode.json`).
+3. Set the variables above and (re)start Stargate.
+
+The agents will automatically use the tool to do real work inside each task's isolated results directory.
+
+### Safety Notes
+
+- Real execution tools can run arbitrary commands in the sandbox directory. Use with care.
+- For tests/CI you can force `STARGATE_AGENT_EXECUTOR=stub`.
+- The orchestrator has built-in rate limits, hoarding prevention (one active task at a time), rejection caching, and resource awareness.
+
+See the source in `backend/agents/` for the full implementation (Watcher, Worker, Orchestrator, and the declarative tool invocation specs).
+
 ## 🌟 Features
 
 ### Frontend (React)
@@ -112,6 +180,7 @@ Starlight (the Python AI steganalysis system) is the approval oracle. Multiple d
 - **Oracle Reconcile**: Match on-chain funding/commitment outputs to contracts
 - **Commitment Sweeps**: Build and broadcast P2WSH sweep transactions
 - **Inscription Storage**: Persistent storage of inscription requests and images
+- **Built-in Autonomous Agents**: Native Go implementation of watcher + worker orchestration (migrated from the original Python `starlight.agents`). Auto-detects and drives external AI coding CLIs for creating proposals, executing tasks, auditing, and handling rework. See "Built-in Autonomous Agents" section below.
 
 ## 🛠 Tech Stack
 
@@ -236,7 +305,7 @@ stargate/
 │   └── index.html
 ├── backend/                 # Go (single-binary, CGO=0 + pure sqlite)
 │   ├── stargate_backend.go    # Main entry point
-│   ├── agents/                # Built-in autonomous agent orchestration
+│   ├── agents/                # Built-in autonomous agent orchestration (Watcher/Worker + AutoDetectExecutor)
 │   ├── api/                   # REST API handlers
 │   ├── bitcoin/               # Bitcoin data + scanner clients
 │   ├── cmd/                   # CLI utilities (migration, etc.)
