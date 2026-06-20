@@ -17,3 +17,15 @@ The `UpdateProposal` stores always overwrote the caller-provided `Status` with t
 - Allow status changes through `UpdateProposal` when the caller provides a non-empty status
 - Keep the "must be pending" gate since we only want status transitions from pending
 - SQLiteStore now properly persists status column
+
+## Session 2 (2026-06-20)
+
+### Work Done
+- Fixed stargate-wgo.8.1 — README was badly outdated vs reality:
+  - Features/Frontend: "Tailwind CSS" → "QuantumCSS"
+  - Project structure: `starlight_backend.go` → `stargate_backend.go`
+  - Added all 17 backend packages to project structure (agents/, api/, bitcoin/, cmd/, container/, core/, docs/, handlers/, mcp/, middleware/, models/, scripts/, security/, services/, starlight/, stego/, storage/)
+  - Added frontend subdirectories (components/, pages/, context/, hooks/, utils/) plus vite.config.js and index.html
+
+### Changes Made
+- `README.md`: Updated line 107 (Tailwind CSS → QuantumCSS), lines 226-260 (updated project structure with all actual backend packages and frontend subdirectories)

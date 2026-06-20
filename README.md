@@ -104,7 +104,7 @@ Starlight (the Python AI steganalysis system) is the approval oracle. Multiple d
 - **Block Explorer**: Horizontal scrolling block viewer with real-time updates
 - **Search**: Find contracts, inscriptions, or blocks by ID/height/hash
 - **Dark/Light Mode**: Automatic theme detection with manual toggle
-- **Responsive Design**: Mobile-friendly interface with Tailwind CSS
+- **Responsive Design**: Mobile-friendly interface with QuantumCSS
 
 ### Backend (Go)
 - **REST API**: Fast HTTP server with CORS support
@@ -226,14 +226,33 @@ stargate/
 ├── frontend/                # React + Vite (JSX)
 │   ├── src/                 # .jsx sources
 │   │   ├── App.jsx
-│   │   └── ...
-│   └── public/
+│   │   ├── components/      # Reusable UI components
+│   │   ├── pages/           # Route pages
+│   │   ├── context/         # React context providers
+│   │   ├── hooks/           # Custom React hooks
+│   │   └── utils/           # Utilities
+│   ├── public/
+│   ├── vite.config.js
+│   └── index.html
 ├── backend/                 # Go (single-binary, CGO=0 + pure sqlite)
-│   ├── starlight_backend.go
-│   ├── storage/ (unified)
-│   ├── mcp/
-│   ├── stego/
-│   ├── handlers/
+│   ├── stargate_backend.go    # Main entry point
+│   ├── agents/                # Built-in autonomous agent orchestration
+│   ├── api/                   # REST API handlers
+│   ├── bitcoin/               # Bitcoin data + scanner clients
+│   ├── cmd/                   # CLI utilities (migration, etc.)
+│   ├── container/             # Dependency injection container
+│   ├── core/                  # Core domain logic
+│   ├── docs/                  # API documentation (OpenAPI)
+│   ├── handlers/              # HTTP request handlers
+│   ├── mcp/                   # MCP protocol server (tool-based auth)
+│   ├── middleware/            # HTTP middleware (auth, CORS, logging)
+│   ├── models/                # Data models
+│   ├── scripts/               # Build/development scripts
+│   ├── security/              # Auth, API keys, crypto
+│   ├── services/              # Business logic services
+│   ├── starlight/             # Starlight ML scanner client
+│   ├── stego/                 # Steganography encoding/decoding
+│   ├── storage/               # Storage abstraction (SQLite, PG)
 │   ├── go.mod
 │   └── ...
 ├── Dockerfile (unified)
