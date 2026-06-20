@@ -159,11 +159,78 @@ func ensureIndexHTML(dir, visibleHash string) {
 // ===================== Auto-detecting real Executor =====================
 
 // supportedTools lists the binaries we know how to drive, in priority order.
+// This order can be overridden via STARGATE_AGENT_EXECUTOR.
 var supportedTools = []string{"opencode", "claude", "grok", "agy", "codex"}
+
+// invocationSpec describes how to invoke a specific tool.
+type invocationSpec struct {
+	// buildArgs returns the full argv (excluding the binary name itself).
+	buildArgs func(fullPrompt string, workdir string, promptFile string) []string
+
+	// preferPromptFile tells us to feed the prompt via a file rather than argv
+	// (safer for very long prompts containing code, history, etc.).
+	preferPromptFile bool
+}
+
+// toolSpecs contains validated invocation rules for each supported tool.
+var toolSpecs = map[string]invocationSpec{
+	"opencode": {
+		buildArgs: func(fullPrompt, workdir, promptFile string) []string {
+			// opencode run takes the prompt as a positional argument.
+			// --dir is the documented way to set the working directory.
+			return []string{"run", "--dir", workdir, fullPrompt}
+		},
+		preferPromptFile: false,
+	},
+	"claude": {
+		buildArgs: func(fullPrompt, workdir, promptFile string) []string {
+			// -p / --print runs non-interactively and prints the final response.
+			return []string{"-p", fullPrompt, "--output-format", "text"}
+		},
+		preferPromptFile: false,
+	},
+	"grok": {
+		buildArgs: func(fullPrompt, workdir, promptFile string) []string {
+			args := []string{"-p"}
+			if promptFile != "" {
+				args = append(args, "--prompt-file", promptFile)
+			} else {
+				args = append(args, fullPrompt)
+			}
+			args = append(args,
+				"--cwd", workdir,
+				"--no-wait-for-background",
+				"--output-format", "plain",
+			)
+			return args
+		},
+		preferPromptFile: true,
+	},
+	"agy": {
+		buildArgs: func(fullPrompt, workdir, promptFile string) []string {
+			return []string{"--print", fullPrompt}
+		},
+		preferPromptFile: false,
+	},
+	"codex": {
+		buildArgs: func(fullPrompt, workdir, promptFile string) []string {
+			// "exec" is the explicit non-interactive subcommand.
+			// -C / --cd sets the working root for the agent.
+			return []string{"exec", "-C", workdir, fullPrompt}
+		},
+		preferPromptFile: false,
+	},
+}
 
 // AutoDetectExecutor automatically finds a supported AI coding assistant
 // (opencode, claude, grok, agy, codex) in the user's PATH and uses it
 // to perform the actual work described in the ExecutionRequest.
+//
+// Improvements over initial version:
+//   - Declarative toolSpecs instead of a large switch (easier to extend and audit)
+//   - Consistent use of prompt files for tools that support them (grok)
+//   - Better error surfacing (exit codes + partial output)
+//   - Validated argument lists against real binaries in the environment
 //
 // Parameter passing for each binary has been validated against the CLIs
 // available in the current environment.
@@ -215,11 +282,10 @@ func (e *AutoDetectExecutor) IsAvailable() bool {
 	return e.detectedBinary != ""
 }
 
-// Execute builds a rich task prompt (matching the style used by the original
-// Python agents) and invokes the detected binary.
+// Execute builds a rich task prompt (modeled closely on the original Python
+// starlight.agents Worker) and invokes the detected external AI coding tool.
 func (e *AutoDetectExecutor) Execute(ctx context.Context, req ExecutionRequest) (ExecutionResult, error) {
 	if !e.IsAvailable() {
-		// Graceful fallback so the rest of the agent loop keeps working
 		stub := NewStubExecutor(e.uploadsDir)
 		return stub.Execute(ctx, req)
 	}
@@ -240,13 +306,10 @@ func (e *AutoDetectExecutor) Execute(ctx context.Context, req ExecutionRequest) 
 		return ExecutionResult{}, fmt.Errorf("failed to create workdir: %w", err)
 	}
 
-	// Build the prompt the same way the original Python Worker did
-	prompt := e.buildPrompt(req)
+	fullPrompt := e.buildPrompt(req)
 
-	// Run the tool (with context timeout support)
-	output, runErr := e.invokeTool(ctx, prompt, workdir)
+	output, runErr := e.invokeTool(ctx, fullPrompt, workdir)
 
-	// Always try to produce a report file + index.html even if the tool partially succeeded
 	resultFilename := req.TaskID + ".md"
 	resultPath := filepath.Join(workdir, resultFilename)
 	publicURL := fmt.Sprintf("/uploads/results/%s/%s", hash, resultFilename)
@@ -275,7 +338,6 @@ func (e *AutoDetectExecutor) Execute(ctx context.Context, req ExecutionRequest) 
 		log.Printf("agents/executor: failed to write report: %v", writeErr)
 	}
 
-	// Make sure we have a usable index.html
 	e.ensureFrontend(workdir, hash, publicURL, resultFilename)
 
 	res := ExecutionResult{
@@ -286,7 +348,7 @@ func (e *AutoDetectExecutor) Execute(ctx context.Context, req ExecutionRequest) 
 	}
 
 	if runErr != nil {
-		return res, fmt.Errorf("%s execution error: %w", e.detectedName, runErr)
+		return res, fmt.Errorf("%s execution error: %w\npartial output:\n%s", e.detectedName, runErr, output)
 	}
 	return res, nil
 }
@@ -358,65 +420,51 @@ PROPOSAL CONTEXT: %s
 }
 
 // invokeTool runs the detected binary with the prompt in the given workdir.
-// Parameter passing has been validated against the actual CLIs present in the environment
-// (opencode, claude, grok, agy, codex).
-func (e *AutoDetectExecutor) invokeTool(ctx context.Context, prompt, workdir string) (string, error) {
-	// For robustness with potentially long agent prompts (context, history, instructions),
-	// write the prompt to a temp file in the workdir when the tool supports it.
-	promptFile := filepath.Join(workdir, ".agent_prompt.txt")
-	if writeErr := os.WriteFile(promptFile, []byte(prompt), 0644); writeErr != nil {
-		// fallback to inline if can't write
-		promptFile = ""
+// The implementation uses declarative toolSpecs for clean, extensible, and validated argument handling.
+func (e *AutoDetectExecutor) invokeTool(ctx context.Context, fullPrompt, workdir string) (string, error) {
+	spec, ok := toolSpecs[e.detectedName]
+	if !ok {
+		spec = toolSpecs["default"] // shouldn't happen
 	}
 
-	var args []string
-
-	switch e.detectedName {
-	case "opencode":
-		// Validated via `opencode run --help`: `opencode run [message..]` + --dir
-		args = []string{"run", "--dir", workdir, prompt}
-	case "claude":
-		// Validated: -p/--print for non-interactive. Prompt as argument works well.
-		args = []string{"-p", prompt, "--output-format", "text"}
-	case "grok":
-		// Validated via `grok --help`: -p/--single for single-turn + --prompt-file support.
-		if promptFile != "" {
-			args = []string{"-p", "--prompt-file", promptFile, "--cwd", workdir, "--no-wait-for-background", "--output-format", "plain"}
-		} else {
-			args = []string{"-p", prompt, "--cwd", workdir, "--no-wait-for-background", "--output-format", "plain"}
+	// Decide whether to use a prompt file.
+	var promptFile string
+	if spec.preferPromptFile {
+		promptFile = filepath.Join(workdir, ".agent_prompt.txt")
+		if err := os.WriteFile(promptFile, []byte(fullPrompt), 0644); err != nil {
+			log.Printf("agents/executor: failed to write prompt file for %s, falling back to argv: %v", e.detectedName, err)
+			promptFile = ""
 		}
-	case "agy":
-		// Validated: --print (alias -p, --prompt) for non-interactive single prompt.
-		args = []string{"--print", prompt}
-	case "codex":
-		// Validated via `codex exec --help`: `codex exec` subcommand + -C/--cd for dir.
-		// Codex also supports prompt via stdin with "-" but arg is reliable here.
-		args = []string{"exec", "-C", workdir, prompt}
-	default:
-		args = []string{prompt}
 	}
+
+	args := spec.buildArgs(fullPrompt, workdir, promptFile)
 
 	cmd := exec.CommandContext(ctx, e.detectedBinary, args...)
-
-	// Always set working directory as a reliable fallback
 	cmd.Dir = workdir
-
-	// Useful env vars many tools respect
 	cmd.Env = append(os.Environ(),
 		"AGENT_WORKDIR="+workdir,
 		"WORK_DIR="+workdir,
 	)
 
-	log.Printf("agents/executor: running %s in %s with args: %v", e.detectedName, workdir, args)
+	log.Printf("agents/executor: executing %s in %s args=%v", e.detectedName, workdir, args)
 
-	out, err := cmd.CombinedOutput()
+	combinedOut, err := cmd.CombinedOutput()
 
-	// cleanup prompt file
+	// Best-effort cleanup of prompt file
 	if promptFile != "" {
 		_ = os.Remove(promptFile)
 	}
 
-	return string(out), err
+	if err != nil {
+		// Include exit information for better debugging
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() != 0 {
+			log.Printf("agents/executor: %s exited with code %d", e.detectedName, exitErr.ExitCode())
+		}
+		// Still return the output we got (many tools print useful partial results on failure)
+		return string(combinedOut), fmt.Errorf("%s failed: %w\noutput:\n%s", e.detectedName, err, combinedOut)
+	}
+
+	return string(combinedOut), nil
 }
 
 func (e *AutoDetectExecutor) ensureFrontend(workdir, hash, publicURL, resultFilename string) {

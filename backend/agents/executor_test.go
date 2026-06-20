@@ -49,6 +49,79 @@ func TestStubExecutor_Execute(t *testing.T) {
 	}
 }
 
+// TestAutoDetectExecutor_CommandConstruction validates that we build the correct
+// arguments for each supported tool. This does not require the binaries to be present.
+func TestAutoDetectExecutor_CommandConstruction(t *testing.T) {
+	tests := []struct {
+		name           string
+		detectedName   string
+		req            ExecutionRequest
+		wantContains   []string // substrings that must appear in the arg list
+		wantNotContain []string
+	}{
+		{
+			name:         "opencode",
+			detectedName: "opencode",
+			req:          ExecutionRequest{Workdir: "/tmp/ws", Description: "build a todo app"},
+			wantContains: []string{"run", "--dir", "/tmp/ws", "build a todo app"},
+		},
+		{
+			name:         "claude",
+			detectedName: "claude",
+			req:          ExecutionRequest{Description: "fix the bug"},
+			wantContains: []string{"-p", "fix the bug", "--output-format", "text"},
+		},
+		{
+			name:         "grok with prompt file",
+			detectedName: "grok",
+			req:          ExecutionRequest{Workdir: "/tmp/grokws", Description: "implement feature"},
+			wantContains: []string{"-p", "--prompt-file", "--cwd", "/tmp/grokws", "--no-wait-for-background"},
+		},
+		{
+			name:         "agy",
+			detectedName: "agy",
+			req:          ExecutionRequest{Description: "do the thing"},
+			wantContains: []string{"--print", "do the thing"},
+		},
+		{
+			name:         "codex",
+			detectedName: "codex",
+			req:          ExecutionRequest{Workdir: "/tmp/codex", Description: "write tests"},
+			wantContains: []string{"exec", "-C", "/tmp/codex", "write tests"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// We test the spec directly to avoid needing real detection
+			spec, ok := toolSpecs[tc.detectedName]
+			if !ok {
+				t.Fatalf("no spec for %s", tc.detectedName)
+			}
+
+			// Simulate prompt file decision
+			var promptFile string
+			if spec.preferPromptFile {
+				promptFile = "/tmp/.prompt.txt"
+			}
+
+			args := spec.buildArgs(tc.req.Description, tc.req.Workdir, promptFile)
+
+			got := strings.Join(args, " ")
+			for _, want := range tc.wantContains {
+				if !strings.Contains(got, want) {
+					t.Errorf("args %q missing %q", got, want)
+				}
+			}
+			for _, notWant := range tc.wantNotContain {
+				if strings.Contains(got, notWant) {
+					t.Errorf("args %q should not contain %q", got, notWant)
+				}
+			}
+		})
+	}
+}
+
 func TestStubExecutor_ExecuteWithRework(t *testing.T) {
 	dir := t.TempDir()
 	e := NewStubExecutor(dir)
