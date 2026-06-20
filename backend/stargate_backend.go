@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"stargate-backend/api"
+	"stargate-backend/agents"
 	"stargate-backend/bitcoin"
 	"stargate-backend/container"
 	"stargate-backend/core/smart_contract"
@@ -448,6 +449,19 @@ func runHTTPServer(store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, api
 		startMCPServices(escort, store)
 	} else {
 		log.Println("MCP background services skipped (will be handled by separate MCP process)")
+	}
+
+	// Start built-in agent orchestrator (opt-in via STARGATE_AGENT_ENABLED).
+	// This brings the former Python starlight.agents orchestration logic into stargate.
+	agentCfg := agents.LoadConfig()
+	if agentCfg.Enabled {
+		agentOrch := agents.NewOrchestrator(agentCfg, store, nil /* stub executor */)
+		agentOrch.Start(context.Background())
+		// Note: orchestrator runs until process exit for now (matches other background services).
+		// If a full shutdown path is added later, call agentOrch.Stop() on termination.
+		log.Printf("Built-in agents enabled (watcher=%v, worker=%v)", agentCfg.WatcherEnabled, agentCfg.WorkerEnabled)
+	} else {
+		log.Println("Built-in agents disabled (set STARGATE_AGENT_ENABLED=true to enable)")
 	}
 
 	// Set up middleware chain

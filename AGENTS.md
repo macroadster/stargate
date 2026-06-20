@@ -252,6 +252,25 @@ go test ./...      # Run all tests (when implemented)
 go test -run TestSpecificFunction  # Run single test
 ```
 
+### Built-in Autonomous Agents (Go)
+
+Stargate can now run the former Python `starlight.agents` orchestration logic natively.
+
+Enable with environment variables (all optional, sensible defaults exist):
+
+- `STARGATE_AGENT_ENABLED=true`
+- `STARGATE_AGENT_WATCHER_ENABLED=true`
+- `STARGATE_AGENT_WORKER_ENABLED=true`
+- `STARGATE_AGENT_AI_IDENTIFIER="stargate-builtin-agent"`
+- `STARGATE_AGENT_POLL_INTERVAL=60`
+- `STARLIGHT_DONATION_ADDRESS` (gives the agent global auditor powers for approvals)
+
+The agent writes results under `UPLOADS_DIR/results/<hash>/` (served at `/uploads/` and `/sandbox/`).
+
+For real LLM-driven work, wire a custom `agents.Executor` (the default is a safe stub that produces placeholder reports). A future `opencode_run` MCP tool or sidecar executor will provide the real implementation path.
+
+The Python agents in the starlight repo continue to work against the same MCP surface.
+
 ### Deployment Workflow
 
 When you need to deploy code changes:
