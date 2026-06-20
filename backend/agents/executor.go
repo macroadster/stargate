@@ -366,12 +366,14 @@ func (e *AutoDetectExecutor) invokeTool(ctx context.Context, prompt, workdir str
 
 	switch e.detectedName {
 	case "opencode":
-		// From the original Python agents: opencode run "<prompt>"
+		// opencode run "prompt"
 		args = []string{"run", prompt}
 	case "claude":
 		args = []string{prompt}
 	case "grok":
-		args = []string{"run", prompt}
+		// Grok Build TUI headless single-turn: grok -p "prompt" [--cwd ...]
+		// Use -p / --single for non-interactive output to stdout.
+		args = []string{"-p", prompt, "--cwd", workdir, "--no-wait-for-background", "--output-format", "plain"}
 	case "agy":
 		args = []string{"--prompt", prompt}
 	case "codex":
@@ -380,10 +382,14 @@ func (e *AutoDetectExecutor) invokeTool(ctx context.Context, prompt, workdir str
 		args = []string{prompt}
 	}
 
+	// For tools that don't take --cwd in the arg list above, we still set Dir.
+	// For grok we already passed it explicitly.
 	cmd := exec.CommandContext(ctx, e.detectedBinary, args...)
+
+	// Always set working directory on the command
 	cmd.Dir = workdir
 
-	// Pass through a hint about the working directory
+	// Pass environment hints
 	cmd.Env = append(os.Environ(),
 		"AGENT_WORKDIR="+workdir,
 		"WORK_DIR="+workdir,
