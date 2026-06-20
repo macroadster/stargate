@@ -1765,7 +1765,9 @@ FROM mcp_proposals WHERE id=$1 FOR UPDATE
 		p.CreatedAt = current.CreatedAt
 	}
 
-	p.Status = current.Status
+	if p.Status == "" {
+		p.Status = current.Status
+	}
 	if p.Metadata == nil {
 		p.Metadata = map[string]interface{}{}
 	}

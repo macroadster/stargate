@@ -1222,11 +1222,14 @@ func (s *SQLiteStore) UpdateProposal(ctx context.Context, p smart_contract.Propo
 	if p.BudgetSats == 0 {
 		p.BudgetSats = existing.BudgetSats
 	}
+	if p.Status == "" {
+		p.Status = existing.Status
+	}
 
 	metadata, _ := json.Marshal(p.Metadata)
 	_, err = s.db.ExecContext(ctx, `
-UPDATE mcp_proposals SET title=?, description_md=?, budget_sats=?, metadata=? WHERE id=?
-`, p.Title, p.DescriptionMD, p.BudgetSats, string(metadata), p.ID)
+UPDATE mcp_proposals SET title=?, description_md=?, budget_sats=?, status=?, metadata=? WHERE id=?
+`, p.Title, p.DescriptionMD, p.BudgetSats, p.Status, string(metadata), p.ID)
 	return err
 }
 

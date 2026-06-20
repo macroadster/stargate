@@ -41,11 +41,11 @@ func TestWatcherAuditsAndAutoApproves(t *testing.T) {
 
 	// After auto-approve + publish, we should have tasks surfaced
 	if len(tasks) == 0 {
-		// At minimum the proposal should no longer be pending
-		props, _ := store.ListProposals(context.Background(), smart_contract.ProposalFilter{})
-		if len(props) > 0 && props[0].Status == "pending" {
-			t.Errorf("expected proposal to be approved or published, still pending")
-		}
+		t.Errorf("expected at least 1 task after auto-approve, got 0")
+	}
+	props, _ := store.ListProposals(context.Background(), smart_contract.ProposalFilter{ProposalID: "prop-1"})
+	if len(props) > 0 && props[0].Status == "pending" {
+		t.Errorf("expected proposal to be approved or published, still '%s'", props[0].Status)
 	}
 }
 
@@ -79,8 +79,9 @@ func TestWatcherRejectsBadProposal(t *testing.T) {
 	props, _ := store.ListProposals(context.Background(), smart_contract.ProposalFilter{ProposalID: "bad-prop"})
 	if len(props) > 0 {
 		if props[0].Status != "rejected" {
-			// It may stay pending if we only marked locally; accept either but log
-			t.Logf("bad proposal status after audit: %s", props[0].Status)
+			t.Errorf("expected proposal status 'rejected', got '%s'", props[0].Status)
 		}
+	} else {
+		t.Error("expected proposal to exist after audit")
 	}
 }

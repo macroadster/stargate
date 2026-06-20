@@ -51,6 +51,9 @@ type StubExecutor struct {
 
 func NewStubExecutor(uploadsDir string) *StubExecutor {
 	if uploadsDir == "" {
+		uploadsDir = os.Getenv("UPLOADS_DIR")
+	}
+	if uploadsDir == "" {
 		uploadsDir = "/data/uploads"
 	}
 	return &StubExecutor{uploadsDir: uploadsDir}
@@ -177,6 +180,9 @@ type AutoDetectExecutor struct {
 }
 
 func NewAutoDetectExecutor(uploadsDir string) *AutoDetectExecutor {
+	if uploadsDir == "" {
+		uploadsDir = os.Getenv("UPLOADS_DIR")
+	}
 	if uploadsDir == "" {
 		uploadsDir = "/data/uploads"
 	}

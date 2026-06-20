@@ -437,6 +437,9 @@ func (w *Worker) performWork(task smart_contract.Task) map[string]interface{} {
 	// Build workdir
 	base := w.cfg.UploadsDir
 	if base == "" {
+		base = os.Getenv("UPLOADS_DIR")
+	}
+	if base == "" {
 		base = "/data/uploads"
 	}
 	workdir := filepath.Join(base, "results", visible)

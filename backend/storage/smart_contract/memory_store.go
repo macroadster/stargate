@@ -944,7 +944,9 @@ func (s *MemoryStore) UpdateProposal(ctx context.Context, p smart_contract.Propo
 		p.CreatedAt = existing.CreatedAt
 	}
 
-	p.Status = existing.Status
+	if p.Status == "" {
+		p.Status = existing.Status
+	}
 	if p.Metadata == nil {
 		p.Metadata = map[string]interface{}{}
 	}

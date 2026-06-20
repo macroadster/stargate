@@ -439,8 +439,12 @@ func (w *Watcher) findAvailableTasks(ctx context.Context) []smart_contract.Task 
 		if contractID == "" {
 			contractID = p.ID
 		}
+		canonicalID := "wish-" + strings.TrimPrefix(contractID, "wish-")
 		tasks, err := w.store.ListTasks(smart_contract.TaskFilter{ContractID: contractID})
 		if err != nil || len(tasks) == 0 {
+			tasks, _ = w.store.ListTasks(smart_contract.TaskFilter{ContractID: canonicalID})
+		}
+		if len(tasks) == 0 {
 			// fallback to proposal ID
 			tasks, _ = w.store.ListTasks(smart_contract.TaskFilter{ContractID: p.ID})
 		}

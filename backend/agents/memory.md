@@ -1,31 +1,19 @@
-# Agents Module — Persistent Memory
+# Agents Package - Task Memory
 
-## Module Identity
-- **Path:** `backend/agents/`
-- **Purpose:** Built-in Go autonomous agents for steganographic analysis orchestration (replaces former Python `starlight.agents`)
+## Session 1 (2026-06-19)
 
-## Architecture
-- **Orchestrator** (`orchestrator.go`): Central lifecycle coordinator, watches for pending tasks, dispatches to worker
-- **Worker** (`worker.go`): Task execution engine with pluggable `Executor` interface
-- **Watcher** (`watcher.go`): Task queue monitor, polls MCP for new tasks
-- **Executor** (`executor.go`): Default `PlaceholderExecutor` (stub); wire custom executor for real LLM work
-- **Config** (`config.go`): Env-based configuration with sane defaults
-- **State** (`state.go`): Runtime state management
-- **Types** (`types.go`): Shared domain types
+### Work Done
+- Fixed `UpdateProposal` status bug in all 3 store implementations:
+  - **MemoryStore** (`storage/smart_contract/memory_store.go:947`): `p.Status = existing.Status` overwrote the caller's status. Changed to `if p.Status == "" { p.Status = existing.Status }`.
+  - **PGStore** (`storage/smart_contract/pg_store.go:1768`): Same bug. Changed to same conditional.
+  - **SQLiteStore** (`storage/smart_contract/sqlite_store.go:1227`): Status column was omitted from the UPDATE query entirely. Added `status=?` to SET clause.
+- Fixed `findAvailableTasks` in `watcher.go` to search using canonical contract ID (`wish-` prefix) when the bare VPH search returns no tasks.
+- Updated watcher tests to assert on proposal status after rejection.
 
-## Key Configuration
-| Variable | Default | Description |
-|---|---|---|
-| `STARGATE_AGENT_ENABLED` | `false` | Enable agent system |
-| `STARGATE_AGENT_WATCHER_ENABLED` | `false` | Enable watcher loop |
-| `STARGATE_AGENT_WORKER_ENABLED` | `false` | Enable worker goroutine |
-| `STARGATE_AGENT_POLL_INTERVAL` | `60` | Poll interval in seconds |
-| `STARGATE_AGENT_AI_IDENTIFIER` | `stargate-builtin-agent` | AI agent ID for task claims |
+### Root Cause
+The `UpdateProposal` stores always overwrote the caller-provided `Status` with the existing status, making it impossible to change a proposal's status (e.g. from "pending" to "rejected"). The watcher's `rejectProposal` appeared to succeed silently but never persisted the rejection.
 
-## Results Storage
-- Written to `UPLOADS_DIR/results/<hash>/`
-- Served at `/uploads/` and `/sandbox/`
-
-## Session Log
-- **2026-06-19:** Initial setup. Created `index.html` (agents frontend) and `memory.md` (persistent state).
-- **2026-06-19:** Verified issues stargate-wgo.7.1 and stargate-wgo.9.2 were already fixed in reconciliation commit 0b6222d but never closed. Closed them.
+### Key Decisions
+- Allow status changes through `UpdateProposal` when the caller provides a non-empty status
+- Keep the "must be pending" gate since we only want status transitions from pending
+- SQLiteStore now properly persists status column
