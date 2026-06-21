@@ -230,7 +230,7 @@ html[data-theme="dark"] .dropdown-menu {
     letter-spacing: 0.1em;
 }
 
-/* Modal backdrop */
+/* Modal backdrop — must sit above .nav-glass (z-index: 1000 in quantumcss) */
 .modal-backdrop-overlay {
     position: fixed;
     inset: 0;
@@ -238,7 +238,7 @@ html[data-theme="dark"] .dropdown-menu {
     display: flex;
     align-items: center;
     justify-content: center;
-    z-index: 50;
+    z-index: 1100;
     backdrop-filter: blur(4px);
 }
 
@@ -1144,7 +1144,7 @@ html[data-theme="light"] .contract-card {
     display: flex;
     align-items: center;
     justify-content: center;
-    z-index: 50;
+    z-index: 1100;
 }
 
 .modal-container {
