@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"html"
@@ -485,31 +486,68 @@ func (e *AutoDetectExecutor) invokeTool(ctx context.Context, fullPrompt, workdir
 	execCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(execCtx, e.detectedBinary, args...)
+	// Use a plain exec.Command (not CommandContext) so we can kill only the
+	// isolated child process group on timeout. CommandContext sends SIGKILL to
+	// the direct child only and, without Setpgid, tool cleanup handlers can
+	// broadcast signals that take down the stargate parent process.
+	cmd := exec.Command(e.detectedBinary, args...)
 	cmd.Dir = workdir
 	cmd.Env = append(os.Environ(),
 		"AGENT_WORKDIR="+workdir,
 		"WORK_DIR="+workdir,
 	)
+	configureIsolatedProcess(cmd)
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
 
 	log.Printf("agents/executor: executing %s in %s args=%v (timeout %s)", e.detectedName, workdir, args, timeout)
 
-	combinedOut, err := cmd.CombinedOutput()
+	if err := cmd.Start(); err != nil {
+		if promptFile != "" {
+			_ = os.Remove(promptFile)
+		}
+		return "", fmt.Errorf("failed to start %s: %w", e.detectedName, err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+
+	var waitErr error
+	select {
+	case <-execCtx.Done():
+		killIsolatedProcess(cmd)
+		waitErr = <-done // reap zombie
+	case waitErr = <-done:
+	}
+
+	combinedOut := append(stdout.Bytes(), stderr.Bytes()...)
 
 	// Best-effort cleanup of prompt file
 	if promptFile != "" {
 		_ = os.Remove(promptFile)
 	}
 
-	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
+	if execCtx.Err() != nil {
+		if execCtx.Err() == context.DeadlineExceeded {
+			log.Printf("agents/executor: %s timed out after %s. Consider increasing STARGATE_AGENT_MAX_EXECUTION_SECONDS", e.detectedName, timeout)
+		} else {
+			log.Printf("agents/executor: %s cancelled: %v", e.detectedName, execCtx.Err())
+		}
+		return string(combinedOut), fmt.Errorf("%s stopped: %w\noutput:\n%s", e.detectedName, execCtx.Err(), combinedOut)
+	}
+
+	if waitErr != nil {
+		if exitErr, ok := waitErr.(*exec.ExitError); ok {
 			log.Printf("agents/executor: %s exited with code %d", e.detectedName, exitErr.ExitCode())
-			if exitErr.ExitCode() == -1 || strings.Contains(err.Error(), "killed") || strings.Contains(err.Error(), "signal") {
-				// Likely killed by our safety timeout or OOM
+			if exitErr.ExitCode() == -1 || strings.Contains(waitErr.Error(), "killed") || strings.Contains(waitErr.Error(), "signal") {
 				log.Printf("agents/executor: %s appears to have been killed (timeout or external signal). Consider increasing STARGATE_AGENT_MAX_EXECUTION_SECONDS", e.detectedName)
 			}
 		}
-		return string(combinedOut), fmt.Errorf("%s failed: %w\noutput:\n%s", e.detectedName, err, combinedOut)
+		return string(combinedOut), fmt.Errorf("%s failed: %w\noutput:\n%s", e.detectedName, waitErr, combinedOut)
 	}
 
 	return string(combinedOut), nil
