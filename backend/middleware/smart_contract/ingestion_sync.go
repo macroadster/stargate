@@ -144,48 +144,43 @@ func processRecord(ctx context.Context, rec services.IngestionRecord, ingest *se
 		}
 	}
 
-	if store != nil {
-		visible := strings.TrimSpace(metaString(meta["visible_pixel_hash"]))
-		if visible == "" {
-			visible = strings.TrimSpace(rec.ID)
-		}
-		if visible != "" {
-			if existing, err := store.GetProposal(ctx, visible); err == nil && strings.TrimSpace(existing.ID) != "" {
-				return ingest.UpdateStatusWithNote(rec.ID, "ignored", "proposal already exists for visible hash")
-			}
-			if _, err := store.GetContract(visible); err == nil {
-				return ingest.UpdateStatusWithNote(rec.ID, "ignored", "contract already exists for visible hash")
-			}
-		}
+	visible := strings.TrimSpace(metaString(meta["visible_pixel_hash"]))
+	if visible == "" {
+		visible = strings.TrimSpace(rec.ID)
 	}
+	if store != nil && contractExistsForIngestion(store, visible, rec.ID) {
+		return ingest.UpdateStatusWithNote(rec.ID, "ignored", "contract already exists for visible hash")
+	}
+
+	hasPSBT := hasIngestionPSBT(meta)
 
 	// Check for structured proposal/task data from peer replication (IPFS announcement).
 	// This is the most reliable path: the source node includes parsed task data.
 	if tasksJSON, ok := meta["proposal_tasks_json"].(string); ok && tasksJSON != "" {
 		proposal, err := buildProposalFromReplicatedTasks(rec.ID, tasksJSON, meta, raw, rec.ImageBase64)
 		if err == nil && len(proposal.Tasks) > 0 {
-			if err := store.CreateProposal(ctx, proposal); err != nil {
+			if err := ensureProposal(ctx, store, proposal); err != nil {
 				log.Printf("replicated proposal create failed for %s: %v", proposal.ID, err)
-			} else {
-				if err := publishProposalEvent(ctx, proposal); err != nil {
-					log.Printf("failed to publish proposal create event for %s: %v", proposal.ID, err)
-				}
-				if proposal.ID != "" {
-					wishContract := smart_contract.Contract{
-						ContractID:          proposal.ID,
-						Title:               proposal.Title,
-						TotalBudgetSats:     proposal.BudgetSats,
-						GoalsCount:          len(proposal.Tasks),
-						AvailableTasksCount: len(proposal.Tasks),
-						Status:              proposal.Status,
-						Skills:              proposal.Tasks[0].Skills,
-					}
-					if err := store.UpsertContractWithTasks(ctx, wishContract, proposal.Tasks); err != nil {
-						log.Printf("wish contract creation failed for %s: %v", proposal.ID, err)
-					}
-				}
-				return ingest.UpdateStatusWithNote(rec.ID, "verified", "proposal and contract created from replicated tasks; awaiting approval")
 			}
+			if !hasPSBT {
+				log.Printf("ingestion %s: awaiting PSBT before loading contract", rec.ID)
+				return nil
+			}
+			if proposal.ID != "" {
+				wishContract := smart_contract.Contract{
+					ContractID:          proposal.ID,
+					Title:               proposal.Title,
+					TotalBudgetSats:     proposal.BudgetSats,
+					GoalsCount:          len(proposal.Tasks),
+					AvailableTasksCount: len(proposal.Tasks),
+					Status:              proposal.Status,
+					Skills:              proposal.Tasks[0].Skills,
+				}
+				if err := store.UpsertContractWithTasks(ctx, wishContract, proposal.Tasks); err != nil {
+					log.Printf("wish contract creation failed for %s: %v", proposal.ID, err)
+				}
+			}
+			return ingest.UpdateStatusWithNote(rec.ID, "verified", "proposal and contract created from replicated tasks; awaiting approval")
 		}
 	}
 
@@ -197,13 +192,14 @@ func processRecord(ctx context.Context, rec services.IngestionRecord, ingest *se
 		if err != nil {
 			return ingest.UpdateStatusWithNote(rec.ID, "invalid", fmt.Sprintf("parse error: %v", err))
 		}
-		if err := store.CreateProposal(ctx, proposal); err != nil {
+		if err := ensureProposal(ctx, store, proposal); err != nil {
 			return ingest.UpdateStatusWithNote(rec.ID, "invalid", fmt.Sprintf("proposal upsert failed: %v", err))
 		}
-		if err := publishProposalEvent(ctx, proposal); err != nil {
-			log.Printf("failed to publish proposal create event for %s: %v", proposal.ID, err)
+		if !hasPSBT {
+			log.Printf("ingestion %s: awaiting PSBT before loading contract", rec.ID)
+			return nil
 		}
-		// Also create contract for wishes so they show up in contracts list
+		// Create contract for wishes so they show up in contracts list once funded.
 		if proposal.ID != "" {
 			wishContract := smart_contract.Contract{
 				ContractID:          proposal.ID,
@@ -238,11 +234,94 @@ func processRecord(ctx context.Context, rec services.IngestionRecord, ingest *se
 		tasks[i] = t
 	}
 
+	if !hasPSBT {
+		log.Printf("ingestion %s: awaiting PSBT before loading contract", rec.ID)
+		return nil
+	}
+
 	if err := store.UpsertContractWithTasks(ctx, contract, tasks); err != nil {
 		return ingest.UpdateStatusWithNote(rec.ID, "invalid", fmt.Sprintf("upsert failed: %v", err))
 	}
 
 	return ingest.UpdateStatusWithNote(rec.ID, "verified", "ingested into MCP")
+}
+
+// hasIngestionPSBT reports whether the ingestion record has funding PSBT metadata.
+// Contracts are only loaded into the store after PSBT is built so remote nodes do
+// not pick up unfunded open contracts and duplicate work.
+func hasIngestionPSBT(meta map[string]interface{}) bool {
+	if strings.TrimSpace(metaString(meta["funding_txid"])) != "" {
+		return true
+	}
+	switch v := meta["funding_txids"].(type) {
+	case []interface{}:
+		for _, item := range v {
+			if strings.TrimSpace(metaString(item)) != "" {
+				return true
+			}
+		}
+	case []string:
+		for _, item := range v {
+			if strings.TrimSpace(item) != "" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func contractExistsForIngestion(store Store, visible, ingestionID string) bool {
+	if store == nil {
+		return false
+	}
+	for _, id := range candidateContractIDs(visible, ingestionID) {
+		if _, err := store.GetContract(id); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+func candidateContractIDs(visible, ingestionID string) []string {
+	seen := make(map[string]struct{})
+	var out []string
+	add := func(id string) {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			return
+		}
+		if _, ok := seen[id]; ok {
+			return
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	add(visible)
+	add(ingestionID)
+	for _, base := range []string{visible, ingestionID} {
+		base = strings.TrimSpace(base)
+		if base == "" || strings.HasPrefix(base, "wish-") {
+			continue
+		}
+		add("wish-" + base)
+	}
+	return out
+}
+
+func ensureProposal(ctx context.Context, store Store, proposal smart_contract.Proposal) error {
+	if store == nil || strings.TrimSpace(proposal.ID) == "" {
+		return nil
+	}
+	if existing, err := store.GetProposal(ctx, proposal.ID); err == nil && strings.TrimSpace(existing.ID) != "" {
+		return nil
+	}
+	if err := store.CreateProposal(ctx, proposal); err != nil {
+		return err
+	}
+	if err := publishProposalEvent(ctx, proposal); err != nil {
+		log.Printf("failed to publish proposal create event for %s: %v", proposal.ID, err)
+	}
+	return nil
 }
 
 func parseEmbeddedContract(raw string) (smart_contract.Contract, []smart_contract.Task, error) {
