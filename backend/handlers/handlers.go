@@ -2107,7 +2107,8 @@ func publishPendingIngestAnnouncement(ingestionID, visibleHash, filename, method
 }
 
 func ipfsIngestSyncEnabled() bool {
-	return strings.EqualFold(strings.TrimSpace(os.Getenv("IPFS_INGEST_SYNC_ENABLED")), "true")
+	// Match loadIPFSIngestSyncConfig: enabled by default unless explicitly false.
+	return !strings.EqualFold(strings.TrimSpace(os.Getenv("IPFS_INGEST_SYNC_ENABLED")), "false")
 }
 
 func (h *InscriptionHandler) updateContractID(oldHash, newContractID string) {

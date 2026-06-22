@@ -141,7 +141,11 @@ func IngestDownloadedFile(ctx context.Context, filePath string, cid string, inge
 	}
 	stegoManifest, payload, err := stego.ParseEmbedded(rawBytes)
 	if err != nil {
-		return // not a proper manifest — skip
+		// Plain-text wish images (alpha stego) are mirrored but are not YAML manifests.
+		if created := ingestPlainStegoWish(ctx, ingest, filePath, cid, rawBytes, blob); created {
+			log.Printf("mirror ingest: pending wish %s (cid=%s)", ingestIDFromPath(filePath), cid)
+		}
+		return
 	}
 	id := strings.TrimSpace(stegoManifest.VisiblePixelHash)
 	if id == "" {
@@ -234,6 +238,7 @@ func StartIPFSIngestionSync(ctx context.Context, ingest *services.IngestionServi
 		queueWake:     make(chan struct{}, 1),
 	}
 	client := ipfs.NewClientFromEnv()
+	go backfillMirroredUploadsIngestion(ctx, ingest, store)
 	go ipfsIngestProcessUpdateQueue(ctx, ingest, store, reconcileFn, cfg, state)
 	go func() {
 		for {
@@ -414,7 +419,12 @@ func ipfsIngestProcessManifest(ctx context.Context, ingest *services.IngestionSe
 		}
 		stegoManifest, payload, err := stego.ParseEmbedded(rawBytes)
 		if err != nil {
-			// Not a manifest — likely a plain-text wish message embedded via stego.
+			// Plain-text wish images are mirrored alongside approved stego manifests.
+			uploadsDir := strings.TrimSpace(os.Getenv("UPLOADS_DIR"))
+			filePath := filepath.Join(uploadsDir, filepath.Base(entry.Path))
+			if ingestPlainStegoWish(ctx, ingest, filePath, entry.CID, rawBytes, blob) {
+				processed++
+			}
 			state.lastSeen[entry.CID] = entry.ModTime
 			continue
 		}
@@ -1150,6 +1160,109 @@ func decodeBase64Payload(encoded string) []byte {
 		}
 	}
 	return nil
+}
+
+func ingestIDFromPath(filePath string) string {
+	base := filepath.Base(filePath)
+	return strings.TrimSuffix(base, filepath.Ext(base))
+}
+
+// ingestPlainStegoWish creates a pending ingestion for mirrored wish images whose
+// alpha-channel payload is plain text rather than a stego YAML manifest.
+func ingestPlainStegoWish(ctx context.Context, ingest *services.IngestionService, filePath, cid string, rawBytes, blob []byte) bool {
+	if ingest == nil || len(rawBytes) == 0 || len(blob) == 0 {
+		return false
+	}
+	message := strings.TrimSpace(string(rawBytes))
+	if message == "" || looksLikeStegoManifestTextIngest(message) {
+		return false
+	}
+	id := ingestIDFromPath(filePath)
+	if id == "" || strings.HasPrefix(id, ".") {
+		return false
+	}
+	if existing, err := ingest.Get(id); err == nil && existing != nil {
+		return false
+	}
+	meta := map[string]interface{}{
+		"embedded_message":   message,
+		"message":            message,
+		"ipfs_image_cid":     cid,
+		"visible_pixel_hash": id,
+		"ingestion_id":       id,
+	}
+	if strings.TrimSpace(cid) != "" {
+		meta["stego_image_cid"] = cid
+	}
+	rec := services.IngestionRecord{
+		ID:            id,
+		Filename:      filepath.Base(filePath),
+		Method:        getStegoMethodForFilename(filePath),
+		MessageLength: len(rawBytes),
+		ImageBase64:   base64.StdEncoding.EncodeToString(blob),
+		Metadata:      meta,
+		Status:        "pending",
+	}
+	if rec.Filename == "" {
+		rec.Filename = "inscription.png"
+	}
+	if err := ingest.Create(rec); err != nil {
+		log.Printf("mirror ingest: pending wish create %s: %v", id, err)
+		return false
+	}
+	return true
+}
+
+// backfillMirroredUploadsIngestion scans UPLOADS_DIR once at startup so files that
+// were mirrored before the ingest callback existed still become ingestion records.
+func backfillMirroredUploadsIngestion(ctx context.Context, ingest *services.IngestionService, store Store) {
+	uploadsDir := strings.TrimSpace(os.Getenv("UPLOADS_DIR"))
+	if uploadsDir == "" || ingest == nil {
+		return
+	}
+	reconcileCfg := loadStegoReconcileConfig()
+	var created int
+	_ = filepath.WalkDir(uploadsDir, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			if path != uploadsDir {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if strings.HasPrefix(entry.Name(), ".") {
+			return nil
+		}
+		if !isImageFile(path) {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+		blob, err := os.ReadFile(path)
+		if err != nil {
+			return nil
+		}
+		rawBytes, err := extractStegoManifest(ctx, blob, reconcileCfg)
+		if err != nil {
+			return nil
+		}
+		if _, _, err := stego.ParseEmbedded(rawBytes); err == nil {
+			IngestDownloadedFile(ctx, path, "", ingest, store)
+			return nil
+		}
+		if ingestPlainStegoWish(ctx, ingest, path, "", rawBytes, blob) {
+			created++
+		}
+		return nil
+	})
+	if created > 0 {
+		log.Printf("ipfs ingestion backfill: created %d pending wish records from %s", created, uploadsDir)
+	}
 }
 
 func isImageFile(path string) bool {
