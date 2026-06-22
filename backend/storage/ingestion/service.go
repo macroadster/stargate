@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -72,6 +73,7 @@ type IngestionService struct {
 	db        *sql.DB
 	tableName string
 	dialect   string // "postgres" or "sqlite"
+	writeMu   sync.Mutex
 }
 
 func isValidIngestionTableName(name string) bool {
@@ -98,6 +100,40 @@ func isSQLiteDSN(dsn string) bool {
 	return false
 }
 
+func sqliteIngestionDSN(path string) string {
+	sep := "?"
+	if strings.Contains(path, "?") {
+		sep = "&"
+	}
+	return path + sep + "_foreign_keys=on&_journal_mode=WAL&_busy_timeout=10000"
+}
+
+func isSQLiteBusy(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "database is locked") || strings.Contains(msg, "sqlite_busy")
+}
+
+func (s *IngestionService) execWrite(fn func() error) error {
+	if s == nil || s.dialect != "sqlite" {
+		return fn()
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
+	var err error
+	for attempt := 0; attempt < 6; attempt++ {
+		err = fn()
+		if err == nil || !isSQLiteBusy(err) {
+			return err
+		}
+		time.Sleep(time.Duration(attempt+1) * 50 * time.Millisecond)
+	}
+	return err
+}
+
 // NewIngestionService creates a new IngestionService.
 // The backend dialect is auto-detected from the DSN: file paths use SQLite,
 // connection strings use Postgres.
@@ -107,19 +143,23 @@ func NewIngestionService(dsn string) (*IngestionService, error) {
 	if isSQLiteDSN(dsn) {
 		dialect = "sqlite"
 		driver = "sqlite"
-		dsn = dsn + "?_foreign_keys=on"
+		dsn = sqliteIngestionDSN(dsn)
 	}
 
 	db, err := sql.Open(driver, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", driver, err)
 	}
-	db.SetMaxOpenConns(20)
-	db.SetMaxIdleConns(10)
-	db.SetConnMaxLifetime(1 * time.Hour)
-	if dialect == "postgres" {
+	if dialect == "sqlite" {
+		// SQLite allows one writer at a time; serialize through a single connection.
+		db.SetMaxOpenConns(1)
+		db.SetMaxIdleConns(1)
+	} else {
+		db.SetMaxOpenConns(20)
+		db.SetMaxIdleConns(10)
 		db.SetConnMaxIdleTime(30 * time.Minute)
 	}
+	db.SetConnMaxLifetime(1 * time.Hour)
 
 	tableName := "starlight_ingestions"
 	if !isValidIngestionTableName(tableName) {
@@ -239,8 +279,10 @@ VALUES ($1, $2, $3, $4, $5, $6, $7)
 ON CONFLICT (id) DO NOTHING;
 `, s.tableName)
 	}
-	_, err = s.db.Exec(query, rec.ID, rec.Filename, rec.Method, rec.MessageLength, rec.ImageBase64, metadataParam, rec.Status)
-	return err
+	return s.execWrite(func() error {
+		_, err := s.db.Exec(query, rec.ID, rec.Filename, rec.Method, rec.MessageLength, rec.ImageBase64, metadataParam, rec.Status)
+		return err
+	})
 }
 
 func (s *IngestionService) Get(id string) (*IngestionRecord, error) {
@@ -340,8 +382,10 @@ SET status = $2,
 WHERE id = $1
 `, s.tableName)
 	}
-	_, err := s.db.Exec(query, id, status, note)
-	return err
+	return s.execWrite(func() error {
+		_, err := s.db.Exec(query, id, status, note)
+		return err
+	})
 }
 
 func (s *IngestionService) UpdateFromIngest(id string, rec IngestionRecord) error {
@@ -352,14 +396,15 @@ func (s *IngestionService) UpdateFromIngest(id string, rec IngestionRecord) erro
 	if err != nil {
 		return err
 	}
-	if s.dialect == "sqlite" {
-		// SQLite json_patch requires 3.39+; modernc.org/sqlite provides a recent version.
-		// Merge in Go instead: read existing metadata, merge, write back.
-		merged, err := s.mergeMetadataSQLite(id, rec.Metadata)
-		if err != nil {
-			return err
-		}
-		query := fmt.Sprintf(`
+	return s.execWrite(func() error {
+		if s.dialect == "sqlite" {
+			// SQLite json_patch requires 3.39+; modernc.org/sqlite provides a recent version.
+			// Merge in Go instead: read existing metadata, merge, write back.
+			merged, err := s.mergeMetadataSQLite(id, rec.Metadata)
+			if err != nil {
+				return err
+			}
+			query := fmt.Sprintf(`
 UPDATE %s
 SET filename = $2,
     method = $3,
@@ -369,10 +414,10 @@ SET filename = $2,
     status = $7
 WHERE id = $1
 `, s.tableName)
-		_, err = s.db.Exec(query, id, rec.Filename, rec.Method, rec.MessageLength, rec.ImageBase64, merged, rec.Status)
-		return err
-	}
-	query := fmt.Sprintf(`
+			_, err = s.db.Exec(query, id, rec.Filename, rec.Method, rec.MessageLength, rec.ImageBase64, merged, rec.Status)
+			return err
+		}
+		query := fmt.Sprintf(`
 UPDATE %s
 SET filename = $2,
     method = $3,
@@ -382,40 +427,43 @@ SET filename = $2,
     status = $7
 WHERE id = $1
 `, s.tableName)
-	_, err = s.db.Exec(query, id, rec.Filename, rec.Method, rec.MessageLength, rec.ImageBase64, string(metadataJSON), rec.Status)
-	return err
+		_, err := s.db.Exec(query, id, rec.Filename, rec.Method, rec.MessageLength, rec.ImageBase64, string(metadataJSON), rec.Status)
+		return err
+	})
 }
 
 func (s *IngestionService) UpdateMetadata(id string, updates map[string]interface{}) error {
 	if id == "" {
 		return fmt.Errorf("missing id")
 	}
-	if s.dialect == "sqlite" {
-		// SQLite json_patch requires 3.39+; modernc.org/sqlite provides a recent version.
-		// Merge in Go instead.
-		merged, err := s.mergeMetadataSQLite(id, updates)
+	return s.execWrite(func() error {
+		if s.dialect == "sqlite" {
+			// SQLite json_patch requires 3.39+; modernc.org/sqlite provides a recent version.
+			// Merge in Go instead.
+			merged, err := s.mergeMetadataSQLite(id, updates)
+			if err != nil {
+				return err
+			}
+			query := fmt.Sprintf(`
+UPDATE %s
+SET metadata = $2
+WHERE id = $1
+`, s.tableName)
+			_, err = s.db.Exec(query, id, merged)
+			return err
+		}
+		updatesJSON, err := toJSONB(updates)
 		if err != nil {
 			return err
 		}
 		query := fmt.Sprintf(`
 UPDATE %s
-SET metadata = $2
-WHERE id = $1
-`, s.tableName)
-		_, err = s.db.Exec(query, id, merged)
-		return err
-	}
-	updatesJSON, err := toJSONB(updates)
-	if err != nil {
-		return err
-	}
-	query := fmt.Sprintf(`
-UPDATE %s
 SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb
 WHERE id = $1
 `, s.tableName)
-	_, err = s.db.Exec(query, id, string(updatesJSON))
-	return err
+		_, err = s.db.Exec(query, id, string(updatesJSON))
+		return err
+	})
 }
 
 func (s *IngestionService) UpdateID(oldID, newID string) error {
@@ -425,30 +473,32 @@ func (s *IngestionService) UpdateID(oldID, newID string) error {
 	if oldID == newID {
 		return nil
 	}
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer func() {
+	return s.execWrite(func() error {
+		tx, err := s.db.Begin()
 		if err != nil {
-			_ = tx.Rollback()
+			return err
 		}
-	}()
+		defer func() {
+			if err != nil {
+				_ = tx.Rollback()
+			}
+		}()
 
-	var exists bool
-	checkQuery := fmt.Sprintf(`SELECT EXISTS(SELECT 1 FROM %s WHERE id=$1)`, s.tableName)
-	if err = tx.QueryRow(checkQuery, newID).Scan(&exists); err != nil {
-		return err
-	}
-	if exists {
-		return fmt.Errorf("ingestion id %s already exists", newID)
-	}
+		var exists bool
+		checkQuery := fmt.Sprintf(`SELECT EXISTS(SELECT 1 FROM %s WHERE id=$1)`, s.tableName)
+		if err = tx.QueryRow(checkQuery, newID).Scan(&exists); err != nil {
+			return err
+		}
+		if exists {
+			return fmt.Errorf("ingestion id %s already exists", newID)
+		}
 
-	updateQuery := fmt.Sprintf(`UPDATE %s SET id=$2 WHERE id=$1`, s.tableName)
-	if _, err = tx.Exec(updateQuery, oldID, newID); err != nil {
-		return err
-	}
-	return tx.Commit()
+		updateQuery := fmt.Sprintf(`UPDATE %s SET id=$2 WHERE id=$1`, s.tableName)
+		if _, err = tx.Exec(updateQuery, oldID, newID); err != nil {
+			return err
+		}
+		return tx.Commit()
+	})
 }
 
 func (s *IngestionService) ListRecent(status string, limit int) ([]IngestionRecord, error) {
@@ -540,20 +590,22 @@ WHERE id = ANY($1)
 }
 
 func (s *IngestionService) Delete(ctx context.Context, id string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
+	return s.execWrite(func() error {
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
 
-	if _, err := tx.ExecContext(ctx, "DELETE FROM starlight_ingest_updates WHERE ingestion_id = $1", id); err != nil {
-		return fmt.Errorf("delete ingest updates: %w", err)
-	}
-	query := fmt.Sprintf("DELETE FROM %s WHERE id = $1", s.tableName)
-	if _, err := tx.ExecContext(ctx, query, id); err != nil {
-		return fmt.Errorf("delete ingestion: %w", err)
-	}
-	return tx.Commit()
+		if _, err := tx.ExecContext(ctx, "DELETE FROM starlight_ingest_updates WHERE ingestion_id = $1", id); err != nil {
+			return fmt.Errorf("delete ingest updates: %w", err)
+		}
+		query := fmt.Sprintf("DELETE FROM %s WHERE id = $1", s.tableName)
+		if _, err := tx.ExecContext(ctx, query, id); err != nil {
+			return fmt.Errorf("delete ingestion: %w", err)
+		}
+		return tx.Commit()
+	})
 }
 
 // mergeMetadataSQLite reads existing metadata for a row, merges the updates
@@ -605,8 +657,59 @@ func (s *IngestionService) EnqueueIngestUpdate(ctx context.Context, ingestionID,
 INSERT INTO starlight_ingest_updates (ingestion_id, visible_pixel_hash, proposal_id, payload)
 VALUES ($1, $2, $3, $4)
 `
-	_, err := s.db.ExecContext(ctx, query, ingestionID, visiblePixelHash, proposalID, string(payload))
-	return err
+	return s.execWrite(func() error {
+		_, err := s.db.ExecContext(ctx, query, ingestionID, visiblePixelHash, proposalID, string(payload))
+		return err
+	})
+}
+
+func (s *IngestionService) claimIngestUpdatesSQLite(ctx context.Context, limit int) ([]IngestUpdateRow, error) {
+	// SQLite lacks FOR UPDATE SKIP LOCKED and CTE+UPDATE RETURNING.
+	// Use a two-step select-then-update within a transaction.
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	selQuery := `
+SELECT id, payload, attempts FROM starlight_ingest_updates
+WHERE status IN ('pending', 'retry')
+  AND (next_retry_at IS NULL OR next_retry_at <= datetime('now'))
+ORDER BY created_at ASC
+LIMIT $1
+`
+	rows, err := tx.QueryContext(ctx, selQuery, limit)
+	if err != nil {
+		return nil, err
+	}
+	var out []IngestUpdateRow
+	for rows.Next() {
+		var row IngestUpdateRow
+		if err := rows.Scan(&row.ID, &row.Payload, &row.Attempts); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for i := range out {
+		out[i].Attempts++
+		_, err := tx.ExecContext(ctx, `
+UPDATE starlight_ingest_updates
+SET status = 'processing', attempts = $2, updated_at = datetime('now')
+WHERE id = $1`, out[i].ID, out[i].Attempts)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (s *IngestionService) ClaimIngestUpdates(ctx context.Context, limit int) ([]IngestUpdateRow, error) {
@@ -614,49 +717,13 @@ func (s *IngestionService) ClaimIngestUpdates(ctx context.Context, limit int) ([
 		limit = 25
 	}
 	if s.dialect == "sqlite" {
-		// SQLite lacks FOR UPDATE SKIP LOCKED and CTE+UPDATE RETURNING.
-		// Use a two-step select-then-update within a transaction.
-		tx, err := s.db.BeginTx(ctx, nil)
-		if err != nil {
-			return nil, err
-		}
-		defer tx.Rollback()
-
-		selQuery := `
-SELECT id, payload, attempts FROM starlight_ingest_updates
-WHERE status IN ('pending', 'retry')
-  AND (next_retry_at IS NULL OR next_retry_at <= datetime('now'))
-ORDER BY created_at ASC
-LIMIT $1
-`
-		rows, err := tx.QueryContext(ctx, selQuery, limit)
-		if err != nil {
-			return nil, err
-		}
 		var out []IngestUpdateRow
-		for rows.Next() {
-			var row IngestUpdateRow
-			if err := rows.Scan(&row.ID, &row.Payload, &row.Attempts); err != nil {
-				rows.Close()
-				return nil, err
-			}
-			out = append(out, row)
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
-			return nil, err
-		}
-		for i := range out {
-			out[i].Attempts++
-			_, err := tx.ExecContext(ctx, `
-UPDATE starlight_ingest_updates
-SET status = 'processing', attempts = $2, updated_at = datetime('now')
-WHERE id = $1`, out[i].ID, out[i].Attempts)
-			if err != nil {
-				return nil, err
-			}
-		}
-		return out, tx.Commit()
+		err := s.execWrite(func() error {
+			var claimErr error
+			out, claimErr = s.claimIngestUpdatesSQLite(ctx, limit)
+			return claimErr
+		})
+		return out, err
 	}
 
 	query := `
@@ -706,8 +773,10 @@ SET status = 'applied',
     updated_at = %s
 WHERE id = $1
 `, now)
-	_, err := s.db.ExecContext(ctx, query, id)
-	return err
+	return s.execWrite(func() error {
+		_, err := s.db.ExecContext(ctx, query, id)
+		return err
+	})
 }
 
 func (s *IngestionService) MarkIngestUpdateRetry(ctx context.Context, id int64, lastErr string, delay time.Duration) error {
@@ -724,8 +793,10 @@ SET status = 'retry',
     updated_at = %s
 WHERE id = $1
 `, now)
-	_, err := s.db.ExecContext(ctx, query, id, lastErr, nextRetry)
-	return err
+	return s.execWrite(func() error {
+		_, err := s.db.ExecContext(ctx, query, id, lastErr, nextRetry)
+		return err
+	})
 }
 
 func (s *IngestionService) MarkIngestUpdateFailed(ctx context.Context, id int64, lastErr string) error {
@@ -740,6 +811,8 @@ SET status = 'failed',
     updated_at = %s
 WHERE id = $1
 `, now)
-	_, err := s.db.ExecContext(ctx, query, id, lastErr)
-	return err
+	return s.execWrite(func() error {
+		_, err := s.db.ExecContext(ctx, query, id, lastErr)
+		return err
+	})
 }
