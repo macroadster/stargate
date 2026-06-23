@@ -167,13 +167,14 @@ func processRecord(ctx context.Context, rec services.IngestionRecord, ingest *se
 				return nil
 			}
 			if proposal.ID != "" {
+				cStatus := "funded"
 				wishContract := smart_contract.Contract{
 					ContractID:          proposal.ID,
 					Title:               proposal.Title,
 					TotalBudgetSats:     proposal.BudgetSats,
 					GoalsCount:          len(proposal.Tasks),
 					AvailableTasksCount: len(proposal.Tasks),
-					Status:              proposal.Status,
+					Status:              cStatus,
 					Skills:              proposal.Tasks[0].Skills,
 				}
 				if err := store.UpsertContractWithTasks(ctx, wishContract, proposal.Tasks); err != nil {
@@ -207,7 +208,7 @@ func processRecord(ctx context.Context, rec services.IngestionRecord, ingest *se
 				TotalBudgetSats:     proposal.BudgetSats,
 				GoalsCount:          len(proposal.Tasks),
 				AvailableTasksCount: len(proposal.Tasks),
-				Status:              proposal.Status,
+				Status:              "funded",
 				Skills:              proposal.Tasks[0].Skills,
 			}
 			if err := store.UpsertContractWithTasks(ctx, wishContract, proposal.Tasks); err != nil {

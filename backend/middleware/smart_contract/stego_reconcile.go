@@ -224,10 +224,15 @@ func (s *Server) ReconcileStegoWithAnnouncement(ctx context.Context, ann *stegoA
 		}
 	}
 
-	// Determine contract ID
+	// Determine contract ID. Prefer wish hash (ExpectedHash / visible), fall back to
+	// the stego image's own content hash so either can trigger the ingestion record.
 	contractID := strings.TrimSpace(ann.ExpectedHash)
 	if contractID == "" && ann.ProposalID != "" {
 		contractID = ann.ProposalID
+	}
+	if contractID == "" {
+		// stegoHash was computed above from the downloaded bytes.
+		contractID = stegoHash
 	}
 	if contractID == "" {
 		return fmt.Errorf("unable to determine contract ID from announcement")
@@ -261,6 +266,18 @@ func (s *Server) ReconcileStegoWithAnnouncement(ctx context.Context, ann *stegoA
 	}
 
 	log.Printf("stego: reconciled from announcement: contract_id=%s, stego_cid=%s", contractID, ann.StegoCID)
+
+	// If the contract is already confirmed (e.g. via prior chain observation or sync),
+	// ensure AI artifacts are decompressed into the sandbox for serving.
+	// This is especially relevant when donation funding was chosen:
+	// the post-PSBT stego publish carries the sandbox tarball cid+hash, and on
+	// confirmation remotes must have the files under UPLOADS_DIR/results/<id>/
+	// so /sandbox/ and /uploads/results/ can serve them.
+	if c, err := s.store.GetContract(contractID); err == nil {
+		if strings.EqualFold(strings.TrimSpace(c.Status), "confirmed") {
+			go s.downloadSandboxArtifacts(context.Background(), contractID)
+		}
+	}
 	return nil
 }
 
@@ -506,6 +523,13 @@ func (s *Server) upsertContractFromStegoPayload(ctx context.Context, contractID,
 			meta["sandbox_tarball_cid"] = entry.Value
 		}
 	}
+	// Merge payload metadata (includes funding_txid etc from PSBT time) so
+	// hasIngestionPSBT can detect funded state for setting contract status.
+	for k, v := range payloadMetadataMap(payload) {
+		if _, ok := meta[k]; !ok {
+			meta[k] = v
+		}
+	}
 	if payload.Proposal.Title == "" {
 		payload.Proposal.Title = "Stego Contract " + contractID
 	}
@@ -525,9 +549,24 @@ func (s *Server) upsertContractFromStegoPayload(ctx context.Context, contractID,
 	if err := s.store.CreateProposal(ctx, proposal); err != nil {
 		return fmt.Errorf("create proposal failed: %w", err)
 	}
-	// Preserve confirmed/completed/superseded status if the contract already exists
-	// at a more advanced lifecycle stage (prevents self-echo regression).
+	// For wish-style contracts (identified by 64-hex visible pixel hash), normalize
+	// the stored ContractID to "wish-<hash>" for consistency with wish creation,
+	// open-contracts listings, and GetContract calls. Non-wish or test contractIDs
+	// (e.g. "contract-foo") are left as provided.
+	vh := strings.TrimSpace(manifest.VisiblePixelHash)
+	if vh == "" {
+		vh = strings.TrimSpace(payload.Proposal.VisiblePixelHash)
+	}
+	if vh != "" && looksLikeHash(contractID) {
+		contractID = "wish-" + strings.TrimPrefix(vh, "wish-")
+	}
+	// If the stego was published after PSBT (funding info present in meta), mark as funded
+	// so finished contracts (PSBT built + artifacts) show as work completed / waiting
+	// for on-chain confirmation.
 	contractStatus := "active"
+	if hasIngestionPSBT(meta) {
+		contractStatus = "funded"
+	}
 	if existing, err := s.store.GetContract(contractID); err == nil {
 		switch strings.ToLower(existing.Status) {
 		case "confirmed", "completed", "superseded":
@@ -665,6 +704,21 @@ func (s *Server) upsertContractFromStegoPayload(ctx context.Context, contractID,
 	return fmt.Errorf("store does not support contract upsert")
 }
 
+// looksLikeHash returns true for typical 64-hex visible pixel / stego hashes
+// used as wish/contract identifiers. Used to decide when to apply "wish-" prefix.
+func looksLikeHash(s string) bool {
+	s = strings.TrimSpace(s)
+	if len(s) != 64 {
+		return false
+	}
+	for _, r := range s {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+			return false
+		}
+	}
+	return true
+}
+
 // downloadSandboxArtifacts fetches and extracts the sandbox tarball for a
 // confirmed contract.  It looks up sandbox_tarball_cid and sandbox_hash from
 // the associated proposal metadata, downloads the tarball from IPFS, verifies
@@ -695,6 +749,15 @@ func (s *Server) downloadSandboxArtifacts(ctx context.Context, contractID string
 					sandboxHash = strings.TrimSpace(toString(p.Metadata["sandbox_hash"]))
 					break
 				}
+			}
+		}
+	}
+	// Also check the contract metadata directly (some paths store sandbox info at contract level).
+	if sandboxCID == "" {
+		if c, err := s.store.GetContract(contractID); err == nil && c.Metadata != nil {
+			if cid := strings.TrimSpace(toString(c.Metadata["sandbox_tarball_cid"])); cid != "" {
+				sandboxCID = cid
+				sandboxHash = strings.TrimSpace(toString(c.Metadata["sandbox_hash"]))
 			}
 		}
 	}

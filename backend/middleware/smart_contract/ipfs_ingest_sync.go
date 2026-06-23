@@ -3,7 +3,9 @@ package smart_contract
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -147,9 +149,17 @@ func IngestDownloadedFile(ctx context.Context, filePath string, cid string, inge
 		}
 		return
 	}
+	// Compute stego content hash so remote can confirm by stego hash (product hash)
+	// or wish hash to trigger the ingestion record.
+	sum := sha256.Sum256(blob)
+	stegoHash := hex.EncodeToString(sum[:])
 	id := strings.TrimSpace(stegoManifest.VisiblePixelHash)
 	if id == "" {
 		id = strings.TrimSpace(stegoManifest.ProposalID)
+	}
+	// Fallback: allow ingestion keyed by the stego image's own hash if no wish hash.
+	if id == "" {
+		id = stegoHash
 	}
 	if id == "" {
 		return
@@ -172,7 +182,8 @@ func IngestDownloadedFile(ctx context.Context, filePath string, cid string, inge
 			log.Printf("mirror ingest: proposal upsert: %v", err)
 		}
 	}
-	// Create or update ingestion record
+	// Create or update ingestion record. Record both wish hash (visible) and stego hash
+	// so either can be used by remote to confirm and trigger the ingestion record.
 	if existing, err := ingest.Get(id); err == nil && existing != nil {
 		metaUpdates := map[string]interface{}{
 			"stego_image_cid":            cid,
@@ -181,6 +192,7 @@ func IngestDownloadedFile(ctx context.Context, filePath string, cid string, inge
 			"stego_manifest_created_at":  stegoManifest.CreatedAt,
 			"stego_manifest_proposal_id": stegoManifest.ProposalID,
 			"visible_pixel_hash":         stegoManifest.VisiblePixelHash,
+			"stego_contract_id":          stegoHash,
 		}
 		for k, v := range payloadMeta {
 			if _, ok := metaUpdates[k]; !ok {
@@ -204,6 +216,7 @@ func IngestDownloadedFile(ctx context.Context, filePath string, cid string, inge
 			"stego_manifest_created_at":  stegoManifest.CreatedAt,
 			"stego_manifest_proposal_id": stegoManifest.ProposalID,
 			"visible_pixel_hash":         stegoManifest.VisiblePixelHash,
+			"stego_contract_id":          stegoHash,
 		},
 		Status: "verified",
 	}
@@ -428,9 +441,16 @@ func ipfsIngestProcessManifest(ctx context.Context, ingest *services.IngestionSe
 			state.lastSeen[entry.CID] = entry.ModTime
 			continue
 		}
+		// Compute stego hash (content hash of this image) to support confirming
+		// by wish hash OR stego hash when triggering ingestion record on remote.
+		sum := sha256.Sum256(blob)
+		stegoHash := hex.EncodeToString(sum[:])
 		id := strings.TrimSpace(stegoManifest.VisiblePixelHash)
 		if id == "" {
 			id = strings.TrimSpace(stegoManifest.ProposalID)
+		}
+		if id == "" {
+			id = stegoHash
 		}
 		if id == "" {
 			state.lastSeen[entry.CID] = entry.ModTime
@@ -458,6 +478,7 @@ func ipfsIngestProcessManifest(ctx context.Context, ingest *services.IngestionSe
 				"stego_manifest_created_at":  stegoManifest.CreatedAt,
 				"stego_manifest_proposal_id": stegoManifest.ProposalID,
 				"visible_pixel_hash":         stegoManifest.VisiblePixelHash,
+				"stego_contract_id":          stegoHash,
 			}
 			for k, v := range payloadMeta {
 				if _, ok := metaUpdates[k]; !ok {
@@ -483,6 +504,7 @@ func ipfsIngestProcessManifest(ctx context.Context, ingest *services.IngestionSe
 				"stego_manifest_created_at":  stegoManifest.CreatedAt,
 				"stego_manifest_proposal_id": stegoManifest.ProposalID,
 				"visible_pixel_hash":         stegoManifest.VisiblePixelHash,
+				"stego_contract_id":          stegoHash,
 			},
 			Status: "verified",
 		}
@@ -564,11 +586,10 @@ func ensureProposalFromStegoPayload(ctx context.Context, store Store, stegoCID s
 		_ = store.UpdateProposalMetadata(ctx, proposalID, updates)
 		return nil
 	}
-	if visibleHash != "" {
-		if _, err := store.GetContract("wish-" + visibleHash); err != nil {
-			return nil
-		}
-	}
+	// NOTE: Do not require a pre-existing "wish-xxx" contract. The stego image
+	// published after PSBT build is the replication of the committed contract
+	// (wish hash + stego/product hash + AI artifacts). Remotes must be able to
+	// materialize the proposal + contract purely from the stego payload.
 	title := strings.TrimSpace(payload.Proposal.Title)
 	if title == "" {
 		title = "Proposal " + proposalID
@@ -578,13 +599,19 @@ func ensureProposalFromStegoPayload(ctx context.Context, store Store, stegoCID s
 		createdAt = time.Unix(payload.Proposal.CreatedAt, 0)
 	}
 	contractID := proposalID
-	if visibleHash != "" {
-		contractID = visibleHash
+	if visibleHash != "" && looksLikeHash(visibleHash) {
+		contractID = "wish-" + strings.TrimPrefix(visibleHash, "wish-")
+	} else if looksLikeHash(contractID) && visibleHash != "" {
+		contractID = "wish-" + strings.TrimPrefix(visibleHash, "wish-")
 	}
 	tasks := make([]smart_contract.Task, 0, len(payload.Tasks))
 	for _, t := range payload.Tasks {
 		if strings.TrimSpace(t.TaskID) == "" {
 			continue
+		}
+		st := t.Status
+		if st == "" {
+			st = "available"
 		}
 		tasks = append(tasks, smart_contract.Task{
 			TaskID:           t.TaskID,
@@ -594,7 +621,7 @@ func ensureProposalFromStegoPayload(ctx context.Context, store Store, stegoCID s
 			Description:      t.Description,
 			BudgetSats:       t.BudgetSats,
 			Skills:           t.Skills,
-			Status:           "available",
+			Status:           st,
 			ContractorWallet: t.ContractorWallet,
 		})
 	}
@@ -628,7 +655,40 @@ func ensureProposalFromStegoPayload(ctx context.Context, store Store, stegoCID s
 		Tasks:            tasks,
 		Metadata:         meta,
 	}
-	return store.CreateProposal(ctx, proposal)
+	if err := store.CreateProposal(ctx, proposal); err != nil {
+		return err
+	}
+
+	// Ensure a contract row exists (for /api/open-contracts, list_contracts, etc.).
+	// For stego published after PSBT build, prefer status "funded" so finished
+	// work (with artifacts) appears as work completed / waiting for on-chain
+	// confirmation rather than disappearing.
+	cStatus := "active"
+	if hasIngestionPSBT(meta) {
+		cStatus = "funded"
+	}
+	// Also check payload metadata for funding signals (txid etc).
+	for _, e := range payload.Metadata {
+		if strings.Contains(strings.ToLower(e.Key), "funding_tx") && strings.TrimSpace(e.Value) != "" {
+			cStatus = "funded"
+			break
+		}
+	}
+	contract := smart_contract.Contract{
+		ContractID:          contractID,
+		Title:               title,
+		TotalBudgetSats:     payload.Proposal.BudgetSats,
+		GoalsCount:          1,
+		AvailableTasksCount: len(tasks),
+		Status:              cStatus,
+		Metadata:            meta,
+	}
+	if up, ok := store.(interface {
+		UpsertContractWithTasks(context.Context, smart_contract.Contract, []smart_contract.Task) error
+	}); ok {
+		_ = up.UpsertContractWithTasks(ctx, contract, tasks)
+	}
+	return nil
 }
 
 func payloadMetadataMap(payload stego.Payload) map[string]interface{} {

@@ -309,6 +309,15 @@ func (s *Server) publishStegoForProposal(ctx context.Context, proposalID string,
 	if strings.EqualFold(strings.TrimSpace(p.Status), "approved") {
 		s.archiveWishContract(ctx, visibleHash)
 	}
+	// After publishing the stego (post-PSBT), ensure the contract is marked funded
+	// so it appears in open contracts / discovery as work completed (PSBT built,
+	// artifacts captured) and waiting for on-chain confirmation. This overrides
+	// any superseded from approve for the committed contract.
+	if visibleHash != "" {
+		wishID := "wish-" + strings.TrimPrefix(visibleHash, "wish-")
+		_ = s.store.UpdateContractStatus(ctx, wishID, "funded")
+		_ = s.store.UpdateContractStatus(ctx, visibleHash, "funded")
+	}
 	if cfg.AnnounceEnabled && strings.TrimSpace(cfg.AnnounceTopic) != "" {
 		announce := stegoAnnouncement{
 			Type:              "stego",

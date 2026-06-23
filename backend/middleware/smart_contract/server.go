@@ -2922,9 +2922,10 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 				s.archiveWishContract(r.Context(), visibleHash)
 			}
 
-			stegoAlreadyPublished := strings.TrimSpace(toString(proposal.Metadata["stego_contract_id"])) != ""
-
-			// Approve the proposal first - IPFS announcement is async
+			// Approve the proposal first. Stego/IPFS replication (contract to peers)
+			// is intentionally deferred until after PSBT is built. This ensures
+			// wish hash, stego (product) hash, and AI artifact hashes are all
+			// committed before remote nodes can ingest the full contract.
 			s.recordEvent(smart_contract.Event{
 				Type:      "approve",
 				EntityID:  id,
@@ -2933,22 +2934,10 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 				CreatedAt: time.Now(),
 			})
 
-			// Async stego publishing - doesn't block approval
-			if !stegoAlreadyPublished {
-				go func() {
-					ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-					defer cancel()
-					if err := s.maybePublishStegoForProposal(ctx, id); err != nil {
-						log.Printf("stego publish failed async for proposal %s: %v", id, err)
-					} else {
-						log.Printf("stego publish succeeded async for proposal %s", id)
-					}
-				}()
-			}
 			JSON(w, http.StatusOK, map[string]interface{}{
 				"proposal_id": id,
 				"status":      "approved",
-				"message":     "Proposal approved; stego publishing in progress.",
+				"message":     "Proposal approved.",
 			})
 			return
 		}
@@ -3014,17 +3003,9 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 				Error(w, http.StatusBadRequest, err.Error())
 				return
 			}
-			// Async stego publishing - doesn't block proposal creation response
-			go func() {
-				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-				defer cancel()
-				log.Printf("stego publish: starting async for proposal %s, ingestion %s", proposal.ID, body.IngestionID)
-				if err := s.maybePublishStegoForProposal(ctx, proposal.ID); err != nil {
-					log.Printf("stego publish failed async for proposal %s: %v", proposal.ID, err)
-				} else {
-					log.Printf("stego publish succeeded async for proposal %s", proposal.ID)
-				}
-			}()
+			// Note: stego/IPFS replication is deferred until PSBT build (see PSBT handlers).
+			// This prevents remote nodes from ingesting an actionable contract before
+			// the payer has committed funding via PSBT (wish hash + product hash + payouts).
 			s.recordEvent(smart_contract.Event{
 				Type:      "proposal_create",
 				EntityID:  proposal.ID,
@@ -3035,7 +3016,7 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 			JSON(w, http.StatusCreated, map[string]interface{}{
 				"proposal_id": proposal.ID,
 				"status":      proposal.Status,
-				"message":     "proposal created from pending ingestion; stego publishing in progress",
+				"message":     "proposal created from pending ingestion",
 			})
 			return
 		}
