@@ -27,8 +27,8 @@ type Worker struct {
 	mu              sync.Mutex
 	seenWishes      map[string]bool
 	recentProposals map[string]bool
-	activeTasks     map[string]bool     // taskID currently being worked on
-	rejectedTasks   map[string]string   // taskID -> last rejection reason
+	activeTasks     map[string]bool   // taskID currently being worked on
+	rejectedTasks   map[string]string // taskID -> last rejection reason
 	state           *FileState
 }
 
@@ -199,24 +199,50 @@ func (w *Worker) hasActiveWork() bool {
 		return true
 	}
 
-	// Check store for tasks we have claimed that are still in progress
-	tasks, err := w.store.ListTasks(smart_contract.TaskFilter{
-		ClaimedBy: w.aiID,
-		Limit:     50,
-	})
-	if err != nil {
-		return false
+	// Check store for tasks we have claimed that are still in progress.
+	// Query by both aiID and donation (if set) because we may claim "as" the donation address.
+	toCheck := []string{w.aiID}
+	if w.donation != "" && !strings.EqualFold(w.donation, w.aiID) {
+		toCheck = append(toCheck, w.donation)
 	}
-	for _, t := range tasks {
-		st := strings.ToLower(t.Status)
-		if st == "claimed" || st == "in_progress" || st == "rework" || st == "rejected" {
-			// also verify it's still ours
-			if strings.EqualFold(t.ClaimedBy, w.aiID) || (w.donation != "" && strings.EqualFold(t.ClaimedBy, w.donation)) {
-				return true
+	for _, cb := range toCheck {
+		tasks, err := w.store.ListTasks(smart_contract.TaskFilter{
+			ClaimedBy: cb,
+			Limit:     50,
+		})
+		if err != nil {
+			continue
+		}
+		for _, t := range tasks {
+			st := strings.ToLower(t.Status)
+			if st == "claimed" || st == "in_progress" || st == "rework" || st == "rejected" {
+				if strings.EqualFold(t.ClaimedBy, w.aiID) || (w.donation != "" && strings.EqualFold(t.ClaimedBy, w.donation)) {
+					// Skip expired claims so we don't treat stale work as "active" forever (blocks proposals, etc).
+					if details := w.getTaskStatus(t.TaskID); details != nil {
+						if cid := getString(details, "claim_id"); cid != "" {
+							if cl, cerr := w.store.GetClaim(cid); cerr == nil {
+								if cl.Status != "active" || time.Now().After(cl.ExpiresAt) {
+									continue
+								}
+							}
+						}
+					}
+					return true
+				}
 			}
 		}
 	}
 	return false
+}
+
+// claimWallet returns the wallet/address to use when calling ClaimTask.
+// When a donation address is configured, we claim "as" that address (it also
+// gives auditor powers and is how some tasks get attributed to the agent).
+func (w *Worker) claimWallet() string {
+	if w.donation != "" {
+		return w.donation
+	}
+	return w.aiID
 }
 
 func firstLine(s string) string {
@@ -290,6 +316,7 @@ func (w *Worker) ProcessTask(task smart_contract.Task) bool {
 
 	// Robust resume for tasks that are already claimed by us (including after a previous killed execution)
 	// Also support "submitted" by us for retrying failed submissions.
+	// IMPORTANT: never resume an *expired* claim for SubmitWork; let ClaimTask issue a fresh one instead.
 	if (status == "claimed" || status == "rework" || status == "rejected" || status == "submitted") && isOurs {
 		if existingClaim == "" {
 			existingClaim = w.findMyExistingClaim(task)
@@ -303,19 +330,34 @@ func (w *Worker) ProcessTask(task smart_contract.Task) bool {
 			}
 		}
 		if existingClaim != "" {
-			claimID = existingClaim
-			log.Printf("agents/worker: resuming task %s with existing claim %s", taskID, claimID)
+			// Validate the candidate claim is still active and not expired.
+			valid := false
+			if cl, err := w.store.GetClaim(existingClaim); err == nil {
+				if cl.Status == "active" && !time.Now().After(cl.ExpiresAt) {
+					valid = true
+				} else {
+					log.Printf("agents/worker: discarding stale/expired claim %s (status=%s, expires_at=%v) for task %s; will re-claim", existingClaim, cl.Status, cl.ExpiresAt, taskID)
+				}
+			} else {
+				log.Printf("agents/worker: GetClaim(%s) failed for task %s (%v); will re-claim", existingClaim, taskID, err)
+			}
+			if valid {
+				claimID = existingClaim
+				log.Printf("agents/worker: resuming task %s with existing claim %s", taskID, claimID)
+			}
 		}
 	}
 
 	if claimID == "" && (status == "available" || status == "rejected" || status == "rework" || ((status == "claimed" || status == "submitted") && isOurs)) {
 		log.Printf("agents/worker: claiming/reclaiming task %s (rework=%v, status=%s)", taskID, rejectionFeedback != "", status)
-		claim, err := w.store.ClaimTask(taskID, w.aiID, nil)
+		claim, err := w.store.ClaimTask(taskID, w.claimWallet(), nil)
 		if err != nil {
 			log.Printf("agents/worker: claim/reclaim failed for %s: %v", taskID, err)
-			// Try to find if we already own it
+			// Try to find if we already own it (non-expired)
 			if existing := w.findMyExistingClaim(task); existing != "" {
-				claimID = existing
+				if cl, cerr := w.store.GetClaim(existing); cerr == nil && cl.Status == "active" && !time.Now().After(cl.ExpiresAt) {
+					claimID = existing
+				}
 			}
 		} else {
 			claimID = claim.ClaimID
@@ -327,10 +369,21 @@ func (w *Worker) ProcessTask(task smart_contract.Task) bool {
 		if isOurs {
 			if details := w.getTaskStatus(taskID); details != nil {
 				if c := getString(details, "claim_id"); c != "" {
-					claimID = c
-					log.Printf("agents/worker: recovered claim_id %s for our task %s via TaskStatus", claimID, taskID)
+					if cl, cerr := w.store.GetClaim(c); cerr == nil && cl.Status == "active" && !time.Now().After(cl.ExpiresAt) {
+						claimID = c
+						log.Printf("agents/worker: recovered claim_id %s for our task %s via TaskStatus", claimID, taskID)
+					}
 				}
 			}
+		}
+	}
+
+	// Extra safety: if a claimID made it here but is expired/invalid, drop it.
+	// This prevents SubmitWork on expired claims (which always fails) and forces a fresh ClaimTask next cycle.
+	if claimID != "" {
+		if cl, err := w.store.GetClaim(claimID); err != nil || cl.Status != "active" || time.Now().After(cl.ExpiresAt) {
+			log.Printf("agents/worker: final guard: dropping expired/invalid claim %s for %s", claimID, taskID)
+			claimID = ""
 		}
 	}
 
@@ -382,7 +435,10 @@ func (w *Worker) findMyExistingClaim(task smart_contract.Task) string {
 			cb := strings.ToLower(t.ClaimedBy)
 			if cb == strings.ToLower(w.aiID) || (w.donation != "" && cb == strings.ToLower(w.donation)) {
 				if t.ActiveClaimID != "" {
-					return t.ActiveClaimID
+					// Only return if the claim is still valid
+					if cl, cerr := w.store.GetClaim(t.ActiveClaimID); cerr == nil && cl.Status == "active" && !time.Now().After(cl.ExpiresAt) {
+						return t.ActiveClaimID
+					}
 				}
 			}
 		}
@@ -392,7 +448,9 @@ func (w *Worker) findMyExistingClaim(task smart_contract.Task) string {
 	// TaskStatus does a direct latest claim query and returns "claim_id".
 	if details := w.getTaskStatus(task.TaskID); details != nil {
 		if c := getString(details, "claim_id"); c != "" {
-			return c
+			if cl, cerr := w.store.GetClaim(c); cerr == nil && cl.Status == "active" && !time.Now().After(cl.ExpiresAt) {
+				return c
+			}
 		}
 	}
 
@@ -521,10 +579,10 @@ func (w *Worker) performWork(task smart_contract.Task) map[string]interface{} {
 	publicURL := fmt.Sprintf("/uploads/results/%s/%s.md", visible, taskID)
 
 	return map[string]interface{}{
-		"notes":             finalNotes,
-		"result_file":       publicURL,
-		"artifacts_dir":     fmt.Sprintf("/uploads/results/%s/", visible),
-		"completion_proof":  result.CompletionProof,
+		"notes":            finalNotes,
+		"result_file":      publicURL,
+		"artifacts_dir":    fmt.Sprintf("/uploads/results/%s/", visible),
+		"completion_proof": result.CompletionProof,
 	}
 }
 
