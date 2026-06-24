@@ -466,7 +466,7 @@ func (w *Watcher) findAvailableTasks(ctx context.Context) []smart_contract.Task 
 			isOurs := claimedBy == strings.ToLower(w.aiID) || (w.donation != "" && claimedBy == strings.ToLower(w.donation))
 			claimedByOthers := claimedBy != "" && !isOurs
 
-			isActionable := status == "available" || status == "rejected" || status == "rework" || (status == "claimed" && isOurs) || (status == "submitted" && isOurs)
+			isActionable := status == "available" || status == "rejected" || status == "rework" || (status == "claimed" && isOurs)
 
 			if claimedByOthers || !isActionable {
 				continue

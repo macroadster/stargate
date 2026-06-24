@@ -314,10 +314,11 @@ func (w *Worker) ProcessTask(task smart_contract.Task) bool {
 	claimedBy := strings.ToLower(task.ClaimedBy)
 	isOurs := claimedBy == strings.ToLower(w.aiID) || (w.donation != "" && claimedBy == strings.ToLower(w.donation))
 
-	// Robust resume for tasks that are already claimed by us (including after a previous killed execution)
-	// Also support "submitted" by us for retrying failed submissions.
+	// Robust resume for tasks that are already claimed by us (including after a previous killed execution).
+	// Tasks with status "submitted" are NOT re-claimed here — they already have work submitted.
+	// If a submission is rejected/reworked, the task status changes to "rejected"/"rework" which IS handled.
 	// IMPORTANT: never resume an *expired* claim for SubmitWork; let ClaimTask issue a fresh one instead.
-	if (status == "claimed" || status == "rework" || status == "rejected" || status == "submitted") && isOurs {
+	if (status == "claimed" || status == "rework" || status == "rejected") && isOurs {
 		if existingClaim == "" {
 			existingClaim = w.findMyExistingClaim(task)
 		}
@@ -348,7 +349,7 @@ func (w *Worker) ProcessTask(task smart_contract.Task) bool {
 		}
 	}
 
-	if claimID == "" && (status == "available" || status == "rejected" || status == "rework" || ((status == "claimed" || status == "submitted") && isOurs)) {
+	if claimID == "" && (status == "available" || status == "rejected" || status == "rework" || (status == "claimed" && isOurs)) {
 		log.Printf("agents/worker: claiming/reclaiming task %s (rework=%v, status=%s)", taskID, rejectionFeedback != "", status)
 		claim, err := w.store.ClaimTask(taskID, w.claimWallet(), nil)
 		if err != nil {
