@@ -1413,14 +1413,53 @@ func (s *SQLiteStore) PublishProposal(ctx context.Context, id string) error {
 }
 
 func (s *SQLiteStore) UpdateSubmissionStatus(ctx context.Context, submissionID, status, reviewerNotes, rejectionType string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Get claim_id from submission
+	var claimID string
+	if err := tx.QueryRowContext(ctx, `SELECT claim_id FROM mcp_submissions WHERE submission_id=?`, submissionID).Scan(&claimID); err != nil {
+		return err
+	}
+
+	// Update submission status
 	var rejectedAt interface{}
+	rejectionReason := strings.TrimSpace(reviewerNotes)
+	rejType := strings.TrimSpace(rejectionType)
 	if status == "rejected" {
 		rejectedAt = time.Now().Format(time.RFC3339)
+	} else {
+		rejectionReason = ""
+		rejType = ""
 	}
-	_, err := s.db.ExecContext(ctx, `
+	if _, err := tx.ExecContext(ctx, `
 UPDATE mcp_submissions SET status=?, rejection_reason=?, rejection_type=?, rejected_at=? WHERE submission_id=?
-`, status, reviewerNotes, rejectionType, rejectedAt, submissionID)
-	return err
+`, status, rejectionReason, rejType, rejectedAt, submissionID); err != nil {
+		return err
+	}
+
+	// On approval, update task and claim
+	if status == "accepted" || status == "approved" {
+		var taskID string
+		if err := tx.QueryRowContext(ctx, `SELECT task_id FROM mcp_claims WHERE claim_id=?`, claimID).Scan(&taskID); err == nil {
+			tx.ExecContext(ctx, `UPDATE mcp_tasks SET status='approved' WHERE task_id=?`, taskID)
+			tx.ExecContext(ctx, `UPDATE mcp_claims SET status='complete' WHERE claim_id=?`, claimID)
+		}
+	}
+
+	// On rejection, release claim and reset task status
+	if status == "rejected" {
+		var taskID string
+		if err := tx.QueryRowContext(ctx, `SELECT task_id FROM mcp_claims WHERE claim_id=?`, claimID).Scan(&taskID); err == nil {
+			tx.ExecContext(ctx, `UPDATE mcp_tasks SET status='available', claimed_by=NULL, claimed_at=NULL, claim_expires_at=NULL WHERE task_id=?`, taskID)
+			tx.ExecContext(ctx, `UPDATE mcp_claims SET status='rejected' WHERE claim_id=?`, claimID)
+		}
+	}
+
+	return tx.Commit()
 }
 
 func (s *SQLiteStore) UpdateSubmission(ctx context.Context, sub smart_contract.Submission) error {
