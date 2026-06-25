@@ -325,17 +325,37 @@ export const useBlocks = () => {
     }
   }, [showHistorical]);
 
+  const getOldestLoadedHeight = useCallback(() => {
+    const realBlocks = blocksRef.current.filter(
+      (b) => !b.isFuture && !b.isGenesis && typeof b.height === 'number' && b.height > 0
+    );
+    if (!realBlocks.length) return null;
+    return Math.min(...realBlocks.map((b) => b.height));
+  }, []);
+
   // loadMoreBlocks uses its own cursor (olderCursorRef) that is independent
   // of the 2-minute polling cycle. Polling fetches tip blocks and must never
   // reset the scroll-into-history cursor.
+  //
+  // Important: do not gate on loadingRef (tip fetch/poll). On initial load a
+  // poll can hold loadingRef while the user hits the rail end; blocking here
+  // traps scroll at the first ~2h page because the scroll event does not re-fire.
   const loadMoreBlocks = useCallback(async () => {
-    if (!hasMoreOlderRef.current || !olderCursorRef.current) return;
-    if (loadingOlderRef.current || loadingRef.current) return;
+    if (!hasMoreOlderRef.current) return;
+    if (loadingOlderRef.current) return;
+
+    // Prefer stored cursor; fall back to oldest loaded real block so we always
+    // page strictly older than what the rail already shows (survives poll races).
+    const cursor =
+      olderCursorRef.current ||
+      (getOldestLoadedHeight() != null ? String(getOldestLoadedHeight()) : null);
+    if (!cursor) return;
+
     loadingOlderRef.current = true;
     try {
       const url = new URL(`${API_BASE}/api/data/block-summaries`);
       url.searchParams.set('limit', 20);
-      url.searchParams.set('cursor_height', olderCursorRef.current);
+      url.searchParams.set('cursor_height', cursor);
 
       const response = await apiFetch(url.toString());
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -345,6 +365,15 @@ export const useBlocks = () => {
       const olderBlocks = Array.isArray(blocksData)
         ? blocksData.map(generateBlock).filter(b => b.height)
         : [];
+
+      const priorHeights = new Set(
+        blocksRef.current
+          .filter((b) => !b.isFuture && typeof b.height === 'number')
+          .map((b) => b.height)
+      );
+      const newRealBlocks = olderBlocks.filter(
+        (b) => !b.isFuture && typeof b.height === 'number' && !priorHeights.has(b.height)
+      );
 
       // Anchor around the lowest currently-loaded real block so the window
       // expands downward (into history) rather than evicting what the user sees.
@@ -359,16 +388,28 @@ export const useBlocks = () => {
       setBlocks(deduped);
 
       // Advance the older-blocks cursor
-      olderCursorRef.current = data.next_cursor || null;
-      hasMoreOlderRef.current = Boolean(data.has_more);
-      setNextCursor(data.next_cursor || null);
-      setHasMore(Boolean(data.has_more));
+      const apiCursor = data.next_cursor ? String(data.next_cursor) : null;
+      const apiHasMore = Boolean(data.has_more);
+      olderCursorRef.current = apiCursor;
+      hasMoreOlderRef.current = apiHasMore;
+      setNextCursor(apiCursor);
+      setHasMore(apiHasMore);
+
+      // If we only got duplicates but more pages exist, step from oldest loaded
+      // so the next scroll/request advances past the stuck first-page boundary.
+      if (apiHasMore && newRealBlocks.length === 0) {
+        const oldest = getOldestLoadedHeight();
+        if (oldest != null) {
+          olderCursorRef.current = String(oldest);
+          setNextCursor(String(oldest));
+        }
+      }
     } catch (error) {
       console.error('Error loading older blocks:', error);
     } finally {
       loadingOlderRef.current = false;
     }
-  }, [showHistorical]);
+  }, [showHistorical, getOldestLoadedHeight]);
 
   // Fetch blocks around a specific height (for URL navigation to distant blocks).
   // Replaces the current window with blocks centered on targetHeight.

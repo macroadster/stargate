@@ -689,7 +689,7 @@ function MainContent() {
           onScroll={(e) => {
             const el = e.currentTarget;
             // Load older blocks when scrolling right to the end
-            if (el.scrollLeft + el.clientWidth >= el.scrollWidth - 50) {
+            if (el.scrollLeft + el.clientWidth >= el.scrollWidth - 80) {
               loadMoreBlocks();
             }
             // Load newer blocks when scrolling left to the beginning
