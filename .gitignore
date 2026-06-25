@@ -4,9 +4,21 @@ backend/uploads/*
 backend/.cache/
 backend/.gocache/
 backend/.gomodcache/
+
+# Compiled Go binaries (never commit build output)
+/stargate
+backend/stargate
 backend/stargate-backend
 backend/stargate_backend
 backend/stargate_backend_new
+backend/stargate-backend-fixed
+backend/stargate-test
+backend/tests
+backend/cmd/tests/build-verification
+
+# Embedded frontend build artifacts (generated, not source)
+backend/assets/frontend/
+
 **/*.log
 .gocache/*
 .beads/*
