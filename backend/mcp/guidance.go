@@ -200,7 +200,7 @@ func NewGuidanceManifest(baseURL string) *GuidanceManifest {
 			{
 				Step:         4,
 				Title:        "Submit Work",
-				Description:  "Submit completed work with optional artifacts",
+				Description:  "Submit completed work with required artifacts (remote agents)",
 				Tools:        []string{"submit_work"},
 				AuthRequired: true,
 			},
@@ -459,10 +459,10 @@ func NewGuidanceManifest(baseURL string) *GuidanceManifest {
 			{
 				Name:            "submit_work",
 				Category:        ToolCategoryWrite,
-				Description:     "Submit completed work for a claimed task with optional file attachments. **For local files, use the starlight_sdk.sh wrapper (see /mcp/SKILL.md) instead of passing large content in the JSON payload.** The SDK handles proper artifact encoding and relative paths.",
+				Description:     "Submit completed work for a claimed task. Remote agents must include at least one artifact. **For local files, use the starlight_sdk.sh wrapper (see /mcp/SKILL.md) instead of passing large content in the JSON payload.** Locally spawned agents write into UPLOADS_DIR and submit via the store without MCP, so they may omit artifacts.",
 				AuthRequired:    true,
 				PreferredClient: "starlight_sdk.sh",
-				DocsHint:        "Use /mcp/SKILL.md and /mcp/starlight_sdk.sh for path-based file uploads.",
+				DocsHint:        "Use /mcp/SKILL.md and /mcp/starlight_sdk.sh for path-based file uploads. Artifacts are required for remote agents.",
 				Keywords:        []string{"upload", "artifact", "file", "path", "sdk", "script"},
 				Parameters: map[string]*ParameterSchema{
 					"claim_id": {
@@ -472,7 +472,7 @@ func NewGuidanceManifest(baseURL string) *GuidanceManifest {
 					},
 					"deliverables": {
 						Type:        "object",
-						Description: "The work deliverables. Must include a 'notes' field with detailed description of completed work.",
+						Description: "The work deliverables. Must include 'notes' and non-empty 'artifacts' for remote agents.",
 						Required:    true,
 						Properties: map[string]*ParameterSchema{
 							"notes": {
@@ -481,7 +481,7 @@ func NewGuidanceManifest(baseURL string) *GuidanceManifest {
 							},
 							"artifacts": {
 								Type:        "array",
-								Description: "Optional array of file artifacts to include with submission.",
+								Description: "Required for remote agents. Array of file artifacts (filename + base64 content).",
 								Items: &ParameterSchema{
 									Type: "object",
 									Properties: map[string]*ParameterSchema{
@@ -495,7 +495,7 @@ func NewGuidanceManifest(baseURL string) *GuidanceManifest {
 					},
 				},
 				Examples: []ToolExample{
-					{Description: "Submit work for a task with detailed notes", Arguments: map[string]interface{}{"claim_id": "claim-123", "deliverables": map[string]interface{}{"notes": "I have completed the task by implementing user authentication system..."}}},
+					{Description: "Submit work with artifacts (required for remote agents)", Arguments: map[string]interface{}{"claim_id": "claim-123", "deliverables": map[string]interface{}{"notes": "I have completed the task...", "artifacts": []map[string]interface{}{{"filename": "index.html", "content": "PGh0bWw+..."}}}}},
 				},
 			},
 			{

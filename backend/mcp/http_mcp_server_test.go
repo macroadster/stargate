@@ -623,3 +623,68 @@ func TestScanTransactionTool(t *testing.T) {
 		}
 	})
 }
+
+func TestSubmitWorkRequiresArtifactsForRemoteAgents(t *testing.T) {
+	store := scstore.NewMemoryStore(72 * time.Hour)
+	ingestionSvc := &services.IngestionService{}
+	scannerManager := &starlight.ScannerManager{}
+	server := NewHTTPMCPServer(store, allowAllValidator{}, nil, ingestionSvc, scannerManager, nil, auth.NewChallengeStore(10*time.Minute))
+
+	callSubmit := func(t *testing.T, deliverables map[string]interface{}) MCPResponse {
+		t.Helper()
+		req := MCPRequest{
+			Tool: "submit_work",
+			Arguments: map[string]interface{}{
+				"claim_id":     "claim-remote-1",
+				"deliverables": deliverables,
+			},
+		}
+		body, _ := json.Marshal(req)
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("POST", "/mcp/call", bytes.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("X-API-Key", "test-key")
+		server.handleToolCall(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+		var resp MCPResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to unmarshal response: %v", err)
+		}
+		return resp
+	}
+
+	t.Run("rejects_missing_artifacts", func(t *testing.T) {
+		resp := callSubmit(t, map[string]interface{}{
+			"notes": "finished without uploading files",
+		})
+		if resp.Success {
+			t.Fatalf("expected failure when artifacts are missing")
+		}
+		validationErrors, ok := resp.Details["validation_errors"].(map[string]interface{})
+		if !ok {
+			t.Fatalf("expected validation_errors in details, got: %#v", resp.Details)
+		}
+		if _, ok := validationErrors["deliverables.artifacts"]; !ok {
+			t.Fatalf("expected deliverables.artifacts validation error, got: %#v", validationErrors)
+		}
+	})
+
+	t.Run("rejects_empty_artifacts_array", func(t *testing.T) {
+		resp := callSubmit(t, map[string]interface{}{
+			"notes":     "finished with empty artifacts",
+			"artifacts": []interface{}{},
+		})
+		if resp.Success {
+			t.Fatalf("expected failure when artifacts array is empty")
+		}
+		validationErrors, ok := resp.Details["validation_errors"].(map[string]interface{})
+		if !ok {
+			t.Fatalf("expected validation_errors in details, got: %#v", resp.Details)
+		}
+		if _, ok := validationErrors["deliverables.artifacts"]; !ok {
+			t.Fatalf("expected deliverables.artifacts validation error, got: %#v", validationErrors)
+		}
+	})
+}

@@ -283,9 +283,9 @@ func (h *HTTPMCPServer) getToolSchemasLegacy() map[string]interface{} {
 		},
 		"submit_work": map[string]interface{}{
 			"category":         ToolCategoryWrite,
-			"description":      "Submit completed work for a claimed task with optional file attachments",
+			"description":      "Submit completed work for a claimed task. Remote agents must attach at least one artifact (file upload); locally spawned agents write into UPLOADS_DIR and submit via the store without MCP.",
 			"preferred_client": "starlight_sdk.sh",
-			"docs_hint":        "Use /mcp/SKILL.md and /mcp/starlight_sdk.sh for path-based file uploads.",
+			"docs_hint":        "Use /mcp/SKILL.md and /mcp/starlight_sdk.sh for path-based file uploads. Artifacts are required for remote agents.",
 			"keywords":         []string{"upload", "artifact", "file", "path", "sdk", "script"},
 			"parameters": map[string]interface{}{
 				"claim_id": map[string]interface{}{
@@ -295,14 +295,14 @@ func (h *HTTPMCPServer) getToolSchemasLegacy() map[string]interface{} {
 				},
 				"deliverables": map[string]interface{}{
 					"type":        "object",
-					"description": "The work deliverables. Must include a 'notes' field with detailed description of completed work. Example: {\"notes\": \"I have completed the task by implementing...\"}",
+					"description": "The work deliverables. Must include 'notes' and at least one entry in 'artifacts' (remote agents). Example: {\"notes\": \"...\", \"artifacts\": [{\"filename\": \"index.html\", \"content\": \"<base64>\"}]}",
 					"properties": map[string]interface{}{
 						"notes": map[string]interface{}{
 							"description": "Detailed description of completed work, methodology, findings, and outcomes. This is the primary field that will be displayed for review.",
 							"type":        "string",
 						},
 						"artifacts": map[string]interface{}{
-							"description": "Optional array of file artifacts to include with submission. Each artifact should have 'filename' and 'content' (base64-encoded) fields.",
+							"description": "Required for remote agents. Array of file artifacts to include with submission. Each artifact must have 'filename' and 'content' (base64-encoded) fields. Prefer starlight_sdk.sh for local paths.",
 							"type":        "array",
 							"items": map[string]interface{}{
 								"type": "object",
@@ -324,21 +324,12 @@ func (h *HTTPMCPServer) getToolSchemasLegacy() map[string]interface{} {
 							},
 						},
 					},
-					"required": []interface{}{"notes"},
+					"required": []interface{}{"notes", "artifacts"},
 				},
 			},
 			"examples": []map[string]interface{}{
 				{
-					"description": "Submit work for a task with detailed notes",
-					"arguments": map[string]interface{}{
-						"claim_id": "claim-123",
-						"deliverables": map[string]interface{}{
-							"notes": "I have successfully completed the task by implementing user authentication system with JWT tokens. The implementation includes: 1) User registration endpoint with email validation, 2) Login endpoint with secure password hashing, 3) JWT token generation and validation middleware, 4) Password reset functionality. All components have been tested with unit tests achieving 95% coverage.",
-						},
-					},
-				},
-				{
-					"description": "Submit work with file attachments",
+					"description": "Submit work with file attachments (required for remote agents)",
 					"arguments": map[string]interface{}{
 						"claim_id": "claim-456",
 						"deliverables": map[string]interface{}{

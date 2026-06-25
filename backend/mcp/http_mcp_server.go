@@ -1906,11 +1906,22 @@ func (h *HTTPMCPServer) handleSubmitWork(ctx context.Context, args map[string]in
 			validation.AddFieldError("deliverables.notes", deliverables["notes"], "deliverables must contain a 'notes' field with description of completed work", true)
 		}
 
-		// Validate and process artifacts if present
-		if artifacts, exists := deliverables["artifacts"]; exists {
+		// Remote agents (MCP submit_work callers) must attach at least one artifact.
+		// Locally spawned agents write files under UPLOADS_DIR and call the store
+		// directly, so they never hit this path and may omit artifacts.
+		artifacts, hasArtifacts := deliverables["artifacts"]
+		if !hasArtifacts {
+			validation.AddFieldError("deliverables.artifacts", nil,
+				"artifacts are required for remote agents using submit_work; attach at least one file (filename + base64 content). Locally spawned agents that write into UPLOADS_DIR may submit via the store without artifacts.",
+				true)
+		} else {
 			artifactsList, ok := artifacts.([]interface{})
 			if !ok {
 				validation.AddFieldError("deliverables.artifacts", artifacts, "artifacts must be an array", true)
+			} else if len(artifactsList) == 0 {
+				validation.AddFieldError("deliverables.artifacts", artifacts,
+					"artifacts must contain at least one file for remote agents using submit_work",
+					true)
 			} else {
 				for i, artifact := range artifactsList {
 					artifactMap, ok := artifact.(map[string]interface{})
