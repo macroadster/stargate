@@ -118,9 +118,6 @@ func getStegoMethodFromImage(imageBytes []byte, filename string) string {
 
 func loadStegoReconcileConfig() stegoReconcileConfig {
 	proxyBase := strings.TrimSpace(os.Getenv("STARGATE_PROXY_BASE"))
-	if proxyBase == "" {
-		proxyBase = "http://localhost:8080"
-	}
 	timeout := 30 * time.Second
 	if raw := strings.TrimSpace(os.Getenv("STARGATE_STEGO_SCAN_TIMEOUT_SEC")); raw != "" {
 		if v, err := strconv.Atoi(raw); err == nil && v > 0 {

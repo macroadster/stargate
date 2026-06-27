@@ -124,7 +124,7 @@ func NewContainer(apiKeyIssuer auth.APIKeyIssuer, apiKeyValidator auth.APIKeyVal
 	qrHandler := handlers.NewQRCodeHandler(qrService)
 	proxyBase := os.Getenv("STARGATE_PROXY_BASE")
 	if proxyBase == "" {
-		proxyBase = "http://localhost:8080"
+		proxyBase = "http://localhost:3001" // default to self in single-binary mode
 	}
 	proxyHandler := handlers.NewProxyHandler(proxyBase)
 	ingestionHandler := handlers.NewIngestionHandler(ingestionService)

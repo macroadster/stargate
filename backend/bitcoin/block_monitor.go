@@ -699,71 +699,19 @@ func (bm *BlockMonitor) ProcessBlock(height int64) error {
 		log.Printf("Failed to save images: %v", err)
 	}
 
-	// Scan block for steganography using the scanner manager
-	// NOTE: We use the Go backend's /bitcoin/v1/scan/block endpoint via scannerManager.ScanBlock()
-	// instead of calling the Python API's /scan/block endpoint directly. While the Python API
-	// has an efficient /scan/block endpoint that scans entire blocks in one request and
-	// automatically updates inscriptions.json, we use the Go implementation for consistency
-	// with the existing architecture. The Python /scan/block endpoint requires filesystem access to
-	// the shared blocks directory.
-	var blockScanResponse *core.BlockScanResponse
-
-	if bm.bitcoinAPI != nil && bm.bitcoinAPI.scannerManager != nil {
-		log.Printf("Using scanner manager to scan block %d", height)
-		var err error
-		blockScanResponse, err = bm.bitcoinAPI.scannerManager.ScanBlock(height, core.ScanOptions{
-			ExtractMessage:      true,
-			ConfidenceThreshold: 0.5,
-			IncludeMetadata:     true,
-		})
-		if err != nil {
-			log.Printf("Failed to scan block via scanner manager: %v", err)
-			blockScanResponse = nil
-		}
-	}
-
-	// Convert block scan response to the format expected by the rest of the code
+	// Scan each image individually using the native Go AlphaScanner via ScanImage.
+	// This replaces the former ScanBlock call which required the Python proxy.
 	var scanResults []map[string]any
-	if blockScanResponse != nil {
-		// Use results from block scan
-		scanResults = make([]map[string]any, len(blockScanResponse.Inscriptions))
-		for i, inscription := range blockScanResponse.Inscriptions {
-			result := map[string]any{
-				"tx_id":             inscription.TxID,
-				"image_index":       i,
-				"file_name":         inscription.FileName,
-				"size_bytes":        inscription.SizeBytes,
-				"format":            "unknown", // Could extract from content_type
-				"scanned_at":        time.Now().Unix(),
-				"is_stego":          false,
-				"confidence":        0.0,
-				"stego_type":        "",
-				"extracted_message": "",
-				"scan_error":        "",
-				"stego_details":     nil,
-			}
-
-			if inscription.ScanResult != nil {
-				result["is_stego"] = inscription.ScanResult.IsStego
-				result["confidence"] = inscription.ScanResult.Confidence
-				if inscription.ScanResult.StegoType != "" {
-					result["stego_type"] = inscription.ScanResult.StegoType
-				}
-				if inscription.ScanResult.ExtractedMessage != "" {
-					result["extracted_message"] = inscription.ScanResult.ExtractedMessage
-				}
-				if inscription.ScanResult.ExtractionError != "" {
-					result["scan_error"] = inscription.ScanResult.ExtractionError
-				}
-			}
-
-			scanResults[i] = result
+	if len(parsedBlock.Images) > 0 {
+		log.Printf("Scanning %d images from block %d using per-image scanner", len(parsedBlock.Images), height)
+		var err error
+		scanResults, err = bm.scanImagesDirectly(parsedBlock.Images)
+		if err != nil {
+			log.Printf("Failed to scan images for block %d: %v", height, err)
+			scanResults = bm.createEmptyScanResults(len(parsedBlock.Images))
 		}
-		log.Printf("Block scan completed: %d inscriptions scanned, %d stego detected", blockScanResponse.TotalInscriptions, blockScanResponse.StegoDetected)
 	} else {
-		// Fallback to empty results
-		log.Printf("No block scan results available, using empty results for %d images", len(parsedBlock.Images))
-		scanResults = bm.createEmptyScanResults(len(parsedBlock.Images))
+		scanResults = bm.createEmptyScanResults(0)
 	}
 
 	stegoCount := bm.countStegoImagesFromAPIResponse(scanResults)
@@ -814,8 +762,8 @@ func (bm *BlockMonitor) ProcessBlock(height int64) error {
 	bm.totalInscriptions += int64(len(inscriptions))
 	bm.totalStegoContracts += int64(bm.countStegoImages(scanResults))
 
-	log.Printf("Successfully processed block %d in %v: %d txs, %d images, %d inscriptions, %d stego detected",
-		height, processingTime, len(parsedBlock.Transactions), len(parsedBlock.Images), len(inscriptions), bm.countStegoImages(scanResults))
+	log.Printf("Successfully processed block %d in %v: %d txs, %d images, %d inscriptions, %d stego detected, %d smart contracts",
+		height, processingTime, len(parsedBlock.Transactions), len(parsedBlock.Images), len(inscriptions), bm.countStegoImages(scanResults), len(smartContracts))
 
 	for _, fn := range bm.onBlockProcessed {
 		fn(height)
@@ -1727,94 +1675,41 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 			candidatesByID[rec.ID] = append(candidatesByID[rec.ID], hash)
 		}
 	}
-
-	if len(primaryCandidates) == 0 && len(fallbackCandidates) == 0 && len(txidMatches) == 0 {
-		return smartContracts
+	contractCands := bm.contractCandidates(primaryCandidates)
+	for hash, rec := range contractCands {
+		if _, exists := primaryCandidates[hash]; !exists {
+			primaryCandidates[hash] = rec
+			candidatesByID[rec.ID] = append(candidatesByID[rec.ID], hash)
+		}
 	}
 
-	log.Printf("oracle reconcile: %d primary hashes, %d fallback hashes, %d funding txids across %d ingestions (+%d from proposals)", len(primaryCandidates), len(fallbackCandidates), len(txidMatches), len(recs), len(proposalCandidates))
+	log.Printf("oracle reconcile: block %d: ingestion=%v sweepStore=%v, %d ingestions, %d proposal candidates, %d contract candidates, %d primary, %d fallback, %d txid",
+		blockHeight, bm.ingestion != nil, bm.sweepStore != nil, len(recs), len(proposalCandidates), len(contractCands), len(primaryCandidates), len(fallbackCandidates), len(txidMatches))
+
+	if len(primaryCandidates) == 0 && len(fallbackCandidates) == 0 && len(txidMatches) == 0 {
+		log.Printf("oracle reconcile: block %d: no candidates found, will still scan for OP_RETURN contracts", blockHeight)
+	}
+
+	log.Printf("oracle reconcile: %d primary hashes, %d fallback hashes, %d funding txids across %d ingestions (+%d from proposals, +%d from contracts)", len(primaryCandidates), len(fallbackCandidates), len(txidMatches), len(recs), len(proposalCandidates), len(contractCands))
 
 	for _, tx := range parsedBlock.Transactions {
 		if match, ok := txidMatches[tx.TxID]; ok && match != nil {
+			var imageFile, imagePath string
 			destPath, err := bm.moveIngestionImageWithFilename(blockDir, match, blockImageFilename(match, tx.TxID))
 			if err != nil {
-				log.Printf("oracle reconcile: failed to move ingestion image for %s: %v", match.ID, err)
-				bm.maybeReconcileStego(match)
+				log.Printf("oracle reconcile: image unavailable for %s (will create contract without image): %v", match.ID, err)
 			} else {
-				bm.maybeReconcileStego(match)
-				log.Printf("oracle reconcile: matched ingestion %s via funding_txid=%s", match.ID, tx.TxID)
-				imageFile := filepath.Base(destPath)
-				imagePath := filepath.Join("images", imageFile)
-				contractMeta := map[string]any{
-					"tx_id":              tx.TxID,
-					"output_index":       0,
-					"block_height":       blockHeight,
-					"match_type":         "funding_txid",
-					"match_hash":         tx.TxID,
-					"image_file":         imageFile,
-					"image_path":         imagePath,
-					"ingestion_id":       match.ID,
-					"visible_pixel_hash": stringFromAny(match.Metadata["visible_pixel_hash"]),
-				}
-				mergeIngestionMetadata(contractMeta, match.Metadata)
-				applyStegoMetadata(contractMeta, match.Metadata)
-				smartContracts = upsertContractByID(smartContracts, SmartContractData{
-					ContractID:  match.ID,
-					BlockHeight: blockHeight,
-					ImagePath:   imagePath,
-					Confidence:  0,
-					Metadata:    contractMeta,
-				})
-				bm.markIngestionConfirmed(match, tx.TxID, blockHeight, imageFile, imagePath)
-				bm.updateTaskFundingProofsFromTx(match.ID, tx, blockHeight)
-				bm.confirmContractTasks(match.ID, tx.TxID, blockHeight)
-				for _, candidate := range candidatesByID[match.ID] {
-					delete(primaryCandidates, candidate)
-					delete(fallbackCandidates, candidate)
-				}
-				delete(txidMatches, tx.TxID)
-				matchedTxIDs[tx.TxID] = match.ID
-			}
-		}
-
-		// OP_RETURN matching: scan outputs for wish_hash || product_hash proof.
-		// This is the primary matching path for new-style transactions that use
-		// direct donation + OP_RETURN instead of P2WSH hashlocks.
-		for _, output := range tx.Outputs {
-			wishHash, productHash, ok := parseOPReturnHashes(output.ScriptPubKey)
-			if !ok {
-				continue
-			}
-			// Try matching wish_hash against primary candidates.
-			match := primaryCandidates[wishHash]
-			if match == nil && productHash != "" {
-				match = primaryCandidates[productHash]
-			}
-			if match == nil {
-				match = fallbackCandidates[wishHash]
-			}
-			if match == nil {
-				continue
-			}
-			if _, ok := matchedTxIDs[tx.TxID]; ok {
-				continue // already matched by funding_txid
-			}
-			destPath, err := bm.moveIngestionImageWithFilename(blockDir, match, blockImageFilename(match, tx.TxID))
-			if err != nil {
-				log.Printf("oracle reconcile: failed to move ingestion image for %s: %v", match.ID, err)
-				bm.maybeReconcileStego(match)
-				continue
+				imageFile = filepath.Base(destPath)
+				imagePath = filepath.Join("images", imageFile)
 			}
 			bm.maybeReconcileStego(match)
-			log.Printf("oracle reconcile: matched ingestion %s via OP_RETURN wish=%s product=%s in tx %s", match.ID, wishHash, productHash, tx.TxID)
-			imageFile := filepath.Base(destPath)
-			imagePath := filepath.Join("images", imageFile)
+			log.Printf("oracle reconcile: matched ingestion %s via funding_txid=%s", match.ID, tx.TxID)
 			contractMeta := map[string]any{
 				"tx_id":              tx.TxID,
+				"output_index":       0,
 				"block_height":       blockHeight,
-				"match_type":         "op_return",
-				"wish_hash":          wishHash,
-				"product_hash":       productHash,
+				"match_type":         "funding_txid",
+				"match_hash":         tx.TxID,
 				"image_file":         imageFile,
 				"image_path":         imagePath,
 				"ingestion_id":       match.ID,
@@ -1836,7 +1731,96 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 				delete(primaryCandidates, candidate)
 				delete(fallbackCandidates, candidate)
 			}
+			delete(txidMatches, tx.TxID)
 			matchedTxIDs[tx.TxID] = match.ID
+		}
+
+		// OP_RETURN matching: scan outputs for wish_hash || product_hash proof.
+		// This is the primary matching path for new-style transactions that use
+		// direct donation + OP_RETURN instead of P2WSH hashlocks.
+		for _, output := range tx.Outputs {
+			wishHash, productHash, ok := parseOPReturnHashes(output.ScriptPubKey)
+			if !ok {
+				continue
+			}
+			log.Printf("oracle reconcile: block %d tx %s has OP_RETURN wish=%s product=%s", blockHeight, tx.TxID, wishHash, productHash)
+			// Try matching wish_hash against primary candidates.
+			match := primaryCandidates[wishHash]
+			if match == nil && productHash != "" {
+				match = primaryCandidates[productHash]
+			}
+			if match == nil {
+				match = fallbackCandidates[wishHash]
+			}
+			if _, ok := matchedTxIDs[tx.TxID]; ok {
+				continue // already matched by funding_txid
+			}
+			if match != nil {
+				// Matched against a known candidate (ingestion/proposal/contract).
+				var imageFile, imagePath string
+				destPath, err := bm.moveIngestionImageWithFilename(blockDir, match, blockImageFilename(match, tx.TxID))
+				if err != nil {
+					log.Printf("oracle reconcile: image unavailable for %s (will create contract without image): %v", match.ID, err)
+				} else {
+					imageFile = filepath.Base(destPath)
+					imagePath = filepath.Join("images", imageFile)
+				}
+				bm.maybeReconcileStego(match)
+				log.Printf("oracle reconcile: matched ingestion %s via OP_RETURN wish=%s product=%s in tx %s", match.ID, wishHash, productHash, tx.TxID)
+				contractMeta := map[string]any{
+					"tx_id":              tx.TxID,
+					"block_height":       blockHeight,
+					"match_type":         "op_return",
+					"wish_hash":          wishHash,
+					"product_hash":       productHash,
+					"image_file":         imageFile,
+					"image_path":         imagePath,
+					"ingestion_id":       match.ID,
+					"visible_pixel_hash": stringFromAny(match.Metadata["visible_pixel_hash"]),
+				}
+				mergeIngestionMetadata(contractMeta, match.Metadata)
+				applyStegoMetadata(contractMeta, match.Metadata)
+				smartContracts = upsertContractByID(smartContracts, SmartContractData{
+					ContractID:  match.ID,
+					BlockHeight: blockHeight,
+					ImagePath:   imagePath,
+					Confidence:  0,
+					Metadata:    contractMeta,
+				})
+				bm.markIngestionConfirmed(match, tx.TxID, blockHeight, imageFile, imagePath)
+				bm.updateTaskFundingProofsFromTx(match.ID, tx, blockHeight)
+				bm.confirmContractTasks(match.ID, tx.TxID, blockHeight)
+				for _, candidate := range candidatesByID[match.ID] {
+					delete(primaryCandidates, candidate)
+					delete(fallbackCandidates, candidate)
+				}
+				matchedTxIDs[tx.TxID] = match.ID
+			} else {
+				// No candidate match — create contract directly from on-chain OP_RETURN data.
+				// This is the primary path for a fresh instance scanning old blocks before
+				// IPFS sync delivers the wish image.
+				contractID := "wish-" + wishHash
+				log.Printf("oracle reconcile: block %d tx %s: OP_RETURN wish=%s discovered on-chain (no local candidate), creating contract %s", blockHeight, tx.TxID, wishHash, contractID)
+				contractMeta := map[string]any{
+					"tx_id":              tx.TxID,
+					"block_height":       blockHeight,
+					"match_type":         "op_return_discovery",
+					"wish_hash":          wishHash,
+					"product_hash":       productHash,
+					"visible_pixel_hash": wishHash,
+					"confirmed_txid":     tx.TxID,
+					"confirmed_height":   blockHeight,
+				}
+				smartContracts = upsertContractByID(smartContracts, SmartContractData{
+					ContractID:  contractID,
+					BlockHeight: blockHeight,
+					Confidence:  0,
+					Metadata:    contractMeta,
+				})
+				// Persist contract to MCP store so it appears in /api/contracts.
+				bm.persistDiscoveryContract(contractID, wishHash, tx.TxID, blockHeight, productHash)
+				matchedTxIDs[tx.TxID] = contractID
+			}
 			break // one OP_RETURN match per tx
 		}
 
@@ -1846,41 +1830,41 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 			} else if existingID, ok := matchedTxIDs[tx.TxID]; ok && existingID != match.ID {
 				log.Printf("oracle reconcile: skipping %s match for %s (tx %s already matched by funding_txid)", matchType, match.ID, tx.TxID)
 			} else {
+				var imageFile, imagePath string
 				destPath, err := bm.moveIngestionImageWithFilename(blockDir, match, blockImageFilename(match, tx.TxID))
 				if err != nil {
-					log.Printf("oracle reconcile: failed to move ingestion image for %s: %v", match.ID, err)
-					bm.maybeReconcileStego(match)
+					log.Printf("oracle reconcile: image unavailable for %s (will create contract without image): %v", match.ID, err)
 				} else {
-					bm.maybeReconcileStego(match)
-					log.Printf("oracle reconcile: matched ingestion %s via %s=%s in tx %s witness", match.ID, matchType, matchedHash, tx.TxID)
-					imageFile := filepath.Base(destPath)
-					imagePath := filepath.Join("images", imageFile)
-					contractMeta := map[string]any{
-						"tx_id":              tx.TxID,
-						"block_height":       blockHeight,
-						"match_type":         matchType,
-						"match_hash":         matchedHash,
-						"image_file":         imageFile,
-						"image_path":         imagePath,
-						"ingestion_id":       match.ID,
-						"visible_pixel_hash": stringFromAny(match.Metadata["visible_pixel_hash"]),
-					}
-					mergeIngestionMetadata(contractMeta, match.Metadata)
-					applyStegoMetadata(contractMeta, match.Metadata)
-					smartContracts = upsertContractByID(smartContracts, SmartContractData{
-						ContractID:  match.ID,
-						BlockHeight: blockHeight,
-						ImagePath:   imagePath,
-						Confidence:  0,
-						Metadata:    contractMeta,
-					})
-					bm.markIngestionConfirmed(match, tx.TxID, blockHeight, imageFile, imagePath)
-					bm.updateTaskFundingProofsFromTx(match.ID, tx, blockHeight)
-					bm.confirmContractTasks(match.ID, tx.TxID, blockHeight)
-					for _, candidate := range candidatesByID[match.ID] {
-						delete(primaryCandidates, candidate)
-						delete(fallbackCandidates, candidate)
-					}
+					imageFile = filepath.Base(destPath)
+					imagePath = filepath.Join("images", imageFile)
+				}
+				bm.maybeReconcileStego(match)
+				log.Printf("oracle reconcile: matched ingestion %s via %s=%s in tx %s witness", match.ID, matchType, matchedHash, tx.TxID)
+				contractMeta := map[string]any{
+					"tx_id":              tx.TxID,
+					"block_height":       blockHeight,
+					"match_type":         matchType,
+					"match_hash":         matchedHash,
+					"image_file":         imageFile,
+					"image_path":         imagePath,
+					"ingestion_id":       match.ID,
+					"visible_pixel_hash": stringFromAny(match.Metadata["visible_pixel_hash"]),
+				}
+				mergeIngestionMetadata(contractMeta, match.Metadata)
+				applyStegoMetadata(contractMeta, match.Metadata)
+				smartContracts = upsertContractByID(smartContracts, SmartContractData{
+					ContractID:  match.ID,
+					BlockHeight: blockHeight,
+					ImagePath:   imagePath,
+					Confidence:  0,
+					Metadata:    contractMeta,
+				})
+				bm.markIngestionConfirmed(match, tx.TxID, blockHeight, imageFile, imagePath)
+				bm.updateTaskFundingProofsFromTx(match.ID, tx, blockHeight)
+				bm.confirmContractTasks(match.ID, tx.TxID, blockHeight)
+				for _, candidate := range candidatesByID[match.ID] {
+					delete(primaryCandidates, candidate)
+					delete(fallbackCandidates, candidate)
 				}
 			}
 		}
@@ -1898,17 +1882,17 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 				continue
 			}
 
+			var imageFile, imagePath string
 			destPath, err := bm.moveIngestionImageWithFilename(blockDir, match, blockImageFilename(match, tx.TxID))
 			if err != nil {
-				log.Printf("oracle reconcile: failed to move ingestion image for %s: %v", match.ID, err)
-				bm.maybeReconcileStego(match)
-				continue
+				log.Printf("oracle reconcile: image unavailable for %s (will create contract without image): %v", match.ID, err)
+			} else {
+				imageFile = filepath.Base(destPath)
+				imagePath = filepath.Join("images", imageFile)
 			}
 			bm.maybeReconcileStego(match)
 			log.Printf("oracle reconcile: matched ingestion %s via %s=%s in tx %s output %d", match.ID, matchType, matchedHash, tx.TxID, outIdx)
 
-			imageFile := filepath.Base(destPath)
-			imagePath := filepath.Join("images", imageFile)
 			contractMeta := map[string]any{
 				"tx_id":              tx.TxID,
 				"output_index":       outIdx,
@@ -2214,6 +2198,79 @@ func ingestionCandidateBuckets(rec services.IngestionRecord, params *chaincfg.Pa
 	return primary, fallback
 }
 
+// contractUpserter is an optional interface satisfied by MCP stores that can
+// upsert contracts.  Used by persistDiscoveryContract to save on-chain
+// OP_RETURN discoveries so they appear in /api/contracts immediately.
+type contractUpserter interface {
+	UpsertContractWithTasks(ctx context.Context, c smart_contract.Contract, t []smart_contract.Task) error
+}
+
+// persistDiscoveryContract saves a contract discovered purely from on-chain
+// OP_RETURN data to the MCP store and ingestion database.  This enables a
+// fresh instance to rebuild its database from block scans before IPFS sync
+// delivers the original wish image.
+func (bm *BlockMonitor) persistDiscoveryContract(contractID, wishHash, txID string, blockHeight int64, productHash string) {
+	ctx := context.Background()
+
+	// Persist to MCP store so the contract is visible in /api/contracts.
+	if upserter, ok := bm.sweepStore.(contractUpserter); ok {
+		bh := int(blockHeight)
+		now := time.Now()
+		c := smart_contract.Contract{
+			ContractID:           contractID,
+			Title:                "Wish " + wishHash[:8] + "...",
+			Status:               "confirmed",
+			ConfirmedBlockHeight: &bh,
+			ConfirmedAt:          &now,
+			Metadata: map[string]interface{}{
+				"visible_pixel_hash": wishHash,
+				"confirmed_txid":     txID,
+				"confirmed_height":   blockHeight,
+				"match_type":         "op_return_discovery",
+				"product_hash":       productHash,
+			},
+			CreatedAt: now,
+		}
+		if err := upserter.UpsertContractWithTasks(ctx, c, nil); err != nil {
+			log.Printf("oracle reconcile: failed to persist discovery contract %s: %v", contractID, err)
+		} else {
+			log.Printf("oracle reconcile: persisted discovery contract %s to MCP store", contractID)
+		}
+		// Also call ConfirmContract to set confirmed metadata consistently.
+		if err := bm.sweepStore.ConfirmContract(ctx, contractID, bh, txID); err != nil {
+			log.Printf("oracle reconcile: ConfirmContract for %s: %v", contractID, err)
+		}
+	}
+
+	// Create ingestion record so re-scans match via the candidate path and
+	// IPFS sync can later enrich with the actual wish image.
+	if bm.ingestion != nil {
+		rec := services.IngestionRecord{
+			ID:       wishHash,
+			Method:   "on_chain_discovery",
+			Status:   "confirmed",
+			Metadata: map[string]interface{}{
+				"visible_pixel_hash": wishHash,
+				"confirmed_txid":     txID,
+				"confirmed_height":   blockHeight,
+				"match_type":         "op_return_discovery",
+			},
+		}
+		if err := bm.ingestion.Create(rec); err != nil {
+			log.Printf("oracle reconcile: failed to create discovery ingestion for %s: %v", wishHash, err)
+		} else {
+			log.Printf("oracle reconcile: created discovery ingestion record %s", wishHash)
+		}
+	}
+}
+
+// contractLister is an optional interface satisfied by MCP stores that can
+// list contracts (wishes).  Used to build OP_RETURN candidates from wish
+// contracts whose contract_id encodes the visible_pixel_hash.
+type contractLister interface {
+	ListContracts(filter smart_contract.ContractFilter) ([]smart_contract.Contract, error)
+}
+
 // proposalLister is an optional interface satisfied by MCP stores that can
 // list proposals.  Used to build OP_RETURN candidates from proposals when
 // the peer's ingestion records are incomplete.
@@ -2228,14 +2285,17 @@ type proposalLister interface {
 func (bm *BlockMonitor) proposalCandidates(existing map[string]*services.IngestionRecord) map[string]*services.IngestionRecord {
 	pl, ok := bm.sweepStore.(proposalLister)
 	if !ok || pl == nil {
+		log.Printf("proposalCandidates: sweepStore does not satisfy proposalLister (sweepStore=%T, ok=%v)", bm.sweepStore, ok)
 		return nil
 	}
 	proposals, err := pl.ListProposals(context.Background(), smart_contract.ProposalFilter{
 		MaxResults: 500,
 	})
 	if err != nil {
+		log.Printf("proposalCandidates: ListProposals error: %v", err)
 		return nil
 	}
+	log.Printf("proposalCandidates: %d proposals returned", len(proposals))
 	out := make(map[string]*services.IngestionRecord)
 	for _, p := range proposals {
 		hash := normalizeHex(strings.TrimSpace(p.VisiblePixelHash))
@@ -2261,6 +2321,48 @@ func (bm *BlockMonitor) proposalCandidates(existing map[string]*services.Ingesti
 		}
 		out[hash] = rec
 	}
+	return out
+}
+
+// contractCandidates builds synthetic IngestionRecord entries from contracts
+// whose contract_id starts with "wish-" and thus encodes a visible_pixel_hash.
+func (bm *BlockMonitor) contractCandidates(existing map[string]*services.IngestionRecord) map[string]*services.IngestionRecord {
+	cl, ok := bm.sweepStore.(contractLister)
+	if !ok || cl == nil {
+		return nil
+	}
+	contracts, err := cl.ListContracts(smart_contract.ContractFilter{Limit: 500})
+	if err != nil {
+		log.Printf("contractCandidates: ListContracts error: %v", err)
+		return nil
+	}
+	out := make(map[string]*services.IngestionRecord)
+	for _, c := range contracts {
+		hash := ""
+		if strings.HasPrefix(c.ContractID, "wish-") {
+			hash = normalizeHex(strings.TrimPrefix(c.ContractID, "wish-"))
+		}
+		if hash == "" {
+			if v, ok := c.Metadata["visible_pixel_hash"].(string); ok {
+				hash = normalizeHex(v)
+			}
+		}
+		if hash == "" || len(hash) != 64 {
+			continue
+		}
+		if _, covered := existing[hash]; covered {
+			continue
+		}
+		out[hash] = &services.IngestionRecord{
+			ID:       hash,
+			Filename: "",
+			Metadata: map[string]interface{}{
+				"visible_pixel_hash": hash,
+				"source":             "contract",
+			},
+		}
+	}
+	log.Printf("contractCandidates: %d contracts returned, %d new candidates", len(contracts), len(out))
 	return out
 }
 
@@ -2610,19 +2712,17 @@ func (bm *BlockMonitor) moveIngestionImageWithFilename(blockDir string, rec *ser
 	}
 	destPath := security.SafeFilePath(destDir, destFilename)
 	if _, err := os.Stat(destPath); err == nil {
-		bm.cleanupUploadArtifacts(rec)
+		// Already copied — keep upload files for IPFS mirror.
 		return destPath, nil
 	}
 
 	if stegoPath, ok := bm.stegoImagePath(rec); ok {
 		if err := bm.copyStegoToBlock(stegoPath, destPath); err == nil {
-			bm.unpinUploadPath(stegoPath)
-			bm.cleanupUploadArtifacts(rec)
+			// Keep stegoPath in uploads/ so the IPFS mirror continues serving it.
 			return destPath, nil
 		}
 	}
 	if bm.writeStegoToBlock(rec, destPath) {
-		bm.cleanupUploadArtifacts(rec)
 		return destPath, nil
 	}
 
@@ -2669,18 +2769,14 @@ func (bm *BlockMonitor) moveIngestionImageWithFilename(blockDir string, rec *ser
 		if err := os.WriteFile(destPath, data, 0644); err != nil {
 			return "", fmt.Errorf("write ingestion image: %w", err)
 		}
-		bm.cleanupUploadArtifacts(rec)
 		return destPath, nil
 	}
 
-	if err := os.Rename(sourcePath, destPath); err != nil {
-		if err := copyFile(sourcePath, destPath); err != nil {
-			return "", err
-		}
-		_ = os.Remove(sourcePath)
+	// Copy instead of move — keep the source in uploads/ so the IPFS mirror
+	// continues to serve confirmed wish images to new nodes joining the network.
+	if err := copyFile(sourcePath, destPath); err != nil {
+		return "", err
 	}
-	bm.unpinUploadPath(sourcePath)
-	bm.cleanupUploadArtifacts(rec)
 	return destPath, nil
 }
 

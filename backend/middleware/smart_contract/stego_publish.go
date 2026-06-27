@@ -62,9 +62,6 @@ type stegoAnnouncement struct {
 func loadStegoApprovalConfig() stegoApprovalConfig {
 	enabled := !strings.EqualFold(strings.TrimSpace(os.Getenv("STARGATE_STEGO_APPROVAL_ENABLED")), "false")
 	proxyBase := strings.TrimSpace(os.Getenv("STARGATE_PROXY_BASE"))
-	if proxyBase == "" {
-		proxyBase = "http://localhost:8080"
-	}
 	method := strings.TrimSpace(os.Getenv("STARGATE_STEGO_METHOD"))
 	if method == "" {
 		method = "lsb"
