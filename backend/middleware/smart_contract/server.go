@@ -2839,13 +2839,9 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 			if proposal.Metadata == nil {
 				proposal.Metadata = map[string]interface{}{}
 			}
-			if _, ok := proposal.Metadata["creator_wallet"].(string); !ok {
-				applyCreatorWallet(proposal.Metadata, r.Header.Get("X-API-Key"), s.apiKeys)
-				if err := s.store.UpdateProposal(r.Context(), proposal); err != nil {
-					Error(w, http.StatusBadRequest, err.Error())
-					return
-				}
-			}
+			// NOTE: Do NOT backfill creator_wallet here from the approver's API key.
+			// The proposal's creator_wallet should only be set during creation.
+			// Stamping the approver's wallet would write incorrect data.
 			if err := s.enforceCreatorApproval(r, proposal); err != nil {
 				Error(w, http.StatusForbidden, err.Error())
 				return
