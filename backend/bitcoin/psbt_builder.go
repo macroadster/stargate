@@ -21,7 +21,8 @@ type PSBTRequest struct {
 	PayerAddresses    []btcutil.Address
 	TargetValueSats   int64
 	PixelHash         []byte   // Wish image hash (32 bytes) — used for OP_RETURN proof
-	ProductPixelHash  []byte   // Product image hash (32 bytes) — used for OP_RETURN proof
+	ProductPixelHash  []byte   // Product image hash (32 bytes) — used for OP_RETURN proof (stego image)
+	SandboxHash       []byte   // Sandbox tarball hash (32 bytes) — used for OP_RETURN proof
 	CommitmentSats    int64    // Sats sent directly to DonationAddress
 	DonationAddress   btcutil.Address // Direct P2WPKH donation recipient
 	CommitmentAddress btcutil.Address // Deprecated: kept for backward compat, use DonationAddress
@@ -58,7 +59,7 @@ type PSBTResult struct {
 	CommitmentAddr   string   // Deprecated: use DonationAddr
 	DonationVout     uint32   // Vout index of the direct donation P2WPKH output
 	DonationAddr     string   // Donation address (P2WPKH)
-	OPReturnScript   []byte   // OP_RETURN script with wish_hash || product_hash
+	OPReturnScript   []byte   // OP_RETURN script with wish_hash || stego_hash || sandbox_hash
 	OPReturnVout     uint32   // Vout index of the OP_RETURN output
 	FundingTxID      string
 }
@@ -192,7 +193,7 @@ func BuildFundingPSBT(client *MempoolClient, params *chaincfg.Params, req PSBTRe
 	var donation *donationOutputs
 	// New path: direct donation + OP_RETURN proof (no hashlock, no sweeping)
 	if req.DonationAddress != nil && len(req.PixelHash) > 0 && req.CommitmentSats > 0 {
-		donation, err = buildDonationOutputs(params, req.PixelHash, req.ProductPixelHash, req.DonationAddress)
+		donation, err = buildDonationOutputs(params, req.PixelHash, req.ProductPixelHash, req.SandboxHash, req.DonationAddress)
 		if err != nil {
 			return nil, err
 		}
@@ -711,13 +712,18 @@ func buildPayoutScripts(req PSBTRequest) ([][]byte, []int64, error) {
 type donationOutputs struct {
 	donationScript []byte // P2WPKH pkScript for the donation address
 	donationAddr   string
-	opReturnScript []byte // OP_RETURN <wish_hash(32)><product_hash(32)>
+	opReturnScript []byte // OP_RETURN <wish_hash(32)>[<stego_hash(32)>][<sandbox_hash(32)>]
 }
 
 // buildDonationOutputs builds a direct P2WPKH donation output and an OP_RETURN
-// proof output containing wish_hash || product_hash.  This replaces the old
-// P2WSH hashlock approach — no sweeping required.
-func buildDonationOutputs(params *chaincfg.Params, wishHash, productHash []byte, donationAddr btcutil.Address) (*donationOutputs, error) {
+// proof output.  The OP_RETURN payload is:
+//
+//	wish_hash(32) || stego_image_hash(32) || sandbox_hash(32)  — 96 bytes (full)
+//	wish_hash(32) || stego_image_hash(32)                      — 64 bytes (no sandbox)
+//	wish_hash(32)                                               — 32 bytes (wish only)
+//
+// This replaces the old P2WSH hashlock approach — no sweeping required.
+func buildDonationOutputs(params *chaincfg.Params, wishHash, stegoHash, sandboxHash []byte, donationAddr btcutil.Address) (*donationOutputs, error) {
 	if donationAddr == nil {
 		return nil, fmt.Errorf("donation address required")
 	}
@@ -728,14 +734,16 @@ func buildDonationOutputs(params *chaincfg.Params, wishHash, productHash []byte,
 		return nil, fmt.Errorf("donation script: %w", err)
 	}
 
-	// Build OP_RETURN: wish_hash(32) || product_hash(32).
-	// If product hash is missing (backward compat), just use wish hash.
+	// Build OP_RETURN: wish_hash(32) [|| stego_hash(32) [|| sandbox_hash(32)]].
 	var payload []byte
 	if len(wishHash) == 32 {
 		payload = append(payload, wishHash...)
 	}
-	if len(productHash) == 32 {
-		payload = append(payload, productHash...)
+	if len(stegoHash) == 32 {
+		payload = append(payload, stegoHash...)
+	}
+	if len(sandboxHash) == 32 {
+		payload = append(payload, sandboxHash...)
 	}
 	if len(payload) == 0 {
 		return nil, fmt.Errorf("at least one 32-byte hash required for OP_RETURN")

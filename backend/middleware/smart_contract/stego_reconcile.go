@@ -155,10 +155,83 @@ func (s *Server) handleStegoReconcile(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, res)
 }
 
-// ReconcileStego reconciles a stego image from IPFS and upserts contracts/tasks.
+// ReconcileStego reconciles a stego image and upserts contracts/tasks.
+// It first tries to read the image from the local UPLOADS_DIR (by hash),
+// falling back to IPFS if not found locally.
 func (s *Server) ReconcileStego(ctx context.Context, stegoCID, expectedHash string) error {
+	// Try local file first: if the stegoCID looks like a SHA256 hash,
+	// look for UPLOADS_DIR/<hash> on disk (synced by IPFS mirror).
+	if len(stegoCID) == 64 {
+		if _, hexErr := hex.DecodeString(stegoCID); hexErr == nil {
+			if err := s.reconcileStegoFromLocalFile(ctx, stegoCID); err == nil {
+				return nil
+			}
+			// Fall through to IPFS if local file reconcile failed.
+		}
+	}
 	_, err := s.reconcileStegoFromIPFS(ctx, stegoCID, expectedHash)
 	return err
+}
+
+// reconcileStegoFromLocalFile reads a stego image from UPLOADS_DIR/<hash>
+// and runs the same reconciliation as reconcileStegoFromIPFS.
+func (s *Server) reconcileStegoFromLocalFile(ctx context.Context, stegoHash string) error {
+	uploadsDir := strings.TrimSpace(os.Getenv("UPLOADS_DIR"))
+	if uploadsDir == "" {
+		return fmt.Errorf("UPLOADS_DIR not set")
+	}
+	stegoPath := filepath.Join(uploadsDir, stegoHash)
+	stegoBytes, err := os.ReadFile(stegoPath)
+	if err != nil {
+		return fmt.Errorf("read local stego %s: %w", stegoPath, err)
+	}
+	// Verify hash.
+	sum := sha256.Sum256(stegoBytes)
+	actualHash := hex.EncodeToString(sum[:])
+	if !strings.EqualFold(actualHash, stegoHash) {
+		return fmt.Errorf("stego hash mismatch: expected %s got %s", stegoHash, actualHash)
+	}
+	log.Printf("stego: reconciling from local file %s (%d bytes)", stegoPath, len(stegoBytes))
+
+	rawBytes, err := extractStegoManifest(ctx, stegoBytes, loadStegoReconcileConfig())
+	if err != nil {
+		return fmt.Errorf("stego extraction failed: %w", err)
+	}
+	manifest, payload, err := stego.ParseEmbedded(rawBytes)
+	if err != nil {
+		return fmt.Errorf("stego parse failed: %w", err)
+	}
+	contractID := strings.TrimSpace(manifest.VisiblePixelHash)
+	if contractID == "" {
+		return fmt.Errorf("manifest visible_pixel_hash missing")
+	}
+	// v1 fallback: payload was not inline — fetch from IPFS.
+	if payload.SchemaVersion == 0 && manifest.PayloadCID != "" {
+		ipfsClient := ipfs.NewClientFromEnv()
+		if ipfsClient == nil {
+			return fmt.Errorf("v1 stego needs IPFS for payload fetch but IPFS is disabled")
+		}
+		payloadBytes, err := ipfsClient.Cat(ctx, manifest.PayloadCID)
+		if err != nil {
+			return fmt.Errorf("ipfs cat payload failed: %w", err)
+		}
+		if err := json.Unmarshal(payloadBytes, &payload); err != nil {
+			return fmt.Errorf("payload json decode failed: %w", err)
+		}
+	}
+	if err := s.upsertContractFromStegoPayload(ctx, contractID, stegoHash, stegoHash, manifest, payload); err != nil {
+		return err
+	}
+	s.ensureStegoIngestion(ctx, contractID, stegoHash, stegoHash, stegoBytes, manifest)
+
+	// If the contract is already confirmed, kick off sandbox extraction.
+	if c, err := s.store.GetContract(contractID); err == nil {
+		if strings.EqualFold(strings.TrimSpace(c.Status), "confirmed") {
+			go s.downloadSandboxArtifacts(context.Background(), contractID)
+		}
+	}
+	log.Printf("stego: reconciled from local file: contract_id=%s, hash=%s", contractID, stegoHash)
+	return nil
 }
 
 // ReconcileStegoWithAnnouncement reconciles a stego image using embedded announcement data.

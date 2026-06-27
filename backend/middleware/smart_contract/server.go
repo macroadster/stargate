@@ -751,12 +751,31 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		}
 	}
 
-	// Resolve product pixel hash for OP_RETURN proof.
+	// Prepare stego image + sandbox tarball BEFORE building the PSBT so
+	// their SHA256 hashes can be inscribed in the OP_RETURN.  This lets
+	// any peer confirm from on-chain data alone — no pubsub required.
+	proposalID := s.resolveProposalIDForContract(r.Context(), contractID, ingestionRec)
+	var publishArtifacts *PublishArtifacts
+	var stegoHashBytes []byte
+	var sandboxHashBytes []byte
+	if proposalID != "" {
+		artifacts, err := s.PreparePublishArtifacts(r.Context(), proposalID)
+		if err != nil {
+			log.Printf("psbt: PreparePublishArtifacts failed for %s (continuing without): %v", proposalID, err)
+		} else {
+			publishArtifacts = artifacts
+			stegoHashBytes = decodePixelHex(artifacts.StegoImageHash)
+			sandboxHashBytes = decodePixelHex(artifacts.SandboxHash)
+		}
+	}
+
+	// Fall back to explicit product pixel hash if stego preparation didn't produce one.
 	var productPixelBytes []byte
-	if ph := strings.TrimSpace(body.ProductPixelHash); ph != "" {
+	if stegoHashBytes != nil {
+		productPixelBytes = stegoHashBytes
+	} else if ph := strings.TrimSpace(body.ProductPixelHash); ph != "" {
 		productPixelBytes = decodePixelHex(ph)
 	}
-	// Fall back to task MerkleProof.ProductPixelHash if not provided explicitly.
 	if productPixelBytes == nil {
 		tasks, _ := s.store.ListTasks(smart_contract.TaskFilter{ContractID: contractID, Limit: 1})
 		for _, t := range tasks {
@@ -892,6 +911,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 				TargetValueSats:   target,
 				PixelHash:         pixelBytes,
 				ProductPixelHash:  productPixelBytes,
+				SandboxHash:       sandboxHashBytes,
 				CommitmentSats:    commitmentSats,
 				DonationAddress:   donationAddr,
 				CommitmentAddress: commitmentLockAddr,
@@ -954,7 +974,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 				"network_params":          params.Name,
 			})
 		}
-		proposalID := s.resolveProposalIDForContract(r.Context(), contractID, ingestionRec)
+		// proposalID was resolved before artifact preparation above.
 		if ingestionRec != nil && len(fundingTxIDs) > 0 {
 			metadata := map[string]interface{}{
 				"funding_txids":           fundingTxIDs,
@@ -978,8 +998,12 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 			go func() {
 				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 				defer cancel()
-				if err := s.maybePublishStegoForProposal(ctx, proposalID); err != nil {
-					log.Printf("stego publish on split psbt failed for proposal %s: %v", proposalID, err)
+				if publishArtifacts != nil {
+					s.FinalizePublishArtifacts(ctx, proposalID, publishArtifacts)
+				} else {
+					if err := s.maybePublishStegoForProposal(ctx, proposalID); err != nil {
+						log.Printf("stego publish on split psbt failed for proposal %s: %v", proposalID, err)
+					}
 				}
 				s.publishPendingStegoIngest(ctx, proposalID, publishPixelHash)
 			}()
@@ -1019,6 +1043,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 			TargetValueSats:   target,
 			PixelHash:         pixelBytes,
 			ProductPixelHash:  productPixelBytes,
+			SandboxHash:       sandboxHashBytes,
 			CommitmentSats:    commitmentSats,
 			DonationAddress:   donationAddr,
 			CommitmentAddress: commitmentLockAddr,
@@ -1035,7 +1060,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	proposalID := s.resolveProposalIDForContract(r.Context(), contractID, ingestionRec)
+	// proposalID was resolved before artifact preparation above.
 	if ingestionRec != nil && res.FundingTxID != "" {
 		scriptHashes, scriptHash160s := buildScriptHashes(res.PayoutScripts)
 		if err := s.ingestionSvc.UpdateMetadata(ingestionRec.ID, map[string]interface{}{
@@ -1054,13 +1079,21 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 	if proposalID != "" {
 		s.updateProposalMetadataBestEffort(r.Context(), proposalID, commitmentMeta)
 	}
+	// Finalize: IPFS upload + pubsub announcement (best-effort, async).
+	// The old maybePublishStegoForProposal is kept as fallback for the
+	// legacy path but the primary flow now uses PreparePublishArtifacts.
 	if proposalID != "" {
 		publishPixelHash := strings.TrimSpace(body.PixelHash)
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 			defer cancel()
-			if err := s.maybePublishStegoForProposal(ctx, proposalID); err != nil {
-				log.Printf("stego publish on psbt failed for proposal %s: %v", proposalID, err)
+			if publishArtifacts != nil {
+				s.FinalizePublishArtifacts(ctx, proposalID, publishArtifacts)
+			} else {
+				// Fallback: old path for when artifact preparation failed.
+				if err := s.maybePublishStegoForProposal(ctx, proposalID); err != nil {
+					log.Printf("stego publish on psbt failed for proposal %s: %v", proposalID, err)
+				}
 			}
 			s.publishPendingStegoIngest(ctx, proposalID, publishPixelHash)
 		}()

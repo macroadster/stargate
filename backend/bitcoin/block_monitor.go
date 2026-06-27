@@ -1736,19 +1736,19 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 			matchedTxIDs[tx.TxID] = match.ID
 		}
 
-		// OP_RETURN matching: scan outputs for wish_hash || product_hash proof.
+		// OP_RETURN matching: scan outputs for wish_hash || stego_hash || sandbox_hash proof.
 		// This is the primary matching path for new-style transactions that use
 		// direct donation + OP_RETURN instead of P2WSH hashlocks.
 		for _, output := range tx.Outputs {
-			wishHash, productHash, ok := parseOPReturnHashes(output.ScriptPubKey)
+			wishHash, stegoHash, sandboxHash, ok := parseOPReturnHashes(output.ScriptPubKey)
 			if !ok {
 				continue
 			}
-			log.Printf("oracle reconcile: block %d tx %s has OP_RETURN wish=%s product=%s", blockHeight, tx.TxID, wishHash, productHash)
+			log.Printf("oracle reconcile: block %d tx %s has OP_RETURN wish=%s stego=%s sandbox=%s", blockHeight, tx.TxID, wishHash, stegoHash, sandboxHash)
 			// Try matching wish_hash against primary candidates.
 			match := primaryCandidates[wishHash]
-			if match == nil && productHash != "" {
-				match = primaryCandidates[productHash]
+			if match == nil && stegoHash != "" {
+				match = primaryCandidates[stegoHash]
 			}
 			if match == nil {
 				match = fallbackCandidates[wishHash]
@@ -1767,13 +1767,14 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 					imagePath = filepath.Join("images", imageFile)
 				}
 				bm.maybeReconcileStego(match)
-				log.Printf("oracle reconcile: matched ingestion %s via OP_RETURN wish=%s product=%s in tx %s", match.ID, wishHash, productHash, tx.TxID)
+				log.Printf("oracle reconcile: matched ingestion %s via OP_RETURN wish=%s stego=%s sandbox=%s in tx %s", match.ID, wishHash, stegoHash, sandboxHash, tx.TxID)
 				contractMeta := map[string]any{
 					"tx_id":              tx.TxID,
 					"block_height":       blockHeight,
 					"match_type":         "op_return",
 					"wish_hash":          wishHash,
-					"product_hash":       productHash,
+					"stego_hash":         stegoHash,
+					"sandbox_hash":       sandboxHash,
 					"image_file":         imageFile,
 					"image_path":         imagePath,
 					"ingestion_id":       match.ID,
@@ -1792,6 +1793,9 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 				bm.markIngestionConfirmed(match, tx.TxID, blockHeight, imageFile, imagePath)
 				bm.updateTaskFundingProofsFromTx(match.ID, tx, blockHeight)
 				bm.confirmContractTasks(match.ID, tx.TxID, blockHeight)
+				// Trigger stego reconciliation and sandbox extraction using
+				// the on-chain hashes — no pubsub or flag required.
+				bm.reconcileOnChainArtifacts(match.ID, stegoHash, sandboxHash)
 				for _, candidate := range candidatesByID[match.ID] {
 					delete(primaryCandidates, candidate)
 					delete(fallbackCandidates, candidate)
@@ -1799,11 +1803,11 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 				matchedTxIDs[tx.TxID] = match.ID
 			} else {
 				// No candidate match — log for debugging but do NOT create a
-				// contract.  Any OP_RETURN with 32/64 bytes of data would be
+				// contract.  Any OP_RETURN with 32/64+ bytes of data would be
 				// treated as a wish hash, causing false "Smart Contract" entries.
 				// Contracts should only be created when the hash is confirmed
 				// via IPFS sync (stego reconcile / ingestion).
-				log.Printf("oracle reconcile: block %d tx %s: OP_RETURN wish=%s product=%s has no matching candidate, skipping (will be created when IPFS sync delivers the image)", blockHeight, tx.TxID, wishHash, productHash)
+				log.Printf("oracle reconcile: block %d tx %s: OP_RETURN wish=%s stego=%s sandbox=%s has no matching candidate, skipping (will be created when IPFS sync delivers the image)", blockHeight, tx.TxID, wishHash, stegoHash, sandboxHash)
 			}
 			break // one OP_RETURN match per tx
 		}
@@ -1915,13 +1919,16 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 	return smartContracts
 }
 
-// parseOPReturnHashes extracts wish_hash and product_hash from an OP_RETURN
-// output.  Returns (wishHash, productHash, ok).  The expected format is:
-//   OP_RETURN <push 64 bytes: wish_hash(32) || product_hash(32)>
-// or with just a wish hash (32 bytes).
-func parseOPReturnHashes(script []byte) (string, string, bool) {
+// parseOPReturnHashes extracts wish_hash, stego_image_hash, and sandbox_hash
+// from an OP_RETURN output.  Returns (wishHash, stegoHash, sandboxHash, ok).
+// The expected formats are:
+//
+//	OP_RETURN <96 bytes: wish_hash(32) || stego_hash(32) || sandbox_hash(32)>
+//	OP_RETURN <64 bytes: wish_hash(32) || stego_hash(32)>
+//	OP_RETURN <32 bytes: wish_hash only>
+func parseOPReturnHashes(script []byte) (string, string, string, bool) {
 	if len(script) < 2 || script[0] != txscript.OP_RETURN {
-		return "", "", false
+		return "", "", "", false
 	}
 	// Disassemble the script to get the data pushes.
 	tokenizer := txscript.MakeScriptTokenizer(0, script[1:])
@@ -1930,15 +1937,17 @@ func parseOPReturnHashes(script []byte) (string, string, bool) {
 		data = append(data, tokenizer.Data()...)
 	}
 	if tokenizer.Err() != nil {
-		return "", "", false
+		return "", "", "", false
 	}
 	switch len(data) {
-	case 64: // wish_hash(32) || product_hash(32)
-		return hex.EncodeToString(data[:32]), hex.EncodeToString(data[32:64]), true
+	case 96: // wish_hash(32) || stego_hash(32) || sandbox_hash(32)
+		return hex.EncodeToString(data[:32]), hex.EncodeToString(data[32:64]), hex.EncodeToString(data[64:96]), true
+	case 64: // wish_hash(32) || stego_hash(32)
+		return hex.EncodeToString(data[:32]), hex.EncodeToString(data[32:64]), "", true
 	case 32: // wish_hash only
-		return hex.EncodeToString(data[:32]), "", true
+		return hex.EncodeToString(data[:32]), "", "", true
 	default:
-		return "", "", false
+		return "", "", "", false
 	}
 }
 
@@ -3002,6 +3011,73 @@ func (bm *BlockMonitor) maybeReconcileStego(rec *services.IngestionRecord) {
 			"stego_reconciled_at": now,
 		}); err != nil {
 			log.Printf("stego reconcile: failed to mark ingestion %s reconciled: %v", rec.ID, err)
+		}
+	}
+}
+
+// reconcileOnChainArtifacts uses stego_hash and sandbox_hash from the
+// OP_RETURN to find the corresponding files in UPLOADS_DIR and trigger
+// stego reconciliation + sandbox extraction.  This is the primary
+// replication path — no pubsub or STARGATE_STEGO_APPROVAL_ENABLED needed.
+func (bm *BlockMonitor) reconcileOnChainArtifacts(contractID, stegoHash, sandboxHash string) {
+	if contractID == "" {
+		return
+	}
+	uploadsDir := strings.TrimSpace(os.Getenv("UPLOADS_DIR"))
+	if uploadsDir == "" {
+		uploadsDir = "data/uploads"
+	}
+
+	// 1. Reconcile stego image: find UPLOADS_DIR/<stegoHash> and extract
+	//    the embedded v2 payload (proposal + tasks + metadata).
+	if stegoHash != "" {
+		stegoPath := filepath.Join(uploadsDir, stegoHash)
+		if _, err := os.Stat(stegoPath); err == nil {
+			log.Printf("oracle reconcile: found stego image on disk for %s at %s, reconciling", contractID, stegoPath)
+			if bm.stegoReconciler != nil {
+				ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+				defer cancel()
+				// Pass stegoHash as both CID and expected hash — reconcileStegoFromIPFS
+				// will fail (no IPFS CID), so use the local-file reconcile path instead.
+				// The stego reconciler already knows how to read from UPLOADS_DIR.
+				if err := bm.stegoReconciler.ReconcileStego(ctx, stegoHash, stegoHash); err != nil {
+					log.Printf("oracle reconcile: stego reconcile from on-chain hash failed for %s: %v", contractID, err)
+				}
+			}
+		} else {
+			log.Printf("oracle reconcile: stego image %s not yet on disk for %s (will arrive via mirror)", stegoHash, contractID)
+		}
+	}
+
+	// 2. Persist sandbox_hash into the contract metadata so
+	//    downloadSandboxArtifacts can find the tarball by hash.
+	if sandboxHash != "" {
+		if upserter, ok := bm.sweepStore.(contractUpserter); ok {
+			ctx := context.Background()
+			// Ensure the contract exists, then update its metadata with sandbox_hash.
+			normalizedID := contractID
+			if len(normalizedID) == 64 {
+				if _, decErr := hex.DecodeString(normalizedID); decErr == nil {
+					normalizedID = "wish-" + normalizedID
+				}
+			}
+			if existing, err := bm.sweepStore.(interface {
+				GetContract(string) (smart_contract.Contract, error)
+			}).GetContract(normalizedID); err == nil {
+				meta := existing.Metadata
+				if meta == nil {
+					meta = map[string]any{}
+				}
+				if strings.TrimSpace(stringFromAny(meta["sandbox_hash"])) == "" {
+					meta["sandbox_hash"] = sandboxHash
+					if stegoHash != "" {
+						meta["stego_hash"] = stegoHash
+					}
+					existing.Metadata = meta
+					_ = upserter.UpsertContractWithTasks(ctx, existing, nil)
+					log.Printf("oracle reconcile: persisted sandbox_hash=%s for contract %s", sandboxHash, normalizedID)
+				}
+			}
 		}
 	}
 }
