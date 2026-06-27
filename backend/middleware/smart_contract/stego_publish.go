@@ -207,11 +207,11 @@ func (s *Server) PreparePublishArtifacts(ctx context.Context, proposalID string)
 	result := &PublishArtifacts{}
 
 	// 1. Build sandbox tarball.
-	sandboxDir := filepath.Join(uploadsDir, "results", scstore.NormalizeContractID(proposalID))
-	tarballPath := filepath.Join(uploadsDir, fmt.Sprintf("sandbox-%s.tar", scstore.NormalizeContractID(proposalID)))
+	sandboxDir := filepath.Join(uploadsDir, "results", visibleHash)
+	tarballPath := filepath.Join(uploadsDir, fmt.Sprintf("sandbox-%s.tar", visibleHash))
 	if h, err := stego.WriteSandboxTarball(sandboxDir, tarballPath); err == nil {
 		result.SandboxHash = h
-		log.Printf("stego prepare: sandbox tarball hash=%s for %s", h, proposalID)
+		log.Printf("stego prepare: sandbox tarball hash=%s for %s (results dir=%s)", h, proposalID, sandboxDir)
 		// Store tarball by its SHA256 hash in UPLOADS_DIR.
 		hashPath := filepath.Join(uploadsDir, h)
 		if _, statErr := os.Stat(hashPath); os.IsNotExist(statErr) {
@@ -484,11 +484,11 @@ func (s *Server) publishStegoForProposal(ctx context.Context, proposalID string,
 	// uploaded to IPFS so peers can retrieve the full artifact set.
 	sandboxHash := ""
 	uploadsDir := strings.TrimSpace(os.Getenv("UPLOADS_DIR"))
-	sandboxDir := filepath.Join(uploadsDir, "results", scstore.NormalizeContractID(proposalID))
-	tarballPath := filepath.Join(uploadsDir, fmt.Sprintf("sandbox-%s.tar", scstore.NormalizeContractID(proposalID)))
+	sandboxDir := filepath.Join(uploadsDir, "results", visibleHash)
+	tarballPath := filepath.Join(uploadsDir, fmt.Sprintf("sandbox-%s.tar", visibleHash))
 	if h, err := stego.WriteSandboxTarball(sandboxDir, tarballPath); err == nil {
 		sandboxHash = h
-		log.Printf("stego publish: sandbox tarball for %s written to %s (hash=%s)", proposalID, tarballPath, sandboxHash)
+		log.Printf("stego publish: sandbox tarball for %s written to %s (hash=%s, results dir=%s)", proposalID, tarballPath, sandboxHash, sandboxDir)
 		// Store tarball by its SHA256 hash in UPLOADS_DIR so the IPFS mirror
 		// syncs it to peers using the same hash-based filename convention.
 		// Receivers find it via UPLOADS_DIR/<sandbox_hash> at confirmation time.

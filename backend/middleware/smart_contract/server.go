@@ -757,7 +757,6 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 	proposalID := s.resolveProposalIDForContract(r.Context(), contractID, ingestionRec)
 	var publishArtifacts *PublishArtifacts
 	var stegoHashBytes []byte
-	var sandboxHashBytes []byte
 	if proposalID != "" {
 		artifacts, err := s.PreparePublishArtifacts(r.Context(), proposalID)
 		if err != nil {
@@ -765,7 +764,6 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		} else {
 			publishArtifacts = artifacts
 			stegoHashBytes = decodePixelHex(artifacts.StegoImageHash)
-			sandboxHashBytes = decodePixelHex(artifacts.SandboxHash)
 		}
 	}
 
@@ -911,7 +909,6 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 				TargetValueSats:   target,
 				PixelHash:         pixelBytes,
 				ProductPixelHash:  productPixelBytes,
-				SandboxHash:       sandboxHashBytes,
 				CommitmentSats:    commitmentSats,
 				DonationAddress:   donationAddr,
 				CommitmentAddress: commitmentLockAddr,
@@ -1043,7 +1040,6 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 			TargetValueSats:   target,
 			PixelHash:         pixelBytes,
 			ProductPixelHash:  productPixelBytes,
-			SandboxHash:       sandboxHashBytes,
 			CommitmentSats:    commitmentSats,
 			DonationAddress:   donationAddr,
 			CommitmentAddress: commitmentLockAddr,
