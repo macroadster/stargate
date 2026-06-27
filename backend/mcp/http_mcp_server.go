@@ -1087,14 +1087,9 @@ func (h *HTTPMCPServer) requireAuthorizedApprover(apiKey string, proposal smart_
 		}
 	}
 
-	// 2. Fallback: Check proposal metadata for wish creator info
-	if proposal.Metadata != nil {
-		if creatorWallet, ok := proposal.Metadata["creator_wallet"].(string); ok {
-			if strings.EqualFold(strings.TrimSpace(creatorWallet), approverWallet) {
-				return nil
-			}
-		}
-	}
+	// 2. Self-approval guard: the proposal's creator_wallet is the agent that
+	// *created the proposal*, NOT the wish owner. Never use it to authorize
+	// approval — that would let the proposer approve their own proposal.
 
 	// 3. If no wish creator info exists at all, allow for now to prevent deadlock on old data
 	hasWishCreatorInfo := false
@@ -1104,11 +1099,6 @@ func (h *HTTPMCPServer) requireAuthorizedApprover(apiKey string, proposal smart_
 			if _, ok := rec.Metadata["creator_wallet"].(string); ok {
 				hasWishCreatorInfo = true
 			}
-		}
-	}
-	if !hasWishCreatorInfo && proposal.Metadata != nil {
-		if _, ok := proposal.Metadata["creator_wallet"].(string); ok {
-			hasWishCreatorInfo = true
 		}
 	}
 

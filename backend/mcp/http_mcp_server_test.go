@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -437,19 +438,44 @@ func TestProposalCreationRequiresWish(t *testing.T) {
 
 	t.Run("approve_proposal_requires_creator", func(t *testing.T) {
 		creatorKey := "creator-key"
+		proposerKey := "proposer-key"
 		otherKey := "other-key"
 		creatorWallet := "tb1qcreatorwallet000000000000000000000000000"
+		proposerWallet := "tb1qproposerwallet0000000000000000000000000"
 		otherWallet := "tb1qotherwallet00000000000000000000000000000"
 		visibleHash := strings.Repeat("b", 64)
 
 		// Create a validator that returns different wallets for different keys
 		multiWalletValidator := &multiKeyWalletValidator{
 			wallets: map[string]string{
-				creatorKey: creatorWallet,
-				otherKey:   otherWallet,
+				creatorKey:  creatorWallet,
+				proposerKey: proposerWallet,
+				otherKey:    otherWallet,
 			},
 		}
-		creatorServer := NewHTTPMCPServer(store, multiWalletValidator, nil, ingestionSvc, scannerManager, nil, auth.NewChallengeStore(10*time.Minute))
+
+		// Use a real (SQLite) ingestion service so the wish creator wallet is
+		// stored in the ingestion record — the only authoritative source for
+		// approval authorization.
+		testDB := filepath.Join(t.TempDir(), "test.db")
+		testIngestionSvc, err := services.NewIngestionService(testDB)
+		if err != nil {
+			t.Fatalf("failed to create test ingestion service: %v", err)
+		}
+		// Seed ingestion record with the wish creator's wallet.
+		if err := testIngestionSvc.Create(services.IngestionRecord{
+			ID:       visibleHash,
+			Filename: "test.png",
+			Method:   "test",
+			Status:   "completed",
+			Metadata: map[string]interface{}{
+				"creator_wallet": creatorWallet,
+			},
+		}); err != nil {
+			t.Fatalf("failed to seed ingestion record: %v", err)
+		}
+
+		creatorServer := NewHTTPMCPServer(store, multiWalletValidator, nil, testIngestionSvc, scannerManager, nil, auth.NewChallengeStore(10*time.Minute))
 
 		proposal := smart_contract.Proposal{
 			ID:               "proposal-creator-test",
@@ -459,7 +485,9 @@ func TestProposalCreationRequiresWish(t *testing.T) {
 			BudgetSats:       1000,
 			Status:           "pending",
 			Metadata: map[string]interface{}{
-				"creator_wallet":     creatorWallet,
+				// This is the proposer's wallet, NOT the wish creator's wallet.
+				// The bug was that this field was incorrectly used for approval auth.
+				"creator_wallet":     proposerWallet,
 				"visible_pixel_hash": visibleHash,
 			},
 		}
@@ -485,6 +513,7 @@ func TestProposalCreationRequiresWish(t *testing.T) {
 		}
 		body, _ := json.Marshal(req)
 
+		// 1. Non-creator (otherKey) should be rejected
 		w := httptest.NewRecorder()
 		r := httptest.NewRequest("POST", "/mcp/call", bytes.NewReader(body))
 		r.Header.Set("Content-Type", "application/json")
@@ -493,7 +522,7 @@ func TestProposalCreationRequiresWish(t *testing.T) {
 		creatorServer.handleToolCall(w, r)
 
 		if w.Code != http.StatusOK {
-			t.Fatalf("expected 401, got %d: %s", w.Code, w.Body.String())
+			t.Fatalf("expected 200 with error payload, got %d: %s", w.Code, w.Body.String())
 		}
 
 		var resp MCPResponse
@@ -508,6 +537,41 @@ func TestProposalCreationRequiresWish(t *testing.T) {
 		}
 		if !strings.Contains(resp.Error, "does not match wish creator") {
 			t.Fatalf("expected creator mismatch error, got: %s", resp.Error)
+		}
+
+		// 2. Proposer (proposerKey) should also be rejected — this is the
+		//    self-approval bug. The proposer's wallet is in
+		//    proposal.Metadata["creator_wallet"] but they did NOT create the wish.
+		w = httptest.NewRecorder()
+		r = httptest.NewRequest("POST", "/mcp/call", bytes.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("X-API-Key", proposerKey)
+
+		creatorServer.handleToolCall(w, r)
+
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to unmarshal response: %v", err)
+		}
+		if resp.Success {
+			t.Fatalf("expected failure when proposal creator tries to self-approve")
+		}
+		if resp.ErrorCode != "UNAUTHORIZED" {
+			t.Fatalf("expected UNAUTHORIZED for self-approval, got: %s", resp.ErrorCode)
+		}
+
+		// 3. Wish creator (creatorKey) should succeed
+		w = httptest.NewRecorder()
+		r = httptest.NewRequest("POST", "/mcp/call", bytes.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("X-API-Key", creatorKey)
+
+		creatorServer.handleToolCall(w, r)
+
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to unmarshal response: %v", err)
+		}
+		if !resp.Success {
+			t.Fatalf("expected wish creator to approve successfully, got: %s", resp.Error)
 		}
 	})
 }
