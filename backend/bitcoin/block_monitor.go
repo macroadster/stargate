@@ -1724,6 +1724,7 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 				Confidence:  0,
 				Metadata:    contractMeta,
 			})
+			bm.ensureMatchedContract(match.ID, match, tx.TxID, blockHeight, imagePath)
 			bm.markIngestionConfirmed(match, tx.TxID, blockHeight, imageFile, imagePath)
 			bm.updateTaskFundingProofsFromTx(match.ID, tx, blockHeight)
 			bm.confirmContractTasks(match.ID, tx.TxID, blockHeight)
@@ -1787,6 +1788,7 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 					Confidence:  0,
 					Metadata:    contractMeta,
 				})
+				bm.ensureMatchedContract(match.ID, match, tx.TxID, blockHeight, imagePath)
 				bm.markIngestionConfirmed(match, tx.TxID, blockHeight, imageFile, imagePath)
 				bm.updateTaskFundingProofsFromTx(match.ID, tx, blockHeight)
 				bm.confirmContractTasks(match.ID, tx.TxID, blockHeight)
@@ -1796,30 +1798,12 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 				}
 				matchedTxIDs[tx.TxID] = match.ID
 			} else {
-				// No candidate match — create contract directly from on-chain OP_RETURN data.
-				// This is the primary path for a fresh instance scanning old blocks before
-				// IPFS sync delivers the wish image.
-				contractID := "wish-" + wishHash
-				log.Printf("oracle reconcile: block %d tx %s: OP_RETURN wish=%s discovered on-chain (no local candidate), creating contract %s", blockHeight, tx.TxID, wishHash, contractID)
-				contractMeta := map[string]any{
-					"tx_id":              tx.TxID,
-					"block_height":       blockHeight,
-					"match_type":         "op_return_discovery",
-					"wish_hash":          wishHash,
-					"product_hash":       productHash,
-					"visible_pixel_hash": wishHash,
-					"confirmed_txid":     tx.TxID,
-					"confirmed_height":   blockHeight,
-				}
-				smartContracts = upsertContractByID(smartContracts, SmartContractData{
-					ContractID:  contractID,
-					BlockHeight: blockHeight,
-					Confidence:  0,
-					Metadata:    contractMeta,
-				})
-				// Persist contract to MCP store so it appears in /api/contracts.
-				bm.persistDiscoveryContract(contractID, wishHash, tx.TxID, blockHeight, productHash)
-				matchedTxIDs[tx.TxID] = contractID
+				// No candidate match — log for debugging but do NOT create a
+				// contract.  Any OP_RETURN with 32/64 bytes of data would be
+				// treated as a wish hash, causing false "Smart Contract" entries.
+				// Contracts should only be created when the hash is confirmed
+				// via IPFS sync (stego reconcile / ingestion).
+				log.Printf("oracle reconcile: block %d tx %s: OP_RETURN wish=%s product=%s has no matching candidate, skipping (will be created when IPFS sync delivers the image)", blockHeight, tx.TxID, wishHash, productHash)
 			}
 			break // one OP_RETURN match per tx
 		}
@@ -1859,6 +1843,7 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 					Confidence:  0,
 					Metadata:    contractMeta,
 				})
+				bm.ensureMatchedContract(match.ID, match, tx.TxID, blockHeight, imagePath)
 				bm.markIngestionConfirmed(match, tx.TxID, blockHeight, imageFile, imagePath)
 				bm.updateTaskFundingProofsFromTx(match.ID, tx, blockHeight)
 				bm.confirmContractTasks(match.ID, tx.TxID, blockHeight)
@@ -1915,6 +1900,7 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 				Confidence:  0,
 				Metadata:    contractMeta,
 			})
+			bm.ensureMatchedContract(match.ID, match, tx.TxID, blockHeight, imagePath)
 			bm.markIngestionConfirmed(match, tx.TxID, blockHeight, imageFile, imagePath)
 			bm.updateTaskFundingProofsFromTx(match.ID, tx, blockHeight)
 			bm.confirmContractTasks(match.ID, tx.TxID, blockHeight)
@@ -2261,6 +2247,107 @@ func (bm *BlockMonitor) persistDiscoveryContract(contractID, wishHash, txID stri
 		} else {
 			log.Printf("oracle reconcile: created discovery ingestion record %s", wishHash)
 		}
+	}
+}
+
+// ensureMatchedContract ensures a contract record exists in the MCP store for
+// a matched ingestion.  reconcileOracleIngestions writes matches to the block
+// inscriptions.json, but the MCP store may not have the contract yet — for
+// example on a peer node that received the image via IPFS but hasn't run the
+// full stego reconcile.  Without this, ConfirmContract (called from
+// markIngestionConfirmed) silently fails when the row doesn't exist, leaving
+// the frontend without proposal data or sandbox links.
+func (bm *BlockMonitor) ensureMatchedContract(contractID string, match *services.IngestionRecord, txID string, blockHeight int64, imagePath string) {
+	upserter, ok := bm.sweepStore.(contractUpserter)
+	if !ok || upserter == nil {
+		return
+	}
+	ctx := context.Background()
+
+	// Build contract ID with wish- prefix for consistency.
+	visibleHash := stringFromAny(match.Metadata["visible_pixel_hash"])
+	if visibleHash == "" {
+		visibleHash = contractID
+	}
+	normalizedID := contractID
+	if len(normalizedID) == 64 {
+		if _, err := hex.DecodeString(normalizedID); err == nil {
+			normalizedID = "wish-" + normalizedID
+		}
+	}
+
+	// Try to confirm the contract first — if the row already exists,
+	// ConfirmContract will update it and we're done.
+	_ = bm.sweepStore.ConfirmContract(ctx, normalizedID, int(blockHeight), txID)
+
+	// Check if the row actually exists now — ConfirmContract doesn't return
+	// "not found" explicitly, it just updates 0 rows.
+	type contractGetter interface {
+		GetContract(id string) (smart_contract.Contract, error)
+	}
+	if cg, ok := bm.sweepStore.(contractGetter); ok {
+		if _, err := cg.GetContract(normalizedID); err == nil {
+			return // already exists
+		}
+	}
+
+	// Build title from ingestion metadata.
+	title := stringFromAny(match.Metadata["embedded_message"])
+	if title == "" {
+		title = stringFromAny(match.Metadata["message"])
+	}
+	if title == "" && len(visibleHash) >= 8 {
+		title = "Wish " + visibleHash[:8] + "..."
+	}
+	// Truncate title to first line for display.
+	if idx := strings.Index(title, "\n"); idx > 0 {
+		title = strings.TrimSpace(title[:idx])
+	}
+	if len(title) > 120 {
+		title = title[:117] + "..."
+	}
+
+	bh := int(blockHeight)
+	now := time.Now()
+	meta := map[string]interface{}{
+		"visible_pixel_hash": visibleHash,
+		"confirmed_txid":     txID,
+		"confirmed_height":   blockHeight,
+	}
+	// Merge key fields from ingestion metadata.
+	for _, key := range []string{
+		"ipfs_image_cid", "stego_image_cid", "embedded_message",
+		"commitment_address", "commitment_sats", "commitment_vout",
+		"funding_txid", "funding_txids",
+		"stego_contract_id", "stego_type", "stego_probability",
+	} {
+		if v := match.Metadata[key]; v != nil {
+			meta[key] = v
+		}
+	}
+
+	stegoImageURL := ""
+	if imagePath != "" {
+		stegoImageURL = fmt.Sprintf("/api/block-image/%d/%s", blockHeight, filepath.Base(imagePath))
+	}
+	if cid := stringFromAny(match.Metadata["ipfs_image_cid"]); cid != "" && stegoImageURL == "" {
+		stegoImageURL = fmt.Sprintf("/api/block-image/%d/%s", blockHeight, cid)
+	}
+
+	c := smart_contract.Contract{
+		ContractID:           normalizedID,
+		Title:                title,
+		Status:               "confirmed",
+		StegoImageURL:        stegoImageURL,
+		ConfirmedBlockHeight: &bh,
+		ConfirmedAt:          &now,
+		Metadata:             meta,
+		CreatedAt:            now,
+	}
+	if err := upserter.UpsertContractWithTasks(ctx, c, nil); err != nil {
+		log.Printf("oracle reconcile: ensureMatchedContract %s: %v", normalizedID, err)
+	} else {
+		log.Printf("oracle reconcile: ensured matched contract %s in MCP store", normalizedID)
 	}
 }
 
