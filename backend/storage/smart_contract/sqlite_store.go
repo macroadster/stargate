@@ -885,10 +885,21 @@ WHERE contract_id=?
 SELECT COALESCE(title, ''), COALESCE(total_budget_sats, 0), COALESCE(goals_count, 0), COALESCE(available_tasks_count, 0), skills, COALESCE(metadata, '{}')
 FROM mcp_contracts WHERE contract_id=?`, wishID).Scan(&wishTitle, &wishBudget, &wishGoals, &wishAvail, &wishSkills, &wishMeta)
 		if err == nil {
+			// Merge wish metadata into the confirmed contract so proposal
+			// linkage (origin_proposal_id, sandbox_hash, etc.) is preserved.
+			wishMetaMap := map[string]interface{}{}
+			if len(wishMeta) > 0 {
+				_ = json.Unmarshal(wishMeta, &wishMetaMap)
+			}
+			// Layer confirmation fields on top of wish metadata.
+			for k, v := range meta {
+				wishMetaMap[k] = v
+			}
+			mergedMeta, _ := json.Marshal(wishMetaMap)
 			_, _ = s.db.ExecContext(ctx, `
 INSERT INTO mcp_contracts (contract_id, title, total_budget_sats, goals_count, available_tasks_count, status, skills, stego_image_url, confirmed_block_height, confirmed_at, created_at, metadata)
 VALUES (?,?,?,?,?,'confirmed',?,?,?,datetime('now'),datetime('now'),?)
-`, normalized, wishTitle, wishBudget, wishGoals, wishAvail, string(wishSkills), stegoImageURL, blockHeight, string(updatedMeta))
+`, normalized, wishTitle, wishBudget, wishGoals, wishAvail, string(wishSkills), stegoImageURL, blockHeight, string(mergedMeta))
 			// Copy tasks from wish contract to confirmed contract
 			_, _ = s.db.ExecContext(ctx, `
 INSERT OR IGNORE INTO mcp_tasks (task_id, contract_id, goal_id, title, description, budget_sats, skills, status, claimed_by, claimed_at, claim_expires_at, difficulty, estimated_hours, requirements, merkle_proof)

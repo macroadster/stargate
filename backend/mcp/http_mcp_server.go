@@ -1544,7 +1544,64 @@ func (h *HTTPMCPServer) handleGetContract(ctx context.Context, args map[string]i
 		}
 	}
 
+	// Enrich contract metadata from the associated proposal when the
+	// contract record has sparse metadata (e.g. peer node that only
+	// saw the on-chain confirmation but received proposal via sync).
+	h.enrichContractFromProposal(ctx, &contract)
+
 	return contract, nil
+}
+
+// enrichContractFromProposal fills in missing contract metadata from the
+// associated proposal.  This handles the case where the contract record was
+// created from bare on-chain confirmation data while the proposal (with full
+// metadata from stego reconciliation or MCP sync) is stored separately.
+func (h *HTTPMCPServer) enrichContractFromProposal(ctx context.Context, contract *smart_contract.Contract) {
+	if contract == nil {
+		return
+	}
+	// Skip if the contract already has rich metadata.
+	if contract.Metadata != nil {
+		if _, ok := contract.Metadata["origin_proposal_id"]; ok {
+			return
+		}
+	}
+
+	// Find proposal by visible_pixel_hash (the normalized contract hash).
+	normalized := contract.ContractID
+	for _, prefix := range []string{"wish-", "proposal-"} {
+		normalized = strings.TrimPrefix(normalized, prefix)
+	}
+	proposals, err := h.store.ListProposals(ctx, smart_contract.ProposalFilter{ContractID: normalized})
+	if err != nil || len(proposals) == 0 {
+		// Also try with wish- prefix.
+		proposals, err = h.store.ListProposals(ctx, smart_contract.ProposalFilter{ContractID: "wish-" + normalized})
+	}
+	if err != nil || len(proposals) == 0 {
+		return
+	}
+	p := proposals[0]
+	if contract.Metadata == nil {
+		contract.Metadata = map[string]interface{}{}
+	}
+	// Merge key proposal metadata into the contract.
+	if p.Metadata != nil {
+		for _, key := range []string{
+			"origin_proposal_id", "sandbox_hash", "stego_contract_id",
+			"stego_image_cid", "stego_manifest_schema", "creator_wallet",
+			"visible_pixel_hash", "proposal_title", "proposal_description_md",
+		} {
+			if v, ok := p.Metadata[key]; ok && v != nil {
+				if _, exists := contract.Metadata[key]; !exists {
+					contract.Metadata[key] = v
+				}
+			}
+		}
+	}
+	// Ensure title is populated from proposal if contract title is empty.
+	if strings.TrimSpace(contract.Title) == "" && strings.TrimSpace(p.Title) != "" {
+		contract.Title = p.Title
+	}
 }
 
 func (h *HTTPMCPServer) handleGetContractReworkRequests(ctx context.Context, args map[string]interface{}) (interface{}, error) {
