@@ -119,7 +119,7 @@ func LoadStorageConfigFromEnv() StorageConfig {
 		}
 	}
 	if cfg.ClaimTTL == 0 {
-		cfg.ClaimTTL = 72 * time.Hour
+		cfg.ClaimTTL = 1 * time.Hour
 	}
 
 	if s := os.Getenv("STARGATE_SEED_FIXTURES"); s != "" {
