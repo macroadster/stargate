@@ -227,9 +227,23 @@ func (s *Server) publishStegoForProposal(ctx context.Context, proposalID string,
 	if h, err := stego.WriteSandboxTarball(sandboxDir, tarballPath); err == nil {
 		sandboxHash = h
 		log.Printf("stego publish: sandbox tarball for %s written to %s (hash=%s)", proposalID, tarballPath, sandboxHash)
-		// Upload the tarball to IPFS
+		// Store tarball by its SHA256 hash in UPLOADS_DIR so the IPFS mirror
+		// syncs it to peers using the same hash-based filename convention.
+		// Receivers find it via UPLOADS_DIR/<sandbox_hash> at confirmation time.
+		hashPath := filepath.Join(uploadsDir, sandboxHash)
+		if _, statErr := os.Stat(hashPath); os.IsNotExist(statErr) {
+			if linkErr := os.Link(tarballPath, hashPath); linkErr != nil {
+				// Hardlink failed (cross-device?), fall back to copy.
+				if data, readErr := os.ReadFile(tarballPath); readErr == nil {
+					_ = os.WriteFile(hashPath, data, 0600)
+				}
+			}
+			log.Printf("stego publish: sandbox tarball stored as %s", hashPath)
+		}
+		// Also upload to IPFS for content-addressed retrieval by peers
+		// that haven't received the file via the mirror yet.
 		if tarballData, readErr := os.ReadFile(tarballPath); readErr == nil {
-			tarballName := fmt.Sprintf("sandbox-%s.tar", scstore.NormalizeContractID(proposalID))
+			tarballName := sandboxHash // use hash as the IPFS object name
 			if tarballCID, addErr := ipfsClient.AddBytes(ctx, tarballName, tarballData); addErr == nil {
 				meta["sandbox_tarball_cid"] = tarballCID
 				log.Printf("stego publish: sandbox tarball uploaded to IPFS: %s", tarballCID)

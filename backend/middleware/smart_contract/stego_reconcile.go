@@ -717,11 +717,14 @@ func looksLikeHash(s string) bool {
 }
 
 // downloadSandboxArtifacts fetches and extracts the sandbox tarball for a
-// confirmed contract.  It looks up sandbox_tarball_cid and sandbox_hash from
-// the associated proposal metadata, downloads the tarball from IPFS, verifies
-// the hash, and extracts the files to $UPLOADS_DIR/results/<contract-id>/.
+// confirmed contract.  It looks up sandbox_hash from the associated proposal
+// or contract metadata, then searches for the tarball on the local filesystem
+// (UPLOADS_DIR/<sandbox_hash>) first — the IPFS mirror syncs tarballs between
+// peers using hash-based filenames.  Falls back to IPFS Cat if the file isn't
+// available locally yet.
+//
 // The function is idempotent — if the results directory already exists and
-// passes hash verification, the download is skipped.
+// passes hash verification, the extraction is skipped.
 func (s *Server) downloadSandboxArtifacts(ctx context.Context, contractID string) {
 	if s.store == nil || contractID == "" {
 		return
@@ -731,78 +734,136 @@ func (s *Server) downloadSandboxArtifacts(ctx context.Context, contractID string
 		return
 	}
 
-	// Find sandbox metadata from the proposal associated with this contract.
-	var sandboxCID, sandboxHash string
-	if p, err := s.store.GetProposal(ctx, contractID); err == nil && p.Metadata != nil {
-		sandboxCID = strings.TrimSpace(toString(p.Metadata["sandbox_tarball_cid"]))
-		sandboxHash = strings.TrimSpace(toString(p.Metadata["sandbox_hash"]))
-	}
-	if sandboxCID == "" {
-		// Try listing proposals by contract ID.
-		if proposals, err := s.store.ListProposals(ctx, smart_contract.ProposalFilter{ContractID: contractID}); err == nil {
-			for _, p := range proposals {
-				if cid := strings.TrimSpace(toString(p.Metadata["sandbox_tarball_cid"])); cid != "" {
-					sandboxCID = cid
-					sandboxHash = strings.TrimSpace(toString(p.Metadata["sandbox_hash"]))
-					break
-				}
-			}
-		}
-	}
-	// Also check the contract metadata directly (some paths store sandbox info at contract level).
-	if sandboxCID == "" {
-		if c, err := s.store.GetContract(contractID); err == nil && c.Metadata != nil {
-			if cid := strings.TrimSpace(toString(c.Metadata["sandbox_tarball_cid"])); cid != "" {
-				sandboxCID = cid
-				sandboxHash = strings.TrimSpace(toString(c.Metadata["sandbox_hash"]))
-			}
-		}
-	}
-	if sandboxCID == "" {
-		log.Printf("sandbox: no tarball CID found for contract %s, skipping", contractID)
+	sandboxHash := s.findSandboxHash(ctx, contractID, normalizedID)
+	if sandboxHash == "" {
+		log.Printf("sandbox: no sandbox_hash found for contract %s, skipping", contractID)
 		return
 	}
 
 	uploadsDir := strings.TrimSpace(os.Getenv("UPLOADS_DIR"))
 	resultsDir := filepath.Join(uploadsDir, "results", normalizedID)
 
-	// If results already exist and match the expected hash, skip download.
+	// If results already exist and match the expected hash, skip extraction.
 	if info, err := os.Stat(resultsDir); err == nil && info.IsDir() {
-		if sandboxHash != "" {
-			if err := stego.VerifySandboxHash(resultsDir, sandboxHash); err == nil {
-				log.Printf("sandbox: artifacts already present and verified for %s", contractID)
-				return
-			}
-			log.Printf("sandbox: artifacts present but hash mismatch for %s, re-downloading", contractID)
-		} else {
-			log.Printf("sandbox: artifacts already present for %s (no hash to verify)", contractID)
+		if err := stego.VerifySandboxHash(resultsDir, sandboxHash); err == nil {
+			log.Printf("sandbox: artifacts already present and verified for %s", contractID)
 			return
 		}
+		log.Printf("sandbox: artifacts present but hash mismatch for %s, re-extracting", contractID)
 	}
 
-	ipfsClient := ipfs.NewClientFromEnv()
-	if ipfsClient == nil {
-		log.Printf("sandbox: IPFS disabled, cannot download artifacts for %s", contractID)
-		return
-	}
-
-	tarballBytes, err := ipfsClient.Cat(ctx, sandboxCID)
+	// Try to read the tarball from the local uploads directory first.
+	// The publisher stores it as UPLOADS_DIR/<sandbox_hash> and the IPFS
+	// mirror replicates it to peers using the same hash-based filename.
+	tarballBytes, err := os.ReadFile(filepath.Join(uploadsDir, sandboxHash))
 	if err != nil {
-		log.Printf("sandbox: failed to download tarball %s for %s: %v", sandboxCID, contractID, err)
-		return
+		// Not available locally — try IPFS content-addressed fetch.
+		// Also try sandbox_tarball_cid for backward compat with older publishers.
+		sandboxCID := s.findSandboxCID(ctx, contractID, normalizedID)
+		fetchKey := sandboxHash
+		if sandboxCID != "" {
+			fetchKey = sandboxCID
+		}
+		ipfsClient := ipfs.NewClientFromEnv()
+		if ipfsClient == nil {
+			log.Printf("sandbox: tarball not on disk and IPFS disabled for %s", contractID)
+			return
+		}
+		tarballBytes, err = ipfsClient.Cat(ctx, fetchKey)
+		if err != nil {
+			log.Printf("sandbox: tarball %s not on disk and IPFS fetch failed for %s: %v", fetchKey, contractID, err)
+			return
+		}
+		log.Printf("sandbox: fetched tarball from IPFS for %s (%d bytes)", contractID, len(tarballBytes))
+	} else {
+		log.Printf("sandbox: found tarball on disk for %s (%d bytes)", contractID, len(tarballBytes))
 	}
 
 	// Verify tarball hash before extracting.
-	if sandboxHash != "" {
-		sum := sha256.Sum256(tarballBytes)
-		actual := hex.EncodeToString(sum[:])
-		if !strings.EqualFold(actual, sandboxHash) {
-			log.Printf("sandbox: hash mismatch for %s: expected %s got %s", contractID, sandboxHash, actual)
-			return
-		}
+	sum := sha256.Sum256(tarballBytes)
+	actual := hex.EncodeToString(sum[:])
+	if !strings.EqualFold(actual, sandboxHash) {
+		log.Printf("sandbox: hash mismatch for %s: expected %s got %s", contractID, sandboxHash, actual)
+		return
 	}
 
-	// Extract tarball to results directory.
+	s.extractSandboxTarball(contractID, tarballBytes, resultsDir)
+}
+
+// findSandboxHash searches proposal and contract metadata for sandbox_hash.
+// It tries multiple ID variations to handle the wish-<hash> / proposalID /
+// visible_pixel_hash mismatch.
+func (s *Server) findSandboxHash(ctx context.Context, contractID, normalizedID string) string {
+	// 1. Direct proposal lookup by contractID.
+	if p, err := s.store.GetProposal(ctx, contractID); err == nil && p.Metadata != nil {
+		if h := strings.TrimSpace(toString(p.Metadata["sandbox_hash"])); h != "" {
+			return h
+		}
+	}
+	// 2. Proposal lookup by normalizedID (wish-<hash>).
+	if normalizedID != contractID {
+		if p, err := s.store.GetProposal(ctx, normalizedID); err == nil && p.Metadata != nil {
+			if h := strings.TrimSpace(toString(p.Metadata["sandbox_hash"])); h != "" {
+				return h
+			}
+		}
+	}
+	// 3. Strip wish- prefix and search by raw visible_pixel_hash.
+	vph := strings.TrimPrefix(normalizedID, "wish-")
+	if vph != normalizedID && vph != contractID {
+		if p, err := s.store.GetProposal(ctx, vph); err == nil && p.Metadata != nil {
+			if h := strings.TrimSpace(toString(p.Metadata["sandbox_hash"])); h != "" {
+				return h
+			}
+		}
+	}
+	// 4. List proposals filtering by contract ID.
+	if proposals, err := s.store.ListProposals(ctx, smart_contract.ProposalFilter{ContractID: contractID}); err == nil {
+		for _, p := range proposals {
+			if h := strings.TrimSpace(toString(p.Metadata["sandbox_hash"])); h != "" {
+				return h
+			}
+		}
+	}
+	// 5. Check contract metadata directly.
+	if c, err := s.store.GetContract(contractID); err == nil && c.Metadata != nil {
+		if h := strings.TrimSpace(toString(c.Metadata["sandbox_hash"])); h != "" {
+			return h
+		}
+	}
+	// 6. Try with origin_proposal_id from contract metadata.
+	if c, err := s.store.GetContract(contractID); err == nil && c.Metadata != nil {
+		if opID := strings.TrimSpace(toString(c.Metadata["origin_proposal_id"])); opID != "" {
+			if p, err := s.store.GetProposal(ctx, opID); err == nil && p.Metadata != nil {
+				if h := strings.TrimSpace(toString(p.Metadata["sandbox_hash"])); h != "" {
+					return h
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// findSandboxCID returns sandbox_tarball_cid for backward compatibility with
+// older publishers that stored a CID instead of relying on hash-based lookup.
+func (s *Server) findSandboxCID(ctx context.Context, contractID, normalizedID string) string {
+	for _, id := range []string{contractID, normalizedID, strings.TrimPrefix(normalizedID, "wish-")} {
+		if p, err := s.store.GetProposal(ctx, id); err == nil && p.Metadata != nil {
+			if cid := strings.TrimSpace(toString(p.Metadata["sandbox_tarball_cid"])); cid != "" {
+				return cid
+			}
+		}
+	}
+	if c, err := s.store.GetContract(contractID); err == nil && c.Metadata != nil {
+		if cid := strings.TrimSpace(toString(c.Metadata["sandbox_tarball_cid"])); cid != "" {
+			return cid
+		}
+	}
+	return ""
+}
+
+// extractSandboxTarball extracts a tar archive to the results directory.
+func (s *Server) extractSandboxTarball(contractID string, tarballBytes []byte, resultsDir string) {
 	if err := os.MkdirAll(resultsDir, 0755); err != nil {
 		log.Printf("sandbox: failed to create results dir %s: %v", resultsDir, err)
 		return
@@ -843,7 +904,7 @@ func (s *Server) downloadSandboxArtifacts(ctx context.Context, contractID string
 		fileCount++
 	}
 
-	log.Printf("sandbox: downloaded and extracted %d files for contract %s from %s", fileCount, contractID, sandboxCID)
+	log.Printf("sandbox: extracted %d files for contract %s to %s", fileCount, contractID, resultsDir)
 }
 
 

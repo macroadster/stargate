@@ -2425,6 +2425,65 @@ func (s *Server) processEvent(evt smart_contract.Event, shouldPublish bool) {
 	}
 }
 
+// mergeSandboxMetadata propagates sandbox_hash (and sandbox_tarball_cid for
+// backward compat) from a synced contract into the local proposal and contract
+// metadata so downloadSandboxArtifacts can find the tarball by hash.
+func (s *Server) mergeSandboxMetadata(ctx context.Context, c *smart_contract.Contract) {
+	if c == nil || c.Metadata == nil {
+		return
+	}
+	sandboxHash, _ := c.Metadata["sandbox_hash"].(string)
+	sandboxCID, _ := c.Metadata["sandbox_tarball_cid"].(string)
+	if strings.TrimSpace(sandboxHash) == "" && strings.TrimSpace(sandboxCID) == "" {
+		return
+	}
+
+	// Merge into contract metadata.
+	if local, err := s.store.GetContract(c.ContractID); err == nil {
+		meta := local.Metadata
+		if meta == nil {
+			meta = map[string]interface{}{}
+		}
+		changed := false
+		if h := strings.TrimSpace(sandboxHash); h != "" && strings.TrimSpace(toString(meta["sandbox_hash"])) == "" {
+			meta["sandbox_hash"] = h
+			changed = true
+		}
+		if cid := strings.TrimSpace(sandboxCID); cid != "" && strings.TrimSpace(toString(meta["sandbox_tarball_cid"])) == "" {
+			meta["sandbox_tarball_cid"] = cid
+			changed = true
+		}
+		if changed {
+			local.Metadata = meta
+			_ = s.store.UpsertContractWithTasks(ctx, local, nil)
+			log.Printf("sandbox: merged sandbox metadata for contract %s (hash=%s)", c.ContractID, sandboxHash)
+		}
+	}
+
+	// Also merge into the associated proposal if one exists.
+	for _, id := range []string{c.ContractID, strings.TrimPrefix(scstore.NormalizeContractID(c.ContractID), "wish-")} {
+		if p, err := s.store.GetProposal(ctx, id); err == nil {
+			pmeta := p.Metadata
+			if pmeta == nil {
+				pmeta = map[string]interface{}{}
+			}
+			changed := false
+			if h := strings.TrimSpace(sandboxHash); h != "" && strings.TrimSpace(toString(pmeta["sandbox_hash"])) == "" {
+				pmeta["sandbox_hash"] = h
+				changed = true
+			}
+			if cid := strings.TrimSpace(sandboxCID); cid != "" && strings.TrimSpace(toString(pmeta["sandbox_tarball_cid"])) == "" {
+				pmeta["sandbox_tarball_cid"] = cid
+				changed = true
+			}
+			if changed {
+				_ = s.store.UpdateProposalMetadata(ctx, p.ID, pmeta)
+			}
+			break
+		}
+	}
+}
+
 func (s *Server) publishSyncEvent(evt smart_contract.Event) {
 	// TEMPORARY FIX: Add basic rate limiting to prevent sync storms
 	if evt.Type == "contract_upsert" || evt.Type == "publish" {
@@ -2581,7 +2640,10 @@ func (s *Server) ReconcileSyncAnnouncement(ctx context.Context, ann *syncAnnounc
 	case "contract_confirmed":
 		if ann.Contract != nil {
 			err = s.store.UpdateContractStatus(ctx, ann.Contract.ContractID, "confirmed")
-			// Download sandbox artifacts from IPFS now that the contract is confirmed.
+			// Merge sandbox_hash from the synced contract metadata so the
+			// local node can locate the tarball by hash in UPLOADS_DIR.
+			s.mergeSandboxMetadata(ctx, ann.Contract)
+			// Download sandbox artifacts now that the contract is confirmed.
 			go s.downloadSandboxArtifacts(context.Background(), ann.Contract.ContractID)
 		}
 	case "submit":
