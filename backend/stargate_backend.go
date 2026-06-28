@@ -797,6 +797,20 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 			return
 		}
 
+		// Fallback: check UPLOADS_DIR (images received via IPFS or local creation)
+		if uDir := os.Getenv("UPLOADS_DIR"); uDir != "" {
+			uploadPath := filepath.Join(uDir, filename)
+			if !strings.HasPrefix(filepath.Clean(uploadPath), filepath.Clean(uDir)) {
+				http.Error(w, "Invalid filename", http.StatusBadRequest)
+				return
+			}
+			if info, err := os.Stat(uploadPath); err == nil && !info.IsDir() {
+				log.Printf("Serving image from uploads fallback: %s", uploadPath)
+				http.ServeFile(w, r, uploadPath)
+				return
+			}
+		}
+
 		// Fallback to Postgres storage: delegate to data API to build an in-memory response
 		h, _ := strconv.ParseInt(height, 10, 64)
 		if cache, err := dataStorage.GetBlockData(h); err == nil {
