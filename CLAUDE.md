@@ -52,17 +52,25 @@ bd close <id>         # Complete work
 
 ## Build & Test
 
-_Add your build and test commands here_
+Stargate is a **single binary** (embedded UI). Prefer the targets in the repo root `Makefile` — do **not** use retired split `make backend` / `make frontend` images.
 
 ```bash
-# Example:
-# npm install
-# npm test
+# Unit tests (sources in frontend/ and backend/)
+cd frontend && npm test
+cd backend && go test ./...
+
+# Unified local binary (embeds frontend → ./stargate)
+make single-binary
+
+# Unified Docker image for Helm (stargate:latest)
+make docker
 ```
+
+See **Agents.md** → “Stargate Development Guide” for deploy/verify with Helm (`starlight-stack`, one `stargate` container).
 
 ## Architecture Overview
 
-_Add a brief overview of your project architecture_
+Single process serves UI + `/api/*` + `/mcp/*` + `/bitcoin/v1/*`. Layers: transport (`handlers`, `mcp`, `api`) → app (`app/smart_contract`) → domain (`core`, `stego`, `bitcoin`) → storage (SQLite default and Postgres). Details: `docs/adr/`, `docs/arch/PACKAGE_BOUNDARIES.md`.
 
 ## Conventions & Patterns
 

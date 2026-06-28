@@ -212,49 +212,88 @@ For more details, see README.md and QUICKSTART.md.
 
 ## Stargate Development Guide
 
+Stargate is a **single Go binary** (UI embedded at build time) and a **single Docker image** `stargate:latest`. There are no separate backend/frontend images or Deployments for agents to build.
+
+Package layout (see `docs/adr/`, `docs/arch/PACKAGE_BOUNDARIES.md`):
+
+| Area | Path |
+| --- | --- |
+| HTTP entry / wiring | `backend/stargate_backend.go` |
+| Application (smart contracts) | `backend/app/smart_contract/` |
+| Domain | `backend/core/`, `backend/stego/`, `backend/bitcoin/` |
+| Persistence (SQLite default **and** Postgres) | `backend/storage/` |
+| HTTP middleware only | `backend/middleware/` |
+| MCP tools | `backend/mcp/` |
+| React UI (embedded into the binary) | `frontend/` |
+
+### Single-binary development model
+
+**Primary artifact:** one process serves UI + REST (`/api/*`) + MCP (`/mcp/*`) + scan APIs (`/bitcoin/v1/*`) on `STARGATE_HTTP_PORT` (default `3001`).
+
+**Do not** use or document split builds:
+
+- `make backend` / `make frontend` / `make backend-legacy` / `make frontend-legacy` — **retired** (fail with a pointer to the targets below)
+- Separate `stargate-backend` / `stargate-frontend` images or Deployments — **retired**
+
+**Do** use:
+
+| Goal | Command |
+| --- | --- |
+| Local binary with embedded UI | `make single-binary` → `./stargate` |
+| Cluster / Helm image | `make docker` → `stargate:latest` |
+
+`make single-binary` builds the frontend (`frontend/`), copies assets into `backend/assets/frontend/`, then compiles the Go binary with CGO disabled (`gms_pure_go`).
+
+Storage defaults to **SQLite** for single-node; **Postgres** remains first-class (`STARGATE_STORAGE=postgres` + `STARGATE_PG_DSN` / `DATABASE_URL`). See ADR 0002.
+
 ### Development Workflow
 
 **For code changes, follow this sequence:**
 
-1. **Compile and test locally**:
+1. **Test locally** (sources stay in `frontend/` and `backend/`; runtime is still one binary):
    ```bash
-   # Frontend
-   cd frontend && npm install
-   npm test
-   
-   # Backend  
-   cd backend && go build
-   go test ./...
+   # UI unit tests (Vitest)
+   cd frontend && npm install && npm test
+
+   # Go tests + compile check
+   cd backend && go test ./... && go build -o /dev/null .
    ```
 
-2. **Build Docker image** (single-binary model):
+2. **Build the unified artifact** (pick one):
    ```bash
-   make docker   # Build stargate:latest (unified binary with embedded frontend)
+   make single-binary   # ./stargate — run locally: ./stargate
+   # or
+   make docker          # stargate:latest — for Kubernetes / Helm
    ```
 
-   Split backend/frontend images are retired (`make backend-legacy` fails by design); use `make docker` / `make single-binary` only.
-
-3. **Deploy to cluster** (see Deployment Workflow section)
+3. **Deploy to cluster** when validating integration (see Deployment Workflow). Local `./stargate` is enough for many pure backend/UI unit changes; **cluster deploy is mandatory** for session completion when code changed (see Landing the Plane).
 
 ### Testing Commands
 
-#### Frontend (React)
+#### Frontend (React / Vitest)
 ```bash
 cd frontend
-npm test                          # Run Jest tests
-npm test -- --testNamePattern="SpecificTest"  # Run single test
+npm test
+npm test -- src/components/Inscription/InscriptionModal.test.js
 ```
 
 #### Backend (Go)
 ```bash
 cd backend
-go test ./...      # Run all tests (when implemented)
-go test -run TestSpecificFunction  # Run single test
+go test ./...
+go test ./app/smart_contract/ ./storage/smart_contract/ ./bitcoin/ -count=1
+go test -run TestName ./path/to/package
+```
+
+#### Full production UI embed (catches Vite / embed issues)
+```bash
+make single-binary
+# optional smoke: ./stargate  (then hit http://localhost:3001)
 ```
 
 ### Built-in Autonomous Agents (Go)
 
-Stargate can now run the former Python `starlight.agents` orchestration logic natively.
+Stargate can run agent orchestration in-process (former Python `starlight.agents` surface).
 
 Enable with environment variables (all optional, sensible defaults exist):
 
@@ -265,91 +304,88 @@ Enable with environment variables (all optional, sensible defaults exist):
 - `STARGATE_AGENT_POLL_INTERVAL=60`
 - `STARLIGHT_DONATION_ADDRESS` (gives the agent global auditor powers for approvals)
 
-The agent writes results under `UPLOADS_DIR/results/<hash>/` (served at `/uploads/` and `/sandbox/`).
+The agent writes results under `UPLOADS_DIR/results/<hash>/` (served at `/uploads/` and `/sandbox/` by the **same** `stargate` process).
 
 For real LLM-driven work, wire a custom `agents.Executor` (the default is a safe stub that produces placeholder reports). A future `opencode_run` MCP tool or sidecar executor will provide the real implementation path.
 
-The Python agents in the starlight repo continue to work against the same MCP surface.
+External agents can use the same MCP/REST APIs on the single binary (`/mcp/*`, `/api/smart_contract/*`). See `GET /api/surfaces` and `docs/adr/0005-rest-vs-mcp-ownership.md`.
 
 ### Deployment Workflow
 
-When you need to deploy code changes:
+Deploy the **unified** image only (one container per stargate pod).
 
-**Deploy local Docker image (single-binary) for testing**
 ```bash
 # 1. Build the unified image locally
-make docker   # Builds stargate:latest (single binary containing frontend + backend)
+make docker   # stargate:latest — frontend embedded in the Go binary
 
 # 2. Upgrade the starlight-helm stack (adjust path/chart name to your checkout)
 cd ../starlight-helm   # or the location of your starlight-helm chart
 helm upgrade --install starlight-stack . \
   --set stargate.image.repository=stargate \
   --set stargate.image.tag=latest \
-  --set stargate.image.pullPolicy=Never \
+  --set stargate.image.pullPolicy=Never
   # (or the equivalent values your chart uses under the stargate: section)
 
-# 3. Wait for rollout (Helm handles the underlying Deployment/StatefulSet)
-helm upgrade --install ...   # (re-run or use kubectl rollout status on the resources created by the chart)
+# 3. Wait for rollout
+kubectl rollout status deployment -l app.kubernetes.io/instance=starlight-stack
+# or re-run helm upgrade / use the chart’s rollout resources
 ```
 
-**VERIFYING DEPLOYMENT (Helm-based single-binary stack):**
+**VERIFYING DEPLOYMENT (single-binary Helm stack):**
 ```bash
-# Check running pods (use labels from your Helm release)
-kubectl get pods -l app.kubernetes.io/instance=starlight-stack   # common Helm label; adjust if your chart uses different selectors
+kubectl get pods -l app.kubernetes.io/instance=starlight-stack
 # or
 kubectl get pods | grep -E 'starlight|stargate'
 
-# Get a pod (the chart typically creates pods running the unified 'stargate' container)
 POD=$(kubectl get pods -l app.kubernetes.io/instance=starlight-stack -o name | head -1)
 
-# Check actual image deployed
 kubectl describe $POD | grep -E "Image:|Image ID:"
-# Should show: stargate:latest (local) or your-registry/stargate:...
+# Expect: stargate:latest (local) or your-registry/stargate:...
+# One application container — not separate backend + frontend containers
 
-# Verify image ID matches what you just built
-docker images | grep stargate   # Note the Image ID (SHA256)
+docker images | grep stargate   # Compare Image ID (SHA256) to the pod
 ```
 
-Use https://starlight.local for testing deployed changes
+Use https://starlight.local for testing deployed changes.
 
-**DEPLOYMENT RULES (single-binary + Helm era):**
+**DEPLOYMENT RULES:**
 
-1. **NEVER assume `make docker` automatically deploys** - it only builds the local `stargate:latest` image
-2. **NEVER blame "image not deployed" without verifying** - check actual pod image via the Helm release
-3. **ALWAYS verify deployment** with `helm list`, `kubectl get pods -l ...` (from the chart) and `kubectl describe pod`
-4. **If deployment uses Docker Hub images**, you must push there first (or use your registry)
-5. **If using local images**, set the corresponding `image.pullPolicy: Never` (or equivalent) via Helm `--set` / values override
-6. The legacy separate `stargate-backend` / `stargate-frontend` Deployments and `make backend` / `make frontend` paths are deprecated in favor of the unified single-binary image.
+1. **NEVER assume `make docker` deploys** — it only builds local `stargate:latest`
+2. **NEVER blame "image not deployed" without verifying** — check pod Image ID vs `docker images`
+3. **ALWAYS verify** with `helm list`, `kubectl get pods -l ...`, and `kubectl describe pod`
+4. Remote registry: push the **stargate** image before upgrade
+5. Local images: `image.pullPolicy=Never` (or chart equivalent) via Helm `--set` / values
+6. **Do not** deploy or document separate `stargate-backend` / `stargate-frontend` images — retired
 
 ### Troubleshooting Common Issues
 
 **"Changes not visible after deployment"**
 ```bash
-# Get pod(s) managed by the Helm release and check image ID
 kubectl get pods -l app.kubernetes.io/instance=starlight-stack
 POD=$(kubectl get pods -l app.kubernetes.io/instance=starlight-stack -o name | head -1)
 kubectl describe $POD | grep -A 5 "Image:" | grep "Image ID:"
-docker images | grep stargate   # Compare Image IDs (look for the unified stargate image)
+docker images | grep stargate   # Must match the unified stargate image ID
 ```
 
 **"Pod keeps crashing with ImagePullBackOff"**
-- Verify image exists locally: `docker images | grep stargate`
-- If using local images with the Helm chart, ensure you passed `image.pullPolicy=Never` (or the chart's equivalent key) on upgrade
-- If using a remote registry, verify the image was pushed: `docker pull .../stargate:latest`
+- Verify image exists locally: `docker images | grep '^stargate'`
+- Local chart: `image.pullPolicy=Never` (or chart key) on upgrade
+- Remote registry: confirm `docker pull …/stargate:latest` works
 
 **"Old code still running"**
 ```bash
-# Inspect the resources created by your Helm release (Deployment, etc.)
 helm get manifest starlight-stack | grep -A 20 "kind: Deployment" | grep -E 'image:|name:'
-# or
 kubectl get deployment -l app.kubernetes.io/instance=starlight-stack -o yaml | grep image:
-helm upgrade --install starlight-stack . ...   # re-apply with updated image settings
+# Re-apply with make docker + helm upgrade using stargate:latest
 ```
 
 **"Approval still times out after deployment"**
-- Check backend logs: `kubectl logs <pod> -n default | grep -i "timeout\|stego"`
-- Review fix logic - check both `stego_contract_id` AND skip reinscribing condition
-- Verify metadata is being set correctly during `/api/inscribe`
+- Logs from the **stargate** pod: `kubectl logs <pod> | grep -i "timeout\|stego"`
+- Review fix logic — check both `stego_contract_id` AND skip reinscribing condition
+- Verify metadata during `/api/inscribe`
+
+**"make backend / make frontend failed"**
+- Expected. Use `make docker` or `make single-binary` only (see Legacy retirement: `docs/arch/LEGACY_RETIREMENT.md`)
 
 <!-- bv-agent-instructions-v1 -->
 
