@@ -11,28 +11,35 @@ The system is intentionally tolerant of unswept hashlocks and centralized hostin
 ## How it works (high level)
 
 ```text
-Human Wish → Stego Image (Starlight) + Visible Pixel Hash
+Human Wish → Visible Pixel Hash + Ingestion Record (local + IPFS)
              ↓
-     Ingestion Record (local + IPFS)
+     AI Agent creates Proposal + executes Tasks
              ↓
-     Funding (PSBT with optional hashlock commitment)
-             | 
-             +--> On-chain (P2WSH hashlock using wish image or later product image)
-             |
-             v
-     Block Monitor (witness reconciliation)
-             • Scans new blocks for steganographic inscriptions
-             • Matches visible_pixel_hash / witness data against known ingestions
-             • Confirms "this buyer paid creator for this exact intent"
+     Results stored at UPLOADS_DIR/results/<visible_pixel_hash>/
              ↓
-     Submission + Product Image (tasks inscribed via steganography)
+     Build PSBT (PreparePublishArtifacts runs FIRST):
+       1. Sandbox tarball: tar results/ → UPLOADS_DIR/<sandbox_hash>
+       2. Stego v2 image: embed JSON payload (proposal, tasks, sandbox_hash)
+          into wish image alpha channel → UPLOADS_DIR/<stego_hash>
+       3. PSBT built with OP_RETURN: wish_hash(32) || stego_hash(32) = 64 bytes
+       4. Donation paid directly as P2WPKH (no hashlock, no sweep)
              ↓
-     IPFS Publication + Distributed Witnessing across nodes
+     User signs PSBT → broadcasts → confirms on-chain
              ↓
-     Optional hashlock sweep (lottery for node operators)
+     Block Monitor (on-chain reconciliation):
+       • Parses OP_RETURN → extracts wish_hash + stego_hash
+       • Matches against known ingestions/proposals/contracts
+       • Finds stego image on disk → extracts v2 JSON payload
+       • Creates/updates proposal + contract + tasks from payload
+       • Reads sandbox_hash from payload → extracts tarball to results/
+             ↓
+     Peer Replication (fully autonomous):
+       • IPFS mirror syncs UPLOADS_DIR/<stego_hash> + <sandbox_hash>
+       • Peer's block monitor parses same OP_RETURN from blockchain
+       • Same reconciliation flow — contract replicated with sandbox
+             ↓
+     Sandbox served at /sandbox/<visible_pixel_hash>/
 ```
-
-The final delivered artifact (the "product image") can itself become the source of a future hashlock commitment when no separate donation was funded at the start. This creates a chain where completed work carries forward the ability to incentivize the preservation network.
 
 ## Architecture & Philosophy (detailed)
 
@@ -46,27 +53,34 @@ People who run Starlight instances are not primarily chasing the tiny hashlock d
 
 Running a node is an act of tool collection and cultural preservation. The small donation sweep is a stochastic micro-reward (a "lottery") that favors the instance closest to the original creation event because it has the artifacts locally before IPFS propagation reaches others. Anyone can win, but the originating node has a natural first-mover advantage. If the donations are never swept, that is philosophically acceptable — it would only indicate that Bitcoin itself had lost all value.
 
-### Hashlock Commitments and the "Product Image" Rule
+### OP_RETURN Proof and Stego v2 Replication
 
-At funding time, a small P2WSH hashlock output can be created (`OP_SHA256 <SHA256(preimage)> OP_EQUAL`). The preimage is normally derived from the visible pixel hash of the original wish image (when a donation component was explicitly funded).
+At funding time, the PSBT carries an OP_RETURN output with exactly 2 hashes (64 bytes total, within Bitcoin's 80-byte recommendation):
 
-When the payer provides **no extra donation** (only payment for labor), the commitment — if still created — should use the **final delivered product image** (the artifact the contractor actually produced, with tasks and context inscribed via steganography) as the basis for the hashlock. This keeps the incentive mechanism aligned with completed work rather than only with the initial request.
+- **wish_hash** (32 bytes): SHA256 of the original wish image pixels
+- **stego_hash** (32 bytes): SHA256 of the stego image (wish image with embedded v2 JSON payload)
 
-See open beads tasks for the implementation work required in the PSBT builder and funding handler.
+The stego v2 JSON payload — embedded in the wish image's alpha channel — contains the full proposal, tasks, metadata, and the **sandbox_hash** (SHA256 of the deliverables tarball). This keeps the sandbox hash off-chain while making it discoverable by any node that has the stego image.
 
-### Witness Reconciliation (the "Signature" Layer)
+Donations are paid directly as standard P2WPKH outputs to `STARLIGHT_DONATION_ADDRESS` — no hashlocks, no sweeps, no recommitment. One transaction, zero ceremony.
 
-When a Bitcoin block is processed:
+See `docs/arch/starlight_contracts.md` Section 12 for the full specification.
 
-- The BlockMonitor scans inscriptions for steganographic content.
-- It also scans transaction witness data for hashes matching known ingestion records (`matchWitnessHash`).
-- A successful match between an on-chain inscription/witness hash and a prior ingestion (via `visible_pixel_hash` + stego manifest) creates a distributed, independently verifiable record that "this buyer paid this creator for this specific intent at this block height."
+### Block Monitor Reconciliation
 
-Any Starlight instance that processes the block can perform this reconciliation. This is how the network stays in sync without a single source of truth.
+When a Bitcoin block is processed, the block monitor has three matching paths (in priority order):
 
-### IPFS as Primary Distribution, Bitcoin as Slow Expensive Memory
+1. **funding_txid match**: Known funding txid from ingestion metadata → confirm contract, then scan OP_RETURN for stego hash → reconcile stego + sandbox
+2. **OP_RETURN candidate match**: Parse OP_RETURN → match wish_hash against known ingestions/proposals/contracts → reconcile stego + sandbox
+3. **OP_RETURN no-candidate fallback**: No database match, but stego image exists on disk → reconcile from stego v2 payload (creates the contract from scratch)
 
-Approved artifacts (wish images and final product images) are published to IPFS. Nodes share them via pubsub. Bitcoin is used for the high-integrity, hard-to-revise commitments and the witness reconciliation — not as the primary hosting or distribution layer. People who want something to survive long-term are expected to pin it on IPFS themselves.
+In all paths, `reconcileOnChainArtifacts` finds the stego image at `UPLOADS_DIR/<stego_hash>`, extracts the v2 JSON payload, upserts the contract/proposal/tasks, and triggers sandbox extraction.
+
+Any Starlight instance that processes the block + has the files via IPFS mirror can perform this reconciliation independently. The blockchain is the announcement channel — no pubsub flags or special configuration needed.
+
+### IPFS Mirror as File Distribution, Bitcoin as Settlement
+
+Files in `UPLOADS_DIR` are named by their SHA256 hash (P2P-layer neutral — no IPFS CID leakage into Starlight). The IPFS mirror syncs root-level files between peers using these hash-based filenames. Bitcoin is the settlement and proof layer — OP_RETURN hashes let any node verify and reconstruct contracts from the on-chain record.
 
 ### Single-Binary Direction and Future Provenance Ideas
 
@@ -81,7 +95,7 @@ Stargate is moving toward a single-binary distribution model (downloadable, runn
 
 Then set `STARGATE_STORAGE=sqlite` (or simply remove the PG DSN env var) and restart. The tool correctly converts JSONB→TEXT, TEXT[] skills→comma strings, TIMESTAMPTZ→RFC3339 text, etc. See `bin/migrate-pg-to-sqlite --help`.
 
-A related future direction under discussion: at submission time, tar the relevant sandbox/artifact state and embed the SHA256 of that tarball into the product image via steganography. This would give AI-generated binaries and complex deliverables a strong, bit-level verifiable provenance chain ("this exact bundle was produced for this specific task").
+This is now implemented: at PSBT build time, `PreparePublishArtifacts` tars the sandbox artifacts (`results/<visible_pixel_hash>/`), computes the SHA256, and embeds it as `sandbox_hash` in the stego v2 JSON payload. Peers extract the tarball by hash after replication, giving AI-generated deliverables a bit-level verifiable provenance chain.
 
 ### Relationship with Starlight (the ML scanner)
 
@@ -90,9 +104,11 @@ Starlight (the Python AI steganalysis system) is the approval oracle. Multiple d
 ## Current Status & Direction
 
 - The system is fully functional for solo or small-group use.
-- Multiple independent instances can coexist and eventually see the same IPFS content.
-- The donation mechanism is intentionally voluntary and non-rent-seeking.
-- Work is ongoing to better align the hashlock preimage source with the "product image" rule and to improve single-binary packaging.
+- Multiple independent instances replicate contracts autonomously via OP_RETURN hashes + IPFS mirror file sync.
+- The donation mechanism is intentionally voluntary and non-rent-seeking — direct P2WPKH, no hashlocks or sweeps.
+- OP_RETURN uses 64 bytes (2 hashes), within Bitcoin's 80-byte standard recommendation.
+- Sandbox (AI deliverables) hash is carried inside the stego v2 JSON payload, not on-chain.
+- Single-binary distribution: `make docker` produces a unified `stargate:latest` image with embedded frontend.
 
 ## Built-in Autonomous Agents
 

@@ -653,92 +653,122 @@ MCP UPDATE:
 
 ---
 
-## 12. Implemented: OP_RETURN Direct Donation (Zero-Sweep Design)
+## 12. Implemented: OP_RETURN Direct Donation + Stego v2 Replication
 
 > **Status: Implemented** on `feature/single-binary`
 > **Supersedes**: Two-Phase Donation Sweep (Hashlock P2WSH) — removed.
 
-This section documents the **actually implemented** donation and proof-of-work mechanism. Both the wish image and the product (stego) image are published to IPFS **before** the user signs the PSBT, making their hashes public knowledge. Since preimages are public, hashlock P2WSH scripts add ceremony without security benefit. Instead, the donation is paid directly as a standard P2WPKH output, and the blockchain itself is the announcement channel via OP_RETURN.
+This section documents the **actually implemented** donation, proof-of-work, and contract replication mechanism. The design keeps OP_RETURN within Bitcoin's 80-byte recommendation (64 bytes used) and enables fully autonomous replication across independent nodes using only on-chain data + file sync.
 
-### 12.1 Design Insight
+### 12.1 Design Principles
 
-Both images exist before the user pays:
+1. **OP_RETURN carries exactly 2 hashes**: `wish_hash(32) || stego_hash(32)` = 64 bytes
+2. **sandbox_hash lives inside the stego v2 JSON payload**, not on-chain
+3. **All filenames in UPLOADS_DIR use SHA256 hashes** — P2P-layer neutral, no IPFS CID leakage
+4. **No pubsub or flags required for replication** — on-chain hashes are sufficient
+5. **Artifacts created BEFORE PSBT** — `PreparePublishArtifacts` runs at PSBT build time, not after
 
-1. User clicks **Build PSBT**
-2. Backend creates the stego (product) image from the wish image
-3. Both images are published to IPFS — public can see wish + product
-4. PSBT is built with OP_RETURN carrying both hashes
-5. User reviews and signs the PSBT in their wallet
-6. Transaction broadcasts and confirms on-chain
-7. Oracle (block monitor) parses OP_RETURN and matches the contract
+### 12.2 Artifact Preparation (Pre-PSBT)
 
-Since both preimages are already public on IPFS, a hashlock "reveal" proves nothing that isn't already known. The proof is the **entire transaction structure**: correct contractor wallets, correct amounts, donation to the right address, and OP_RETURN labeling linking to the specific wish and product images.
+When the user clicks **Build PSBT**, `PreparePublishArtifacts` runs:
 
-### 12.2 PSBT Output Structure
+1. Load the proposal and its cover (wish) image
+2. **Build sandbox tarball**: tar `UPLOADS_DIR/results/<visible_pixel_hash>/` → compute SHA256 → store as `UPLOADS_DIR/<sandbox_hash>`
+3. **Build stego v2 image**: embed full JSON payload (proposal, tasks, metadata, `sandbox_hash`) into the cover image's alpha channel → compute SHA256 → store as `UPLOADS_DIR/<stego_hash>`
+4. Return `StegoImageHash` and `SandboxHash` to the PSBT handler
+5. PSBT is built with OP_RETURN carrying `wish_hash || stego_hash`
+
+The stego v2 JSON payload embedded in the image:
+```json
+{
+  "schema_version": 2,
+  "proposal_id": "proposal-...",
+  "visible_pixel_hash": "<wish_hash>",
+  "sandbox_hash": "<sha256 of sandbox tarball>",
+  "issuer": "stargate-instance-id",
+  "created_at": 1719510000,
+  "proposal": { "title": "...", "budget_sats": 50000, ... },
+  "tasks": [ { "task_id": "...", "title": "...", ... } ],
+  "metadata": [ { "key": "funding_txid", "value": "..." }, ... ]
+}
+```
+
+### 12.3 PSBT Output Structure
 
 ```
 Output 0..N:   P2WPKH  — contractor payouts (direct to wallet addresses)
 Output N+1:    P2WPKH  — donation (direct to STARLIGHT_DONATION_ADDRESS)
-Output N+2:    OP_RETURN — wish_hash || product_hash (64 bytes, 0 sats)
+Output N+2:    OP_RETURN — wish_hash(32) || stego_hash(32) = 64 bytes
 Output N+3:    P2WPKH  — change (if any)
 ```
 
 The OP_RETURN script:
 
 ```bitcoin-script
-OP_RETURN
-OP_PUSHBYTES_32 <wish_pixel_hash>     # 32 bytes: SHA256 of wish image pixels
-OP_PUSHBYTES_32 <product_pixel_hash>  # 32 bytes: SHA256 of product image pixels
+OP_RETURN <64 bytes: wish_hash(32) || stego_hash(32)>
 ```
 
-- Total OP_RETURN payload: 64 bytes (well within the 80-byte standard limit)
+- **wish_hash**: SHA256 of the original wish image pixels (`visible_pixel_hash`)
+- **stego_hash**: SHA256 of the stego image (wish image with embedded v2 JSON payload)
+- **sandbox_hash**: NOT on-chain — inside the stego v2 JSON payload
+- Total OP_RETURN payload: 64 bytes (within Bitcoin's 80-byte recommendation)
 - OP_RETURN output carries 0 sats (provably unspendable, prunable by nodes)
-- Donation output is a standard P2WPKH — no sweep, no hashlock, no redeem script
 
 **Source**: `backend/bitcoin/psbt_builder.go` → `buildDonationOutputs()`
 
-### 12.3 Transaction Flow (Zero Sweeps)
+### 12.4 Replication Flow
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│  PSBT Funding TX (single transaction, zero sweeps)       │
-│                                                          │
-│  Output 0..N:  P2WPKH → contractor wallets               │
-│  Output N+1:   P2WPKH → donation address (direct)        │
-│  Output N+2:   OP_RETURN wish_hash || product_hash        │
-│  Output N+3:   P2WPKH → change                           │
-│                                                          │
-│  ✓ Donation paid immediately — no sweep needed            │
-│  ✓ Hashes on-chain — blockchain is the announcement       │
-│  ✓ One transaction — no recommit, no phase routing        │
-└──────────────────────────────────────────────────────────┘
+Publisher Node                           Peer Node
+─────────────                           ─────────
+1. PreparePublishArtifacts()
+   → stego image → UPLOADS_DIR/<stego_hash>
+   → sandbox tar → UPLOADS_DIR/<sandbox_hash>
+2. Build PSBT with OP_RETURN
+3. User signs + broadcasts
+                                        ┌────────────────────────┐
+         ── IPFS mirror sync ──────────►│ UPLOADS_DIR/<stego_hash>│
+         ── IPFS mirror sync ──────────►│ UPLOADS_DIR/<sandbox_hash>│
+                                        └────────────────────────┘
+         ── Bitcoin block ─────────────► Block monitor scans OP_RETURN
+                                         │
+                                         ├─ parseOPReturnHashes → wish_hash, stego_hash
+                                         ├─ Match via funding_txid or wish_hash candidate
+                                         ├─ reconcileOnChainArtifacts(contractID, stegoHash)
+                                         │   ├─ Find UPLOADS_DIR/<stego_hash> on disk
+                                         │   ├─ Extract v2 JSON → proposal, tasks, sandbox_hash
+                                         │   ├─ upsertContractFromStegoPayload()
+                                         │   └─ Check confirmed → downloadSandboxArtifacts()
+                                         │       ├─ Find UPLOADS_DIR/<sandbox_hash>
+                                         │       ├─ Verify SHA256 matches
+                                         │       └─ Extract tar → results/<visible_pixel_hash>/
+                                         └─ Contract fully replicated with sandbox
 ```
 
-### 12.4 On-Chain Detection (OP_RETURN Matching)
+### 12.5 On-Chain Detection (Block Monitor)
 
-The block monitor (`block_monitor.go` → `reconcileOracleIngestions`) has an OP_RETURN matching pass:
+The block monitor (`block_monitor.go` → `reconcileOracleIngestions`) processes each transaction:
 
-1. For each transaction in a confirmed block, scan outputs for `OP_RETURN`
-2. Call `parseOPReturnHashes(script)` — extracts two 32-byte hashes
-3. Match `wish_hash` against ingestion records' `visible_pixel_hash`
-4. Match `product_hash` against ingestion records' `product_pixel_hash`
-5. On match: update task proof with block height, txid, vout, sats
-6. Call `confirmContractTasks()` — marks confirmed, sets `SweepStatus = "direct"`
+1. **funding_txid match**: If the tx matches a known `funding_txid` from ingestion metadata, confirm the contract, then scan OP_RETURN outputs for the stego hash and call `reconcileOnChainArtifacts`
+2. **OP_RETURN match**: Parse OP_RETURN → `parseOPReturnHashes(script)` → try matching `wish_hash` against candidates (ingestions, proposals, contracts)
+3. **No-candidate fallback**: If no candidate matches but `stego_hash` is present, call `reconcileOnChainArtifacts` directly — the stego reconciler reads the v2 payload from disk and creates the contract
+4. After confirmation, re-reconcile to trigger `downloadSandboxArtifacts` (which checks for "confirmed" status)
 
-**No IPFS pubsub needed**: Any node watching the blockchain can discover and verify contracts by parsing OP_RETURN data. The blockchain IS the announcement channel.
+**No pubsub or STARGATE_STEGO_APPROVAL_ENABLED required**: Any node watching the blockchain + syncing files via IPFS mirror can fully replicate contracts.
 
-**No race conditions**: Unlike the old event-driven approach where ingestion records could arrive after their block was processed, OP_RETURN matching works on every block scan — the hashes are embedded in the transaction itself.
+### 12.6 Sandbox Tarball Flow
 
-### 12.5 OP_RETURN Fakability
+**Publisher side** (`PreparePublishArtifacts`):
+- Tar `UPLOADS_DIR/results/<visible_pixel_hash>/` → write to `UPLOADS_DIR/<sandbox_hash>`
+- The `sandbox_hash` is embedded in the stego v2 JSON payload
 
-Anyone can compute the hashes from public IPFS images and put them in an OP_RETURN output. This is irrelevant because:
+**Peer side** (`downloadSandboxArtifacts`):
+- Read `sandbox_hash` from proposal/contract metadata (populated during stego reconciliation from the v2 payload)
+- Find `UPLOADS_DIR/<sandbox_hash>` on disk (synced via IPFS mirror)
+- Verify SHA256 matches → extract tar to `UPLOADS_DIR/results/<visible_pixel_hash>/`
+- Files served at `/sandbox/<visible_pixel_hash>/`
 
-- Peer verification checks the **entire transaction**: correct wallets, correct amounts, donation output to the right address
-- OP_RETURN is a label for indexing, not a security boundary
-- A fake OP_RETURN in a random transaction won't match any ingestion record (wrong wallets/amounts)
-- The security model is **transparency** — everything is public and verifiable
-
-### 12.6 Data Model
+### 12.7 Data Model
 
 Fields on `MerkleProof` (in `core/smart_contract/types.go`):
 
@@ -754,41 +784,49 @@ SeenAt                  — timestamp of first observation
 
 # Image hashes (set during stego reconciliation / PSBT construction)
 VisiblePixelHash        — wish image pixel hash (hex, 64 chars)
-ProductPixelHash        — product image pixel hash (hex, 64 chars)
+ProductPixelHash        — stego image hash (hex, 64 chars)
 
 # Sweep status (set by confirmContractTasks)
 SweepStatus             — "direct" (donation paid in PSBT, no sweep needed)
 ```
 
-Legacy fields (`Recommit*`, `Commitment*`, `Sweep*`) are retained in the struct for backward compatibility with existing data but are no longer populated for new contracts.
+The stego v2 payload (embedded in the stego image) carries:
+```
+sandbox_hash            — SHA256 of the sandbox tarball
+proposal metadata       — title, description, budget, tasks
+```
 
-### 12.7 Edge Cases
+### 12.8 Edge Cases
 
-**No donation (`DonationAddress` empty or `STARLIGHT_DONATION_ADDRESS` unset)**: PSBT builder skips both the donation P2WPKH output and the OP_RETURN output. Only contractor payouts + change are included. The block monitor still matches via wallet addresses.
+**No donation (`STARLIGHT_DONATION_ADDRESS` unset)**: PSBT builder skips both the donation P2WPKH output and the OP_RETURN output. Only contractor payouts + change are included.
 
-**OP_RETURN parsing**: `parseOPReturnHashes()` accepts several valid encodings of 64 bytes of push data (single push, two 32-byte pushes, etc.) to handle miner relay variations.
+**Stego image not yet on disk**: The peer logs "stego image not yet on disk, will arrive via mirror" and skips. Next block scan after mirror sync will succeed.
 
-**Backward compatibility**: Existing contracts with hashlock P2WSH outputs from the old two-phase design can still be swept manually via the `/api/smart_contract/sweep` endpoint. The `commitment_sweep.go` code is retained for this purpose.
+**Sandbox tarball not on disk**: Falls back to IPFS content-addressed fetch via `sandbox_tarball_cid` if available, otherwise waits for mirror sync.
 
-### 12.8 Comparison: Old vs New Design
+### 12.9 Comparison: Old vs Current Design
 
-| Aspect | Two-Phase Hashlock (old) | OP_RETURN Direct (new) |
+| Aspect | Two-Phase Hashlock (old) | OP_RETURN + Stego v2 (current) |
 |---|---|---|
 | Transactions | 3 (fund + recommit + sweep) | 1 (fund only) |
 | Sweep needed | Yes (2 sweeps) | No |
-| Hashlock security | Ceremony — preimages are public | N/A |
-| Announcement channel | IPFS pubsub | Bitcoin blockchain (OP_RETURN) |
+| On-chain data | Hashlock P2WSH | OP_RETURN 64 bytes (2 hashes) |
+| Sandbox hash | Not tracked | Inside stego v2 JSON payload |
+| Replication | IPFS pubsub required | On-chain hashes + file mirror |
 | Race conditions | Yes (ingestion vs block timing) | No (hashes in tx itself) |
 | Fee cost | 3× tx fees | 1× tx fee |
 | Failure modes | Sweep stuck, recommit stuck | None (donation is final) |
 
-### 12.9 Source Files
+### 12.10 Source Files
 
 | File | Role |
 |---|---|
-| `backend/bitcoin/psbt_builder.go` | PSBT construction, `buildDonationOutputs()` |
-| `backend/bitcoin/block_monitor.go` | OP_RETURN parsing (`parseOPReturnHashes`), `confirmContractTasks()` |
-| `backend/middleware/server/server.go` | Passes `DonationAddress` + `ProductPixelHash` to PSBT builder |
-| `backend/middleware/smart_contract/stego_reconcile.go` | Sets `ProductPixelHash` on ingestion |
+| `backend/bitcoin/psbt_builder.go` | PSBT construction, `buildDonationOutputs()` — 2 hashes only |
+| `backend/bitcoin/block_monitor.go` | OP_RETURN parsing (`parseOPReturnHashes`), `reconcileOnChainArtifacts()`, `confirmContractTasks()` |
+| `backend/middleware/smart_contract/stego_publish.go` | `PreparePublishArtifacts()` — builds stego + sandbox BEFORE PSBT; `FinalizePublishArtifacts()` — optional IPFS upload after |
+| `backend/middleware/smart_contract/stego_reconcile.go` | `ReconcileStego()`, `reconcileStegoFromLocalFile()`, `downloadSandboxArtifacts()`, `upsertContractFromStegoPayload()` |
+| `backend/middleware/smart_contract/server.go` | `handleContractPSBT()` — calls PreparePublishArtifacts, passes stego hash to PSBT builder |
+| `backend/stego/payload.go` | `Payload` struct with `SandboxHash` field |
+| `backend/stego/sandbox.go` | `WriteSandboxTarball()`, `VerifySandboxHash()`, `HashSandboxDir()` |
+| `backend/storage/ipfs/mirror.go` | IPFS mirror — syncs hash-named files between peers |
 | `backend/core/smart_contract/types.go` | `MerkleProof` struct |
-| `backend/bitcoin/commitment_sweep.go` | Legacy: manual sweep for old hashlock contracts |
