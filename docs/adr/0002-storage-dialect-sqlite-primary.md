@@ -1,4 +1,4 @@
-# ADR 0002: Storage dialect — SQLite primary
+# ADR 0002: Storage dialects — SQLite default, Postgres supported
 
 - **Status:** Accepted
 - **Date:** 2026-06-28
@@ -14,37 +14,55 @@ Stargate needs durable state for:
 - Block / inscription caches (`storage` data layer)
 - Ingestion records (`services.IngestionService` / SQLite or PG-backed paths)
 
-Postgres remains valuable for multi-writer or shared hosting, but the default developer and single-binary experience should work with **zero external database**.
+Operators need **both**:
+
+1. **Zero-dependency single-binary / laptop / edge** installs (no external DB).
+2. **Shared multi-writer / HA-friendly** deployments (Postgres).
+
+Claiming “SQLite only” would be inaccurate and break production shared hosting.
 
 ## Decision
 
-**SQLite is the primary default persistence dialect for the single-binary product.** Postgres remains a supported alternate when `STARGATE_PG_DSN` / `DATABASE_URL` (or explicit `STARGATE_STORAGE=postgres`) is configured.
+**Support both SQLite and Postgres as first-class dialects.**  
+**SQLite is the default** when no Postgres DSN / storage override is set (best for ADR 0001 single-binary).  
+**Postgres is fully supported** when configured—not a temporary legacy path and **must not be removed** without an explicit superseding ADR.
 
-- Default paths under data dir / `UPLOADS_DIR` / env-driven `*.db` files (`mcp.db`, `api_keys.db`, `ingestions.db`, `blocks.db` as applicable)
-- Interfaces live under `storage/*`; implementations may be memory, SQLite, or Postgres
-- New features must work on SQLite first; PG-only paths require explicit justification
-- In-memory store is for tests and optional seed fixtures (`MCP_SEED_FIXTURES`), not production default
+Selection (see `storage/factory.go`, `container/container.go`):
+
+| Mode | Typical env |
+| --- | --- |
+| SQLite (default) | unset, or `STARGATE_STORAGE=sqlite` |
+| Postgres | `STARGATE_STORAGE=postgres` and `STARGATE_PG_DSN` (or `DATABASE_URL` for data layer) |
+| Memory | tests / ephemeral (`STARGATE_STORAGE=memory`) |
+
+Rules:
+
+- Interfaces live under `storage/*`; keep **both** `sqlite_*` and `pg_*` implementations in sync at the interface boundary.
+- New features must work on **both** dialects unless explicitly documented as dialect-specific.
+- `cmd/migrate-pg-to-sqlite` is an **optional migration tool** for operators moving *to* SQLite—not a mandate to abandon Postgres.
+- Unification work (stargate-3bk.3) means **reduce duplication** (shared logic, one interface, less drift)—**not** delete Postgres support.
 
 ## Consequences
 
 **Positive**
 
-- `curl | bash` / single node works offline
-- Simple backups (copy files)
-- Aligns with embedded deploy (ADR 0001)
+- Single-binary / offline works out of the box (SQLite)
+- Shared clusters can use Postgres without a fork
+- Clear env matrix for deploy docs
 
 **Negative / trade-offs**
 
-- Limited multi-process writers on one SQLite file
-- Some historical code still branches on PG (ingestion sync, funding sync) — must keep feature parity or clearly gate
-- Operators needing HA should use Postgres and shared storage for uploads/IPFS
+- Two implementations to maintain (mitigate via shared helpers / interface tests)
+- Historical near-duplicates between sqlite_store and pg_store need ongoing DRY, not deletion of PG
 
-**Follow-ups**
+**Non-goals**
 
-- Prefer `storage` factories over ad-hoc DSN checks in `main`
-- Document env matrix in deployment guide
+- Requiring Postgres for all installs
+- Requiring SQLite for all installs
+- Removing either dialect in favor of the other
 
 ## Related
 
-- `backend/storage/`, `docs/history/STORAGE_REFACTORING_STRATEGY.md`
-- ADR 0001 — single binary
+- `backend/storage/`, `backend/storage/factory.go`
+- ADR 0001 — single binary (SQLite default fits embedded deploy)
+- stargate-3bk.3 — unify implementations **while keeping both dialects**

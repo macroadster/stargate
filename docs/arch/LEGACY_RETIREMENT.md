@@ -1,7 +1,7 @@
 # Legacy retirement inventory (stargate-3bk.8)
 
 Status: **in progress / partially complete**  
-Related: ADR 0001, 0002, 0005; blocked work on full PG removal: **stargate-3bk.3**
+Related: ADR 0001, 0002, 0005; related: **stargate-3bk.3** (unify stores, keep both dialects)
 
 ## Retired in this change
 
@@ -18,7 +18,7 @@ Related: ADR 0001, 0002, 0005; blocked work on full PG removal: **stargate-3bk.3
 | --- | --- | --- |
 | `VerifyLegacySignMessage` (compact wallet signmessage) | Bitcoin Core wallet protocol, not app debt | None — keep alongside BIP-322 |
 | `/api/contract-stego` (+ create) | Still used by `StegoAnalysisViewer` | Migrate UI → `/api/smart_contract/*` then remove |
-| Postgres store implementations (`pg_store`, `apikey_store_pg`) | Supported dialect for multi-writer; SQLite is **primary** (ADR 0002) | Complete under **stargate-3bk.3** (unify / document matrix) |
+| Postgres store implementations (`pg_store`, `apikey_store_pg`) | **First-class** dialect for multi-writer / shared deploys (ADR 0002); SQLite is default only | **Keep forever** unless a new ADR supersedes; 3bk.3 = reduce duplication, not remove PG |
 | Filesystem block path `height_00000000` fallback | On-disk layout compatibility | Keep until data migration tool exists |
 | Inscription `?legacy=1` query | Opt-in file-based pending items | Prefer ingestion store; remove after one release without callers |
 
@@ -40,5 +40,5 @@ Catalog of remaining surfaces: `GET /api/surfaces`.
 
 - [x] Frontend uses `/api/open-contracts` (useContracts) and `/api/data/*` for blocks
 - [x] MCP tests pass with guidance-only schemas
-- [ ] PG→SQLite migration path exercised (`cmd/migrate-pg-to-sqlite`) — **3bk.3**
+- [ ] Optional PG↔SQLite migration tooling / shared tests for both dialects — **3bk.3** (do **not** remove Postgres)
 - [ ] StegoAnalysisViewer migrated off `/api/contract-stego`
