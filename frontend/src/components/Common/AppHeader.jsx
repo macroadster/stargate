@@ -84,178 +84,191 @@ const AppHeader = ({
   }, [isDropdownOpen]);
 
   return (
-    <header className="nav-glass fixed top-0 left-0 right-0 z-50">
-      <nav className="starlight-nav bg-transparent border-none w-full">
-        <div className="container mx-auto px-6 h-16 flex flex-row items-center justify-between">
-          {/* Left Side: Logo & Links */}
-          <div className="flex flex-row items-center gap-8">
-            <button
-              onClick={() => navigate("/")}
-              className="flex flex-row items-center gap-2 p-0 bg-transparent border-none cursor-pointer group"
-            >
-              <i className="icon-starlight header-logo-icon" />
-              <span className="text-2xl font-bold text-gradient-starlight">
-                Starlight
-              </span>
-            </button>
+    <>
+      {/*
+        Bar only inside .nav-glass. Mobile drawer is a fixed sibling so its
+        backdrop-filter is not trapped by the header's own blur stacking context
+        (a common browser limitation for nested frosted panels).
+      */}
+      <header className="nav-glass fixed top-0 left-0 right-0 z-50">
+        <nav className="starlight-nav bg-transparent border-none w-full">
+          <div className="container mx-auto px-6 h-16 flex flex-row items-center justify-between">
+            {/* Left Side: Logo & Links */}
+            <div className="flex flex-row items-center gap-8">
+              <button
+                onClick={() => navigate("/")}
+                className="flex flex-row items-center gap-2 p-0 bg-transparent border-none cursor-pointer group"
+              >
+                <i className="icon-starlight header-logo-icon" />
+                <span className="text-2xl font-bold text-gradient-starlight">
+                  Starlight
+                </span>
+              </button>
 
-            <div className="nav-desktop">
-              <ul className="nav-list flex flex-row items-center">
-                <li>
-                  <button onClick={onInscribe} className="nav-link">
-                    Inscribe
-                  </button>
-                </li>
-                <li>
-                  <button onClick={() => navigate("/")} className="nav-link">
-                    Blocks
-                  </button>
-                </li>
-                <li>
-                  <button
-                    onClick={() => navigate("/contracts")}
-                    className="nav-link"
-                  >
-                    Contracts
-                  </button>
-                </li>
-                <li>
-                  <button
-                    onClick={() => navigate("/discover")}
-                    className="nav-link"
-                  >
-                    Discover
-                  </button>
-                </li>
-                <li>
-                  <button
-                    onClick={() => navigate("/docs")}
-                    className="nav-link"
-                  >
-                    Documents
-                  </button>
-                </li>
-              </ul>
-            </div>
-          </div>
-
-          {/* Right Side: Search & Actions */}
-          <div className="flex flex-row items-center gap-4">
-            <div className="nav-desktop">
-              <div className="nav-actions flex flex-row items-center gap-2 h-full">
-                {showSearch && (
-                  <div className="search has-icon mr-2">
-                    <Search className="icon-search w-4 h-4" />
-                    <input
-                      type="text"
-                      placeholder="Search..."
-                      value={searchQuery}
-                      onChange={(e) => onSearchChange?.(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Escape") {
-                          onClearSearch?.();
-                        }
-                      }}
-                      className="input search-input text-sm"
-                    />
-                    {searchQuery && (
-                      <button onClick={onClearSearch} className="search-clear">
-                        <X className="w-4 h-4" />
-                      </button>
-                    )}
-                    {renderInlineSearch && renderInlineSearch()}
-                  </div>
-                )}
-
-                {showThemeToggle && (
-                  <button
-                    onClick={cycleTheme}
-                    className="nav-link px-2 bg-transparent border-none cursor-pointer"
-                    title={getThemeTitle()}
-                  >
-                    {getThemeIcon()}
-                  </button>
-                )}
-
-                <div
-                  className={`dropdown h-full flex items-center ${isDropdownOpen ? "active" : ""}`}
-                  ref={dropdownRef}
-                >
-                  <button
-                    onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-                    className="nav-link px-2 bg-transparent border-none cursor-pointer"
-                    title="More options"
-                  >
-                    <MoreVertical className="w-5 h-5" />
-                  </button>
-                  <div
-                    className="dropdown-menu active"
-                    style={{ right: 0, left: "auto" }}
-                  >
-                    {showTextToggle && (
-                      <button
-                        onClick={() => {
-                          onToggleText?.();
-                          setIsDropdownOpen(false);
-                        }}
-                        className="dropdown-item flex flex-row items-center justify-between"
-                      >
-                        <span>Hide text</span>
-                        {hideText && (
-                          <Check className="w-4 h-4 text-primary" />
-                        )}
-                      </button>
-                    )}
-                    {auth?.apiKey ? (
-                      <>
-                        <div className="px-4 py-2 border-t border-white/5">
-                          <div className="text-[10px] text-muted mb-1 uppercase tracking-widest font-bold">
-                            Wallet
-                          </div>
-                          <div className="badge-success text-[11px] px-2 py-0.5 rounded truncate w-full text-center">
-                            {auth.wallet || auth.email || "Connected"}
-                          </div>
-                        </div>
-                        <button
-                          onClick={() => {
-                            signOut();
-                            setIsDropdownOpen(false);
-                          }}
-                          className="dropdown-item text-error border-t border-white/5"
-                        >
-                          Sign out
-                        </button>
-                      </>
-                    ) : (
-                      <button
-                        onClick={() => {
-                          navigate("/auth");
-                          setIsDropdownOpen(false);
-                        }}
-                        className="dropdown-item border-t border-white/5"
-                      >
-                        Sign In
-                      </button>
-                    )}
-                  </div>
-                </div>
+              <div className="nav-desktop">
+                <ul className="nav-list flex flex-row items-center">
+                  <li>
+                    <button onClick={onInscribe} className="nav-link">
+                      Inscribe
+                    </button>
+                  </li>
+                  <li>
+                    <button onClick={() => navigate("/")} className="nav-link">
+                      Blocks
+                    </button>
+                  </li>
+                  <li>
+                    <button
+                      onClick={() => navigate("/contracts")}
+                      className="nav-link"
+                    >
+                      Contracts
+                    </button>
+                  </li>
+                  <li>
+                    <button
+                      onClick={() => navigate("/discover")}
+                      className="nav-link"
+                    >
+                      Discover
+                    </button>
+                  </li>
+                  <li>
+                    <button
+                      onClick={() => navigate("/docs")}
+                      className="nav-link"
+                    >
+                      Documents
+                    </button>
+                  </li>
+                </ul>
               </div>
             </div>
 
-            <button
-              onClick={() => setIsMenuOpen(!isMenuOpen)}
-              className={`hamburger md:hidden ${isMenuOpen ? "active" : ""}`}
-              aria-label="Toggle menu"
-            >
-              <span />
-              <span />
-              <span />
-            </button>
-          </div>
-        </div>
+            {/* Right Side: Search & Actions */}
+            <div className="flex flex-row items-center gap-4">
+              <div className="nav-desktop">
+                <div className="nav-actions flex flex-row items-center gap-2 h-full">
+                  {showSearch && (
+                    <div className="search has-icon mr-2">
+                      <Search className="icon-search w-4 h-4" />
+                      <input
+                        type="text"
+                        placeholder="Search..."
+                        value={searchQuery}
+                        onChange={(e) => onSearchChange?.(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Escape") {
+                            onClearSearch?.();
+                          }
+                        }}
+                        className="input search-input text-sm"
+                      />
+                      {searchQuery && (
+                        <button onClick={onClearSearch} className="search-clear">
+                          <X className="w-4 h-4" />
+                        </button>
+                      )}
+                      {renderInlineSearch && renderInlineSearch()}
+                    </div>
+                  )}
 
-        {/* Mobile Menu */}
-        <div className={`nav-menu-mobile ${isMenuOpen ? "active" : ""}`}>
+                  {showThemeToggle && (
+                    <button
+                      onClick={cycleTheme}
+                      className="nav-link px-2 bg-transparent border-none cursor-pointer"
+                      title={getThemeTitle()}
+                    >
+                      {getThemeIcon()}
+                    </button>
+                  )}
+
+                  <div
+                    className={`dropdown h-full flex items-center ${isDropdownOpen ? "active" : ""}`}
+                    ref={dropdownRef}
+                  >
+                    <button
+                      onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+                      className="nav-link px-2 bg-transparent border-none cursor-pointer"
+                      title="More options"
+                    >
+                      <MoreVertical className="w-5 h-5" />
+                    </button>
+                    <div
+                      className="dropdown-menu active"
+                      style={{ right: 0, left: "auto" }}
+                    >
+                      {showTextToggle && (
+                        <button
+                          onClick={() => {
+                            onToggleText?.();
+                            setIsDropdownOpen(false);
+                          }}
+                          className="dropdown-item flex flex-row items-center justify-between"
+                        >
+                          <span>Hide text</span>
+                          {hideText && (
+                            <Check className="w-4 h-4 text-primary" />
+                          )}
+                        </button>
+                      )}
+                      {auth?.apiKey ? (
+                        <>
+                          <div className="px-4 py-2 border-t border-white/5">
+                            <div className="text-[10px] text-muted mb-1 uppercase tracking-widest font-bold">
+                              Wallet
+                            </div>
+                            <div className="badge-success text-[11px] px-2 py-0.5 rounded truncate w-full text-center">
+                              {auth.wallet || auth.email || "Connected"}
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => {
+                              signOut();
+                              setIsDropdownOpen(false);
+                            }}
+                            className="dropdown-item text-error border-t border-white/5"
+                          >
+                            Sign out
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          onClick={() => {
+                            navigate("/auth");
+                            setIsDropdownOpen(false);
+                          }}
+                          className="dropdown-item border-t border-white/5"
+                        >
+                          Sign In
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <button
+                onClick={() => setIsMenuOpen(!isMenuOpen)}
+                className={`hamburger md:hidden ${isMenuOpen ? "active" : ""}`}
+                aria-label="Toggle menu"
+                aria-expanded={isMenuOpen}
+              >
+                <span />
+                <span />
+                <span />
+              </button>
+            </div>
+          </div>
+        </nav>
+      </header>
+
+      {/* Fixed sibling — blur lives on inner panel (no opacity/overflow on that node) */}
+      <div
+        className={`nav-menu-mobile ${isMenuOpen ? "active" : ""}`}
+        aria-hidden={!isMenuOpen}
+      >
+        <div className="nav-menu-mobile-glass">
           {showSearch && (
             <div className="search has-icon">
               <Search className="icon-search w-4 h-4" />
@@ -404,8 +417,8 @@ const AppHeader = ({
             )}
           </div>
         </div>
-      </nav>
-    </header>
+      </div>
+    </>
   );
 };
 

@@ -709,50 +709,131 @@ html[data-theme="light"] .auth-tab-inactive {
    to match quantum's nav-menu-mobile a targets.
    ================================================================ */
 
-/* Hamburger → X (quantum .hamburger.active only recolors bars) */
+/*
+ * Hamburger → X
+ * quantum .hamburger uses gap: 0.4rem (6.4px) + 2px bars; center-to-center
+ * between first/third is ~8.4px. Prior 6px offset left a broken / skewed X.
+ */
+.hamburger span {
+    transition: transform 0.3s ease, opacity 0.2s ease, background-color 0.3s ease, box-shadow 0.3s ease;
+}
+
 .hamburger.active span:nth-child(1) {
-    transform: translateY(6px) rotate(45deg);
+    transform: translateY(calc(0.4rem + 2px)) rotate(45deg);
 }
 .hamburger.active span:nth-child(2) {
     opacity: 0;
+    transform: scaleX(0);
 }
 .hamburger.active span:nth-child(3) {
-    transform: translateY(-6px) rotate(-45deg);
+    transform: translateY(calc(-0.4rem - 2px)) rotate(-45deg);
 }
 
-/* Smooth max-height reveal instead of display:none toggle */
+/*
+ * Mobile drawer — browser backdrop-filter workarounds
+ * -------------------------------------------------
+ * Blur fails (or never samples page content) when the frosted node:
+ *   - lives under another element that already has backdrop-filter
+ *     (our header.nav-glass — menu is now a fixed *sibling*)
+ *   - has opacity < 1, or animates opacity on the same node
+ *   - has overflow: hidden on the same node as backdrop-filter
+ * Outer shell handles clip/animation; inner .nav-menu-mobile-glass owns blur.
+ */
 .nav-menu-mobile {
+    /* Override quantum: display:none + absolute under header */
     display: block !important;
+    position: fixed !important;
+    top: 4rem !important;
+    left: 0;
+    right: 0;
+    width: 100%;
+    z-index: 40; /* under header (z-50 / quantum 1000) */
     max-height: 0;
     overflow: hidden;
-    opacity: 0;
     padding: 0 !important;
-    transition: max-height 0.3s ease, opacity 0.25s ease;
-    top: 4rem !important;
-    backdrop-filter: blur(24px) saturate(180%);
-    -webkit-backdrop-filter: blur(24px) saturate(180%);
-    border-bottom-color: transparent !important;
-    background: rgba(2, 6, 23, 1) !important;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
-}
-
-html[data-theme="light"] .nav-menu-mobile {
-    background: rgba(255, 255, 255, 1) !important;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
-}
-@media (prefers-color-scheme: light) {
-    .nav-menu-mobile {
-        background: rgba(255, 255, 255, 1) !important;
-        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
-    }
+    margin: 0;
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    pointer-events: none;
+    visibility: hidden;
+    transition: max-height 0.3s ease, visibility 0s linear 0.3s;
 }
 
 .nav-menu-mobile.active {
     max-height: calc(100vh - 4rem);
+    pointer-events: auto;
+    visibility: visible;
+    transition: max-height 0.3s ease, visibility 0s linear 0s;
+}
+
+/* Frosted panel: always opacity:1, no overflow:hidden on this node.
+   Tint matches quantum .nav-glass so the drawer reads as the same bar. */
+.nav-menu-mobile-glass {
+    position: relative;
+    max-height: calc(100vh - 4rem);
+    overflow-x: hidden;
     overflow-y: auto;
-    opacity: 1;
-    padding: 0.75rem 0 !important;
-    border-bottom-color: hsla(0, 0%, 100%, 0.08) !important;
+    padding: 0.75rem 0;
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    /* Same recipe as dark .nav-glass */
+    background: rgba(255, 255, 255, 0.15);
+    border-bottom: 1px solid hsla(0, 0%, 100%, 0.08);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .nav-menu-mobile-glass {
+        background: rgba(8, 8, 26, 0.92);
+    }
+    html[data-theme="light"] .nav-menu-mobile-glass {
+        background: rgba(255, 255, 255, 0.96);
+    }
+}
+
+/* Light: match index.css header.nav-glass overrides (48% white) */
+html[data-theme="light"] .nav-menu-mobile-glass {
+    background: rgba(255, 255, 255, 0.48);
+    border-bottom-color: rgba(0, 0, 0, 0.1);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
+}
+
+@media (prefers-color-scheme: light) {
+    html:not([data-theme="dark"]) .nav-menu-mobile-glass {
+        background: rgba(255, 255, 255, 0.48);
+        border-bottom-color: rgba(0, 0, 0, 0.1);
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
+    }
+}
+
+html[data-theme="dark"] .nav-menu-mobile-glass {
+    background: rgba(255, 255, 255, 0.15);
+}
+
+/* Quantum / OS: disable blur → keep solid frosted look so content doesn't leak */
+@media (prefers-reduced-transparency: reduce) {
+    .nav-menu-mobile-glass {
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
+        background: rgba(8, 8, 26, 0.96) !important;
+    }
+    html[data-theme="light"] .nav-menu-mobile-glass {
+        background: rgba(255, 255, 255, 0.98) !important;
+    }
+}
+@media (prefers-reduced-transparency: reduce) and (prefers-color-scheme: light) {
+    html:not([data-theme="dark"]) .nav-menu-mobile-glass {
+        background: rgba(255, 255, 255, 0.98) !important;
+    }
+}
+
+@media (min-width: 768px) {
+    .nav-menu-mobile {
+        display: none !important;
+    }
 }
 
 /* Nav list spacing */
