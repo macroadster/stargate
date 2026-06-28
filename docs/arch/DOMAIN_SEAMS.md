@@ -58,3 +58,7 @@ When touching confirmation or publish flows:
 - [ ] Keep manifest/payload codec in `stego/*`
 - [ ] Keep proposal/task upsert in `app/smart_contract` (ports)
 - [ ] Wire new collaborations through interfaces in `ports.go` / `StegoReconciler`
+
+## ADRs
+
+Decision records: [../adr/README.md](../adr/README.md) (especially ADR 0003–0004).

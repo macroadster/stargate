@@ -49,3 +49,7 @@ API ownership (REST vs MCP vs data) is documented separately in `GET /api/surfac
 
 ## Domain entanglement
 See [DOMAIN_SEAMS.md](./DOMAIN_SEAMS.md) for stego / ingestion / bitcoin / contract seams and `core/identity`.
+
+## ADRs
+
+Decision records: [../adr/README.md](../adr/README.md).
