@@ -6,6 +6,16 @@ import { API_BASE } from '../../apiBase';
 import { apiFetch } from '../../utils/api';
 import CopyButton from '../Common/CopyButton';
 import { useAuth } from '../../context/AuthContext';
+import {
+  filterByKeys,
+  countWords,
+  getSubmissionNotes,
+  getNotesPreview,
+  getSubmissionTimestamp,
+  getSubmissionId,
+  formatTimestamp,
+  sortSubmissions,
+} from './deliverablesUtils';
 
 const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRefresh, isContractLocked = false }) => {
   const { auth } = useAuth();
@@ -106,12 +116,6 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
     [allDeliverables],
   );
 
-  const filterByKeys = (entries, allowed) => Object.keys(entries).reduce((acc, key) => {
-    if (allowed.has(key)) {
-      acc[key] = entries[key];
-    }
-    return acc;
-  }, {});
 
   React.useEffect(() => {
     const allowedSubmissionIds = new Set(submissionIds);
@@ -448,51 +452,9 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
     };
   }, [submissionsKey]);
 
-  const getSubmissionTimestamp = (submission) => {
-    const raw = submission?.submitted_at || submission?.created_at;
-    if (!raw) return 0;
-    const parsed = Date.parse(raw);
-    return Number.isNaN(parsed) ? 0 : parsed;
-  };
 
-  const countWords = (value) => {
-    if (!value || typeof value !== 'string') return 0;
-    return value.trim().split(/\s+/).filter(Boolean).length;
-  };
 
-  const getSubmissionNotes = (submission) => (
-    submission?.deliverables?.notes
-      || submission?.deliverables?.document
-      || submission?.deliverables?.rework_notes
-      || ''
-  );
 
-  const getNotesPreview = (value, limit = 320) => {
-    if (!value) return '';
-    if (value.length <= limit) return value;
-    return `${value.slice(0, limit)}…`;
-  };
-
-  const getSubmissionId = (submission, fallback) => (
-    submission?.submission_id || submission?.id || fallback
-  );
-
-  const formatTimestamp = (value) => (
-    value ? new Date(value).toLocaleString() : 'Unknown time'
-  );
-
-  const sortSubmissions = (submissions) => {
-    return [...submissions].sort((a, b) => {
-      if (sortBy === 'most_words' || sortBy === 'fewest_words') {
-        const aWords = countWords(getSubmissionNotes(a));
-        const bWords = countWords(getSubmissionNotes(b));
-        return sortBy === 'most_words' ? bWords - aWords : aWords - bWords;
-      }
-      const aTime = getSubmissionTimestamp(a);
-      const bTime = getSubmissionTimestamp(b);
-      return sortBy === 'oldest' ? aTime - bTime : bTime - aTime;
-    });
-  };
 
   const exportComparison = () => {
     const payload = comparisonGroups
@@ -502,7 +464,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
           return (submission.status || '').toLowerCase() === filterStatus;
         });
         if (filteredSubmissions.length === 0) return null;
-        const sorted = sortSubmissions(filteredSubmissions);
+        const sorted = sortSubmissions(filteredSubmissions, sortBy);
         return {
           task_id: group.task_id,
           title: group.title,
@@ -649,7 +611,7 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
             });
             if (filteredSubmissions.length === 0) return null;
 
-            const sortedSubmissions = sortSubmissions(filteredSubmissions);
+            const sortedSubmissions = sortSubmissions(filteredSubmissions, sortBy);
 
             return (
               <div key={group.task_id} className="deliverables-compare-group">

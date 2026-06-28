@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"testing"
 	auth "stargate-backend/storage/auth"
+	"testing"
 )
 
 func TestHandleLoginSetsCookie(t *testing.T) {

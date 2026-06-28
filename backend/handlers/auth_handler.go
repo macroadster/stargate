@@ -12,13 +12,14 @@ import (
 	"os"
 	"strings"
 
+	auth "stargate-backend/storage/auth"
+
 	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
-	auth "stargate-backend/storage/auth"
 )
 
 // APIKeyHandler issues API keys via registration.

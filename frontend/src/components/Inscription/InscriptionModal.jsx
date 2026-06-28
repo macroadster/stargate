@@ -7,19 +7,14 @@ import DeliverablesReview from '../Review/DeliverablesReview';
 import { API_BASE } from '../../apiBase';
 import { apiFetch } from '../../utils/api';
 import { useAuth } from '../../context/AuthContext';
-
-// QR version 40-L max byte capacity (base64 uses byte mode).
-const QR_BYTE_LIMIT = 2953;
+import { QR_BYTE_LIMIT } from './inscriptionUtils';
+import { useInscriptionNetwork } from './useInscriptionNetwork';
 
 const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
   const { auth } = useAuth();
+  const [network, setNetwork] = useInscriptionNetwork(inscription, auth.wallet);
   const [activeTab, setActiveTab] = useState(initialTab);
   const [monoContent, setMonoContent] = useState(true);
-  const [network, setNetwork] = useState(
-    inscription?.metadata?.network ||
-      inscription?.network ||
-      (inscription?.contract_type?.toLowerCase().includes('testnet') ? 'testnet' : 'testnet4')
-  );
   const [proposalItems, setProposalItems] = useState([]);
   const [isLoadingProposals, setIsLoadingProposals] = useState(false);
   const [proposalError, setProposalError] = useState('');
@@ -65,43 +60,7 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
   const [reworkNotes, setReworkNotes] = useState('');
   const [isSubmittingRework, setIsSubmittingRework] = useState(false);
 
-  const guessNetworkFromAddress = (addr) => {
-    const a = (addr || '').trim().toLowerCase();
-    if (!a) return '';
-    if (a.startsWith('tb1') || a.startsWith('m') || a.startsWith('n') || a.startsWith('2')) return 'testnet4';
-    if (a.startsWith('bc1') || a.startsWith('1') || a.startsWith('3')) return 'mainnet';
-    return '';
-  };
 
-  // Fetch network info (prefer wallet-derived guess, fallback to metadata/testnet)
-  useEffect(() => {
-    const walletGuess =
-      guessNetworkFromAddress(auth.wallet) ||
-      guessNetworkFromAddress(inscription?.metadata?.funding_address) ||
-      guessNetworkFromAddress(inscription?.metadata?.address) ||
-      guessNetworkFromAddress(inscription?.metadata?.contractor_wallet);
-    const metaNetwork =
-      inscription?.metadata?.network ||
-      inscription?.network ||
-      (inscription?.contract_type?.toLowerCase().includes('testnet') ? 'testnet4' : '');
-    const localNetwork = walletGuess || metaNetwork || 'testnet4';
-    setNetwork(localNetwork);
-
-    const fetchNetwork = async () => {
-      try {
-        const response = await apiFetch('/bitcoin/v1/health');
-        if (response.ok) {
-          const data = await response.json();
-          if (!walletGuess) {
-            setNetwork(data.network || localNetwork || 'testnet4');
-          }
-        }
-      } catch (error) {
-        console.error('Failed to fetch network info:', error);
-      }
-    };
-    fetchNetwork();
-  }, [inscription, auth.wallet]);
 
   useEffect(() => {
     setShowPsbtQr(false);
