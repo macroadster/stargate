@@ -216,11 +216,10 @@ See the source in `backend/agents/` for the full implementation (Watcher, Worker
 
 ## 🚀 Installation
 
-### One-Liner Binary Install (Recommended)
+### Quick Install (Recommended)
 
 ```bash
-curl -fsSL -o stargate https://github.com/macroadster/stargate/releases/latest/download/stargate-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
-chmod +x stargate && sudo mv stargate /usr/local/bin/
+curl -fsSL https://raw.githubusercontent.com/macroadster/stargate/main/install.sh | bash
 ```
 
 Then run:
@@ -229,7 +228,7 @@ Then run:
 stargate
 ```
 
-Server starts on `http://localhost:3001` with SQLite storage. No Docker, Kubernetes, or Helm required. Available for Linux (amd64, arm64) and macOS (amd64, arm64).
+Server starts on `http://localhost:3001` with SQLite storage. No Docker, Kubernetes, or Helm required. Available for Linux (amd64, arm64) and macOS (amd64, arm64). Set `INSTALL_DIR` to change the install location (default `/usr/local/bin`).
 
 ### Prerequisites (Development)
 - Node.js 18+ and npm
