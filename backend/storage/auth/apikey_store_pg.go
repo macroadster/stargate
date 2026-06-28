@@ -2,22 +2,12 @@ package auth
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
-
-// hashAPIKey returns the SHA256 hash of an API key for database lookup.
-// This must match the hashing used in Issue() and Seed().
-func hashAPIKey(key string) string {
-	sum := sha256.Sum256([]byte(strings.TrimSpace(key)))
-	return hex.EncodeToString(sum[:])
-}
 
 // PGAPIKeyStore persists API keys in Postgres.
 type PGAPIKeyStore struct {
@@ -111,9 +101,7 @@ func (s *PGAPIKeyStore) Issue(email, wallet, source string) (APIKey, error) {
 		return APIKey{}, err
 	}
 
-	// Use SHA256 hashing consistent with creatorAPIKeyHash() and Seed()
-	sum := sha256.Sum256([]byte(key))
-	keyHash := hex.EncodeToString(sum[:])
+	keyHash := hashAPIKey(key)
 
 	rec := APIKey{
 		Key:       key,
@@ -176,10 +164,7 @@ func (s *PGAPIKeyStore) Seed(key, email, source string) {
 	if key == "" {
 		return
 	}
-	// key_hash is PRIMARY KEY and NOT NULL, must be provided.
-	// We MUST use the same SHA256 hashing as creatorAPIKeyHash in server.go
-	sum := sha256.Sum256([]byte(strings.TrimSpace(key)))
-	hash := hex.EncodeToString(sum[:])
+	hash := hashAPIKey(key)
 
 	_, _ = s.pool.Exec(context.Background(),
 		"INSERT INTO api_keys (key_hash, email, source, created_at) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING",
@@ -188,31 +173,17 @@ func (s *PGAPIKeyStore) Seed(key, email, source string) {
 
 // SeedEnvironmentVariables seeds STARGATE_API_KEY and STARLIGHT_DONATION_ADDRESS from environment variables.
 func (s *PGAPIKeyStore) SeedEnvironmentVariables() {
-	stargateKey := strings.TrimSpace(os.Getenv("STARGATE_API_KEY"))
-	donationAddr := strings.TrimSpace(os.Getenv("STARLIGHT_DONATION_ADDRESS"))
-
-	// If both are available, bind them together
-	if stargateKey != "" && donationAddr != "" {
-		// key_hash is PRIMARY KEY and NOT NULL, must be provided.
-		// We MUST use the same SHA256 hashing as creatorAPIKeyHash in server.go
-		sum := sha256.Sum256([]byte(stargateKey))
-		hash := hex.EncodeToString(sum[:])
-
+	plan := PlanEnvSeed()
+	if plan.BindKey != "" {
 		_, _ = s.pool.Exec(context.Background(),
 			"INSERT INTO api_keys (key_hash, email, wallet_address, source, created_at) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING",
-			hash, "", donationAddr, "seed", time.Now())
+			hashAPIKey(plan.BindKey), "", plan.BindWallet, "seed", time.Now())
 		return
 	}
-
-	// If only STARGATE_API_KEY is available, seed it without wallet
-	if stargateKey != "" {
-		s.Seed(stargateKey, "", "seed")
+	if plan.SeedKeyOnly != "" {
+		s.Seed(plan.SeedKeyOnly, "", "seed")
 	}
-
-	// If only STARLIGHT_DONATION_ADDRESS is available, seed it as its own API key
-	if donationAddr != "" {
-		// Use the donation address as both the key and wallet for simplicity
-		// This allows the donation address to be used as an API key
-		s.Seed(donationAddr, "donation@starlight", "donation_seed")
+	if plan.SeedDonationAsKey != "" {
+		s.Seed(plan.SeedDonationAsKey, "donation@starlight", "donation_seed")
 	}
 }

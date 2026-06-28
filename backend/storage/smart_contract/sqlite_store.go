@@ -1019,46 +1019,9 @@ ON CONFLICT(task_id) DO UPDATE SET
 }
 
 func (s *SQLiteStore) CreateProposal(ctx context.Context, p smart_contract.Proposal) error {
-	if p.Metadata == nil {
-		p.Metadata = map[string]interface{}{}
-	}
-	if strings.TrimSpace(p.VisiblePixelHash) != "" {
-		if vph, ok := p.Metadata["visible_pixel_hash"].(string); !ok || strings.TrimSpace(vph) == "" {
-			p.Metadata["visible_pixel_hash"] = p.VisiblePixelHash
-		}
-	}
-
-	// Validate contract_id vs visible_pixel_hash consistency (mirrors PG)
-	if metaContract, ok := p.Metadata["contract_id"].(string); ok {
-		metaContract = strings.TrimSpace(metaContract)
-		if metaContract != "" {
-			if metaHash, ok2 := p.Metadata["visible_pixel_hash"].(string); ok2 {
-				metaHash = strings.TrimSpace(metaHash)
-				normalizedContract := strings.TrimPrefix(metaContract, "wish-")
-				if metaHash != "" && metaHash != normalizedContract {
-					return fmt.Errorf("visible_pixel_hash must match contract_id when both are set (normalized: %s)", normalizedContract)
-				}
-			}
-		}
-	}
-
-	if err := ValidateProposalInput(&p); err != nil {
-		return fmt.Errorf("proposal validation failed: %v", err)
-	}
-
-	// Validate status field (mirrors PG)
-	if p.Status == "" {
-		p.Status = "pending"
-	} else if !isValidProposalStatus(p.Status) {
-		return fmt.Errorf("invalid proposal status: %s (must be one of: pending, approved, rejected, published)", p.Status)
-	}
-
-	// Check for duplicate visible_pixel_hash with approved/published status (mirrors PG)
-	visibleHash := strings.TrimSpace(p.VisiblePixelHash)
-	if visibleHash == "" {
-		if v, ok := p.Metadata["visible_pixel_hash"].(string); ok {
-			visibleHash = strings.TrimSpace(v)
-		}
+	visibleHash, metadata, wishToSupersede, err := PrepareProposalForCreate(&p)
+	if err != nil {
+		return err
 	}
 	if visibleHash != "" {
 		var conflictID string
@@ -1069,29 +1032,18 @@ func (s *SQLiteStore) CreateProposal(ctx context.Context, p smart_contract.Propo
 		LIMIT 1
 		`, visibleHash, p.ID).Scan(&conflictID)
 		if err == nil && conflictID != "" {
-			return fmt.Errorf("a proposal with visible_pixel_hash=%s is already approved/published (id=%s)", visibleHash, conflictID)
+			return ProposalConflictApprovedMsg(visibleHash, conflictID)
 		}
-
-		// Safeguard: Maximum 5 proposals per wish (mirrors PG)
 		var count int
 		err = s.db.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM mcp_proposals
 		WHERE visible_pixel_hash=? AND id<>?
 		`, visibleHash, p.ID).Scan(&count)
-		if err == nil && count >= 5 {
-			return fmt.Errorf("maximum of 5 proposals reached for wish %s", visibleHash)
+		if err == nil && count >= MaxProposalsPerWish {
+			return ProposalMaxPerWishMsg(visibleHash)
 		}
 	}
-
-	metaMap := p.Metadata
-	if metaMap == nil {
-		metaMap = map[string]interface{}{}
-	}
-	if len(p.Tasks) > 0 {
-		metaMap["suggested_tasks"] = p.Tasks
-	}
-	metadata, _ := json.Marshal(metaMap)
-	_, err := s.db.ExecContext(ctx, `
+	_, err = s.db.ExecContext(ctx, `
 INSERT INTO mcp_proposals (id, title, description_md, visible_pixel_hash, budget_sats, status, metadata, created_at)
 VALUES (?,?,?,?,?,?,?,?)
 ON CONFLICT(id) DO UPDATE SET
@@ -1105,24 +1057,8 @@ ON CONFLICT(id) DO UPDATE SET
 	if err != nil {
 		return err
 	}
-
-	// Supersede matching wish contract when proposal is approved/published (mirrors PG)
-	if strings.EqualFold(p.Status, "approved") || strings.EqualFold(p.Status, "published") {
-		visible := strings.TrimSpace(p.VisiblePixelHash)
-		if visible == "" {
-			if v, ok := p.Metadata["visible_pixel_hash"].(string); ok {
-				visible = strings.TrimSpace(v)
-			}
-		}
-		if visible == "" {
-			if v, ok := p.Metadata["contract_id"].(string); ok {
-				visible = strings.TrimSpace(v)
-			}
-		}
-		if visible != "" {
-			wishID := "wish-" + visible
-			_, _ = s.db.ExecContext(ctx, `UPDATE mcp_contracts SET status='superseded' WHERE contract_id=?`, wishID)
-		}
+	if wishToSupersede != "" {
+		_, _ = s.db.ExecContext(ctx, `UPDATE mcp_contracts SET status='superseded' WHERE contract_id=?`, wishToSupersede)
 	}
 	return nil
 }

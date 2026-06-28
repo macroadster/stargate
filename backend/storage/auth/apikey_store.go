@@ -2,6 +2,7 @@ package auth
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"os"
@@ -63,33 +64,20 @@ func (s *APIKeyStore) Seed(key, email, source string) {
 
 // SeedEnvironmentVariables seeds STARGATE_API_KEY and STARLIGHT_DONATION_ADDRESS from environment variables.
 func (s *APIKeyStore) SeedEnvironmentVariables() {
-	stargateKey := strings.TrimSpace(os.Getenv("STARGATE_API_KEY"))
-	donationAddr := strings.TrimSpace(os.Getenv("STARLIGHT_DONATION_ADDRESS"))
-
-	// If both are available, bind them together
-	if stargateKey != "" && donationAddr != "" {
+	plan := PlanEnvSeed()
+	if plan.BindKey != "" {
 		s.mu.Lock()
-		s.keys[stargateKey] = APIKey{
-			Key:       stargateKey,
-			Email:     "",
-			Wallet:    donationAddr,
-			Source:    "seed",
-			CreatedAt: time.Now(),
+		s.keys[plan.BindKey] = APIKey{
+			Key: plan.BindKey, Wallet: plan.BindWallet, Source: "seed", CreatedAt: time.Now(),
 		}
 		s.mu.Unlock()
 		return
 	}
-
-	// If only STARGATE_API_KEY is available, seed it without wallet
-	if stargateKey != "" {
-		s.Seed(stargateKey, "", "seed")
+	if plan.SeedKeyOnly != "" {
+		s.Seed(plan.SeedKeyOnly, "", "seed")
 	}
-
-	// If only STARLIGHT_DONATION_ADDRESS is available, seed it as its own API key
-	if donationAddr != "" {
-		// Use the donation address as both the key and wallet for simplicity
-		// This allows the donation address to be used as an API key
-		s.Seed(donationAddr, "donation@starlight", "donation_seed")
+	if plan.SeedDonationAsKey != "" {
+		s.Seed(plan.SeedDonationAsKey, "donation@starlight", "donation_seed")
 	}
 }
 
@@ -165,4 +153,39 @@ func generateKey() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(b), nil
+}
+
+// hashAPIKey returns the SHA256 hex digest used as api_keys.key_hash in SQLite and Postgres.
+func hashAPIKey(key string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(key)))
+	return hex.EncodeToString(sum[:])
+}
+
+// EnvSeedPlan describes how STARGATE_API_KEY / STARLIGHT_DONATION_ADDRESS should be applied.
+// Both SQL dialects interpret this the same way so seed behavior cannot drift.
+type EnvSeedPlan struct {
+	// BindKey+BindWallet when both env vars set (key bound to donation wallet).
+	BindKey    string
+	BindWallet string
+	// SeedKeyOnly when only STARGATE_API_KEY is set.
+	SeedKeyOnly string
+	// SeedDonationAsKey when only STARLIGHT_DONATION_ADDRESS is set (legacy seed path).
+	SeedDonationAsKey string
+}
+
+// PlanEnvSeed reads environment once for API key stores (memory / sqlite / postgres).
+func PlanEnvSeed() EnvSeedPlan {
+	stargateKey := strings.TrimSpace(os.Getenv("STARGATE_API_KEY"))
+	donationAddr := strings.TrimSpace(os.Getenv("STARLIGHT_DONATION_ADDRESS"))
+	if stargateKey != "" && donationAddr != "" {
+		return EnvSeedPlan{BindKey: stargateKey, BindWallet: donationAddr}
+	}
+	plan := EnvSeedPlan{}
+	if stargateKey != "" {
+		plan.SeedKeyOnly = stargateKey
+	}
+	if donationAddr != "" {
+		plan.SeedDonationAsKey = donationAddr
+	}
+	return plan
 }

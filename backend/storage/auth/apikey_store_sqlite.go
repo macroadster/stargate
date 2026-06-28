@@ -2,11 +2,8 @@ package auth
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -89,8 +86,7 @@ func (s *SQLiteAPIKeyStore) Issue(email, wallet, source string) (APIKey, error) 
 		return APIKey{}, err
 	}
 
-	sum := sha256.Sum256([]byte(key))
-	keyHash := hex.EncodeToString(sum[:])
+	keyHash := hashAPIKey(key)
 
 	rec := APIKey{
 		Key:       key,
@@ -151,8 +147,7 @@ func (s *SQLiteAPIKeyStore) Seed(key, email, source string) {
 	if key == "" {
 		return
 	}
-	sum := sha256.Sum256([]byte(strings.TrimSpace(key)))
-	hash := hex.EncodeToString(sum[:])
+	hash := hashAPIKey(key)
 
 	_, _ = s.db.ExecContext(context.Background(),
 		"INSERT OR IGNORE INTO api_keys (key_hash, email, source, created_at) VALUES (?,?,?,?)",
@@ -160,25 +155,18 @@ func (s *SQLiteAPIKeyStore) Seed(key, email, source string) {
 }
 
 func (s *SQLiteAPIKeyStore) SeedEnvironmentVariables() {
-	stargateKey := strings.TrimSpace(os.Getenv("STARGATE_API_KEY"))
-	donationAddr := strings.TrimSpace(os.Getenv("STARLIGHT_DONATION_ADDRESS"))
-
-	if stargateKey != "" && donationAddr != "" {
-		sum := sha256.Sum256([]byte(stargateKey))
-		hash := hex.EncodeToString(sum[:])
-
+	plan := PlanEnvSeed()
+	if plan.BindKey != "" {
 		_, _ = s.db.ExecContext(context.Background(),
 			"INSERT OR IGNORE INTO api_keys (key_hash, email, wallet_address, source, created_at) VALUES (?,?,?,?,?)",
-			hash, "", donationAddr, "seed", time.Now())
+			hashAPIKey(plan.BindKey), "", plan.BindWallet, "seed", time.Now())
 		return
 	}
-
-	if stargateKey != "" {
-		s.Seed(stargateKey, "", "seed")
+	if plan.SeedKeyOnly != "" {
+		s.Seed(plan.SeedKeyOnly, "", "seed")
 	}
-
-	if donationAddr != "" {
-		s.Seed(donationAddr, "donation@starlight", "donation_seed")
+	if plan.SeedDonationAsKey != "" {
+		s.Seed(plan.SeedDonationAsKey, "donation@starlight", "donation_seed")
 	}
 }
 

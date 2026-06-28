@@ -27,7 +27,7 @@ type AllStores struct {
 	APIKeyValidator auth.APIKeyValidator
 	ChallengeStore *auth.ChallengeStore
 
-	// Ingestion (currently PG-only; will be generalized in later phases)
+	// IngestionService (SQLite or Postgres DSN — both supported)
 	IngestionService *services.IngestionService
 
 	// Caches
