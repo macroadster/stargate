@@ -655,7 +655,7 @@ MCP UPDATE:
 
 ## 12. Implemented: OP_RETURN Direct Donation + Stego v2 Replication
 
-> **Status: Implemented** on `feature/single-binary`
+> **Status: Implemented** (single-binary / stego v2 on `dev` and releases)
 > **Supersedes**: Two-Phase Donation Sweep (Hashlock P2WSH) — removed.
 
 This section documents the **actually implemented** donation, proof-of-work, and contract replication mechanism. The design keeps OP_RETURN within Bitcoin's 80-byte recommendation (64 bytes used) and enables fully autonomous replication across independent nodes using only on-chain data + file sync.
