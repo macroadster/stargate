@@ -34,6 +34,7 @@ func (h *HTTPMCPServer) handleListTools(w http.ResponseWriter, r *http.Request) 
 		"http_endpoints": h.getHTTPEndpointsMap(base),
 		"agent_assets":   h.getAgentAssetsMap(base),
 		"endpoints": []string{
+			"/api/surfaces",
 			"/api/inscribe",
 			"/api/smart_contract/contracts",
 			"/api/smart_contract/tasks",
@@ -41,7 +42,10 @@ func (h *HTTPMCPServer) handleListTools(w http.ResponseWriter, r *http.Request) 
 			"/api/smart_contract/submissions",
 			"/api/smart_contract/events",
 			"/api/open-contracts",
+			"/api/data/blocks",
+			"/bitcoin/v1/info",
 		},
+		"surface_note": "GET /api/surfaces for primary vs legacy API ownership (REST primary, MCP tool shim, /api/data for blocks).",
 	})
 }
 
@@ -140,6 +144,7 @@ func (h *HTTPMCPServer) handleDiscover(w http.ResponseWriter, r *http.Request) {
 		"http_endpoints": h.getHTTPEndpointsMap(base),
 		"agent_assets":   h.getAgentAssetsMap(base),
 		"endpoints": []string{
+			"/api/surfaces",
 			"/api/inscribe",
 			"/api/smart_contract/contracts",
 			"/api/smart_contract/tasks",
@@ -147,7 +152,10 @@ func (h *HTTPMCPServer) handleDiscover(w http.ResponseWriter, r *http.Request) {
 			"/api/smart_contract/submissions",
 			"/api/smart_contract/events",
 			"/api/open-contracts",
+			"/api/data/blocks",
+			"/bitcoin/v1/info",
 		},
+		"surface_note": "GET /api/surfaces for primary vs legacy API ownership (REST primary, MCP tool shim, /api/data for blocks).",
 		"tools":      tools,
 		"tool_names": toolNames,
 		"total":      len(tools),

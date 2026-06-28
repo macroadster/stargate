@@ -62,7 +62,8 @@ export const useContracts = () => {
     setIsLoading(true);
     setError('');
     try {
-      const url = new URL(`${API_BASE}/api/data/contracts-with-pagination`);
+      // Primary UI contract list path (legacy /api/data/contracts-with-pagination still aliases).
+      const url = new URL(`${API_BASE}/api/open-contracts`);
       url.searchParams.set('limit', 12);
       url.searchParams.set('status', 'confirmed');
       if (cursor) {

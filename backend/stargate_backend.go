@@ -582,16 +582,22 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 	mux.Handle("/api/inscriptions/", wrapWithAuth(container.InscriptionHandler.HandleDeleteInscription))
 	mux.Handle("/api/inscribe", wrapWithAuth(container.InscriptionHandler.HandleCreateInscription))
 
-	// Block endpoints
-	mux.HandleFunc("/api/blocks", container.BlockHandler.HandleGetBlocks)
+	// Surface ownership catalog (primary vs legacy aliases) — see api/surfaces.go and docs/arch/MCP_UNIFIED_PLAN.md
+	mux.HandleFunc("/api/surfaces", api.HandleSurfaces)
 
-	// Smart contract endpoints
+	// Block endpoints — primary browse APIs live under /api/data/*; /api/blocks is a legacy alias.
+	mux.HandleFunc("/api/blocks", api.WithDeprecation("/api/data/blocks", container.BlockHandler.HandleGetBlocks))
+
+	// UI contract list (inscription-shaped for the frontend). Prefer /api/open-contracts.
+	// Lifecycle CRUD for agents stays on /api/smart_contract/*; MCP tools shim the same store.
 	mux.HandleFunc("/api/open-contracts", container.SmartContractHandler.HandleGetContracts)
-	mux.HandleFunc("/api/smart-contracts", container.SmartContractHandler.HandleGetContracts)
-	mux.HandleFunc("/api/contracts-confirmed", container.SmartContractHandler.HandleGetContracts)
-	mux.HandleFunc("/api/data/contracts-with-pagination", container.SmartContractHandler.HandleGetContracts)
-	mux.HandleFunc("/api/contract-stego", container.SmartContractHandler.HandleGetContract)
-	mux.Handle("/api/contract-stego/create", wrapWithAuth(container.SmartContractHandler.HandleCreateContract))
+	api.RegisterAliases(mux, "/api/open-contracts", container.SmartContractHandler.HandleGetContracts,
+		"/api/smart-contracts",
+		"/api/contracts-confirmed",
+		"/api/data/contracts-with-pagination",
+	)
+	mux.HandleFunc("/api/contract-stego", api.WithDeprecation("/api/smart_contract/contracts", container.SmartContractHandler.HandleGetContract))
+	mux.Handle("/api/contract-stego/create", wrapWithAuth(api.WithDeprecation("/api/smart_contract/proposals", container.SmartContractHandler.HandleCreateContract)))
 
 	// Ingestion endpoints
 	mux.Handle("/api/ingest-inscription", wrapWithAuth(container.IngestionHandler.HandleIngest))
@@ -764,7 +770,7 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 	mux.HandleFunc("/api/data/updates", dataAPI.HandleRealtimeUpdates)
 	mux.HandleFunc("/api/data/scan", dataAPI.HandleScanBlockOnDemand)
 	mux.HandleFunc("/api/data/block-images", dataAPI.HandleGetBlockImages)
-	mux.HandleFunc("/api/block-images", dataAPI.HandleGetBlockImages)
+	mux.HandleFunc("/api/block-images", api.WithDeprecation("/api/data/block-images", dataAPI.HandleGetBlockImages))
 	mux.HandleFunc("/api/stego/callback", dataAPI.HandleStegoCallback)
 	mux.HandleFunc("/content/", dataAPI.HandleContent)
 

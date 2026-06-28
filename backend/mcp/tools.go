@@ -17,16 +17,24 @@ type ToolMetadata struct {
 	Keywords        []string `json:"keywords,omitempty"`
 }
 
-// getToolSchemas returns detailed schemas for all available tools
+// getToolSchemas returns detailed schemas for all available tools.
+// Guidance (SKILL-driven) is primary; hardcoded schemas are fallback only.
 func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 	if h.guidance != nil {
 		return h.guidance.GetToolSchemas()
 	}
-	return h.getToolSchemasLegacy()
+	return h.getToolSchemasFallback()
 }
 
-// getToolSchemasLegacy returns the hardcoded tool schemas (fallback when guidance is not available)
+// getToolSchemasLegacy is deprecated; use getToolSchemasFallback.
+// Kept as a thin alias for any external callers/tests still referencing the old name.
 func (h *HTTPMCPServer) getToolSchemasLegacy() map[string]interface{} {
+	return h.getToolSchemasFallback()
+}
+
+// getToolSchemasFallback returns hardcoded tool schemas when guidance is unavailable.
+// Prefer /api/smart_contract/* REST or guidance-backed schemas for new integrations.
+func (h *HTTPMCPServer) getToolSchemasFallback() map[string]interface{} {
 	return map[string]interface{}{
 		"list_contracts": map[string]interface{}{
 			"category":    ToolCategoryDiscovery,
@@ -871,7 +879,7 @@ func (h *HTTPMCPServer) getToolList() []ToolMetadata {
 	if h.guidance != nil {
 		return h.guidance.GetToolList()
 	}
-	schemas := h.getToolSchemasLegacy()
+	schemas := h.getToolSchemasFallback()
 	metadata := make([]ToolMetadata, 0, len(schemas))
 	for name, tool := range schemas {
 		tm, ok := tool.(map[string]interface{})

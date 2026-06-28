@@ -101,8 +101,20 @@ Tool names map to the same store used by REST. Where possible they already reuse
 - **Visible Pixel Hash (VPH):** Every inscription-derived wish yields a `visible_pixel_hash` that becomes the contract identifier once a proposal is created. Tasks and funding/Merkle proofs inherit this VPH as the stable key linking inscription → proposal → contract → tasks → payouts. Treat VPH as canonical for cross-component joins.
 - **Ingestion → Proposal:** `POST /api/smart_contract/proposals` with `ingestion_id` converts a pending inscription into a proposal, auto-derives tasks from embedded message, and stamps VPH plus funding address. Approval/publish flows upsert contracts/tasks so both REST and MCP tools surface the same objects.
 
+## Surface ownership (stargate-3bk.2)
+
+Machine-readable catalog: **`GET /api/surfaces`** (`backend/api/surfaces.go`).
+
+| Surface | Primary | Legacy aliases (Deprecation + Link headers) |
+| --- | --- | --- |
+| Smart-contract lifecycle | `/api/smart_contract/*` | MCP tools under `/mcp/*` (tool shim over same store) |
+| UI wish/contract browse (inscription-shaped) | `/api/open-contracts` | `/api/smart-contracts`, `/api/contracts-confirmed`, `/api/data/contracts-with-pagination` |
+| Block / inscription data | `/api/data/*` | `/api/blocks`, `/api/block-images` |
+| Scan / extract | `/bitcoin/v1/*` | — |
+| Contract stego UI | prefer `/api/smart_contract/contracts` | `/api/contract-stego`, `/api/contract-stego/create` → proposals |
+
 ## Backlog (next steps, ordered)
-1) **Hard-route MCP to REST:** Keep single `/mcp` namespace; have the tool bridge call the HTTP REST endpoints first (with store fallback for in-process CLI mode).  
+1) ~~**Collapse dual API surfaces**~~ — done via `/api/surfaces`, alias deprecation headers, tool→REST map (3bk.2). MCP still calls the store in-process (same data as REST); optional HTTP round-trip proxy deferred.  
 2) **Complete `list_submissions` tool:** Wire to `/api/smart_contract/submissions` with filters and pagination.  
 3) **OpenAPI & discovery:** (In progress) MCP OpenAPI available at `/api/docs/mcp/openapi.json`; add `/api/smart_contract/discover` plus `/mcp/discover` for capability advertisement.  
 4) **Pagination + sorting consistency:** Ensure list endpoints honor `limit/offset/sort` across contracts/tasks/proposals/submissions; surface defaults in responses.  
