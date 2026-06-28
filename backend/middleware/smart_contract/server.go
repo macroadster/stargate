@@ -24,9 +24,11 @@ type Server struct {
 	escort       *smart_contract.EscortService
 
 	// Domain services (business logic extracted from HTTP handlers).
-	eventSvc *scservices.EventService
-	psbtSvc  *scservices.PSBTService
-	taskSvc  *scservices.TaskService
+	eventSvc      *scservices.EventService
+	psbtSvc       *scservices.PSBTService
+	taskSvc       *scservices.TaskService
+	proposalSvc   *scservices.ProposalService
+	submissionSvc *scservices.SubmissionService
 }
 
 // SetEscortService sets the escort service for the server.
@@ -72,6 +74,8 @@ func NewServer(store Store, apiKeys auth.APIKeyValidator, ingest *services.Inges
 		taskSvc:      scservices.NewTaskService(store, ingest),
 	}
 	srv.eventSvc.SetRecorder(srv.recordEvent)
+	srv.proposalSvc = scservices.NewProposalService(store, ingest, apiKeys, srv.recordEvent, srv.eventSvc.PublishProposalTasks, srv.archiveWishContract)
+	srv.submissionSvc = scservices.NewSubmissionService(store, srv.recordEvent)
 	RegisterEventSink(srv.recordEvent)
 	return srv
 }

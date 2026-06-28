@@ -152,85 +152,24 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 	var raiseFundTaskIDs []string
 	var raiseFundTasksByWallet map[string][]string
 	if isRaiseFund(fundingMode) {
-		if s.store == nil {
-			Error(w, http.StatusBadRequest, "task store unavailable for raise_fund")
-			return
-		}
-		tasks, err := s.store.ListTasks(smart_contract.TaskFilter{ContractID: contractID})
+		rf, err := s.prepareRaiseFundContext(r.Context(), contractID, fundingAddress, params)
 		if err != nil {
-			Error(w, http.StatusBadRequest, fmt.Sprintf("failed to load tasks: %v", err))
+			Error(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		if len(tasks) == 0 {
-			Error(w, http.StatusBadRequest, "no tasks available for raise_fund")
-			return
-		}
-		if strings.TrimSpace(fundingAddress) == "" {
-			Error(w, http.StatusBadRequest, "missing fundraiser payout address")
-			return
-		}
-		fundAddr, err := btcutil.DecodeAddress(strings.TrimSpace(fundingAddress), params)
-		if err != nil {
-			Error(w, http.StatusBadRequest, fmt.Sprintf("invalid fundraiser payout address: %v", err))
-			return
-		}
-		fundraiserAddr = fundAddr
-		payerTotals := make(map[string]int64)
-		raiseFundPayoutsByPayer = make(map[string][]bitcoin.PayoutOutput)
-		raiseFundPayersByWallet = make(map[string]bitcoin.PayerTarget)
-		raiseFundTasksByWallet = make(map[string][]string)
-		var payerOrder []string
-		var payoutTotal int64
-		for _, task := range tasks {
-			if task.BudgetSats <= 0 {
-				Error(w, http.StatusBadRequest, fmt.Sprintf("task budget missing for %s", task.TaskID))
-				return
-			}
-			payoutTotal += task.BudgetSats
-			raiseFundTaskIDs = append(raiseFundTaskIDs, task.TaskID)
-			payout := bitcoin.PayoutOutput{
-				Address:   fundAddr,
-				ValueSats: task.BudgetSats,
-			}
-			raiseFundPayouts = append(raiseFundPayouts, payout)
-			taskWallet := strings.TrimSpace(task.ContractorWallet)
-			if taskWallet == "" && task.MerkleProof != nil {
-				taskWallet = strings.TrimSpace(task.MerkleProof.ContractorWallet)
-			}
-			if taskWallet == "" {
-				Error(w, http.StatusBadRequest, fmt.Sprintf("missing contractor wallet for task %s", task.TaskID))
-				return
-			}
-			if _, ok := payerTotals[taskWallet]; !ok {
-				payerOrder = append(payerOrder, taskWallet)
-			}
-			payerTotals[taskWallet] += task.BudgetSats
-			raiseFundPayoutsByPayer[taskWallet] = append(raiseFundPayoutsByPayer[taskWallet], payout)
-			raiseFundTasksByWallet[taskWallet] = append(raiseFundTasksByWallet[taskWallet], task.TaskID)
-		}
-		for _, wallet := range payerOrder {
-			addr, err := btcutil.DecodeAddress(wallet, params)
-			if err != nil {
-				Error(w, http.StatusBadRequest, fmt.Sprintf("invalid contractor wallet: %v", err))
-				return
-			}
-			payerTarget := bitcoin.PayerTarget{
-				Address:    addr,
-				TargetSats: payerTotals[wallet],
-			}
-			raiseFundPayers = append(raiseFundPayers, payerTarget)
-			raiseFundPayerAddrs = append(raiseFundPayerAddrs, addr)
-			raiseFundPayersByWallet[wallet] = payerTarget
-		}
-		if len(raiseFundPayers) == 0 {
-			Error(w, http.StatusBadRequest, "no contractor wallets found for raise_fund")
-			return
-		}
-		target = payoutTotal
-		raiseFundPayerOrder = payerOrder
-		raiseFundPayerTotals = payerTotals
-		payerAddresses = raiseFundPayerAddrs
-		primaryPayer = raiseFundPayerAddrs[0]
+		fundraiserAddr = rf.FundraiserAddr
+		raiseFundPayouts = rf.Payouts
+		raiseFundPayers = rf.Payers
+		raiseFundPayerAddrs = rf.PayerAddrs
+		raiseFundPayoutsByPayer = rf.PayoutsByPayer
+		raiseFundPayersByWallet = rf.PayersByWallet
+		raiseFundPayerOrder = rf.PayerOrder
+		raiseFundPayerTotals = rf.PayerTotals
+		raiseFundTaskIDs = rf.TaskIDs
+		raiseFundTasksByWallet = rf.TasksByWallet
+		target = rf.TargetSats
+		payerAddresses = rf.PayerAddrs
+		primaryPayer = rf.PayerAddrs[0]
 		changeAddr = nil
 	}
 	if !isRaiseFund(fundingMode) && len(payerAddresses) > 1 && changeAddr == nil {
@@ -238,54 +177,18 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		return
 	}
 
-	normalizePixel := func(b []byte) []byte {
-		if l := len(b); l == 20 || l == 32 {
-			return b
-		}
-		return nil
-	}
-	decodePixelHex := func(value string) []byte {
-		if value == "" {
-			return nil
-		}
-		if b, err := hex.DecodeString(value); err == nil {
-			return normalizePixel(b)
-		}
-		return nil
-	}
-	var pixelBytes []byte
-	pixelSource := ""
-	usePixelHash := true
-	if body.UsePixelHash != nil {
-		usePixelHash = *body.UsePixelHash
-	}
 	var ingestionRec *services.IngestionRecord
 	if s.ingestionSvc != nil {
 		ingestionRec = s.resolveIngestionRecord(r.Context(), contractID)
 	}
-	if usePixelHash {
-		if ph := strings.TrimSpace(body.PixelHash); ph != "" {
-			pixelBytes = decodePixelHex(ph)
-			if pixelBytes != nil {
-				pixelSource = "pixel_hash"
-			}
-		}
-		if pixelBytes == nil && ingestionRec != nil {
-			pixelBytes = resolvePixelHashFromIngestion(ingestionRec, normalizePixel)
-			if pixelBytes != nil {
-				pixelSource = "visible_pixel_hash"
-			}
-		}
-		if pixelBytes == nil {
-			pixelBytes = decodePixelHex(strings.TrimSpace(contractID))
-			if pixelBytes != nil {
-				pixelSource = "contract_id"
-			}
-		}
-		if pixelBytes == nil {
-			Error(w, http.StatusBadRequest, "missing 32-byte pixel hash for commitment output")
-			return
-		}
+	usePixelHash := true
+	if body.UsePixelHash != nil {
+		usePixelHash = *body.UsePixelHash
+	}
+	pixelBytes, pixelSource, err := s.resolvePSBTPixel(contractID, body.PixelHash, usePixelHash, ingestionRec)
+	if err != nil {
+		Error(w, http.StatusBadRequest, err.Error())
+		return
 	}
 
 	// Prepare stego image + sandbox tarball BEFORE building the PSBT so
@@ -674,6 +577,137 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		"contractor":              contractorAddressFor(contractorAddr),
 		"network_params":          params.Name,
 	})
+}
+
+
+
+func normalizePixelBytes(b []byte) []byte {
+	if l := len(b); l == 20 || l == 32 {
+		return b
+	}
+	return nil
+}
+
+func decodePixelHex(value string) []byte {
+	if value == "" {
+		return nil
+	}
+	if b, err := hex.DecodeString(value); err == nil {
+		return normalizePixelBytes(b)
+	}
+	return nil
+}
+
+func (s *Server) resolvePSBTPixel(contractID, pixelHash string, usePixelHash bool, ingestionRec *services.IngestionRecord) ([]byte, string, error) {
+	if !usePixelHash {
+		return nil, "", nil
+	}
+	var pixelBytes []byte
+	pixelSource := ""
+	if ph := strings.TrimSpace(pixelHash); ph != "" {
+		pixelBytes = decodePixelHex(ph)
+		if pixelBytes != nil {
+			pixelSource = "pixel_hash"
+		}
+	}
+	if pixelBytes == nil && ingestionRec != nil {
+		pixelBytes = resolvePixelHashFromIngestion(ingestionRec, normalizePixelBytes)
+		if pixelBytes != nil {
+			pixelSource = "visible_pixel_hash"
+		}
+	}
+	if pixelBytes == nil {
+		pixelBytes = decodePixelHex(strings.TrimSpace(contractID))
+		if pixelBytes != nil {
+			pixelSource = "contract_id"
+		}
+	}
+	if pixelBytes == nil {
+		return nil, "", fmt.Errorf("missing 32-byte pixel hash for commitment output")
+	}
+	return pixelBytes, pixelSource, nil
+}
+
+// raiseFundContext holds precomputed raise_fund PSBT inputs.
+type raiseFundContext struct {
+	FundraiserAddr  btcutil.Address
+	Payouts         []bitcoin.PayoutOutput
+	Payers          []bitcoin.PayerTarget
+	PayerAddrs      []btcutil.Address
+	PayoutsByPayer  map[string][]bitcoin.PayoutOutput
+	PayersByWallet  map[string]bitcoin.PayerTarget
+	PayerOrder      []string
+	PayerTotals     map[string]int64
+	TaskIDs         []string
+	TasksByWallet   map[string][]string
+	TargetSats      int64
+}
+
+func (s *Server) prepareRaiseFundContext(ctx context.Context, contractID, fundingAddress string, params *chaincfg.Params) (*raiseFundContext, error) {
+	if s.store == nil {
+		return nil, fmt.Errorf("task store unavailable for raise_fund")
+	}
+	tasks, err := s.store.ListTasks(smart_contract.TaskFilter{ContractID: contractID})
+	if err != nil {
+		return nil, fmt.Errorf("failed to load tasks: %v", err)
+	}
+	if len(tasks) == 0 {
+		return nil, fmt.Errorf("no tasks available for raise_fund")
+	}
+	if strings.TrimSpace(fundingAddress) == "" {
+		return nil, fmt.Errorf("missing fundraiser payout address")
+	}
+	fundAddr, err := btcutil.DecodeAddress(strings.TrimSpace(fundingAddress), params)
+	if err != nil {
+		return nil, fmt.Errorf("invalid fundraiser payout address: %v", err)
+	}
+	out := &raiseFundContext{
+		FundraiserAddr: fundAddr,
+		PayoutsByPayer: make(map[string][]bitcoin.PayoutOutput),
+		PayersByWallet: make(map[string]bitcoin.PayerTarget),
+		TasksByWallet:  make(map[string][]string),
+		PayerTotals:    make(map[string]int64),
+	}
+	var payerOrder []string
+	var payoutTotal int64
+	for _, task := range tasks {
+		if task.BudgetSats <= 0 {
+			return nil, fmt.Errorf("task budget missing for %s", task.TaskID)
+		}
+		payoutTotal += task.BudgetSats
+		out.TaskIDs = append(out.TaskIDs, task.TaskID)
+		payout := bitcoin.PayoutOutput{Address: fundAddr, ValueSats: task.BudgetSats}
+		out.Payouts = append(out.Payouts, payout)
+		taskWallet := strings.TrimSpace(task.ContractorWallet)
+		if taskWallet == "" && task.MerkleProof != nil {
+			taskWallet = strings.TrimSpace(task.MerkleProof.ContractorWallet)
+		}
+		if taskWallet == "" {
+			return nil, fmt.Errorf("missing contractor wallet for task %s", task.TaskID)
+		}
+		if _, ok := out.PayerTotals[taskWallet]; !ok {
+			payerOrder = append(payerOrder, taskWallet)
+		}
+		out.PayerTotals[taskWallet] += task.BudgetSats
+		out.PayoutsByPayer[taskWallet] = append(out.PayoutsByPayer[taskWallet], payout)
+		out.TasksByWallet[taskWallet] = append(out.TasksByWallet[taskWallet], task.TaskID)
+	}
+	for _, wallet := range payerOrder {
+		addr, err := btcutil.DecodeAddress(wallet, params)
+		if err != nil {
+			return nil, fmt.Errorf("invalid contractor wallet: %v", err)
+		}
+		payerTarget := bitcoin.PayerTarget{Address: addr, TargetSats: out.PayerTotals[wallet]}
+		out.Payers = append(out.Payers, payerTarget)
+		out.PayerAddrs = append(out.PayerAddrs, addr)
+		out.PayersByWallet[wallet] = payerTarget
+	}
+	if len(out.Payers) == 0 {
+		return nil, fmt.Errorf("no contractor wallets found for raise_fund")
+	}
+	out.TargetSats = payoutTotal
+	out.PayerOrder = payerOrder
+	return out, nil
 }
 
 func contractorAddressFor(addr btcutil.Address) string {
