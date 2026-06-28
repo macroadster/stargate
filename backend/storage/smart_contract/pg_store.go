@@ -21,13 +21,31 @@ type PGStore struct {
 
 // NewPGStore connects, initializes schema, and optionally seeds fixtures.
 func NewPGStore(ctx context.Context, dsn string, claimTTL time.Duration, seed bool) (*PGStore, error) {
-	pool, err := pgxpool.New(ctx, dsn)
+	config, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("parse postgres config: %w", err)
+	}
+
+	if config.MaxConns < 20 {
+		config.MaxConns = 20
+	}
+
+	config.MinConns = 5
+	config.HealthCheckPeriod = 1 * time.Minute
+	config.MaxConnLifetime = 1 * time.Hour
+	config.MaxConnIdleTime = 30 * time.Minute
+
+	pool, err := pgxpool.NewWithConfig(ctx, config)
 	if err != nil {
 		return nil, fmt.Errorf("connect postgres: %w", err)
 	}
 
 	s := &PGStore{pool: pool, claimTTL: claimTTL}
 	if err := s.initSchema(ctx); err != nil {
+		pool.Close()
+		return nil, err
+	}
+	if err := s.runMigrations(ctx); err != nil {
 		pool.Close()
 		return nil, err
 	}
@@ -40,6 +58,14 @@ func NewPGStore(ctx context.Context, dsn string, claimTTL time.Duration, seed bo
 	return s, nil
 }
 
+func (s *PGStore) runMigrations(ctx context.Context) error {
+	_, err := s.pool.Exec(ctx, `ALTER TABLE mcp_contracts ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'::jsonb;`)
+	if err != nil {
+		log.Printf("Migration warning: %v", err)
+	}
+	return nil
+}
+
 func (s *PGStore) initSchema(ctx context.Context) error {
 	schema := `
 CREATE TABLE IF NOT EXISTS mcp_contracts (
@@ -50,8 +76,15 @@ CREATE TABLE IF NOT EXISTS mcp_contracts (
   available_tasks_count INT,
   status TEXT,
   skills TEXT[],
-  stego_image_url TEXT
+  stego_image_url TEXT,
+  confirmed_block_height INTEGER,
+  confirmed_at TIMESTAMP WITH TIME ZONE,
+  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+  metadata JSONB DEFAULT '{}'::jsonb
 );
+CREATE INDEX IF NOT EXISTS idx_mcp_contracts_confirmed_height ON mcp_contracts(confirmed_block_height DESC);
+CREATE INDEX IF NOT EXISTS idx_mcp_contracts_confirmed_at ON mcp_contracts(confirmed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_mcp_contracts_created_at ON mcp_contracts(created_at DESC);
 CREATE TABLE IF NOT EXISTS mcp_tasks (
   task_id TEXT PRIMARY KEY,
   contract_id TEXT,
@@ -80,14 +113,21 @@ CREATE TABLE IF NOT EXISTS mcp_claims (
 CREATE TABLE IF NOT EXISTS mcp_submissions (
   submission_id TEXT PRIMARY KEY,
   claim_id TEXT,
-  status TEXT,
+  task_id TEXT,
+  status TEXT NOT NULL,
   deliverables JSONB,
   completion_proof JSONB,
   rejection_reason TEXT,
   rejection_type TEXT,
   rejected_at TIMESTAMPTZ,
-  created_at TIMESTAMPTZ
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Indexes for mcp_submissions
+CREATE INDEX IF NOT EXISTS idx_mcp_submissions_claim_id ON mcp_submissions(claim_id);
+CREATE INDEX IF NOT EXISTS idx_mcp_submissions_task_id ON mcp_submissions(task_id);
+CREATE INDEX IF NOT EXISTS idx_mcp_submissions_status ON mcp_submissions(status);
+CREATE INDEX IF NOT EXISTS idx_mcp_submissions_created_at ON mcp_submissions(created_at DESC);
 
 CREATE TABLE IF NOT EXISTS mcp_proposals (
   id TEXT PRIMARY KEY,
@@ -101,9 +141,24 @@ CREATE TABLE IF NOT EXISTS mcp_proposals (
 );
 CREATE INDEX IF NOT EXISTS idx_mcp_proposals_status ON mcp_proposals(status);
 CREATE INDEX IF NOT EXISTS idx_mcp_tasks_contract_status ON mcp_tasks(contract_id, status);
+ALTER TABLE mcp_submissions ADD COLUMN IF NOT EXISTS task_id TEXT;
 ALTER TABLE mcp_submissions ADD COLUMN IF NOT EXISTS rejection_reason TEXT;
 ALTER TABLE mcp_submissions ADD COLUMN IF NOT EXISTS rejection_type TEXT;
 ALTER TABLE mcp_submissions ADD COLUMN IF NOT EXISTS rejected_at TIMESTAMPTZ;
+
+-- Add FOREIGN KEY constraints (ignoring errors if they already exist)
+DO $$ 
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_mcp_tasks_contract') THEN
+        ALTER TABLE mcp_tasks ADD CONSTRAINT fk_mcp_tasks_contract FOREIGN KEY (contract_id) REFERENCES mcp_contracts(contract_id) ON DELETE CASCADE;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_mcp_claims_task') THEN
+        ALTER TABLE mcp_claims ADD CONSTRAINT fk_mcp_claims_task FOREIGN KEY (task_id) REFERENCES mcp_tasks(task_id) ON DELETE CASCADE;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_mcp_submissions_claim') THEN
+        ALTER TABLE mcp_submissions ADD CONSTRAINT fk_mcp_submissions_claim FOREIGN KEY (claim_id) REFERENCES mcp_claims(claim_id) ON DELETE CASCADE;
+    END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS mcp_escort_status (
   task_id TEXT PRIMARY KEY,
@@ -152,16 +207,22 @@ ON CONFLICT (contract_id) DO NOTHING
 	}
 
 	for _, t := range tasks {
-		reqJSON, _ := json.Marshal(t.Requirements)
-		var proofJSON []byte
+		var reqArg, proofArg *string
+		if reqJSON, err := json.Marshal(t.Requirements); err == nil {
+			s := string(reqJSON)
+			reqArg = &s
+		}
 		if t.MerkleProof != nil {
-			proofJSON, _ = json.Marshal(t.MerkleProof)
+			if proofJSON, err := json.Marshal(t.MerkleProof); err == nil {
+				s := string(proofJSON)
+				proofArg = &s
+			}
 		}
 		_, err := s.pool.Exec(ctx, `
 INSERT INTO mcp_tasks (task_id, contract_id, goal_id, title, description, budget_sats, skills, status, difficulty, estimated_hours, requirements, merkle_proof)
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
 ON CONFLICT (task_id) DO NOTHING
-`, t.TaskID, t.ContractID, t.GoalID, t.Title, t.Description, t.BudgetSats, t.Skills, t.Status, t.Difficulty, t.EstimatedHours, string(reqJSON), string(proofJSON))
+`, t.TaskID, t.ContractID, t.GoalID, t.Title, t.Description, t.BudgetSats, t.Skills, t.Status, t.Difficulty, t.EstimatedHours, reqArg, proofArg)
 		if err != nil {
 			return err
 		}
@@ -176,33 +237,106 @@ func (s *PGStore) Close() {
 	}
 }
 
-// ListContracts returns all contracts filtered by status, skill, and metadata fields.
+// ListContracts returns all contracts filtered by status, skill, and metadata fields with pagination.
+// Supports cursor-based pagination using confirmed_block_height for optimized frontend display.
 func (s *PGStore) ListContracts(filter smart_contract.ContractFilter) ([]smart_contract.Contract, error) {
 	ctx := context.Background()
-	rows, err := s.pool.Query(ctx, `
-	SELECT c.contract_id, c.title, c.total_budget_sats, c.goals_count,
-		COALESCE((SELECT COUNT(*) FROM mcp_tasks t WHERE t.contract_id = c.contract_id AND t.status = 'available'), 0) AS available_tasks_count,
-		c.status, c.skills, c.stego_image_url
-	FROM mcp_contracts c
-	WHERE ($1 = '' OR c.status = $1)
-	`, filter.Status)
+
+	// Build query dynamically based on filter
+	baseSelect := `
+SELECT c.contract_id, c.title, c.total_budget_sats, c.goals_count,
+	COALESCE((SELECT COUNT(*) FROM mcp_tasks t WHERE t.contract_id = c.contract_id AND t.status = 'available'), 0) AS available_tasks_count,
+	c.status, c.skills, c.stego_image_url, c.metadata, c.confirmed_block_height, c.confirmed_at, c.created_at
+FROM mcp_contracts c
+`
+
+	// Build WHERE clause
+	whereConditions := []string{}
+	args := []interface{}{}
+	argIndex := 1
+
+	// Status filter
+	if filter.Status != "" {
+		whereConditions = append(whereConditions, fmt.Sprintf("c.status = $%d", argIndex))
+		args = append(args, filter.Status)
+		argIndex++
+	}
+
+	// Cursor-based pagination by block height (for efficient frontend pagination)
+	if filter.CursorHeight != nil && *filter.CursorHeight > 0 {
+		whereConditions = append(whereConditions, fmt.Sprintf("c.confirmed_block_height < $%d", argIndex))
+		args = append(args, *filter.CursorHeight)
+		argIndex++
+	}
+
+	// Cursor-based pagination by date
+	if filter.CursorDate != nil {
+		op := "<"
+		if strings.EqualFold(filter.CursorType, "after") {
+			op = ">"
+		}
+		whereConditions = append(whereConditions, fmt.Sprintf("c.confirmed_at %s $%d", op, argIndex))
+		args = append(args, *filter.CursorDate)
+		argIndex++
+	}
+
+	// Build WHERE clause
+	whereClause := ""
+	if len(whereConditions) > 0 {
+		whereClause = "WHERE " + strings.Join(whereConditions, " AND ")
+	}
+
+	// ORDER BY - prefer confirmed_block_height for cursor-based pagination
+	orderBy := "ORDER BY c.confirmed_block_height DESC NULLS FIRST, c.created_at DESC, c.contract_id DESC"
+	if filter.OrderByConfirmedAt {
+		orderBy = "ORDER BY c.confirmed_at DESC NULLS FIRST, c.created_at DESC, c.contract_id DESC"
+	}
+
+	// LIMIT
+	limitClause := ""
+	if filter.Limit > 0 {
+		limitClause = fmt.Sprintf("LIMIT $%d", argIndex)
+		args = append(args, filter.Limit)
+		argIndex++
+	}
+
+	query := baseSelect + whereClause + " " + orderBy + " " + limitClause
+
+	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var out []smart_contract.Contract
+	var allContracts []smart_contract.Contract
 	for rows.Next() {
 		var c smart_contract.Contract
-		if err := rows.Scan(&c.ContractID, &c.Title, &c.TotalBudgetSats, &c.GoalsCount, &c.AvailableTasksCount, &c.Status, &c.Skills, &c.StegoImageURL); err != nil {
+		var metadata []byte
+		if err := rows.Scan(&c.ContractID, &c.Title, &c.TotalBudgetSats, &c.GoalsCount, &c.AvailableTasksCount,
+			&c.Status, &c.Skills, &c.StegoImageURL, &metadata, &c.ConfirmedBlockHeight, &c.ConfirmedAt, &c.CreatedAt); err != nil {
 			return nil, err
+		}
+		if len(metadata) > 0 {
+			if err := json.Unmarshal(metadata, &c.Metadata); err == nil {
+				// Metadata loaded successfully
+			}
 		}
 		if len(filter.Skills) > 0 && !containsSkill(c.Skills, filter.Skills) {
 			continue
 		}
-		out = append(out, c)
+		allContracts = append(allContracts, c)
 	}
-	return out, rows.Err()
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Apply offset in memory if needed (offset should be used sparingly with cursor pagination)
+	if filter.Offset > 0 && filter.Offset < len(allContracts) {
+		allContracts = allContracts[filter.Offset:]
+	}
+
+	return allContracts, nil
 }
 
 // hydrateProposalTasks updates proposal tasks with live task statuses from the DB.
@@ -211,7 +345,14 @@ func (s *PGStore) hydrateProposalTasks(ctx context.Context, p *smart_contract.Pr
 		return
 	}
 	contractIDs := []string{}
+	// Try multiple sources to find the contract_id for tasks
 	if cid, ok := p.Metadata["contract_id"].(string); ok && strings.TrimSpace(cid) != "" {
+		contractIDs = append(contractIDs, cid)
+	}
+	if cid, ok := p.Metadata["visible_pixel_hash"].(string); ok && strings.TrimSpace(cid) != "" {
+		contractIDs = append(contractIDs, cid)
+	}
+	if cid, ok := p.Metadata["ingestion_id"].(string); ok && strings.TrimSpace(cid) != "" {
 		contractIDs = append(contractIDs, cid)
 	}
 	if strings.TrimSpace(p.ID) != "" {
@@ -255,7 +396,9 @@ FROM mcp_tasks WHERE contract_id = ANY($1)
 		liveTasks[t.TaskID] = t
 	}
 
-	if len(p.Tasks) == 0 {
+	if len(p.Tasks) == 0 || len(liveTasks) > len(p.Tasks) {
+		// DB tasks are authoritative — replace auto-generated placeholder tasks
+		p.Tasks = make([]smart_contract.Task, 0, len(liveTasks))
 		for _, t := range liveTasks {
 			p.Tasks = append(p.Tasks, t)
 		}
@@ -347,23 +490,270 @@ FROM mcp_tasks WHERE task_id=$1
 	return task, nil
 }
 
+// GetClaim returns a claim by ID.
+func (s *PGStore) GetClaim(id string) (smart_contract.Claim, error) {
+	ctx := context.Background()
+	var c smart_contract.Claim
+	err := s.pool.QueryRow(ctx, `
+SELECT claim_id, task_id, ai_identifier, status, expires_at, created_at
+FROM mcp_claims WHERE claim_id=$1
+`, id).Scan(&c.ClaimID, &c.TaskID, &c.AiIdentifier, &c.Status, &c.ExpiresAt, &c.CreatedAt)
+	if err != nil {
+		if strings.Contains(err.Error(), "no rows") {
+			return smart_contract.Claim{}, ErrClaimNotFound
+		}
+		return smart_contract.Claim{}, err
+	}
+	return c, nil
+}
+
 // GetContract returns a contract by ID.
 func (s *PGStore) GetContract(id string) (smart_contract.Contract, error) {
 	ctx := context.Background()
 	var c smart_contract.Contract
+	var metadata []byte
 	err := s.pool.QueryRow(ctx, `
 SELECT contract_id, title, total_budget_sats, goals_count,
        COALESCE((SELECT COUNT(*) FROM mcp_tasks t WHERE t.contract_id = mcp_contracts.contract_id AND t.status = 'available'), 0) AS available_tasks_count,
-       status, skills, stego_image_url
+       status, skills, stego_image_url, confirmed_block_height, confirmed_at, metadata
 FROM mcp_contracts WHERE contract_id=$1
-`, id).Scan(&c.ContractID, &c.Title, &c.TotalBudgetSats, &c.GoalsCount, &c.AvailableTasksCount, &c.Status, &c.Skills, &c.StegoImageURL)
+`, id).Scan(&c.ContractID, &c.Title, &c.TotalBudgetSats, &c.GoalsCount, &c.AvailableTasksCount, &c.Status, &c.Skills, &c.StegoImageURL, &c.ConfirmedBlockHeight, &c.ConfirmedAt, &metadata)
 	if err != nil {
 		if strings.Contains(err.Error(), "no rows") {
 			return smart_contract.Contract{}, fmt.Errorf("contract %s not found", id)
 		}
 		return smart_contract.Contract{}, err
 	}
+	if len(metadata) > 0 {
+		var meta map[string]interface{}
+		if err := json.Unmarshal(metadata, &meta); err == nil {
+			if reworkReqs, ok := meta["rework_requests"].([]interface{}); ok {
+				for _, r := range reworkReqs {
+					if rMap, ok := r.(map[string]interface{}); ok {
+						req := smart_contract.ContractReworkRequest{}
+						if id, ok := rMap["request_id"].(string); ok {
+							req.RequestID = id
+						}
+						if contractID, ok := rMap["contract_id"].(string); ok {
+							req.ContractID = contractID
+						}
+						if requester, ok := rMap["requester"].(string); ok {
+							req.Requester = requester
+						}
+						if notes, ok := rMap["notes"].(string); ok {
+							req.Notes = notes
+						}
+						if status, ok := rMap["status"].(string); ok {
+							req.Status = status
+						}
+						if createdAt, ok := rMap["created_at"].(string); ok {
+							if t, err := time.Parse(time.RFC3339, createdAt); err == nil {
+								req.CreatedAt = t
+							}
+						}
+						if resolvedAt, ok := rMap["resolved_at"].(string); ok {
+							if t, err := time.Parse(time.RFC3339, resolvedAt); err == nil {
+								req.ResolvedAt = &t
+							}
+						}
+						c.ReworkRequests = append(c.ReworkRequests, req)
+					}
+				}
+			}
+		}
+	}
 	return c, nil
+}
+
+// CreateContractReworkRequest adds a rework request from the wish creator at contract level.
+func (s *PGStore) CreateContractReworkRequest(ctx context.Context, contractID, requester, notes string) (smart_contract.ContractReworkRequest, error) {
+	requestID := fmt.Sprintf("rework-%s-%d", contractID, time.Now().UnixNano())
+	now := time.Now()
+
+	reworkReq := smart_contract.ContractReworkRequest{
+		RequestID:  requestID,
+		ContractID: contractID,
+		Requester:  requester,
+		Notes:      notes,
+		Status:     "open",
+		CreatedAt:  now,
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return smart_contract.ContractReworkRequest{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	var metadata []byte
+	err = tx.QueryRow(ctx, `SELECT metadata FROM mcp_contracts WHERE contract_id=$1 FOR UPDATE`, contractID).Scan(&metadata)
+	if err != nil {
+		if strings.Contains(err.Error(), "no rows") {
+			return smart_contract.ContractReworkRequest{}, fmt.Errorf("contract %s not found", contractID)
+		}
+		return smart_contract.ContractReworkRequest{}, err
+	}
+
+	var meta map[string]interface{}
+	if len(metadata) > 0 {
+		if err := json.Unmarshal(metadata, &meta); err != nil {
+			meta = make(map[string]interface{})
+		}
+	} else {
+		meta = make(map[string]interface{})
+	}
+
+	reworkReqs := []interface{}{}
+	if existing, ok := meta["rework_requests"].([]interface{}); ok {
+		reworkReqs = existing
+	}
+
+	reworkReqs = append(reworkReqs, map[string]interface{}{
+		"request_id":  reworkReq.RequestID,
+		"contract_id": reworkReq.ContractID,
+		"requester":   reworkReq.Requester,
+		"notes":       reworkReq.Notes,
+		"status":      reworkReq.Status,
+		"created_at":  reworkReq.CreatedAt.Format(time.RFC3339),
+	})
+	meta["rework_requests"] = reworkReqs
+
+	updatedMetadata, err := json.Marshal(meta)
+	if err != nil {
+		return smart_contract.ContractReworkRequest{}, err
+	}
+
+	_, err = tx.Exec(ctx, `UPDATE mcp_contracts SET metadata=$2 WHERE contract_id=$1`, contractID, updatedMetadata)
+	if err != nil {
+		return smart_contract.ContractReworkRequest{}, err
+	}
+
+	_, err = tx.Exec(ctx, `UPDATE mcp_tasks SET status='rejected' WHERE contract_id=$1`, contractID)
+	if err != nil {
+		return smart_contract.ContractReworkRequest{}, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return smart_contract.ContractReworkRequest{}, err
+	}
+
+	return reworkReq, nil
+}
+
+// GetContractReworkRequests returns all rework requests for a contract.
+func (s *PGStore) GetContractReworkRequests(ctx context.Context, contractID string) ([]smart_contract.ContractReworkRequest, error) {
+	var metadata []byte
+	err := s.pool.QueryRow(ctx, `SELECT metadata FROM mcp_contracts WHERE contract_id=$1`, contractID).Scan(&metadata)
+	if err != nil {
+		if strings.Contains(err.Error(), "no rows") {
+			return nil, fmt.Errorf("contract %s not found", contractID)
+		}
+		return nil, err
+	}
+
+	var reqs []smart_contract.ContractReworkRequest
+	if len(metadata) > 0 {
+		var meta map[string]interface{}
+		if err := json.Unmarshal(metadata, &meta); err == nil {
+			if reworkReqs, ok := meta["rework_requests"].([]interface{}); ok {
+				for _, r := range reworkReqs {
+					if rMap, ok := r.(map[string]interface{}); ok {
+						req := smart_contract.ContractReworkRequest{}
+						if id, ok := rMap["request_id"].(string); ok {
+							req.RequestID = id
+						}
+						if contractID, ok := rMap["contract_id"].(string); ok {
+							req.ContractID = contractID
+						}
+						if requester, ok := rMap["requester"].(string); ok {
+							req.Requester = requester
+						}
+						if notes, ok := rMap["notes"].(string); ok {
+							req.Notes = notes
+						}
+						if status, ok := rMap["status"].(string); ok {
+							req.Status = status
+						}
+						if createdAt, ok := rMap["created_at"].(string); ok {
+							if t, err := time.Parse(time.RFC3339, createdAt); err == nil {
+								req.CreatedAt = t
+							}
+						}
+						if resolvedAt, ok := rMap["resolved_at"].(string); ok {
+							if t, err := time.Parse(time.RFC3339, resolvedAt); err == nil {
+								req.ResolvedAt = &t
+							}
+						}
+						reqs = append(reqs, req)
+					}
+				}
+			}
+		}
+	}
+	return reqs, nil
+}
+
+// ResolveContractReworkRequest marks a rework request as resolved.
+func (s *PGStore) ResolveContractReworkRequest(ctx context.Context, contractID, requestID string) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var metadata []byte
+	err = tx.QueryRow(ctx, `SELECT metadata FROM mcp_contracts WHERE contract_id=$1 FOR UPDATE`, contractID).Scan(&metadata)
+	if err != nil {
+		if strings.Contains(err.Error(), "no rows") {
+			return fmt.Errorf("contract %s not found", contractID)
+		}
+		return err
+	}
+
+	var meta map[string]interface{}
+	if len(metadata) > 0 {
+		if err := json.Unmarshal(metadata, &meta); err != nil {
+			meta = make(map[string]interface{})
+		}
+	} else {
+		meta = make(map[string]interface{})
+	}
+
+	reworkReqs := []interface{}{}
+	if existing, ok := meta["rework_requests"].([]interface{}); ok {
+		reworkReqs = existing
+	}
+
+	found := false
+	now := time.Now().Format(time.RFC3339)
+	for i, r := range reworkReqs {
+		if rMap, ok := r.(map[string]interface{}); ok {
+			if rid, ok := rMap["request_id"].(string); ok && rid == requestID {
+				rMap["status"] = "resolved"
+				rMap["resolved_at"] = now
+				reworkReqs[i] = rMap
+				found = true
+				break
+			}
+		}
+	}
+
+	if !found {
+		return fmt.Errorf("rework request %s not found", requestID)
+	}
+
+	meta["rework_requests"] = reworkReqs
+	updatedMetadata, err := json.Marshal(meta)
+	if err != nil {
+		return err
+	}
+
+	_, err = tx.Exec(ctx, `UPDATE mcp_contracts SET metadata=$2 WHERE contract_id=$1`, contractID, updatedMetadata)
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit(ctx)
 }
 
 // ClaimTask reserves a task for an AI. It is idempotent if the same AI reclaims before expiry.
@@ -382,17 +772,59 @@ FROM mcp_tasks WHERE task_id=$1 FOR UPDATE
 	if err != nil {
 		return smart_contract.Claim{}, ErrTaskNotFound
 	}
-	if strings.EqualFold(task.Status, "approved") || strings.EqualFold(task.Status, "completed") || strings.EqualFold(task.Status, "claimed") || strings.EqualFold(task.Status, "submitted") {
-		return smart_contract.Claim{}, ErrTaskUnavailable
-	}
 
 	normalizedWallet := strings.TrimSpace(walletAddress)
 	if normalizedWallet == "" {
 		return smart_contract.Claim{}, fmt.Errorf("wallet address required")
 	}
+
+	// Check for existing active claim by this wallet
+	rows, err := tx.Query(ctx, `SELECT claim_id, task_id, ai_identifier, status, expires_at, created_at FROM mcp_claims WHERE task_id=$1`, taskID)
+	if err != nil {
+		return smart_contract.Claim{}, err
+	}
+
+	var activeClaim *smart_contract.Claim
+	var activeClaimErr error
+	now := time.Now()
+
+	for rows.Next() {
+		var c smart_contract.Claim
+		if err := rows.Scan(&c.ClaimID, &c.TaskID, &c.AiIdentifier, &c.Status, &c.ExpiresAt, &c.CreatedAt); err != nil {
+			rows.Close()
+			return smart_contract.Claim{}, err
+		}
+		if c.Status == "active" && now.Before(c.ExpiresAt) {
+			if strings.EqualFold(c.AiIdentifier, normalizedWallet) {
+				// IDEMPOTENT: Same user re-claiming active task.
+				activeClaim = &c
+				break
+			}
+			// Another user has it
+			activeClaimErr = ErrTaskTaken
+			break
+		}
+	}
+	rows.Close() // Close BEFORE executing updates on tx
+
+	if activeClaimErr != nil {
+		return smart_contract.Claim{}, activeClaimErr
+	}
+	if activeClaim != nil {
+		// Ensure task table matches.
+		_, _ = tx.Exec(ctx, `UPDATE mcp_tasks SET status='claimed', claimed_by=$2 WHERE task_id=$1`, taskID, activeClaim.AiIdentifier)
+		return *activeClaim, tx.Commit(ctx)
+	}
+
+	// New claim logic: task must be available or claimed (for re-claim by same agent)
+	if strings.EqualFold(task.Status, "approved") || strings.EqualFold(task.Status, "completed") || strings.EqualFold(task.Status, "published") || strings.EqualFold(task.Status, "submitted") {
+		return smart_contract.Claim{}, ErrTaskUnavailable
+	}
+
 	if err := ValidateBitcoinAddress(normalizedWallet); err != nil {
 		return smart_contract.Claim{}, fmt.Errorf("wallet address validation failed: %v", err)
 	}
+
 	persistWallet := func(wallet string) error {
 		wallet = strings.TrimSpace(wallet)
 		if wallet == "" {
@@ -409,28 +841,6 @@ FROM mcp_tasks WHERE task_id=$1 FOR UPDATE
 		proofJSON, _ := json.Marshal(task.MerkleProof)
 		_, err := tx.Exec(ctx, `UPDATE mcp_tasks SET merkle_proof=$2 WHERE task_id=$1`, taskID, string(proofJSON))
 		return err
-	}
-
-	rows, err := tx.Query(ctx, `SELECT claim_id, task_id, ai_identifier, status, expires_at, created_at FROM mcp_claims WHERE task_id=$1`, taskID)
-	if err != nil {
-		return smart_contract.Claim{}, err
-	}
-	defer rows.Close()
-	now := time.Now()
-	for rows.Next() {
-		var c smart_contract.Claim
-		if err := rows.Scan(&c.ClaimID, &c.TaskID, &c.AiIdentifier, &c.Status, &c.ExpiresAt, &c.CreatedAt); err != nil {
-			return smart_contract.Claim{}, err
-		}
-		if c.Status == "active" && now.Before(c.ExpiresAt) {
-			if c.AiIdentifier == walletAddress {
-				if err := persistWallet(normalizedWallet); err != nil {
-					return smart_contract.Claim{}, err
-				}
-				return c, tx.Commit(ctx)
-			}
-			return smart_contract.Claim{}, ErrTaskTaken
-		}
 	}
 
 	claimID := fmt.Sprintf("CLAIM-%d", time.Now().UnixNano())
@@ -554,7 +964,14 @@ func (s *PGStore) SubmitWork(claimID string, deliverables map[string]interface{}
 		time.Sleep(10 * time.Millisecond)
 	}
 
+	// Safeguard: Ensure internal fields cannot be overridden by external tool calls
+	delete(deliverables, "status")
+	if proof != nil {
+		delete(proof, "status")
+	}
+
 	subID := fmt.Sprintf("SUB-%d", time.Now().UnixNano())
+
 	delivJSON, _ := json.Marshal(deliverables)
 	proofJSON, _ := json.Marshal(proof)
 	sub := smart_contract.Submission{
@@ -569,9 +986,9 @@ func (s *PGStore) SubmitWork(claimID string, deliverables map[string]interface{}
 	log.Printf("Creating new submission: ID=%s, ClaimID=%s", subID, claimID)
 
 	if _, err := tx.Exec(ctx, `
-	INSERT INTO mcp_submissions (submission_id, claim_id, status, deliverables, completion_proof, created_at)
-	VALUES ($1,$2,$3,$4,$5,$6)
-	`, sub.SubmissionID, sub.ClaimID, sub.Status, delivJSON, proofJSON, sub.CreatedAt); err != nil {
+	INSERT INTO mcp_submissions (submission_id, claim_id, task_id, status, deliverables, completion_proof, created_at)
+	VALUES ($1,$2,$3,$4,$5,$6,$7)
+	`, sub.SubmissionID, sub.ClaimID, claim.TaskID, sub.Status, delivJSON, proofJSON, sub.CreatedAt); err != nil {
 		log.Printf("Failed to insert submission: %v", err)
 		return smart_contract.Submission{}, err
 	}
@@ -805,9 +1222,15 @@ func (s *PGStore) UpsertContractWithTasks(ctx context.Context, contract smart_co
 	}
 	defer tx.Rollback(ctx)
 
-	_, err = tx.Exec(ctx, `
-INSERT INTO mcp_contracts (contract_id, title, total_budget_sats, goals_count, available_tasks_count, status, skills, stego_image_url)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+	// Use Provided CreatedAt if set, otherwise NOW()
+	createdAt := "now()"
+	if !contract.CreatedAt.IsZero() {
+		createdAt = fmt.Sprintf("'%s'", contract.CreatedAt.Format(time.RFC3339))
+	}
+
+	query := fmt.Sprintf(`
+INSERT INTO mcp_contracts (contract_id, title, total_budget_sats, goals_count, available_tasks_count, status, skills, stego_image_url, created_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8, %s)
 ON CONFLICT (contract_id) DO UPDATE SET
   title = EXCLUDED.title,
   total_budget_sats = EXCLUDED.total_budget_sats,
@@ -816,18 +1239,28 @@ ON CONFLICT (contract_id) DO UPDATE SET
   status = EXCLUDED.status,
   skills = EXCLUDED.skills,
   stego_image_url = EXCLUDED.stego_image_url
- `, contract.ContractID, contract.Title, contract.TotalBudgetSats, contract.GoalsCount, contract.AvailableTasksCount, contract.Status, contract.Skills, contract.StegoImageURL)
+ `, createdAt)
+
+	_, err = tx.Exec(ctx, query, contract.ContractID, contract.Title, contract.TotalBudgetSats, contract.GoalsCount, contract.AvailableTasksCount, contract.Status, contract.Skills, contract.StegoImageURL)
 	if err != nil {
 		return err
 	}
 
 	for _, t := range tasks {
-		reqJSON, _ := json.Marshal(t.Requirements)
-		var proofJSON []byte
+		// Encode JSONB parameters as *string so that nil → SQL NULL
+		// (letting COALESCE preserve existing data), while non-nil values
+		// produce a valid JSON string.  Previously string(nil) produced ""
+		// which Postgres rejects as invalid JSONB (SQLSTATE 22P02).
+		var reqArg, proofArg *string
+		if reqJSON, err := json.Marshal(t.Requirements); err == nil {
+			s := string(reqJSON)
+			reqArg = &s
+		}
 		if t.MerkleProof != nil {
-			proofJSON, _ = json.Marshal(t.MerkleProof)
-		} else {
-			proofJSON = nil // Use nil instead of "null" to let COALESCE preserve existing data
+			if proofJSON, err := json.Marshal(t.MerkleProof); err == nil {
+				s := string(proofJSON)
+				proofArg = &s
+			}
 		}
 		_, err := tx.Exec(ctx, `
 INSERT INTO mcp_tasks (task_id, contract_id, goal_id, title, description, budget_sats, skills, status, claimed_by, claimed_at, claim_expires_at, difficulty, estimated_hours, requirements, merkle_proof)
@@ -850,7 +1283,7 @@ ON CONFLICT (task_id) DO UPDATE SET
   estimated_hours = EXCLUDED.estimated_hours,
   requirements = EXCLUDED.requirements,
   merkle_proof = COALESCE(EXCLUDED.merkle_proof, mcp_tasks.merkle_proof)
-`, t.TaskID, t.ContractID, t.GoalID, t.Title, t.Description, t.BudgetSats, t.Skills, t.Status, t.ClaimedBy, t.ClaimedAt, t.ClaimExpires, t.Difficulty, t.EstimatedHours, string(reqJSON), string(proofJSON))
+`, t.TaskID, t.ContractID, t.GoalID, t.Title, t.Description, t.BudgetSats, t.Skills, t.Status, t.ClaimedBy, t.ClaimedAt, t.ClaimExpires, t.Difficulty, t.EstimatedHours, reqArg, proofArg)
 		if err != nil {
 			return err
 		}
@@ -898,19 +1331,35 @@ WHERE task_id = $1 AND (status = 'available' OR status = 'claimed' OR status = '
 
 // SyncSubmission persists a submission from another instance.
 func (s *PGStore) SyncSubmission(ctx context.Context, sub smart_contract.Submission) error {
-	delivJSON, _ := json.Marshal(sub.Deliverables)
-	proofJSON, _ := json.Marshal(sub.CompletionProof)
+	// Safeguard: Ensure internal fields cannot be overridden by external tool calls
+	if sub.Deliverables != nil {
+		delete(sub.Deliverables, "status")
+	}
+	if sub.CompletionProof != nil {
+		delete(sub.CompletionProof, "status")
+	}
+
+	var delivArg, proofArg *string
+	if delivJSON, err := json.Marshal(sub.Deliverables); err == nil && sub.Deliverables != nil {
+		s := string(delivJSON)
+		delivArg = &s
+	}
+	if proofJSON, err := json.Marshal(sub.CompletionProof); err == nil && sub.CompletionProof != nil {
+		s := string(proofJSON)
+		proofArg = &s
+	}
 	_, err := s.pool.Exec(ctx, `
-INSERT INTO mcp_submissions (submission_id, claim_id, status, deliverables, completion_proof, rejection_reason, rejection_type, rejected_at, created_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+INSERT INTO mcp_submissions (submission_id, claim_id, task_id, status, deliverables, completion_proof, rejection_reason, rejection_type, rejected_at, created_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 ON CONFLICT (submission_id) DO UPDATE SET
   status = EXCLUDED.status,
   deliverables = EXCLUDED.deliverables,
   completion_proof = EXCLUDED.completion_proof,
   rejection_reason = EXCLUDED.rejection_reason,
   rejection_type = EXCLUDED.rejection_type,
-  rejected_at = EXCLUDED.rejected_at
-`, sub.SubmissionID, sub.ClaimID, sub.Status, string(delivJSON), string(proofJSON), sub.RejectionReason, sub.RejectionType, sub.RejectedAt, sub.CreatedAt)
+  rejected_at = EXCLUDED.rejected_at,
+  task_id = EXCLUDED.task_id
+`, sub.SubmissionID, sub.ClaimID, sub.TaskID, sub.Status, delivArg, proofArg, sub.RejectionReason, sub.RejectionType, sub.RejectedAt, sub.CreatedAt)
 	return err
 }
 
@@ -936,10 +1385,16 @@ WHERE task_id=$1 AND claimed_by IS NOT NULL
 		}
 	}
 
-	reqJSON, _ := json.Marshal(t.Requirements)
-	var proofJSON []byte
+	var reqArg, proofArg *string
+	if reqJSON, err := json.Marshal(t.Requirements); err == nil {
+		s := string(reqJSON)
+		reqArg = &s
+	}
 	if t.MerkleProof != nil {
-		proofJSON, _ = json.Marshal(t.MerkleProof)
+		if proofJSON, err := json.Marshal(t.MerkleProof); err == nil {
+			s := string(proofJSON)
+			proofArg = &s
+		}
 	}
 	_, err := s.pool.Exec(ctx, `
 INSERT INTO mcp_tasks (task_id, contract_id, goal_id, title, description, budget_sats, skills, status, claimed_by, claimed_at, claim_expires_at, difficulty, estimated_hours, requirements, merkle_proof)
@@ -950,7 +1405,7 @@ ON CONFLICT (task_id) DO UPDATE SET
   claimed_at = COALESCE(EXCLUDED.claimed_at, mcp_tasks.claimed_at),
   claim_expires_at = COALESCE(EXCLUDED.claim_expires_at, mcp_tasks.claim_expires_at),
   merkle_proof = COALESCE(EXCLUDED.merkle_proof, mcp_tasks.merkle_proof)
- `, t.TaskID, t.ContractID, t.GoalID, t.Title, t.Description, t.BudgetSats, t.Skills, t.Status, t.ClaimedBy, t.ClaimedAt, t.ClaimExpires, t.Difficulty, t.EstimatedHours, string(reqJSON), string(proofJSON))
+ `, t.TaskID, t.ContractID, t.GoalID, t.Title, t.Description, t.BudgetSats, t.Skills, t.Status, t.ClaimedBy, t.ClaimedAt, t.ClaimExpires, t.Difficulty, t.EstimatedHours, reqArg, proofArg)
 	return err
 }
 
@@ -995,6 +1450,70 @@ WHERE status='approved' AND (
   id IN ($1, $2)
 )`, normalized, wishID)
 	}
+	return err
+}
+
+// ConfirmContract confirms a contract and sets confirmation tracking
+func (s *PGStore) ConfirmContract(ctx context.Context, contractID string, blockHeight int, txid string) error {
+	contractID = strings.TrimSpace(contractID)
+	if contractID == "" {
+		return nil
+	}
+
+	// Get image_file from contract metadata to construct the URL
+	var imageFile string
+	err := s.pool.QueryRow(ctx,
+		`SELECT COALESCE((metadata->>'image_file'), '') 
+		 FROM starlight_ingestions
+		 WHERE id=$1`, contractID).Scan(&imageFile)
+	if err != nil {
+		// Fallback: use contract_id directly (stealthy design)
+		imageFile = contractID
+	}
+	stegoImageURL := ""
+	if imageFile != "" {
+		stegoImageURL = fmt.Sprintf("/api/block-image/%d/%s", blockHeight, imageFile)
+	}
+
+	// Update status and confirmation tracking, including metadata with confirmed_txid
+	tag, err := s.pool.Exec(ctx, `
+UPDATE mcp_contracts 
+SET status='confirmed', confirmed_block_height=$2, confirmed_at=NOW(), 
+    stego_image_url=COALESCE($3, stego_image_url),
+    metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{confirmed_txid}', to_jsonb($4::text))
+WHERE contract_id=$1`, contractID, blockHeight, stegoImageURL, txid)
+	if err != nil {
+		return err
+	}
+
+	// If the confirmed contract doesn't exist yet (peer node case), create it from the wish contract
+	normalized := NormalizeContractID(contractID)
+	wishID := "wish-" + normalized
+	if tag.RowsAffected() == 0 {
+		_, _ = s.pool.Exec(ctx, `
+INSERT INTO mcp_contracts (contract_id, title, total_budget_sats, goals_count, available_tasks_count, status, skills, stego_image_url, confirmed_block_height, confirmed_at, created_at, metadata)
+SELECT $1, COALESCE(title, ''), COALESCE(total_budget_sats, 0), 1, 0, 'confirmed', skills, $2, $3, NOW(), NOW(),
+       jsonb_set(COALESCE(metadata, '{}'::jsonb), '{confirmed_txid}', to_jsonb($4::text))
+FROM mcp_contracts WHERE contract_id=$5
+ON CONFLICT(contract_id) DO UPDATE SET
+  status='confirmed', confirmed_block_height=$3, confirmed_at=NOW(),
+  stego_image_url=COALESCE($2, mcp_contracts.stego_image_url),
+  metadata = jsonb_set(COALESCE(mcp_contracts.metadata, '{}'::jsonb), '{confirmed_txid}', to_jsonb($4::text))
+`, normalized, stegoImageURL, blockHeight, txid, wishID)
+	}
+
+	// Supersede the wish contract (peer nodes don't run archiveWishContract)
+	_, _ = s.pool.Exec(ctx, `UPDATE mcp_contracts SET status='superseded' WHERE contract_id=$1 AND status<>'superseded'`, wishID)
+
+	// Handle proposal status updates for confirmed contracts
+	_, err = s.pool.Exec(ctx, `
+UPDATE mcp_proposals SET status='confirmed'
+WHERE status='approved' AND (
+  metadata->>'contract_id' IN ($1, $2) OR
+  metadata->>'ingestion_id' IN ($1, $2) OR
+  metadata->>'visible_pixel_hash' IN ($1, $2) OR
+  id IN ($1, $2)
+)`, normalized, wishID)
 	return err
 }
 
@@ -1051,6 +1570,16 @@ func (s *PGStore) CreateProposal(ctx context.Context, p smart_contract.Proposal)
 		if err == nil && conflictID != "" {
 			return fmt.Errorf("a proposal with visible_pixel_hash=%s is already approved/published (id=%s)", visibleHash, conflictID)
 		}
+
+		// Safeguard: Maximum 5 proposals per wish
+		var count int
+		err = s.pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM mcp_proposals
+		WHERE visible_pixel_hash=$1 AND id<>$2
+		`, visibleHash, p.ID).Scan(&count)
+		if err == nil && count >= 5 {
+			return fmt.Errorf("maximum of 5 proposals reached for wish %s", visibleHash)
+		}
 	}
 
 	metaMap := p.Metadata
@@ -1099,9 +1628,16 @@ ON CONFLICT (id) DO UPDATE SET
 func (s *PGStore) ListProposals(ctx context.Context, filter smart_contract.ProposalFilter) ([]smart_contract.Proposal, error) {
 	query := `SELECT id, title, description_md, visible_pixel_hash, budget_sats, status, metadata, created_at FROM mcp_proposals`
 	var args []interface{}
-	if filter.Status != "" {
-		query += " WHERE status=$1"
+	argNum := 1
+
+	if filter.ProposalID != "" {
+		query += fmt.Sprintf(" WHERE id=$%d", argNum)
+		args = append(args, filter.ProposalID)
+		argNum++
+	} else if filter.Status != "" {
+		query += fmt.Sprintf(" WHERE status=$%d", argNum)
 		args = append(args, filter.Status)
+		argNum++
 	}
 	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
@@ -1229,7 +1765,9 @@ FROM mcp_proposals WHERE id=$1 FOR UPDATE
 		p.CreatedAt = current.CreatedAt
 	}
 
-	p.Status = current.Status
+	if p.Status == "" {
+		p.Status = current.Status
+	}
 	if p.Metadata == nil {
 		p.Metadata = map[string]interface{}{}
 	}
@@ -1247,7 +1785,9 @@ FROM mcp_proposals WHERE id=$1 FOR UPDATE
 	if metaMap == nil {
 		metaMap = map[string]interface{}{}
 	}
-	if len(p.Tasks) > 0 {
+	// Only store suggested_tasks in metadata for pending proposals
+	// Approved/published proposals get their task status from mcp_tasks table (single source of truth)
+	if len(p.Tasks) > 0 && (p.Status == "" || strings.EqualFold(p.Status, "pending")) {
 		metaMap["suggested_tasks"] = p.Tasks
 	} else {
 		delete(metaMap, "suggested_tasks")
@@ -1403,6 +1943,8 @@ WHERE id<>$1 AND status='pending' AND (
 	if _, err := tx.Exec(ctx, `UPDATE mcp_proposals SET status='approved' WHERE id=$1`, id); err != nil {
 		return err
 	}
+	// Clean up suggested_tasks from metadata - task status now comes from mcp_tasks (single source of truth)
+	_, _ = tx.Exec(ctx, `UPDATE mcp_proposals SET metadata = metadata - 'suggested_tasks' WHERE id=$1`, id)
 	visible := strings.TrimSpace(visiblePixelHash)
 	if visible == "" {
 		if v, ok := meta["visible_pixel_hash"].(string); ok {
@@ -1449,6 +1991,8 @@ func (s *PGStore) PublishProposal(ctx context.Context, id string) error {
 	if _, err := tx.Exec(ctx, `UPDATE mcp_proposals SET status='published' WHERE id=$1`, id); err != nil {
 		return err
 	}
+	// Clean up suggested_tasks from metadata - task status now comes from mcp_tasks (single source of truth)
+	_, _ = tx.Exec(ctx, `UPDATE mcp_proposals SET metadata = metadata - 'suggested_tasks' WHERE id=$1`, id)
 
 	return tx.Commit(ctx)
 }
@@ -1497,16 +2041,23 @@ func scanTask(scanner interface {
 }) (smart_contract.Task, error) {
 	var t smart_contract.Task
 	var reqJSON, proofJSON []byte
-	var claimedBy sql.NullString
+	var claimedBy, difficulty sql.NullString
 	var claimedAt, claimExpires sql.NullTime
+	var estimatedHours sql.NullInt32
 	if err := scanner.Scan(
 		&t.TaskID, &t.ContractID, &t.GoalID, &t.Title, &t.Description, &t.BudgetSats, &t.Skills, &t.Status,
-		&claimedBy, &claimedAt, &claimExpires, &t.Difficulty, &t.EstimatedHours, &reqJSON, &proofJSON,
+		&claimedBy, &claimedAt, &claimExpires, &difficulty, &estimatedHours, &reqJSON, &proofJSON,
 	); err != nil {
 		return smart_contract.Task{}, err
 	}
 	if claimedBy.Valid {
 		t.ClaimedBy = claimedBy.String
+	}
+	if difficulty.Valid {
+		t.Difficulty = difficulty.String
+	}
+	if estimatedHours.Valid {
+		t.EstimatedHours = int(estimatedHours.Int32)
 	}
 	if claimedAt.Valid {
 		c := claimedAt.Time
@@ -1670,6 +2221,65 @@ WHERE task_id=$1
 		if _, err := tx.Exec(ctx, `UPDATE mcp_claims SET status='rejected' WHERE claim_id=$1`, claimID); err != nil {
 			return err
 		}
+	}
+
+	return tx.Commit(ctx)
+}
+
+// UpdateSubmission updates a full submission record with internal field protection.
+func (s *PGStore) UpdateSubmission(ctx context.Context, sub smart_contract.Submission) error {
+	// Safeguard: Ensure internal fields cannot be overridden by external tool calls
+	if sub.Deliverables != nil {
+		delete(sub.Deliverables, "status")
+	}
+	if sub.CompletionProof != nil {
+		delete(sub.CompletionProof, "status")
+	}
+
+	var delivArg, proofArg *string
+	if delivJSON, err := json.Marshal(sub.Deliverables); err == nil && sub.Deliverables != nil {
+		s := string(delivJSON)
+		delivArg = &s
+	}
+	if proofJSON, err := json.Marshal(sub.CompletionProof); err == nil && sub.CompletionProof != nil {
+		s := string(proofJSON)
+		proofArg = &s
+	}
+
+	_, err := s.pool.Exec(ctx, `
+UPDATE mcp_submissions
+SET status=$2, deliverables=$3, completion_proof=$4, rejection_reason=$5, rejection_type=$6, rejected_at=$7, task_id=$8
+WHERE submission_id=$1
+`, sub.SubmissionID, sub.Status, delivArg, proofArg, sub.RejectionReason, sub.RejectionType, sub.RejectedAt, sub.TaskID)
+
+	return err
+}
+
+func (s *PGStore) DeleteWish(ctx context.Context, visiblePixelHash string) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	// 1. Delete associated proposals
+	if _, err := tx.Exec(ctx, `DELETE FROM mcp_proposals WHERE visible_pixel_hash = $1`, visiblePixelHash); err != nil {
+		return fmt.Errorf("delete proposals: %w", err)
+	}
+
+	wishID := "wish-" + visiblePixelHash
+
+	// 2. Delete from mcp_escort_status (for any tasks linked to this wish)
+	if _, err := tx.Exec(ctx, `
+		DELETE FROM mcp_escort_status 
+		WHERE task_id IN (SELECT task_id FROM mcp_tasks WHERE contract_id = $1)
+	`, wishID); err != nil {
+		return fmt.Errorf("delete escort status: %w", err)
+	}
+
+	// 3. Delete the wish contract (cascades to tasks, claims, and submissions)
+	if _, err := tx.Exec(ctx, `DELETE FROM mcp_contracts WHERE contract_id = $1`, wishID); err != nil {
+		return fmt.Errorf("delete wish contract: %w", err)
 	}
 
 	return tx.Commit(ctx)

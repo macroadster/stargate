@@ -31,7 +31,10 @@ type DataAPI struct {
 	bitcoinAPI   *bitcoin.BitcoinAPI
 	// simple in-memory index of tx -> block height for manifest/content lookup
 	txIndex map[string]int64
-	txMu    sync.RWMutex
+	// reverse index so we can quickly know which txs (and thus content) belong to a height
+	// even if the BlockDataCache.Inscriptions list for that height is currently empty.
+	heightIndex map[int64][]string
+	txMu        sync.RWMutex
 }
 
 // NewDataAPI creates a new data API instance
@@ -41,6 +44,7 @@ func NewDataAPI(dataStorage storage.ExtendedDataStorage, blockMonitor *bitcoin.B
 		blockMonitor: blockMonitor,
 		bitcoinAPI:   bitcoinAPI,
 		txIndex:      make(map[string]int64),
+		heightIndex:  make(map[int64][]string),
 	}
 	api.buildTxIndex()
 	return api
@@ -49,9 +53,6 @@ func NewDataAPI(dataStorage storage.ExtendedDataStorage, blockMonitor *bitcoin.B
 // resolveBlocksDir returns the directory that holds block JSON artifacts.
 func (api *DataAPI) resolveBlocksDir() string {
 	if dir := os.Getenv("BLOCKS_DIR"); dir != "" {
-		return dir
-	}
-	if dir := os.Getenv("DATA_DIR"); dir != "" {
 		return dir
 	}
 	return "blocks"
@@ -417,6 +418,63 @@ func (api *DataAPI) HandleGetBlockSummaries(w http.ResponseWriter, r *http.Reque
 		inscriptionCount := len(block.Inscriptions)
 		contractCount := len(smartContracts)
 		hasImages := len(block.Images) > 0 || inscriptionCount > 0 || contractCount > 0
+
+		// Compute a representative thumbnail URL for the block card.
+		// Prefer the first real smart contract image (served via block-image), else first inscription.
+		thumbnailURL := ""
+		for _, c := range smartContracts {
+			if isSyntheticStegoContract(c) {
+				continue
+			}
+			meta := c.Metadata
+			fileName := strings.TrimSpace(stringFromAny(meta["image_file"]))
+			if fileName == "" {
+				fileName = filepath.Base(strings.TrimSpace(c.ImagePath))
+			}
+			if fileName != "" {
+				thumbnailURL = fmt.Sprintf("/api/block-image/%d/%s", block.BlockHeight, fileName)
+				break
+			}
+		}
+		if thumbnailURL == "" && len(inscriptions) > 0 {
+			// Prefer an actual image inscription for the card thumbnail (by content_type
+			// or filename). Many blocks mix text + images; always taking [0] often
+			// picked a .txt and caused the <img> to error → fallback pickaxe emoji.
+			if chosen := pickImageLikeInscription(inscriptions); chosen != nil {
+				thumbnailURL = fmt.Sprintf("/content/%s%s", chosen.TxID, func() string {
+					if chosen.InputIndex >= 0 {
+						return fmt.Sprintf("?witness=%d", chosen.InputIndex)
+					}
+					return ""
+				}())
+			}
+		}
+
+		// Fallback for blocks where the persisted Inscriptions list is (currently) empty
+		// but we know via the tx index (from prior content access or startup scan) that
+		// the block has servable inscription content. This makes the BlockCard show the
+		// actual thumbnail image (e.g. for blocks like 95785 that have witness images
+		// resolvable via /content/ even if the block cache list is empty).
+		if thumbnailURL == "" {
+			api.txMu.RLock()
+			if txs, ok := api.heightIndex[block.BlockHeight]; ok && len(txs) > 0 {
+				// /content/{tx} (no witness) serves the primary inscription for the tx.
+				// This is the same pattern used for recent blocks and will render a real
+				// image thumbnail in the scroller instead of the emoji.
+				thumbnailURL = fmt.Sprintf("/content/%s", txs[0])
+			}
+			api.txMu.RUnlock()
+		}
+
+		// Last resort on-disk scan: if there are payload files in the block dir's images/
+		// subdir (even without tx metadata), use the block-image serving route so the
+		// card can still show a thumbnail.
+		if thumbnailURL == "" {
+			if t := api.findFirstBlockImageThumbnail(block.BlockHeight); t != "" {
+				thumbnailURL = t
+			}
+		}
+
 		summaries = append(summaries, map[string]interface{}{
 			"block_height":          block.BlockHeight,
 			"block_hash":            block.BlockHash,
@@ -427,6 +485,7 @@ func (api *DataAPI) HandleGetBlockSummaries(w http.ResponseWriter, r *http.Reque
 			"steganography_summary": block.SteganographySummary,
 			"preview_inscriptions":  preview,
 			"has_images":            hasImages,
+			"thumbnail_url":         thumbnailURL,
 		})
 	}
 
@@ -783,12 +842,57 @@ func (api *DataAPI) HandleGetBlockInscriptionsPaginated(w http.ResponseWriter, r
 	}
 	if filter == "text" {
 		var filtered []bitcoin.InscriptionData
-		for _, ins := range inscriptions {
+		newImageOverrides := map[int]string{}
+		newMetaOverrides := map[int]map[string]any{}
+		for i, ins := range inscriptions {
 			if strings.HasPrefix(strings.ToLower(ins.ContentType), "text/") || ins.Content != "" {
+				idx := len(filtered)
 				filtered = append(filtered, ins)
+				if v, ok := imageURLOverrides[i]; ok {
+					newImageOverrides[idx] = v
+				}
+				if v, ok := metadataOverrides[i]; ok {
+					newMetaOverrides[idx] = v
+				}
 			}
 		}
 		inscriptions = filtered
+		imageURLOverrides = newImageOverrides
+		metadataOverrides = newMetaOverrides
+	} else if filter == "image" {
+		var filtered []bitcoin.InscriptionData
+		newImageOverrides := map[int]string{}
+		newMetaOverrides := map[int]map[string]any{}
+		for i, ins := range inscriptions {
+			// An inscription is image-like if:
+			// 1. It has an image content type or image file extension, OR
+			// 2. It has a block-image URL override (smart contract images), OR
+			// 3. Sniffing the actual file on disk reveals an image type
+			isImage := isImageLikeInscription(ins)
+			if !isImage {
+				if override, ok := imageURLOverrides[i]; ok && strings.Contains(override, "/block-image/") {
+					isImage = true
+				}
+			}
+			if !isImage && ins.FilePath != "" {
+				if sniffed := api.sniffContentType(height, ins.FilePath); strings.HasPrefix(sniffed, "image/") {
+					isImage = true
+				}
+			}
+			if isImage {
+				idx := len(filtered)
+				filtered = append(filtered, ins)
+				if v, ok := imageURLOverrides[i]; ok {
+					newImageOverrides[idx] = v
+				}
+				if v, ok := metadataOverrides[i]; ok {
+					newMetaOverrides[idx] = v
+				}
+			}
+		}
+		inscriptions = filtered
+		imageURLOverrides = newImageOverrides
+		metadataOverrides = newMetaOverrides
 	}
 
 	start := cursor
@@ -991,7 +1095,13 @@ func buildContractInscriptions(contracts []bitcoin.SmartContractData, height int
 
 		idx := len(out) - 1
 		imageURLs[idx] = fmt.Sprintf("/api/block-image/%d/%s", height, fileName)
-		if meta != nil {
+		if meta == nil {
+			meta = make(map[string]any)
+		}
+		if contract.ContractID != "" {
+			meta["contract_id"] = contract.ContractID
+		}
+		if len(meta) > 0 {
 			metadata[idx] = meta
 		}
 	}
@@ -1299,8 +1409,6 @@ func (api *DataAPI) HandleContent(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodOptions {
 		return
 	}
-	// Rebuild the tx index on each request to pick up newly processed blocks.
-	api.buildTxIndex()
 	path := strings.TrimPrefix(r.URL.Path, "/content/")
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 	if len(parts) == 0 || parts[0] == "" {
@@ -1344,6 +1452,14 @@ func (api *DataAPI) handleContentRaw(w http.ResponseWriter, r *http.Request, txi
 				inscription = ins
 				break
 			}
+		}
+	} else {
+		// No explicit witness requested: prefer an image-like part if this tx
+		// has mixed content (text + image). This makes bare /content/{tx} (as
+		// used for some block thumbnails and direct links) return a renderable
+		// image when one is present in the tx's witnesses.
+		if img := pickImageLikeInscription(insList); img != nil {
+			inscription = *img
 		}
 	}
 
@@ -1461,6 +1577,7 @@ func (api *DataAPI) findInscriptionsByTx(txid string) (int64, []bitcoin.Inscript
 		if len(hits) > 0 {
 			api.txMu.Lock()
 			api.txIndex[txid] = h
+			api.heightIndex[h] = appendIfNotPresent(api.heightIndex[h], txid)
 			api.txMu.Unlock()
 			return h, hits, nil
 		}
@@ -1610,6 +1727,27 @@ func inferMime(current string, content []byte, fileName string) string {
 		m = "image/svg+xml"
 	}
 
+	// Normalize bare format strings (e.g. "jpeg", "png") that some extractors
+	// store directly in ContentType instead of a full MIME type. This ensures
+	// the block-inscriptions API and cards always see proper "image/..." types
+	// so that "hide text" filtering keeps real images and type displays aren't "unknown".
+	switch m {
+	case "jpeg", "jpg":
+		m = "image/jpeg"
+	case "png":
+		m = "image/png"
+	case "gif":
+		m = "image/gif"
+	case "webp":
+		m = "image/webp"
+	case "avif":
+		m = "image/avif"
+	case "svg":
+		m = "image/svg+xml"
+	case "bmp":
+		m = "image/bmp"
+	}
+
 	// Enhanced content detection for files without extensions
 	if len(content) > 0 && (m == "" || m == "application/octet-stream") {
 		sample := content
@@ -1643,6 +1781,10 @@ func inferMime(current string, content []byte, fileName string) string {
 			m = "text/html"
 		case strings.HasSuffix(lowerName, ".json"):
 			m = "application/json"
+		case strings.HasSuffix(lowerName, ".js"):
+			m = "text/javascript"
+		case strings.HasSuffix(lowerName, ".css"):
+			m = "text/css"
 		}
 	}
 
@@ -1956,6 +2098,7 @@ func stripNonPrintablePrefix(b []byte) []byte {
 func (api *DataAPI) buildTxIndex() {
 	heights := api.listAvailableBlockHeights()
 	newIndex := make(map[string]int64)
+	newHeightIndex := make(map[int64][]string)
 	for _, h := range heights {
 		block, err := api.loadBlock(h)
 		if err != nil {
@@ -1967,12 +2110,37 @@ func (api *DataAPI) buildTxIndex() {
 		}
 		for _, ins := range inscriptions {
 			if ins.TxID != "" {
-				newIndex[normalizeTxID(ins.TxID)] = h
+				ntx := normalizeTxID(ins.TxID)
+				newIndex[ntx] = h
+				newHeightIndex[h] = appendIfNotPresent(newHeightIndex[h], ntx)
 			}
 		}
 	}
 	api.txMu.Lock()
 	api.txIndex = newIndex
+	api.heightIndex = newHeightIndex
+	api.txMu.Unlock()
+}
+
+// IndexBlock incrementally adds a single block's inscriptions to the tx index.
+// Designed to be called from BlockMonitor.OnBlockProcessed.
+func (api *DataAPI) IndexBlock(height int64) {
+	block, err := api.loadBlock(height)
+	if err != nil {
+		return
+	}
+	inscriptions := block.Inscriptions
+	if len(inscriptions) == 0 && len(block.SmartContracts) > 0 {
+		inscriptions, _, _ = buildContractInscriptions(block.SmartContracts, block.BlockHeight)
+	}
+	api.txMu.Lock()
+	for _, ins := range inscriptions {
+		if ins.TxID != "" {
+			ntx := normalizeTxID(ins.TxID)
+			api.txIndex[ntx] = height
+			api.heightIndex[height] = appendIfNotPresent(api.heightIndex[height], ntx)
+		}
+	}
 	api.txMu.Unlock()
 }
 
@@ -1981,6 +2149,84 @@ func (api *DataAPI) lookupTxHeight(txid string) (int64, bool) {
 	h, ok := api.txIndex[txid]
 	api.txMu.RUnlock()
 	return h, ok
+}
+
+// appendIfNotPresent is a tiny helper for maintaining the heightIndex without duplicates.
+func appendIfNotPresent(list []string, v string) []string {
+	for _, x := range list {
+		if x == v {
+			return list
+		}
+	}
+	return append(list, v)
+}
+
+// findFirstBlockImageThumbnail scans the on-disk layout for a block and returns
+// a /api/block-image/... URL for the first file found under its images/ subdir
+// (if any). This acts as a last-resort so BlockCards can show a real thumbnail
+// for heights that have payload files on disk even when the Inscriptions list
+// in the loaded BlockDataCache is empty.
+func (api *DataAPI) findFirstBlockImageThumbnail(height int64) string {
+	base := strings.TrimRight(api.resolveBlocksDir(), "/")
+	// Try the two common directory shapes used by the system.
+	candidates := []string{
+		filepath.Join(base, fmt.Sprintf("%d_00000000", height), "images"),
+	}
+	// Also support the hashed suffix form <height>_<hash>
+	if matches, err := filepath.Glob(filepath.Join(base, fmt.Sprintf("%d_*", height), "images")); err == nil {
+		candidates = append(candidates, matches...)
+	}
+
+	for _, imgDir := range candidates {
+		entries, err := os.ReadDir(imgDir)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			name := e.Name()
+			// Return the first file we find; the block-image handler will serve it
+			// and set an appropriate Content-Type.
+			return fmt.Sprintf("/api/block-image/%d/%s", height, name)
+		}
+	}
+	return ""
+}
+
+// pickImageLikeInscription returns the first inscription in the list that looks
+// like a renderable image (based on ContentType or FileName extension).
+// This ensures the thumbnail_url we put in block-summaries points at something
+// that will successfully load as <img> in BlockCard instead of a .txt that
+// causes onError and falls back to the pickaxe.
+func pickImageLikeInscription(ins []bitcoin.InscriptionData) *bitcoin.InscriptionData {
+	if len(ins) == 0 {
+		return nil
+	}
+	for i := range ins {
+		if isImageLikeInscription(ins[i]) {
+			return &ins[i]
+		}
+	}
+	// No obvious image; fall back to first (may still be non-image, but at least
+	// consistent with prior behavior; the card will try <img> and may emoji-fallback).
+	return &ins[0]
+}
+
+func isImageLikeInscription(ins bitcoin.InscriptionData) bool {
+	ct := strings.ToLower(ins.ContentType)
+	fn := strings.ToLower(ins.FileName)
+	if strings.HasPrefix(ct, "image/") {
+		return true
+	}
+	if strings.HasSuffix(fn, ".png") || strings.HasSuffix(fn, ".jpg") ||
+		strings.HasSuffix(fn, ".jpeg") || strings.HasSuffix(fn, ".gif") ||
+		strings.HasSuffix(fn, ".webp") || strings.HasSuffix(fn, ".svg") ||
+		strings.HasSuffix(fn, ".avif") || strings.HasSuffix(fn, ".bmp") {
+		return true
+	}
+	return false
 }
 
 // Helper functions

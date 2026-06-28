@@ -3,8 +3,8 @@ const deriveApiBase = () => {
     return import.meta.env.VITE_API_BASE.replace(/\/$/, '');
   }
   const { origin } = window.location;
-  // Same-origin by default; local dev uses port swap.
-  if (origin.endsWith(':3000') || origin.endsWith(':8081')) {
+  // Same-origin by default (single-binary serves frontend+API); local dev may proxy :3000 -> :3001.
+  if (origin.endsWith(':3000')) {
     return origin.replace(':3000', ':3001');
   }
   return origin;

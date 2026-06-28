@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -28,8 +29,12 @@ type MemoryStore struct {
 // NewMemoryStore seeds fixtures and returns a MemoryStore.
 func NewMemoryStore(claimTTL time.Duration) *MemoryStore {
 	contracts, tasks := SeedData()
+	now := time.Now()
 	cMap := make(map[string]smart_contract.Contract, len(contracts))
 	for _, c := range contracts {
+		if c.CreatedAt.IsZero() {
+			c.CreatedAt = now
+		}
 		cMap[c.ContractID] = c
 	}
 	tMap := make(map[string]smart_contract.Task, len(tasks))
@@ -115,7 +120,7 @@ func matchesContractMeta(contractID string, proposals map[string]smart_contract.
 	return false
 }
 
-// ListContracts returns all contracts filtered by status and skill.
+// ListContracts returns all contracts filtered by status and skill with pagination.
 func (s *MemoryStore) ListContracts(filter smart_contract.ContractFilter) ([]smart_contract.Contract, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -140,9 +145,67 @@ func (s *MemoryStore) ListContracts(filter smart_contract.ContractFilter) ([]sma
 		if !matchesContractMeta(c.ContractID, s.proposals, filter) {
 			continue
 		}
+
+		// Cursor pagination by height
+		if filter.CursorHeight != nil && *filter.CursorHeight > 0 {
+			if c.ConfirmedBlockHeight == nil || *c.ConfirmedBlockHeight >= *filter.CursorHeight {
+				continue
+			}
+		}
+
+		// Cursor pagination by date
+		if filter.CursorDate != nil && c.ConfirmedAt != nil {
+			if strings.EqualFold(filter.CursorType, "after") {
+				if !c.ConfirmedAt.After(*filter.CursorDate) {
+					continue
+				}
+			} else {
+				if !c.ConfirmedAt.Before(*filter.CursorDate) {
+					continue
+				}
+			}
+		}
+
 		c.AvailableTasksCount = availableCounts[c.ContractID]
 		out = append(out, c)
 	}
+
+	// Sort based on filter preference
+	if filter.OrderByConfirmedAt {
+		sort.Slice(out, func(i, j int) bool {
+			if out[i].ConfirmedAt == nil {
+				return false
+			}
+			if out[j].ConfirmedAt == nil {
+				return true
+			}
+			return out[i].ConfirmedAt.After(*out[j].ConfirmedAt)
+		})
+	} else {
+		sort.Slice(out, func(i, j int) bool {
+			h1 := 0
+			if out[i].ConfirmedBlockHeight != nil {
+				h1 = *out[i].ConfirmedBlockHeight
+			}
+			h2 := 0
+			if out[j].ConfirmedBlockHeight != nil {
+				h2 = *out[j].ConfirmedBlockHeight
+			}
+			if h1 != h2 {
+				return h1 > h2
+			}
+			return out[i].ContractID > out[j].ContractID
+		})
+	}
+
+	// Apply pagination
+	if filter.Offset > 0 && filter.Offset < len(out) {
+		out = out[filter.Offset:]
+	}
+	if filter.Limit > 0 && filter.Limit < len(out) {
+		out = out[:filter.Limit]
+	}
+
 	return out, nil
 }
 
@@ -194,6 +257,34 @@ func (s *MemoryStore) ListTasks(filter smart_contract.TaskFilter) ([]smart_contr
 		if filter.MinBudgetSats > 0 && t.BudgetSats < filter.MinBudgetSats {
 			continue
 		}
+
+		// Add time-based filtering for UpdatedSince
+		if filter.UpdatedSince != nil {
+			if t.MerkleProof == nil {
+				continue
+			}
+			proof := t.MerkleProof
+			hasRecentActivity := proof.SeenAt.After(*filter.UpdatedSince) ||
+				(proof.SweepAttemptedAt != nil && proof.SweepAttemptedAt.After(*filter.UpdatedSince))
+			if !hasRecentActivity {
+				continue
+			}
+		}
+
+		// Add time-based filtering for LastActivitySince
+		if filter.LastActivitySince != nil {
+			if t.MerkleProof == nil {
+				continue
+			}
+			proof := t.MerkleProof
+			hasRecentActivity := proof.SeenAt.After(*filter.LastActivitySince) ||
+				(proof.ConfirmedAt != nil && proof.ConfirmedAt.After(*filter.LastActivitySince)) ||
+				(proof.SweepAttemptedAt != nil && proof.SweepAttemptedAt.After(*filter.LastActivitySince))
+			if !hasRecentActivity {
+				continue
+			}
+		}
+
 		out = append(out, t)
 	}
 
@@ -230,6 +321,17 @@ func (s *MemoryStore) GetContract(id string) (smart_contract.Contract, error) {
 	return c, nil
 }
 
+// GetClaim returns a claim by ID.
+func (s *MemoryStore) GetClaim(id string) (smart_contract.Claim, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	c, ok := s.claims[id]
+	if !ok {
+		return smart_contract.Claim{}, ErrClaimNotFound
+	}
+	return c, nil
+}
+
 // ClaimTask reserves a task for an AI. It is idempotent if the same AI reclaims before expiry.
 func (s *MemoryStore) ClaimTask(taskID, walletAddress string, estimatedCompletion *time.Time) (smart_contract.Claim, error) {
 	s.mu.Lock()
@@ -239,18 +341,15 @@ func (s *MemoryStore) ClaimTask(taskID, walletAddress string, estimatedCompletio
 	if !ok {
 		return smart_contract.Claim{}, ErrTaskNotFound
 	}
-	if strings.EqualFold(task.Status, "approved") || strings.EqualFold(task.Status, "completed") || strings.EqualFold(task.Status, "published") || strings.EqualFold(task.Status, "claimed") || strings.EqualFold(task.Status, "submitted") {
-		return smart_contract.Claim{}, ErrTaskUnavailable
-	}
 	normalizedWallet := strings.TrimSpace(walletAddress)
 	if normalizedWallet == "" {
 		return smart_contract.Claim{}, fmt.Errorf("wallet address required")
 	}
 
-	// Existing claim?
+	// Existing claim by this user? (IDEMPOTENCY)
 	for _, c := range s.claims {
 		if c.TaskID == taskID {
-			if c.AiIdentifier == walletAddress && c.Status == "active" && time.Now().Before(c.ExpiresAt) {
+			if strings.EqualFold(c.AiIdentifier, normalizedWallet) && c.Status == "active" && time.Now().Before(c.ExpiresAt) {
 				if task.ContractorWallet == "" {
 					task.ContractorWallet = normalizedWallet
 					if task.MerkleProof == nil {
@@ -265,6 +364,11 @@ func (s *MemoryStore) ClaimTask(taskID, walletAddress string, estimatedCompletio
 				return smart_contract.Claim{}, ErrTaskTaken
 			}
 		}
+	}
+
+	// New claim checks
+	if strings.EqualFold(task.Status, "approved") || strings.EqualFold(task.Status, "completed") || strings.EqualFold(task.Status, "published") || strings.EqualFold(task.Status, "submitted") || strings.EqualFold(task.Status, "claimed") {
+		return smart_contract.Claim{}, ErrTaskUnavailable
 	}
 
 	claimID := fmt.Sprintf("CLAIM-%d", time.Now().UnixNano())
@@ -332,7 +436,14 @@ SubmitWork:
 		return smart_contract.Submission{}, fmt.Errorf("claim %s expired", claimID)
 	}
 
+	// Safeguard: Ensure internal fields cannot be overridden by external tool calls
+	delete(deliverables, "status")
+	if proof != nil {
+		delete(proof, "status")
+	}
+
 	subID := fmt.Sprintf("SUB-%d", time.Now().UnixNano())
+
 	sub := smart_contract.Submission{
 		SubmissionID:    subID,
 		ClaimID:         claimID,
@@ -526,6 +637,60 @@ func (s *MemoryStore) UpdateContractStatus(ctx context.Context, contractID, stat
 	return nil
 }
 
+// ConfirmContract confirms a contract and records confirmation details.
+func (s *MemoryStore) ConfirmContract(ctx context.Context, contractID string, blockHeight int, txid string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	contractID = strings.TrimSpace(contractID)
+	if contractID == "" {
+		return nil
+	}
+
+	normalized := NormalizeContractID(contractID)
+	wishID := "wish-" + normalized
+	imageFile := contractID
+	stegoImageURL := fmt.Sprintf("/api/block-image/%d/%s", blockHeight, imageFile)
+
+	contract, ok := s.contracts[contractID]
+	if !ok {
+		// If the confirmed contract doesn't exist, bootstrap from the wish contract
+		if wishContract, wok := s.contracts[wishID]; wok {
+			contract = wishContract
+			contract.ContractID = normalized
+		} else {
+			return fmt.Errorf("contract %s not found", contractID)
+		}
+	}
+	contract.Status = "confirmed"
+	contract.ConfirmedBlockHeight = &blockHeight
+	confirmedAt := time.Now()
+	contract.ConfirmedAt = &confirmedAt
+
+	// Set confirmed_txid in metadata
+	if contract.Metadata == nil {
+		contract.Metadata = make(map[string]interface{})
+	}
+	contract.Metadata["confirmed_txid"] = txid
+
+	contract.StegoImageURL = stegoImageURL
+	s.contracts[contractID] = contract
+
+	// Supersede the wish contract
+	if wishContract, wok := s.contracts[wishID]; wok && wishContract.Status != "superseded" {
+		wishContract.Status = "superseded"
+		s.contracts[wishID] = wishContract
+	}
+
+	for id, proposal := range s.proposals {
+		proposalCID := NormalizeContractID(contractIDFromMeta(proposal.Metadata, proposal.ID))
+		if proposalCID == normalized && strings.EqualFold(proposal.Status, "approved") {
+			proposal.Status = "confirmed"
+			s.proposals[id] = proposal
+		}
+	}
+	return nil
+}
+
 // CreateProposal stores a new proposal with validation.
 func (s *MemoryStore) CreateProposal(ctx context.Context, p smart_contract.Proposal) error {
 	s.mu.Lock()
@@ -564,6 +729,28 @@ func (s *MemoryStore) CreateProposal(ctx context.Context, p smart_contract.Propo
 		p.Status = "pending" // Default to pending
 	} else if !isValidProposalStatus(p.Status) {
 		return fmt.Errorf("invalid proposal status: %s (must be one of: pending, approved, rejected, published)", p.Status)
+	}
+
+	// Check for duplicate visible_pixel_hash or max limit
+	visibleHash := strings.TrimSpace(p.VisiblePixelHash)
+	if visibleHash == "" {
+		if v, ok := p.Metadata["visible_pixel_hash"].(string); ok {
+			visibleHash = strings.TrimSpace(v)
+		}
+	}
+	if visibleHash != "" {
+		count := 0
+		for _, prop := range s.proposals {
+			if prop.VisiblePixelHash == visibleHash && prop.ID != p.ID {
+				if strings.EqualFold(prop.Status, "approved") || strings.EqualFold(prop.Status, "published") {
+					return fmt.Errorf("a proposal with visible_pixel_hash=%s is already approved/published (id=%s)", visibleHash, prop.ID)
+				}
+				count++
+			}
+		}
+		if count >= 5 {
+			return fmt.Errorf("maximum of 5 proposals reached for wish %s", visibleHash)
+		}
 	}
 
 	s.proposals[p.ID] = p
@@ -638,6 +825,11 @@ func (s *MemoryStore) UpsertContractWithTasks(ctx context.Context, contract smar
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// Ensure CreatedAt is set
+	if contract.CreatedAt.IsZero() {
+		contract.CreatedAt = time.Now()
+	}
+
 	// Store the contract
 	s.contracts[contract.ContractID] = contract
 
@@ -654,6 +846,9 @@ func (s *MemoryStore) ListProposals(ctx context.Context, filter smart_contract.P
 	defer s.mu.RUnlock()
 	var out []smart_contract.Proposal
 	for _, p := range s.proposals {
+		if filter.ProposalID != "" && filter.ProposalID != p.ID {
+			continue
+		}
 		if filter.Status != "" && !strings.EqualFold(filter.Status, p.Status) {
 			continue
 		}
@@ -686,7 +881,7 @@ func (s *MemoryStore) ListProposals(ctx context.Context, filter smart_contract.P
 		if len(filter.Skills) > 0 && !proposalHasSkills(p, filter.Skills) {
 			continue
 		}
-		
+
 		// Hydrate tasks
 		populateProposalTasks(&p)
 		out = append(out, p)
@@ -707,10 +902,10 @@ func (s *MemoryStore) GetProposal(ctx context.Context, id string) (smart_contrac
 	if !ok {
 		return smart_contract.Proposal{}, fmt.Errorf("proposal %s not found", id)
 	}
-	
+
 	// Hydrate tasks
 	populateProposalTasks(&p)
-	
+
 	return p, nil
 }
 
@@ -749,7 +944,9 @@ func (s *MemoryStore) UpdateProposal(ctx context.Context, p smart_contract.Propo
 		p.CreatedAt = existing.CreatedAt
 	}
 
-	p.Status = existing.Status
+	if p.Status == "" {
+		p.Status = existing.Status
+	}
 	if p.Metadata == nil {
 		p.Metadata = map[string]interface{}{}
 	}
@@ -959,7 +1156,17 @@ func (s *MemoryStore) SyncClaim(ctx context.Context, claim smart_contract.Claim)
 func (s *MemoryStore) SyncSubmission(ctx context.Context, sub smart_contract.Submission) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	// Safeguard: Ensure internal fields cannot be overridden by external tool calls
+	if sub.Deliverables != nil {
+		delete(sub.Deliverables, "status")
+	}
+	if sub.CompletionProof != nil {
+		delete(sub.CompletionProof, "status")
+	}
+
 	s.submissions[sub.SubmissionID] = sub
+
 	return nil
 }
 
@@ -1058,5 +1265,145 @@ func (s *MemoryStore) UpdateSubmissionStatus(ctx context.Context, submissionID, 
 		}
 	}
 
+	return nil
+}
+
+// UpdateSubmission updates a full submission record with internal field protection.
+func (s *MemoryStore) UpdateSubmission(ctx context.Context, sub smart_contract.Submission) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Safeguard: Ensure internal fields cannot be overridden by external tool calls
+	if sub.Deliverables != nil {
+		delete(sub.Deliverables, "status")
+	}
+	if sub.CompletionProof != nil {
+		delete(sub.CompletionProof, "status")
+	}
+
+	if _, ok := s.submissions[sub.SubmissionID]; !ok {
+
+		return fmt.Errorf("submission %s not found", sub.SubmissionID)
+	}
+
+	s.submissions[sub.SubmissionID] = sub
+	return nil
+}
+
+func (s *MemoryStore) DeleteWish(ctx context.Context, visiblePixelHash string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// 1. Delete associated proposals
+	for id, p := range s.proposals {
+		if p.VisiblePixelHash == visiblePixelHash {
+			delete(s.proposals, id)
+		}
+	}
+
+	wishID := "wish-" + visiblePixelHash
+
+	// 2. Collect task IDs for this wish to cascade delete claims and submissions
+	taskIDs := make(map[string]bool)
+	for id, t := range s.tasks {
+		if t.ContractID == wishID {
+			taskIDs[id] = true
+			delete(s.tasks, id)
+		}
+	}
+
+	// 3. Delete claims and submissions for those tasks
+	for id, c := range s.claims {
+		if taskIDs[c.TaskID] {
+			delete(s.claims, id)
+			// Delete submissions linked to this claim
+			for sid, sub := range s.submissions {
+				if sub.ClaimID == id {
+					delete(s.submissions, sid)
+				}
+			}
+		}
+	}
+
+	// 4. Delete the contract itself
+	delete(s.contracts, wishID)
+
+	return nil
+}
+
+// CreateContractReworkRequest adds a rework request from the wish creator at contract level.
+func (s *MemoryStore) CreateContractReworkRequest(ctx context.Context, contractID, requester, notes string) (smart_contract.ContractReworkRequest, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	c, ok := s.contracts[contractID]
+	if !ok {
+		return smart_contract.ContractReworkRequest{}, fmt.Errorf("contract %s not found", contractID)
+	}
+
+	requestID := fmt.Sprintf("rework-%s-%d", contractID, time.Now().UnixNano())
+	now := time.Now()
+
+	reworkReq := smart_contract.ContractReworkRequest{
+		RequestID:  requestID,
+		ContractID: contractID,
+		Requester:  requester,
+		Notes:      notes,
+		Status:     "open",
+		CreatedAt:  now,
+	}
+
+	c.ReworkRequests = append(c.ReworkRequests, reworkReq)
+	// Mark all pending tasks for this contract as rejected
+	for tID, t := range s.tasks {
+		if t.ContractID == contractID {
+			t.Status = "rejected"
+			s.tasks[tID] = t
+		}
+	}
+	s.contracts[contractID] = c
+
+	return reworkReq, nil
+}
+
+// GetContractReworkRequests returns all rework requests for a contract.
+func (s *MemoryStore) GetContractReworkRequests(ctx context.Context, contractID string) ([]smart_contract.ContractReworkRequest, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	c, ok := s.contracts[contractID]
+	if !ok {
+		return nil, fmt.Errorf("contract %s not found", contractID)
+	}
+
+	return c.ReworkRequests, nil
+}
+
+// ResolveContractReworkRequest marks a rework request as resolved.
+func (s *MemoryStore) ResolveContractReworkRequest(ctx context.Context, contractID, requestID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	c, ok := s.contracts[contractID]
+	if !ok {
+		return fmt.Errorf("contract %s not found", contractID)
+	}
+
+	found := false
+	now := time.Now()
+	for i, req := range c.ReworkRequests {
+		if req.RequestID == requestID {
+			c.ReworkRequests[i].Status = "resolved"
+			c.ReworkRequests[i].ResolvedAt = &now
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		return fmt.Errorf("rework request %s not found", requestID)
+	}
+
+	s.contracts[contractID] = c
 	return nil
 }

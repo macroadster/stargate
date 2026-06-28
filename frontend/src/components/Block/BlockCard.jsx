@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 
 const BlockCard = ({ block, onClick, isSelected }) => {
   const stegoCount = block.steganography_summary?.stego_count || 0;
@@ -10,20 +10,20 @@ const BlockCard = ({ block, onClick, isSelected }) => {
   const txCount = block.tx_count || 0;
 
 
-  const getBackgroundClass = () => {
-    if (block.isFuture) return 'from-yellow-200 to-yellow-300 dark:from-yellow-600 dark:to-yellow-800';
+  const getGlowClass = () => {
+    if (block.isFuture) return 'shadow-lg';
     
     // Check for historical significance first
     const historical = getHistoricalSignificance(block.height);
     if (historical) {
-      return historical.color;
+      return 'shadow-lg';
     }
     
     const txCount = block.tx_count || 0;
     
-    if (txCount > 3000) return 'from-blue-200 to-blue-300 dark:from-blue-600 dark:to-blue-800';
-    if (txCount > 0) return 'from-gray-200 to-gray-300 dark:from-gray-700 dark:to-gray-800';
-    return 'from-red-200 to-red-300 dark:from-red-600 dark:to-red-800';
+    if (txCount > 3000) return 'shadow-lg';
+    if (txCount > 0) return '';
+    return '';
   };
 
   const getHistoricalSignificance = (height) => {
@@ -32,56 +32,47 @@ const BlockCard = ({ block, onClick, isSelected }) => {
       0: { 
         title: "Genesis Block", 
         description: "First ever Bitcoin block - 'The Times 03/Jan/2009 Chancellor on brink of second bailout for banks'",
-        emoji: "🌅",
-        color: "from-yellow-200 to-yellow-300 dark:from-yellow-600 dark:to-yellow-800"
+        emoji: "🌅"
       },
       1: { 
         title: "Block 1", 
         description: "Second block, mined by Satoshi Nakamoto",
-        emoji: "🔨",
-        color: "from-gray-200 to-gray-300 dark:from-gray-700 dark:to-gray-800"
+        emoji: "🔨"
       },
       174923: { 
         title: "Pizza Day Block", 
         description: "First commercial Bitcoin transaction - 2 pizzas for 10,000 BTC (May 22, 2010)",
-        emoji: "🍕",
-        color: "from-orange-200 to-orange-300 dark:from-orange-600 dark:to-orange-800"
+        emoji: "🍕"
       },
       210000: { 
         title: "First Halving", 
         description: "Reward reduced from 50 → 25 BTC (Nov 2012)",
-        emoji: "💎",
-        color: "from-purple-200 to-purple-300 dark:from-purple-600 dark:to-purple-800"
+        emoji: "💎"
       },
       481824: { 
         title: "SegWit Activation", 
         description: "Segregated Witness officially activated on Bitcoin network",
-        emoji: "⚡",
-        color: "from-blue-200 to-blue-300 dark:from-blue-600 dark:to-blue-800"
+        emoji: "⚡"
       },
       709632: { 
         title: "Taproot Activation", 
         description: "Schnorr signatures and Tapscript go live (Nov 2021)",
-        emoji: "🌲",
-        color: "from-green-200 to-green-300 dark:from-green-600 dark:to-green-800"
+        emoji: "🌲"
       },
       420000: { 
         title: "Halving #2", 
         description: "Second Bitcoin halving - reward reduced from 25 to 12.5 BTC",
-        emoji: "🔷",
-        color: "from-indigo-200 to-indigo-300 dark:from-indigo-600 dark:to-indigo-800"
+        emoji: "🔷"
       },
       630000: { 
         title: "Halving #3", 
         description: "Third Bitcoin halving - reward reduced from 12.5 to 6.25 BTC",
-        emoji: "⛏️",
-        color: "from-pink-200 to-pink-300 dark:from-pink-600 dark:to-pink-800"
+        emoji: "⛏️"
       },
       840000: {
         title: "Halving #4",
         description: "Fourth Bitcoin halving - reward reduced from 6.25 to 3.125 BTC",
-        emoji: "🪙",
-        color: "from-cyan-200 to-cyan-300 dark:from-cyan-600 dark:to-cyan-800"
+        emoji: "🪙"
       }
     };
     
@@ -103,10 +94,10 @@ const BlockCard = ({ block, onClick, isSelected }) => {
   };
 
   const getBadgeClass = () => {
-    if (block.isFuture) return 'text-yellow-800 dark:text-yellow-200';
-    if (txCount > 3000) return 'text-blue-700 dark:text-blue-200';
-    if (txCount > 0) return 'text-gray-700 dark:text-gray-200';
-    return 'text-indigo-700 dark:text-indigo-200';
+    if (block.isFuture) return 'text-warning';
+    if (txCount > 3000) return 'text-primary';
+    if (txCount > 0) return 'text-secondary';
+    return 'text-primary';
   };
 
   const formatTimeAgo = (timestamp) => {
@@ -129,89 +120,19 @@ const BlockCard = ({ block, onClick, isSelected }) => {
 
   return (
     <div
-      onClick={() => {
-        onClick(block);
-      }}
+      onClick={() => onClick(block)}
       data-block-id={block.height}
-      className={`relative flex-shrink-0 w-40 transition-all ${
-        isSelected ? 'scale-102' : 'hover:scale-102'
-      } ${block.isFuture ? 'opacity-75' : ''} cursor-pointer`}
+      className={`flex-shrink-0 w-40 ${block.isNew ? 'block-slide-in' : ''} ${
+        block.isFuture ? 'opacity-75' : ''
+      }`}
       title={undefined}
     >
-      <div className={`${block.isNew ? 'block-slide-in' : ''}`}>
-        <div className={`rounded-xl overflow-hidden border-2 ${
-        isSelected ? 'border-indigo-500' : block.isFuture ? 'border-yellow-400' : 'border-gray-300 dark:border-gray-700'
-      } bg-gradient-to-br ${getBackgroundClass()}`}>
-        <div className="h-32 flex items-center justify-center bg-black bg-opacity-20 relative">
-          {(() => {
-            const historical = getHistoricalSignificance(block.height);
-            if (historical) {
-              return (
-                <div className="text-center">
-                  <div className="text-6xl">{historical.emoji}</div>
-                </div>
-              );
-            }
-            if (hasSmartContracts) {
-              return (
-                <div className="text-center">
-                  <div className="text-6xl">🎨</div>
-                </div>
-              );
-            }
-            if (hasWitnessImages) {
-              return <div className="text-6xl">🖼️</div>;
-            }
-            if (block.thumbnail) {
-              return <div className="text-6xl">{block.thumbnail}</div>;
-            }
-            return <div className="text-6xl">⛏️</div>;
-          })()}
-        </div>
-        
-        <div className={`p-3 ${block.isFuture ? 'bg-yellow-500 bg-opacity-40' : 'bg-black bg-opacity-40 dark:bg-black dark:bg-opacity-40 bg-white bg-opacity-60'}`}>
-          <div className={`font-bold text-lg mb-1 ${block.isFuture ? 'text-yellow-900 dark:text-yellow-100' : 'text-black dark:text-white'}`}>
-            Block {block.height}
-          </div>
-          <div className={`text-xs mb-2 font-semibold ${getBadgeClass()}`}>
-            {getBadgeText()}
-          </div>
-          <div className="space-y-1 mb-2 text-xs text-gray-600 dark:text-gray-400">
-            <div>{`${smartContractCount} smart contract${smartContractCount === 1 ? '' : 's'}`}</div>
-            <div>{formatTimeAgo(block.timestamp)}</div>
-            <div>{`${txCount} transaction${txCount === 1 ? '' : 's'}`}</div>
-          </div>
-          <div className="flex items-center gap-2 mb-2 text-[11px]">
-            {smartContractCount > 0 ? (
-              <span className="px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 dark:bg-purple-900/60 dark:text-purple-200">
-                {smartContractCount} smart contract{smartContractCount === 1 ? '' : 's'}
-              </span>
-            ) : (
-              <span className={`px-2 py-0.5 rounded-full ${hasImages ? 'bg-green-100 text-green-700 dark:bg-green-900/60 dark:text-green-200' : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300'}`}>
-                {hasImages ? `${inscriptionCount} inscription${inscriptionCount === 1 ? '' : 's'}` : 'No inscriptions'}
-              </span>
-            )}
-            {hasWitnessImages && (
-              <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/60 dark:text-blue-200">
-                Witness images
-              </span>
-            )}
-          </div>
-        {(() => {
-          const historical = getHistoricalSignificance(block.height);
-          if (historical) {
-            return (
-              <div className="text-xs text-gray-600 dark:text-gray-400 italic">
-                {historical.description}
-              </div>
-            );
-          }
-          return null;
-        })()}
-        </div>
-        
+      <div className={`card relative p-4 cursor-pointer transition-transform ${getGlowClass()} ${
+        isSelected ? 'border-2 border-primary scale-105' : 'hover:scale-105'
+      } ${block.isFuture ? 'border-2 border-warning' : ''}`}>
+        {/* Notification badges at top */}
         {block.tx_count > 3000 && (
-          <div className="absolute top-2 right-2 bg-blue-600 text-white text-xs px-2 py-1 rounded-md font-bold">
+          <div className="absolute top-2 right-2 z-10 badge badge-primary">
             BUSY
           </div>
         )}
@@ -219,20 +140,114 @@ const BlockCard = ({ block, onClick, isSelected }) => {
           const historical = getHistoricalSignificance(block.height);
           if (historical) {
             return (
-              <div className="absolute top-2 right-2 bg-orange-600 text-white text-xs px-2 py-1 rounded-md font-bold">
+              <div className="absolute top-2 right-2 z-10 badge badge-warning">
                 HISTORIC
               </div>
             );
           }
           if (block.tx_count > 0 && block.tx_count <= 3000) {
             return (
-              <div className="absolute top-2 right-2 bg-gray-600 text-white text-xs px-2 py-1 rounded-md font-bold">
+              <div className="absolute top-2 right-2 z-10 badge badge-secondary">
                 ACTIVE
               </div>
             );
           }
           return null;
         })()}
+        
+        <div className="h-32 flex items-center justify-center bg-gray-100 dark:bg-gray-800 rounded overflow-hidden">
+          {(() => {
+            const historical = getHistoricalSignificance(block.height);
+            if (historical) {
+              return (
+                <div className="text-center">
+                  <div className="text-5xl">{historical.emoji}</div>
+                </div>
+              );
+            }
+            const thumb = block.thumbnail;
+            const isUrl = typeof thumb === 'string' && (thumb.startsWith('/') || thumb.startsWith('http'));
+            if (isUrl) {
+              return (
+                <img
+                  src={thumb}
+                  alt={`Block ${block.height}`}
+                  className="w-full h-full object-contain"
+                  loading="lazy"
+                  onError={(e) => {
+                    // Hide broken image, show fallback emoji below via sibling
+                    e.target.style.display = 'none';
+                    if (e.target.nextSibling) e.target.nextSibling.style.display = 'flex';
+                  }}
+                />
+              );
+            }
+            if (hasSmartContracts) {
+              return (
+                <div className="text-center">
+                  <div className="text-5xl">🎨</div>
+                </div>
+              );
+            }
+            if (hasWitnessImages) {
+              return <div className="text-5xl">🖼️</div>;
+            }
+            if (block.thumbnail && !isUrl) {
+              return <div className="text-5xl">{block.thumbnail}</div>;
+            }
+            return <div className="text-5xl">⛏️</div>;
+          })()}
+          {/* Fallback emoji shown when thumbnail image fails to load */}
+          {(() => {
+            const thumb = block.thumbnail;
+            const isUrl = typeof thumb === 'string' && (thumb.startsWith('/') || thumb.startsWith('http'));
+            if (isUrl) {
+              const fb = hasSmartContracts ? '🎨' : (hasWitnessImages ? '🖼️' : '⛏️');
+              return <div className="text-5xl hidden items-center justify-center">{fb}</div>;
+            }
+            return null;
+          })()}
+        </div>
+        
+        <div className="mt-4">
+          <div className={`font-bold text-lg mb-1 ${block.isFuture ? 'text-warning' : 'text-primary'}`}>
+            Block {block.height}
+          </div>
+          <div className={`text-xs mb-2 font-semibold ${getBadgeClass()}`}>
+            {getBadgeText()}
+          </div>
+          <div className="flex flex-col gap-1 mb-2 text-xs text-secondary">
+            <div>{`${smartContractCount} smart contract${smartContractCount === 1 ? '' : 's'}`}</div>
+            <div>{formatTimeAgo(block.timestamp)}</div>
+            <div>{`${txCount} transaction${txCount === 1 ? '' : 's'}`}</div>
+          </div>
+          <div className="flex items-center justify-center gap-2 mb-2 text-xs">
+            {smartContractCount > 0 ? (
+              <span className="badge badge-primary">
+                {smartContractCount} smart contract{smartContractCount === 1 ? '' : 's'}
+              </span>
+            ) : (
+              <span className={`badge ${hasImages ? 'badge-success' : 'badge-secondary'}`}>
+                {hasImages ? `${inscriptionCount} inscription${inscriptionCount === 1 ? '' : 's'}` : 'No inscriptions'}
+              </span>
+            )}
+            {hasWitnessImages && (
+              <span className="badge badge-primary">
+                Witness images
+              </span>
+            )}
+          </div>
+          {(() => {
+            const historical = getHistoricalSignificance(block.height);
+            if (historical) {
+              return (
+                <div className="text-xs text-secondary italic">
+                  {historical.description}
+                </div>
+              );
+            }
+            return null;
+          })()}
         </div>
       </div>
     </div>

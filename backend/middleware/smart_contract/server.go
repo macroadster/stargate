@@ -22,7 +22,7 @@ import (
 	"golang.org/x/crypto/ripemd160"
 	"stargate-backend/bitcoin"
 	"stargate-backend/core/smart_contract"
-	"stargate-backend/ipfs"
+	"stargate-backend/storage/ipfs"
 	"stargate-backend/services"
 	auth "stargate-backend/storage/auth"
 	scstore "stargate-backend/storage/smart_contract"
@@ -37,14 +37,16 @@ type Server struct {
 	eventsMu     sync.Mutex
 	listenersMu  sync.Mutex
 	listeners    []chan smart_contract.Event
-	mempool      *bitcoin.MempoolClient
-	escort       *smart_contract.EscortService
+	mempool            *bitcoin.MempoolClient
+	escort             *smart_contract.EscortService
 }
 
 // SetEscortService sets the escort service for the server.
 func (s *Server) SetEscortService(escort *smart_contract.EscortService) {
 	s.escort = escort
 }
+
+
 
 // proposalCreateBody captures POST payload for creating proposals.
 type ProposalCreateBody struct {
@@ -71,44 +73,44 @@ type ProposalUpdateBody struct {
 	Tasks            *[]smart_contract.Task  `json:"tasks"`
 }
 
-func creatorAPIKeyHash(apiKey string) string {
-	key := strings.TrimSpace(apiKey)
-	if key == "" {
-		return ""
-	}
-	sum := sha256.Sum256([]byte(key))
-	return hex.EncodeToString(sum[:])
-}
-
-func applyCreatorAPIKeyHash(meta map[string]interface{}, apiKey string) {
+func applyCreatorWallet(meta map[string]interface{}, apiKey string, apiKeys auth.APIKeyValidator) {
 	if meta == nil {
 		return
 	}
-	if _, ok := meta["creator_api_key_hash"].(string); ok {
+	if _, ok := meta["creator_wallet"].(string); ok {
 		return
 	}
-	if hash := creatorAPIKeyHash(apiKey); hash != "" {
-		meta["creator_api_key_hash"] = hash
+	if apiKeys != nil {
+		if rec, ok := apiKeys.Get(apiKey); ok {
+			if wallet := strings.TrimSpace(rec.Wallet); wallet != "" {
+				meta["creator_wallet"] = wallet
+			}
+		}
 	}
 }
 
 func (s *Server) enforceCreatorApproval(r *http.Request, proposal smart_contract.Proposal) error {
 	apiKey := r.Header.Get("X-API-Key")
-	currentHash := creatorAPIKeyHash(apiKey)
-	if currentHash == "" {
-		return fmt.Errorf("api key required for approval")
-	}
 
-	// 1. Check if matches Proposal Creator
-	if proposal.Metadata != nil {
-		if creatorHash, ok := proposal.Metadata["creator_api_key_hash"].(string); ok {
-			if strings.TrimSpace(creatorHash) == currentHash {
-				return nil
-			}
+	// Get approver's wallet from API key
+	var approverWallet string
+	if s.apiKeys != nil {
+		if approverRec, ok := s.apiKeys.Get(apiKey); ok {
+			approverWallet = strings.TrimSpace(approverRec.Wallet)
 		}
 	}
+	if approverWallet == "" {
+		return fmt.Errorf("api key with wallet binding required for approval")
+	}
 
-	// 2. Check if matches Wish Creator
+	// 0. GLOBAL AUDITOR: Check if the bound wallet is the donation address
+	donationAddr := strings.TrimSpace(os.Getenv("STARLIGHT_DONATION_ADDRESS"))
+	if donationAddr != "" && strings.EqualFold(approverWallet, donationAddr) {
+		log.Printf("AUTHORIZATION: Allowing approval for proposal %s based on Global Auditor status (%s)", proposal.ID, approverWallet)
+		return nil
+	}
+
+	// 1. Check if matches Wish Creator by wallet
 	visibleHash := proposalVisibleHash(proposal)
 	if visibleHash != "" && s.ingestionSvc != nil {
 		// Try both hash and wish-hash
@@ -118,36 +120,31 @@ func (s *Server) enforceCreatorApproval(r *http.Request, proposal smart_contract
 		}
 
 		if rec != nil && rec.Metadata != nil {
-			if wishCreatorHash, ok := rec.Metadata["creator_api_key_hash"].(string); ok {
-				if strings.TrimSpace(wishCreatorHash) == currentHash {
+			if wishCreatorWallet, ok := rec.Metadata["creator_wallet"].(string); ok {
+				if strings.EqualFold(strings.TrimSpace(wishCreatorWallet), approverWallet) {
 					return nil
 				}
 			}
 		}
 	}
 
-	// 3. Fallback: if no creator info exists at all, allow for now to prevent deadlock on old data
-	hasAnyCreatorInfo := false
-	if proposal.Metadata != nil {
-		if _, ok := proposal.Metadata["creator_api_key_hash"].(string); ok {
-			hasAnyCreatorInfo = true
-		}
-	}
-	if !hasAnyCreatorInfo && visibleHash != "" && s.ingestionSvc != nil {
+	// 2. Fallback: if no wish creator info exists at all, allow for now to prevent deadlock on old data
+	hasWishCreatorInfo := false
+	if visibleHash != "" && s.ingestionSvc != nil {
 		rec, _ := s.ingestionSvc.Get(visibleHash)
 		if rec != nil && rec.Metadata != nil {
-			if _, ok := rec.Metadata["creator_api_key_hash"].(string); ok {
-				hasAnyCreatorInfo = true
+			if _, ok := rec.Metadata["creator_wallet"].(string); ok {
+				hasWishCreatorInfo = true
 			}
 		}
 	}
 
-	if !hasAnyCreatorInfo {
-		log.Printf("WARNING: allowing approval for proposal %s with NO creator info via REST", proposal.ID)
+	if !hasWishCreatorInfo {
+		log.Printf("WARNING: allowing approval for proposal %s with NO wish creator info via REST", proposal.ID)
 		return nil
 	}
 
-	return fmt.Errorf("approver does not match proposal creator or wish creator")
+	return fmt.Errorf("approver wallet %s does not match wish creator", approverWallet)
 }
 
 // NewServer builds a Server with the given store.
@@ -184,15 +181,15 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/smart_contract/discover", s.authWrap(s.handleDiscover))
 
 	// Proposal endpoints
-	mux.HandleFunc("/api/smart_contract/proposals", s.authWrap(s.handleProposals))
-	mux.HandleFunc("/api/smart_contract/proposals/", s.authWrap(s.handleProposals))
+	mux.HandleFunc("/api/smart_contract/proposals", s.authWrapReadOnly(s.handleProposals))
+	mux.HandleFunc("/api/smart_contract/proposals/", s.authWrapReadOnly(s.handleProposals))
 
 	// Submission endpoints
 	mux.HandleFunc("/api/smart_contract/submissions", s.authWrap(s.handleSubmissions))
 	mux.HandleFunc("/api/smart_contract/submissions/", s.authWrap(s.handleSubmissions))
 
 	// Event endpoints
-	mux.HandleFunc("/api/smart_contract/events", s.authWrap(s.handleEvents))
+	mux.HandleFunc("/api/smart_contract/events", s.authWrapReadOnly(s.handleEvents))
 
 	// Stego endpoints (still using original handlers for now)
 	mux.HandleFunc("/api/smart_contract/stego/reconcile", s.authWrap(s.handleStegoReconcile))
@@ -201,6 +198,27 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 
 func (s *Server) authWrap(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if s.apiKeys != nil {
+			key := r.Header.Get("X-API-Key")
+			if key == "" || !s.apiKeys.Validate(key) {
+				Error(w, http.StatusForbidden, "invalid api key")
+				return
+			}
+		}
+		next(w, r)
+	}
+}
+
+// authWrapReadOnly allows GET requests without authentication but requires auth for other methods
+func (s *Server) authWrapReadOnly(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			// Allow GET requests without authentication
+			next(w, r)
+			return
+		}
+
+		// Require authentication for non-GET methods
 		if s.apiKeys != nil {
 			key := r.Header.Get("X-API-Key")
 			if key == "" || !s.apiKeys.Validate(key) {
@@ -238,6 +256,10 @@ func (s *Server) handleStegoPayload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	client := ipfs.NewClientFromEnv()
+	if client == nil {
+		Error(w, http.StatusServiceUnavailable, "IPFS is disabled")
+		return
+	}
 	data, err := client.Cat(r.Context(), cid)
 	if err != nil {
 		Error(w, http.StatusBadRequest, err.Error())
@@ -286,9 +308,18 @@ func (s *Server) handleContracts(w http.ResponseWriter, r *http.Request) {
 				}
 				contracts = filtered
 			}
+			// Standardize on MCP-style full pagination shape (Cat 4.4)
+			hasMore := false
+			// Note: this handler's filter may not have Limit/Offset set in all paths; has_more is best-effort
+			if len(contracts) > 0 {
+				// simplistic; real has_more would require extra query
+			}
 			JSON(w, http.StatusOK, map[string]interface{}{
-				"contracts":   contracts,
-				"total_count": len(contracts),
+				"contracts": contracts,
+				"total":     len(contracts),
+				"limit":     0, // unknown in this path
+				"offset":    0,
+				"has_more":  hasMore,
 			})
 			return
 		}
@@ -334,10 +365,127 @@ func (s *Server) handleContracts(w http.ResponseWriter, r *http.Request) {
 			s.handlePaymentDetails(w, r, contractID)
 			return
 		}
+		if len(parts) > 1 && parts[1] == "rework" {
+			contractID := parts[0]
+			s.handleContractRework(w, r, contractID)
+			return
+		}
+		Error(w, http.StatusNotFound, "unknown contract action")
+	case http.MethodPatch:
+		if len(parts) > 1 && parts[1] == "rework" && len(parts) > 2 && parts[2] != "" {
+			contractID := parts[0]
+			requestID := parts[2]
+			s.handleResolveContractRework(w, r, contractID, requestID)
+			return
+		}
 		Error(w, http.StatusNotFound, "unknown contract action")
 	default:
 		Error(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
+}
+
+// handleGetContractReworkRequests returns all rework requests for a contract.
+func (s *Server) handleGetContractReworkRequests(w http.ResponseWriter, r *http.Request, contractID string) {
+	reworkReqs, err := s.store.GetContractReworkRequests(r.Context(), contractID)
+	if err != nil {
+		Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	JSON(w, http.StatusOK, map[string]interface{}{
+		"rework_requests": reworkReqs,
+	})
+}
+
+// handleContractRework creates a new rework request for a contract.
+func (s *Server) handleContractRework(w http.ResponseWriter, r *http.Request, contractID string) {
+	if r.Header.Get("Content-Type") != "" && !strings.Contains(r.Header.Get("Content-Type"), "application/json") {
+		Error(w, http.StatusUnsupportedMediaType, "Content-Type must be application/json")
+		return
+	}
+
+	var body struct {
+		Notes string `json:"notes"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if strings.TrimSpace(body.Notes) == "" {
+		Error(w, http.StatusBadRequest, "notes are required")
+		return
+	}
+
+	apiKey := r.Header.Get("X-API-Key")
+	var requester string
+	if apiKey != "" && s.apiKeys != nil {
+		if rec, ok := s.apiKeys.Get(apiKey); ok {
+			requester = strings.TrimSpace(rec.Wallet)
+		}
+	}
+
+	if requester == "" {
+		Error(w, http.StatusForbidden, "authenticated user required")
+		return
+	}
+
+	reworkReq, err := s.store.CreateContractReworkRequest(r.Context(), contractID, requester, body.Notes)
+	if err != nil {
+		Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	JSON(w, http.StatusCreated, reworkReq)
+}
+
+// handleResolveContractRework resolves/closes a rework request.
+func (s *Server) handleResolveContractRework(w http.ResponseWriter, r *http.Request, contractID, requestID string) {
+	apiKey := r.Header.Get("X-API-Key")
+	var requester string
+	if apiKey != "" && s.apiKeys != nil {
+		if rec, ok := s.apiKeys.Get(apiKey); ok {
+			requester = strings.TrimSpace(rec.Wallet)
+		}
+	}
+
+	if requester == "" {
+		Error(w, http.StatusForbidden, "authenticated user required")
+		return
+	}
+
+	// Get rework requests to verify the requester is the original requester
+	reworkReqs, err := s.store.GetContractReworkRequests(r.Context(), contractID)
+	if err != nil {
+		Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	// Verify the requester is the original creator of this rework request
+	authorized := false
+	for _, req := range reworkReqs {
+		if req.RequestID == requestID {
+			// Allow the original requester to resolve their own rework request
+			if strings.EqualFold(req.Requester, requester) {
+				authorized = true
+			}
+			break
+		}
+	}
+
+	if !authorized {
+		Error(w, http.StatusForbidden, "only the original requester can resolve this rework request")
+		return
+	}
+
+	err = s.store.ResolveContractReworkRequest(r.Context(), contractID, requestID)
+	if err != nil {
+		Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	JSON(w, http.StatusOK, map[string]interface{}{
+		"message": "rework request resolved",
+	})
 }
 
 // handleContractPSBT builds a PSBT to fund the contract payout using the caller's wallet UTXOs.
@@ -368,6 +516,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		ChangeAddress    string   `json:"change_address"`
 		BudgetSats       int64    `json:"budget_sats"`
 		PixelHash        string   `json:"pixel_hash"`
+		ProductPixelHash string   `json:"product_pixel_hash"`
 		CommitmentSats   int64    `json:"commitment_sats"`
 		FeeRate          int64    `json:"fee_rate_sats_vb"`
 		UsePixelHash     *bool    `json:"use_pixel_hash"`
@@ -602,11 +751,45 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		}
 	}
 
+	// Prepare stego image + sandbox tarball BEFORE building the PSBT so
+	// their SHA256 hashes can be inscribed in the OP_RETURN.  This lets
+	// any peer confirm from on-chain data alone — no pubsub required.
+	proposalID := s.resolveProposalIDForContract(r.Context(), contractID, ingestionRec)
+	var publishArtifacts *PublishArtifacts
+	var stegoHashBytes []byte
+	if proposalID != "" {
+		artifacts, err := s.PreparePublishArtifacts(r.Context(), proposalID)
+		if err != nil {
+			log.Printf("psbt: PreparePublishArtifacts failed for %s (continuing without): %v", proposalID, err)
+		} else {
+			publishArtifacts = artifacts
+			stegoHashBytes = decodePixelHex(artifacts.StegoImageHash)
+		}
+	}
+
+	// Fall back to explicit product pixel hash if stego preparation didn't produce one.
+	var productPixelBytes []byte
+	if stegoHashBytes != nil {
+		productPixelBytes = stegoHashBytes
+	} else if ph := strings.TrimSpace(body.ProductPixelHash); ph != "" {
+		productPixelBytes = decodePixelHex(ph)
+	}
+	if productPixelBytes == nil {
+		tasks, _ := s.store.ListTasks(smart_contract.TaskFilter{ContractID: contractID, Limit: 1})
+		for _, t := range tasks {
+			if t.MerkleProof != nil && len(strings.TrimSpace(t.MerkleProof.ProductPixelHash)) == 64 {
+				productPixelBytes = decodePixelHex(t.MerkleProof.ProductPixelHash)
+				break
+			}
+		}
+	}
+
 	commitmentTarget := strings.ToLower(strings.TrimSpace(body.CommitmentTarget))
 	if commitmentTarget == "" {
 		commitmentTarget = "funding"
 	}
 	var commitmentLockAddr btcutil.Address
+	var donationAddr btcutil.Address // New: direct donation P2WPKH (no hashlock)
 	switch commitmentTarget {
 	case "donation":
 		donation := strings.TrimSpace(os.Getenv("STARLIGHT_DONATION_ADDRESS"))
@@ -614,11 +797,12 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 			Error(w, http.StatusBadRequest, "donation address not configured")
 			return
 		}
-		commitmentLockAddr, err = btcutil.DecodeAddress(donation, params)
+		donationAddr, err = btcutil.DecodeAddress(donation, params)
 		if err != nil {
 			Error(w, http.StatusBadRequest, fmt.Sprintf("invalid donation address: %v", err))
 			return
 		}
+		commitmentLockAddr = donationAddr // backward compat for metadata
 	case "funding":
 		if isRaiseFund(fundingMode) {
 			if fundraiserAddr == nil {
@@ -629,6 +813,13 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		} else {
 			commitmentLockAddr = primaryPayer
 		}
+	case "product":
+		// Product commitment: hashlock is deferred to delivery time (stego reconciliation).
+		// No commitment output in the funding PSBT; the hash will be based on the
+		// final delivered product image rather than the original wish image.
+		commitmentSats = 0
+		commitmentLockAddr = primaryPayer
+		log.Printf("DEBUG: commitment_target=product, deferring commitment to delivery (commitmentSats=0)")
 	default:
 		Error(w, http.StatusBadRequest, "invalid commitment_target")
 		return
@@ -717,7 +908,9 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 				PayerAddress:      payerTarget.Address,
 				TargetValueSats:   target,
 				PixelHash:         pixelBytes,
+				ProductPixelHash:  productPixelBytes,
 				CommitmentSats:    commitmentSats,
+				DonationAddress:   donationAddr,
 				CommitmentAddress: commitmentLockAddr,
 				Payouts:           payerPayouts,
 				FeeRateSatPerVB:   body.FeeRate,
@@ -741,7 +934,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 			}
 			if len(raiseFundTasksByWallet[wallet]) > 0 {
 				for _, taskID := range raiseFundTasksByWallet[wallet] {
-					if err := s.updateTaskCommitmentProof(r.Context(), taskID, splitRes, pixelBytes); err != nil {
+					if err := s.updateTaskCommitmentProof(r.Context(), taskID, splitRes, pixelBytes, commitmentTarget); err != nil {
 						log.Printf("psbt: failed to update task proof for %s: %v", taskID, err)
 					}
 				}
@@ -767,7 +960,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 				"pixel_hash":              strings.TrimSpace(body.PixelHash),
 				"payer_address":           payerTarget.Address.EncodeAddress(),
 				"payer_addresses":         []string{payerTarget.Address.EncodeAddress()},
-				"change_address":          "",
+				"change_address":          firstString(splitRes.ChangeAddresses),
 				"change_addresses":        splitRes.ChangeAddresses,
 				"change_amounts":          splitRes.ChangeAmounts,
 				"funding_mode":            fundingMode,
@@ -778,7 +971,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 				"network_params":          params.Name,
 			})
 		}
-		proposalID := s.resolveProposalIDForContract(r.Context(), contractID, ingestionRec)
+		// proposalID was resolved before artifact preparation above.
 		if ingestionRec != nil && len(fundingTxIDs) > 0 {
 			metadata := map[string]interface{}{
 				"funding_txids":           fundingTxIDs,
@@ -796,6 +989,21 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		}
 		if proposalID != "" {
 			s.updateProposalMetadataBestEffort(r.Context(), proposalID, commitmentMeta)
+		}
+		if proposalID != "" {
+			publishPixelHash := strings.TrimSpace(body.PixelHash)
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+				defer cancel()
+				if publishArtifacts != nil {
+					s.FinalizePublishArtifacts(ctx, proposalID, publishArtifacts)
+				} else {
+					if err := s.maybePublishStegoForProposal(ctx, proposalID); err != nil {
+						log.Printf("stego publish on split psbt failed for proposal %s: %v", proposalID, err)
+					}
+				}
+				s.publishPendingStegoIngest(ctx, proposalID, publishPixelHash)
+			}()
 		}
 		JSON(w, http.StatusOK, map[string]interface{}{
 			"psbts":           psbtEntries,
@@ -822,26 +1030,33 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 			body.FeeRate,
 		)
 	} else {
+		effectiveChangeAddr := changeAddr
+		if effectiveChangeAddr == nil && len(payerAddresses) > 0 {
+			effectiveChangeAddr = payerAddresses[0]
+		}
 		psbtReq := bitcoin.PSBTRequest{
 			PayerAddress:      primaryPayer,
 			PayerAddresses:    payerAddresses,
 			TargetValueSats:   target,
 			PixelHash:         pixelBytes,
+			ProductPixelHash:  productPixelBytes,
 			CommitmentSats:    commitmentSats,
+			DonationAddress:   donationAddr,
 			CommitmentAddress: commitmentLockAddr,
 			ContractorAddress: contractorAddr,
 			Payouts:           payouts,
 			FeeRateSatPerVB:   body.FeeRate,
-			ChangeAddress:     changeAddr,
+			ChangeAddress:     effectiveChangeAddr,
 			UseAllPayers:      isRaiseFund(fundingMode),
 		}
 		res, err = bitcoin.BuildFundingPSBT(s.mempool, params, psbtReq)
+		changeAddr = effectiveChangeAddr
 	}
 	if err != nil {
 		Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	proposalID := s.resolveProposalIDForContract(r.Context(), contractID, ingestionRec)
+	// proposalID was resolved before artifact preparation above.
 	if ingestionRec != nil && res.FundingTxID != "" {
 		scriptHashes, scriptHash160s := buildScriptHashes(res.PayoutScripts)
 		if err := s.ingestionSvc.UpdateMetadata(ingestionRec.ID, map[string]interface{}{
@@ -860,24 +1075,32 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 	if proposalID != "" {
 		s.updateProposalMetadataBestEffort(r.Context(), proposalID, commitmentMeta)
 	}
+	// Finalize: IPFS upload + pubsub announcement (best-effort, async).
+	// The old maybePublishStegoForProposal is kept as fallback for the
+	// legacy path but the primary flow now uses PreparePublishArtifacts.
 	if proposalID != "" {
 		publishPixelHash := strings.TrimSpace(body.PixelHash)
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 			defer cancel()
-			if err := s.maybePublishStegoForProposal(ctx, proposalID); err != nil {
-				log.Printf("stego publish on psbt failed for proposal %s: %v", proposalID, err)
+			if publishArtifacts != nil {
+				s.FinalizePublishArtifacts(ctx, proposalID, publishArtifacts)
+			} else {
+				// Fallback: old path for when artifact preparation failed.
+				if err := s.maybePublishStegoForProposal(ctx, proposalID); err != nil {
+					log.Printf("stego publish on psbt failed for proposal %s: %v", proposalID, err)
+				}
 			}
 			s.publishPendingStegoIngest(ctx, proposalID, publishPixelHash)
 		}()
 	}
 	if taskID := strings.TrimSpace(body.TaskID); taskID != "" {
-		if err := s.updateTaskCommitmentProof(r.Context(), taskID, res, pixelBytes); err != nil {
+		if err := s.updateTaskCommitmentProof(r.Context(), taskID, res, pixelBytes, commitmentTarget); err != nil {
 			log.Printf("psbt: failed to update task proof for %s: %v", taskID, err)
 		}
 	} else if isRaiseFund(fundingMode) && len(raiseFundTaskIDs) > 0 {
 		for _, taskID := range raiseFundTaskIDs {
-			if err := s.updateTaskCommitmentProof(r.Context(), taskID, res, pixelBytes); err != nil {
+			if err := s.updateTaskCommitmentProof(r.Context(), taskID, res, pixelBytes, commitmentTarget); err != nil {
 				log.Printf("psbt: failed to update task proof for %s: %v", taskID, err)
 			}
 		}
@@ -970,14 +1193,21 @@ func (s *Server) publishIngestUpdate(ctx context.Context, proposalID, ingestionI
 		return
 	}
 	client := ipfs.NewClientFromEnv()
-	if err := client.PubsubPublish(ctx, topic, payload); err != nil {
-		log.Printf("psbt: ingest update publish failed: %v", err)
+	if client != nil {
+		if err := client.PubsubPublish(ctx, topic, payload); err != nil {
+			log.Printf("psbt: ingest update publish failed: %v", err)
+		}
+	} else {
+		log.Printf("psbt: ingest update publish skipped - IPFS disabled")
 	}
 }
 
 func (s *Server) publishPendingStegoIngest(ctx context.Context, proposalID, visiblePixelHash string) {
 	topic := strings.TrimSpace(os.Getenv("IPFS_MIRROR_TOPIC"))
-	if topic == "" || s.store == nil {
+	if topic == "" {
+		topic = "stargate-uploads"
+	}
+	if s.store == nil {
 		return
 	}
 	proposalID = strings.TrimSpace(proposalID)
@@ -1006,7 +1236,7 @@ func (s *Server) publishPendingStegoIngest(ctx context.Context, proposalID, visi
 	if visible == "" {
 		return
 	}
-	message := strings.TrimSpace(p.DescriptionMD)
+	var message string
 	if s.ingestionSvc != nil && visible != "" {
 		rec, err := s.ingestionSvc.Get(visible)
 		if (err != nil || rec == nil) && !strings.HasPrefix(visible, "wish-") {
@@ -1057,14 +1287,35 @@ func (s *Server) publishPendingStegoIngest(ctx context.Context, proposalID, visi
 		Address:          strings.TrimSpace(toString(meta["funding_address"])),
 		FundingMode:      strings.TrimSpace(toString(meta["funding_mode"])),
 		Timestamp:        time.Now().Unix(),
+		ProposalTitle:    strings.TrimSpace(p.Title),
+		ProposalDesc:     strings.TrimSpace(p.DescriptionMD),
+		BudgetSats:       p.BudgetSats,
+		PayloadCID:       strings.TrimSpace(toString(meta["stego_payload_cid"])),
+	}
+	// Include structured task data so peers can create proper proposals
+	// without depending on IPFS payload fetch
+	for _, t := range p.Tasks {
+		announcement.Tasks = append(announcement.Tasks, announcementTask{
+			TaskID:           t.TaskID,
+			Title:            t.Title,
+			Description:      t.Description,
+			BudgetSats:       t.BudgetSats,
+			Skills:           t.Skills,
+			Status:           t.Status,
+			ContractorWallet: t.ContractorWallet,
+		})
 	}
 	payload, err := json.Marshal(announcement)
 	if err != nil {
 		return
 	}
 	client := ipfs.NewClientFromEnv()
-	if err := client.PubsubPublish(ctx, topic, payload); err != nil {
-		log.Printf("psbt: pending ingest publish failed: %v", err)
+	if client != nil {
+		if err := client.PubsubPublish(ctx, topic, payload); err != nil {
+			log.Printf("psbt: pending ingest publish failed: %v", err)
+		}
+	} else {
+		log.Printf("psbt: pending ingest publish skipped - IPFS disabled")
 	}
 }
 
@@ -1246,6 +1497,15 @@ func addressOrEmpty(addr btcutil.Address) string {
 	return addr.EncodeAddress()
 }
 
+func firstString(values []string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
 func (s *Server) resolveContractorPayers(ctx context.Context, contractID string, params *chaincfg.Params) ([]btcutil.Address, error) {
 	if s.store == nil {
 		return nil, fmt.Errorf("task store unavailable")
@@ -1369,7 +1629,7 @@ func resolvePixelHashFromIngestion(rec *services.IngestionRecord, normalize func
 		return nil
 	}
 
-	for _, key := range []string{"pixel_hash", "payout_script_hash", "visible_pixel_hash"} {
+	for _, key := range []string{"pixel_hash", "visible_pixel_hash"} {
 		if v, ok := rec.Metadata[key].(string); ok {
 			if b, err := hex.DecodeString(strings.TrimSpace(v)); err == nil {
 				if normalized := normalize(b); normalized != nil {
@@ -1460,7 +1720,7 @@ func buildScriptHashes(scripts [][]byte) ([]string, []string) {
 	return shaHashes, hash160s
 }
 
-func (s *Server) updateTaskCommitmentProof(ctx context.Context, taskID string, res *bitcoin.PSBTResult, pixelBytes []byte) error {
+func (s *Server) updateTaskCommitmentProof(ctx context.Context, taskID string, res *bitcoin.PSBTResult, pixelBytes []byte, commitmentTarget string) error {
 	task, err := s.store.GetTask(taskID)
 	if err != nil {
 		return err
@@ -1498,6 +1758,13 @@ func (s *Server) updateTaskCommitmentProof(ctx context.Context, taskID string, r
 	}
 	if len(pixelBytes) == 32 {
 		proof.CommitmentPixelHash = hex.EncodeToString(pixelBytes)
+	}
+	// Track commitment source: "product" means hashlock deferred to delivery,
+	// "donation" means funded at PSBT time with wish image hash.
+	if commitmentTarget == "product" {
+		proof.CommitmentSource = "product"
+	} else if proof.CommitmentSource == "" {
+		proof.CommitmentSource = "wish"
 	}
 	return s.store.UpdateTaskProof(ctx, taskID, proof)
 }
@@ -1960,12 +2227,13 @@ func (s *Server) handleDiscover(w http.ResponseWriter, r *http.Request) {
 		},
 		"tools": []string{
 			"list_contracts", "get_contract", "get_contract_funding", "get_open_contracts",
+			"get_contract_rework_requests", "create_contract_rework_request",
 			"list_tasks", "get_task", "claim_task", "submit_work", "get_task_proof", "get_task_status",
 			"list_skills",
 			"list_proposals", "get_proposal", "create_proposal", "approve_proposal", "publish_proposal",
 			"list_submissions", "get_submission", "review_submission", "rework_submission",
 			"list_events",
-			"scan_image", "scan_block", "extract_message", "get_scanner_info",
+			"scan_image", "scan_transaction", "scan_block", "extract_message", "get_scanner_info",
 		},
 		"authentication": map[string]string{
 			"type":        "api_key",
@@ -2179,6 +2447,70 @@ func (s *Server) processEvent(evt smart_contract.Event, shouldPublish bool) {
 	if shouldPublish {
 		go s.publishSyncEvent(evt)
 	}
+
+	// When the local oracle confirms a contract, download sandbox artifacts.
+	if evt.Type == "contract_confirmed" && evt.EntityID != "" {
+		go s.downloadSandboxArtifacts(context.Background(), evt.EntityID)
+	}
+}
+
+// mergeSandboxMetadata propagates sandbox_hash (and sandbox_tarball_cid for
+// backward compat) from a synced contract into the local proposal and contract
+// metadata so downloadSandboxArtifacts can find the tarball by hash.
+func (s *Server) mergeSandboxMetadata(ctx context.Context, c *smart_contract.Contract) {
+	if c == nil || c.Metadata == nil {
+		return
+	}
+	sandboxHash, _ := c.Metadata["sandbox_hash"].(string)
+	sandboxCID, _ := c.Metadata["sandbox_tarball_cid"].(string)
+	if strings.TrimSpace(sandboxHash) == "" && strings.TrimSpace(sandboxCID) == "" {
+		return
+	}
+
+	// Merge into contract metadata.
+	if local, err := s.store.GetContract(c.ContractID); err == nil {
+		meta := local.Metadata
+		if meta == nil {
+			meta = map[string]interface{}{}
+		}
+		changed := false
+		if h := strings.TrimSpace(sandboxHash); h != "" && strings.TrimSpace(toString(meta["sandbox_hash"])) == "" {
+			meta["sandbox_hash"] = h
+			changed = true
+		}
+		if cid := strings.TrimSpace(sandboxCID); cid != "" && strings.TrimSpace(toString(meta["sandbox_tarball_cid"])) == "" {
+			meta["sandbox_tarball_cid"] = cid
+			changed = true
+		}
+		if changed {
+			local.Metadata = meta
+			_ = s.store.UpsertContractWithTasks(ctx, local, nil)
+			log.Printf("sandbox: merged sandbox metadata for contract %s (hash=%s)", c.ContractID, sandboxHash)
+		}
+	}
+
+	// Also merge into the associated proposal if one exists.
+	for _, id := range []string{c.ContractID, strings.TrimPrefix(scstore.NormalizeContractID(c.ContractID), "wish-")} {
+		if p, err := s.store.GetProposal(ctx, id); err == nil {
+			pmeta := p.Metadata
+			if pmeta == nil {
+				pmeta = map[string]interface{}{}
+			}
+			changed := false
+			if h := strings.TrimSpace(sandboxHash); h != "" && strings.TrimSpace(toString(pmeta["sandbox_hash"])) == "" {
+				pmeta["sandbox_hash"] = h
+				changed = true
+			}
+			if cid := strings.TrimSpace(sandboxCID); cid != "" && strings.TrimSpace(toString(pmeta["sandbox_tarball_cid"])) == "" {
+				pmeta["sandbox_tarball_cid"] = cid
+				changed = true
+			}
+			if changed {
+				_ = s.store.UpdateProposalMetadata(ctx, p.ID, pmeta)
+			}
+			break
+		}
+	}
 }
 
 func (s *Server) publishSyncEvent(evt smart_contract.Event) {
@@ -2337,6 +2669,11 @@ func (s *Server) ReconcileSyncAnnouncement(ctx context.Context, ann *syncAnnounc
 	case "contract_confirmed":
 		if ann.Contract != nil {
 			err = s.store.UpdateContractStatus(ctx, ann.Contract.ContractID, "confirmed")
+			// Merge sandbox_hash from the synced contract metadata so the
+			// local node can locate the tarball by hash in UPLOADS_DIR.
+			s.mergeSandboxMetadata(ctx, ann.Contract)
+			// Download sandbox artifacts now that the contract is confirmed.
+			go s.downloadSandboxArtifacts(context.Background(), ann.Contract.ContractID)
 		}
 	case "submit":
 		if ann.Submission != nil {
@@ -2593,13 +2930,9 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 			if proposal.Metadata == nil {
 				proposal.Metadata = map[string]interface{}{}
 			}
-			if _, ok := proposal.Metadata["creator_api_key_hash"].(string); !ok {
-				applyCreatorAPIKeyHash(proposal.Metadata, r.Header.Get("X-API-Key"))
-				if err := s.store.UpdateProposal(r.Context(), proposal); err != nil {
-					Error(w, http.StatusBadRequest, err.Error())
-					return
-				}
-			}
+			// NOTE: Do NOT backfill creator_wallet here from the approver's API key.
+			// The proposal's creator_wallet should only be set during creation.
+			// Stamping the approver's wallet would write incorrect data.
 			if err := s.enforceCreatorApproval(r, proposal); err != nil {
 				Error(w, http.StatusForbidden, err.Error())
 				return
@@ -2676,9 +3009,10 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 				s.archiveWishContract(r.Context(), visibleHash)
 			}
 
-			stegoAlreadyPublished := strings.TrimSpace(toString(proposal.Metadata["stego_contract_id"])) != ""
-
-			// Approve the proposal first - IPFS announcement is async
+			// Approve the proposal first. Stego/IPFS replication (contract to peers)
+			// is intentionally deferred until after PSBT is built. This ensures
+			// wish hash, stego (product) hash, and AI artifact hashes are all
+			// committed before remote nodes can ingest the full contract.
 			s.recordEvent(smart_contract.Event{
 				Type:      "approve",
 				EntityID:  id,
@@ -2687,22 +3021,10 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 				CreatedAt: time.Now(),
 			})
 
-			// Async stego publishing - doesn't block approval
-			if !stegoAlreadyPublished {
-				go func() {
-					ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-					defer cancel()
-					if err := s.maybePublishStegoForProposal(ctx, id); err != nil {
-						log.Printf("stego publish failed async for proposal %s: %v", id, err)
-					} else {
-						log.Printf("stego publish succeeded async for proposal %s", id)
-					}
-				}()
-			}
 			JSON(w, http.StatusOK, map[string]interface{}{
 				"proposal_id": id,
 				"status":      "approved",
-				"message":     "Proposal approved; stego publishing in progress.",
+				"message":     "Proposal approved.",
 			})
 			return
 		}
@@ -2763,19 +3085,14 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 				Error(w, http.StatusBadRequest, "contract_id and visible_pixel_hash are required for proposal creation so the UI can display it; set both to the same 64-char hash if needed")
 				return
 			}
-			applyCreatorAPIKeyHash(proposal.Metadata, r.Header.Get("X-API-Key"))
+			applyCreatorWallet(proposal.Metadata, r.Header.Get("X-API-Key"), s.apiKeys)
 			if err := s.store.CreateProposal(r.Context(), proposal); err != nil {
 				Error(w, http.StatusBadRequest, err.Error())
 				return
 			}
-			// Generate stego payload immediately for wish creation.
-			log.Printf("CRITICAL: About to call maybePublishStegoForProposal for proposal %s, ingestion %s", proposal.ID, body.IngestionID)
-			if err := s.maybePublishStegoForProposal(r.Context(), proposal.ID); err != nil {
-				log.Printf("CRITICAL: maybePublishStegoForProposal failed for proposal %s: %v", proposal.ID, err)
-				Error(w, http.StatusBadRequest, err.Error())
-				return
-			}
-			log.Printf("CRITICAL: maybePublishStegoForProposal succeeded for proposal %s", proposal.ID)
+			// Note: stego/IPFS replication is deferred until PSBT build (see PSBT handlers).
+			// This prevents remote nodes from ingesting an actionable contract before
+			// the payer has committed funding via PSBT (wish hash + product hash + payouts).
 			s.recordEvent(smart_contract.Event{
 				Type:      "proposal_create",
 				EntityID:  proposal.ID,
@@ -2808,7 +3125,7 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 		if body.Metadata == nil {
 			body.Metadata = map[string]interface{}{}
 		}
-		applyCreatorAPIKeyHash(body.Metadata, r.Header.Get("X-API-Key"))
+		applyCreatorWallet(body.Metadata, r.Header.Get("X-API-Key"), s.apiKeys)
 		if body.ContractID != "" {
 			body.Metadata["contract_id"] = body.ContractID
 		}
@@ -3008,13 +3325,44 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		if path == "" {
 			minBudget := int64FromQuery(r, "min_budget_sats", 0)
+			limit := intFromQuery(r, "limit", 20)
+			offset := intFromQuery(r, "offset", 0)
+
+			// First get total count by fetching all matching proposals without limit
+			countFilter := smart_contract.ProposalFilter{
+				Status:     r.URL.Query().Get("status"),
+				Skills:     splitCSV(r.URL.Query().Get("skills")),
+				MinBudget:  minBudget,
+				ContractID: r.URL.Query().Get("contract_id"),
+			}
+			allProposals, err := s.store.ListProposals(r.Context(), countFilter)
+			if err != nil {
+				Error(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			if !includeConfirmed(r) {
+				filtered := make([]smart_contract.Proposal, 0, len(allProposals))
+				for _, p := range allProposals {
+					if looksLikeStegoManifestText(p.DescriptionMD) {
+						continue
+					}
+					if strings.EqualFold(strings.TrimSpace(p.Status), "rejected") {
+						continue
+					}
+					filtered = append(filtered, p)
+				}
+				allProposals = filtered
+			}
+			total := len(allProposals)
+
+			// Apply pagination
 			filter := smart_contract.ProposalFilter{
 				Status:     r.URL.Query().Get("status"),
 				Skills:     splitCSV(r.URL.Query().Get("skills")),
 				MinBudget:  minBudget,
 				ContractID: r.URL.Query().Get("contract_id"),
-				MaxResults: intFromQuery(r, "limit", 0),
-				Offset:     intFromQuery(r, "offset", 0),
+				MaxResults: limit,
+				Offset:     offset,
 			}
 			proposals, err := s.store.ListProposals(r.Context(), filter)
 			if err != nil {
@@ -3030,16 +3378,11 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 					if strings.EqualFold(strings.TrimSpace(p.Status), "rejected") {
 						continue
 					}
-					if strings.EqualFold(strings.TrimSpace(p.Status), "confirmed") {
-						continue
-					}
-					if proposalMetaConfirmed(p.Metadata) || proposalHasConfirmedProof(p) {
-						continue
-					}
 					filtered = append(filtered, p)
 				}
 				proposals = filtered
 			}
+
 			// hydrate tasks and submissions with current state from task store
 			var taskIDs []string
 			for _, p := range proposals {
@@ -3061,9 +3404,14 @@ func (s *Server) handleProposals(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 			}
+
+			hasMore := offset+len(proposals) < total
 			JSON(w, http.StatusOK, map[string]interface{}{
 				"proposals":   proposals,
-				"total":       len(proposals),
+				"total":       total,
+				"has_more":    hasMore,
+				"limit":       limit,
+				"offset":      offset,
 				"submissions": subs,
 			})
 			return
@@ -3286,37 +3634,22 @@ func (s *Server) handleSubmissions(w http.ResponseWriter, r *http.Request) {
 			submissionID := parts[0]
 			log.Printf("GET submission by ID: %s", submissionID)
 
-			// We need to get all submissions to find the specific one
-			// This is not optimal but works for the current store interface
-			tasks, err := s.store.ListTasks(smart_contract.TaskFilter{})
+			// Use the efficient GetSubmission method instead of loading all submissions
+			submission, err := s.store.GetSubmission(r.Context(), submissionID)
 			if err != nil {
+				log.Printf("Failed to get submission %s: %v", submissionID, err)
 				Error(w, http.StatusInternalServerError, err.Error())
 				return
 			}
 
-			taskIDs := make([]string, len(tasks))
-			for i, task := range tasks {
-				taskIDs[i] = task.TaskID
+			// Check if submission was found
+			if submission.SubmissionID != "" {
+				log.Printf("Found submission: %s", submissionID)
+				JSON(w, http.StatusOK, submission)
+			} else {
+				log.Printf("Submission not found: %s", submissionID)
+				Error(w, http.StatusNotFound, "submission not found")
 			}
-
-			submissions, err := s.store.ListSubmissions(r.Context(), taskIDs)
-			if err != nil {
-				Error(w, http.StatusInternalServerError, err.Error())
-				return
-			}
-
-			log.Printf("Found %d submissions for contract", len(submissions))
-			for _, sub := range submissions {
-				log.Printf("Checking submission ID: %s == %s ?", sub.SubmissionID, submissionID)
-				if sub.SubmissionID == submissionID {
-					log.Printf("Found matching submission: %s", submissionID)
-					JSON(w, http.StatusOK, sub)
-					return
-				}
-			}
-
-			log.Printf("No matching submission found for ID: %s", submissionID)
-			Error(w, http.StatusNotFound, "submission not found")
 			return
 		}
 
@@ -3378,6 +3711,39 @@ func (s *Server) handleSubmissions(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
+			// Auto-resolve rework requests when submission is approved and all tasks are approved
+			if newStatus == "approved" {
+				submission, err := s.store.GetSubmission(ctx, submissionID)
+				if err == nil && submission.TaskID != "" {
+					// Get the contract ID from task
+					task, err := s.store.GetTask(submission.TaskID)
+					if err == nil && task.ContractID != "" {
+						// Check if all tasks are approved
+						tasks, err := s.store.ListTasks(smart_contract.TaskFilter{ContractID: task.ContractID})
+						if err == nil {
+							allApproved := true
+							for _, t := range tasks {
+								if t.Status != "approved" && t.Status != "published" {
+									allApproved = false
+									break
+								}
+							}
+							// Auto-resolve open rework requests when all tasks are approved
+							if allApproved {
+								reworkReqs, err := s.store.GetContractReworkRequests(ctx, task.ContractID)
+								if err == nil {
+									for _, req := range reworkReqs {
+										if req.Status == "open" {
+											_ = s.store.ResolveContractReworkRequest(ctx, task.ContractID, req.RequestID)
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+
 			// Record event
 			s.recordEvent(smart_contract.Event{
 				Type:      "review",
@@ -3410,33 +3776,16 @@ func (s *Server) handleSubmissions(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			// Get the original submission to update it
-			tasks, err := s.store.ListTasks(smart_contract.TaskFilter{})
+			// Get the original submission to update it efficiently
+			originalSubmission, err := s.store.GetSubmission(r.Context(), submissionID)
 			if err != nil {
+				log.Printf("Failed to get submission %s for rework: %v", submissionID, err)
 				Error(w, http.StatusInternalServerError, err.Error())
 				return
 			}
 
-			taskIDs := make([]string, len(tasks))
-			for i, task := range tasks {
-				taskIDs[i] = task.TaskID
-			}
-
-			submissions, err := s.store.ListSubmissions(r.Context(), taskIDs)
-			if err != nil {
-				Error(w, http.StatusInternalServerError, err.Error())
-				return
-			}
-
-			var originalSubmission *smart_contract.Submission
-			for _, sub := range submissions {
-				if sub.SubmissionID == submissionID {
-					originalSubmission = &sub
-					break
-				}
-			}
-
-			if originalSubmission == nil {
+			if originalSubmission.SubmissionID == "" {
+				log.Printf("Submission not found for rework: %s", submissionID)
 				Error(w, http.StatusNotFound, "submission not found")
 				return
 			}
@@ -3455,9 +3804,10 @@ func (s *Server) handleSubmissions(w http.ResponseWriter, r *http.Request) {
 				originalSubmission.Deliverables["reworked_at"] = time.Now().Format(time.RFC3339)
 			}
 
-			// Reset status to pending_review
+			// Reset status to pending_review and save all changes
 			ctx := r.Context()
-			err = s.store.UpdateSubmissionStatus(ctx, submissionID, "pending_review", "", "")
+			originalSubmission.Status = "pending_review"
+			err = s.store.UpdateSubmission(ctx, originalSubmission)
 			if err != nil {
 				Error(w, http.StatusInternalServerError, err.Error())
 				return

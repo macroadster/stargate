@@ -3,13 +3,12 @@ package smart_contract
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
-	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -17,7 +16,7 @@ import (
 	"time"
 
 	"stargate-backend/core/smart_contract"
-	"stargate-backend/ipfs"
+	"stargate-backend/storage/ipfs"
 	"stargate-backend/services"
 	"stargate-backend/stego"
 )
@@ -83,6 +82,22 @@ type pendingIngestAnnouncement struct {
 	Address          string `json:"address,omitempty"`
 	FundingMode      string `json:"funding_mode,omitempty"`
 	Timestamp        int64  `json:"timestamp"`
+	// Proposal/task data for peer replication (so peers don't depend on IPFS payload fetch)
+	ProposalTitle string              `json:"proposal_title,omitempty"`
+	ProposalDesc  string              `json:"proposal_desc,omitempty"`
+	BudgetSats    int64               `json:"budget_sats,omitempty"`
+	PayloadCID    string              `json:"payload_cid,omitempty"`
+	Tasks         []announcementTask  `json:"tasks,omitempty"`
+}
+
+type announcementTask struct {
+	TaskID           string   `json:"task_id"`
+	Title            string   `json:"title"`
+	Description      string   `json:"description"`
+	BudgetSats       int64    `json:"budget_sats"`
+	Skills           []string `json:"skills,omitempty"`
+	Status           string   `json:"status,omitempty"`
+	ContractorWallet string   `json:"contractor_wallet,omitempty"`
 }
 
 type ingestUpdateAnnouncement struct {
@@ -105,6 +120,118 @@ type ingestUpdateAnnouncement struct {
 	Timestamp            int64    `json:"timestamp"`
 }
 
+// IngestDownloadedFile is called by the IPFS mirror's OnFileDownloaded callback.
+// It reads the file from disk (already downloaded), runs stego extraction, and
+// creates an ingestion record + proposal if a valid manifest is found.
+// This replaces the redundant pubsub→re-fetch path for mirrored files.
+func IngestDownloadedFile(ctx context.Context, filePath string, cid string, ingest *services.IngestionService, store Store) {
+	if ingest == nil {
+		return
+	}
+	if !isImageFile(filePath) {
+		return
+	}
+	blob, err := os.ReadFile(filePath)
+	if err != nil {
+		log.Printf("mirror ingest: read %s: %v", filePath, err)
+		return
+	}
+	reconcileCfg := loadStegoReconcileConfig()
+	rawBytes, err := extractStegoManifest(ctx, blob, reconcileCfg)
+	if err != nil {
+		return // not a stego image — normal, skip silently
+	}
+	stegoManifest, payload, err := stego.ParseEmbedded(rawBytes)
+	if err != nil {
+		// Plain-text wish images (alpha stego) are mirrored but are not YAML manifests.
+		if created := ingestPlainStegoWish(ctx, ingest, filePath, cid, rawBytes, blob); created {
+			log.Printf("mirror ingest: pending wish %s (cid=%s)", ingestIDFromPath(filePath), cid)
+		}
+		return
+	}
+	// Compute stego content hash so remote can confirm by stego hash (product hash)
+	// or wish hash to trigger the ingestion record.
+	sum := sha256.Sum256(blob)
+	stegoHash := hex.EncodeToString(sum[:])
+	id := strings.TrimSpace(stegoManifest.VisiblePixelHash)
+	if id == "" {
+		id = strings.TrimSpace(stegoManifest.ProposalID)
+	}
+	// Fallback: allow ingestion keyed by the stego image's own hash if no wish hash.
+	if id == "" {
+		id = stegoHash
+	}
+	if id == "" {
+		return
+	}
+	// v1 fallback: payload was not inline — fetch from IPFS
+	if payload.SchemaVersion == 0 && stegoManifest.PayloadCID != "" {
+		client := ipfs.NewClientFromEnv()
+		if client != nil {
+			if loaded, err := fetchStegoPayload(ctx, client, stegoManifest.PayloadCID); err != nil {
+				log.Printf("mirror ingest: payload fetch %s: %v", stegoManifest.PayloadCID, err)
+			} else {
+				payload = loaded
+			}
+		}
+	}
+	payloadMeta := payloadMetadataMap(payload)
+	// Ensure proposal exists in MCP store
+	if store != nil {
+		if err := ensureProposalFromStegoPayload(ctx, store, cid, stegoManifest, payload); err != nil {
+			log.Printf("mirror ingest: proposal upsert: %v", err)
+		}
+	}
+	// Create or update ingestion record. Record both wish hash (visible) and stego hash
+	// so either can be used by remote to confirm and trigger the ingestion record.
+	if existing, err := ingest.Get(id); err == nil && existing != nil {
+		metaUpdates := map[string]interface{}{
+			"stego_image_cid":            cid,
+			"stego_payload_cid":          stegoManifest.PayloadCID,
+			"stego_manifest_issuer":      stegoManifest.Issuer,
+			"stego_manifest_created_at":  stegoManifest.CreatedAt,
+			"stego_manifest_proposal_id": stegoManifest.ProposalID,
+			"visible_pixel_hash":         stegoManifest.VisiblePixelHash,
+			"stego_contract_id":          stegoHash,
+		}
+		for k, v := range payloadMeta {
+			if _, ok := metaUpdates[k]; !ok {
+				metaUpdates[k] = v
+			}
+		}
+		_ = ingest.UpdateMetadata(id, metaUpdates)
+		log.Printf("mirror ingest: updated %s (cid=%s)", id, cid)
+		return
+	}
+	rec := services.IngestionRecord{
+		ID:            id,
+		Filename:      filepath.Base(filePath),
+		Method:        getStegoMethodForFilename(filePath),
+		MessageLength: len(rawBytes),
+		ImageBase64:   base64.StdEncoding.EncodeToString(blob),
+		Metadata: map[string]interface{}{
+			"stego_image_cid":            cid,
+			"stego_payload_cid":          stegoManifest.PayloadCID,
+			"stego_manifest_issuer":      stegoManifest.Issuer,
+			"stego_manifest_created_at":  stegoManifest.CreatedAt,
+			"stego_manifest_proposal_id": stegoManifest.ProposalID,
+			"visible_pixel_hash":         stegoManifest.VisiblePixelHash,
+			"stego_contract_id":          stegoHash,
+		},
+		Status: "verified",
+	}
+	for k, v := range payloadMeta {
+		if _, ok := rec.Metadata[k]; !ok {
+			rec.Metadata[k] = v
+		}
+	}
+	if err := ingest.Create(rec); err != nil {
+		log.Printf("mirror ingest: create %s: %v", id, err)
+	} else {
+		log.Printf("mirror ingest: created %s (cid=%s)", id, cid)
+	}
+}
+
 // StartIPFSIngestionSync subscribes to IPFS mirror announcements and creates ingestion records for stego images.
 func StartIPFSIngestionSync(ctx context.Context, ingest *services.IngestionService, store Store, reconcileFn IngestReconcileFunc) error {
 	if ingest == nil {
@@ -114,17 +241,21 @@ func StartIPFSIngestionSync(ctx context.Context, ingest *services.IngestionServi
 	if !cfg.Enabled {
 		return nil
 	}
+	if !ipfs.IsEnabled() {
+		log.Printf("ipfs ingestion sync: IPFS disabled, skipping")
+		return nil
+	}
 	state := &ipfsIngestSyncState{
 		lastSeen:      make(map[string]int64),
 		repairChecked: make(map[string]bool),
 		queueWake:     make(chan struct{}, 1),
 	}
 	client := ipfs.NewClientFromEnv()
-	streamClient := &http.Client{}
+	go backfillMirroredUploadsIngestion(ctx, ingest, store)
 	go ipfsIngestProcessUpdateQueue(ctx, ingest, store, reconcileFn, cfg, state)
 	go func() {
 		for {
-			if err := ipfsIngestSubscribe(ctx, ingest, store, reconcileFn, cfg, state, client, streamClient); err != nil {
+			if err := ipfsIngestSubscribe(ctx, ingest, store, reconcileFn, cfg, state, client); err != nil {
 				if ctx.Err() != nil {
 					return
 				}
@@ -137,7 +268,13 @@ func StartIPFSIngestionSync(ctx context.Context, ingest *services.IngestionServi
 }
 
 func loadIPFSIngestSyncConfig() ipfsIngestSyncConfig {
-	enabled := strings.EqualFold(strings.TrimSpace(os.Getenv("IPFS_INGEST_SYNC_ENABLED")), "true")
+	// Default to enabled when IPFS is enabled; only disable with explicit "false"
+	raw := strings.TrimSpace(os.Getenv("IPFS_INGEST_SYNC_ENABLED"))
+	enabled := !strings.EqualFold(raw, "false")
+	// Check global IPFS disable flag
+	if !ipfs.IsEnabled() {
+		enabled = false
+	}
 	interval := 60 * time.Second
 	if raw := strings.TrimSpace(os.Getenv("IPFS_INGEST_SYNC_INTERVAL_SEC")); raw != "" {
 		if v, err := strconv.Atoi(raw); err == nil && v > 0 {
@@ -166,6 +303,22 @@ func loadIPFSIngestSyncConfig() ipfsIngestSyncConfig {
 	}
 	reconcileRecentBlocks := 6
 	reconcileMinInterval := 5 * time.Minute
+
+	// Native support: check if local IPFS node is reachable for pubsub
+	if enabled {
+		client := ipfs.NewClientFromEnv()
+		if client == nil {
+			enabled = false
+		} else {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			if err := client.CheckNode(ctx); err != nil {
+				log.Printf("ipfs ingestion sync: local IPFS node not reachable (%v), disabling pubsub sync", err)
+				enabled = false
+			}
+		}
+	}
+
 	return ipfsIngestSyncConfig{
 		Enabled:               enabled,
 		Interval:              interval,
@@ -178,34 +331,24 @@ func loadIPFSIngestSyncConfig() ipfsIngestSyncConfig {
 	}
 }
 
-func ipfsIngestSubscribe(ctx context.Context, ingest *services.IngestionService, store Store, reconcileFn IngestReconcileFunc, cfg ipfsIngestSyncConfig, state *ipfsIngestSyncState, client *ipfs.Client, streamClient *http.Client) error {
-	reqURL := fmt.Sprintf("%s/api/v0/pubsub/sub?arg=%s", strings.TrimRight(cfg.APIURL, "/"), url.QueryEscape(multibaseEncodeString(cfg.Topic)))
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, nil)
+func ipfsIngestSubscribe(ctx context.Context, ingest *services.IngestionService, store Store, reconcileFn IngestReconcileFunc, cfg ipfsIngestSyncConfig, state *ipfsIngestSyncState, client *ipfs.Client) error {
+	// Use the IPFS client's PubsubSubscribe (routes through embedded node when available)
+	ch, err := client.PubsubSubscribe(ctx, cfg.Topic)
 	if err != nil {
 		return err
 	}
 
-	resp, err := streamClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		if len(body) == 0 {
-			return fmt.Errorf("pubsub subscribe failed: %s", resp.Status)
-		}
-		return fmt.Errorf("pubsub subscribe failed: %s: %s", resp.Status, strings.TrimSpace(string(body)))
-	}
-
-	decoder := json.NewDecoder(resp.Body)
-	for {
+	for data := range ch {
+		// The channel delivers raw message payloads; try to decode as pubsub wrapper first
+		var dataStr string
 		var msg pubsubMessage
-		if err := decoder.Decode(&msg); err != nil {
-			return err
+		if json.Unmarshal(data, &msg) == nil && msg.Data != "" {
+			dataStr = msg.Data
+		} else {
+			dataStr = string(data)
 		}
-		announcement, err := parsePendingIngestAnnouncement(msg.Data)
+
+		announcement, err := parsePendingIngestAnnouncement(dataStr)
 		if err != nil {
 			log.Printf("ipfs ingestion sync message decode failed: %v", err)
 			continue
@@ -216,7 +359,7 @@ func ipfsIngestSubscribe(ctx context.Context, ingest *services.IngestionService,
 			}
 			continue
 		}
-		update, err := parseIngestUpdateAnnouncement(msg.Data)
+		update, err := parseIngestUpdateAnnouncement(dataStr)
 		if err != nil {
 			log.Printf("ipfs ingestion sync message decode failed: %v", err)
 			continue
@@ -228,7 +371,7 @@ func ipfsIngestSubscribe(ctx context.Context, ingest *services.IngestionService,
 			signalIngestUpdateQueue(state)
 			continue
 		}
-		manifestCID, err := extractManifestCID(msg.Data)
+		manifestCID, err := extractManifestCID(dataStr)
 		if err != nil {
 			log.Printf("ipfs ingestion sync message decode failed: %v", err)
 			continue
@@ -242,6 +385,7 @@ func ipfsIngestSubscribe(ctx context.Context, ingest *services.IngestionService,
 		}
 		state.lastManifest = manifestCID
 	}
+	return nil
 }
 
 func ipfsIngestProcessManifest(ctx context.Context, ingest *services.IngestionService, store Store, cfg ipfsIngestSyncConfig, state *ipfsIngestSyncState, client *ipfs.Client, manifestCID string) error {
@@ -280,38 +424,50 @@ func ipfsIngestProcessManifest(ctx context.Context, ingest *services.IngestionSe
 		if err != nil {
 			continue
 		}
-		manifestBytes, err := extractStegoManifest(ctx, blob, reconcileCfg)
+		rawBytes, err := extractStegoManifest(ctx, blob, reconcileCfg)
 		if err != nil {
+			log.Printf("ipfs ingestion sync: stego extraction failed for %s (%s): %v", entry.CID, entry.Path, err)
 			state.lastSeen[entry.CID] = entry.ModTime
 			continue
 		}
-		stegoManifest, err := stego.ParseManifestYAML(manifestBytes)
+		stegoManifest, payload, err := stego.ParseEmbedded(rawBytes)
 		if err != nil {
+			// Plain-text wish images are mirrored alongside approved stego manifests.
+			uploadsDir := strings.TrimSpace(os.Getenv("UPLOADS_DIR"))
+			filePath := filepath.Join(uploadsDir, filepath.Base(entry.Path))
+			if ingestPlainStegoWish(ctx, ingest, filePath, entry.CID, rawBytes, blob) {
+				processed++
+			}
 			state.lastSeen[entry.CID] = entry.ModTime
 			continue
 		}
+		// Compute stego hash (content hash of this image) to support confirming
+		// by wish hash OR stego hash when triggering ingestion record on remote.
+		sum := sha256.Sum256(blob)
+		stegoHash := hex.EncodeToString(sum[:])
 		id := strings.TrimSpace(stegoManifest.VisiblePixelHash)
 		if id == "" {
 			id = strings.TrimSpace(stegoManifest.ProposalID)
 		}
 		if id == "" {
+			id = stegoHash
+		}
+		if id == "" {
 			state.lastSeen[entry.CID] = entry.ModTime
 			continue
 		}
-		var payload stego.Payload
-		var payloadMeta map[string]interface{}
-		if store != nil || ingest != nil {
-			loaded, err := fetchStegoPayload(ctx, client, stegoManifest.PayloadCID)
-			if err != nil {
+		// v1 fallback: payload was not inline — fetch from IPFS
+		if payload.SchemaVersion == 0 && stegoManifest.PayloadCID != "" {
+			if loaded, err := fetchStegoPayload(ctx, client, stegoManifest.PayloadCID); err != nil {
 				log.Printf("ipfs ingestion sync payload fetch failed: %v", err)
 			} else {
 				payload = loaded
-				payloadMeta = payloadMetadataMap(payload)
-				if store != nil {
-					if err := ensureProposalFromStegoPayload(ctx, store, entry.CID, stegoManifest, payload); err != nil {
-						log.Printf("ipfs ingestion sync proposal upsert failed: %v", err)
-					}
-				}
+			}
+		}
+		payloadMeta := payloadMetadataMap(payload)
+		if store != nil {
+			if err := ensureProposalFromStegoPayload(ctx, store, entry.CID, stegoManifest, payload); err != nil {
+				log.Printf("ipfs ingestion sync proposal upsert failed: %v", err)
 			}
 		}
 		if existing, err := ingest.Get(id); err == nil && existing != nil {
@@ -322,6 +478,7 @@ func ipfsIngestProcessManifest(ctx context.Context, ingest *services.IngestionSe
 				"stego_manifest_created_at":  stegoManifest.CreatedAt,
 				"stego_manifest_proposal_id": stegoManifest.ProposalID,
 				"visible_pixel_hash":         stegoManifest.VisiblePixelHash,
+				"stego_contract_id":          stegoHash,
 			}
 			for k, v := range payloadMeta {
 				if _, ok := metaUpdates[k]; !ok {
@@ -337,8 +494,8 @@ func ipfsIngestProcessManifest(ctx context.Context, ingest *services.IngestionSe
 		rec := services.IngestionRecord{
 			ID:            id,
 			Filename:      filepath.Base(entry.Path),
-			Method:        getStegoMethodForFilename(entry.Path), // Use appropriate method based on image format
-			MessageLength: len(manifestBytes),
+			Method:        getStegoMethodForFilename(entry.Path),
+			MessageLength: len(rawBytes),
 			ImageBase64:   base64.StdEncoding.EncodeToString(blob),
 			Metadata: map[string]interface{}{
 				"stego_image_cid":            entry.CID,
@@ -346,8 +503,8 @@ func ipfsIngestProcessManifest(ctx context.Context, ingest *services.IngestionSe
 				"stego_manifest_issuer":      stegoManifest.Issuer,
 				"stego_manifest_created_at":  stegoManifest.CreatedAt,
 				"stego_manifest_proposal_id": stegoManifest.ProposalID,
-				"stego_manifest_yaml":        string(manifestBytes),
 				"visible_pixel_hash":         stegoManifest.VisiblePixelHash,
+				"stego_contract_id":          stegoHash,
 			},
 			Status: "verified",
 		}
@@ -429,11 +586,10 @@ func ensureProposalFromStegoPayload(ctx context.Context, store Store, stegoCID s
 		_ = store.UpdateProposalMetadata(ctx, proposalID, updates)
 		return nil
 	}
-	if visibleHash != "" {
-		if _, err := store.GetContract("wish-" + visibleHash); err != nil {
-			return nil
-		}
-	}
+	// NOTE: Do not require a pre-existing "wish-xxx" contract. The stego image
+	// published after PSBT build is the replication of the committed contract
+	// (wish hash + stego/product hash + AI artifacts). Remotes must be able to
+	// materialize the proposal + contract purely from the stego payload.
 	title := strings.TrimSpace(payload.Proposal.Title)
 	if title == "" {
 		title = "Proposal " + proposalID
@@ -443,13 +599,19 @@ func ensureProposalFromStegoPayload(ctx context.Context, store Store, stegoCID s
 		createdAt = time.Unix(payload.Proposal.CreatedAt, 0)
 	}
 	contractID := proposalID
-	if visibleHash != "" {
-		contractID = visibleHash
+	if visibleHash != "" && looksLikeHash(visibleHash) {
+		contractID = "wish-" + strings.TrimPrefix(visibleHash, "wish-")
+	} else if looksLikeHash(contractID) && visibleHash != "" {
+		contractID = "wish-" + strings.TrimPrefix(visibleHash, "wish-")
 	}
 	tasks := make([]smart_contract.Task, 0, len(payload.Tasks))
 	for _, t := range payload.Tasks {
 		if strings.TrimSpace(t.TaskID) == "" {
 			continue
+		}
+		st := t.Status
+		if st == "" {
+			st = "available"
 		}
 		tasks = append(tasks, smart_contract.Task{
 			TaskID:           t.TaskID,
@@ -459,7 +621,7 @@ func ensureProposalFromStegoPayload(ctx context.Context, store Store, stegoCID s
 			Description:      t.Description,
 			BudgetSats:       t.BudgetSats,
 			Skills:           t.Skills,
-			Status:           "available",
+			Status:           st,
 			ContractorWallet: t.ContractorWallet,
 		})
 	}
@@ -493,7 +655,40 @@ func ensureProposalFromStegoPayload(ctx context.Context, store Store, stegoCID s
 		Tasks:            tasks,
 		Metadata:         meta,
 	}
-	return store.CreateProposal(ctx, proposal)
+	if err := store.CreateProposal(ctx, proposal); err != nil {
+		return err
+	}
+
+	// Ensure a contract row exists (for /api/open-contracts, list_contracts, etc.).
+	// For stego published after PSBT build, prefer status "funded" so finished
+	// work (with artifacts) appears as work completed / waiting for on-chain
+	// confirmation rather than disappearing.
+	cStatus := "active"
+	if hasIngestionPSBT(meta) {
+		cStatus = "funded"
+	}
+	// Also check payload metadata for funding signals (txid etc).
+	for _, e := range payload.Metadata {
+		if strings.Contains(strings.ToLower(e.Key), "funding_tx") && strings.TrimSpace(e.Value) != "" {
+			cStatus = "funded"
+			break
+		}
+	}
+	contract := smart_contract.Contract{
+		ContractID:          contractID,
+		Title:               title,
+		TotalBudgetSats:     payload.Proposal.BudgetSats,
+		GoalsCount:          1,
+		AvailableTasksCount: len(tasks),
+		Status:              cStatus,
+		Metadata:            meta,
+	}
+	if up, ok := store.(interface {
+		UpsertContractWithTasks(context.Context, smart_contract.Contract, []smart_contract.Task) error
+	}); ok {
+		_ = up.UpsertContractWithTasks(ctx, contract, tasks)
+	}
+	return nil
 }
 
 func payloadMetadataMap(payload stego.Payload) map[string]interface{} {
@@ -549,12 +744,44 @@ func ipfsIngestProcessPending(ctx context.Context, ingest *services.IngestionSer
 		"visible_pixel_hash": ann.VisiblePixelHash,
 		"ipfs_image_cid":     ann.ImageCID,
 	}
-	if strings.EqualFold(strings.TrimSpace(ann.Method), "stego") {
+	method := strings.ToLower(strings.TrimSpace(ann.Method))
+	if method == "stego" || method == "alpha" || method == "lsb" || method == "exif" || method == "palette" ||
+		strings.HasPrefix(strings.ToLower(strings.TrimSpace(ann.Filename)), "stego") {
 		meta["stego_image_cid"] = ann.ImageCID
 	}
 	if strings.EqualFold(ann.PriceUnit, "sats") {
 		meta["budget_sats"] = priceSatsFromString(ann.Price)
 	}
+	// Store proposal/task data from announcement for peer replication
+	if ann.ProposalTitle != "" {
+		meta["proposal_title"] = ann.ProposalTitle
+	}
+	if ann.ProposalDesc != "" {
+		meta["proposal_description_md"] = ann.ProposalDesc
+	}
+	if ann.BudgetSats > 0 {
+		meta["proposal_budget_sats"] = fmt.Sprintf("%d", ann.BudgetSats)
+	}
+	if ann.PayloadCID != "" {
+		meta["stego_payload_cid"] = ann.PayloadCID
+	}
+	if len(ann.Tasks) > 0 {
+		if taskJSON, err := json.Marshal(ann.Tasks); err == nil {
+			meta["proposal_tasks_json"] = string(taskJSON)
+		}
+	}
+	// Write wish image to disk so the /uploads/ endpoint can serve it.
+	uploadsDir := strings.TrimSpace(os.Getenv("UPLOADS_DIR"))
+	_ = os.MkdirAll(uploadsDir, 0755)
+	uploadPath := filepath.Join(uploadsDir, id)
+	if _, statErr := os.Stat(uploadPath); statErr != nil {
+		if writeErr := os.WriteFile(uploadPath, imageBytes, 0644); writeErr != nil {
+			log.Printf("ipfs ingestion sync: failed to write wish image to %s: %v", uploadPath, writeErr)
+		} else {
+			log.Printf("ipfs ingestion sync: wrote wish image to %s (%d bytes)", uploadPath, len(imageBytes))
+		}
+	}
+
 	if existing, err := ingest.Get(id); err == nil && existing != nil {
 		_ = ingest.UpdateMetadata(id, meta)
 		state.lastSeen[ann.ImageCID] = seenAt
@@ -995,10 +1222,118 @@ func decodeBase64Payload(encoded string) []byte {
 	return nil
 }
 
+func ingestIDFromPath(filePath string) string {
+	base := filepath.Base(filePath)
+	return strings.TrimSuffix(base, filepath.Ext(base))
+}
+
+// ingestPlainStegoWish creates a pending ingestion for mirrored wish images whose
+// alpha-channel payload is plain text rather than a stego YAML manifest.
+func ingestPlainStegoWish(ctx context.Context, ingest *services.IngestionService, filePath, cid string, rawBytes, blob []byte) bool {
+	if ingest == nil || len(rawBytes) == 0 || len(blob) == 0 {
+		return false
+	}
+	message := strings.TrimSpace(string(rawBytes))
+	if message == "" || looksLikeStegoManifestTextIngest(message) {
+		return false
+	}
+	id := ingestIDFromPath(filePath)
+	if id == "" || strings.HasPrefix(id, ".") {
+		return false
+	}
+	if existing, err := ingest.Get(id); err == nil && existing != nil {
+		return false
+	}
+	meta := map[string]interface{}{
+		"embedded_message":   message,
+		"message":            message,
+		"ipfs_image_cid":     cid,
+		"visible_pixel_hash": id,
+		"ingestion_id":       id,
+	}
+	if strings.TrimSpace(cid) != "" {
+		meta["stego_image_cid"] = cid
+	}
+	rec := services.IngestionRecord{
+		ID:            id,
+		Filename:      filepath.Base(filePath),
+		Method:        getStegoMethodForFilename(filePath),
+		MessageLength: len(rawBytes),
+		ImageBase64:   base64.StdEncoding.EncodeToString(blob),
+		Metadata:      meta,
+		Status:        "pending",
+	}
+	if rec.Filename == "" {
+		rec.Filename = "inscription.png"
+	}
+	if err := ingest.Create(rec); err != nil {
+		log.Printf("mirror ingest: pending wish create %s: %v", id, err)
+		return false
+	}
+	return true
+}
+
+// backfillMirroredUploadsIngestion scans UPLOADS_DIR once at startup so files that
+// were mirrored before the ingest callback existed still become ingestion records.
+func backfillMirroredUploadsIngestion(ctx context.Context, ingest *services.IngestionService, store Store) {
+	uploadsDir := strings.TrimSpace(os.Getenv("UPLOADS_DIR"))
+	if uploadsDir == "" || ingest == nil {
+		return
+	}
+	reconcileCfg := loadStegoReconcileConfig()
+	var created int
+	_ = filepath.WalkDir(uploadsDir, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			if path != uploadsDir {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if strings.HasPrefix(entry.Name(), ".") {
+			return nil
+		}
+		if !isImageFile(path) {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+		blob, err := os.ReadFile(path)
+		if err != nil {
+			return nil
+		}
+		rawBytes, err := extractStegoManifest(ctx, blob, reconcileCfg)
+		if err != nil {
+			return nil
+		}
+		if _, _, err := stego.ParseEmbedded(rawBytes); err == nil {
+			IngestDownloadedFile(ctx, path, "", ingest, store)
+			return nil
+		}
+		if ingestPlainStegoWish(ctx, ingest, path, "", rawBytes, blob) {
+			created++
+		}
+		return nil
+	})
+	if created > 0 {
+		log.Printf("ipfs ingestion backfill: created %d pending wish records from %s", created, uploadsDir)
+	}
+}
+
 func isImageFile(path string) bool {
 	ext := strings.ToLower(filepath.Ext(path))
 	switch ext {
 	case ".png", ".jpg", ".jpeg", ".webp":
+		return true
+	case "":
+		// Stego images in uploads are hash-named without extensions
+		// (e.g. "341a6c2b..."). Treat extensionless files as potential
+		// images so the stego extraction pipeline can inspect them.
 		return true
 	default:
 		return false

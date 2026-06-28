@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
@@ -59,7 +60,8 @@ func (h *APIKeyHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !h.validator.Validate(strings.TrimSpace(body.APIKey)) {
+	apiKey := strings.TrimSpace(body.APIKey)
+	if !h.validator.Validate(apiKey) {
 		h.sendError(w, http.StatusForbidden, "invalid api key")
 		return
 	}
@@ -69,7 +71,7 @@ func (h *APIKeyHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		if getter, ok := h.validator.(interface {
 			Get(string) (auth.APIKey, bool)
 		}); ok {
-			if rec, ok := getter.Get(body.APIKey); ok {
+			if rec, ok := getter.Get(apiKey); ok {
 				if strings.TrimSpace(rec.Wallet) != "" && rec.Wallet != wallet {
 					h.sendError(w, http.StatusForbidden, "wallet already bound; rebind requires verification")
 					return
@@ -77,18 +79,42 @@ func (h *APIKeyHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if updater, ok := h.validator.(auth.APIKeyWalletUpdater); ok {
-			if _, err := updater.UpdateWallet(body.APIKey, wallet); err != nil {
+			if _, err := updater.UpdateWallet(apiKey, wallet); err != nil {
 				h.sendError(w, http.StatusInternalServerError, "failed to bind wallet to api key")
 				return
 			}
 		}
 	}
 
+	// Set httpOnly cookie for security
+	secure := r.TLS != nil || os.Getenv("NODE_ENV") == "production"
+	http.SetCookie(w, &http.Cookie{
+		Name:     "X-API-Key",
+		Value:    apiKey,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   secure,
+		SameSite: http.SameSiteStrictMode,
+		MaxAge:   86400 * 30, // 30 days
+	})
+
 	h.sendSuccess(w, map[string]interface{}{
 		"valid":   true,
-		"api_key": body.APIKey,
+		"api_key": apiKey,
 		"wallet":  wallet,
 	})
+}
+
+// HandleLogout clears the API key cookie.
+func (h *APIKeyHandler) HandleLogout(w http.ResponseWriter, r *http.Request) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     "X-API-Key",
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		MaxAge:   -1,
+	})
+	h.sendSuccess(w, map[string]string{"status": "logged out"})
 }
 
 // HandleChallenge issues a nonce for wallet verification.
@@ -149,7 +175,7 @@ func (h *APIKeyHandler) HandleVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	verifier := func(ch auth.Challenge, sig string) bool {
-		ok, err := verifyBTCSignature(ch.Wallet, sig, strings.TrimSpace(ch.Nonce))
+		ok, err := VerifyBTCSignature(ch.Wallet, sig, strings.TrimSpace(ch.Nonce))
 		if err != nil {
 			return false
 		}
@@ -159,11 +185,33 @@ func (h *APIKeyHandler) HandleVerify(w http.ResponseWriter, r *http.Request) {
 		h.sendError(w, http.StatusForbidden, "invalid signature")
 		return
 	}
+
+	// Invalidate any existing API keys for this wallet before issuing a new one
+	if reissuer, ok := h.issuer.(auth.APIKeyWalletReissuer); ok {
+		if err := reissuer.InvalidateByWallet(body.Wallet); err != nil {
+			h.sendError(w, http.StatusInternalServerError, "failed to invalidate existing keys")
+			return
+		}
+	}
+
 	rec, err := h.issuer.Issue(body.Email, body.Wallet, "wallet-verify")
 	if err != nil {
 		h.sendError(w, http.StatusInternalServerError, "failed to issue api key")
 		return
 	}
+
+	// Set httpOnly cookie for security
+	secure := r.TLS != nil || os.Getenv("NODE_ENV") == "production"
+	http.SetCookie(w, &http.Cookie{
+		Name:     "X-API-Key",
+		Value:    rec.Key,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   secure,
+		SameSite: http.SameSiteStrictMode,
+		MaxAge:   86400 * 30, // 30 days
+	})
+
 	h.sendSuccess(w, map[string]interface{}{
 		"api_key":  rec.Key,
 		"wallet":   rec.Wallet,
@@ -172,34 +220,84 @@ func (h *APIKeyHandler) HandleVerify(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// verifyBTCSignature supports legacy signmessage (compact) and BIP-322 simple witness signatures.
+// VerifyBTCSignature supports legacy signmessage (compact) and BIP-322 simple witness signatures.
 // It tries both the provided message and a hex-decoded variant to be lenient with wallets that
 // interpret hex-looking nonces differently.
-func verifyBTCSignature(address, signature, message string) (bool, error) {
-	msgTrimmed := strings.TrimSpace(message)
-
-	if ok, err := verifyLegacySignMessage(address, signature, msgTrimmed); err == nil && ok {
-		return true, nil
-	}
-	if ok, err := verifyBIP322Simple(address, signature, msgTrimmed); err == nil && ok {
-		return true, nil
-	}
-	// If the message is hex, also try interpreting it as raw bytes.
-	if hexMsg, err := hex.DecodeString(msgTrimmed); err == nil {
-		msgAlt := string(hexMsg)
-		if ok, err := verifyLegacySignMessage(address, signature, msgAlt); err == nil && ok {
-			return true, nil
-		}
-		if ok, err := verifyBIP322Simple(address, signature, msgAlt); err == nil && ok {
-			return true, nil
-		}
-	}
-	return false, fmt.Errorf("signature did not verify")
+func VerifyBTCSignature(address, signature, message string) (bool, error) {
+	result := VerifyBTCSignatureWithDetails(address, signature, message)
+	return result.Success, result.Error
 }
 
-// verifyLegacySignMessage verifies a legacy Bitcoin signmessage signature (base64 compact) against a wallet address.
-func verifyLegacySignMessage(address, signatureB64, message string) (bool, error) {
-	params := chooseParams(address)
+// VerifyBTCSignatureWithDetails provides detailed verification results for better error handling.
+func VerifyBTCSignatureWithDetails(address, signature, message string) SignatureVerificationResult {
+	result := SignatureVerificationResult{Success: false}
+
+	msgTrimmed := strings.TrimSpace(message)
+
+	// Try legacy signmessage first
+	if ok, err := VerifyLegacySignMessage(address, signature, msgTrimmed); err == nil {
+		if ok {
+			result.Success = true
+			result.Format = "legacy"
+			result.Message = msgTrimmed
+			return result
+		} else {
+			result.LegacyErrors = append(result.LegacyErrors, "legacy verification failed")
+		}
+	} else {
+		result.LegacyErrors = append(result.LegacyErrors, err.Error())
+	}
+
+	// Try BIP-322 simple
+	if ok, err := VerifyBIP322Simple(address, signature, msgTrimmed); err == nil {
+		if ok {
+			result.Success = true
+			result.Format = "bip322"
+			result.Message = msgTrimmed
+			return result
+		} else {
+			result.BIP322Errors = append(result.BIP322Errors, "BIP-322 verification failed")
+		}
+	} else {
+		result.BIP322Errors = append(result.BIP322Errors, err.Error())
+	}
+
+	// If the message is hex, also try interpreting it as raw bytes
+	if hexMsg, err := hex.DecodeString(msgTrimmed); err == nil {
+		msgAlt := string(hexMsg)
+
+		if ok, err := VerifyLegacySignMessage(address, signature, msgAlt); err == nil && ok {
+			result.Success = true
+			result.Format = "legacy-hex-decoded"
+			result.Message = msgAlt
+			return result
+		}
+
+		if ok, err := VerifyBIP322Simple(address, signature, msgAlt); err == nil && ok {
+			result.Success = true
+			result.Format = "bip322-hex-decoded"
+			result.Message = msgAlt
+			return result
+		}
+	}
+
+	result.Error = fmt.Errorf("signature verification failed - tried legacy and BIP-322 formats")
+	return result
+}
+
+// SignatureVerificationResult provides detailed feedback about signature verification attempts.
+type SignatureVerificationResult struct {
+	Success      bool     `json:"success"`
+	Format       string   `json:"format,omitempty"`
+	Message      string   `json:"message,omitempty"`
+	LegacyErrors []string `json:"legacy_errors,omitempty"`
+	BIP322Errors []string `json:"bip322_errors,omitempty"`
+	Error        error    `json:"-"`
+}
+
+// VerifyLegacySignMessage verifies a legacy Bitcoin signmessage signature (base64 compact) against a wallet address.
+func VerifyLegacySignMessage(address, signatureB64, message string) (bool, error) {
+	params := ChooseParams(address)
 	if params == nil {
 		return false, fmt.Errorf("unsupported address network")
 	}
@@ -270,10 +368,10 @@ func hashBitcoinMessage(message string) []byte {
 	return h2[:]
 }
 
-// verifyBIP322Simple implements the "simple" flow from BIP-322 for P2PKH/P2WPKH/P2SH-P2WPKH.
+// VerifyBIP322Simple implements the "simple" flow from BIP-322 for P2PKH/P2WPKH/P2SH-P2WPKH.
 // It accepts witness encoded as hex (preferred) or base64, as produced by Bitcoin Core `signmessage` with a segwit address.
-func verifyBIP322Simple(address, signature, message string) (bool, error) {
-	params := chooseParams(address)
+func VerifyBIP322Simple(address, signature, message string) (bool, error) {
+	params := ChooseParams(address)
 	if params == nil {
 		return false, fmt.Errorf("unsupported address network")
 	}
@@ -374,8 +472,8 @@ func decodeMaybeHexOrBase64(s string) ([]byte, error) {
 	return base64.StdEncoding.DecodeString(s)
 }
 
-// chooseParams picks network params by decoding the address (prefers testnet4 for tb1/m/n/2).
-func chooseParams(address string) *chaincfg.Params {
+// ChooseParams picks network params by decoding the address (prefers testnet4 for tb1/m/n/2).
+func ChooseParams(address string) *chaincfg.Params {
 	addr := strings.TrimSpace(address)
 	if addr == "" {
 		return nil
@@ -392,4 +490,86 @@ func chooseParams(address string) *chaincfg.Params {
 		}
 	}
 	return nil
+}
+
+// DetectAddressInfo provides detailed information about a Bitcoin address.
+func DetectAddressInfo(address string) AddressInfo {
+	addr := strings.TrimSpace(address)
+	info := AddressInfo{
+		Address:     addr,
+		IsValid:     false,
+		AddressType: "unknown",
+		Network:     "unknown",
+	}
+
+	if addr == "" {
+		info.Error = "Empty address"
+		return info
+	}
+
+	// Try to decode against all known networks to get detailed info
+	for _, params := range []*chaincfg.Params{
+		&chaincfg.MainNetParams,
+		&chaincfg.TestNet4Params,
+		&chaincfg.TestNet3Params,
+		&chaincfg.RegressionNetParams,
+	} {
+		decoded, err := btcutil.DecodeAddress(addr, params)
+		if err == nil {
+			info.IsValid = true
+
+			// Detect network
+			switch params {
+			case &chaincfg.MainNetParams:
+				info.Network = "mainnet"
+			case &chaincfg.TestNet4Params:
+				info.Network = "testnet4"
+			case &chaincfg.TestNet3Params:
+				info.Network = "testnet3"
+			case &chaincfg.RegressionNetParams:
+				info.Network = "regtest"
+			}
+
+			// Detect address type
+			switch addr := decoded.(type) {
+			case *btcutil.AddressPubKeyHash:
+				if len(addr.ScriptAddress()) == 20 {
+					addrStr := addr.String()
+					if strings.HasPrefix(strings.ToLower(addrStr), "1") || strings.HasPrefix(strings.ToLower(addrStr), "m") || strings.HasPrefix(strings.ToLower(addrStr), "n") {
+						info.AddressType = "p2pkh"
+					}
+				}
+			case *btcutil.AddressScriptHash:
+				info.AddressType = "p2sh"
+			case *btcutil.AddressWitnessPubKeyHash:
+				info.AddressType = "p2wpkh"
+			case *btcutil.AddressWitnessScriptHash:
+				info.AddressType = "p2wsh"
+			case *btcutil.AddressTaproot:
+				info.AddressType = "p2tr"
+			}
+
+			// If this is the correct network, we can return
+			if decoded.IsForNet(params) {
+				return info
+			}
+		}
+	}
+
+	if info.IsValid {
+		info.Error = "Network mismatch"
+	} else {
+		info.Error = "Invalid address format"
+	}
+
+	return info
+}
+
+// AddressInfo provides detailed information about a Bitcoin address for AI agents.
+type AddressInfo struct {
+	Address     string `json:"address"`
+	IsValid     bool   `json:"is_valid"`
+	AddressType string `json:"address_type"`
+	Network     string `json:"network"`
+	Error       string `json:"error,omitempty"`
 }

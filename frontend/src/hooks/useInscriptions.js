@@ -1,11 +1,14 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { API_BASE, CONTENT_BASE } from '../apiBase';
+import { apiFetch } from '../utils/api';
 
 const generateInscriptions = (inscriptions) => {
   return inscriptions.map((insc) => ({
     id: insc.id,
+    tx_id: insc.tx_id || insc.metadata?.transaction_id || insc.id || '',
+    contract_id: insc.contract_id || insc.metadata?.contract_id || '',
     type: insc.mime_type?.split('/')[1]?.toUpperCase() || 'UNKNOWN',
-    thumbnail: insc.mime_type?.startsWith('image/') ? insc.image_url : null,
+    thumbnail: (insc.mime_type || '').toLowerCase().includes('image') ? insc.image_url : null,
     gradient: 'from-indigo-500',
     hasMultiple: false,
     contractType: insc.contract_type || 'Steganographic Contract',
@@ -18,17 +21,19 @@ const generateInscriptions = (inscriptions) => {
     number: insc.number,
     address: insc.address,
     genesis_block_height: insc.genesis_block_height,
+    block_height: insc.block_height || insc.genesis_block_height || 0,
     mime_type: insc.mime_type,
     file_name: insc.file_name,
     file_path: insc.file_path,
     size_bytes: insc.size_bytes,
     image_url: insc.image_url,
-    text: insc.text, // Preserve the text content!
+    text: insc.text,
+    status: insc.status,
     metadata: insc.metadata
   }));
 };
 
-export const useInscriptions = (selectedBlock) => {
+export const useInscriptions = (selectedBlock, hideText = false) => {
   const [inscriptions, setInscriptions] = useState([]);
   const [currentInscriptions, setCurrentInscriptions] = useState([]);
   const [allInscriptions, setAllInscriptions] = useState([]);
@@ -37,6 +42,7 @@ export const useInscriptions = (selectedBlock) => {
   const [totalImages, setTotalImages] = useState(0);
   const [filterMode, setFilterMode] = useState('all'); // 'all' or 'text'
   const [lastFetchedHeight, setLastFetchedHeight] = useState(null);
+  const [lastHideText, setLastHideText] = useState(null);
   const [nextCursor, setNextCursor] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -63,13 +69,14 @@ export const useInscriptions = (selectedBlock) => {
       setHasMoreImages(false);
       setTotalImages(0);
       setLastFetchedHeight(selectedBlock.height);
+      setLastHideText(hideText);
       setNextCursor(null);
       setError(null);
       return;
     }
     if (isLoading) return;
-    if (!cursor && lastFetchedHeight === selectedBlock.height) return;
-    if (!cursor && lastFetchedHeight !== selectedBlock.height) {
+    if (!cursor && lastFetchedHeight === selectedBlock.height && lastHideText === hideText) return;
+    if (!cursor && (lastFetchedHeight !== selectedBlock.height || lastHideText !== hideText)) {
       allInscriptionsRef.current = [];
       setAllInscriptions([]);
       setInscriptions([]);
@@ -84,12 +91,14 @@ export const useInscriptions = (selectedBlock) => {
       url.searchParams.set('fields', 'summary');
       if (filterMode === 'text') {
         url.searchParams.set('filter', 'text');
+      } else if (hideText) {
+        url.searchParams.set('filter', 'image');
       }
       if (cursor) {
         url.searchParams.set('cursor', cursor);
       }
 
-      const response = await fetch(url.toString());
+      const response = await apiFetch(url.toString());
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }
@@ -140,7 +149,16 @@ export const useInscriptions = (selectedBlock) => {
           file_name: image.file_name,
           file_path: image.file_path,
           size_bytes: image.size_bytes,
-          image_url: `${CONTENT_BASE}/content/${image.tx_id || image.id}${typeof image.input_index === 'number' ? `?witness=${image.input_index}` : ''}`,
+          image_url: (() => {
+            const raw = image.image_url || '';
+            if (raw) {
+              if (/^https?:\/\//i.test(raw)) return raw;
+              // Server may return relative like "/content/..." or "/api/block-image/..."
+              return `${CONTENT_BASE}${raw.startsWith('/') ? '' : '/'}${raw}`;
+            }
+            // Fallback for legacy/regular inscriptions: construct /content/ URL
+            return `${CONTENT_BASE}/content/${image.tx_id || image.id}${typeof image.input_index === 'number' ? `?witness=${image.input_index}` : ''}`;
+          })(),
           metadata: {
             ...baseMetadata,
             confidence: scanResult.confidence,
@@ -173,6 +191,7 @@ export const useInscriptions = (selectedBlock) => {
       setHasMoreImages(Boolean(data.has_more));
       setInscriptions(filteredInscriptions);
       setLastFetchedHeight(selectedBlock.height);
+      setLastHideText(hideText);
       setNextCursor(data.next_cursor || null);
       setError(null);
     } catch (error) {
@@ -185,6 +204,7 @@ export const useInscriptions = (selectedBlock) => {
         setTotalImages(0);
         setHasMoreImages(false);
         setLastFetchedHeight(selectedBlock.height);
+        setLastHideText(hideText);
         setNextCursor(null);
         setIsLoading(false);
         setError(null);
@@ -199,7 +219,7 @@ export const useInscriptions = (selectedBlock) => {
     } finally {
       setIsLoading(false);
     }
-  }, [selectedBlock, filterMode, lastFetchedHeight, isLoading]);
+  }, [selectedBlock, filterMode, hideText, lastFetchedHeight, isLoading]);
 
   const loadMoreInscriptions = () => {
     if (!hasMoreImages || !nextCursor) return;

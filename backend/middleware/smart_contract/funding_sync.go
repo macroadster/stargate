@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"stargate-backend/bitcoin"
-	scstore "stargate-backend/storage/smart_contract"
 
 	"stargate-backend/core/smart_contract"
 )
@@ -138,10 +137,6 @@ func (m *mockFundingProvider) FetchProof(ctx context.Context, task smart_contrac
 
 // StartFundingSync periodically refreshes provisional proofs using the provider.
 func StartFundingSync(ctx context.Context, store Store, provider FundingProvider, escort *smart_contract.EscortService, interval time.Duration) error {
-	pgStore, ok := store.(*scstore.PGStore)
-	if !ok {
-		return errors.New("funding sync requires Postgres store")
-	}
 	mempool := bitcoin.NewMempoolClient()
 	go func() {
 		t := time.NewTicker(interval)
@@ -151,7 +146,7 @@ func StartFundingSync(ctx context.Context, store Store, provider FundingProvider
 			case <-ctx.Done():
 				return
 			case <-t.C:
-				if err := refreshProofs(ctx, pgStore, provider, escort, mempool); err != nil {
+				if err := refreshProofs(ctx, store, provider, escort, mempool); err != nil {
 					log.Printf("funding sync error: %v", err)
 				}
 			}
@@ -160,16 +155,28 @@ func StartFundingSync(ctx context.Context, store Store, provider FundingProvider
 	return nil
 }
 
-func refreshProofs(ctx context.Context, store *scstore.PGStore, provider FundingProvider, escort *smart_contract.EscortService, mempool *bitcoin.MempoolClient) error {
-	tasks, err := store.ListTasks(smart_contract.TaskFilter{Status: ""})
+func refreshProofs(ctx context.Context, store Store, provider FundingProvider, escort *smart_contract.EscortService, mempool *bitcoin.MempoolClient) error {
+	// Only process tasks with activity in the last 24 hours to reduce processing load
+	twentyFourHoursAgo := time.Now().Add(-24 * time.Hour)
+	tasks, err := store.ListTasks(smart_contract.TaskFilter{
+		Status:            "",
+		LastActivitySince: &twentyFourHoursAgo,
+	})
 	if err != nil {
 		return err
 	}
+	log.Printf("funding sync: processing %d tasks with activity in last 24 hours", len(tasks))
 	for _, t := range tasks {
 		if t.MerkleProof == nil {
 			continue
 		}
 		proof := t.MerkleProof
+
+		hasRealCommitment := proof.CommitmentRedeemScript != "" &&
+			proof.CommitmentVout > 0 &&
+			proof.TxID != "" &&
+			proof.TxID != "mock-txid"
+
 		prevStatus := proof.ConfirmationStatus
 		if proof.ConfirmationStatus == "provisional" {
 			fetched, err := provider.FetchProof(ctx, t)
@@ -180,7 +187,6 @@ func refreshProofs(ctx context.Context, store *scstore.PGStore, provider Funding
 			if err := store.UpdateTaskProof(ctx, t.TaskID, proof); err != nil {
 				log.Printf("failed to update proof for %s: %v", t.TaskID, err)
 			} else {
-				// Always publish proof update to sync across instances
 				PublishEvent(smart_contract.Event{
 					Type:      "task_proof_update",
 					EntityID:  t.TaskID,
@@ -201,17 +207,13 @@ func refreshProofs(ctx context.Context, store *scstore.PGStore, provider Funding
 			}
 		}
 
-		// Use EscortService to validate proof and publish results
-		if escort != nil {
+		if escort != nil && hasRealCommitment && proof.ConfirmationStatus != "confirmed" {
 			escortStatus, err := escort.ValidateProof(proof)
 			if err == nil && escortStatus != nil {
-				// We need TaskID in EscortStatus for sync
 				escortStatus.TaskID = t.TaskID
 
-				// Persist locally
 				_ = store.SyncEscortStatus(ctx, *escortStatus)
 
-				// Publish for other instances
 				PublishEvent(smart_contract.Event{
 					Type:      "escort_validation",
 					EntityID:  t.TaskID,
@@ -222,9 +224,9 @@ func refreshProofs(ctx context.Context, store *scstore.PGStore, provider Funding
 			}
 		}
 
-		if err := bitcoin.SweepCommitmentIfReady(ctx, store, mempool, t, proof); err != nil {
-			log.Printf("commitment sweep error for %s: %v", t.TaskID, err)
-		}
+		// OP_RETURN donation flow: donation is paid directly in the PSBT,
+		// so no sweep is needed. Legacy hashlock contracts can still be
+		// swept manually via the /api/smart_contract/sweep endpoint.
 	}
 	return nil
 }

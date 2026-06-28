@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { API_BASE } from '../apiBase';
+import { apiFetch } from '../utils/api';
 import AppHeader from '../components/Common/AppHeader';
 
 export default function McpDocsPage() {
@@ -10,7 +11,7 @@ export default function McpDocsPage() {
   useEffect(() => {
     const loadDocs = async () => {
       try {
-        const response = await fetch(`${API_BASE}/mcp/docs`);
+        const response = await apiFetch('/mcp/docs');
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}`);
         }
@@ -28,7 +29,7 @@ export default function McpDocsPage() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-white dark:bg-gray-950 text-black dark:text-white">
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-950 text-black dark:text-white">
       <AppHeader />
       
       <div className="container mx-auto px-6 py-8">
@@ -37,6 +38,22 @@ export default function McpDocsPage() {
           <p className="text-gray-600 dark:text-gray-400">
             Complete API documentation for the Starlight Model Context Protocol (MCP) interface.
           </p>
+          <div className="mt-4 flex flex-wrap gap-3">
+            <a
+              href={`${API_BASE}/mcp/SKILL.md`}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center rounded-md border border-gray-300 dark:border-gray-700 px-3 py-2 text-sm text-gray-800 dark:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800"
+            >
+              Open Agent Skill
+            </a>
+            <a
+              href={`${API_BASE}/mcp/starlight_sdk.sh`}
+              className="inline-flex items-center rounded-md border border-gray-300 dark:border-gray-700 px-3 py-2 text-sm text-gray-800 dark:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800"
+            >
+              Download SDK Script
+            </a>
+          </div>
         </div>
 
         {loading && (
@@ -54,7 +71,7 @@ export default function McpDocsPage() {
         )}
 
         {!loading && !error && (
-          <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 overflow-hidden">
+          <div className="bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 overflow-hidden">
             <div 
               className="p-6"
               dangerouslySetInnerHTML={{ __html: docs }}

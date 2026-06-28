@@ -1,37 +1,67 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Search, X, Moon, Sun, Menu, MoreVertical, Check } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
-import { useAuth } from '../../context/AuthContext';
-import { useTheme } from '../../context/ThemeContext';
+import React, { useState, useEffect, useRef } from "react";
+import {
+  Search,
+  X,
+  Moon,
+  Sun,
+  Monitor,
+  Menu,
+  MoreVertical,
+  Check,
+  LogOut,
+} from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { useAuth } from "../../context/AuthContext";
+import { useTheme } from "../../context/ThemeContext";
 
 const AppHeader = ({
   onInscribe,
   showSearch = false,
-  searchQuery = '',
+  searchQuery = "",
   onSearchChange,
   onClearSearch,
   renderInlineSearch,
-  showBrcToggle = false,
-  hideBrc20 = true,
-  onToggleBrc20,
-  showThemeToggle = true, // Default to true now that we have context
-  // Deprecated props (kept for backward compat but overridden by context)
+  showTextToggle = false,
+  hideText = true,
+  onToggleText,
+  showThemeToggle = true,
   isDarkMode: propIsDarkMode,
-  onToggleTheme: propOnToggleTheme
 }) => {
   const navigate = useNavigate();
   const { auth, signOut } = useAuth();
-  
-  // Try to use theme context, fail gracefully if not available (though it should be)
-  let themeContext;
-  try {
-    themeContext = useTheme();
-  } catch (e) {
-    // Context not available
-  }
-  
-  const isDarkMode = themeContext ? themeContext.isDarkMode : (propIsDarkMode || false);
-  const onToggleTheme = themeContext ? themeContext.toggleTheme : (propOnToggleTheme || (() => {}));
+  const themeContext = useTheme();
+
+  const isDarkMode = themeContext
+    ? themeContext.isDarkMode
+    : propIsDarkMode || false;
+  const useSystemTheme = themeContext ? themeContext.useSystemTheme : false;
+  const setTheme = themeContext ? themeContext.setTheme : () => {};
+
+  const cycleTheme = () => {
+    if (useSystemTheme) {
+      setTheme("light");
+    } else if (isDarkMode) {
+      setTheme("auto");
+    } else {
+      setTheme("dark");
+    }
+  };
+
+  const getThemeIcon = () => {
+    if (useSystemTheme) return <Monitor className="w-5 h-5" />;
+    return isDarkMode ? (
+      <Moon className="w-5 h-5" />
+    ) : (
+      <Sun className="w-5 h-5" />
+    );
+  };
+
+  const getThemeTitle = () => {
+    if (useSystemTheme) return "Theme: Auto (click for light)";
+    return isDarkMode
+      ? "Theme: Dark (click for auto)"
+      : "Theme: Light (click for dark)";
+  };
 
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
@@ -45,248 +75,336 @@ const AppHeader = ({
     };
 
     if (isDropdownOpen) {
-      document.addEventListener('mousedown', handleClickOutside);
+      document.addEventListener("mousedown", handleClickOutside);
     }
 
     return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener("mousedown", handleClickOutside);
     };
   }, [isDropdownOpen]);
 
   return (
-    <header className="bg-gray-100 dark:bg-gray-900 border-b border-gray-300 dark:border-gray-800 transition-colors duration-200">
-      <div className="container mx-auto px-6 py-4">
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-8">
+    <header className="nav-glass fixed top-0 left-0 right-0 z-50">
+      <nav className="starlight-nav bg-transparent border-none w-full">
+        <div className="container mx-auto px-6 h-16 flex flex-row items-center justify-between">
+          {/* Left Side: Logo & Links */}
+          <div className="flex flex-row items-center gap-8">
             <button
-              onClick={() => navigate('/')}
-              className="flex items-center gap-3 bg-transparent border-none cursor-pointer"
+              onClick={() => navigate("/")}
+              className="flex flex-row items-center gap-2 p-0 bg-transparent border-none cursor-pointer group"
             >
-              <div className="flex items-center justify-center w-8 h-8 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-lg">
-                <span className="text-white text-lg">✦</span>
-              </div>
-              <h1 className="text-2xl font-bold text-black dark:text-white">Starlight</h1>
+              <i className="icon-starlight header-logo-icon" />
+              <span className="text-2xl font-bold text-gradient-starlight">
+                Starlight
+              </span>
             </button>
 
-            <nav className="hidden md:flex gap-6 text-sm">
+            <div className="nav-desktop">
+              <ul className="nav-list flex flex-row items-center">
+                <li>
+                  <button onClick={onInscribe} className="nav-link">
+                    Inscribe
+                  </button>
+                </li>
+                <li>
+                  <button onClick={() => navigate("/")} className="nav-link">
+                    Blocks
+                  </button>
+                </li>
+                <li>
+                  <button
+                    onClick={() => navigate("/contracts")}
+                    className="nav-link"
+                  >
+                    Contracts
+                  </button>
+                </li>
+                <li>
+                  <button
+                    onClick={() => navigate("/discover")}
+                    className="nav-link"
+                  >
+                    Discover
+                  </button>
+                </li>
+                <li>
+                  <button
+                    onClick={() => navigate("/docs")}
+                    className="nav-link"
+                  >
+                    Documents
+                  </button>
+                </li>
+              </ul>
+            </div>
+          </div>
+
+          {/* Right Side: Search & Actions */}
+          <div className="flex flex-row items-center gap-4">
+            <div className="nav-desktop">
+              <div className="nav-actions flex flex-row items-center gap-2 h-full">
+                {showSearch && (
+                  <div className="search has-icon mr-2">
+                    <Search className="icon-search w-4 h-4" />
+                    <input
+                      type="text"
+                      placeholder="Search..."
+                      value={searchQuery}
+                      onChange={(e) => onSearchChange?.(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Escape") {
+                          onClearSearch?.();
+                        }
+                      }}
+                      className="input search-input text-sm"
+                    />
+                    {searchQuery && (
+                      <button onClick={onClearSearch} className="search-clear">
+                        <X className="w-4 h-4" />
+                      </button>
+                    )}
+                    {renderInlineSearch && renderInlineSearch()}
+                  </div>
+                )}
+
+                {showThemeToggle && (
+                  <button
+                    onClick={cycleTheme}
+                    className="nav-link px-2 bg-transparent border-none cursor-pointer"
+                    title={getThemeTitle()}
+                  >
+                    {getThemeIcon()}
+                  </button>
+                )}
+
+                <div
+                  className={`dropdown h-full flex items-center ${isDropdownOpen ? "active" : ""}`}
+                  ref={dropdownRef}
+                >
+                  <button
+                    onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+                    className="nav-link px-2 bg-transparent border-none cursor-pointer"
+                    title="More options"
+                  >
+                    <MoreVertical className="w-5 h-5" />
+                  </button>
+                  <div
+                    className="dropdown-menu active"
+                    style={{ right: 0, left: "auto" }}
+                  >
+                    {showTextToggle && (
+                      <button
+                        onClick={() => {
+                          onToggleText?.();
+                          setIsDropdownOpen(false);
+                        }}
+                        className="dropdown-item flex flex-row items-center justify-between"
+                      >
+                        <span>Hide text</span>
+                        {hideText && (
+                          <Check className="w-4 h-4 text-primary" />
+                        )}
+                      </button>
+                    )}
+                    {auth?.apiKey ? (
+                      <>
+                        <div className="px-4 py-2 border-t border-white/5">
+                          <div className="text-[10px] text-muted mb-1 uppercase tracking-widest font-bold">
+                            Wallet
+                          </div>
+                          <div className="badge-success text-[11px] px-2 py-0.5 rounded truncate w-full text-center">
+                            {auth.wallet || auth.email || "Connected"}
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => {
+                            signOut();
+                            setIsDropdownOpen(false);
+                          }}
+                          className="dropdown-item text-error border-t border-white/5"
+                        >
+                          Sign out
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        onClick={() => {
+                          navigate("/auth");
+                          setIsDropdownOpen(false);
+                        }}
+                        className="dropdown-item border-t border-white/5"
+                      >
+                        Sign In
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <button
+              onClick={() => setIsMenuOpen(!isMenuOpen)}
+              className={`hamburger md:hidden ${isMenuOpen ? "active" : ""}`}
+              aria-label="Toggle menu"
+            >
+              <span />
+              <span />
+              <span />
+            </button>
+          </div>
+        </div>
+
+        {/* Mobile Menu */}
+        <div className={`nav-menu-mobile ${isMenuOpen ? "active" : ""}`}>
+          {showSearch && (
+            <div className="search has-icon">
+              <Search className="icon-search w-4 h-4" />
+              <input
+                type="text"
+                placeholder="Search..."
+                value={searchQuery}
+                onChange={(e) => onSearchChange?.(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") {
+                    onClearSearch?.();
+                  }
+                }}
+                className="input search-input w-full"
+              />
+              {searchQuery && (
+                <button onClick={onClearSearch} className="search-clear">
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+              {renderInlineSearch && renderInlineSearch()}
+            </div>
+          )}
+
+          <ul className="nav-list vertical">
+            <li>
               <button
-                onClick={onInscribe}
-                className="text-indigo-600 dark:text-indigo-400 hover:text-black dark:hover:text-white bg-transparent border-none cursor-pointer"
+                onClick={() => {
+                  onInscribe?.();
+                  setIsMenuOpen(false);
+                }}
+                className="nav-link"
               >
                 Inscribe
               </button>
+            </li>
+            <li>
               <button
-                onClick={() => navigate('/')}
-                className="text-gray-600 dark:text-gray-400 hover:text-black dark:hover:text-white bg-transparent border-none cursor-pointer"
+                onClick={() => {
+                  navigate("/");
+                  setIsMenuOpen(false);
+                }}
+                className="nav-link"
               >
                 Blocks
               </button>
+            </li>
+            <li>
               <button
-                onClick={() => navigate('/contracts')}
-                className="text-gray-600 dark:text-gray-400 hover:text-black dark:hover:text-white bg-transparent border-none cursor-pointer"
+                onClick={() => {
+                  navigate("/contracts");
+                  setIsMenuOpen(false);
+                }}
+                className="nav-link"
               >
                 Contracts
               </button>
+            </li>
+            <li>
               <button
-                 onClick={() => navigate('/discover')}
-                 className="text-gray-600 dark:text-gray-400 hover:text-black dark:hover:text-white bg-transparent border-none cursor-pointer"
-               >
-                 Discover
-               </button>
-               <button
-                 onClick={() => navigate('/docs')}
-                 className="text-gray-600 dark:text-gray-400 hover:text-black dark:hover:text-white bg-transparent border-none cursor-pointer"
-               >
-                 Help
-               </button>
-             </nav>
-          </div>
+                onClick={() => {
+                  navigate("/discover");
+                  setIsMenuOpen(false);
+                }}
+                className="nav-link"
+              >
+                Discover
+              </button>
+            </li>
+            <li>
+              <button
+                onClick={() => {
+                  navigate("/docs");
+                  setIsMenuOpen(false);
+                }}
+                className="nav-link"
+              >
+                Documents
+              </button>
+            </li>
+            {showTextToggle && (
+              <li>
+                <button
+                  onClick={() => {
+                    onToggleText?.();
+                    setIsMenuOpen(false);
+                  }}
+                  className="nav-link flex flex-row items-center justify-between"
+                >
+                  <span>Hide text</span>
+                  {hideText && <Check className="w-4 h-4 text-primary" />}
+                </button>
+              </li>
+            )}
+          </ul>
 
-          <div className="flex items-center md:hidden">
-            <button onClick={() => setIsMenuOpen(!isMenuOpen)} className="text-gray-600 dark:text-gray-400">
-              <Menu className="w-6 h-6" />
-            </button>
-          </div>
-
-          <div className="hidden md:flex items-center gap-4">
-            {showSearch && (
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400 dark:text-gray-500" />
-                <input
-                  type="text"
-                  placeholder="Search..."
-                  value={searchQuery}
-                  onChange={(e) => onSearchChange?.(e.target.value)}
-                  className="bg-gray-200 dark:bg-gray-800 text-black dark:text-white pl-10 pr-10 py-2 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 w-64 transition-colors"
-                />
-                {searchQuery && (
+          <div className="mt-6 pt-6 flex flex-row items-center justify-between px-4 pb-4">
+            {auth?.apiKey ? (
+              <>
+                <div className="badge badge-success text-xs px-3 py-1 rounded-full truncate">
+                  {auth.wallet || auth.email || "Connected"}
+                </div>
+                <div className="flex items-center gap-2">
+                  {showThemeToggle && (
+                    <button
+                      onClick={cycleTheme}
+                      className="nav-link p-2 bg-transparent border-none"
+                      title={getThemeTitle()}
+                    >
+                      {getThemeIcon()}
+                    </button>
+                  )}
                   <button
-                    onClick={onClearSearch}
-                    className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300"
+                    onClick={() => {
+                      signOut();
+                      setIsMenuOpen(false);
+                    }}
+                    className="nav-link text-error p-2 bg-transparent border-none"
+                    title="Sign Out"
                   >
-                    <X className="w-4 h-4" />
+                    <LogOut className="w-5 h-5" />
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <button
+                  onClick={() => {
+                    navigate("/auth");
+                    setIsMenuOpen(false);
+                  }}
+                  className="btn-starlight btn-sm"
+                >
+                  Sign In
+                </button>
+                {showThemeToggle && (
+                  <button
+                    onClick={cycleTheme}
+                    className="nav-link p-2 bg-transparent border-none"
+                    title={getThemeTitle()}
+                  >
+                    {getThemeIcon()}
                   </button>
                 )}
-                {renderInlineSearch && renderInlineSearch()}
-              </div>
-            )}
-            {showThemeToggle && (
-              <button
-                onClick={onToggleTheme}
-                className="p-2 rounded-full text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-800 hover:text-black dark:hover:text-white transition-colors"
-                title={isDarkMode ? "Switch to light mode" : "Switch to dark mode"}
-              >
-                {isDarkMode ? <Moon className="w-5 h-5" /> : <Sun className="w-5 h-5" />}
-              </button>
-            )}
-            {auth?.apiKey ? (
-              <div className="relative" ref={dropdownRef}>
-                <button
-                  onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-                  className="text-gray-600 dark:text-gray-400 hover:text-black dark:hover:text-white p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors"
-                  title="More options"
-                >
-                  <MoreVertical className="w-5 h-5" />
-                </button>
-                {isDropdownOpen && (
-                  <div className="absolute right-0 top-full mt-2 w-64 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-300 dark:border-gray-700 py-2 z-50">
-                    {showBrcToggle && (
-                      <button
-                        onClick={() => {
-                          onToggleBrc20();
-                          setIsDropdownOpen(false);
-                        }}
-                        className="w-full px-4 py-2 text-left flex items-center justify-between hover:bg-gray-100 dark:hover:bg-gray-700 text-sm"
-                      >
-                        <span className="text-gray-700 dark:text-gray-300">Hide BRC-20</span>
-                        {hideBrc20 && <Check className="w-4 h-4 text-indigo-500" />}
-                      </button>
-                    )}
-                    <div className="px-4 py-2 border-t border-gray-200 dark:border-gray-700">
-                      <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">Wallet</div>
-                      <div className="px-3 py-1 rounded-full bg-emerald-600 text-white text-sm truncate">
-                        {auth.wallet || auth.email || `Key …${auth.apiKey.slice(-6)}`}
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => {
-                        signOut();
-                        setIsDropdownOpen(false);
-                      }}
-                      className="w-full px-4 py-2 text-left text-red-600 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-700 text-sm border-t border-gray-200 dark:border-gray-700"
-                    >
-                      Sign out
-                    </button>
-                  </div>
-                )}
-              </div>
-            ) : (
-              <button
-                onClick={() => navigate('/auth')}
-                className="text-sm px-3 py-1 rounded-full border border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:text-black dark:hover:text-white transition-colors"
-              >
-                Sign In
-              </button>
+              </>
             )}
           </div>
         </div>
-        {isMenuOpen && (
-          <div className="md:hidden mt-4">
-            <nav className="flex flex-col gap-4">
-              {showSearch && (
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400 dark:text-gray-500" />
-                  <input
-                    type="text"
-                    placeholder="Search..."
-                    value={searchQuery}
-                    onChange={(e) => onSearchChange?.(e.target.value)}
-                    className="bg-gray-200 dark:bg-gray-800 text-black dark:text-white pl-10 pr-10 py-2 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 w-full"
-                  />
-                  {searchQuery && (
-                    <button
-                      onClick={onClearSearch}
-                      className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
-                  )}
-                  {renderInlineSearch && renderInlineSearch()}
-                </div>
-              )}
-              <button
-                onClick={onInscribe}
-                className="text-indigo-600 dark:text-indigo-400 hover:text-black dark:hover:text-white bg-transparent border-none cursor-pointer text-left"
-              >
-                Inscribe
-              </button>
-              <button
-                onClick={() => navigate('/')}
-                className="text-gray-600 dark:text-gray-400 hover:text-black dark:hover:text-white bg-transparent border-none cursor-pointer text-left"
-              >
-                Blocks
-              </button>
-              <button
-                onClick={() => navigate('/contracts')}
-                className="text-gray-600 dark:text-gray-400 hover:text-black dark:hover:text-white bg-transparent border-none cursor-pointer text-left"
-              >
-                Contracts
-              </button>
-              <button
-                 onClick={() => navigate('/discover')}
-                 className="text-gray-600 dark:text-gray-400 hover:text-black dark:hover:text-white bg-transparent border-none cursor-pointer text-left"
-               >
-                 Discover
-               </button>
-               <button
-                 onClick={() => navigate('/docs')}
-                 className="text-gray-600 dark:text-gray-400 hover:text-black dark:hover:text-white bg-transparent border-none cursor-pointer text-left"
-               >
-                 Help
-               </button>
-               {showBrcToggle && (
-                <button
-                  onClick={onToggleBrc20}
-                  className={`text-sm px-3 py-1 rounded-full border ${hideBrc20 ? 'border-indigo-500 text-indigo-600 dark:text-indigo-300' : 'border-gray-400 text-gray-600 dark:text-gray-300'} bg-transparent cursor-pointer`}
-                  title="Toggle BRC-20 visibility"
-                >
-                  {hideBrc20 ? 'Hide BRC-20' : 'Show BRC-20'}
-                </button>
-              )}
-              <div className="flex items-center justify-between mt-4">
-                {auth?.apiKey ? (
-                  <div className="flex items-center gap-2">
-                    <div className="px-3 py-1 rounded-full bg-emerald-600 text-white text-sm">
-                      {auth.wallet || auth.email || `Key …${auth.apiKey.slice(-6)}`}
-                    </div>
-                    <button
-                      onClick={signOut}
-                      className="text-xs text-gray-500 dark:text-gray-400 hover:text-black dark:hover:text-white"
-                    >
-                      Sign out
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    onClick={() => navigate('/auth')}
-                    className="text-sm px-3 py-1 rounded-full border border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:text-black dark:hover:text-white"
-                  >
-                    Sign In
-                  </button>
-                )}
-                {showThemeToggle && (
-                  <button
-                    onClick={onToggleTheme}
-                    className="text-gray-600 dark:text-gray-400 hover:text-black dark:hover:text-white"
-                  >
-                    {isDarkMode ? <Moon className="w-5 h-5" /> : <Sun className="w-5 h-5" />}
-                  </button>
-                )}
-              </div>
-            </nav>
-          </div>
-        )}
-      </div>
+      </nav>
     </header>
   );
 };

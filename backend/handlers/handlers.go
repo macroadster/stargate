@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -19,8 +18,15 @@ import (
 	"strings"
 	"time"
 
+	_ "image/gif"
+	_ "image/jpeg"
+
+	_ "golang.org/x/image/bmp"
+	_ "golang.org/x/image/webp"
+
+	"stargate-backend/stego"
 	sc "stargate-backend/core/smart_contract"
-	"stargate-backend/ipfs"
+	"stargate-backend/storage/ipfs"
 	scmiddleware "stargate-backend/middleware/smart_contract"
 	"stargate-backend/models"
 	"stargate-backend/security"
@@ -50,6 +56,7 @@ func (h *BaseHandler) sendJSON(w http.ResponseWriter, statusCode int, data inter
 
 // sendError sends an error response
 func (h *BaseHandler) sendError(w http.ResponseWriter, statusCode int, message string) {
+	log.Printf("ERROR: Status %d - %s", statusCode, message)
 	errorResp := models.NewErrorResponse(message, statusCode)
 	h.sendJSON(w, statusCode, errorResp)
 }
@@ -91,6 +98,79 @@ func (h *HealthHandler) HandleHealth(w http.ResponseWriter, r *http.Request) {
 	h.sendSuccess(w, health)
 }
 
+// DiscoveryHandler handles peer discovery requests for WebRTC
+type DiscoveryHandler struct {
+	*BaseHandler
+	peerService *services.PeerService
+}
+
+// NewDiscoveryHandler creates a new discovery handler
+func NewDiscoveryHandler(peerService *services.PeerService) *DiscoveryHandler {
+	return &DiscoveryHandler{
+		BaseHandler: NewBaseHandler(),
+		peerService: peerService,
+	}
+}
+
+// HandleRegisterPeer registers a new peer ID
+func (h *DiscoveryHandler) HandleRegisterPeer(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		h.sendError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	var req struct {
+		PeerID string `json:"peerId"`
+	}
+	if err := h.parseJSON(r, &req); err != nil {
+		h.sendError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	if req.PeerID == "" {
+		h.sendError(w, http.StatusBadRequest, "peerId is required")
+		return
+	}
+
+	h.peerService.Register(req.PeerID)
+	h.sendSuccess(w, map[string]string{"status": "registered"})
+}
+
+// HandleUnregisterPeer unregisters a peer ID
+func (h *DiscoveryHandler) HandleUnregisterPeer(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		h.sendError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	var req struct {
+		PeerID string `json:"peerId"`
+	}
+	if err := h.parseJSON(r, &req); err != nil {
+		h.sendError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	if req.PeerID == "" {
+		h.sendError(w, http.StatusBadRequest, "peerId is required")
+		return
+	}
+
+	h.peerService.Unregister(req.PeerID)
+	h.sendSuccess(w, map[string]string{"status": "unregistered"})
+}
+
+// HandleListPeers returns a list of active peer IDs
+func (h *DiscoveryHandler) HandleListPeers(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		h.sendError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	peers := h.peerService.GetPeers()
+	h.sendSuccess(w, peers)
+}
+
 // InscriptionHandler handles inscription-related requests
 type InscriptionHandler struct {
 	*BaseHandler
@@ -99,16 +179,21 @@ type InscriptionHandler struct {
 	proxyBase          string
 	store              scmiddleware.Store
 	apiKeyIssuer       auth.APIKeyIssuer
+	apiKeyValidator    auth.APIKeyValidator
+	RequireImage       bool
 }
 
 // NewInscriptionHandler creates a new inscription handler
-func NewInscriptionHandler(inscriptionService *services.InscriptionService, ingestionService *services.IngestionService, apiKeyIssuer auth.APIKeyIssuer) *InscriptionHandler {
+func NewInscriptionHandler(inscriptionService *services.InscriptionService, ingestionService *services.IngestionService, apiKeyIssuer auth.APIKeyIssuer, apiKeyValidator auth.APIKeyValidator) *InscriptionHandler {
+	requireImage := os.Getenv("STARGATE_REQUIRE_IMAGE") == "true"
 	return &InscriptionHandler{
 		BaseHandler:        NewBaseHandler(),
 		inscriptionService: inscriptionService,
 		ingestionService:   ingestionService,
 		proxyBase:          os.Getenv("STARGATE_PROXY_BASE"),
 		apiKeyIssuer:       apiKeyIssuer,
+		apiKeyValidator:    apiKeyValidator,
+		RequireImage:       requireImage,
 	}
 }
 
@@ -257,27 +342,20 @@ func (h *InscriptionHandler) HandleGetInscriptions(w http.ResponseWriter, r *htt
 
 func (h *InscriptionHandler) fromIngestion(rec services.IngestionRecord) models.InscriptionRequest {
 	uploadsDir := os.Getenv("UPLOADS_DIR")
-	if uploadsDir == "" {
-		uploadsDir = "/data/uploads"
-	}
 	_ = os.MkdirAll(uploadsDir, 0755)
 
-	filename := rec.Filename
-	if filename == "" {
-		filename = "inscription.png"
-	}
-	if !strings.HasPrefix(filename, rec.ID+"_") {
-		filename = fmt.Sprintf("%s_%s", rec.ID, filename)
-	}
+	// Use just the hash for consistency with HandleCreateInscription
+	filename := rec.ID
 	targetPath := security.SafeFilePath(uploadsDir, filename)
-	if _, err := os.Stat(targetPath); err == nil {
-		// ok
-	} else if isUploadTombstoned(uploadsDir, filepath.Base(filename)) {
-		targetPath = ""
-	} else if os.IsNotExist(err) {
-		if data, err := base64.StdEncoding.DecodeString(rec.ImageBase64); err == nil {
-			if err := os.WriteFile(targetPath, data, 0644); err != nil {
-				fmt.Printf("Failed to write ingestion image to %s: %v\n", targetPath, err)
+
+	if _, err := os.Stat(targetPath); os.IsNotExist(err) {
+		if rec.ImageBase64 != "" {
+			if data, err := base64.StdEncoding.DecodeString(rec.ImageBase64); err == nil {
+				if err := os.WriteFile(targetPath, data, 0644); err != nil {
+					fmt.Printf("Failed to write ingestion image to %s: %v\n", targetPath, err)
+				} else {
+					log.Printf("DEBUG: lazy-stored ingestion image to %s", targetPath)
+				}
 			}
 		}
 	}
@@ -303,9 +381,6 @@ func (h *InscriptionHandler) fromIngestion(rec services.IngestionRecord) models.
 
 func (h *InscriptionHandler) fromContract(c sc.Contract) models.InscriptionRequest {
 	uploadsDir := os.Getenv("UPLOADS_DIR")
-	if uploadsDir == "" {
-		uploadsDir = "/data/uploads"
-	}
 	imagePath := ""
 	timestamp := int64(0)
 
@@ -378,9 +453,6 @@ func (h *InscriptionHandler) fromContract(c sc.Contract) models.InscriptionReque
 
 func (h *InscriptionHandler) fromProposal(p sc.Proposal) models.InscriptionRequest {
 	uploadsDir := os.Getenv("UPLOADS_DIR")
-	if uploadsDir == "" {
-		uploadsDir = "/data/uploads"
-	}
 	imagePath := ""
 	baseID := baseContractID(p.ID)
 	if baseID == "" {
@@ -531,7 +603,10 @@ func stripWishTimestamp(message string) string {
 }
 
 func computeVisiblePixelHash(imageBytes []byte, text string) string {
-	sum := sha256.Sum256(imageBytes)
+	// Include text (message) in hash if provided, for uniqueness of wish/inscription
+	// (previously ignored the text param, now uses both for Cat 6.6)
+	input := append(imageBytes, []byte(text)...)
+	sum := sha256.Sum256(input)
 	return fmt.Sprintf("%x", sum[:])
 }
 
@@ -604,9 +679,6 @@ func isMethodCompatible(method, ext string) bool {
 // ensureIngestionImageFile writes the base64 image to uploads dir if missing and returns the path.
 func ensureIngestionImageFile(rec services.IngestionRecord) (string, error) {
 	uploadsDir := os.Getenv("UPLOADS_DIR")
-	if uploadsDir == "" {
-		uploadsDir = "/data/uploads"
-	}
 	if err := os.MkdirAll(uploadsDir, 0755); err != nil {
 		return "", err
 	}
@@ -786,277 +858,351 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 
 	// Ensure we have image bytes & filename for downstream hashing/storage
 	if len(imgBytes) == 0 {
+		if h.RequireImage {
+			h.sendError(w, http.StatusBadRequest, "Image is required for inscription")
+			return
+		}
 		imgBytes = placeholderPNG()
 		if filename == "" {
 			filename = "placeholder.png"
 		}
 	}
+	// For inscription, only alpha is supported (detection supports all 5).
+	// Return clear 400 instead of silent downgrade (Cat 6.1).
+	if method != "" && method != "auto" && method != "alpha" {
+		h.sendError(w, http.StatusBadRequest, "only alpha method is supported for inscription")
+		return
+	}
 	method = resolveStegoMethod(method, filename, imgBytes)
 	wishTimestamp := time.Now().Unix()
 	embeddedMessage := appendWishTimestamp(text, wishTimestamp)
 
-	// Proxy to starlight /inscribe to avoid direct frontend → Python exposure
+	// Steganography: proxy to starlight if configured, otherwise native Go
+	var ingestionID string
+	var stegoImgBytes []byte
+	var stegoImageBase64 string
+	var starlightRequestID string
+
 	if h.proxyBase != "" {
-		fmt.Printf("DEBUG: Proxy path selected, proxyBase=%s\n", h.proxyBase)
+		// Proxy to starlight /inscribe
+		log.Printf("DEBUG: Proxy path selected, proxyBase=%s", h.proxyBase)
 		var buf bytes.Buffer
 		writer := multipart.NewWriter(&buf)
 
-		// File part (required by starlight) - use io.Copy like working implementation
 		part, _ := writer.CreateFormFile("image", filename)
 		if len(imgBytes) > 0 {
 			io.Copy(part, bytes.NewReader(imgBytes))
 		} else {
-			// Use placeholder if no image provided
 			io.Copy(part, bytes.NewReader(placeholderPNG()))
 		}
 
-		// Message & method (simple text message like working implementation)
 		writer.WriteField("message", embeddedMessage)
 		writer.WriteField("method", method)
 		writer.Close()
 
 		proxyURL := fmt.Sprintf("%s/inscribe", strings.TrimRight(h.proxyBase, "/"))
-		req, _ := http.NewRequest(http.MethodPost, proxyURL, &buf)
-		req.Header.Set("Content-Type", writer.FormDataContentType())
+		proxyReq, _ := http.NewRequest(http.MethodPost, proxyURL, &buf)
+		proxyReq.Header.Set("Content-Type", writer.FormDataContentType())
 		if apiKey := os.Getenv("STARGATE_API_KEY"); apiKey != "" {
-			req.Header.Set("Authorization", "Bearer "+apiKey)
+			proxyReq.Header.Set("Authorization", "Bearer "+apiKey)
 		}
 
-		resp, err := http.DefaultClient.Do(req)
-		if err == nil && resp != nil {
-			defer resp.Body.Close()
-			body, _ := io.ReadAll(resp.Body)
-			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-				// First check if the response contains an error despite successful HTTP status
-				var errorResponse struct {
-					Success bool `json:"success"`
-					Error   struct {
-						Code    int    `json:"code"`
-						Error   string `json:"error"`
-						Message string `json:"message"`
-					} `json:"error"`
-				}
-
-				if err := json.Unmarshal(body, &errorResponse); err == nil && (errorResponse.Error.Code != 0 || errorResponse.Error.Error != "" || errorResponse.Error.Message != "") {
-					// Response contains error fields despite 200 status - forward it as proper error
-					errorCode := errorResponse.Error.Code
-					errorMessage := errorResponse.Error.Message
-					if errorMessage == "" {
-						errorMessage = errorResponse.Error.Error
-					}
-
-					// If no error code provided, use generic 400 error
-					if errorCode == 0 {
-						errorCode = http.StatusBadRequest
-					}
-					// If no error message provided, use generic message
-					if errorMessage == "" {
-						errorMessage = "Request failed"
-					}
-
-					h.sendError(w, errorCode, errorMessage)
-					return
-				}
-
-				// Parse Starlight response to extract stego hash and image
-				var starlightResponse struct {
-					RequestID   string `json:"request_id"`
-					ID          string `json:"id"`
-					ImageSHA256 string `json:"image_sha256"`
-					ImageBase64 string `json:"image_base64"`
-				}
-
-				if err := json.Unmarshal(body, &starlightResponse); err == nil && starlightResponse.ImageSHA256 != "" {
-					ingestionID := starlightResponse.ImageSHA256
-
-					// Record the wish creator
-					creatorKey := strings.TrimSpace(r.Header.Get("X-API-Key"))
-					if creatorKey == "" {
-						auth := r.Header.Get("Authorization")
-						if strings.HasPrefix(auth, "Bearer ") {
-							creatorKey = strings.TrimPrefix(auth, "Bearer ")
-						}
-					}
-					var creatorHash string
-					if creatorKey != "" {
-						hashBytes := sha256.Sum256([]byte(creatorKey))
-						creatorHash = hex.EncodeToString(hashBytes[:])
-
-						log.Printf("DEBUG: Storing creator API key with hash: %s", creatorHash)
-						// Store the API key in the database for future validation
-						if h.apiKeyIssuer != nil {
-							// The Seed method stores an existing key in the database
-							if seedIssuer, ok := h.apiKeyIssuer.(interface{ Seed(string, string, string) }); ok {
-								seedIssuer.Seed(creatorKey, "", "wish-creator")
-								log.Printf("DEBUG: Successfully stored creator API key in database")
-							} else {
-								log.Printf("Warning: apiKeyIssuer does not support Seed method for storing existing API key")
-							}
-						} else {
-							log.Printf("DEBUG: apiKeyIssuer is nil - cannot store API key")
-						}
-					}
-
-					meta := map[string]interface{}{
-						"embedded_message":     embeddedMessage,
-						"message":              text,
-						"wish_timestamp":       wishTimestamp,
-						"price":                price,
-						"price_unit":           priceUnit,
-						"address":              address,
-						"funding_mode":         fundingMode,
-						"starlight_request_id": starlightResponse.RequestID,
-						"creator_api_key_hash": creatorHash,
-					}
-					if strings.EqualFold(priceUnit, "sats") {
-						meta["budget_sats"] = parsePriceSats(price)
-					}
-
-					if h.ingestionService != nil {
-						// Decode stego image from starlight response first - must succeed for security
-						stegoImgBytes, err := base64.StdEncoding.DecodeString(starlightResponse.ImageBase64)
-						if err != nil {
-							h.sendError(w, http.StatusInternalServerError, fmt.Sprintf("Critical: failed to decode stego image - cannot proceed securely: %v", err))
-							return
-						}
-
-						// Write stego image to uploads directory immediately
-						uploadsDir := os.Getenv("UPLOADS_DIR")
-						if uploadsDir == "" {
-							uploadsDir = "/data/uploads"
-						}
-						if err := os.MkdirAll(uploadsDir, 0755); err != nil {
-							h.sendError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to create uploads directory: %v", err))
-							return
-						}
-						// Use hash-only filename for stealth
-						imageFilename := ingestionID // Just the hash, no original filename
-						imagePath := security.SafeFilePath(uploadsDir, imageFilename)
-						if err := os.WriteFile(imagePath, stegoImgBytes, 0644); err != nil {
-							h.sendError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to write image to %s: %v", imagePath, err))
-							return
-						}
-
-						ingRec := services.IngestionRecord{
-							ID:            ingestionID,
-							Filename:      imageFilename,
-							Method:        method,
-							MessageLength: len(embeddedMessage),
-							ImageBase64:   starlightResponse.ImageBase64,
-							Metadata:      meta,
-							Status:        "pending",
-						}
-						if ingRec.Filename == "" {
-							ingRec.Filename = "inscription.png"
-						}
-						if err := h.ingestionService.Create(ingRec); err != nil {
-							fmt.Printf("Failed to create ingestion record for %s: %v\n", ingestionID, err)
-						}
-						// Publish announcement with verified stego image
-						publishPendingIngestAnnouncement(ingestionID, ingestionID, imageFilename, method, embeddedMessage, price, priceUnit, address, fundingMode, stegoImgBytes)
-					}
-
-					if h.store != nil {
-						// Determine title for both proposal and contract
-						proposalTitle := strings.TrimSpace(text)
-						if strings.HasPrefix(proposalTitle, "#") {
-							proposalTitle = strings.TrimSpace(strings.TrimLeft(proposalTitle, "#"))
-						}
-						if proposalTitle == "" {
-							proposalTitle = "Wish " + starlightResponse.ImageSHA256
-						}
-
-						// 1. Create Proposal (Optional, default TRUE unless skipped)
-						if !payload.SkipProposal {
-							proposal := sc.Proposal{
-								ID:               starlightResponse.ImageSHA256,
-								Title:            proposalTitle,
-								DescriptionMD:    text,
-								VisiblePixelHash: starlightResponse.ImageSHA256,
-								BudgetSats:       parsePriceSats(price),
-								Status:           "pending",
-								CreatedAt:        time.Now(),
-								Metadata: map[string]any{
-									"starlight_request_id": starlightResponse.RequestID,
-									"funding_mode":         fundingMode,
-									"address":              address,
-									"price_unit":           priceUnit,
-								},
-							}
-
-							if err := h.store.CreateProposal(context.Background(), proposal); err != nil {
-								fmt.Printf("Failed to create proposal for wish %s: %v\n", starlightResponse.ImageSHA256, err)
-							}
-						}
-
-						// 2. Create the "Wish Contract" so it appears in the marketplace
-						// This ensures the wish exists even if no proposal is created immediately
-						wishContract := sc.Contract{
-							ContractID:      "wish-" + starlightResponse.ImageSHA256,
-							Title:           proposalTitle,
-							TotalBudgetSats: parsePriceSats(price),
-							GoalsCount:      0,
-							Status:          "pending",
-						}
-
-						type upserter interface {
-							UpsertContractWithTasks(ctx context.Context, contract sc.Contract, tasks []sc.Task) error
-						}
-						if u, ok := h.store.(upserter); ok {
-							if err := u.UpsertContractWithTasks(context.Background(), wishContract, nil); err != nil {
-								fmt.Printf("Failed to create wish contract %s: %v\n", wishContract.ContractID, err)
-							}
-						}
-					}
-
-					h.sendSuccess(w, map[string]string{
-						"status":             "success",
-						"id":                 ingestionID,
-						"ingestion_id":       ingestionID,
-						"visible_pixel_hash": starlightResponse.ImageSHA256,
-					})
-					return
-				}
-
-				// If we got a 200 response but it doesn't match expected formats, treat it as an error
-				h.sendError(w, http.StatusInternalServerError, "Unexpected response format from inscription service")
-				return
-			}
-
-			// Starlight-api returned an error - forward the error to client with consistent JSON format
-			// Don't fall back to local inscription - that causes duplicate proposal creation
-			if resp.StatusCode >= 400 && resp.StatusCode < 500 {
-				// For client errors, try to extract message from JSON response
-				var errorResp struct {
-					Error   string `json:"error"`
-					Message string `json:"message"`
-				}
-				if json.Unmarshal(body, &errorResp) == nil {
-					message := errorResp.Error
-					if message == "" {
-						message = errorResp.Message
-					}
-					if message == "" {
-						message = "Proxy request failed"
-					}
-					h.sendError(w, resp.StatusCode, message)
-				} else {
-					h.sendError(w, resp.StatusCode, "Proxy request failed")
-				}
-			} else {
-				// For server errors, forward as-is
-				w.WriteHeader(resp.StatusCode)
-				w.Write(body)
-			}
+		resp, err := http.DefaultClient.Do(proxyReq)
+		if err != nil {
+			h.sendError(w, http.StatusBadGateway, fmt.Sprintf("Proxy request to starlight failed: %v", err))
 			return
 		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			var errorResp struct {
+				Error   string `json:"error"`
+				Message string `json:"message"`
+			}
+			msg := "Proxy request failed"
+			if json.Unmarshal(body, &errorResp) == nil {
+				if errorResp.Message != "" {
+					msg = errorResp.Message
+				} else if errorResp.Error != "" {
+					msg = errorResp.Error
+				}
+			}
+			h.sendError(w, resp.StatusCode, msg)
+			return
+		}
+
+		// Check for error fields embedded in a 200 response
+		var errorCheck struct {
+			Error struct {
+				Code    int    `json:"code"`
+				Error   string `json:"error"`
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if json.Unmarshal(body, &errorCheck) == nil && (errorCheck.Error.Code != 0 || errorCheck.Error.Error != "" || errorCheck.Error.Message != "") {
+			code := errorCheck.Error.Code
+			msg := errorCheck.Error.Message
+			if msg == "" {
+				msg = errorCheck.Error.Error
+			}
+			if code == 0 {
+				code = http.StatusBadRequest
+			}
+			if msg == "" {
+				msg = "Request failed"
+			}
+			h.sendError(w, code, msg)
+			return
+		}
+
+		var starlightResp struct {
+			RequestID   string `json:"request_id"`
+			ID          string `json:"id"`
+			ImageSHA256 string `json:"image_sha256"`
+			ImageBase64 string `json:"image_base64"`
+		}
+		if err := json.Unmarshal(body, &starlightResp); err != nil || starlightResp.ImageSHA256 == "" {
+			h.sendError(w, http.StatusInternalServerError, "Unexpected response format from inscription service")
+			return
+		}
+
+		ingestionID = starlightResp.ImageSHA256
+		starlightRequestID = starlightResp.RequestID
+		stegoImgBytes, err = base64.StdEncoding.DecodeString(starlightResp.ImageBase64)
+		if err != nil {
+			h.sendError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to decode stego image from proxy: %v", err))
+			return
+		}
+		stegoImageBase64 = starlightResp.ImageBase64
+	} else {
+		// Native steganography (no proxy configured)
+		log.Printf("DEBUG: Native stego path selected")
+		inscribeResult, err := stego.Inscribe(imgBytes, embeddedMessage, method)
+		if err != nil {
+			h.sendError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to embed steganography: %v", err))
+			return
+		}
+		ingestionID = inscribeResult.ID
+		stegoImgBytes = inscribeResult.ImageBytes
+		stegoImageBase64 = inscribeResult.ImageBase64
 	}
 
-	// No legacy fallback - proxy is required for inscription creation
-	if h.proxyBase == "" {
-		h.sendError(w, http.StatusServiceUnavailable, "Inscription service not available - STARGATE_PROXY_BASE not configured")
+	// Record the wish creator
+	creatorKey := strings.TrimSpace(r.Header.Get("X-API-Key"))
+	if creatorKey == "" {
+		auth := r.Header.Get("Authorization")
+		if strings.HasPrefix(auth, "Bearer ") {
+			creatorKey = strings.TrimPrefix(auth, "Bearer ")
+		}
+	}
+	var creatorWallet string
+	if creatorKey != "" && h.apiKeyValidator != nil {
+		if apiKeyRec, ok := h.apiKeyValidator.Get(creatorKey); ok {
+			creatorWallet = strings.TrimSpace(apiKeyRec.Wallet)
+			log.Printf("DEBUG: Found creator wallet: %s", creatorWallet)
+		}
+	}
+
+	meta := map[string]interface{}{
+		"embedded_message": embeddedMessage,
+		"message":          text,
+		"wish_timestamp":   wishTimestamp,
+		"price":            price,
+		"price_unit":       priceUnit,
+		"address":          address,
+		"funding_mode":     fundingMode,
+		"creator_wallet":   creatorWallet,
+	}
+	if starlightRequestID != "" {
+		meta["starlight_request_id"] = starlightRequestID
+	} else {
+		meta["native_stego"] = true
+	}
+	if strings.EqualFold(priceUnit, "sats") {
+		meta["budget_sats"] = parsePriceSats(price)
+	}
+
+	// Write stego image to uploads directory
+	uploadsDir := os.Getenv("UPLOADS_DIR")
+	log.Printf("DEBUG: uploadsDir resolved to: %s", uploadsDir)
+	if err := os.MkdirAll(uploadsDir, 0755); err != nil {
+		h.sendError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to create uploads directory %s: %v", uploadsDir, err))
 		return
 	}
+	// Use hash-only filename for stealth
+	imageFilename := ingestionID
+	imagePath := security.SafeFilePath(uploadsDir, imageFilename)
+	log.Printf("DEBUG: Attempting to write stego image to %s (size: %d bytes)", imagePath, len(stegoImgBytes))
+	if err := os.WriteFile(imagePath, stegoImgBytes, 0644); err != nil {
+		h.sendError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to write image to %s: %v", imagePath, err))
+		return
+	}
+	log.Printf("DEBUG: Successfully stored stego image to %s", imagePath)
+
+	if h.ingestionService != nil {
+		log.Printf("DEBUG: Creating ingestion record for %s", ingestionID)
+		ingRec := services.IngestionRecord{
+			ID:            ingestionID,
+			Filename:      imageFilename,
+			Method:        "alpha",
+			MessageLength: len(embeddedMessage),
+			ImageBase64:   stegoImageBase64,
+			Metadata:      meta,
+			Status:        "pending",
+		}
+		if err := h.ingestionService.Create(ingRec); err != nil {
+			log.Printf("ERROR: Failed to create ingestion record for %s: %v", ingestionID, err)
+		}
+		// Publish announcement
+		log.Printf("DEBUG: Publishing pending ingest announcement for %s", ingestionID)
+		publishPendingIngestAnnouncement(ingestionID, ingestionID, imageFilename, "alpha", embeddedMessage, price, priceUnit, address, fundingMode, stegoImgBytes)
+	}
+
+	if h.store != nil {
+		log.Printf("DEBUG: Mirroring into store for %s", ingestionID)
+		proposalTitle := strings.TrimSpace(text)
+		if strings.HasPrefix(proposalTitle, "#") {
+			proposalTitle = strings.TrimSpace(strings.TrimLeft(proposalTitle, "#"))
+		}
+		if proposalTitle == "" {
+			proposalTitle = "Wish " + ingestionID
+		}
+
+		if !payload.SkipProposal {
+			proposal := sc.Proposal{
+				ID:               ingestionID,
+				Title:            proposalTitle,
+				DescriptionMD:    text,
+				VisiblePixelHash: ingestionID,
+				BudgetSats:       parsePriceSats(price),
+				Status:           "pending",
+				CreatedAt:        time.Now(),
+				Metadata: map[string]any{
+					"funding_mode":   fundingMode,
+					"address":        address,
+					"price_unit":     priceUnit,
+					"creator_wallet": creatorWallet,
+				},
+			}
+
+			if err := h.store.CreateProposal(context.Background(), proposal); err != nil {
+				fmt.Printf("Failed to create proposal for wish %s: %v\n", ingestionID, err)
+			}
+		}
+
+		wishContract := sc.Contract{
+			ContractID:      "wish-" + ingestionID,
+			Title:           proposalTitle,
+			TotalBudgetSats: parsePriceSats(price),
+			GoalsCount:      0,
+			Status:          "pending",
+		}
+
+		type upserter interface {
+			UpsertContractWithTasks(ctx context.Context, contract sc.Contract, tasks []sc.Task) error
+		}
+		if u, ok := h.store.(upserter); ok {
+			if err := u.UpsertContractWithTasks(context.Background(), wishContract, nil); err != nil {
+				fmt.Printf("Failed to create wish contract %s: %v\n", wishContract.ContractID, err)
+			}
+		}
+	}
+
+	h.sendSuccess(w, map[string]string{
+		"status":             "success",
+		"id":                 ingestionID,
+		"ingestion_id":       ingestionID,
+		"visible_pixel_hash": ingestionID,
+	})
+	return
+}
+
+// HandleDeleteInscription handles deleting an inscription and its associated wish
+func (h *InscriptionHandler) HandleDeleteInscription(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		h.sendError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	// Extract ID from URL path (e.g., /api/inscriptions/{id})
+	id := strings.TrimPrefix(r.URL.Path, "/api/inscriptions/")
+	if id == "" {
+		h.sendError(w, http.StatusBadRequest, "Missing ID")
+		return
+	}
+
+	// Normalize ID (strip wish- prefix)
+	visibleHash := strings.TrimPrefix(id, "wish-")
+
+	// Get requester wallet from API key (provided by wrapWithAuth)
+	var requesterWallet string
+	apiKey := strings.TrimSpace(r.Header.Get("X-API-Key"))
+	if apiKey == "" {
+		auth := r.Header.Get("Authorization")
+		if strings.HasPrefix(auth, "Bearer ") {
+			apiKey = strings.TrimPrefix(auth, "Bearer ")
+		}
+	}
+	if apiKey != "" && h.apiKeyValidator != nil {
+		if apiKeyRec, ok := h.apiKeyValidator.Get(apiKey); ok {
+			requesterWallet = strings.TrimSpace(apiKeyRec.Wallet)
+		}
+	}
+
+	// 1. Check ownership via ingestion record
+	if h.ingestionService != nil {
+		rec, err := h.ingestionService.Get(visibleHash)
+		if err != nil {
+			h.sendError(w, http.StatusNotFound, "Inscription not found")
+			return
+		}
+
+		// Verify ownership
+		if creatorWallet, ok := rec.Metadata["creator_wallet"].(string); ok && creatorWallet != "" {
+			if requesterWallet == "" || !strings.EqualFold(strings.TrimSpace(creatorWallet), requesterWallet) {
+				// Special case: check global auditor status (donation address)
+				donationAddr := strings.TrimSpace(os.Getenv("STARLIGHT_DONATION_ADDRESS"))
+				if donationAddr == "" || !strings.EqualFold(requesterWallet, donationAddr) {
+					h.sendError(w, http.StatusForbidden, "Only the wish creator or an authorized auditor can delete this wish")
+					return
+				}
+			}
+		}
+
+		// Check status - deletion not allowed for confirmed/finalized items
+		if !isPendingContractStatus(rec.Status) {
+			h.sendError(w, http.StatusForbidden, fmt.Sprintf("Cannot delete a wish with status '%s' (only pending wishes can be deleted)", rec.Status))
+			return
+		}
+
+		// Delete from ingestion service
+		if err := h.ingestionService.Delete(r.Context(), visibleHash); err != nil {
+			log.Printf("Failed to delete ingestion record %s: %v", visibleHash, err)
+		}
+	}
+
+	// 2. Delete from MCP store (cascading delete)
+	if h.store != nil {
+		// Double check status in contract store
+		wishID := wishContractID(visibleHash)
+		if contract, err := h.store.GetContract(wishID); err == nil {
+			if !isPendingContractStatus(contract.Status) {
+				h.sendError(w, http.StatusForbidden, fmt.Sprintf("Cannot delete a contract with status '%s'", contract.Status))
+				return
+			}
+		}
+
+		if err := h.store.DeleteWish(r.Context(), visibleHash); err != nil {
+			log.Printf("Failed to delete wish %s from store: %v", visibleHash, err)
+		}
+	}
+
+	h.sendSuccess(w, map[string]string{
+		"status":  "success",
+		"message": "Inscription and associated wish deleted",
+		"id":      id,
+	})
 }
 
 // BlockHandler handles block-related requests
@@ -1142,24 +1288,56 @@ func computeStegoImageURL(contractID string) string {
 func contractToInscriptionRequest(contract sc.Contract) models.InscriptionRequest {
 	// Use persisted stego image URL or compute fallback
 	imageURL := contract.StegoImageURL
+
+	// Normalize relative paths from block monitor (e.g. "images/filename.png")
+	if imageURL != "" && !strings.HasPrefix(imageURL, "/") && !strings.HasPrefix(imageURL, "http") {
+		if contract.ConfirmedBlockHeight != nil {
+			filename := filepath.Base(imageURL)
+			imageURL = fmt.Sprintf("/api/block-image/%d/%s", *contract.ConfirmedBlockHeight, filename)
+		}
+	}
+
 	if imageURL == "" {
 		imageURL = computeStegoImageURL(contract.ContractID)
 	}
 
 	// Convert timestamp to Unix if available
 	var timestamp int64
-	if contract.GoalsCount > 0 { // Contract has some data
+	if contract.ConfirmedAt != nil {
+		timestamp = contract.ConfirmedAt.Unix()
+	} else if !contract.CreatedAt.IsZero() {
+		timestamp = contract.CreatedAt.Unix()
+	} else if contract.GoalsCount > 0 { // Contract has some data
 		timestamp = time.Now().Unix() // Use current time as fallback
 	}
 
+	height := int64(0)
+	if contract.ConfirmedBlockHeight != nil {
+		height = int64(*contract.ConfirmedBlockHeight)
+	}
+
+	// Determine TXID: use confirmed_txid for confirmed contracts, otherwise TBD
+	txID := "TBD"
+	if contract.Status == "confirmed" && contract.Metadata != nil {
+		if v, ok := contract.Metadata["confirmed_txid"].(string); ok && v != "" {
+			txID = v
+		} else if v, ok := contract.Metadata["funding_txid"].(string); ok && v != "" {
+			txID = v
+		}
+	}
+
 	return models.InscriptionRequest{
-		ID:        contract.ContractID,
-		Text:      contract.Title,
-		ImageData: imageURL,
-		Price:     0,  // No price in contract model
-		Address:   "", // No address in contract model
-		Timestamp: timestamp,
-		Status:    contract.Status,
+		ID:              contract.ContractID,
+		TXID:            txID,
+		Text:            contract.Title,
+		ImageData:       imageURL,
+		Price:           float64(contract.TotalBudgetSats) / 1e8,
+		Address:         "", // No address in contract model
+		Timestamp:       timestamp,
+		Status:          contract.Status,
+		BlockHeight:     height,
+		TotalBudgetSats: contract.TotalBudgetSats,
+		AvailableTasks:  contract.AvailableTasksCount,
 	}
 }
 
@@ -1207,21 +1385,55 @@ func (h *SmartContractHandler) InvalidateContractCache() {
 	}
 }
 
-// HandleGetContracts handles getting all smart contracts
+// HandleGetContracts handles getting smart contracts with support for filtering and pagination
 func (h *SmartContractHandler) HandleGetContracts(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		h.sendError(w, http.StatusMethodNotAllowed, "Method not allowed")
 		return
 	}
 
-	// Skip cache - go directly to database for consistency
-	// Build filter from query parameters
-	filter := sc.ContractFilter{}
+	// Parse pagination parameters
+	limit := 100 // larger default for sidebar/full views
+	if lim := r.URL.Query().Get("limit"); lim != "" {
+		if parsed, err := strconv.Atoi(lim); err == nil && parsed > 0 && parsed <= 500 {
+			limit = parsed
+		}
+	}
+
+	// Build filter
+	filter := sc.ContractFilter{
+		Limit:              limit,
+		OrderByConfirmedAt: true,
+	}
+
 	if status := r.URL.Query().Get("status"); status != "" {
 		filter.Status = status
 	}
 
-	// Query mcp_contracts table directly
+	if skills := r.URL.Query().Get("skills"); skills != "" {
+		filter.Skills = strings.Split(skills, ",")
+	}
+
+	// Parse cursor_height for pagination
+	if cursor := r.URL.Query().Get("cursor_height"); cursor != "" && cursor != "*" {
+		if parsed, err := strconv.Atoi(cursor); err == nil && parsed > 0 {
+			filter.CursorHeight = &parsed
+		}
+	}
+
+	// Parse cursor_date for pagination
+	if cursorDate := r.URL.Query().Get("cursor_date"); cursorDate != "" {
+		if parsed, err := time.Parse(time.RFC3339, cursorDate); err == nil {
+			filter.CursorDate = &parsed
+		}
+	}
+
+	// Parse cursor_type
+	if cursorType := r.URL.Query().Get("cursor_type"); cursorType != "" {
+		filter.CursorType = cursorType
+	}
+
+	// Query database
 	contracts, err := h.store.ListContracts(filter)
 	if err != nil {
 		log.Printf("Failed to get contracts: %v", err)
@@ -1229,19 +1441,75 @@ func (h *SmartContractHandler) HandleGetContracts(w http.ResponseWriter, r *http
 		return
 	}
 
-	// Convert results
+	// Convert results to inscriptions for frontend compatibility
 	var inscriptions []models.InscriptionRequest
+	ingestionMap := make(map[string]services.IngestionRecord)
+
+	// Pre-fetch ingestion records in batch if service is available
+	if h.ingestion != nil && len(contracts) > 0 {
+		var ingestionIDs []string
+		for _, c := range contracts {
+			id := strings.TrimPrefix(c.ContractID, "wish-")
+			ingestionIDs = append(ingestionIDs, id)
+		}
+		if recs, err := h.ingestion.ListByIDs(ingestionIDs); err == nil {
+			for _, rec := range recs {
+				ingestionMap[rec.ID] = rec
+			}
+		}
+	}
+
 	for _, contract := range contracts {
 		inscription := contractToInscriptionRequest(contract)
+
+		// Enrich with ingestion data from pre-fetched map
+		ingestionID := strings.TrimPrefix(contract.ContractID, "wish-")
+		if rec, ok := ingestionMap[ingestionID]; ok {
+			if wishText, ok := rec.Metadata["message"].(string); ok && wishText != "" {
+				inscription.Text = wishText
+			} else if wishText, ok := rec.Metadata["embedded_message"].(string); ok && wishText != "" {
+				inscription.Text = wishText
+			}
+			if vph, ok := rec.Metadata["visible_pixel_hash"].(string); ok && vph != "" {
+				inscription.VisiblePixelHash = vph
+			}
+			if inscription.Timestamp == 0 || inscription.Timestamp == time.Now().Unix() {
+				inscription.Timestamp = rec.CreatedAt.Unix()
+			}
+		}
+
 		inscriptions = append(inscriptions, inscription)
 	}
 
-	response := models.PendingTransactionsResponse{
-		Transactions: inscriptions,
-		Total:        len(inscriptions),
+	// Determine next cursors for pagination
+	nextCursor := ""
+	nextCursorDate := ""
+	hasMore := false
+	if len(contracts) > 0 {
+		lastContract := contracts[len(contracts)-1]
+		if lastContract.ConfirmedBlockHeight != nil && *lastContract.ConfirmedBlockHeight > 0 {
+			nextCursor = fmt.Sprintf("%d", *lastContract.ConfirmedBlockHeight)
+			hasMore = true
+		}
+		if lastContract.ConfirmedAt != nil {
+			nextCursorDate = lastContract.ConfirmedAt.Format(time.RFC3339)
+			hasMore = true
+		}
 	}
-	h.sendSuccess(w, response)
 
+	// Build response matching frontend expectations
+	response := map[string]interface{}{
+		"contracts":        inscriptions,
+		"transactions":     inscriptions, // for backward compatibility
+		"total":            len(inscriptions),
+		"limit":            limit,
+		"next_cursor":      nextCursor,
+		"next_cursor_date": nextCursorDate,
+		"has_more":         hasMore,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	h.sendSuccess(w, response)
 }
 
 // HandleCreateContract handles creating a new smart contract
@@ -1297,16 +1565,23 @@ type SearchHandler struct {
 	inscriptionService *services.InscriptionService
 	blockService       *services.BlockService
 	dataStorage        storage.ExtendedDataStorage
+	store              scmiddleware.Store
 }
 
 // NewSearchHandler creates a new search handler
-func NewSearchHandler(inscriptionService *services.InscriptionService, blockService *services.BlockService, dataStorage storage.ExtendedDataStorage) *SearchHandler {
+func NewSearchHandler(inscriptionService *services.InscriptionService, blockService *services.BlockService, dataStorage storage.ExtendedDataStorage, store scmiddleware.Store) *SearchHandler {
 	return &SearchHandler{
 		BaseHandler:        NewBaseHandler(),
 		inscriptionService: inscriptionService,
 		blockService:       blockService,
 		dataStorage:        dataStorage,
+		store:              store,
 	}
+}
+
+// SetStore sets the smart contract store for searching proposals and contracts
+func (h *SearchHandler) SetStore(store scmiddleware.Store) {
+	h.store = store
 }
 
 // HandleSearch handles search requests
@@ -1335,30 +1610,30 @@ func (h *SearchHandler) recentBlocksResponse(query string) models.SearchResult {
 	if len(result.Inscriptions) > 5 {
 		result.Inscriptions = result.Inscriptions[:5]
 	}
+	if len(result.Transactions) > 5 {
+		result.Transactions = result.Transactions[:5]
+	}
+	if len(result.Contracts) > 5 {
+		result.Contracts = result.Contracts[:5]
+	}
+	if len(result.Proposals) > 5 {
+		result.Proposals = result.Proposals[:5]
+	}
 	return result
 }
 
 func (h *SearchHandler) searchData(query string) models.SearchResult {
 	q := strings.ToLower(strings.TrimSpace(query))
-	var blocks []interface{}
-	var inscriptions []models.InscriptionRequest
-	var contracts []models.SmartContractImage
+	var blocks []models.SearchResultItem
+	var inscriptions []models.SearchResultItem
+	var transactions []models.SearchResultItem
+	var contracts []models.SearchResultItem
+	var proposals []models.SearchResultItem
+	seenBlocks := make(map[string]bool)
 	seenInscriptions := make(map[string]bool)
+	seenTransactions := make(map[string]bool)
 	seenContracts := make(map[string]bool)
-
-	addInscription := func(id, text string, ts int64) {
-		if id == "" || seenInscriptions[id] {
-			return
-		}
-		seenInscriptions[id] = true
-		inscriptions = append(inscriptions, models.InscriptionRequest{
-			ID:        id,
-			Status:    "confirmed",
-			Text:      text,
-			Price:     0,
-			Timestamp: ts,
-		})
-	}
+	seenProposals := make(map[string]bool)
 
 	matchesQuery := func(values ...string) bool {
 		if q == "" {
@@ -1421,18 +1696,95 @@ func (h *SearchHandler) searchData(query string) models.SearchResult {
 		return txids
 	}
 
-	addContract := func(id string, height int64, imageURL string, contractType string, visibleHash string, meta map[string]any) {
+	addBlock := func(id string, height int64, timestamp int64, txCount int) {
+		if id == "" || seenBlocks[id] || seenBlocks[fmt.Sprintf("%d", height)] {
+			return
+		}
+		seenBlocks[id] = true
+		seenBlocks[fmt.Sprintf("%d", height)] = true
+		blocks = append(blocks, models.SearchResultItem{
+			Type:        "block",
+			ID:          id,
+			BlockHeight: height,
+			Timestamp:   timestamp,
+			TxCount:     txCount,
+		})
+	}
+
+	addInscription := func(id, text string, ts int64, blockHeight int64) {
+		if id == "" || seenInscriptions[id] {
+			return
+		}
+		seenInscriptions[id] = true
+		inscriptions = append(inscriptions, models.SearchResultItem{
+			Type:        "inscription",
+			ID:          id,
+			Text:        text,
+			Timestamp:   ts,
+			BlockHeight: blockHeight,
+			Status:      "confirmed",
+		})
+	}
+
+	addTransaction := func(id, text string, ts int64, blockHeight int64) {
+		if id == "" || seenTransactions[id] {
+			return
+		}
+		seenTransactions[id] = true
+		transactions = append(transactions, models.SearchResultItem{
+			Type:        "transaction",
+			ID:          id,
+			Text:        text,
+			Timestamp:   ts,
+			BlockHeight: blockHeight,
+			Status:      "confirmed",
+		})
+	}
+
+	addContract := func(id string, height int64, imageURL string, contractType string, visibleHash string, meta map[string]any, title string, budgetSats int64, status string, confirmedBlockHeight *int) {
 		if id == "" || seenContracts[id] {
 			return
 		}
 		seenContracts[id] = true
-		contracts = append(contracts, models.SmartContractImage{
-			ContractID:       id,
-			BlockHeight:      height,
-			StegoImage:       imageURL,
-			ContractType:     contractType,
+
+		// Determine TXID based on status: use confirmed_txid/funding_txid for confirmed contracts, TBD otherwise
+		txID := "TBD"
+		if status == "confirmed" {
+			if txID = metaString(meta, "confirmed_txid"); txID == "" {
+				txID = metaString(meta, "funding_txid")
+			}
+		}
+
+		contracts = append(contracts, models.SearchResultItem{
+			Type:                 "contract",
+			ID:                   id,
+			TXID:                 txID,
+			ContractID:           id,
+			BlockHeight:          height,
+			ConfirmedBlockHeight: confirmedBlockHeight,
+			Title:                title,
+			VisiblePixelHash:     visibleHash,
+			BudgetSats:           budgetSats,
+			Metadata:             meta,
+			Status:               status,
+			StegoImageURL:        imageURL,
+		})
+	}
+
+	addProposal := func(id, title string, status string, budgetSats int64, createdAt time.Time, visibleHash string) {
+		if id == "" || seenProposals[id] {
+			return
+		}
+		seenProposals[id] = true
+		proposals = append(proposals, models.SearchResultItem{
+			Type:             "proposal",
+			ID:               id,
+			ProposalID:       id,
+			Title:            title,
+			Status:           status,
+			BudgetSats:       budgetSats,
+			Timestamp:        createdAt.Unix(),
 			VisiblePixelHash: visibleHash,
-			Metadata:         meta,
 		})
 	}
 
@@ -1441,21 +1793,16 @@ func (h *SearchHandler) searchData(query string) models.SearchResult {
 			for _, b := range recent {
 				if cache, ok := b.(*storage.BlockDataCache); ok {
 					if matchesQuery(cache.BlockHash, fmt.Sprintf("%d", cache.BlockHeight)) {
-						blocks = append(blocks, map[string]interface{}{
-							"id":        cache.BlockHash,
-							"height":    cache.BlockHeight,
-							"timestamp": cache.Timestamp,
-							"tx_count":  cache.TxCount,
-						})
+						addBlock(cache.BlockHash, cache.BlockHeight, cache.Timestamp, cache.TxCount)
 					}
 					for _, ins := range cache.Inscriptions {
 						if matchesQuery(ins.TxID, ins.FileName, ins.FilePath, ins.Content, ins.ContentType) {
-							addInscription(ins.TxID, ins.Content, cache.Timestamp)
+							addInscription(ins.TxID, ins.Content, cache.Timestamp, cache.BlockHeight)
 						}
 					}
 					for _, img := range cache.Images {
 						if matchesQuery(img.TxID, img.FileName, img.FilePath, img.ContentType) {
-							addInscription(img.TxID, "", cache.Timestamp)
+							addTransaction(img.TxID, "", cache.Timestamp, cache.BlockHeight)
 						}
 					}
 					for _, sc := range cache.SmartContracts {
@@ -1517,8 +1864,14 @@ func (h *SearchHandler) searchData(query string) models.SearchResult {
 							metaString(meta, "image_path"),
 							text,
 						) {
-							addInscription(id, text, cache.Timestamp)
-							addContract(id, cache.BlockHeight, imageURL, "Smart Contract", visibleHash, meta)
+							addTransaction(id, text, cache.Timestamp, cache.BlockHeight)
+							// Extract confirmed_block_height from metadata if available
+							var confirmedHeight *int
+							if h, ok := meta["confirmed_block_height"].(float64); ok {
+								hInt := int(h)
+								confirmedHeight = &hInt
+							}
+							addContract(id, cache.BlockHeight, imageURL, "Smart Contract", visibleHash, meta, "", 0, metaString(meta, "confirmation_status"), confirmedHeight)
 						}
 					}
 				}
@@ -1530,28 +1883,62 @@ func (h *SearchHandler) searchData(query string) models.SearchResult {
 	if len(blocks) == 0 {
 		if svcBlocks, err := h.blockService.SearchBlocks(query); err == nil {
 			for _, b := range svcBlocks {
-				blocks = append(blocks, b)
+				if m, ok := b.(map[string]interface{}); ok {
+					height, _ := m["height"].(int64)
+					if height == 0 {
+						if f, ok := m["height"].(float64); ok {
+							height = int64(f)
+						}
+					}
+					addBlock(fmt.Sprintf("%v", m["id"]), height, 0, 0)
+				}
 			}
 		}
 	}
-	if len(inscriptions) == 0 {
+	if len(inscriptions) == 0 && len(transactions) == 0 {
 		if svcInscriptions, err := h.inscriptionService.SearchInscriptions(query); err == nil {
 			for _, ins := range svcInscriptions {
-				inscriptions = append(inscriptions, models.InscriptionRequest{
-					ID:        ins.ID,
-					Text:      ins.Text,
-					Price:     ins.Price,
-					Timestamp: ins.Timestamp,
-					Status:    ins.Status,
-				})
+				addInscription(ins.ID, ins.Text, ins.Timestamp, 0)
+			}
+		}
+	}
+
+	// Search contracts from Store
+	if h.store != nil {
+		contractList, err := h.store.ListContracts(sc.ContractFilter{})
+		if err == nil {
+			for _, c := range contractList {
+				if matchesQuery(c.ContractID, c.Title, strings.Join(c.Skills, " ")) {
+					blockHeight := int64(0)
+					if c.ConfirmedBlockHeight != nil {
+						blockHeight = int64(*c.ConfirmedBlockHeight)
+					}
+					// Extract visible_pixel_hash from contract_id (format: wish-{hash})
+					visibleHash := ""
+					if strings.HasPrefix(c.ContractID, "wish-") {
+						visibleHash = strings.TrimPrefix(c.ContractID, "wish-")
+					}
+					addContract(c.ContractID, blockHeight, c.StegoImageURL, "Smart Contract", visibleHash, c.Metadata, c.Title, c.TotalBudgetSats, c.Status, c.ConfirmedBlockHeight)
+				}
+			}
+		}
+	}
+
+	proposalList, err := h.store.ListProposals(context.Background(), sc.ProposalFilter{})
+	if err == nil {
+		for _, p := range proposalList {
+			if matchesQuery(p.ID, p.Title, p.DescriptionMD, p.VisiblePixelHash, p.Status) {
+				addProposal(p.ID, p.Title, p.Status, p.BudgetSats, p.CreatedAt, p.VisiblePixelHash)
 			}
 		}
 	}
 
 	return models.SearchResult{
 		Inscriptions: inscriptions,
+		Transactions: transactions,
 		Blocks:       blocks,
 		Contracts:    contracts,
+		Proposals:    proposals,
 	}
 }
 
@@ -1670,6 +2057,10 @@ func publishPendingIngestAnnouncement(ingestionID, visibleHash, filename, method
 	if !ipfsIngestSyncEnabled() {
 		return
 	}
+	if !ipfs.IsEnabled() {
+		log.Printf("pending ingest announce: IPFS disabled, skipping for %s", ingestionID)
+		return
+	}
 	if strings.TrimSpace(ingestionID) == "" || len(imgBytes) == 0 {
 		return
 	}
@@ -1716,7 +2107,8 @@ func publishPendingIngestAnnouncement(ingestionID, visibleHash, filename, method
 }
 
 func ipfsIngestSyncEnabled() bool {
-	return strings.EqualFold(strings.TrimSpace(os.Getenv("IPFS_INGEST_SYNC_ENABLED")), "true")
+	// Match loadIPFSIngestSyncConfig: enabled by default unless explicitly false.
+	return !strings.EqualFold(strings.TrimSpace(os.Getenv("IPFS_INGEST_SYNC_ENABLED")), "false")
 }
 
 func (h *InscriptionHandler) updateContractID(oldHash, newContractID string) {

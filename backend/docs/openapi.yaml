@@ -36,21 +36,37 @@ paths:
           description: Array of inscription metadata.
   /api/inscribe:
     post:
-      summary: Create a new inscription request
+      summary: Create a new inscription (or wish/proposal)
+      description: |
+        Accepts application/json. For native stego or proxy to external starlight.
+        Fields: message (required), image_base64 (optional), method (default alpha), price (optional).
+        Returns the inscribed result or ingestion ID.
       requestBody:
+        required: true
         content:
-          multipart/form-data:
+          application/json:
             schema:
               type: object
+              required: ["message"]
               properties:
-                file:
+                message:
                   type: string
-                  format: binary
-                text:
+                  description: The message or wish text to inscribe/embed.
+                image_base64:
                   type: string
+                  description: Optional base64 image data (if not provided uses placeholder).
+                method:
+                  type: string
+                  description: Stego method (alpha is only supported for inscription).
+                  default: "alpha"
+                price:
+                  type: string
+                  description: Optional price in BTC/sats.
       responses:
         '200':
-          description: Created inscription payload.
+          description: Inscription result or created wish/proposal reference.
+        '400':
+          description: Bad request (e.g. non-JSON or missing message).
   /api/open-contracts:
     get:
       summary: Pending inscriptions
@@ -103,7 +119,7 @@ paths:
           description: Scan queued/executed.
   /api/search:
     get:
-      summary: Search inscriptions/blocks
+      summary: Search inscriptions, transactions, blocks, contracts, and proposals
       parameters:
         - in: query
           name: q
@@ -112,7 +128,37 @@ paths:
             type: string
       responses:
         '200':
-          description: Search results.
+          description: Search results with typed result items.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  data:
+                    type: object
+                    properties:
+                      inscriptions:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/SearchResultItem'
+                      transactions:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/SearchResultItem'
+                      blocks:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/SearchResultItem'
+                      contracts:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/SearchResultItem'
+                      proposals:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/SearchResultItem'
   /api/qrcode:
     get:
       summary: Generate QR code
@@ -169,7 +215,7 @@ paths:
             schema:
               type: object
               properties:
-                transactionId:
+                transaction_id:
                   type: string
       responses:
         '200':
@@ -226,6 +272,53 @@ components:
       name: X-API-Key
       description: API key for MCP authentication (set via MCP_API_KEY environment variable)
   schemas:
+    SearchResultItem:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [inscription, transaction, block, contract, proposal]
+          description: Type of search result
+        id:
+          type: string
+          description: Unique identifier
+        title:
+          type: string
+          description: Display title (for contracts/proposals)
+        block_height:
+          type: integer
+          format: int64
+          description: Block height for navigation
+        contract_id:
+          type: string
+          description: Contract ID (for contract type)
+        proposal_id:
+          type: string
+          description: Proposal ID (for proposal type)
+        status:
+          type: string
+          description: Status of the item
+        timestamp:
+          type: integer
+          format: int64
+          description: Unix timestamp
+        text:
+          type: string
+          description: Text content (for inscriptions/transactions)
+        visible_pixel_hash:
+          type: string
+          description: Visible pixel hash (for contracts/proposals)
+        budget_sats:
+          type: integer
+          format: int64
+          description: Budget in satoshis (for contracts/proposals)
+        tx_count:
+          type: integer
+          description: Transaction count (for blocks)
+        metadata:
+          type: object
+          additionalProperties: true
+          description: Additional metadata
     Contract:
       type: object
       properties:
@@ -437,27 +530,8 @@ components:
         created_at:
           type: string
           format: date-time
-  # MCP API Endpoints
-  /healthz:
-    get:
-      tags:
-        - MCP API
-        - Health
-      summary: Check MCP server health
-      description: Returns health status of the MCP (Machine Control Protocol) server
-      operationId: getMCPHealth
-      responses:
-        '200':
-          description: MCP server is healthy
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  status:
-                    type: string
-                    example: "ok"
-  /mcp/v1/contracts:
+  # MCP API Endpoints (note: /healthz is alias for /api/health in smart contract server; documented under paths for validity)
+  /api/smart_contract/contracts:
     get:
       tags:
         - MCP API
@@ -493,7 +567,7 @@ components:
                   total_count:
                     type: integer
                     example: 10
-  /mcp/v1/contracts/{contract_id}:
+  /api/smart_contract/contracts/{contract_id}:
     get:
       tags:
         - MCP API
@@ -517,7 +591,7 @@ components:
             application/json:
               schema:
                 $ref: '#/components/schemas/Contract'
-  /mcp/v1/contracts/{contract_id}/funding:
+  /api/smart_contract/contracts/{contract_id}/funding:
     get:
       tags:
         - MCP API
@@ -548,7 +622,7 @@ components:
                     type: array
                     items:
                       $ref: '#/components/schemas/MerkleProof'
-  /mcp/v1/tasks:
+  /api/smart_contract/tasks:
     get:
       tags:
         - MCP API
@@ -621,7 +695,7 @@ components:
                     type: array
                     items:
                       $ref: '#/components/schemas/Submission'
-  /mcp/v1/tasks/{task_id}:
+  /api/smart_contract/tasks/{task_id}:
     get:
       tags:
         - MCP API
@@ -645,7 +719,7 @@ components:
             application/json:
               schema:
                 $ref: '#/components/schemas/Task'
-  /mcp/v1/tasks/{task_id}/claim:
+  /api/smart_contract/tasks/{task_id}/claim:
     post:
       tags:
         - MCP API
@@ -696,7 +770,7 @@ components:
                   message:
                     type: string
                     example: "Task reserved. Submit work before expiration."
-  /mcp/v1/skills:
+  /api/smart_contract/skills:
     get:
       tags:
         - MCP API
@@ -722,7 +796,7 @@ components:
                   count:
                     type: integer
                     example: 4
-  /mcp/v1/proposals:
+  /api/smart_contract/proposals:
     get:
       tags:
         - MCP API
@@ -831,7 +905,7 @@ components:
                     type: string
                   message:
                     type: string
-  /mcp/v1/events:
+  /api/smart_contract/events:
     get:
       tags:
         - MCP API

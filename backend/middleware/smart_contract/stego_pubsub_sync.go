@@ -5,14 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
-	"net/http"
-	"net/url"
 	"os"
 	"strconv"
 	"strings"
 	"time"
+
+	"stargate-backend/storage/ipfs"
 )
 
 type stegoPubsubConfig struct {
@@ -20,6 +19,7 @@ type stegoPubsubConfig struct {
 	Topic    string
 	APIURL   string
 	Interval time.Duration
+	Issuer   string
 }
 
 type stegoPubsubState struct {
@@ -36,22 +36,11 @@ func StartStegoPubsubSync(ctx context.Context, server *Server) error {
 		log.Printf("stego pubsub sync disabled")
 		return nil
 	}
-	log.Printf("stego pubsub sync enabled: topic=%s, api_url=%s", cfg.Topic, cfg.APIURL)
+	log.Printf("stego pubsub sync enabled: topic=%s", cfg.Topic)
 	state := &stegoPubsubState{lastSeen: make(map[string]int64)}
-	// Configure HTTP client for long-lived streaming connections
-	streamClient := &http.Client{
-		Timeout: 0, // No timeout for streaming connections
-		Transport: &http.Transport{
-			IdleConnTimeout:       90 * time.Second,
-			DisableKeepAlives:     false,
-			MaxIdleConnsPerHost:   1,
-			TLSHandshakeTimeout:   10 * time.Second,
-			ResponseHeaderTimeout: 10 * time.Second,
-		},
-	}
 	go func() {
 		for {
-			if err := stegoPubsubSubscribe(ctx, server, cfg, state, streamClient); err != nil {
+			if err := stegoPubsubSubscribe(ctx, server, cfg, state); err != nil {
 				if ctx.Err() != nil {
 					log.Printf("stego pubsub sync stopped: %v", err)
 					return
@@ -75,77 +64,94 @@ func loadStegoPubsubConfig() stegoPubsubConfig {
 			interval = time.Duration(v) * time.Second
 		}
 	}
-	apiURL := strings.TrimSpace(os.Getenv("IPFS_API_URL"))
-	if apiURL == "" {
-		apiURL = "http://127.0.0.1:5001"
-	}
 	topic := strings.TrimSpace(os.Getenv("IPFS_STEGO_TOPIC"))
 	if topic == "" {
 		topic = "stargate-stego"
 	}
+
+	if enabled {
+		client := ipfs.NewClientFromEnv()
+		if client == nil {
+			enabled = false
+		} else {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			if err := client.CheckNode(ctx); err != nil {
+				log.Printf("stego pubsub sync: local IPFS node not reachable (%v), disabling pubsub sync", err)
+				enabled = false
+			}
+		}
+	}
+
+	issuer := strings.TrimSpace(os.Getenv("STARGATE_STEGO_ISSUER"))
+	if issuer == "" {
+		issuer = strings.TrimSpace(os.Getenv("STARGATE_INSTANCE_ID"))
+	}
+	if issuer == "" {
+		if host, err := os.Hostname(); err == nil && strings.TrimSpace(host) != "" {
+			issuer = host
+		} else {
+			issuer = "stargate"
+		}
+	}
+
 	return stegoPubsubConfig{
 		Enabled:  enabled,
 		Topic:    topic,
-		APIURL:   apiURL,
+		APIURL:   "",
 		Interval: interval,
+		Issuer:   issuer,
 	}
 }
 
-func stegoPubsubSubscribe(ctx context.Context, server *Server, cfg stegoPubsubConfig, state *stegoPubsubState, streamClient *http.Client) error {
-	reqURL := fmt.Sprintf("%s/api/v0/pubsub/sub?arg=%s", strings.TrimRight(cfg.APIURL, "/"), url.QueryEscape(multibaseEncodeString(cfg.Topic)))
-	log.Printf("stego pubsub subscribing to: %s", reqURL)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, nil)
+func stegoPubsubSubscribe(ctx context.Context, server *Server, cfg stegoPubsubConfig, state *stegoPubsubState) error {
+	client := ipfs.NewClientFromEnv()
+	if client == nil {
+		return fmt.Errorf("IPFS client not available")
+	}
+
+	ch, err := client.PubsubSubscribe(ctx, cfg.Topic)
 	if err != nil {
-		log.Printf("stego pubsub request creation failed: %v", err)
+		log.Printf("stego pubsub subscribe failed: %v", err)
 		return err
 	}
+	log.Printf("stego pubsub subscribed to %s, waiting for messages...", cfg.Topic)
 
-	resp, err := streamClient.Do(req)
-	if err != nil {
-		log.Printf("stego pubsub HTTP request failed: %v", err)
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		if len(body) == 0 {
-			log.Printf("stego pubsub subscribe failed (no body): %s", resp.Status)
-			return fmt.Errorf("pubsub subscribe failed: %s", resp.Status)
-		}
-		log.Printf("stego pubsub subscribe failed: %s: %s", resp.Status, strings.TrimSpace(string(body)))
-		return fmt.Errorf("pubsub subscribe failed: %s: %s", resp.Status, strings.TrimSpace(string(body)))
-	}
-
-	log.Printf("stego pubsub subscribe successful, waiting for messages...")
-	decoder := json.NewDecoder(resp.Body)
 	for {
-		var msg pubsubMessage
-		if err := decoder.Decode(&msg); err != nil {
-			log.Printf("stego pubsub decoder error: %v", err)
-			return err
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case msg, ok := <-ch:
+			if !ok {
+				return fmt.Errorf("pubsub channel closed")
+			}
+			announcement, err := parseStegoAnnouncement(string(msg))
+			if err != nil {
+				log.Printf("stego pubsub decode failed: %v", err)
+				continue
+			}
+			if announcement == nil || strings.TrimSpace(announcement.StegoCID) == "" {
+				continue
+			}
+			// Skip self-published announcements to prevent self-echo reconciliation
+			if strings.TrimSpace(announcement.Issuer) != "" && announcement.Issuer == cfg.Issuer {
+				log.Printf("stego pubsub: skipping self-published announcement (issuer=%s)", announcement.Issuer)
+				continue
+			}
+			seenAt := announcement.Timestamp
+			if seenAt <= 0 {
+				seenAt = time.Now().Unix()
+			}
+			if last, ok := state.lastSeen[announcement.StegoCID]; ok && seenAt <= last {
+				continue
+			}
+			if err := server.ReconcileStegoWithAnnouncement(ctx, announcement); err != nil {
+				log.Printf("stego pubsub reconcile failed for %s: %v", announcement.StegoCID, err)
+				continue
+			}
+			state.lastSeen[announcement.StegoCID] = seenAt
+			log.Printf("stego pubsub reconciled: stego_cid=%s", announcement.StegoCID)
 		}
-		announcement, err := parseStegoAnnouncement(msg.Data)
-		if err != nil {
-			log.Printf("stego pubsub decode failed: %v", err)
-			continue
-		}
-		if announcement == nil || strings.TrimSpace(announcement.StegoCID) == "" {
-			continue
-		}
-		seenAt := announcement.Timestamp
-		if seenAt <= 0 {
-			seenAt = time.Now().Unix()
-		}
-		if last, ok := state.lastSeen[announcement.StegoCID]; ok && seenAt <= last {
-			continue
-		}
-		if err := server.ReconcileStegoWithAnnouncement(ctx, announcement); err != nil {
-			log.Printf("stego pubsub reconcile failed for %s: %v", announcement.StegoCID, err)
-			continue
-		}
-		state.lastSeen[announcement.StegoCID] = seenAt
-		log.Printf("stego pubsub reconciled: stego_cid=%s", announcement.StegoCID)
 	}
 }
 

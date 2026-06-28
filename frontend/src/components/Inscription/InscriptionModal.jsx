@@ -2,18 +2,18 @@ import React, { useLayoutEffect, useState, useEffect, useMemo, useCallback } fro
 import { X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import CopyButton from '../Common/CopyButton';
-import ConfidenceIndicator from '../Common/ConfidenceIndicator';
 import SafeQrCodeCanvas from '../Common/SafeQrCodeCanvas';
 import DeliverablesReview from '../Review/DeliverablesReview';
 import { API_BASE } from '../../apiBase';
+import { apiFetch } from '../../utils/api';
 import { useAuth } from '../../context/AuthContext';
 
 // QR version 40-L max byte capacity (base64 uses byte mode).
 const QR_BYTE_LIMIT = 2953;
 
-const InscriptionModal = ({ inscription, onClose }) => {
+const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
   const { auth } = useAuth();
-  const [activeTab, setActiveTab] = useState('overview');
+  const [activeTab, setActiveTab] = useState(initialTab);
   const [monoContent, setMonoContent] = useState(true);
   const [network, setNetwork] = useState(
     inscription?.metadata?.network ||
@@ -36,6 +36,7 @@ const InscriptionModal = ({ inscription, onClose }) => {
     pixelHash: '',
     budgetSats: '',
     feeRate: '1',
+    changeAddress: '',
     contractId: '',
     taskId: '',
     includeDonation: true,
@@ -58,6 +59,11 @@ const InscriptionModal = ({ inscription, onClose }) => {
   const refreshIntervalRef = React.useRef(null);
   const scrollContainerRef = React.useRef(null);
   const deliverablesScrollRef = React.useRef(0);
+  const [reworkRequests, setReworkRequests] = useState([]);
+  const [isLoadingRework, setIsLoadingRework] = useState(false);
+  const [showReworkForm, setShowReworkForm] = useState(false);
+  const [reworkNotes, setReworkNotes] = useState('');
+  const [isSubmittingRework, setIsSubmittingRework] = useState(false);
 
   const guessNetworkFromAddress = (addr) => {
     const a = (addr || '').trim().toLowerCase();
@@ -83,7 +89,7 @@ const InscriptionModal = ({ inscription, onClose }) => {
 
     const fetchNetwork = async () => {
       try {
-        const response = await fetch(`${API_BASE}/bitcoin/v1/health`);
+        const response = await apiFetch('/bitcoin/v1/health');
         if (response.ok) {
           const data = await response.json();
           if (!walletGuess) {
@@ -263,8 +269,8 @@ const InscriptionModal = ({ inscription, onClose }) => {
     if (stegoPayload) {
       return JSON.stringify(stegoPayload, null, 2);
     }
-    return inscription?.metadata?.extracted_message || '';
-  }, [stegoPayload, inscription?.metadata?.extracted_message]);
+    return scanMessage || inscription?.metadata?.extracted_message || '';
+  }, [stegoPayload, scanMessage, inscription?.metadata?.extracted_message]);
 
   const inscriptionMessage = parsedPayload?.message || inscriptionMessageRaw;
   const inscriptionAddress = parsedPayload?.address ?? inscriptionAddressRaw;
@@ -387,6 +393,9 @@ const InscriptionModal = ({ inscription, onClose }) => {
     fundDepositAddress,
   ]);
   const textContent = inscriptionMessage || '';
+  const pixelHash = inscription.metadata?.visible_pixel_hash || 
+                   selectedTask?.merkle_proof?.visible_pixel_hash || 
+                   '';
   const confidenceValue = Number(inscription.metadata?.confidence || 0);
   const confidencePercent = Math.round(confidenceValue * 100);
   const confirmationStatus = (inscription.metadata?.confirmation_status || inscription.confirmation_status || '').toLowerCase();
@@ -417,13 +426,35 @@ const InscriptionModal = ({ inscription, onClose }) => {
   const isContractLocked = isConfirmedContract || isFundingConfirmed || hasFundingTxId;
   const normalizeAddress = (value) => (value || '').trim().toLowerCase();
   
+  const mime = (inscription.mime_type || '').toLowerCase();
+  const fileName = (inscription.file_name || '').toLowerCase();
+  const url = (inscription.image_url || inscription.thumbnail || '').toLowerCase();
+  const urlLooksLikeTextFile = url.endsWith('.txt');
+
+  const isObviouslyText = mime.startsWith('text/') ||
+                          mime.includes('json') ||
+                          fileName.endsWith('.json') ||
+                          fileName.endsWith('.txt') ||
+                          fileName.endsWith('.bitmap') ||
+                          fileName.endsWith('.md') ||
+                          fileName.includes('brc-20') ||
+                          fileName.includes('brc20');
+
+  const isBlockImage = url.includes('/block-image/');
+  const hasContentUrl = !!url && !urlLooksLikeTextFile;
+  // Same heuristic as the hide filter and card: attempt the large image in the modal
+  // for real visuals, but not for obvious text items.
+  const isImageByMimeOrName =
+    mime.includes('image') ||
+    ['jpeg', 'jpg', 'png', 'gif', 'webp', 'avif', 'bmp', 'svg'].includes(mime) ||
+    fileName.endsWith('.jpeg') || fileName.endsWith('.jpg') || fileName.endsWith('.png') ||
+    fileName.endsWith('.gif') || fileName.endsWith('.webp') || fileName.endsWith('.avif') ||
+    fileName.endsWith('.bmp') || fileName.endsWith('.svg');
   const isActuallyImageFile =
-    inscription.mime_type?.includes('image') &&
-    !inscription.image_url?.endsWith('.txt') &&
-    (inscription.image_url || inscription.thumbnail);
+    (isImageByMimeOrName || isBlockImage || (hasContentUrl && !isObviouslyText)) &&
+    !urlLooksLikeTextFile;
   const modalImageSource = isActuallyImageFile ? (inscription.thumbnail || inscription.image_url) : null;
   const scanImageSource = modalImageSource || inscription.image_url || inscription.thumbnail || '';
-  const mime = (inscription.mime_type || '').toLowerCase();
   const isHtmlContent = mime.includes('text/html') || mime.includes('application/xhtml');
   const isSvgContent = mime === 'image/svg+xml' || (mime.includes('svg') && mime.includes('xml'));
   const sandboxSrc = inscription.image_url || inscription.thumbnail;
@@ -436,7 +467,7 @@ const InscriptionModal = ({ inscription, onClose }) => {
         ...(options.headers || {}),
         ...(auth.apiKey ? { 'X-API-Key': auth.apiKey } : {}),
       };
-      return await fetch(url, { ...options, headers, signal: controller.signal });
+      return await apiFetch(url, { ...options, headers, signal: controller.signal });
     } finally {
       clearTimeout(timer);
     }
@@ -495,8 +526,16 @@ const InscriptionModal = ({ inscription, onClose }) => {
           throw new Error(`image fetch failed: ${imageRes.status}`);
         }
         const blob = await imageRes.blob();
+        
+        // Align filename extension with actual MIME type
+        let extension = 'png';
+        if (blob.type === 'image/jpeg') extension = 'jpg';
+        else if (blob.type === 'image/gif') extension = 'gif';
+        else if (blob.type === 'image/webp') extension = 'webp';
+        else if (blob.type === 'image/bmp') extension = 'bmp';
+        
         const form = new FormData();
-        form.append('image', blob, 'stego.png');
+        form.append('image', blob, `stego.${extension}`);
         const scanRes = await fetchWithTimeout(`${API_BASE}/bitcoin/v1/extract`, { method: 'POST', body: form }, 15000);
         if (!scanRes.ok) {
           throw new Error(`scan failed: ${scanRes.status}`);
@@ -526,23 +565,64 @@ const InscriptionModal = ({ inscription, onClose }) => {
 
   const loadProposals = React.useCallback(async (options = {}) => {
     const { showLoading = false } = options;
-    if (!auth.apiKey || authBlocked || !contractCandidates.length) return;
+    if (authBlocked || !contractCandidates.length) return;
     lastFetchedKeyRef.current = contractKey;
     if (showLoading) {
       setIsLoadingProposals(true);
     }
     setProposalError('');
     try {
-      const res = await fetchWithTimeout(`${API_BASE}/api/smart_contract/proposals`, {}, 6000);
-      if (res.status === 401 || res.status === 403) {
+      const results = await Promise.all(
+        contractCandidates.map(async (contractId) => {
+          try {
+            const res = await fetchWithTimeout(
+              `${API_BASE}/api/smart_contract/proposals?contract_id=${encodeURIComponent(contractId)}`,
+              {},
+              6000
+            );
+            if (res.status === 401 || res.status === 403) return { status: res.status };
+            if (!res.ok) return { error: res.status };
+            return await res.json();
+          } catch (e) {
+            return { error: e.message };
+          }
+        })
+      );
+
+      // Check for auth blocks
+      if (results.some((r) => r.status === 401 || r.status === 403)) {
         setAuthBlocked(true);
         setProposalItems([]);
         setSubmissions({});
         return;
       }
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      let items = (data?.proposals || []).filter((p) => {
+
+      // Merge results
+      const allProposals = [];
+      const allSubmissionsList = [];
+
+      results.forEach((data) => {
+        if (data && !data.error && !data.status) {
+          if (Array.isArray(data.proposals)) {
+            allProposals.push(...data.proposals);
+          }
+          if (Array.isArray(data.submissions)) {
+            allSubmissionsList.push(...data.submissions);
+          } else if (data.submissions) {
+            allSubmissionsList.push(...Object.values(data.submissions));
+          }
+        }
+      });
+
+      // Deduplicate proposals
+      const uniqueProposals = new Map();
+      allProposals.forEach((p) => {
+        if (!uniqueProposals.has(p.id)) {
+          uniqueProposals.set(p.id, p);
+        }
+      });
+
+      let items = Array.from(uniqueProposals.values()).filter((p) => {
         const tasks = Array.isArray(p.tasks) ? p.tasks : [];
         const suggested = Array.isArray(p.metadata?.suggested_tasks) ? p.metadata.suggested_tasks : [];
         const hasMatchingTasks = [...tasks, ...suggested].some((t) => contractCandidates.includes(t.contract_id));
@@ -551,11 +631,17 @@ const InscriptionModal = ({ inscription, onClose }) => {
         const ingestMatch = p.metadata?.ingestion_id && contractCandidates.includes(p.metadata.ingestion_id);
         return idMatch || hasMatchingTasks || metaContract || ingestMatch;
       });
+
       // Create comprehensive submission mapping with all IDs
       const submissionsByKey = {};
-      const submissionList = Array.isArray(data?.submissions)
-        ? data.submissions
-        : Object.values(data?.submissions || {});
+      const uniqueSubmissions = new Map();
+      allSubmissionsList.forEach((s) => {
+        if (!uniqueSubmissions.has(s.submission_id)) {
+          uniqueSubmissions.set(s.submission_id, s);
+        }
+      });
+      const submissionList = Array.from(uniqueSubmissions.values());
+
       const submissionTime = (submission) => {
         const raw = submission?.submitted_at || submission?.created_at;
         const parsed = Date.parse(raw || '');
@@ -677,7 +763,6 @@ const InscriptionModal = ({ inscription, onClose }) => {
       }
     }
   }, [
-    auth.apiKey,
     authBlocked,
     contractCandidates,
     contractKey,
@@ -692,7 +777,7 @@ const InscriptionModal = ({ inscription, onClose }) => {
   ]);
 
   const loadSubmissions = React.useCallback(async () => {
-    if (!auth.apiKey || authBlocked || !contractCandidates.length) return;
+    if (authBlocked || !contractCandidates.length) return;
     try {
       const submissionsPromises = contractCandidates.map(async (contractId) => {
         const res = await fetchWithTimeout(`${API_BASE}/api/smart_contract/submissions?contract_id=${contractId}`, {}, 6000);
@@ -747,10 +832,10 @@ const InscriptionModal = ({ inscription, onClose }) => {
     } catch (err) {
       console.error('Failed to load submissions:', err);
     }
-  }, [auth.apiKey, authBlocked, contractCandidates, fetchWithTimeout]);
+  }, [authBlocked, contractCandidates, fetchWithTimeout]);
 
   useEffect(() => {
-    if (!auth.apiKey || authBlocked) {
+    if (authBlocked) {
       setProposalItems([]);
       setSubmissions({});
       return undefined;
@@ -778,6 +863,32 @@ const InscriptionModal = ({ inscription, onClose }) => {
       deliverablesScrollRef.current = node.scrollTop;
     };
   }, [activeTab, proposalItems, submissionsList]);
+
+  useEffect(() => {
+    if (activeTab !== 'rework') return;
+    if (!auth.apiKey) {
+      setReworkRequests([]);
+      return;
+    }
+    const fetchReworkRequests = async () => {
+      setIsLoadingRework(true);
+      try {
+        const res = await apiFetch(
+          `/api/smart_contract/contracts/${inscription.id}/rework`,
+          { headers: { 'X-API-Key': auth.apiKey } }
+        );
+        if (res.ok) {
+          const data = await res.json();
+          setReworkRequests(data.rework_requests || []);
+        }
+      } catch (err) {
+        console.error('Failed to fetch rework requests:', err);
+      } finally {
+        setIsLoadingRework(false);
+      }
+    };
+    fetchReworkRequests();
+  }, [activeTab, auth.apiKey, inscription.id]);
 
   const getSubmissionTimestamp = (submission) => {
     const raw = submission?.submitted_at || submission?.created_at;
@@ -912,9 +1023,10 @@ const InscriptionModal = ({ inscription, onClose }) => {
         payouts: payouts.length > 0 ? payouts : undefined,
         budget_sats: targetBudget || undefined,
         fee_rate_sats_vb: feeRate,
+        change_address: !isRaiseFund && psbtForm.changeAddress?.trim() ? psbtForm.changeAddress.trim() : undefined,
         split_psbt: isRaiseFund ? true : undefined,
       };
-      const res = await fetch(`${API_BASE}/api/smart_contract/contracts/${contractId}/psbt`, {
+      const res = await apiFetch(`/api/smart_contract/contracts/${contractId}/psbt`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -988,106 +1100,90 @@ const InscriptionModal = ({ inscription, onClose }) => {
     }
   };
 
-  const markdownContent = `# Steganographic Smart Contract Analysis
-
-## Contract Identity
-- **Contract ID**: \`${inscription.contract_id || inscription.id}\`
-- **Block Height**: ${inscription.block_height || inscription.genesis_block_height || 'Unknown'}
-- **Transaction ID**: \`${inscription.metadata?.transaction_id || 'Not available'}\`
-- **Deployment Date**: ${inscription.metadata?.created_at ? new Date(inscription.metadata.created_at * 1000).toLocaleDateString() : 'Unknown'}
-
-## Technical Architecture
-- **Contract Type**: ${inscription.contract_type || inscription.contractType || 'Steganographic'}
-- **Protocol Layer**: ${inscription.protocol || 'BRC-20'}
-- **Data Capability**: ${inscription.capability || 'Data Storage & Concealment'}
-- **MIME Type**: ${inscription.mime_type || 'Unknown'}
-
-## Steganographic Specifications
-- **Detection Method**: ${inscription.metadata?.detection_method || 'AI-Powered Analysis'}
-- **Steganography Type**: ${inscription.metadata?.stego_type || 'Unknown'}
-- **Confidence Level**: ${inscription.metadata?.confidence ? Math.round(inscription.metadata.confidence * 100) + '%' : 'N/A'}
-- **Probability Score**: ${inscription.metadata?.stego_probability ? Math.round(inscription.metadata.stego_probability * 100) + '%' : 'N/A'}
-
-## Media Properties
-- **Image Format**: ${inscription.metadata?.image_format || 'Unknown'}
-- **File Size**: ${inscription.metadata?.image_size ? (inscription.metadata.image_size / 1024).toFixed(2) + ' KB' : 'Unknown'}
-- **Image Index**: ${inscription.metadata?.image_index || 'Unknown'}
-- **Encoding Method**: ${inscription.metadata?.stego_type || 'Analysis Required'}
-
-## Extracted Intelligence
-${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extracted_message}\n\`\`\`` : 'No hidden message detected'}
-
-## Blockchain Integration
-- **Block Hash**: \`${inscription.metadata?.block_hash || 'Unknown'}\`
-- **Network**: Bitcoin Mainnet
-- **Consensus**: Proof of Work
-- **Timestamp**: ${inscription.metadata?.created_at ? new Date(inscription.metadata.created_at * 1000).toISOString() : 'Unknown'}
-
----
-
-*Analysis performed by Steganography Detection System*`;
-
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white dark:bg-gray-800 rounded-lg lg:max-w-7xl w-full h-full lg:w-[95vw] lg:mx-4 lg:min-h-[80vh] lg:max-h-[85vh] overflow-hidden flex flex-col shadow-2xl">
-        <div className="sticky top-0 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 p-4 lg:p-6 flex-shrink-0">
-          <div className="flex justify-between items-center">
-            <h2 className="text-lg lg:text-xl font-bold text-black dark:text-white">Smart Contract Details</h2>
-            <button onClick={onClose} className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200">
-              <X className="w-6 h-6" />
-            </button>
-          </div>
+    <div className="modal-backdrop">
+      <div className="modal-container">
+        <div className="modal-header">
+          <h2 className="text-lg lg:text-xl font-bold">Smart Contract Details</h2>
+          <button onClick={onClose} className="btn-icon">
+            <X className="w-6 h-6" />
+          </button>
         </div>
 
-        <div
-          className="p-4 flex-1 overflow-y-auto overflow-x-auto"
-          data-deliverables-scroll
-          ref={scrollContainerRef}
-        >
-            <div className="flex flex-col items-center lg:flex-row lg:items-start gap-6 mb-6">
-              <div className="flex-shrink-0">
-                {modalImageSource ? (
+        <div className="modal-content" data-deliverables-scroll ref={scrollContainerRef}>
+          <div className="flex flex-col items-start lg:flex-row gap-6 mb-6">
+            <div className="flex-shrink-0">
+              {pixelHash ? (
+                <a 
+                  href={`/sandbox/${pixelHash}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block hover:opacity-80 transition-opacity cursor-pointer"
+                  title="View details in separate page"
+                >
+                  {modalImageSource ? (
+                    <div className="relative">
+                      <img
+                        src={modalImageSource}
+                        alt={inscription.file_name || inscription.id}
+                        className="modal-identity-image"
+                      />
+                      {confidencePercent > 0 && (
+                        <div className="badge badge-success absolute top-2 right-2">
+                          {confidencePercent}%
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="modal-identity-image modal-placeholder flex items-center justify-center">
+                      <div className="text-6xl text-center">
+                        {inscription.contract_type === 'Steganographic Contract' ? '🎨' :
+                         (inscription.mime_type || '').toLowerCase().includes('text') ? '📄' :
+                         (inscription.mime_type || '').toLowerCase().includes('image') ? '🖼️' : '📦'}
+                      </div>
+                    </div>
+                  )}
+                </a>
+              ) : (
+                modalImageSource ? (
                   <div className="relative">
                     <img
                       src={modalImageSource}
                       alt={inscription.file_name || inscription.id}
-                      className="w-48 h-48 object-cover rounded-lg border-2 border-gray-300 dark:border-gray-700"
+                      className="modal-identity-image"
                     />
                     {confidencePercent > 0 && (
-                      <div className="absolute top-2 right-2 bg-green-500 text-white text-xs px-2 py-1 rounded-md font-bold">
+                      <div className="badge badge-success absolute top-2 right-2">
                         {confidencePercent}%
                       </div>
                     )}
                   </div>
                 ) : (
-                  <div className="w-48 h-48 bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-700 dark:to-gray-800 rounded-lg flex items-center justify-center border-2 border-gray-300 dark:border-gray-700">
+                  <div className="modal-identity-image modal-placeholder flex items-center justify-center">
                     <div className="text-6xl text-center">
                       {inscription.contract_type === 'Steganographic Contract' ? '🎨' :
-                       inscription.mime_type?.includes('text') ? '📄' :
-                       inscription.mime_type?.includes('image') ? '🖼️' : '📦'}
+                       (inscription.mime_type || '').toLowerCase().includes('text') ? '📄' :
+                       (inscription.mime_type || '').toLowerCase().includes('image') ? '🖼️' : '📦'}
                     </div>
                   </div>
-                )}
-              </div>
+                )
+              )}
+            </div>
 
-              <div className="flex-1 w-full">
-              <div className="border-b border-gray-200 dark:border-gray-700 mb-6">
-                <div className="flex gap-6 overflow-x-auto no-scrollbar">
-{[
-  { id: 'overview', label: 'Details', icon: '📋' },
-  { id: 'content', label: 'Content', icon: '📄' },
-  { id: 'proposals', label: 'Proposals', icon: '🗂️' },
-  { id: 'deliverables', label: 'Deliverables', icon: '✅' },
-  { id: 'blockchain', label: 'Blockchain', icon: '⛓️' }
-].map((tab) => (
+            <div className="flex-1 w-full">
+              <div className="mb-6">
+                <div className="modal-tabs">
+                  {[
+                    { id: 'content', label: 'Details', icon: '📋' },
+                    { id: 'proposals', label: 'Proposals', icon: '🗂️' },
+                    { id: 'deliverables', label: 'Deliverables', icon: '✅' },
+                    { id: 'rework', label: 'Rework', icon: '🔧' },
+                    { id: 'blockchain', label: 'Blockchain', icon: '⛓️' }
+                  ].map((tab) => (
                     <button
                       key={tab.id}
                       onClick={() => setActiveTab(tab.id)}
-                      className={`px-4 py-2 font-medium text-sm border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap ${
-                        activeTab === tab.id
-                          ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400'
-                          : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
-                      }`}
+                      className={`modal-tab ${activeTab === tab.id ? 'active' : ''}`}
                     >
                       <span>{tab.icon}</span>
                       {tab.label}
@@ -1097,89 +1193,40 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
               </div>
 
 
-              {activeTab === 'overview' && (
+              {activeTab === 'content' && (
                 <div className="space-y-6">
-                  <div>
-                    <h4 className="text-lg font-semibold text-black dark:text-white mb-3 flex items-center gap-2">
-                      <span className="w-2 h-2 bg-purple-500 rounded-full"></span>
-                      Identity
-                    </h4>
-                    <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4 space-y-3">
-                      <div className="space-y-2">
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="flex items-start gap-2">
-                            <span className="text-gray-600 dark:text-gray-400 text-sm whitespace-nowrap">Transaction ID:</span>
-                            <span className="text-black dark:text-white font-mono text-xs break-all leading-tight">{inscription.metadata?.transaction_id || inscription.id}</span>
-                          </div>
-                          <CopyButton text={inscription.metadata?.transaction_id || inscription.id} />
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-4">
-                        <div className="flex items-center gap-2">
-                          <span className="text-gray-600 dark:text-gray-400 text-sm">Block Height:</span>
-                          <span className="text-black dark:text-white font-semibold">{inscription.block_height || inscription.genesis_block_height || 'Unknown'}</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-gray-600 dark:text-gray-400 text-sm">Type:</span>
-                          <span className="text-black dark:text-white font-semibold">{inscription.mime_type?.split('/')[1]?.toUpperCase() || 'UNKNOWN'}</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div>
-                    <h4 className="text-lg font-semibold text-black dark:text-white mb-3 flex items-center gap-2">
-                      <span className="w-2 h-2 bg-blue-500 rounded-full"></span>
-                      File Information
-                    </h4>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-3 overflow-hidden">
-                        <div className="text-gray-600 dark:text-gray-400 text-xs mb-1">File Name</div>
-                        <div className="text-black dark:text-white font-semibold break-words">{inscription.file_name || 'N/A'}</div>
-                      </div>
-                      <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
-                        <div className="text-gray-600 dark:text-gray-400 text-xs mb-1">File Size</div>
-                        <div className="text-black dark:text-white font-semibold">{inscription.size_bytes ? `${(inscription.size_bytes / 1024).toFixed(2)} KB` : 'Unknown'}</div>
-                      </div>
-                      <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
-                        <div className="text-gray-600 dark:text-gray-400 text-xs mb-1">Content Type</div>
-                        <div className="text-black dark:text-white font-semibold">{inscription.mime_type || 'Unknown'}</div>
-                      </div>
-                      <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
-                        <div className="text-gray-600 dark:text-gray-400 text-xs mb-1">Contract Type</div>
-                        <div className="text-black dark:text-white font-semibold">{inscription.contract_type || 'Standard'}</div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {inscription.metadata?.is_stego && (
+                  {pixelHash && (
                     <div>
-                      <h4 className="text-lg font-semibold text-black dark:text-white mb-3 flex items-center gap-2">
-                        <span className="w-2 h-2 bg-yellow-500 rounded-full"></span>
-                        Steganographic Analysis
+                      <h4 className="modal-section-title">
+                        <span className="modal-section-dot green"></span>
+                        Contract Details
                       </h4>
-                      <div className="bg-yellow-50 dark:bg-yellow-900 border border-yellow-200 dark:border-yellow-700 rounded-lg p-4">
-                        <div className="grid grid-cols-2 gap-4">
-                          <div className="bg-white dark:bg-gray-800 rounded-lg p-3">
-                            <div className="text-yellow-700 dark:text-yellow-300 text-xs mb-1">Detection Status</div>
-                            <div className="text-yellow-900 dark:text-yellow-100 font-semibold">Steganography Detected</div>
-                          </div>
-                          <div className="bg-white dark:bg-gray-800 rounded-lg p-3">
-                            <div className="text-yellow-700 dark:text-yellow-300 text-xs mb-1">Confidence Level</div>
-                            <div className="text-yellow-900 dark:text-yellow-100 font-semibold">
-                              {confidencePercent > 0 ? `${confidencePercent}%` : 'N/A'}
+                      <div className="modal-text-box">
+                        <div className="flex flex-col gap-3">
+                          <div className="flex flex-col gap-1">
+                            <div className="flex items-center justify-between">
+                              <span className="modal-data-label">Contract ID</span>
+                              <CopyButton text={inscription.contract_id || inscription.id} />
                             </div>
+                            <span className="font-mono text-sm text-primary break-all">{inscription.contract_id || inscription.id}</span>
                           </div>
-                          {inscription.metadata.stego_type && (
-                            <div className="bg-white dark:bg-gray-800 rounded-lg p-3">
-                              <div className="text-yellow-700 dark:text-yellow-300 text-xs mb-1">Method</div>
-                              <div className="text-yellow-900 dark:text-yellow-100 font-semibold">{inscription.metadata.stego_type.toUpperCase()}</div>
+                          <div className="flex flex-col gap-1">
+                            <div className="flex items-center justify-between">
+                              <span className="modal-data-label">Visible Pixel Hash</span>
+                              <CopyButton text={pixelHash} />
+                            </div>
+                            <span className="font-mono text-sm text-primary break-all">{pixelHash}</span>
+                          </div>
+                          {inscription.status && (
+                            <div className="flex flex-col gap-1">
+                              <span className="modal-data-label">Status</span>
+                              <span className="text-primary">{inscription.status}</span>
                             </div>
                           )}
-                          {inscription.metadata.extracted_message && (
-                            <div className="bg-white dark:bg-gray-800 rounded-lg p-3">
-                              <div className="text-yellow-700 dark:text-yellow-300 text-xs mb-1">Hidden Message</div>
-                              <div className="text-yellow-900 dark:text-yellow-100 font-semibold">Available</div>
+                          {inscription.block_height > 0 && (
+                            <div className="flex flex-col gap-1">
+                              <span className="modal-data-label">Block Height</span>
+                              <a href={`/block/${inscription.block_height}`} className="text-primary hover:underline cursor-pointer">{inscription.block_height}</a>
                             </div>
                           )}
                         </div>
@@ -1191,40 +1238,37 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
 
               {activeTab === 'proposals' && (
                 <div className="space-y-4">
-                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <div className="modal-proposals-header">
                     <div>
-                      <h4 className="text-lg font-semibold text-black dark:text-white">Proposals for this contract</h4>
-                      <p className="text-sm text-gray-500 dark:text-gray-400">Tasks and budgets attached to this smart contract.</p>
+                      <h4 className="modal-proposals-title">Proposals for this contract</h4>
+                      <p className="modal-proposals-subtitle">Tasks and budgets attached to this smart contract.</p>
                     </div>
                     <button
                       onClick={() => loadProposals({ showLoading: true })}
                       disabled={isLoadingProposals}
-                      className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-full border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-60"
+                      className="modal-proposals-refresh"
                     >
                       <span className="text-xs">↻</span>
                       {isLoadingProposals ? 'Refreshing…' : 'Refresh'}
                     </button>
                   </div>
-                  {proposalError && <div className="text-sm text-red-500">{proposalError}</div>}
+                  {proposalError && <div className="modal-data-label">{proposalError}</div>}
                   {isLoadingProposals ? (
-                    <div className="text-sm text-gray-500 dark:text-gray-400">Loading proposals...</div>
+                    <div className="modal-data-label">Loading proposals...</div>
                   ) : proposalItems.length === 0 ? (
-                    <div className="text-sm text-gray-500 dark:text-gray-400">No proposals found for this contract.</div>
+                    <div className="modal-data-label">No proposals found for this contract.</div>
                   ) : (
                     proposalItems.map((p) => {
                       const tasks = Array.isArray(p.tasks) && p.tasks.length > 0
                         ? p.tasks
                         : (Array.isArray(p.metadata?.suggested_tasks) ? p.metadata.suggested_tasks : []);
                       const totalTaskBudget = tasks.reduce((sum, t) => sum + (t.budget_sats || 0), 0);
-                      // Gracefully show human text when description_md/title are JSON blobs
                       const prettyTitle = (() => {
                         if (typeof p.title === 'string') {
                           try {
                             const o = JSON.parse(p.title);
                             if (o?.message) return o.message;
-                          } catch {
-                            // Ignore invalid JSON payloads.
-                          }
+                          } catch { /* not JSON */ }
                         }
                         return p.title;
                       })();
@@ -1233,70 +1277,61 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                           try {
                             const o = JSON.parse(p.description_md);
                             if (o?.message) return o.message;
-                          } catch {
-                            // Ignore invalid JSON payloads.
-                          }
+                          } catch { /* not JSON */ }
                         }
                         return p.description_md;
                       })();
+                      const isApproved = (p.status || '').toLowerCase() === 'approved';
                       return (
-                        <div key={p.id} className="border border-gray-200 dark:border-gray-700 rounded-lg p-3 bg-gray-50 dark:bg-gray-900/60">
-                          <div className="flex justify-between items-center mb-1">
-                            <h5 className="text-base font-semibold text-black dark:text-white">{prettyTitle}</h5>
-                            <span className={`text-xs px-2 py-0.5 rounded border ${
-                              (p.status || '').toLowerCase() === 'approved'
-                                ? 'bg-emerald-100 dark:bg-emerald-900/40 border-emerald-400 text-emerald-700 dark:text-emerald-200'
-                                : 'bg-gray-200 dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200'
-                            }`}>
+                        <div key={p.id} className="modal-proposal-card">
+                          <div className="modal-proposal-header">
+                            <h5 className="modal-proposal-title">{prettyTitle}</h5>
+                            <span className={`modal-proposal-status ${isApproved ? 'approved' : 'default'}`}>
                               {p.status || 'pending'}
                             </span>
                           </div>
-                          <div className="text-xs text-gray-500 dark:text-gray-400 mb-2 break-all">ID: {p.id}</div>
-                          <div className="text-sm text-gray-800 dark:text-gray-200 whitespace-pre-line mb-3">
+                          <div className="modal-proposal-id">ID: {p.id}</div>
+                          <div className="modal-proposal-desc">
                             {prettyDesc}
                           </div>
-                          <div className="grid grid-cols-2 gap-2 text-sm text-gray-600 dark:text-gray-300 mb-3">
+                          <div className="modal-proposal-meta">
                             <div>Budget: {p.budget_sats || totalTaskBudget || 0} sats</div>
                             <div>Tasks: {tasks.length}</div>
                             {p.visible_pixel_hash && (
-                              <div className="col-span-2 break-all text-xs text-gray-500 dark:text-gray-400">
+                              <div className="modal-proposal-hash">
                                 Evidence hash: {p.visible_pixel_hash}
                               </div>
                             )}
                           </div>
                           {tasks.length > 0 && (
-                            <div className="bg-gray-100 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded p-2">
-                              <div className="text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">Tasks (with status)</div>
-                              <ul className="text-sm text-gray-700 dark:text-gray-200 list-disc pl-4 space-y-1">
+                            <div className="modal-tasks-box">
+                              <div className="modal-tasks-title">Tasks (with status)</div>
+                              <ul className="list-disc pl-4 space-y-1">
                                 {tasks.map((t) => {
                                   const submission = getLatestSubmissionByTask(t.task_id)
                                     || submissions[t.task_id]
                                     || (t.active_claim_id ? submissions[t.active_claim_id] : null);
                                   const status = (submission?.status || t.status || 'pending').toLowerCase();
-                                  const statusClasses = status === 'approved'
-                                    ? 'bg-emerald-100 dark:bg-emerald-900/40 border-emerald-400 text-emerald-700 dark:text-emerald-200'
-                                    : status === 'available'
-                                      ? 'bg-blue-100 dark:bg-blue-900/40 border-blue-400 text-blue-700 dark:text-blue-200'
-                                      : 'bg-amber-100 dark:bg-amber-900/40 border-amber-400 text-amber-800 dark:text-amber-200';
+                                  const statusClass = status === 'approved' ? 'approved' : status === 'available' ? 'available' : 'pending';
                                   return (
-                                    <li key={t.task_id || t.title} className="flex items-center gap-2 flex-wrap">
+                                    <li key={t.task_id || t.title} className="modal-task-item">
                                       <span className="font-semibold">{t.title}</span>
-                                      {t.budget_sats ? <span className="text-gray-600 dark:text-gray-300">— {t.budget_sats} sats</span> : null}
-                                      <span className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] border ${statusClasses}`}>
+                                      {t.budget_sats ? <span>— {t.budget_sats} sats</span> : null}
+                                      <span className={`modal-task-status ${statusClass}`}>
                                         {status}
                                       </span>
                                       {t.contractor_wallet && (
-                                        <span className="text-[11px] text-gray-500 dark:text-gray-400 font-mono">
+                                        <span className="modal-task-wallet">
                                           • payout: {t.contractor_wallet}
                                         </span>
                                       )}
                                       {Array.isArray(t.skills || t.skills_required) && (t.skills || t.skills_required).length > 0 && (
-                                        <span className="text-[11px] text-gray-500 dark:text-gray-400">
+                                        <span className="modal-task-skills">
                                           • {(t.skills || t.skills_required).join(', ')}
                                         </span>
                                       )}
                                       {submission && (
-                                        <span className="text-[11px] text-emerald-600 dark:text-emerald-300">
+                                        <span className="modal-task-submission">
                                           • submission: {submission.status || 'pending'} {submission.completion_proof?.link ? `(${submission.completion_proof.link})` : ''}
                                         </span>
                                       )}
@@ -1306,13 +1341,13 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                               </ul>
                             </div>
                           )}
-                          <div className="flex justify-end mt-3">
+                          <div className="modal-proposal-actions">
                             {(() => {
                               const statusLower = (p.status || '').toLowerCase();
                               const isFinal = ['approved', 'published'].includes(statusLower);
                               if (isFinal) {
                                 return (
-                                  <span className="text-xs text-emerald-600 dark:text-emerald-300 font-semibold">
+                                  <span className="modal-approved-label">
                                     Approved
                                   </span>
                                 );
@@ -1321,7 +1356,7 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                                 <button
                                   onClick={() => approveProposal(p.id, false)}
                                   disabled={approvingId === p.id}
-                                  className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-sm disabled:opacity-60"
+                                  className="modal-btn-approve"
                                 >
                                   {approvingId === p.id ? 'Processing…' : 'Approve'}
                                 </button>
@@ -1338,18 +1373,18 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
               {activeTab === 'deliverables' && (
                 <div className="space-y-4">
                   {isContractLocked ? null : !auth.apiKey || authBlocked ? (
-                    <div className="text-sm text-gray-500 dark:text-gray-400">
+                    <div className="modal-data-label">
                       Payout tools are unavailable for this session.
                     </div>
                   ) : !approvedProposal ? (
-                    <div className="text-sm text-gray-500 dark:text-gray-400">Approve a proposal to unlock deliverables.</div>
+                    <div className="modal-data-label">Approve a proposal to unlock deliverables.</div>
                   ) : deliverableTasks.length === 0 ? (
-                    <div className="text-sm text-gray-500 dark:text-gray-400">No deliverables available yet.</div>
+                    <div className="modal-data-label">No deliverables available yet.</div>
                   ) : (
-                  <div className="border border-gray-200 dark:border-gray-800 rounded-lg p-4 bg-white dark:bg-gray-900">
-                    <div className="flex items-start justify-between gap-3 flex-wrap">
+                  <div className="modal-deliverables-card">
+                    <div className="modal-deliverables-header">
                       <div>
-                        <h4 className="text-base font-semibold text-black dark:text-white">Publish & Build PSBT</h4>
+                        <h4 className="modal-deliverables-title">Publish & Build PSBT</h4>
                       </div>
                       <button
                         onClick={publishAndBuild}
@@ -1374,73 +1409,54 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                             : payoutList.length === 0 && !payoutWallet;
                           return psbtLoading || !auth.wallet || !approvedProposal || missingPayout || noTasks || fundingMismatch;
                         })()}
-                        className="px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-sm disabled:opacity-60"
-                        title={(() => {
-                          if (!auth.wallet) return 'Sign in with funding API key first';
-                          const fundingWallet =
-                            selectedTask?.merkle_proof?.funding_address ||
-                            inscription.metadata?.funding_address ||
-                            '';
-                          if (
-                            fundingWallet &&
-                            !isPlaceholderAddress(fundingWallet) &&
-                            normalizeAddress(fundingWallet) !== normalizeAddress(auth.wallet)
-                          ) {
-                            return 'Funding wallet does not match signed-in wallet';
-                          }
-                          return '';
-                        })()}
+                        className="modal-deliverables-btn"
                       >
                         {psbtLoading ? 'Building…' : 'Publish & Build'}
                       </button>
                     </div>
                     {!auth.wallet && (
-                      <div className="text-xs text-amber-600 dark:text-amber-400 mt-2">
+                      <div className="modal-deliverables-alert">
                         Sign in with the funder API key (payer wallet) to build the PSBT.
                       </div>
                     )}
                     {psbtTasks.length === 0 && allTasks.length === 0 ? (
-                      <div className="text-sm text-gray-500 dark:text-gray-400 mt-3">No deliverables available yet.</div>
+                      <div className="modal-data-label mt-3">No deliverables available yet.</div>
                     ) : (
-                      <div className="grid md:grid-cols-2 gap-3 text-sm mt-3">
+                      <div className="modal-deliverables-grid text-sm mt-4" style={{ gap: '1rem' }}>
                         <div className="space-y-1">
-                          <label className="text-xs text-gray-500">
+                          <label className="block modal-deliverables-label">
                             {isRaiseFund ? 'Funding target (sum of task budgets)' : 'Budget (sum of proposal tasks)'}
                           </label>
-                          <div className="h-10 px-3 py-2 rounded bg-gray-100 dark:bg-gray-800 font-mono text-xs flex items-center">
+                          <div className="modal-deliverables-box" style={{ minHeight: '2.5rem', padding: '0.5rem 0.75rem', fontFamily: 'monospace', fontSize: '0.7rem' }}>
                             {approvedBudgetsTotal || selectedTask?.budget_sats || 'n/a'} sats
                           </div>
                         </div>
-                        <div className="space-y-2">
-                          <label className="block text-xs text-gray-500">
+                        <div className="space-y-1">
+                          <label className="block modal-deliverables-label">
                             {isRaiseFund ? 'Fund deposit address' : 'Payer address'}
                           </label>
-                          <input
-                            className="w-full h-10 rounded bg-gray-100 dark:bg-gray-800 px-3 py-2 font-mono text-xs text-gray-600 dark:text-gray-300"
-                            placeholder={isRaiseFund ? 'Contract creator address' : 'Funding address'}
-                            value={
-                              isRaiseFund
-                                ? resolvedFundraiserWallet || ''
-                                : auth.wallet || fundDepositAddress || ''
-                            }
-                            readOnly
-                          />
+                          <div
+                            className="modal-deliverables-box"
+                            style={{ minHeight: '2.5rem', padding: '0.5rem 0.75rem', fontFamily: 'monospace', fontSize: '0.7rem' }}
+                          >
+                            {isRaiseFund ? resolvedFundraiserWallet || 'n/a' : auth.wallet || fundDepositAddress || 'n/a'}
+                          </div>
                         </div>
-                        <div className="md:col-span-2 grid sm:grid-cols-2 gap-2">
-                          <label className="flex items-start gap-3 text-xs text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-800 rounded-md px-3 py-2">
+                        <div className="md:col-span-2">
+                          <label className="flex items-start gap-3 modal-deliverables-checkbox-label" style={{ padding: '0.75rem' }}>
                             <input
                               type="checkbox"
-                              className="mt-0.5 h-4 w-4 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500 dark:border-gray-600"
+                              className="modal-deliverables-checkbox"
                               checked={psbtForm.includeDonation}
                               onChange={(e) => setPsbtForm((p) => ({ ...p, includeDonation: e.target.checked }))}
                             />
-                            <span>Donate to Starlight Project to keep lights on</span>
+                            <span style={{ marginTop: '0.125rem' }}>Donate to Starlight Project to keep lights on</span>
                           </label>
                         </div>
-                        <div className="space-y-2 md:col-span-2">
-                          <label className="block text-xs text-gray-500">Fee rate (sat/vB)</label>
+                        <div className="space-y-1 md:col-span-2">
+                          <label className="block modal-deliverables-label">Fee rate (sat/vB)</label>
                           <input
-                            className="w-full h-10 rounded bg-gray-100 dark:bg-gray-800 px-3 py-2"
+                            className="modal-deliverables-input"
                             type="number"
                             min="1"
                             step="1"
@@ -1448,24 +1464,42 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                             onChange={(e) => setPsbtForm((p) => ({ ...p, feeRate: e.target.value }))}
                           />
                         </div>
+                        {!isRaiseFund && (
+                          <div className="space-y-1 md:col-span-2">
+                            <label className="block modal-deliverables-label">Change address</label>
+                            <input
+                              className="modal-deliverables-input"
+                              type="text"
+                              placeholder={auth.wallet || 'Defaults to payer wallet'}
+                              value={psbtForm.changeAddress}
+                              onChange={(e) => setPsbtForm((p) => ({ ...p, changeAddress: e.target.value }))}
+                              spellCheck={false}
+                              autoCapitalize="off"
+                              autoCorrect="off"
+                            />
+                            <div className="modal-deliverables-label">
+                              Leave blank to send change back to the payer wallet.
+                            </div>
+                          </div>
+                        )}
                         <div className="space-y-1 md:col-span-2">
-                          <div className="text-xs text-gray-500">
+                          <div className="modal-deliverables-label">
                             {isRaiseFund
                               ? 'Contributor summary by contractor wallet'
                               : 'Payout summary by contractor wallet'}
                           </div>
-                          <div className="rounded bg-gray-100 dark:bg-gray-800 p-3 space-y-2 min-h-[96px]">
+                          <div className="modal-deliverables-box" style={{ flexDirection: 'column', gap: '0.5rem' }}>
                             {payoutSummaries.map((item) => (
-                              <div key={item.wallet} className="flex items-center justify-between text-xs font-mono text-gray-700 dark:text-gray-300">
-                                <span className="truncate">{item.wallet}</span>
+                              <div key={item.wallet} className="modal-deliverables-row">
+                                <span>{item.wallet}</span>
                                 <span>{item.total} sats</span>
                               </div>
                             ))}
                           </div>
                         </div>
                         <div className="space-y-2 md:col-span-2">
-                          <label className="block text-xs text-gray-500">Contract ID</label>
-                          <div className="w-full rounded bg-gray-100 dark:bg-gray-800 px-3 py-3 min-h-[48px] font-mono text-xs text-gray-500 dark:text-gray-400 flex items-center">
+                          <label className="block modal-deliverables-label">Contract ID</label>
+                          <div className="modal-deliverables-contract">
                             {psbtForm.contractId || primaryContractId || 'n/a'}
                           </div>
                         </div>
@@ -1481,25 +1515,22 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                       if (isRaiseFund && !fundraiserWallet) {
                         return <div className="text-xs text-amber-600 dark:text-amber-400 mt-2">Fundraiser address missing.</div>;
                       }
-                      if (!isRaiseFund && !payoutWallet && payoutList.length === 0) {
-                        return <div className="text-xs text-amber-600 dark:text-amber-400 mt-2">Payout wallet missing.</div>;
-                      }
                       if (!isRaiseFund && payerAddress && payoutList.length === 0 && payoutWallet === payerAddress) {
                         return (
-                          <div className="text-xs text-amber-600 dark:text-amber-400 mt-2">
+                          <div className="modal-deliverables-alert">
                             Payout matches payer wallet—confirm contractor address.
                           </div>
                         );
                       }
                       return null;
                     })()}
-                    {psbtError && <div className="text-sm text-red-500 mt-2">{psbtError}</div>}
+                    {psbtError && <div className="modal-data-label mt-2">{psbtError}</div>}
                     {psbtResult && (() => {
                       const splitPsbts = Array.isArray(psbtResult.psbts) ? psbtResult.psbts : [];
                       if (splitPsbts.length > 0) {
                         return (
-                          <div className="mt-3 space-y-3 bg-gray-50 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700 rounded-lg p-3">
-                            <div className="text-xs text-gray-600 dark:text-gray-300">
+                          <div className="modal-psbt-result">
+                            <div className="modal-psbt-row">
                               Split PSBTs: {splitPsbts.length} contributors
                             </div>
                             {splitPsbts.map((entry, index) => {
@@ -1513,43 +1544,43 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                               const psbtBase64 = entry.psbt_base64 || entry.encodedBase64 || entry.EncodedBase64 || '';
                               const payerAddress = entry.payer_address || 'Unknown';
                               return (
-                                <div key={`${payerAddress}-${index}`} className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-3 space-y-2">
-                                  <div className="text-[11px] text-gray-600 dark:text-gray-300 font-mono break-all">
+                                <div key={`${payerAddress}-${index}`} className="modal-deliverables-card" style={{ padding: '0.75rem' }}>
+                                  <div className="modal-psbt-row" style={{ fontSize: '0.688rem' }}>
                                     Contributor: {payerAddress}
                                   </div>
-                                  <div className="text-xs text-gray-600 dark:text-gray-300 grid grid-cols-[1fr_auto] gap-x-4 gap-y-1 font-mono">
+                                  <div className="modal-psbt-grid">
                                     <div>Inputs selected</div>
-                                    <div className="text-right tabular-nums">{entry.selected_sats} sats</div>
+                                    <div style={{ textAlign: 'right' }}>{entry.selected_sats} sats</div>
                                     <div>Funding target</div>
-                                    <div className="text-right tabular-nums">{entry.budget_sats} sats</div>
+                                    <div style={{ textAlign: 'right' }}>{entry.budget_sats} sats</div>
                                     {entry.commitment_sats && psbtForm.includeDonation ? (
                                       <>
                                         <div>Donation</div>
-                                        <div className="text-right tabular-nums">{entry.commitment_sats} sats</div>
+                                        <div style={{ textAlign: 'right' }}>{entry.commitment_sats} sats</div>
                                       </>
                                     ) : null}
                                     <div>Fee</div>
-                                    <div className="text-right tabular-nums">{entry.fee_sats} sats</div>
+                                    <div style={{ textAlign: 'right' }}>{entry.fee_sats} sats</div>
                                     <div>Change</div>
-                                    <div className="text-right tabular-nums">{entry.change_sats} sats</div>
+                                    <div style={{ textAlign: 'right' }}>{entry.change_sats} sats</div>
                                   </div>
                                   <textarea
-                                    className="w-full rounded bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 font-mono text-xs p-2"
+                                    className="modal-psbt-textarea"
                                     rows={3}
                                     readOnly
                                     value={psbtValue}
                                   />
-                                  <div className="flex gap-2 text-[11px] text-gray-600 dark:text-gray-300 flex-wrap">
+                                  <div className="modal-psbt-actions">
                                     <button
                                       onClick={() => copyToClipboard(psbtValue, `hex-${index}`)}
-                                      className="px-2 py-1 rounded border border-gray-300 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-700"
+                                      className="modal-psbt-copy-btn"
                                     >
                                       {copiedPsbt === `hex-${index}` ? 'Copied hex' : 'Copy hex'}
                                     </button>
                                     {psbtBase64 && (
                                       <button
                                         onClick={() => copyToClipboard(psbtBase64, `b64-${index}`)}
-                                        className="px-2 py-1 rounded border border-gray-300 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-700"
+                                        className="modal-psbt-copy-btn"
                                       >
                                         {copiedPsbt === `b64-${index}` ? 'Copied base64' : 'Copy base64'}
                                       </button>
@@ -1589,6 +1620,7 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                       const changeAmounts = Array.isArray(psbtResult.change_amounts)
                         ? psbtResult.change_amounts
                         : [];
+                      const effectiveChangeAddress = psbtResult.change_address || changeAddresses[0] || '';
                       const payoutAmounts = Array.isArray(psbtResult.payout_amounts)
                         ? psbtResult.payout_amounts
                         : [];
@@ -1596,35 +1628,46 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                         ? (payerAddresses.length > 0 ? payerAddresses.join(', ') : payerAddress)
                         : payerAddress;
                       return (
-                        <div className="mt-3 space-y-2 bg-gray-50 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700 rounded-lg p-3">
-                          <div className="flex gap-2 text-[11px] text-gray-600 dark:text-gray-300 flex-wrap">
-                            <span>{effectiveRaiseFund ? 'Contributors' : 'Payer'}: {payerDisplay}</span>
+                        <div className="modal-psbt-result">
+                          <div className="modal-psbt-row">
+                            <span>
+                              {effectiveRaiseFund ? 'Contributors' : 'Payer'}:{' '}
+                              <span style={payerDisplay === 'Not signed in' ? { color: '#ef4444' } : {}}>
+                                {payerDisplay}
+                              </span>
+                            </span>
                             <span>Network: {psbtResult.network_params || 'testnet4'}</span>
                           </div>
-                          <div className="text-xs text-gray-600 dark:text-gray-300 break-all">
+                          <div className="modal-psbt-row">
                             {effectiveRaiseFund ? 'Fund deposit script' : 'Payout script'}: {psbtResult.payout_script}
                           </div>
-                          <div className="text-xs text-gray-600 dark:text-gray-300 grid grid-cols-[1fr_auto] gap-x-4 gap-y-1 font-mono">
+                          <div className="modal-psbt-grid">
                             <div>{effectiveRaiseFund ? 'Inputs selected' : 'Selected'}</div>
-                            <div className="text-right tabular-nums">{psbtResult.selected_sats} sats</div>
+                            <div style={{ textAlign: 'right' }}>{psbtResult.selected_sats} sats</div>
                             <div>{effectiveRaiseFund ? 'Funding target' : 'Price'}</div>
-                            <div className="text-right tabular-nums">{budgetSats} sats</div>
+                            <div style={{ textAlign: 'right' }}>{budgetSats} sats</div>
                             {psbtResult.commitment_sats && psbtForm.includeDonation ? (
                               <>
                                 <div>Donation</div>
-                                <div className="text-right tabular-nums">{psbtResult.commitment_sats} sats</div>
+                                <div style={{ textAlign: 'right' }}>{psbtResult.commitment_sats} sats</div>
                               </>
                             ) : null}
                             <div>Fee</div>
-                            <div className="text-right tabular-nums">{psbtResult.fee_sats} sats</div>
+                            <div style={{ textAlign: 'right' }}>{psbtResult.fee_sats} sats</div>
                             <div>Change</div>
-                            <div className="text-right tabular-nums">{psbtResult.change_sats} sats</div>
+                            <div style={{ textAlign: 'right' }}>{psbtResult.change_sats} sats</div>
                           </div>
+                          {!effectiveRaiseFund && effectiveChangeAddress && (
+                            <div className="modal-deliverables-card" style={{ padding: '0.5rem', fontSize: '0.688rem' }}>
+                              <div className="modal-deliverables-label" style={{ fontWeight: 600, marginBottom: '0.25rem' }}>Change address</div>
+                              <div style={{ fontFamily: 'monospace', wordBreak: 'break-all' }}>{effectiveChangeAddress}</div>
+                            </div>
+                          )}
                           {effectiveRaiseFund && payoutAmounts.length > 1 && (
-                            <div className="rounded bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 p-2 text-[11px] text-gray-600 dark:text-gray-300 space-y-1">
-                              <div className="font-semibold text-gray-700 dark:text-gray-200">Funding outputs (per task)</div>
+                            <div className="modal-deliverables-card" style={{ padding: '0.5rem', fontSize: '0.688rem' }}>
+                              <div className="modal-deliverables-label" style={{ fontWeight: 600, marginBottom: '0.25rem' }}>Funding outputs (per task)</div>
                               {payoutAmounts.map((amount, index) => (
-                                <div key={`${amount}-${index}`} className="flex items-center justify-between font-mono">
+                                <div key={`${amount}-${index}`} className="modal-deliverables-row">
                                   <span>Output {index + 1}</span>
                                   <span>{amount} sats</span>
                                 </div>
@@ -1632,26 +1675,26 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                             </div>
                           )}
                           {effectiveRaiseFund && changeAddresses.length > 0 && (
-                            <div className="rounded bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 p-2 text-[11px] text-gray-600 dark:text-gray-300 space-y-1">
-                              <div className="font-semibold text-gray-700 dark:text-gray-200">Change outputs (by contributor)</div>
+                            <div className="modal-deliverables-card" style={{ padding: '0.5rem', fontSize: '0.688rem' }}>
+                              <div className="modal-deliverables-label" style={{ fontWeight: 600, marginBottom: '0.25rem' }}>Change outputs (by contributor)</div>
                               {changeAddresses.map((addr, index) => (
-                                <div key={`${addr}-${index}`} className="flex items-center justify-between gap-2 font-mono">
-                                  <span className="truncate">{addr}</span>
+                                <div key={`${addr}-${index}`} className="modal-deliverables-row">
+                                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{addr}</span>
                                   <span>{changeAmounts[index] ?? 0} sats</span>
                                 </div>
                               ))}
                             </div>
                           )}
                           <textarea
-                            className="w-full rounded bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 font-mono text-xs p-2"
+                            className="modal-psbt-textarea"
                             rows={3}
                             readOnly
                             value={psbtValue}
                           />
-                          <div className="flex gap-2 text-[11px] text-gray-600 dark:text-gray-300 flex-wrap">
+                          <div className="modal-psbt-actions">
                             <button
                               onClick={() => copyToClipboard(psbtValue, 'hex')}
-                              className="px-2 py-1 rounded border border-gray-300 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-700"
+                              className="modal-psbt-copy-btn"
                             >
                               {copiedPsbt === 'hex' ? 'Copied hex' : 'Copy hex'}
                             </button>
@@ -1659,13 +1702,13 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                               <>
                                 <button
                                   onClick={() => copyToClipboard(psbtBase64, 'b64')}
-                                  className="px-2 py-1 rounded border border-gray-300 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-700"
+                                  className="modal-psbt-copy-btn"
                                 >
                                   {copiedPsbt === 'b64' ? 'Copied base64' : 'Copy base64'}
                                 </button>
                                 <button
                                   onClick={() => setShowPsbtQr((prev) => !prev)}
-                                  className="px-2 py-1 rounded border border-gray-300 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-700"
+                                  className="modal-psbt-copy-btn"
                                 >
                                   {showPsbtQr ? 'Hide QR' : 'Show QR'}
                                 </button>
@@ -1673,10 +1716,10 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                             )}
                           </div>
                           {showPsbtQr && psbtBase64 && (
-                            <div className="flex justify-center py-2">
-                              <div className="bg-white p-2 rounded">
+                            <div className="modal-qr-container">
+                              <div className="bg-white">
                                 {psbtQrTooLarge ? (
-                                  <div className="text-xs text-amber-600 text-center">
+                                  <div className="modal-qr-warning">
                                     PSBT is too large for a single QR. Copy the base64 instead.
                                   </div>
                                 ) : (
@@ -1753,17 +1796,17 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                     };
 
                     return (
-                      <div className="border border-gray-200 dark:border-gray-800 rounded-lg p-4 bg-white dark:bg-gray-900 space-y-4">
-                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <div className="modal-dashboard-card">
+                        <div className="modal-dashboard-header">
                           <div>
-                            <h4 className="text-base font-semibold text-black dark:text-white">Task Status Dashboard</h4>
-                            <p className="text-xs text-gray-500 dark:text-gray-400">Snapshot of task progress and review queue.</p>
+                            <h4 className="modal-dashboard-title">Task Status Dashboard</h4>
+                            <p className="modal-dashboard-subtitle">Snapshot of task progress and review queue.</p>
                           </div>
-                          <div className="flex items-center gap-2 flex-wrap">
+                          <div className="modal-dashboard-filters">
                             <select
                               value={dashboardFilter}
                               onChange={(e) => setDashboardFilter(e.target.value)}
-                              className="text-xs rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-2 py-1"
+                              className="modal-dashboard-select"
                             >
                               <option value="all">All statuses</option>
                               <option value="available">Available</option>
@@ -1777,7 +1820,7 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                             <select
                               value={dashboardSort}
                               onChange={(e) => setDashboardSort(e.target.value)}
-                              className="text-xs rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-2 py-1"
+                              className="modal-dashboard-select"
                             >
                               <option value="status">Sort by status</option>
                               <option value="title">Sort by title</option>
@@ -1786,65 +1829,65 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                             <button
                               type="button"
                               onClick={exportStatusReport}
-                              className="px-3 py-1.5 text-xs rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
+                              className="modal-dashboard-export-btn"
                             >
                               Export JSON
                             </button>
                           </div>
                         </div>
 
-                        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
-                          <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-3">
-                            <div className="text-gray-500 dark:text-gray-400">Total tasks</div>
-                            <div className="text-lg font-semibold text-black dark:text-white">{counts.total || 0}</div>
+                        <div className="modal-dashboard-stats">
+                          <div className="modal-dashboard-stat total">
+                            <div className="modal-dashboard-stat-label">Total tasks</div>
+                            <div className="modal-dashboard-stat-value">{counts.total || 0}</div>
                           </div>
-                          <div className="bg-emerald-50 dark:bg-emerald-900/40 rounded-lg p-3">
-                            <div className="text-emerald-700 dark:text-emerald-200">Approved</div>
-                            <div className="text-lg font-semibold text-emerald-800 dark:text-emerald-100">{counts.approved || 0}</div>
+                          <div className="modal-dashboard-stat approved">
+                            <div className="modal-dashboard-stat-label">Approved</div>
+                            <div className="modal-dashboard-stat-value">{counts.approved || 0}</div>
                           </div>
-                          <div className="bg-amber-50 dark:bg-amber-900/40 rounded-lg p-3">
-                            <div className="text-amber-700 dark:text-amber-200">Pending review</div>
-                            <div className="text-lg font-semibold text-amber-800 dark:text-amber-100">{pendingReviewCount}</div>
+                          <div className="modal-dashboard-stat pending">
+                            <div className="modal-dashboard-stat-label">Pending review</div>
+                            <div className="modal-dashboard-stat-value">{pendingReviewCount}</div>
                           </div>
-                          <div className="bg-blue-50 dark:bg-blue-900/40 rounded-lg p-3">
-                            <div className="text-blue-700 dark:text-blue-200">Claimed</div>
-                            <div className="text-lg font-semibold text-blue-800 dark:text-blue-100">{counts.claimed || 0}</div>
+                          <div className="modal-dashboard-stat claimed">
+                            <div className="modal-dashboard-stat-label">Claimed</div>
+                            <div className="modal-dashboard-stat-value">{counts.claimed || 0}</div>
                           </div>
                         </div>
 
                         <div>
-                          <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400 mb-2">
+                          <div className="modal-dashboard-progress">
                             <span>Progress</span>
                             <span>{progress}% complete</span>
                           </div>
-                          <div className="w-full h-2 rounded-full bg-gray-200 dark:bg-gray-800 overflow-hidden">
+                          <div className="modal-dashboard-progress-bar">
                             <div
-                              className="h-full bg-emerald-500"
+                              className="modal-dashboard-progress-fill"
                               style={{ width: `${progress}%` }}
                             />
                           </div>
                         </div>
 
                         {pendingReviewCount > 0 && (
-                          <div className="text-xs text-amber-800 dark:text-amber-200 bg-amber-50 dark:bg-amber-900/40 border border-amber-200 dark:border-amber-700 rounded p-2">
+                          <div className="modal-dashboard-alert">
                             {pendingReviewCount} submission{pendingReviewCount === 1 ? '' : 's'} waiting for review.
                           </div>
                         )}
 
-                        <div className="border border-gray-200 dark:border-gray-800 rounded-lg overflow-hidden">
-                          <div className="grid grid-cols-4 gap-2 bg-gray-50 dark:bg-gray-900 text-xs text-gray-500 dark:text-gray-400 px-3 py-2">
+                        <div className="modal-dashboard-table">
+                          <div className="modal-dashboard-table-header">
                             <span>Task</span>
                             <span>Status</span>
                             <span>Budget</span>
                             <span>Last submission</span>
                           </div>
-                          <div className="divide-y divide-gray-200 dark:divide-gray-800 text-xs">
+                          <div className="modal-dashboard-table-body">
                             {sorted.map((row) => (
-                              <div key={row.task.task_id} className="grid grid-cols-4 gap-2 px-3 py-2">
-                                <span className="text-gray-800 dark:text-gray-200 font-semibold truncate">{row.task.title}</span>
-                                <span className="text-gray-600 dark:text-gray-300">{row.displayStatus}</span>
-                                <span className="text-gray-600 dark:text-gray-300">{row.task.budget_sats || 0} sats</span>
-                                <span className="text-gray-500 dark:text-gray-400">
+                              <div key={row.task.task_id} className="modal-dashboard-table-row">
+                                <span className="modal-dashboard-table-cell title">{row.task.title}</span>
+                                <span className="modal-dashboard-table-cell status">{row.displayStatus}</span>
+                                <span className="modal-dashboard-table-cell budget">{row.task.budget_sats || 0} sats</span>
+                                <span className="modal-dashboard-table-cell date">
                                   {row.submission?.submitted_at
                                     ? new Date(row.submission.submitted_at).toLocaleDateString()
                                     : row.submission?.created_at
@@ -1873,75 +1916,75 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                 <div className="space-y-6">
                   {(isHtmlContent || isSvgContent) && (sandboxSrc || inlineDoc) && (
                     <div>
-                      <h4 className="text-lg font-semibold text-black dark:text-white mb-3 flex items-center gap-2">
-                        <span className="w-2 h-2 bg-indigo-500 rounded-full"></span>
+                      <h4 className="modal-section-title">
+                        <span className="modal-section-dot indigo"></span>
                         Sandboxed Preview
                       </h4>
-                      <div className="rounded-lg border border-indigo-200 dark:border-indigo-700 overflow-hidden bg-gray-50 dark:bg-gray-900">
+                      <div className="modal-sandbox-box">
                         <iframe
                           title="inscription-sandbox"
                           src={sandboxSrc || undefined}
                           srcDoc={sandboxSrc ? undefined : inlineDoc}
-                          sandbox=""
+                          sandbox="allow-scripts"
                           referrerPolicy="no-referrer"
-                          className="w-full min-h-[420px] bg-white"
+                          className="modal-sandbox-iframe"
                         />
                       </div>
-                      <div className="text-xs text-gray-600 dark:text-gray-400 mt-2">
-                        Rendered in an isolated sandbox (scripts/DOM access blocked).
+                      <div className="modal-data-label mt-2">
+                        Rendered in an isolated sandbox (scripts enabled, DOM access restricted).
                       </div>
                     </div>
                   )}
 
                   {textContent && !(isHtmlContent || isSvgContent) && (
                     <div>
-                      <h4 className="text-lg font-semibold text-black dark:text-white mb-3 flex items-center gap-2">
-                        <span className="w-2 h-2 bg-blue-500 rounded-full"></span>
+                      <h4 className="modal-section-title">
+                        <span className="modal-section-dot blue"></span>
                         Text Content
                       </h4>
-                      <div className="bg-blue-50 dark:bg-blue-900 border border-blue-200 dark:border-blue-700 rounded-lg p-4">
+                      <div className="modal-text-box">
                         <div className="flex items-center justify-between mb-2">
                           <div className="flex items-start gap-2">
-                            <span className="text-blue-600 dark:text-blue-400 text-sm">📄</span>
-                            <span className="text-blue-800 dark:text-blue-200 text-sm font-medium">Inscription Text Data</span>
+                            <span className="modal-text-label">📄</span>
+                            <span className="modal-text-label font-medium">Inscription Text Data</span>
                           </div>
                           <CopyButton text={textContent} />
                         </div>
                         <div className="flex items-center gap-3 mb-3">
-                          <label className="flex items-center gap-2 text-sm text-blue-800 dark:text-blue-200">
+                          <label className="flex items-center gap-2 modal-text-label">
                             <input
                               type="checkbox"
                               checked={monoContent}
                               onChange={() => setMonoContent(!monoContent)}
-                              className="form-checkbox h-4 w-4 text-blue-600"
+                              className="form-checkbox h-4 w-4 text-indigo-600"
                             />
                             Monospace
                           </label>
                         </div>
-                        <div className="bg-white dark:bg-gray-800 rounded p-4 max-h-96 min-h-[200px] overflow-y-auto w-full">
-                          <pre className={`${monoContent ? 'font-mono text-sm' : 'font-sans text-sm'} text-blue-900 dark:text-blue-100 leading-relaxed whitespace-pre-wrap break-words max-w-full`}>
+                        <div className="modal-text-content">
+                          <pre className={monoContent ? 'font-mono' : 'font-sans'}>
                             {textContent}
                           </pre>
                         </div>
-                        <div className="mt-4 pt-4 border-t border-blue-200 dark:border-blue-700">
-                          <div className="grid grid-cols-3 gap-4 w-full">
-                            <div className="text-center">
-                              <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">
+                        <div className="modal-stats">
+                          <div className="modal-stats-grid">
+                            <div className="modal-stats-item">
+                              <div className="modal-stats-value">
                                 {textContent.length}
                               </div>
-                              <div className="text-sm text-blue-700 dark:text-blue-300">Characters</div>
+                              <div className="modal-stats-label">Characters</div>
                             </div>
-                            <div className="text-center">
-                              <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">
+                            <div className="modal-stats-item">
+                              <div className="modal-stats-value">
                                 {textContent.split(' ').filter(word => word.length > 0).length}
                               </div>
-                              <div className="text-sm text-blue-700 dark:text-blue-300">Words</div>
+                              <div className="modal-stats-label">Words</div>
                             </div>
-                            <div className="text-center">
-                              <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">
+                            <div className="modal-stats-item">
+                              <div className="modal-stats-value">
                                 {textContent.split('\n').length}
                               </div>
-                              <div className="text-sm text-blue-700 dark:text-blue-300">Lines</div>
+                              <div className="modal-stats-label">Lines</div>
                             </div>
                           </div>
                         </div>
@@ -1951,65 +1994,65 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
 
                   {(inscription.metadata?.extracted_message || scanLoading || scanMessage || stegoPayloadLoading || stegoPayload || stegoPayloadError || scanError) && (
                     <div>
-                      <h4 className="text-lg font-semibold text-black dark:text-white mb-3 flex items-center gap-2">
-                        <span className="w-2 h-2 bg-green-500 rounded-full"></span>
+                      <h4 className="modal-section-title">
+                        <span className="modal-section-dot green"></span>
                         Hidden Message
                       </h4>
-                      <div className="bg-green-50 dark:bg-green-900 border border-green-200 dark:border-green-700 rounded-lg p-4 space-y-4">
+                      <div className="modal-hidden-box">
                         <div className="flex items-center justify-between">
                           <div className="flex items-start gap-2">
-                            <span className="text-green-600 dark:text-green-400 text-sm">🔓</span>
-                            <span className="text-green-800 dark:text-green-200 text-sm font-medium">Extracted Hidden Data</span>
+                            <span className="modal-hidden-label">🔓</span>
+                            <span className="modal-hidden-label font-medium">Extracted Hidden Data</span>
                           </div>
                           <CopyButton text={hiddenMessageText} />
                         </div>
 
                         {scanLoading && (
-                          <div className="text-sm text-green-700 dark:text-green-300">Scanning stego image…</div>
+                          <div className="modal-hidden-value">Scanning stego image…</div>
                         )}
                         {!scanLoading && scanError && (
-                          <div className="text-sm text-amber-700 dark:text-amber-300">Scan unavailable: {scanError}</div>
+                          <div className="modal-warning-text">Scan unavailable: {scanError}</div>
                         )}
                         {stegoPayloadLoading && (
-                          <div className="text-sm text-green-700 dark:text-green-300">Loading stego payload…</div>
+                          <div className="modal-hidden-value">Loading stego payload…</div>
                         )}
                         {!stegoPayloadLoading && stegoPayloadError && (
-                          <div className="text-sm text-amber-700 dark:text-amber-300">Payload unavailable: {stegoPayloadError}</div>
+                          <div className="modal-warning-text">Payload unavailable: {stegoPayloadError}</div>
                         )}
 
                         {stegoProposal ? (
                           <div className="space-y-3">
-                            <div className="bg-white dark:bg-gray-800 rounded p-4">
-                              <div className="text-xs text-green-700 dark:text-green-300 uppercase tracking-wide mb-2">Proposal</div>
-                              <div className="text-lg font-semibold text-green-900 dark:text-green-100">{stegoProposal.title || 'Untitled'}</div>
+                            <div className="modal-stego-card">
+                              <div className="modal-stego-label">Proposal</div>
+                              <div className="modal-stego-value text-lg font-semibold">{stegoProposal.title || 'Untitled'}</div>
                               {stegoProposal.description_md && (
-                                <div className="text-sm text-green-800 dark:text-green-200 mt-2 whitespace-pre-wrap">
+                                <div className="modal-stego-value mt-2 whitespace-pre-wrap">
                                   {stegoProposal.description_md}
                                 </div>
                               )}
-                              <div className="mt-3 flex flex-wrap gap-4 text-xs text-green-700 dark:text-green-300">
+                              <div className="modal-stego-label mt-3 flex flex-wrap gap-4">
                                 <span>Budget: {stegoProposal.budget_sats || 0} sats</span>
                                 <span>Visible Hash: {stegoProposal.visible_pixel_hash || '—'}</span>
                                 {stegoProposalStatus && <span>Status: {stegoProposalStatus}</span>}
                               </div>
                             </div>
 
-                            <div className="bg-white dark:bg-gray-800 rounded p-4">
-                              <div className="text-xs text-green-700 dark:text-green-300 uppercase tracking-wide mb-2">Tasks</div>
+                            <div className="modal-stego-card">
+                              <div className="modal-stego-label">Tasks</div>
                               {stegoTasks.length > 0 ? (
-                                <div className="divide-y divide-gray-200 dark:divide-gray-700 text-sm">
+                                <div className="modal-stego-value divide-y">
                                   {stegoTasks.map((task) => (
                                     <div key={task.task_id || task.title} className="py-2 flex flex-col gap-1">
                                       <div className="flex items-center justify-between">
-                                        <span className="text-green-900 dark:text-green-100 font-semibold">{task.title || 'Untitled task'}</span>
-                                        <span className="text-green-700 dark:text-green-300 text-xs">
+                                        <span className="modal-stego-value font-semibold">{task.title || 'Untitled task'}</span>
+                                        <span className="modal-stego-label">
                                           {task.budget_sats || 0} sats
                                         </span>
                                       </div>
                                       {task.description && (
-                                        <div className="text-green-800 dark:text-green-200 text-xs whitespace-pre-wrap">{task.description}</div>
+                                        <div className="modal-stego-label text-xs whitespace-pre-wrap">{task.description}</div>
                                       )}
-                                      <div className="text-xs text-green-700 dark:text-green-300 flex flex-wrap gap-3">
+                                      <div className="modal-stego-label text-xs flex flex-wrap gap-3">
                                         {task.task_id && <span>ID: {task.task_id}</span>}
                                         <span>Status: {stegoTaskStatusMap.get(task.task_id) || 'unknown'}</span>
                                       </div>
@@ -2017,13 +2060,13 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                                   ))}
                                 </div>
                               ) : (
-                                <div className="text-sm text-green-700 dark:text-green-300">No tasks found in payload.</div>
+                                <div className="modal-stego-value">No tasks found in payload.</div>
                               )}
                             </div>
                           </div>
-                        ) : (
-                          <div className="bg-white dark:bg-gray-800 rounded p-4 max-h-96 min-h-[200px] overflow-y-auto w-full">
-                            <pre className="text-green-900 dark:text-green-100 font-mono text-sm leading-relaxed whitespace-pre-wrap break-words max-w-full">
+                          ) : (
+                          <div className="modal-text-content">
+                            <pre className="font-mono">
                               {hiddenMessageText}
                             </pre>
                           </div>
@@ -2032,128 +2075,15 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                     </div>
                   )}
 
-                  {!textContent && !inscription.metadata?.extracted_message && (
+                  {!textContent && !inscription.metadata?.extracted_message && !pixelHash && (
                     <div className="text-center py-12">
                       <div className="text-6xl mb-4">📦</div>
-                      <div className="text-gray-600 dark:text-gray-400 font-semibold">No Text Content Available</div>
-                      <div className="text-gray-500 dark:text-gray-500 text-sm mt-2">
+                      <div className="modal-data-label font-semibold">No Text Content Available</div>
+                      <div className="modal-data-label text-sm mt-2">
                         This inscription contains binary data or media content that cannot be displayed as text.
                       </div>
                     </div>
                   )}
-                </div>
-              )}
-
-              {activeTab === 'technical' && (
-                <div className="space-y-6">
-                  {inscription.metadata?.extracted_message ? (
-                    <div>
-                      <h4 className="text-lg font-semibold text-black dark:text-white mb-3 flex items-center gap-2">
-                        <span className="w-2 h-2 bg-green-500 rounded-full"></span>
-                        Extracted Hidden Message
-                      </h4>
-                      <div className="bg-gradient-to-br from-green-50 to-green-100 dark:from-green-900 dark:to-green-800 border border-green-200 dark:border-green-700 rounded-lg p-6">
-                        <div className="flex items-start gap-3 mb-4">
-                          <div className="w-8 h-8 bg-green-500 rounded-full flex items-center justify-center flex-shrink-0">
-                            <span className="text-white text-lg">🔓</span>
-                          </div>
-                          <div>
-                            <div className="text-green-900 dark:text-green-100 font-semibold text-lg">Successfully Decoded Message</div>
-                            <div className="text-green-700 dark:text-green-300 text-sm">Hidden data extracted from steganographic carrier</div>
-                          </div>
-                        </div>
-                        
-                        <div className="bg-white dark:bg-gray-800 rounded-lg p-4 border border-green-300 dark:border-green-600">
-                          <div className="flex items-center justify-between mb-2">
-                            <div className="text-green-800 dark:text-green-200 text-xs font-mono uppercase tracking-wider">Hidden Content:</div>
-                            <CopyButton text={hiddenMessageText} />
-                          </div>
-                           <div className="bg-gray-50 dark:bg-gray-900 rounded p-3 max-h-64 overflow-y-auto">
-                             <pre className="text-green-900 dark:text-green-100 font-mono text-sm leading-relaxed whitespace-pre-wrap break-words max-w-full">
-                               {hiddenMessageText}
-                             </pre>
-                           </div>
-                        </div>
-
-                        <div className="mt-4 pt-4 border-t border-green-200 dark:border-green-700">
-                          <div className="grid grid-cols-2 gap-4">
-                            <div className="text-center">
-                              <div className="text-2xl font-bold text-green-600 dark:text-green-400">
-                                {hiddenMessageText.length}
-                              </div>
-                              <div className="text-sm text-green-700 dark:text-green-300">Characters</div>
-                            </div>
-                            <div className="text-center">
-                              <div className="text-2xl font-bold text-green-600 dark:text-green-400">
-                                {hiddenMessageText.split(' ').length}
-                              </div>
-                              <div className="text-sm text-green-700 dark:text-green-300">Words</div>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  ) : (
-                    <div>
-                      <h4 className="text-lg font-semibold text-black dark:text-white mb-3 flex items-center gap-2">
-                        <span className="w-2 h-2 bg-gray-500 rounded-full"></span>
-                        Hidden Message Analysis
-                      </h4>
-                      <div className="bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg p-6">
-                        <div className="text-center">
-                          <div className="text-6xl mb-4">🔍</div>
-                          <div className="text-gray-600 dark:text-gray-400 font-semibold">No Hidden Message Detected</div>
-                          <div className="text-gray-500 dark:text-gray-500 text-sm mt-2">
-                            This contract may not contain extractable hidden data, or the message may be encoded using a different method.
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {inscription.metadata && (
-                    <div>
-                      <h4 className="text-lg font-semibold text-black dark:text-white mb-3 flex items-center gap-2">
-                        <span className="w-2 h-2 bg-blue-500 rounded-full"></span>
-                        Message Analysis Details
-                      </h4>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="bg-blue-50 dark:bg-blue-900 border border-blue-200 dark:border-blue-700 rounded-lg p-4">
-                          <div className="text-blue-700 dark:text-blue-300 text-xs mb-1">Encoding Method</div>
-                          <div className="text-blue-900 dark:text-blue-100 font-semibold">
-                            {inscription.metadata.stego_type?.includes('lsb') ? 'Least Significant Bit (LSB)' : 
-                             inscription.metadata.stego_type?.includes('alpha') ? 'Alpha Channel' : 'Unknown'}
-                          </div>
-                          <div className="text-blue-600 dark:text-blue-400 text-xs mt-2">
-                            {inscription.metadata.stego_type?.includes('lsb') ? 'Data hidden in image pixel values' : 
-                             inscription.metadata.stego_type?.includes('alpha') ? 'Data hidden in transparency channel' : 'Unknown encoding method'}
-                          </div>
-                        </div>
-                        <div className="bg-purple-50 dark:bg-purple-900 border border-purple-200 dark:border-purple-700 rounded-lg p-4">
-                          <div className="text-purple-700 dark:text-purple-300 text-xs mb-1">Detection Confidence</div>
-                          <ConfidenceIndicator confidence={inscription.metadata.confidence} />
-                           <div className="text-purple-600 dark:text-purple-400 text-xs">
-                             {inscription.metadata?.confidence ? 
-                              (inscription.metadata.confidence >= 0.9 ? 'High confidence detection' :
-                               inscription.metadata.confidence >= 0.7 ? 'Medium confidence detection' : 'Low confidence detection') :
-                              'Analysis required for confidence assessment'}
-                           </div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  <div>
-                    <h4 className="text-lg font-semibold text-black dark:text-white mb-3 flex items-center gap-2">
-                      <span className="w-2 h-2 bg-orange-500 rounded-full"></span>
-                      Technical Architecture
-                    </h4>
-                    <div className="bg-gray-100 dark:bg-gray-900 rounded-lg p-4 max-h-64 overflow-y-auto">
-                      <pre className="text-gray-700 dark:text-gray-300 text-sm whitespace-pre-wrap font-mono leading-relaxed max-w-full break-words">
-                        {markdownContent}
-                      </pre>
-                    </div>
-                  </div>
                 </div>
               )}
 
@@ -2231,60 +2161,191 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
                 </div>
               )}
 
+              {activeTab === 'rework' && (
+                <div className="space-y-4">
+                  <div className="flex justify-between items-center">
+                    <h4 className="modal-section-title">
+                      <span className="modal-section-dot orange"></span>
+                      Contract Rework Requests
+                    </h4>
+                    {auth.apiKey && (
+                      <button
+                        onClick={() => setShowReworkForm(true)}
+                        className="modal-btn-reject"
+                      >
+                        + Request Rework
+                      </button>
+                    )}
+                  </div>
+                  
+                  {showReworkForm && (
+                    <div className="modal-form-card">
+                      <div className="space-y-3">
+                        <label className="modal-data-label">Feedback Notes</label>
+                        <textarea
+                          value={reworkNotes}
+                          onChange={(e) => setReworkNotes(e.target.value)}
+                          placeholder="Explain what needs to be reworked..."
+                          className="modal-textarea"
+                          rows={4}
+                        />
+                        <div className="flex gap-2">
+                          <button
+                            onClick={async () => {
+                              if (!reworkNotes.trim()) {
+                                toast.error('Please provide feedback notes');
+                                return;
+                              }
+                              setIsSubmittingRework(true);
+                              try {
+                                const res = await apiFetch(
+                                  `/api/smart_contract/contracts/${inscription.id}/rework`,
+                                  {
+                                    method: 'POST',
+                                    headers: {
+                                      'Content-Type': 'application/json',
+                                      'X-API-Key': auth.apiKey,
+                                    },
+                                    body: JSON.stringify({ notes: reworkNotes }),
+                                  }
+                                );
+                                if (!res.ok) {
+                                  throw new Error('Failed to create rework request');
+                                }
+                                toast.success('Rework request submitted');
+                                setReworkNotes('');
+                                setShowReworkForm(false);
+                                // Refresh rework requests
+                                const reworkRes = await apiFetch(
+                                  `/api/smart_contract/contracts/${inscription.id}/rework`,
+                                  { headers: { 'X-API-Key': auth.apiKey } }
+                                );
+                                if (reworkRes.ok) {
+                                  const data = await reworkRes.json();
+                                  setReworkRequests(data.rework_requests || []);
+                                }
+                              } catch (err) {
+                                toast.error(err.message);
+                              } finally {
+                                setIsSubmittingRework(false);
+                              }
+                            }}
+                            disabled={isSubmittingRework}
+                            className="modal-btn-approve"
+                          >
+                            {isSubmittingRework ? 'Submitting...' : 'Submit'}
+                          </button>
+                          <button
+                            onClick={() => {
+                              setShowReworkForm(false);
+                              setReworkNotes('');
+                            }}
+                            className="modal-btn-cancel"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {isLoadingRework ? (
+                    <div className="modal-loading">Loading rework requests...</div>
+                  ) : reworkRequests.length === 0 ? (
+                    <div className="modal-data-label">No rework requests yet.</div>
+                  ) : (
+                    <div className="space-y-3">
+                      {reworkRequests.map((req) => (
+                        <div key={req.request_id} className="modal-rework-card">
+                          <div className="flex justify-between items-start">
+                            <div>
+                              <span className={`badge ${req.status === 'open' ? 'badge-warning' : 'badge-success'}`}>
+                                {req.status}
+                              </span>
+                              <span className="modal-data-label ml-2">
+                                {new Date(req.created_at).toLocaleString()}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <div className="font-mono text-xs text-gray-500">
+                                {req.requester?.slice(0, 8)}...{req.requester?.slice(-4)}
+                              </div>
+                              {req.status === 'open' && auth.apiKey && auth.wallet && req.requester && auth.wallet.toLowerCase() === req.requester.toLowerCase() && (
+                                <button
+                                  onClick={async () => {
+                                    try {
+                                      const res = await apiFetch(
+                                        `/api/smart_contract/contracts/${inscription.id}/rework/${req.request_id}`,
+                                        {
+                                          method: 'PATCH',
+                                          headers: { 'X-API-Key': auth.apiKey },
+                                        }
+                                      );
+                                      if (res.ok) {
+                                        // Refresh rework requests
+                                        const reworkRes = await apiFetch(
+                                          `/api/smart_contract/contracts/${inscription.id}/rework`,
+                                          { headers: { 'X-API-Key': auth.apiKey } }
+                                        );
+
+                                        if (reworkRes.ok) {
+                                          const data = await reworkRes.json();
+                                          setReworkRequests(data.rework_requests || []);
+                                        }
+                                        toast.success('Rework request resolved');
+                                      }
+                                    } catch {
+                                      toast.error('Failed to resolve rework request');
+                                    }
+                                  }}
+                                  className="modal-btn-approve"
+                                >
+                                  Resolve
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                          <div className="modal-text-box mt-2">
+                            {req.notes}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
               {activeTab === 'blockchain' && (
                 <div className="space-y-6">
                   <div>
-                    <h4 className="text-lg font-semibold text-black dark:text-white mb-3 flex items-center gap-2">
-                      <span className="w-2 h-2 bg-purple-500 rounded-full"></span>
+                    <h4 className="modal-section-title">
+                      <span className="modal-section-dot purple"></span>
                       Transaction Information
                     </h4>
-                    <div className="bg-purple-50 dark:bg-purple-900 border border-purple-200 dark:border-purple-700 rounded-lg p-4">
+                    <div className="modal-blockchain-card purple">
                       <div className="space-y-3">
-                        <div className="flex items-center justify-between">
-                          <span className="text-purple-700 dark:text-purple-300 text-sm">Transaction ID</span>
+                        <div className="modal-blockchain-row">
+                          <span className="modal-blockchain-label">Transaction ID</span>
                           <div className="flex items-center gap-2">
-                            <span className="text-purple-900 dark:text-purple-100 font-mono text-xs">
-                              {inscription.id?.slice(0, 12)}...
+                            <span className="modal-blockchain-mono">
+                              {(inscription.tx_id || inscription.id) ? (inscription.tx_id || inscription.id).slice(0, 12) + '...' : 'TBD'}
                             </span>
-                            <CopyButton text={inscription.id || ''} />
+                            <CopyButton text={inscription.tx_id || inscription.id || 'TBD'} />
                           </div>
                         </div>
-                        <div className="flex items-center justify-between">
-                          <span className="text-purple-700 dark:text-purple-300 text-sm">Block Height</span>
-                          <span className="text-purple-900 dark:text-purple-100 font-semibold">
-                            {inscription.block_height || inscription.genesis_block_height || 'Unknown'}
+                        <div className="modal-blockchain-row">
+                          <span className="modal-blockchain-label">Block Height</span>
+                          <span className="modal-blockchain-value font-semibold">
+                            {(inscription.block_height || inscription.genesis_block_height) ? (
+                              <a href={`/block/${inscription.block_height || inscription.genesis_block_height}`} className="text-primary hover:underline cursor-pointer">
+                                {inscription.block_height || inscription.genesis_block_height}
+                              </a>
+                            ) : 'Unknown'}
                           </span>
                         </div>
-                         <div className="flex items-center justify-between">
-                           <span className="text-purple-700 dark:text-purple-300 text-sm">Network</span>
-                           <span className="text-purple-900 dark:text-purple-100 font-semibold">Bitcoin {network.charAt(0).toUpperCase() + network.slice(1)}</span>
-                         </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div>
-                    <h4 className="text-lg font-semibold text-black dark:text-white mb-3 flex items-center gap-2">
-                      <span className="w-2 h-2 bg-blue-500 rounded-full"></span>
-                      File Details
-                    </h4>
-                    <div className="bg-blue-50 dark:bg-blue-900 border border-blue-200 dark:border-blue-700 rounded-lg p-4">
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="bg-white dark:bg-gray-800 rounded-lg p-3">
-                          <div className="text-blue-700 dark:text-blue-300 text-xs mb-1">File Name</div>
-                          <div className="text-blue-900 dark:text-blue-100 font-semibold break-all">{inscription.file_name || 'N/A'}</div>
-                        </div>
-                        <div className="bg-white dark:bg-gray-800 rounded-lg p-3">
-                          <div className="text-blue-700 dark:text-blue-300 text-xs mb-1">File Size</div>
-                          <div className="text-blue-900 dark:text-blue-100 font-semibold">{inscription.size_bytes ? `${(inscription.size_bytes / 1024).toFixed(2)} KB` : 'Unknown'}</div>
-                        </div>
-                        <div className="bg-white dark:bg-gray-800 rounded-lg p-3">
-                          <div className="text-blue-700 dark:text-blue-300 text-xs mb-1">Content Type</div>
-                          <div className="text-blue-900 dark:text-blue-100 font-semibold">{inscription.mime_type || 'Unknown'}</div>
-                        </div>
-                        <div className="bg-white dark:bg-gray-800 rounded-lg p-3">
-                          <div className="text-blue-700 dark:text-blue-300 text-xs mb-1">Contract Type</div>
-                          <div className="text-blue-900 dark:text-blue-100 font-semibold">{inscription.contract_type || 'Standard'}</div>
+                        <div className="modal-blockchain-row">
+                          <span className="modal-blockchain-label">Network</span>
+                          <span className="modal-blockchain-value font-semibold">Bitcoin {network.charAt(0).toUpperCase() + network.slice(1)}</span>
                         </div>
                       </div>
                     </div>
@@ -2292,21 +2353,21 @@ ${inscription.metadata?.extracted_message ? `\`\`\`\n${inscription.metadata.extr
 
                   {inscription.metadata?.scanned_at && (
                     <div>
-                      <h4 className="text-lg font-semibold text-black dark:text-white mb-3 flex items-center gap-2">
-                        <span className="w-2 h-2 bg-green-500 rounded-full"></span>
+                      <h4 className="modal-section-title">
+                        <span className="modal-section-dot green"></span>
                         Analysis Information
                       </h4>
-                      <div className="bg-green-50 dark:bg-green-900 border border-green-200 dark:border-green-700 rounded-lg p-4">
-                        <div className="grid grid-cols-2 gap-4">
-                          <div className="bg-white dark:bg-gray-800 rounded-lg p-3">
-                            <div className="text-green-700 dark:text-green-300 text-xs mb-1">Scan Status</div>
-                            <div className="text-green-900 dark:text-green-100 font-semibold">
+                      <div className="modal-blockchain-card green">
+                        <div className="modal-blockchain-grid">
+                          <div className="modal-blockchain-grid-item">
+                            <div className="modal-blockchain-grid-label">Scan Status</div>
+                            <div className="modal-blockchain-grid-value">
                               {inscription.metadata.is_stego ? 'Steganography Detected' : 'No Hidden Data'}
                             </div>
                           </div>
-                          <div className="bg-white dark:bg-gray-800 rounded-lg p-3">
-                            <div className="text-green-700 dark:text-green-300 text-xs mb-1">Last Scanned</div>
-                            <div className="text-green-900 dark:text-green-100 font-semibold">
+                          <div className="modal-blockchain-grid-item">
+                            <div className="modal-blockchain-grid-label">Last Scanned</div>
+                            <div className="modal-blockchain-grid-value">
                               {new Date(inscription.metadata.scanned_at * 1000).toLocaleString()}
                             </div>
                           </div>

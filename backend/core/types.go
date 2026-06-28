@@ -116,12 +116,14 @@ type BlockScanResponse struct {
 }
 
 // SmartContractImage represents a smart contract with steganographic image
+// Canonical definition (core package). models package re-exports/uses this.
 type SmartContractImage struct {
-	ContractID   string                 `json:"contract_id"`
-	BlockHeight  int64                  `json:"block_height"`
-	StegoImage   string                 `json:"stego_image_url"`
-	ContractType string                 `json:"contract_type"`
-	Metadata     map[string]interface{} `json:"metadata"`
+	ContractID       string                 `json:"contract_id"`
+	BlockHeight      int64                  `json:"block_height"`
+	StegoImage       string                 `json:"stego_image_url"`
+	ContractType     string                 `json:"contract_type"`
+	VisiblePixelHash string                 `json:"visible_pixel_hash,omitempty"`
+	Metadata         map[string]interface{} `json:"metadata"`
 }
 
 // BlockWithCounts represents a block with comprehensive counting statistics
@@ -183,10 +185,11 @@ type InfoResponse struct {
 	Name             string            `json:"name"`
 	Version          string            `json:"version"`
 	Description      string            `json:"description"`
-	SupportedFormats []string          `json:"supported_formats"`
-	StegoMethods     []string          `json:"stego_methods"`
-	MaxImageSize     int               `json:"max_image_size"`
-	Endpoints        map[string]string `json:"endpoints"`
+	SupportedFormats            []string          `json:"supported_formats"`
+	StegoMethods                []string          `json:"stego_methods"` // for detection/scanning (all 5 supported)
+	SupportedInscriptionMethod  string            `json:"supported_inscription_method"` // only "alpha" for new inscriptions
+	MaxImageSize                int               `json:"max_image_size"`
+	Endpoints                   map[string]string `json:"endpoints"`
 }
 
 // TransactionInfo represents basic transaction information
@@ -235,12 +238,13 @@ func NewHealthResponse(status string, scanner ScannerInfo, bitcoin BitcoinInfo) 
 
 func NewInfoResponse() InfoResponse {
 	return InfoResponse{
-		Name:             "Starlight Bitcoin Steganography Scanner",
-		Version:          "1.0.0",
-		Description:      "AI-powered steganography detection for Bitcoin transaction images",
-		SupportedFormats: []string{"png", "jpg", "jpeg", "gif", "bmp", "webp"},
-		StegoMethods:     []string{"alpha", "palette", "lsb.rgb", "exif", "raw"},
-		MaxImageSize:     10485760, // 10MB
+		Name:                        "Starlight Bitcoin Steganography Scanner",
+		Version:                     "1.0.0",
+		Description:                 "AI-powered steganography detection for Bitcoin transaction images",
+		SupportedFormats:            []string{"png", "jpg", "jpeg", "gif", "bmp", "webp"},
+		StegoMethods:                []string{"alpha", "palette", "lsb.rgb", "exif", "raw"}, // supported for detection/scanning
+		SupportedInscriptionMethod:  "alpha", // only alpha supported for new inscriptions (detection supports all 5)
+		MaxImageSize:                10485760, // 10MB
 		Endpoints: map[string]string{
 			"scan_tx":         "/scan/transaction",
 			"scan_image":      "/scan/image",

@@ -34,7 +34,7 @@ func NewProxyScanner(apiURL string, apiKey string) *ProxyScanner {
 	return &ProxyScanner{
 		apiURL:      apiURL,
 		apiKey:      apiKey,
-		client:      &http.Client{Timeout: 30 * time.Second},
+		client:      &http.Client{Timeout: 120 * time.Second},
 		initialized: false,
 		maxRetries:  3,
 		retryDelay:  1 * time.Second,
@@ -89,7 +89,7 @@ func (p *ProxyScanner) ScanImage(imageData []byte, options core.ScanOptions) (*c
 	writer := multipart.NewWriter(&buf)
 
 	// Add image file
-	part, err := writer.CreateFormFile("image", "image.png")
+	part, err := writer.CreateFormFile("image", "image")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create form file: %w", err)
 	}
@@ -108,8 +108,14 @@ func (p *ProxyScanner) ScanImage(imageData []byte, options core.ScanOptions) (*c
 		return nil, fmt.Errorf("failed to close multipart writer: %w", err)
 	}
 
+	// Use /extract endpoint for message extraction, /scan/image for scanning
+	endpoint := "/scan/image"
+	if options.ExtractMessage {
+		endpoint = "/extract"
+	}
+
 	// Create request
-	req, err := http.NewRequest("POST", p.apiURL+"/scan/image", &buf)
+	req, err := http.NewRequest("POST", p.apiURL+endpoint, &buf)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -137,7 +143,38 @@ func (p *ProxyScanner) ScanImage(imageData []byte, options core.ScanOptions) (*c
 
 	// Convert to ScanResult
 	scanResult := &core.ScanResult{}
-	if scanData, ok := result["scan_result"].(map[string]any); ok {
+
+	// Handle the actual API response structure from extract endpoint
+	if extractionResult, ok := result["extraction_result"].(map[string]any); ok {
+		if messageFound, ok := extractionResult["message_found"].(bool); ok {
+			scanResult.IsStego = messageFound
+		}
+		if methodConfidence, ok := extractionResult["method_confidence"].(float64); ok {
+			scanResult.Confidence = methodConfidence
+			scanResult.StegoProbability = methodConfidence
+		}
+		if methodUsed, ok := extractionResult["method_used"].(string); ok && methodUsed != "" {
+			scanResult.StegoType = methodUsed
+		}
+		if message, ok := extractionResult["message"].(string); ok && message != "" {
+			scanResult.ExtractedMessage = message
+		}
+
+		// Set prediction based on message_found
+		if scanResult.IsStego {
+			scanResult.Prediction = "stego"
+		} else {
+			scanResult.Prediction = "clean"
+		}
+	} else {
+		// Fallback to old scan_result structure for backward compatibility
+		var scanData map[string]any
+		if nested, ok := result["scan_result"].(map[string]any); ok {
+			scanData = nested
+		} else {
+			scanData = result
+		}
+
 		if isStego, ok := scanData["is_stego"].(bool); ok {
 			scanResult.IsStego = isStego
 		}
@@ -229,7 +266,7 @@ func (p *ProxyScanner) ExtractMessage(imageData []byte, method string) (*core.Ex
 	writer := multipart.NewWriter(&buf)
 
 	// Add image file
-	part, err := writer.CreateFormFile("image", "image.png")
+	part, err := writer.CreateFormFile("image", "image")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create form file: %w", err)
 	}

@@ -138,7 +138,7 @@ Retrieves transaction details with optional image data.
 
 #### Escrow Management
 
-##### POST `/api/escrow/create`
+##### POST `/api/escrow/create` (Planned — Not Yet Implemented)
 Creates a new escrow contract.
 
 **Request:**
@@ -170,24 +170,24 @@ Creates a new escrow contract.
 }
 ```
 
-##### POST `/api/escrow/{contract_id}/fund`
+##### POST `/api/escrow/{contract_id}/fund` (Planned — Not Yet Implemented)
 Funds an escrow contract.
 
-##### POST `/api/escrow/{contract_id}/claim`
+##### POST `/api/escrow/{contract_id}/claim` (Planned — Not Yet Implemented)
 Claims funds from an escrow contract.
 
-##### POST `/api/escrow/{contract_id}/payout`
+##### POST `/api/escrow/{contract_id}/payout` (Planned — Not Yet Implemented)
 Processes payouts to contract participants.
 
-##### POST `/api/escrow/{contract_id}/refund`
+##### POST `/api/escrow/{contract_id}/refund` (Planned — Not Yet Implemented)
 Processes refund from escrow contract.
 
-##### GET `/api/escrow/{contract_id}/status`
+##### GET `/api/escrow/{contract_id}/status` (Planned — Not Yet Implemented)
 Returns current escrow contract status.
 
 #### Transaction Monitoring
 
-##### POST `/api/monitor/transactions`
+##### POST `/api/monitor/transactions` (Planned — Not Yet Implemented)
 Adds transactions to monitoring.
 
 **Request:**
@@ -205,15 +205,15 @@ Adds transactions to monitoring.
 }
 ```
 
-##### GET `/api/monitor/transactions`
+##### GET `/api/monitor/transactions` (Planned — Not Yet Implemented)
 Returns all monitored transactions.
 
-##### GET `/api/monitor/stats`
+##### GET `/api/monitor/stats` (Planned — Not Yet Implemented)
 Returns monitoring service statistics.
 
 #### Merkle Proof Verification
 
-##### POST `/api/proofs/verify`
+##### POST `/api/proofs/verify` (Planned — Not Yet Implemented)
 Verifies a Merkle proof against blockchain data.
 
 **Request:**
@@ -234,15 +234,15 @@ Verifies a Merkle proof against blockchain data.
 }
 ```
 
-##### POST `/api/proofs/batch-verify`
+##### POST `/api/proofs/batch-verify` (Planned — Not Yet Implemented)
 Verifies multiple Merkle proofs.
 
-##### POST `/api/proofs/refresh`
+##### POST `/api/proofs/refresh` (Planned — Not Yet Implemented)
 Refreshes proof status from blockchain.
 
 #### Dispute Resolution
 
-##### POST `/api/disputes/create`
+##### POST `/api/disputes/create` (Planned — Not Yet Implemented)
 Creates a new dispute case.
 
 **Request:**
@@ -257,16 +257,16 @@ Creates a new dispute case.
 }
 ```
 
-##### POST `/api/disputes/{dispute_id}/evidence`
+##### POST `/api/disputes/{dispute_id}/evidence` (Planned — Not Yet Implemented)
 Submits evidence for a dispute.
 
-##### POST `/api/disputes/{dispute_id}/vote`
+##### POST `/api/disputes/{dispute_id}/vote` (Planned — Not Yet Implemented)
 Casts a vote in dispute resolution.
 
-##### POST `/api/disputes/{dispute_id}/resolve`
+##### POST `/api/disputes/{dispute_id}/resolve` (Planned — Not Yet Implemented)
 Resolves a dispute with final decision.
 
-##### POST `/api/disputes/{dispute_id}/appeal`
+##### POST `/api/disputes/{dispute_id}/appeal` (Planned — Not Yet Implemented)
 Creates an appeal for dispute decision.
 
 ## Data Types

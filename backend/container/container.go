@@ -22,6 +22,7 @@ type Container struct {
 	SmartContractService *services.SmartContractService
 	QRCodeService        *services.QRCodeService
 	HealthService        *services.HealthService
+	PeerService          *services.PeerService
 	DataStorage          storage.ExtendedDataStorage
 	IngestionService     *services.IngestionService
 
@@ -30,6 +31,7 @@ type Container struct {
 
 	// Handlers
 	HealthHandler        *handlers.HealthHandler
+	DiscoveryHandler     *handlers.DiscoveryHandler
 	InscriptionHandler   *handlers.InscriptionHandler
 	BlockHandler         *handlers.BlockHandler
 	SmartContractHandler *handlers.SmartContractHandler
@@ -40,7 +42,7 @@ type Container struct {
 }
 
 // NewContainer creates a new dependency container
-func NewContainer(apiKeyIssuer auth.APIKeyIssuer) *Container {
+func NewContainer(apiKeyIssuer auth.APIKeyIssuer, apiKeyValidator auth.APIKeyValidator) *Container {
 	storageType := os.Getenv("STARGATE_STORAGE")
 	pgDSN := os.Getenv("STARGATE_PG_DSN")
 	if pgDSN == "" {
@@ -63,9 +65,9 @@ func NewContainer(apiKeyIssuer auth.APIKeyIssuer) *Container {
 	contractCache := smart_contract.NewContractCache(contractCacheTTL, contractCacheSize)
 
 	// Initialize services
-	dataDir := "blocks"
-	if env := os.Getenv("BLOCKS_DIR"); env != "" {
-		dataDir = env
+	dataDir := os.Getenv("BLOCKS_DIR")
+	if dataDir == "" {
+		dataDir = storage.DefaultPath("blocks")
 	}
 	inscriptionsFile := os.Getenv("INSCRIPTIONS_FILE")
 	if inscriptionsFile == "" {
@@ -76,15 +78,29 @@ func NewContainer(apiKeyIssuer auth.APIKeyIssuer) *Container {
 	}
 	inscriptionService := services.NewInscriptionService(inscriptionsFile)
 	blockService := services.NewBlockService()
-	contractService := services.NewSmartContractService("smart_contracts.json")
+	contractsFile := os.Getenv("SMART_CONTRACTS_FILE")
+	if contractsFile == "" {
+		contractsFile = storage.DefaultPath("smart_contracts.json")
+	}
+	contractService := services.NewSmartContractService(contractsFile)
 	qrService := services.NewQRCodeService()
 	healthService := services.NewHealthService()
+	peerService := services.NewPeerService()
+
 	var ingestionService *services.IngestionService
-	if pgDSN != "" {
-		ingestionService = initIngestionService(pgDSN)
-	} else {
-		log.Printf("ingestion service disabled: STARGATE_PG_DSN not set")
+	ingestionDSN := pgDSN
+	if ingestionDSN == "" {
+		// Fall back to SQLite ingestion database
+		ingestionDSN = os.Getenv("STARGATE_INGESTIONS_DB")
+		if ingestionDSN == "" {
+			dataDir := os.Getenv("STARGATE_DATA_DIR")
+			if dataDir == "" {
+				dataDir = "data"
+			}
+			ingestionDSN = filepath.Join(dataDir, "sqlite", "ingestions.db")
+		}
 	}
+	ingestionService = initIngestionService(ingestionDSN)
 
 	// Data storage selection
 	var dataStorage storage.ExtendedDataStorage
@@ -100,14 +116,15 @@ func NewContainer(apiKeyIssuer auth.APIKeyIssuer) *Container {
 
 	// Initialize handlers
 	healthHandler := handlers.NewHealthHandler(healthService)
-	inscriptionHandler := handlers.NewInscriptionHandler(inscriptionService, ingestionService, apiKeyIssuer)
+	discoveryHandler := handlers.NewDiscoveryHandler(peerService)
+	inscriptionHandler := handlers.NewInscriptionHandler(inscriptionService, ingestionService, apiKeyIssuer, apiKeyValidator)
 	blockHandler := handlers.NewBlockHandler(blockService)
 	// contractHandler will be set later with store
-	searchHandler := handlers.NewSearchHandler(inscriptionService, blockService, dataStorage)
+	searchHandler := handlers.NewSearchHandler(inscriptionService, blockService, dataStorage, nil)
 	qrHandler := handlers.NewQRCodeHandler(qrService)
 	proxyBase := os.Getenv("STARGATE_PROXY_BASE")
 	if proxyBase == "" {
-		proxyBase = "http://localhost:8080"
+		proxyBase = "http://localhost:3001" // default to self in single-binary mode
 	}
 	proxyHandler := handlers.NewProxyHandler(proxyBase)
 	ingestionHandler := handlers.NewIngestionHandler(ingestionService)
@@ -119,6 +136,7 @@ func NewContainer(apiKeyIssuer auth.APIKeyIssuer) *Container {
 		SmartContractService: contractService,
 		QRCodeService:        qrService,
 		HealthService:        healthService,
+		PeerService:          peerService,
 		DataStorage:          dataStorage,
 		IngestionService:     ingestionService,
 
@@ -127,6 +145,7 @@ func NewContainer(apiKeyIssuer auth.APIKeyIssuer) *Container {
 
 		// Handlers
 		HealthHandler:      healthHandler,
+		DiscoveryHandler:   discoveryHandler,
 		InscriptionHandler: inscriptionHandler,
 		BlockHandler:       blockHandler,
 		// SmartContractHandler will be set later
@@ -140,6 +159,10 @@ func NewContainer(apiKeyIssuer auth.APIKeyIssuer) *Container {
 // SetSmartContractHandler sets the smart contract handler with the MCP store
 func (c *Container) SetSmartContractHandler(store scmiddleware.Store) {
 	c.SmartContractHandler = handlers.NewSmartContractHandler(store, c.IngestionService, c.ContractCache)
+	// Also set the store on SearchHandler for proposals/contracts search
+	if c.SearchHandler != nil {
+		c.SearchHandler.SetStore(store)
+	}
 }
 
 // initIngestionService retries connecting to Postgres a few times to avoid startup races.

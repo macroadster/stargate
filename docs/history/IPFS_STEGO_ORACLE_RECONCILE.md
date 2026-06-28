@@ -1,4 +1,13 @@
-# IPFS Stego Oracle Reconciliation (YAML Manifest)
+# IPFS Stego Oracle Reconciliation (YAML Manifest) — SUPERSEDED
+
+> **Note**: This document describes the v1 YAML manifest design. The current
+> implementation uses **stego v2 JSON payloads** embedded directly in the image's
+> alpha channel. The v2 payload includes the full proposal, tasks, metadata, and
+> `sandbox_hash`. Reconciliation now works from on-chain OP_RETURN hashes
+> (`wish_hash || stego_hash`, 64 bytes) without requiring IPFS pubsub.
+> See `docs/arch/starlight_contracts.md` Section 12 for the current design.
+
+# Original v1 Design (Historical)
 
 ## Goal
 When a proposal is approved, embed a compact YAML manifest into a stego image.

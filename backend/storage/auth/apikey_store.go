@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -34,6 +35,11 @@ type APIKeyIssuer interface {
 	Issue(email, wallet, source string) (APIKey, error)
 }
 
+// APIKeyWalletReissuer allows invalidating existing keys for a wallet before reissuing.
+type APIKeyWalletReissuer interface {
+	InvalidateByWallet(wallet string) error
+}
+
 // APIKeyStore provides in-memory API key validation/issuance.
 type APIKeyStore struct {
 	mu   sync.RWMutex
@@ -55,6 +61,38 @@ func (s *APIKeyStore) Seed(key, email, source string) {
 	s.keys[key] = APIKey{Key: key, Email: email, Source: source, CreatedAt: time.Now()}
 }
 
+// SeedEnvironmentVariables seeds STARGATE_API_KEY and STARLIGHT_DONATION_ADDRESS from environment variables.
+func (s *APIKeyStore) SeedEnvironmentVariables() {
+	stargateKey := strings.TrimSpace(os.Getenv("STARGATE_API_KEY"))
+	donationAddr := strings.TrimSpace(os.Getenv("STARLIGHT_DONATION_ADDRESS"))
+
+	// If both are available, bind them together
+	if stargateKey != "" && donationAddr != "" {
+		s.mu.Lock()
+		s.keys[stargateKey] = APIKey{
+			Key:       stargateKey,
+			Email:     "",
+			Wallet:    donationAddr,
+			Source:    "seed",
+			CreatedAt: time.Now(),
+		}
+		s.mu.Unlock()
+		return
+	}
+
+	// If only STARGATE_API_KEY is available, seed it without wallet
+	if stargateKey != "" {
+		s.Seed(stargateKey, "", "seed")
+	}
+
+	// If only STARLIGHT_DONATION_ADDRESS is available, seed it as its own API key
+	if donationAddr != "" {
+		// Use the donation address as both the key and wallet for simplicity
+		// This allows the donation address to be used as an API key
+		s.Seed(donationAddr, "donation@starlight", "donation_seed")
+	}
+}
+
 // Validate returns true if the key exists.
 func (s *APIKeyStore) Validate(key string) bool {
 	s.mu.RLock()
@@ -69,6 +107,22 @@ func (s *APIKeyStore) Get(key string) (APIKey, bool) {
 	defer s.mu.RUnlock()
 	rec, ok := s.keys[key]
 	return rec, ok
+}
+
+// InvalidateByWallet removes all API keys associated with a wallet address.
+func (s *APIKeyStore) InvalidateByWallet(wallet string) error {
+	if strings.TrimSpace(wallet) == "" {
+		return fmt.Errorf("wallet required")
+	}
+	normalizedWallet := strings.ToLower(strings.TrimSpace(wallet))
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for key, rec := range s.keys {
+		if strings.ToLower(rec.Wallet) == normalizedWallet {
+			delete(s.keys, key)
+		}
+	}
+	return nil
 }
 
 // Issue creates and stores a new API key.

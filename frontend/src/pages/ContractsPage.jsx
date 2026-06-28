@@ -1,8 +1,8 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { API_BASE, CONTENT_BASE } from '../apiBase';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import InscriptionModal from '../components/Inscription/InscriptionModal';
 import AppHeader from '../components/Common/AppHeader';
+import { useContracts } from '../hooks/useContracts';
 
 const extractHeadline = (text) => {
   if (!text) return '';
@@ -14,176 +14,124 @@ const extractHeadline = (text) => {
   return line.replace(/^#+\s*/, '').slice(0, 140);
 };
 
-const mapContractItem = (item, height) => {
-  const rawUrl = item.image_url || '';
-  const imageUrl = rawUrl.startsWith('http') ? rawUrl : (rawUrl ? `${CONTENT_BASE}${rawUrl}` : '');
-  return {
-    id: item.tx_id || item.id,
-    mime_type: item.content_type || 'application/octet-stream',
-    image_url: imageUrl,
-    file_name: item.file_name,
-    size_bytes: item.size_bytes,
-    text: item.content || '',
-    metadata: item.metadata || {},
-    genesis_block_height: height,
-    block_height: height,
-    contract_type: 'Smart Contract'
-  };
-};
-
 export default function ContractsPage() {
   const navigate = useNavigate();
-  const [contracts, setContracts] = useState([]);
-  const [cursor, setCursor] = useState('');
-  const [hasMore, setHasMore] = useState(true);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState('');
+  const { contracts, isLoading, hasMore, error, loadMore } = useContracts();
   const [selectedInscription, setSelectedInscription] = useState(null);
   const sentinelRef = useRef(null);
-  const seenRef = useRef(new Set());
-
-  const loadMore = useCallback(async () => {
-    if (isLoading || !hasMore) return;
-    setIsLoading(true);
-    setError('');
-    try {
-      const url = new URL(`${API_BASE}/api/data/block-summaries`);
-      url.searchParams.set('limit', 12);
-      if (cursor) url.searchParams.set('cursor_height', cursor);
-      const res = await fetch(url.toString());
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      const blocks = Array.isArray(data.blocks) ? data.blocks : [];
-      const nextCursor = data.next_cursor || '';
-      const more = Boolean(data.has_more);
-
-      const blockFetches = blocks.map(async (block) => {
-        const height = Number(block.block_height || block.height);
-        if (!height || block.smart_contract_count <= 0) {
-          return [];
-        }
-        const blockRes = await fetch(`${API_BASE}/api/data/block-inscriptions/${height}?limit=50&fields=summary`);
-        if (!blockRes.ok) return [];
-        const blockData = await blockRes.json();
-        const items = Array.isArray(blockData.inscriptions) ? blockData.inscriptions : [];
-        return items.map((item) => mapContractItem(item, height));
-      });
-
-      const results = await Promise.all(blockFetches);
-      const flattened = results.flat();
-      const unique = [];
-      flattened.forEach((item) => {
-        const key = `${item.id}-${item.metadata?.input_index ?? ''}`;
-        if (!seenRef.current.has(key)) {
-          seenRef.current.add(key);
-          unique.push(item);
-        }
-      });
-
-      setContracts((prev) => [...prev, ...unique]);
-      setCursor(nextCursor);
-      setHasMore(more);
-    } catch (err) {
-      console.error('Failed to load contracts', err);
-      setError('Unable to load contracts. Please retry.');
-    } finally {
-      setIsLoading(false);
-    }
-  }, [cursor, hasMore, isLoading]);
 
   useEffect(() => {
     loadMore();
-  }, [loadMore]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
-    if (!sentinelRef.current || !hasMore) return;
+    if (!sentinelRef.current || !hasMore || isLoading) return;
     const sentinel = sentinelRef.current;
     const observer = new IntersectionObserver(
       ([entry]) => {
-        if (entry.isIntersecting) {
+        if (entry.isIntersecting && !isLoading && hasMore) {
           loadMore();
         }
       },
-      { threshold: 0.6 }
+      { threshold: 0.1, rootMargin: '100px' }
     );
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [loadMore, hasMore]);
+  }, [loadMore, hasMore, isLoading]);
 
   const displayContracts = useMemo(() => {
     return contracts.map((contract) => {
-      const rawText = contract.text || contract.metadata?.embedded_message || contract.metadata?.extracted_message || '';
       return {
         ...contract,
-        headline: extractHeadline(rawText) || contract.file_name || 'Untitled Contract'
+        headline: extractHeadline(contract.text) || contract.file_name || 'Untitled Contract'
       };
     });
   }, [contracts]);
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-50 via-white to-slate-100 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950 text-gray-900 dark:text-gray-100">
+    <div className="min-h-screen bg-app-main text-gray-900 dark:text-gray-100">
       <AppHeader onInscribe={() => navigate('/')} />
-      <div className="container mx-auto px-6 py-10">
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold">Contracts</h1>
-          <p className="text-gray-600 dark:text-gray-400">Newest contracts first, with infinite scroll.</p>
+      <div className="w-full mx-auto px-6 py-10 space-y-8">
+        <div>
+          <h1 className="text-4xl font-black page-title">Contracts</h1>
+          <p className="text-xs page-subtitle uppercase tracking-widest opacity-70">
+            Newest contracts first, with infinite scroll.
+          </p>
         </div>
 
         {error && (
-          <div className="mb-6 rounded-lg border border-red-200 bg-red-50 text-red-800 px-4 py-3 text-sm">
+          <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-[10px] font-black uppercase tracking-widest text-center shadow-lg">
             {error}
           </div>
         )}
 
-        <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="contracts-grid">
           {displayContracts.map((contract) => (
-            <button
+            <div
               key={`${contract.id}-${contract.block_height}`}
               onClick={() => setSelectedInscription(contract)}
-              className="group text-left"
+              onKeyDown={(e) => e.key === 'Enter' && setSelectedInscription(contract)}
+              role="button"
+              tabIndex={0}
+              className="group text-left cursor-pointer"
             >
-              <div className="relative overflow-hidden rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 shadow-sm">
-                <div className={`relative ${contract.image_url ? 'aspect-[3/4]' : 'min-h-[320px]'} bg-gray-100 dark:bg-gray-800`}>
+              <div className="contract-card transition-all duration-300 hover:shadow-xl hover:translate-y-[-5px]">
                   {contract.image_url ? (
                     <img
                       src={contract.image_url}
                       alt={contract.file_name || contract.id}
-                      className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
+                      className="contract-card-image transition-transform duration-300 group-hover:scale-[1.02]"
                       loading="lazy"
                     />
                   ) : (
-                    <div className="h-full w-full flex flex-col items-center justify-center p-6 text-center">
+                    <div className="contract-card-image flex flex-col items-center justify-center p-6 text-center bg-gray-100 dark:bg-gray-800">
                       <div className="text-5xl mb-4">🧩</div>
                       <div className="text-sm font-medium text-gray-700 dark:text-gray-300 line-clamp-3">
                         {contract.headline}
                       </div>
                     </div>
                   )}
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent opacity-90" />
-                  <div className="absolute bottom-0 left-0 right-0 p-4 text-white">
-                    <div className="text-xs uppercase tracking-wide text-white/70">
-                      Block #{contract.block_height}
-                    </div>
-                    <div className="text-lg font-semibold leading-snug">
-                      {contract.headline}
-                    </div>
+                <div className="contract-card-info">
+                  <div className="flex items-center justify-between gap-2 mb-1">
+                    <span className="text-[10px] font-black uppercase tracking-[0.2em] opacity-70">
+                      Block #{contract.block_height || 'Pending'}
+                    </span>
+                    {contract.metadata?.status && (
+                      <span className="badge badge-primary" style={{ fontSize: '0.6rem' }}>
+                        {contract.metadata.status}
+                      </span>
+                    )}
                   </div>
-                </div>
-                <div className="p-4">
-                  <div className="text-xs text-gray-500 dark:text-gray-400 font-mono truncate">
-                    {contract.id}
-                  </div>
-                  <div className="mt-2 text-sm text-gray-700 dark:text-gray-300">
+                  <div className="text-sm font-semibold leading-snug mb-2 line-clamp-2">
                     {contract.headline}
+                  </div>
+                  <div className="flex items-center justify-between gap-2 text-xs opacity-60">
+                    <div className="contract-id truncate flex-1 font-mono">
+                      {contract.id?.slice(0, 12)}…
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <span>💰 {(contract.metadata?.total_budget / 1e8 || 0).toFixed(4)} BTC</span>
+                      <span>📋 {contract.metadata?.available_tasks || 0}</span>
+                    </div>
                   </div>
                 </div>
               </div>
-            </button>
+            </div>
           ))}
         </div>
 
-        <div ref={sentinelRef} className="py-6 text-center text-sm text-gray-500 dark:text-gray-400">
-          {isLoading ? 'Loading more contracts…' : hasMore ? 'Scroll for more' : 'End of contracts'}
+        <div ref={sentinelRef} className="py-10 text-center">
+          {isLoading ? (
+            <div className="flex flex-col items-center gap-2">
+              <div className="w-6 h-6 border-2 border-starlight border-t-transparent rounded-full animate-spin"></div>
+              <span className="text-[10px] font-black uppercase tracking-widest text-gray-500">Loading more contracts…</span>
+            </div>
+          ) : hasMore ? (
+            <span className="text-[10px] font-black uppercase tracking-widest text-gray-500">Scroll for more</span>
+          ) : (
+            <div className="text-[10px] font-black uppercase tracking-widest text-gray-500 opacity-60">— End of contracts —</div>
+          )}
         </div>
       </div>
 

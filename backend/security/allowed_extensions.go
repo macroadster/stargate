@@ -5,7 +5,7 @@ var AllowedImageExtensions = []string{
 }
 
 var AllowedTextExtensions = []string{
-	".txt", ".json", ".html", ".md", ".htm",
+	".txt", ".json", ".html", ".md", ".htm", ".js", ".css",
 }
 
 var AllowedDataExtensions = []string{

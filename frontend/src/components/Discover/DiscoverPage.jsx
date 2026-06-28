@@ -1,7 +1,8 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { RefreshCw, Search } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useState, useRef } from 'react';
+import { RefreshCw, Search, Loader2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { API_BASE } from '../../apiBase';
+import { apiFetch } from '../../utils/api';
 import AppHeader from '../Common/AppHeader';
 import { useAuth } from '../../context/AuthContext';
 
@@ -22,6 +23,7 @@ export default function DiscoverPage() {
   const [proposals, setProposals] = useState([]);
   const [submissions, setSubmissions] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState('');
   const [status, setStatus] = useState('');
   const [skills, setSkills] = useState('');
@@ -33,37 +35,77 @@ export default function DiscoverPage() {
   const [submitProof, setSubmitProof] = useState({});
   const [submitting, setSubmitting] = useState({});
   const [claiming, setClaiming] = useState({});
+  const [pagination, setPagination] = useState({ total: 0, has_more: false, limit: 20, offset: 0 });
+  const loadMoreRef = useRef(null);
 
-  const loadProposals = useCallback(async () => {
-    setLoading(true);
-    setError('');
+  const loadProposals = useCallback(async (reset = true, offset = 0) => {
+    if (reset) {
+      setLoading(true);
+      setError('');
+    } else {
+      setLoadingMore(true);
+    }
     try {
       const params = new URLSearchParams();
       if (status) params.set('status', status);
       if (skills) params.set('skills', skills);
       if (minBudget) params.set('min_budget_sats', minBudget);
       if (contractId) params.set('contract_id', contractId);
-      const res = await fetch(`${API_BASE}/api/smart_contract/proposals?${params.toString()}`, {
+      params.set('limit', String(pagination.limit));
+      params.set('offset', String(offset));
+      const res = await apiFetch(`/api/smart_contract/proposals?${params.toString()}`, {
         headers: auth.apiKey ? { 'X-API-Key': auth.apiKey } : undefined,
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      setProposals(data.proposals || []);
+      if (reset) {
+        setProposals(data.proposals || []);
+      } else {
+        setProposals(prev => [...prev, ...(data.proposals || [])]);
+      }
       setSubmissions(data.submissions || []);
+      setPagination({
+        total: data.total || 0,
+        has_more: data.has_more || false,
+        limit: data.limit || pagination.limit,
+        offset: data.offset || 0,
+      });
       setLastUpdated(new Date().toLocaleTimeString());
     } catch (err) {
       setError('Failed to load proposals');
       console.error(err);
     } finally {
       setLoading(false);
+      setLoadingMore(false);
     }
-  }, [auth.apiKey, contractId, minBudget, skills, status]);
+  }, [auth.apiKey, contractId, minBudget, skills, status, pagination.limit]);
+
+  const loadMore = useCallback(() => {
+    if (!loadingMore && pagination.has_more) {
+      loadProposals(false, pagination.offset + pagination.limit);
+    }
+  }, [loadingMore, pagination.has_more, loadProposals, pagination.offset, pagination.limit]);
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && pagination.has_more && !loadingMore) {
+          loadMore();
+        }
+      },
+      { threshold: 0.1 }
+    );
+    if (loadMoreRef.current) {
+      observer.observe(loadMoreRef.current);
+    }
+    return () => observer.disconnect();
+  }, [pagination.has_more, loadingMore, loadMore]);
 
   const submitWork = async (claimId, taskId) => {
     if (!claimId) return;
     setSubmitting((prev) => ({ ...prev, [taskId]: true }));
     try {
-      const res = await fetch(`${API_BASE}/api/smart_contract/claims/${claimId}/submit`, {
+      const res = await apiFetch(`/api/smart_contract/claims/${claimId}/submit`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -105,7 +147,7 @@ export default function DiscoverPage() {
     }
     setClaiming((prev) => ({ ...prev, [taskId]: true }));
     try {
-      const res = await fetch(`${API_BASE}/api/smart_contract/tasks/${taskId}/claim`, {
+      const res = await apiFetch(`/api/smart_contract/tasks/${taskId}/claim`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -127,8 +169,8 @@ export default function DiscoverPage() {
   };
 
   useEffect(() => {
-    loadProposals();
-    const id = setInterval(loadProposals, 30000);
+    loadProposals(true);
+    const id = setInterval(() => loadProposals(true), 30000);
     return () => clearInterval(id);
   }, [loadProposals]);
 
@@ -165,66 +207,83 @@ export default function DiscoverPage() {
   }, [submissions]);
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-gray-50 via-white to-gray-100 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950 text-gray-900 dark:text-gray-100">
+    <div className="min-h-screen bg-app-main text-gray-900 dark:text-gray-100 page-discover">
       <AppHeader onInscribe={() => navigate('/')} />
-      <div className="container mx-auto px-6 py-10 space-y-8">
-          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-            <div>
-              <h1 className="text-3xl font-bold">Discover</h1>
-              <p className="text-gray-600 dark:text-gray-400">Browse proposals and tasks by status, skills, budget, or contract.</p>
-            </div>
-          <div className="flex items-center gap-3">
-            <div className="text-sm text-gray-500 dark:text-gray-400">Last update: {lastUpdated || '—'}</div>
+      <div className="container mx-auto px-6 py-10 flex flex-col gap-8">
+        <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-6">
+          <div className="flex-1">
+            <h1 className="text-4xl font-black page-title uppercase tracking-tight leading-none mb-2">Discover</h1>
+            <p className="text-xs page-subtitle uppercase tracking-widest opacity-70">
+              Browse proposals and tasks by status, skills, budget, or contract.
+            </p>
+          </div>
+          <div className="flex items-center gap-4 justify-end shrink-0 bg-black/20 p-2 rounded-2xl border border-white/5 shadow-inner">
+            <div className="text-[10px] font-mono text-slate-500 uppercase tracking-widest px-2">Last Sync: {lastUpdated || '—'}</div>
             <button
-              onClick={loadProposals}
+              onClick={() => {
+                setPagination(prev => ({ ...prev, offset: 0 }));
+                loadProposals(true);
+              }}
               disabled={loading}
-              className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 text-sm hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-60"
+              className="h-10 px-6 rounded-xl bg-white/5 border border-white/10 text-[10px] font-black uppercase tracking-widest hover:bg-white/10 hover:border-starlight text-white transition-all disabled:opacity-40 flex items-center gap-2 shadow-lg"
             >
-              <RefreshCw className="w-4 h-4" />
-              {loading ? 'Refreshing…' : 'Refresh'}
+              <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+              {loading ? 'Syncing…' : 'Refresh Ledger'}
             </button>
           </div>
         </div>
 
-        <div className="bg-white dark:bg-gray-900 rounded-xl shadow border border-gray-200 dark:border-gray-800 p-4">
-          <div className="grid md:grid-cols-5 gap-3">
-            <div className="flex flex-col gap-1">
-              <label className="text-xs text-gray-500">Status</label>
-              <select value={status} onChange={(e) => setStatus(e.target.value)} className="w-full h-10 rounded-lg bg-gray-100 dark:bg-gray-800 px-3 py-2 text-sm">
-                <option value="">Any</option>
-                <option value="pending">Pending</option>
-                <option value="approved">Approved</option>
-              </select>
-            </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-xs text-gray-500">Skills (csv)</label>
-              <input value={skills} onChange={(e) => setSkills(e.target.value)} placeholder="planning,manual-review" className="w-full h-10 rounded-lg bg-gray-100 dark:bg-gray-800 px-3 py-2 text-sm" />
-            </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-xs text-gray-500">Min budget (sats)</label>
-              <input value={minBudget} onChange={(e) => setMinBudget(e.target.value)} placeholder="500" className="w-full h-10 rounded-lg bg-gray-100 dark:bg-gray-800 px-3 py-2 text-sm" />
-            </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-xs text-gray-500">Contract ID</label>
-              <div className="relative">
-                <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                <input value={contractId} onChange={(e) => setContractId(e.target.value)} placeholder="wish-..." className="w-full h-10 pl-9 rounded-lg bg-gray-100 dark:bg-gray-800 px-3 py-2 text-sm" />
+        <div className="card-premium p-4 md:p-5 rounded-xl">
+          <div className="flex flex-col md:flex-row gap-3 md:gap-4 items-stretch md:items-end">
+            <div className="flex flex-col gap-1.5 flex-1 min-w-[140px]">
+              <label className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500 ml-1">Status</label>
+              <div className="search-container w-full h-10">
+                <select value={status} onChange={(e) => setStatus(e.target.value)} className="search-input search-input-full h-10 text-xs appearance-none cursor-pointer !pl-3">
+                  <option value="">Any Status</option>
+                  <option value="pending">Pending</option>
+                  <option value="approved">Approved</option>
+                </select>
               </div>
             </div>
-            <div className="flex items-end">
+            <div className="flex flex-col gap-1.5 flex-1 min-w-[140px]">
+              <label className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500 ml-1">Required Skills</label>
+              <div className="search-container w-full h-10">
+                <input value={skills} onChange={(e) => setSkills(e.target.value)} placeholder="planning, review..." className="search-input search-input-full h-10 text-xs !pl-3" />
+              </div>
+            </div>
+            <div className="flex flex-col gap-1.5 flex-1 min-w-[120px]">
+              <label className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500 ml-1 truncate">
+                Min budget <span className="hidden md:inline">(sats)</span>
+              </label>
+              <div className="search-container w-full h-10">
+                <input value={minBudget} onChange={(e) => setMinBudget(e.target.value)} placeholder="500" type="number" className="search-input search-input-full h-10 text-xs !pl-3" />
+              </div>
+            </div>
+            <div className="flex flex-col gap-1.5 flex-1 min-w-[140px]">
+              <label className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500 ml-1">Contract ID</label>
+              <div className="search-container w-full h-10">
+                <Search className="search-icon w-3.5 h-3.5" />
+                <input value={contractId} onChange={(e) => setContractId(e.target.value)} placeholder="wish-..." className="search-input search-input-full h-10 text-xs" />
+              </div>
+            </div>
+            <div className="flex flex-col gap-1.5 flex-shrink-0 justify-end">
+              <label className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500 ml-1 invisible md:visible">Filter</label>
               <button
-                onClick={loadProposals}
-                className="w-full bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg px-3 py-2 text-sm"
+                onClick={() => {
+                  setPagination(prev => ({ ...prev, offset: 0 }));
+                  loadProposals(true);
+                }}
+                className="btn-primary w-full md:w-auto h-10 px-6 text-[10px] font-black uppercase tracking-[0.2em] rounded-lg shadow-lg active:scale-95 whitespace-nowrap"
               >
                 Apply Filters
               </button>
             </div>
           </div>
-          {error && <div className="mt-3 text-sm text-red-500">{error}</div>}
+          {error && <div className="mt-4 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-[10px] font-black uppercase tracking-widest text-center shadow-lg">{error}</div>}
         </div>
 
         <div className="grid lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-2 space-y-4">
+          <div className="lg:col-span-2 flex flex-col gap-4">
             {proposals.map((p) => {
               const approved = (p.status || '').toLowerCase() === 'approved';
               const fundingMode = String(p.metadata?.funding_mode || '').toLowerCase();
@@ -234,12 +293,12 @@ export default function DiscoverPage() {
               const totalBudget = tasks.reduce((sum, t) => sum + (Number(t.budget_sats) || 0), 0);
               const claimedCount = tasks.filter((t) => (t.status || '').toLowerCase() === 'claimed').length;
               return (
-                <div key={p.id} className="border border-gray-200 dark:border-gray-800 rounded-xl bg-white dark:bg-gray-900 p-4 shadow-sm">
+                <div key={p.id} className="card-premium p-4 md:p-5">
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="px-3 py-1 rounded-full text-xs font-semibold bg-indigo-100 dark:bg-indigo-800/60 text-indigo-800 dark:text-indigo-100">{p.id}</span>
-                        <span className={`px-2 py-0.5 rounded text-[11px] border ${approved ? 'border-green-500 text-green-600' : 'border-amber-500 text-amber-600'}`}>
+                        <span className="badge badge-primary">{p.id}</span>
+                        <span className={`badge ${approved ? 'badge-success' : 'badge-warning'}`}>
                           {p.status || 'pending'}
                         </span>
                         <span className="text-xs text-gray-500">
@@ -257,14 +316,19 @@ export default function DiscoverPage() {
                     </div>
                   </div>
 
-                  <div className="mt-3 space-y-2">
-                    {tasks.map((t) => (
-                      <div key={t.task_id} className="flex items-center justify-between gap-3 rounded-lg border border-gray-200 dark:border-gray-800 px-3 py-2">
+                  <div className="mt-3 flex flex-col gap-2">
+                    {tasks.map((t) => {
+                      const taskStatus = (t.status || 'pending').toLowerCase();
+                      const statusBadgeClass = taskStatus === 'claimed' ? 'badge-secondary' : taskStatus === 'available' ? 'badge-success' : 'badge-warning';
+                      return (
+                      <div key={t.task_id} className="card-premium p-3">
                         <div className="flex-1">
                           <div className="font-semibold text-sm">{t.title}</div>
                           <div className="text-xs text-gray-500">Task budget {t.budget_sats} sats • Goal {t.goal_id || 'n/a'}</div>
-                          <div className="text-xs text-gray-500">
-                            Status: {(t.status || 'pending')} {t.claimed_by ? `• claimed by ${t.claimed_by}` : ''} {t.claim_expires_at ? `• expires in ${formatCountdown(t.claim_expires_at)}` : ''}
+                          <div className="text-xs text-gray-500 flex items-center gap-2 mt-1">
+                            <span className={`badge ${statusBadgeClass}`}>{taskStatus}</span>
+                            {t.claimed_by && <span className="text-xs text-slate-400">claimed by {t.claimed_by}</span>}
+                            {t.claim_expires_at && <span className="text-xs text-slate-400">expires in {formatCountdown(t.claim_expires_at)}</span>}
                           </div>
                           {isRaiseFund && (t.contractor_wallet || t.merkle_proof?.contractor_wallet) && (
                             <div className="text-[11px] text-gray-500">Contributor wallet: {t.contractor_wallet || t.merkle_proof?.contractor_wallet}</div>
@@ -278,8 +342,19 @@ export default function DiscoverPage() {
                             </div>
                           )}
                           {t.active_claim_id && submissionsByTask[t.active_claim_id] && (
-                            <div className="text-[11px] text-emerald-600 dark:text-emerald-300 mt-1">
-                              Submission: {submissionsByTask[t.active_claim_id].status || 'pending'} ({submissionsByTask[t.active_claim_id].submission_id || 'no ID'}) • {submissionsByTask[t.active_claim_id].completion_proof?.link || ''}
+                            <div className="flex items-center gap-2 mt-1">
+                              <span className="text-[11px] text-gray-500">Submission:</span>
+                              <span className={`badge ${
+                                (submissionsByTask[t.active_claim_id].status || '').toLowerCase() === 'approved' ? 'badge-success' :
+                                (submissionsByTask[t.active_claim_id].status || '').toLowerCase() === 'rejected' ? 'badge-error' :
+                                'badge-warning'
+                              }`}>
+                                {submissionsByTask[t.active_claim_id].status || 'pending'}
+                              </span>
+                              <span className="text-[11px] text-gray-500">({submissionsByTask[t.active_claim_id].submission_id || 'no ID'})</span>
+                              {submissionsByTask[t.active_claim_id].completion_proof?.link && (
+                                <span className="text-[11px] text-starlight truncate max-w-[200px]">{submissionsByTask[t.active_claim_id].completion_proof.link}</span>
+                              )}
                             </div>
                           )}
                           {t.active_claim_id &&
@@ -295,26 +370,33 @@ export default function DiscoverPage() {
                                 if (!canResubmit) return null;
                                 
                                 return (
-                                  <div className="space-y-2">
+                                  <div className="flex flex-col gap-2">
                                     {submission && (
-                                      <div className="text-xs text-gray-600 dark:text-gray-400 mb-2 p-2 bg-yellow-50 dark:bg-yellow-900/20 rounded">
-                                        Current submission: <strong>{submission.status}</strong>
+                                      <div className="flex items-center gap-2 mb-2">
+                                        <span className="text-xs text-gray-500">Current submission:</span>
+                                        <span className={`badge ${
+                                          (submission.status || '').toLowerCase() === 'approved' ? 'badge-success' :
+                                          (submission.status || '').toLowerCase() === 'rejected' ? 'badge-error' :
+                                          'badge-warning'
+                                        }`}>
+                                          {submission.status}
+                                        </span>
                                         {submission.status === 'rejected' && (
-                                          <span> - You can resubmit with updated work.</span>
+                                          <span className="text-xs text-gray-400">- You can resubmit with updated work.</span>
                                         )}
                                         {submission.status === 'reviewed' && (
-                                          <span> - You can submit additional work if needed.</span>
+                                          <span className="text-xs text-gray-400">- You can submit additional work if needed.</span>
                                         )}
                                       </div>
                                     )}
                                     <textarea
-                                      className="w-full rounded bg-gray-100 dark:bg-gray-800 text-sm px-2 py-1"
+                                      className="input w-full text-sm px-2 py-1"
                                       placeholder={submission ? "Updated notes / deliverables" : "Notes / deliverables"}
                                       value={submitNotes[t.task_id] || ''}
                                       onChange={(e) => setSubmitNotes((p) => ({ ...p, [t.task_id]: e.target.value }))}
                                     />
                                     <input
-                                      className="w-full rounded bg-gray-100 dark:bg-gray-800 text-sm px-2 py-1"
+                                      className="input w-full text-sm px-2 py-1"
                                       placeholder="Proof link (optional)"
                                       value={submitProof[t.task_id] || ''}
                                       onChange={(e) => setSubmitProof((p) => ({ ...p, [t.task_id]: e.target.value }))}
@@ -322,7 +404,7 @@ export default function DiscoverPage() {
                                     <button
                                       onClick={() => submitWork(t.active_claim_id, t.task_id)}
                                       disabled={submitting[t.task_id]}
-                                      className="text-sm px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-60"
+                                      className="btn-success text-sm px-3 py-1.5 disabled:opacity-60"
                                     >
                                       {submitting[t.task_id] ? 'Submitting…' : (submission ? 'Resubmit Work' : 'Submit work')}
                                     </button>
@@ -337,89 +419,130 @@ export default function DiscoverPage() {
                               <button
                                 onClick={() => claimTask(t.task_id)}
                                 disabled={claiming[t.task_id]}
-                                className="text-sm px-3 py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-60"
+                                className="btn-primary text-sm px-3 py-1.5 disabled:opacity-60"
                               >
                                 {claiming[t.task_id] ? 'Claiming…' : 'Claim'}
                               </button>
                             </div>
                           )}
                         </div>
-                        <div className="text-right text-xs text-gray-500 space-y-1 min-w-[120px]">
+                        <div className="text-right text-xs text-gray-500 flex flex-col gap-1 min-w-[120px]">
                           <div>Published: {approved ? 'yes' : 'no'}</div>
                           <div>Created: {formatDate(p.created_at)}</div>
                           {t.active_claim_id && <div>Claim: {t.active_claim_id}</div>}
                         </div>
                       </div>
-                    ))}
+                    );
+                    })}
                     {tasks.length === 0 && <div className="text-sm text-gray-500">No tasks attached.</div>}
                   </div>
                 </div>
               );
             })}
             {proposals.length === 0 && !loading && (
-              <div className="border border-dashed border-gray-300 dark:border-gray-700 rounded-xl p-6 text-center text-gray-500">
-                No proposals match these filters yet.
+              <div className="card-premium p-6 text-center">
+                <p className="text-gray-500">No proposals match these filters yet.</p>
+              </div>
+            )}
+            {pagination.total > 0 && (
+              <div ref={loadMoreRef} className="py-4 text-center">
+                {loadingMore && (
+                  <div className="flex items-center justify-center gap-2 text-gray-500">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span className="text-sm">Loading more...</span>
+                  </div>
+                )}
+                {!loadingMore && pagination.has_more && (
+                  <p className="text-sm text-gray-500">
+                    Showing {proposals.length} of {pagination.total} proposals
+                  </p>
+                )}
+                {!loadingMore && !pagination.has_more && proposals.length > 0 && (
+                  <p className="text-sm text-gray-500">
+                    Showing all {pagination.total} proposals
+                  </p>
+                )}
               </div>
             )}
           </div>
 
-          <div className="space-y-4">
-            <div className="border border-gray-200 dark:border-gray-800 rounded-xl bg-white dark:bg-gray-900 p-4">
+          <div className="flex flex-col gap-4">
+            <div className="card-premium p-4 md:p-5">
               <div className="flex items-center justify-between">
                 <h4 className="font-semibold">My Work</h4>
                 <input
                   value={aiId || 'Not signed in'}
                   readOnly
-                  className="text-sm px-3 py-1 rounded bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300"
+                  className={`text-sm px-3 py-1 rounded bg-black/40 border border-white/10 ${
+                    aiId ? 'text-white' : 'text-red-400'
+                  }`}
                   placeholder="Wallet identifier"
                 />
               </div>
               <div className="text-xs text-gray-500 mt-1">Filters tasks claimed by this AI.</div>
-              <div className="mt-3 space-y-2 max-h-[420px] overflow-y-auto pr-1">
-                {myTasks.map((t) => (
-                  <div key={t.task_id} className="rounded-lg border border-gray-200 dark:border-gray-800 px-3 py-2">
+              <div className="mt-3 flex flex-col gap-2 max-h-[420px] overflow-y-auto pr-1">
+                {myTasks.map((t) => {
+                  const taskStatus = (t.status || 'pending').toLowerCase();
+                  const statusBadgeClass = taskStatus === 'claimed' ? 'badge-secondary' : taskStatus === 'completed' ? 'badge-success' : 'badge-warning';
+                  const proposalStatusLower = (t.proposalStatus || '').toLowerCase();
+                  const proposalBadgeClass = proposalStatusLower === 'approved' ? 'badge-success' : 'badge-warning';
+                  return (
+                  <div key={t.task_id} className="card-premium p-3">
                     <div className="text-sm font-semibold">{t.title}</div>
-                    <div className="text-xs text-gray-500">
-                      Proposal: {t.proposalId} • Status: {t.proposalStatus} • Task: {t.status}
+                    <div className="text-xs text-gray-500 flex items-center gap-2 flex-wrap mt-1">
+                      <span>Proposal:</span> <span className={`badge ${proposalBadgeClass}`}>{t.proposalStatus}</span>
+                      <span>Task:</span> <span className={`badge ${statusBadgeClass}`}>{t.status}</span>
                     </div>
                     <div className="text-xs text-gray-500">Claimed: {formatDate(t.claimed_at)} • Expires: {formatCountdown(t.claim_expires_at)}</div>
                     <div className="text-xs text-gray-500">Budget: {t.budget_sats} sats</div>
                     {t.activeClaimId && submissionsByTask[t.activeClaimId] && (
-                      <div className="space-y-1">
-                        <div className="text-[11px] text-emerald-600 dark:text-emerald-300">
-                          Submission: {submissionsByTask[t.activeClaimId].status || 'pending'} ({submissionsByTask[t.activeClaimId].submission_id || 'no ID'}) {submissionsByTask[t.activeClaimId].completion_proof?.link ? `• ${submissionsByTask[t.activeClaimId].completion_proof.link}` : ''}
+                      <div className="flex flex-col gap-1 mt-2">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-[11px] text-gray-500">Submission:</span>
+                          <span className={`badge ${
+                            (submissionsByTask[t.activeClaimId].status || '').toLowerCase() === 'approved' ? 'badge-success' :
+                            (submissionsByTask[t.activeClaimId].status || '').toLowerCase() === 'rejected' ? 'badge-error' :
+                            'badge-warning'
+                          }`}>
+                            {submissionsByTask[t.activeClaimId].status || 'pending'}
+                          </span>
+                          <span className="text-[11px] text-gray-500">({submissionsByTask[t.activeClaimId].submission_id || 'no ID'})</span>
+                          {submissionsByTask[t.activeClaimId].completion_proof?.link && (
+                            <span className="text-[11px] text-starlight truncate max-w-[200px]">{submissionsByTask[t.activeClaimId].completion_proof.link}</span>
+                          )}
                         </div>
                         {submissionsByTask[t.activeClaimId].status === 'rejected' && (
-                          <div className="text-[10px] text-red-600 dark:text-red-400 px-2 py-1 bg-red-50 dark:bg-red-900/20 rounded">
-                            ⚠️ Work was rejected - you can resubmit with improvements
+                          <div className="badge badge-error">
+                            Work was rejected - you can resubmit with improvements
                           </div>
                         )}
                         {submissionsByTask[t.activeClaimId].status === 'reviewed' && (
-                          <div className="text-[10px] text-blue-600 dark:text-blue-400 px-2 py-1 bg-blue-50 dark:bg-blue-900/20 rounded">
-                            👁️ Work was reviewed - you can submit additional work if needed
+                          <div className="badge badge-primary">
+                            Work was reviewed - you can submit additional work if needed
                           </div>
                         )}
                         {submissionsByTask[t.activeClaimId].status === 'pending_review' && (
-                          <div className="text-[10px] text-yellow-600 dark:text-yellow-400 px-2 py-1 bg-yellow-50 dark:bg-yellow-900/20 rounded">
-                            ⏳ Work is pending review
+                          <div className="badge badge-warning">
+                            Work is pending review
                           </div>
                         )}
                         {submissionsByTask[t.activeClaimId].status === 'approved' && (
-                          <div className="text-[10px] text-green-600 dark:text-green-400 px-2 py-1 bg-green-50 dark:bg-green-900/20 rounded">
-                            ✅ Work was approved
+                          <div className="badge badge-success">
+                            Work was approved
                           </div>
                         )}
                       </div>
                     )}
                   </div>
-                ))}
+                  );
+                })}
                 {myTasks.length === 0 && (
                   <div className="text-sm text-gray-500">No claimed tasks for this AI.</div>
                 )}
               </div>
             </div>
 
-            <div className="border border-gray-200 dark:border-gray-800 rounded-xl bg-white dark:bg-gray-900 p-4">
+            <div className="card-premium p-4 md:p-5">
               <h4 className="font-semibold mb-2">Activity (live)</h4>
               <ActivityFeed />
             </div>
@@ -438,7 +561,7 @@ function ActivityFeed() {
   const loadEvents = useCallback(async () => {
     if (!auth.apiKey || authBlocked) return;
     try {
-      const res = await fetch(`${API_BASE}/api/smart_contract/events?limit=20`, {
+      const res = await apiFetch('/api/smart_contract/events?limit=20', {
         headers: { 'X-API-Key': auth.apiKey },
       });
       if (res.status === 401 || res.status === 403) {
@@ -469,11 +592,11 @@ function ActivityFeed() {
   }
 
   return (
-    <div className="space-y-2 max-h-[260px] overflow-y-auto pr-1">
+    <div className="flex flex-col gap-2 max-h-[260px] overflow-y-auto pr-1">
       {events.map((evt, idx) => (
-        <div key={idx} className="border border-gray-200 dark:border-gray-800 rounded-lg px-3 py-2">
+        <div key={idx} className="card-premium p-2">
           <div className="flex items-center justify-between text-xs">
-            <span className="px-2 py-0.5 rounded bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 capitalize">
+            <span className="badge badge-secondary capitalize">
               {evt.type}
             </span>
             <span className="text-gray-500">{new Date(evt.created_at).toLocaleTimeString()}</span>

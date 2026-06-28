@@ -142,8 +142,12 @@ func (r *ProposalsRepository) Create(ctx context.Context, p smart_contract.Propo
 	if metaMap == nil {
 		metaMap = map[string]interface{}{}
 	}
-	if len(p.Tasks) > 0 {
+	// Only store suggested_tasks in metadata for pending proposals
+	// Approved/published proposals get their task status from mcp_tasks table (single source of truth)
+	if len(p.Tasks) > 0 && (p.Status == "" || strings.EqualFold(p.Status, "pending")) {
 		metaMap["suggested_tasks"] = p.Tasks
+	} else {
+		delete(metaMap, "suggested_tasks")
 	}
 	meta, _ := json.Marshal(metaMap)
 	_, err := r.pool.Exec(ctx, `

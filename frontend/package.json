@@ -3,12 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "dependencies": {
-    "@tailwindcss/typography": "^0.5.19",
+    "@howssatoshi/quantumcss": "1.13.0",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.0",
     "@testing-library/user-event": "^13.5.0",
-    "autoprefixer": "^10.4.22",
     "lucide-react": "^0.553.0",
     "postcss": "^8.5.6",
     "qrcode.react": "^4.2.0",
@@ -19,18 +18,22 @@
     "react-router-dom": "^7.9.6",
     "react-window": "^2.2.3",
     "remark-gfm": "^4.0.1",
+    "sql.js": "^1.12.0",
     "web-vitals": "^2.1.4"
   },
   "scripts": {
+    "postinstall": "npm run build:wasm",
+    "build:wasm": "cp node_modules/sql.js/dist/sql-wasm*.wasm public/",
     "start": "vite",
-    "build": "vite build",
+    "build": "npm run build:wasm && vite build && node scripts/generate-sitemap.js",
     "preview": "vite preview",
     "lint": "eslint \"src/**/*.{js,jsx}\"",
     "test": "NODE_NO_WARNINGS=1 vitest",
     "test:e2e": "npx playwright test frontend/tests/selection.spec.js",
     "test:watch": "NODE_NO_WARNINGS=1 vitest --watch",
     "test:real": "npx playwright test tests/mcp_workflow_real.spec.js --headed",
-    "test:real:headless": "npx playwright test tests/mcp_workflow_real.spec.js"
+    "test:real:headless": "npx playwright test tests/mcp_workflow_real.spec.js",
+    "sitemap": "node scripts/generate-sitemap.js"
   },
   "eslintConfig": {
     "extends": [
@@ -61,7 +64,6 @@
     "eslint-plugin-react-refresh": "^0.4.24",
     "globals": "^15.15.0",
     "jsdom": "^26.1.0",
-    "tailwindcss": "^3.4.18",
     "vite": "^7.3.0",
     "vitest": "^4.0.16"
   }

@@ -1,32 +1,41 @@
 package mcp
 
-import "strings"
+import (
+	"strings"
 
-const (
-	ToolCategoryDiscovery = "discovery" // list, get, scan - no auth
-	ToolCategoryWrite     = "write"     // create, claim, submit - requires auth
-	ToolCategoryUtility   = "utility"   // helpers, tools
+	"stargate-backend/core/smart_contract"
 )
 
 // ToolMetadata contains lightweight metadata for search
 type ToolMetadata struct {
-	Name         string `json:"name"`
-	Description  string `json:"description"`
-	Category     string `json:"category"`
-	AuthRequired bool   `json:"auth_required"`
+	Name            string   `json:"name"`
+	Description     string   `json:"description"`
+	Category        string   `json:"category"`
+	AuthRequired    bool     `json:"auth_required"`
+	PreferredClient string   `json:"preferred_client,omitempty"`
+	DocsHint        string   `json:"docs_hint,omitempty"`
+	Keywords        []string `json:"keywords,omitempty"`
 }
 
 // getToolSchemas returns detailed schemas for all available tools
 func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
+	if h.guidance != nil {
+		return h.guidance.GetToolSchemas()
+	}
+	return h.getToolSchemasLegacy()
+}
+
+// getToolSchemasLegacy returns the hardcoded tool schemas (fallback when guidance is not available)
+func (h *HTTPMCPServer) getToolSchemasLegacy() map[string]interface{} {
 	return map[string]interface{}{
 		"list_contracts": map[string]interface{}{
 			"category":    ToolCategoryDiscovery,
-			"description": "List available smart contracts with optional filtering",
+			"description": "List all smart contracts with optional filtering and pagination",
 			"parameters": map[string]interface{}{
 				"status": map[string]interface{}{
 					"type":        "string",
 					"description": "Filter contracts by status",
-					"enum":        []string{"active", "pending", "completed"},
+					"enum":        []string{smart_contract.StatusActive, smart_contract.StatusPending, smart_contract.StatusCompleted},
 				},
 				"creator": map[string]interface{}{
 					"type":        "string",
@@ -41,11 +50,25 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 					"items":       map[string]interface{}{"type": "string"},
 					"description": "Filter contracts by required skills",
 				},
+				"limit": map[string]interface{}{
+					"type":        "integer",
+					"description": "Maximum number of contracts to return (default: 50)",
+					"default":     50,
+				},
+				"offset": map[string]interface{}{
+					"type":        "integer",
+					"description": "Number of contracts to skip for pagination (default: 0)",
+					"default":     0,
+				},
 			},
 			"examples": []map[string]interface{}{
 				{
-					"description": "List all active contracts",
-					"arguments":   map[string]interface{}{"status": "active"},
+					"description": "List active contracts with pagination",
+					"arguments":   map[string]interface{}{"status": "active", "limit": 10},
+				},
+				{
+					"description": "List all contracts with custom pagination",
+					"arguments":   map[string]interface{}{"limit": 20, "offset": 100},
 				},
 			},
 		},
@@ -61,7 +84,7 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 				"status": map[string]interface{}{
 					"type":        "string",
 					"description": "Filter by contract status",
-					"enum":        []string{"pending", "active", "all"},
+					"enum":        []string{smart_contract.ProposalStatusPending, smart_contract.StatusActive, smart_contract.StatusAll},
 					"default":     "pending",
 				},
 			},
@@ -93,9 +116,76 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 				},
 			},
 		},
+		"get_contract_rework_requests": map[string]interface{}{
+			"category":    ToolCategoryDiscovery,
+			"description": "Get rework requests for a contract",
+			"parameters": map[string]interface{}{
+				"contract_id": map[string]interface{}{
+					"type":        "string",
+					"description": "The ID of the contract",
+					"required":    true,
+				},
+			},
+			"examples": []map[string]interface{}{
+				{
+					"description": "Get rework requests for a contract",
+					"arguments":   map[string]interface{}{"contract_id": "contract-123"},
+				},
+			},
+		},
+		"create_contract_rework_request": map[string]interface{}{
+			"category":    ToolCategoryWrite,
+			"description": "Create a rework request for a contract (wish creator only)",
+			"parameters": map[string]interface{}{
+				"contract_id": map[string]interface{}{
+					"type":        "string",
+					"description": "The ID of the contract",
+					"required":    true,
+				},
+				"notes": map[string]interface{}{
+					"type":        "string",
+					"description": "Feedback notes explaining what needs to be reworked",
+					"required":    true,
+				},
+			},
+			"examples": []map[string]interface{}{
+				{
+					"description": "Create rework request",
+					"arguments":   map[string]interface{}{"contract_id": "contract-123", "notes": "The output doesn't work as expected..."},
+				},
+			},
+		},
+		"get_task": map[string]interface{}{
+			"category":    ToolCategoryDiscovery,
+			"description": "Get detailed information about a specific task by ID",
+			"parameters": map[string]interface{}{
+				"task_id": map[string]interface{}{
+					"type":        "string",
+					"description": "The ID of the task to retrieve",
+					"required":    true,
+				},
+			},
+			"examples": []map[string]interface{}{
+				{
+					"description": "Get task details",
+					"arguments":   map[string]interface{}{"task_id": "task-123"},
+				},
+			},
+		},
+		"get_scanner_info": map[string]interface{}{
+			"category":    ToolCategoryDiscovery,
+			"description": "Get information about the steganographic scanner status and version",
+			"parameters":  map[string]interface{}{},
+			"examples": []map[string]interface{}{
+				{
+					"description": "Get scanner info",
+					"arguments":   map[string]interface{}{},
+				},
+			},
+		},
 		"list_tasks": map[string]interface{}{
 			"category":    ToolCategoryDiscovery,
-			"description": "List available tasks with filtering options",
+			"description": "List available tasks with filtering options and pagination",
 			"parameters": map[string]interface{}{
 				"contract_id": map[string]interface{}{
 					"type":        "string",
@@ -109,17 +199,66 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 				"status": map[string]interface{}{
 					"type":        "string",
 					"description": "Filter by task status",
-					"enum":        []string{"available", "claimed", "completed"},
+					"enum":        []string{smart_contract.TaskStatusAvailable, smart_contract.TaskStatusClaimed, smart_contract.TaskStatusCompleted},
 				},
 				"limit": map[string]interface{}{
 					"type":        "integer",
-					"description": "Maximum number of tasks to return",
+					"description": "Maximum number of tasks to return (default: 50)",
+					"default":     50,
+				},
+				"offset": map[string]interface{}{
+					"type":        "integer",
+					"description": "Number of tasks to skip for pagination (default: 0)",
+					"default":     0,
 				},
 			},
 			"examples": []map[string]interface{}{
 				{
-					"description": "List available tasks",
-					"arguments":   map[string]interface{}{"status": "available"},
+					"description": "List available tasks with pagination",
+					"arguments":   map[string]interface{}{"status": "available", "limit": 10},
+				},
+				{
+					"description": "List tasks for specific contract",
+					"arguments":   map[string]interface{}{"contract_id": "contract-123", "limit": 20, "offset": 0},
+				},
+			},
+		},
+		"list_submissions": map[string]interface{}{
+			"category":    ToolCategoryDiscovery,
+			"description": "List submissions with filtering options and pagination",
+			"parameters": map[string]interface{}{
+				"contract_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Filter submissions by contract ID (returns submissions for all tasks in the contract)",
+				},
+				"task_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Filter submissions by task ID",
+				},
+				"status": map[string]interface{}{
+					"type":        "string",
+					"description": "Filter by submission status",
+					"enum":        []string{smart_contract.SubmissionStatusPendingReview, smart_contract.SubmissionStatusReviewed, smart_contract.SubmissionStatusApproved, smart_contract.SubmissionStatusRejected},
+				},
+				"limit": map[string]interface{}{
+					"type":        "integer",
+					"description": "Maximum number of submissions to return (default: 50)",
+					"default":     50,
+				},
+				"offset": map[string]interface{}{
+					"type":        "integer",
+					"description": "Number of submissions to skip for pagination (default: 0)",
+					"default":     0,
+				},
+			},
+			"examples": []map[string]interface{}{
+				{
+					"description": "List submissions for a contract",
+					"arguments":   map[string]interface{}{"contract_id": "contract-123", "limit": 10},
+				},
+				{
+					"description": "List submissions for a specific task",
+					"arguments":   map[string]interface{}{"task_id": "task-456", "limit": 20, "offset": 0},
 				},
 			},
 		},
@@ -132,25 +271,22 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 					"description": "The ID of the task to claim",
 					"required":    true,
 				},
-				"ai_identifier": map[string]interface{}{
-					"type":        "string",
-					"description": "Identifier of the AI agent claiming the task",
-					"required":    true,
-				},
 			},
 			"examples": []map[string]interface{}{
 				{
 					"description": "Claim a task",
 					"arguments": map[string]interface{}{
-						"task_id":       "task-123",
-						"ai_identifier": "agent-1",
+						"task_id": "task-123",
 					},
 				},
 			},
 		},
 		"submit_work": map[string]interface{}{
-			"category":    ToolCategoryWrite,
-			"description": "Submit completed work for a claimed task",
+			"category":         ToolCategoryWrite,
+			"description":      "Submit completed work for a claimed task. Remote agents must attach at least one artifact (file upload); locally spawned agents write into UPLOADS_DIR and submit via the store without MCP.",
+			"preferred_client": "starlight_sdk.sh",
+			"docs_hint":        "Use /mcp/SKILL.md and /mcp/starlight_sdk.sh for path-based file uploads. Artifacts are required for remote agents.",
+			"keywords":         []string{"upload", "artifact", "file", "path", "sdk", "script"},
 			"parameters": map[string]interface{}{
 				"claim_id": map[string]interface{}{
 					"type":        "string",
@@ -159,23 +295,57 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 				},
 				"deliverables": map[string]interface{}{
 					"type":        "object",
-					"description": "The work deliverables. Must include a 'notes' field with detailed description of completed work. Example: {\"notes\": \"I have completed the task by implementing...\"}",
+					"description": "The work deliverables. Must include 'notes' and at least one entry in 'artifacts' (remote agents). Example: {\"notes\": \"...\", \"artifacts\": [{\"filename\": \"index.html\", \"content\": \"<base64>\"}]}",
 					"properties": map[string]interface{}{
 						"notes": map[string]interface{}{
 							"description": "Detailed description of completed work, methodology, findings, and outcomes. This is the primary field that will be displayed for review.",
 							"type":        "string",
 						},
+						"artifacts": map[string]interface{}{
+							"description": "Required for remote agents. Array of file artifacts to include with submission. Each artifact must have 'filename' and 'content' (base64-encoded) fields. Prefer starlight_sdk.sh for local paths.",
+							"type":        "array",
+							"items": map[string]interface{}{
+								"type": "object",
+								"properties": map[string]interface{}{
+									"filename": map[string]interface{}{
+										"description": "Name of the file",
+										"type":        "string",
+									},
+									"content": map[string]interface{}{
+										"description": "Base64-encoded file content",
+										"type":        "string",
+									},
+									"content_type": map[string]interface{}{
+										"description": "MIME type of the file (optional, auto-detected if not provided)",
+										"type":        "string",
+									},
+								},
+								"required": []interface{}{"filename", "content"},
+							},
+						},
 					},
-					"required": []interface{}{"notes"},
+					"required": []interface{}{"notes", "artifacts"},
 				},
 			},
 			"examples": []map[string]interface{}{
 				{
-					"description": "Submit work for a task with detailed notes",
+					"description": "Submit work with file attachments (required for remote agents)",
 					"arguments": map[string]interface{}{
-						"claim_id": "claim-123",
+						"claim_id": "claim-456",
 						"deliverables": map[string]interface{}{
-							"notes": "I have successfully completed the task by implementing user authentication system with JWT tokens. The implementation includes: 1) User registration endpoint with email validation, 2) Login endpoint with secure password hashing, 3) JWT token generation and validation middleware, 4) Password reset functionality. All components have been tested with unit tests achieving 95% coverage.",
+							"notes": "Completed blog template with responsive design and interactive features. The template includes a working demo and comprehensive documentation.",
+							"artifacts": []map[string]interface{}{
+								{
+									"filename":     "blog-template.html",
+									"content":      "PCFET0NUWVBFIGh0bWw+PGh0bWw+...",
+									"content_type": "text/html",
+								},
+								{
+									"filename":     "screenshot.png",
+									"content":      "iVBORw0KGgoAAAANSUhEUgAA...",
+									"content_type": "image/png",
+								},
+							},
 						},
 					},
 				},
@@ -184,17 +354,39 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 		// Add more tools as needed...
 		"list_proposals": map[string]interface{}{
 			"category":    ToolCategoryDiscovery,
-			"description": "List proposals with filtering",
+			"description": "List proposals with filtering and pagination",
 			"parameters": map[string]interface{}{
+				"contract_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Filter by contract/wish ID",
+				},
+				"proposal_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Filter by proposal ID",
+				},
 				"status": map[string]interface{}{
 					"type":        "string",
 					"description": "Filter by proposal status",
 				},
+				"limit": map[string]interface{}{
+					"type":        "integer",
+					"description": "Maximum number of proposals to return (default: 50)",
+					"default":     50,
+				},
+				"offset": map[string]interface{}{
+					"type":        "integer",
+					"description": "Number of proposals to skip for pagination (default: 0)",
+					"default":     0,
+				},
 			},
 			"examples": []map[string]interface{}{
 				{
-					"description": "List pending proposals",
-					"arguments":   map[string]interface{}{"status": "pending"},
+					"description": "List pending proposals with pagination",
+					"arguments":   map[string]interface{}{"status": "pending", "limit": 10, "offset": 0},
+				},
+				{
+					"description": "List all proposals with custom pagination",
+					"arguments":   map[string]interface{}{"limit": 20, "offset": 100},
 				},
 			},
 		},
@@ -222,6 +414,7 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 				"visible_pixel_hash": map[string]interface{}{
 					"type":        "string",
 					"description": "Visible pixel hash (wish id)",
+					"required":    true,
 				},
 				"ingestion_id": map[string]interface{}{
 					"type":        "string",
@@ -242,8 +435,11 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 			},
 		},
 		"create_wish": map[string]interface{}{
-			"category":    ToolCategoryWrite,
-			"description": "Create a new wish (request for work) by inscribing a message. This creates a pending wish contract that agents can then propose solutions for using 'create_proposal'.",
+			"category":         ToolCategoryWrite,
+			"description":      "Create a new wish (request for work) by inscribing a message. This creates a pending wish contract that agents can then propose solutions for using 'create_proposal'.",
+			"preferred_client": "starlight_sdk.sh",
+			"docs_hint":        "Use /mcp/SKILL.md and /mcp/starlight_sdk.sh for local image uploads.",
+			"keywords":         []string{"image", "upload", "file", "path", "sdk", "script"},
 			"parameters": map[string]interface{}{
 				"message": map[string]interface{}{
 					"type":        "string",
@@ -301,6 +497,25 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 				},
 			},
 		},
+		"scan_transaction": map[string]interface{}{
+			"category":    ToolCategoryDiscovery,
+			"description": "Scan a Bitcoin transaction to extract inscribed skill. Looks up the transaction in the blocks directory, finds the associated image, and uses the native Go scanner to extract the steganographically hidden skill message.",
+			"parameters": map[string]interface{}{
+				"transaction_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Bitcoin transaction ID (64 character hex string)",
+					"required":    true,
+				},
+			},
+			"examples": []map[string]interface{}{
+				{
+					"description": "Scan transaction and extract inscribed skill",
+					"arguments": map[string]interface{}{
+						"transaction_id": "abc123...",
+					},
+				},
+			},
+		},
 		"list_events": map[string]interface{}{
 			"category":    ToolCategoryDiscovery,
 			"description": "List recent MCP events with optional filters",
@@ -331,7 +546,7 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 		},
 		"events_stream": map[string]interface{}{
 			"category":    ToolCategoryDiscovery,
-			"description": "Get SSE stream URL and auth hints for real-time MCP events",
+			"description": "Get Streamable HTTP stream URL and auth hints for real-time MCP events",
 			"parameters": map[string]interface{}{
 				"type": map[string]interface{}{
 					"type":        "string",
@@ -348,7 +563,7 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 			},
 			"examples": []map[string]interface{}{
 				{
-					"description": "Get SSE stream URL",
+					"description": "Get Streamable HTTP stream URL",
 					"arguments":   map[string]interface{}{"type": "approve"},
 				},
 			},
@@ -370,26 +585,96 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 				},
 			},
 		},
+		"reject_submission": map[string]interface{}{
+			"category":    ToolCategoryWrite,
+			"description": "Reject a work submission with optional notes and rejection type",
+			"parameters": map[string]interface{}{
+				"submission_id": map[string]interface{}{
+					"type":        "string",
+					"description": "The ID of the submission to reject",
+					"required":    true,
+				},
+				"notes": map[string]interface{}{
+					"type":        "string",
+					"description": "Reason for rejection",
+					"required":    false,
+				},
+				"rejection_type": map[string]interface{}{
+					"type":        "string",
+					"description": "Type of rejection (e.g., 'quality', 'incomplete', 'not_as_described')",
+					"required":    false,
+				},
+			},
+			"examples": []map[string]interface{}{
+				{
+					"description": "Reject a submission with a reason",
+					"arguments":   map[string]interface{}{"submission_id": "sub-123", "notes": "Deliverables do not meet quality standards", "rejection_type": "quality"},
+				},
+			},
+		},
+		"approve_submission": map[string]interface{}{
+			"category":    ToolCategoryWrite,
+			"description": "Approve a work submission and mark it as accepted",
+			"parameters": map[string]interface{}{
+				"submission_id": map[string]interface{}{
+					"type":        "string",
+					"description": "The ID of the submission to approve",
+					"required":    true,
+				},
+			},
+			"examples": []map[string]interface{}{
+				{
+					"description": "Approve a submission",
+					"arguments":   map[string]interface{}{"submission_id": "sub-123"},
+				},
+			},
+		},
 		"get_auth_challenge": map[string]interface{}{
 			"category":    ToolCategoryDiscovery,
-			"description": "Get a cryptographic challenge for wallet verification",
+			"description": "Get a cryptographic challenge for wallet verification with AI-friendly options",
 			"parameters": map[string]interface{}{
 				"wallet_address": map[string]interface{}{
 					"type":        "string",
 					"description": "Bitcoin wallet address to verify",
 					"required":    true,
 				},
+				"ai_mode": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Enable AI-friendly mode with higher attempt limits",
+					"required":    false,
+				},
 			},
 			"examples": []map[string]interface{}{
 				{
-					"description": "Get challenge for wallet verification",
+					"description": "Get standard challenge for wallet verification",
 					"arguments":   map[string]interface{}{"wallet_address": "tb1qexample..."},
+				},
+				{
+					"description": "Get AI-friendly challenge with higher attempt limits",
+					"arguments":   map[string]interface{}{"wallet_address": "tb1qexample...", "ai_mode": true},
+				},
+			},
+		},
+		"validate_address": map[string]interface{}{
+			"category":    ToolCategoryDiscovery,
+			"description": "Validate a Bitcoin address and get detailed information about its type and network",
+			"parameters": map[string]interface{}{
+				"address": map[string]interface{}{
+					"type":        "string",
+					"description": "Bitcoin address to validate",
+					"required":    true,
+				},
+			},
+			"examples": []map[string]interface{}{
+				{
+					"description": "Validate a Bitcoin address",
+					"arguments":   map[string]interface{}{"address": "tb1qexample..."},
 				},
 			},
 		},
 		"verify_auth_challenge": map[string]interface{}{
 			"category":    ToolCategoryWrite,
-			"description": "Verify wallet signature and receive API key",
+			"description": "Verify wallet signature and receive API key with detailed error reporting",
 			"parameters": map[string]interface{}{
 				"wallet_address": map[string]interface{}{
 					"type":        "string",
@@ -398,12 +683,16 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 				},
 				"signature": map[string]interface{}{
 					"type":        "string",
-					"description": "Bitcoin signature of the challenge nonce",
+					"description": "Bitcoin signature of the challenge nonce (supports legacy signmessage and BIP-322 formats)",
 					"required":    true,
 				},
 				"email": map[string]interface{}{
 					"type":        "string",
 					"description": "Optional email address for account recovery",
+				},
+				"detailed": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Enable detailed error reporting with specific signature format information",
 				},
 			},
 			"examples": []map[string]interface{}{
@@ -415,6 +704,163 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 						"email":          "user@example.com",
 					},
 				},
+				{
+					"description": "Complete verification with detailed error reporting for debugging",
+					"arguments": map[string]interface{}{
+						"wallet_address": "tb1qexample...",
+						"signature":      "base64_or_hex_signature...",
+						"detailed":       true,
+					},
+				},
+			},
+		},
+		"chat_send": map[string]interface{}{
+			"category":    ToolCategoryWrite,
+			"description": "Send a message in an MCP chat session",
+			"parameters": map[string]interface{}{
+				"session_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Chat session ID",
+					"required":    true,
+				},
+				"message": map[string]interface{}{
+					"type":        "string",
+					"description": "Message content",
+					"required":    true,
+				},
+			},
+		},
+		"chat_stream": map[string]interface{}{
+			"category":    ToolCategoryDiscovery,
+			"description": "Open a streaming chat session",
+			"parameters": map[string]interface{}{
+				"session_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Chat session ID (optional to create new)",
+				},
+			},
+		},
+		"chat_members": map[string]interface{}{
+			"category":    ToolCategoryDiscovery,
+			"description": "List members in a chat session",
+			"parameters": map[string]interface{}{
+				"session_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Chat session ID",
+					"required":    true,
+				},
+			},
+		},
+		"create_task": map[string]interface{}{
+			"category":    ToolCategoryWrite,
+			"description": "Create a new task for an existing contract",
+			"parameters": map[string]interface{}{
+				"contract_id": map[string]interface{}{
+					"type":        "string",
+					"description": "The ID of the contract to create the task for",
+					"required":    true,
+				},
+				"title": map[string]interface{}{
+					"type":        "string",
+					"description": "Task title",
+					"required":    true,
+				},
+				"description": map[string]interface{}{
+					"type":        "string",
+					"description": "Task description",
+					"required":    true,
+				},
+				"budget_sats": map[string]interface{}{
+					"type":        "integer",
+					"description": "Task budget in satoshis",
+					"required":    true,
+				},
+				"skills": map[string]interface{}{
+					"type":        "array",
+					"items":       map[string]interface{}{"type": "string"},
+					"description": "Required skills for the task",
+				},
+				"difficulty": map[string]interface{}{
+					"type":        "string",
+					"description": "Task difficulty level",
+					"enum":        []string{"easy", "medium", "hard"},
+				},
+				"estimated_hours": map[string]interface{}{
+					"type":        "integer",
+					"description": "Estimated hours to complete the task",
+				},
+				"requirements": map[string]interface{}{
+					"type":                 "object",
+					"additionalProperties": map[string]interface{}{"type": "string"},
+					"description":          "Additional requirements as key-value pairs",
+				},
+			},
+			"examples": []map[string]interface{}{
+				{
+					"description": "Create a frontend development task",
+					"arguments": map[string]interface{}{
+						"contract_id":     "contract-123",
+						"title":           "Build React component",
+						"description":     "Create a reusable React component for user profiles",
+						"budget_sats":     1000,
+						"skills":          []string{"react", "typescript", "css"},
+						"difficulty":      "medium",
+						"estimated_hours": 8,
+						"requirements": map[string]string{
+							"framework": "React 18+",
+							"styling":   "CSS Modules or Styled Components",
+						},
+					},
+				},
+			},
+		},
+		"build_psbt": map[string]interface{}{
+			"category":    ToolCategoryUtility,
+			"description": "Build a Partially Signed Bitcoin Transaction (PSBT) for contract payouts. Looks up contract by pixel_hash and builds a PSBT with contractor payments from approved tasks. Payer address is derived from the authenticated API key.",
+			"parameters": map[string]interface{}{
+				"pixel_hash": map[string]interface{}{
+					"type":        "string",
+					"description": "The visible pixel hash (wish id) to build PSBT for",
+					"required":    true,
+				},
+				"fee_rate_sat_per_vb": map[string]interface{}{
+					"type":        "integer",
+					"description": "Fee rate in sats per virtual byte (default: 1)",
+					"default":     1,
+				},
+				"commitment_sats": map[string]interface{}{
+					"type":        "integer",
+					"description": "Optional sats to lock in commitment output (min 546 sats)",
+				},
+				"change_address": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional change address for remaining balance (for privacy, defaults to payer address)",
+				},
+			},
+			"examples": []map[string]interface{}{
+				{
+					"description": "Build PSBT for contract payouts (requires auth)",
+					"arguments": map[string]interface{}{
+						"pixel_hash":          "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+						"fee_rate_sat_per_vb": 1,
+					},
+				},
+				{
+					"description": "Build PSBT with commitment output",
+					"arguments": map[string]interface{}{
+						"pixel_hash":          "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+						"fee_rate_sat_per_vb": 15,
+						"commitment_sats":     1000,
+					},
+				},
+				{
+					"description": "Build PSBT with custom change address for privacy",
+					"arguments": map[string]interface{}{
+						"pixel_hash":          "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+						"fee_rate_sat_per_vb": 1,
+						"change_address":      "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+					},
+				},
 			},
 		},
 	}
@@ -422,7 +868,10 @@ func (h *HTTPMCPServer) getToolSchemas() map[string]interface{} {
 
 // getToolList returns lightweight metadata for all tools
 func (h *HTTPMCPServer) getToolList() []ToolMetadata {
-	schemas := h.getToolSchemas()
+	if h.guidance != nil {
+		return h.guidance.GetToolList()
+	}
+	schemas := h.getToolSchemasLegacy()
 	metadata := make([]ToolMetadata, 0, len(schemas))
 	for name, tool := range schemas {
 		tm, ok := tool.(map[string]interface{})
@@ -431,11 +880,27 @@ func (h *HTTPMCPServer) getToolList() []ToolMetadata {
 		}
 		category, _ := tm["category"].(string)
 		description, _ := tm["description"].(string)
+		preferredClient, _ := tm["preferred_client"].(string)
+		docsHint, _ := tm["docs_hint"].(string)
+		rawKeywords, _ := tm["keywords"].([]string)
+		if rawKeywords == nil {
+			if genericKeywords, ok := tm["keywords"].([]interface{}); ok {
+				rawKeywords = make([]string, 0, len(genericKeywords))
+				for _, keyword := range genericKeywords {
+					if keywordStr, ok := keyword.(string); ok && keywordStr != "" {
+						rawKeywords = append(rawKeywords, keywordStr)
+					}
+				}
+			}
+		}
 		metadata = append(metadata, ToolMetadata{
-			Name:         name,
-			Description:  description,
-			Category:     category,
-			AuthRequired: h.toolRequiresAuth(name),
+			Name:            name,
+			Description:     description,
+			Category:        category,
+			AuthRequired:    h.toolRequiresAuth(name),
+			PreferredClient: preferredClient,
+			DocsHint:        docsHint,
+			Keywords:        rawKeywords,
 		})
 	}
 	return metadata
@@ -443,6 +908,9 @@ func (h *HTTPMCPServer) getToolList() []ToolMetadata {
 
 // searchTools filters tools by keyword and category
 func (h *HTTPMCPServer) searchTools(query string, category string, limit int) []ToolMetadata {
+	if h.guidance != nil {
+		return h.guidance.SearchTools(query, category, limit)
+	}
 	allTools := h.getToolList()
 	queryLower := strings.ToLower(query)
 	categoryLower := strings.ToLower(category)
@@ -460,7 +928,14 @@ func (h *HTTPMCPServer) searchTools(query string, category string, limit int) []
 		if matched && queryLower != "" {
 			nameMatch := strings.Contains(strings.ToLower(tool.Name), queryLower)
 			descMatch := strings.Contains(strings.ToLower(tool.Description), queryLower)
-			if !nameMatch && !descMatch {
+			keywordMatch := false
+			for _, keyword := range tool.Keywords {
+				if strings.Contains(strings.ToLower(keyword), queryLower) {
+					keywordMatch = true
+					break
+				}
+			}
+			if !nameMatch && !descMatch && !keywordMatch {
 				matched = false
 			}
 		}

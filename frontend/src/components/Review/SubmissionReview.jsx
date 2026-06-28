@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { CheckCircle, XCircle, Clock, FileText, ExternalLink } from 'lucide-react';
 import { API_BASE } from '../../apiBase';
+import { apiFetch } from '../../utils/api';
 
 const SubmissionReview = ({ submissionId, onApprove, onReject, onClose }) => {
   const [submission, setSubmission] = useState(null);
@@ -11,7 +12,7 @@ const SubmissionReview = ({ submissionId, onApprove, onReject, onClose }) => {
   useEffect(() => {
     const fetchSubmission = async () => {
       try {
-        const response = await fetch(`${API_BASE}/api/smart_contract/submissions/${submissionId}`);
+        const response = await apiFetch(`/api/smart_contract/submissions/${submissionId}`);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const data = await response.json();
         setSubmission(data);
@@ -62,7 +63,7 @@ const SubmissionReview = ({ submissionId, onApprove, onReject, onClose }) => {
   );
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+    <div className="modal-backdrop-overlay" style={{ backdropFilter: 'none' }}>
       <div className="bg-white dark:bg-gray-900 rounded-xl shadow-xl max-w-4xl max-h-[90vh] overflow-y-auto m-4">
         {/* Header */}
         <div className="border-b border-gray-200 dark:border-gray-800 p-6">

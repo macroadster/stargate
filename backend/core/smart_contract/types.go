@@ -2,16 +2,81 @@ package smart_contract
 
 import "time"
 
+// Canonical status constants for contracts, tasks, proposals, claims, etc.
+// Use these instead of magic strings everywhere (core, stores, MCP tools, handlers)
+// to prevent the enum drift described in Cat 5.1.
+const (
+	// Contract statuses
+	ContractStatusCreated   = "created"
+	ContractStatusActive    = "active"
+	ContractStatusFunded    = "funded"
+	ContractStatusConfirmed = "confirmed"
+	ContractStatusExpired   = "expired"
+
+	// Task statuses
+	TaskStatusAvailable = "available"
+	TaskStatusClaimed   = "claimed"
+	TaskStatusSubmitted = "submitted"
+	TaskStatusApproved  = "approved"
+	TaskStatusPublished = "published"
+	TaskStatusCompleted = "completed" // used in some MCP lists / legacy
+
+	// Proposal statuses
+	ProposalStatusPending   = "pending"
+	ProposalStatusApproved  = "approved"
+	ProposalStatusRejected  = "rejected"
+	ProposalStatusPublished = "published"
+
+	// Claim statuses
+	ClaimStatusActive    = "active"
+	ClaimStatusSubmitted = "submitted"
+	ClaimStatusComplete  = "complete"
+	ClaimStatusExpired   = "expired"
+	ClaimStatusRejected  = "rejected"
+
+	// Submission statuses
+	SubmissionStatusPendingReview = "pending_review"
+	SubmissionStatusReviewed      = "reviewed"
+	SubmissionStatusApproved      = "approved"
+	SubmissionStatusRejected      = "rejected"
+
+	// ContractReworkRequest statuses
+	ReworkStatusOpen     = "open"
+	ReworkStatusResolved = "resolved"
+
+	// Additional legacy / MCP list values for compatibility in schemas
+	StatusPending   = "pending"
+	StatusActive    = "active"
+	StatusCompleted = "completed"
+	StatusAll       = "all"
+)
+
 // Contract captures a goal contract summary.
 type Contract struct {
-	ContractID          string   `json:"contract_id"`
-	Title               string   `json:"title"`
-	TotalBudgetSats     int64    `json:"total_budget_sats"`
-	GoalsCount          int      `json:"goals_count"`
-	AvailableTasksCount int      `json:"available_tasks_count"`
-	Status              string   `json:"status"` // created | active | funded | confirmed | expired
-	Skills              []string `json:"skills,omitempty"`
-	StegoImageURL       string   `json:"stego_image_url,omitempty"`
+	ContractID           string                  `json:"contract_id"`
+	Title                string                  `json:"title"`
+	TotalBudgetSats      int64                   `json:"total_budget_sats"`
+	GoalsCount           int                     `json:"goals_count"`
+	AvailableTasksCount  int                     `json:"available_tasks_count"`
+	Status string `json:"status"` // ContractStatusCreated | Active | Funded | Confirmed | Expired (use the consts)
+	Skills               []string                `json:"skills,omitempty"`
+	StegoImageURL        string                  `json:"stego_image_url,omitempty"`
+	Metadata             map[string]interface{}  `json:"metadata,omitempty"`
+	ConfirmedBlockHeight *int                    `json:"confirmed_block_height,omitempty"`
+	ConfirmedAt          *time.Time              `json:"confirmed_at,omitempty"`
+	CreatedAt            time.Time               `json:"created_at"`
+	ReworkRequests       []ContractReworkRequest `json:"rework_requests,omitempty"`
+}
+
+// ContractReworkRequest represents a rework request from the wish creator at contract level.
+type ContractReworkRequest struct {
+	RequestID  string     `json:"request_id"`
+	ContractID string     `json:"contract_id"`
+	Requester  string     `json:"requester"` // wallet address of wish creator
+	Notes      string     `json:"notes"`     // feedback for rework
+	Status     string     `json:"status"`    // open | resolved
+	CreatedAt  time.Time  `json:"created_at"`
+	ResolvedAt *time.Time `json:"resolved_at,omitempty"`
 }
 
 // Task describes a specific unit of work an AI can claim.
@@ -23,7 +88,7 @@ type Task struct {
 	Description      string            `json:"description"`
 	BudgetSats       int64             `json:"budget_sats"`
 	Skills           []string          `json:"skills_required"`
-	Status           string            `json:"status"` // available | claimed | submitted | approved | published
+	Status string `json:"status"` // TaskStatusAvailable | Claimed | Submitted | Approved | Published (use the consts)
 	ClaimedBy        string            `json:"claimed_by,omitempty"`
 	ContractorWallet string            `json:"contractor_wallet,omitempty"`
 	ClaimedAt        *time.Time        `json:"claimed_at,omitempty"`
@@ -51,6 +116,17 @@ type MerkleProof struct {
 	CommitmentAddress      string      `json:"commitment_address,omitempty"`
 	CommitmentVout         uint32      `json:"commitment_vout,omitempty"`
 	CommitmentSats         int64       `json:"commitment_sats,omitempty"`
+	CommitmentSource       string      `json:"commitment_source,omitempty"` // "wish" (original image) | "product" (delivered stego image)
+	ProductPixelHash       string      `json:"product_pixel_hash,omitempty"`
+	RecommitTxID           string      `json:"recommit_tx_id,omitempty"`
+	RecommitVout           uint32      `json:"recommit_vout,omitempty"`
+	RecommitSats           int64       `json:"recommit_sats,omitempty"`
+	RecommitRedeemScript   string      `json:"recommit_redeem_script,omitempty"`
+	RecommitRedeemHash     string      `json:"recommit_redeem_hash,omitempty"`
+	RecommitAddress        string      `json:"recommit_address,omitempty"`
+	RecommitStatus         string      `json:"recommit_status,omitempty"` // "" | "broadcast" | "confirmed"
+	RecommitBroadcastAt    *time.Time  `json:"recommit_broadcast_at,omitempty"`
+	RecommitConfirmedAt    *time.Time  `json:"recommit_confirmed_at,omitempty"`
 	SweepTxID              string      `json:"sweep_tx_id,omitempty"`
 	SweepStatus            string      `json:"sweep_status,omitempty"`
 	SweepError             string      `json:"sweep_error,omitempty"`
@@ -92,22 +168,30 @@ type Submission struct {
 
 // ContractFilter captures list filters for contracts.
 type ContractFilter struct {
-	Status       string
-	Skills       []string
-	Creator      string
-	AiIdentifier string
+	Status             string
+	Skills             []string
+	Creator            string
+	AiIdentifier       string
+	Limit              int
+	Offset             int
+	CursorHeight       *int       // For cursor-based pagination using confirmed_block_height
+	CursorDate         *time.Time // For cursor-based pagination using confirmed_at
+	CursorType         string     // 'before' or 'after'
+	OrderByConfirmedAt bool       // Order by confirmed_at instead of block height
 }
 
 // TaskFilter captures simple query params for listing tasks.
 type TaskFilter struct {
-	Skills        []string
-	MaxDifficulty string
-	MinBudgetSats int64
-	Limit         int
-	Offset        int
-	Status        string
-	ContractID    string
-	ClaimedBy     string
+	Skills            []string
+	MaxDifficulty     string
+	MinBudgetSats     int64
+	Limit             int
+	Offset            int
+	Status            string
+	ContractID        string
+	ClaimedBy         string
+	UpdatedSince      *time.Time // Only include tasks updated since this time
+	LastActivitySince *time.Time // Only include tasks with activity since this time
 }
 
 // Proposal represents a human/markdown wish that must be approved before tasks are published.
@@ -125,6 +209,7 @@ type Proposal struct {
 
 // ProposalFilter captures list filters for proposals.
 type ProposalFilter struct {
+	ProposalID string
 	Status     string
 	Skills     []string
 	MinBudget  int64

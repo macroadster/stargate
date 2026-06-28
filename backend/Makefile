@@ -1,6 +1,6 @@
 # Stargate Backend Makefile
 
-.PHONY: build build-test clean test docker-build docker-run help
+.PHONY: build build-migrate clean test docker-build docker-run help
 
 # Default target
 all: build
@@ -11,15 +11,16 @@ build:
 	go build -o stargate-backend .
 	@echo "✅ Main application built: stargate-backend"
 
-# Build test utilities
-build-test:
-	@echo "Building test utilities..."
-	@mkdir -p cmd/tests
-	go build -o cmd/tests/build-verification ./cmd/tests/
-	@echo "✅ Build verification utility built: cmd/tests/build-verification"
+# Build the Postgres→SQLite migration utility (single-binary transition helper)
+build-migrate:
+	@echo "Building Postgres to SQLite migration utility..."
+	@mkdir -p bin
+	go build -o bin/migrate-pg-to-sqlite ./cmd/migrate-pg-to-sqlite
+	@echo "✅ Migration utility built: bin/migrate-pg-to-sqlite"
+	@echo "   Run with: ./bin/migrate-pg-to-sqlite --help"
 
-# Build all binaries
-build-all: build build-test
+# Build all binaries (migration helper is the relevant one for single-binary transition)
+build-all: build build-migrate
 
 # Run tests
 test:
@@ -30,13 +31,8 @@ test:
 clean:
 	@echo "Cleaning build artifacts..."
 	rm -f stargate-backend
-	rm -f cmd/tests/build-verification
+	rm -f bin/migrate-pg-to-sqlite
 	@echo "✅ Clean completed"
-
-# Run build verification
-verify: build-test
-	@echo "Running build verification..."
-	./cmd/tests/build-verification
 
 # Docker build
 docker-build:
@@ -61,13 +57,16 @@ help:
 	@echo "Stargate Backend Build System"
 	@echo ""
 	@echo "Available targets:"
-	@echo "  build        - Build main application"
-	@echo "  build-test   - Build test utilities"
-	@echo "  build-all    - Build all binaries"
-	@echo "  test         - Run tests"
-	@echo "  clean        - Clean build artifacts"
-	@echo "  verify       - Run build verification"
-	@echo "  docker-build - Build Docker image"
-	@echo "  docker-run   - Build and run Docker container"
-	@echo "  dev-setup    - Set up development environment"
-	@echo "  help         - Show this help message"
+	@echo "  build         - Build main application (backend only)"
+	@echo "  build-migrate - Build Postgres→SQLite migration utility (single-binary transition)"
+	@echo "  build-all     - Build all binaries (incl. migrator)"
+	@echo "  test          - Run tests"
+	@echo "  clean         - Clean build artifacts"
+	@echo "  docker-build  - Build Docker image (legacy backend image)"
+	@echo "  docker-run    - Build and run Docker container"
+	@echo "  dev-setup     - Set up development environment"
+	@echo "  help          - Show this help message"
+	@echo ""
+	@echo "For the unified single-binary image use the root Makefile:"
+	@echo "  make single-binary   # local build with embedded frontend"
+	@echo "  make docker          # build unified stargate:latest image"

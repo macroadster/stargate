@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -33,12 +34,27 @@ func (w walletValidator) Get(key string) (auth.APIKey, bool) {
 	return auth.APIKey{Key: key, Wallet: w.wallet}, true
 }
 
+// multiKeyWalletValidator returns different wallets for different keys
+type multiKeyWalletValidator struct {
+	wallets map[string]string
+}
+
+func (m *multiKeyWalletValidator) Validate(key string) bool {
+	_, ok := m.wallets[key]
+	return ok
+}
+
+func (m *multiKeyWalletValidator) Get(key string) (auth.APIKey, bool) {
+	wallet, ok := m.wallets[key]
+	return auth.APIKey{Key: key, Wallet: wallet}, ok
+}
+
 func TestHTTPMCPServer(t *testing.T) {
 	// Use memory store for testing
 	store := scstore.NewMemoryStore(72 * time.Hour)
 	ingestionSvc := &services.IngestionService{}  // nil for memory mode
 	scannerManager := &starlight.ScannerManager{} // mock scanner manager
-	server := NewHTTPMCPServer(store, allowAllValidator{}, ingestionSvc, scannerManager, nil, auth.NewChallengeStore(10*time.Minute))
+	server := NewHTTPMCPServer(store, allowAllValidator{}, nil, ingestionSvc, scannerManager, nil, auth.NewChallengeStore(10*time.Minute))
 
 	// Test list_contracts
 	t.Run("list_contracts", func(t *testing.T) {
@@ -101,7 +117,7 @@ func TestClaimTaskUsesAPIKeyWallet(t *testing.T) {
 	scannerManager := &starlight.ScannerManager{}
 	apiKey := "test-api-key"
 	wallet := "tb1qwallettest000000000000000000000000000000000"
-	server := NewHTTPMCPServer(store, walletValidator{wallet: wallet}, ingestionSvc, scannerManager, nil, auth.NewChallengeStore(10*time.Minute))
+	server := NewHTTPMCPServer(store, walletValidator{wallet: wallet}, nil, ingestionSvc, scannerManager, nil, auth.NewChallengeStore(10*time.Minute))
 
 	contract := smart_contract.Contract{
 		ContractID:          "contract-claim-wallet",
@@ -158,7 +174,7 @@ func TestProposalCreationRequiresWish(t *testing.T) {
 	store := scstore.NewMemoryStore(72 * time.Hour)
 	ingestionSvc := &services.IngestionService{}  // nil for memory mode
 	scannerManager := &starlight.ScannerManager{} // mock scanner manager
-	server := NewHTTPMCPServer(store, allowAllValidator{}, ingestionSvc, scannerManager, nil, auth.NewChallengeStore(10*time.Minute))
+	server := NewHTTPMCPServer(store, allowAllValidator{}, nil, ingestionSvc, scannerManager, nil, auth.NewChallengeStore(10*time.Minute))
 
 	// Test that proposals require a wish hash.
 	t.Run("create_proposal_requires_visible_pixel_hash", func(t *testing.T) {
@@ -329,6 +345,9 @@ func TestProposalCreationRequiresWish(t *testing.T) {
 
 	t.Run("approve_proposal_requires_wish", func(t *testing.T) {
 		apiKey := "approve-test-key"
+		creatorWallet := "tb1qcreatorwallet000000000000000000000000000"
+		// Use walletValidator so the API key has a wallet binding
+		walletServer := NewHTTPMCPServer(store, walletValidator{wallet: creatorWallet}, nil, ingestionSvc, scannerManager, nil, auth.NewChallengeStore(10*time.Minute))
 		visibleHash := strings.Repeat("a", 64)
 		proposal := smart_contract.Proposal{
 			ID:               "proposal-approve-test",
@@ -347,8 +366,8 @@ func TestProposalCreationRequiresWish(t *testing.T) {
 				},
 			},
 			Metadata: map[string]interface{}{
-				"creator_api_key_hash": apiKeyHash(apiKey),
-				"visible_pixel_hash":   visibleHash,
+				"creator_wallet":     creatorWallet,
+				"visible_pixel_hash": visibleHash,
 			},
 		}
 		if err := store.CreateProposal(context.Background(), proposal); err != nil {
@@ -368,7 +387,7 @@ func TestProposalCreationRequiresWish(t *testing.T) {
 		r.Header.Set("Content-Type", "application/json")
 		r.Header.Set("X-API-Key", apiKey)
 
-		server.handleToolCall(w, r)
+		walletServer.handleToolCall(w, r)
 
 		if w.Code != http.StatusOK {
 			t.Fatalf("expected 404, got %d: %s", w.Code, w.Body.String())
@@ -403,7 +422,7 @@ func TestProposalCreationRequiresWish(t *testing.T) {
 		r.Header.Set("Content-Type", "application/json")
 		r.Header.Set("X-API-Key", apiKey)
 
-		server.handleToolCall(w, r)
+		walletServer.handleToolCall(w, r)
 
 		if w.Code != http.StatusOK {
 			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
@@ -419,8 +438,44 @@ func TestProposalCreationRequiresWish(t *testing.T) {
 
 	t.Run("approve_proposal_requires_creator", func(t *testing.T) {
 		creatorKey := "creator-key"
+		proposerKey := "proposer-key"
 		otherKey := "other-key"
+		creatorWallet := "tb1qcreatorwallet000000000000000000000000000"
+		proposerWallet := "tb1qproposerwallet0000000000000000000000000"
+		otherWallet := "tb1qotherwallet00000000000000000000000000000"
 		visibleHash := strings.Repeat("b", 64)
+
+		// Create a validator that returns different wallets for different keys
+		multiWalletValidator := &multiKeyWalletValidator{
+			wallets: map[string]string{
+				creatorKey:  creatorWallet,
+				proposerKey: proposerWallet,
+				otherKey:    otherWallet,
+			},
+		}
+
+		// Use a real (SQLite) ingestion service so the wish creator wallet is
+		// stored in the ingestion record — the only authoritative source for
+		// approval authorization.
+		testDB := filepath.Join(t.TempDir(), "test.db")
+		testIngestionSvc, err := services.NewIngestionService(testDB)
+		if err != nil {
+			t.Fatalf("failed to create test ingestion service: %v", err)
+		}
+		// Seed ingestion record with the wish creator's wallet.
+		if err := testIngestionSvc.Create(services.IngestionRecord{
+			ID:       visibleHash,
+			Filename: "test.png",
+			Method:   "test",
+			Status:   "completed",
+			Metadata: map[string]interface{}{
+				"creator_wallet": creatorWallet,
+			},
+		}); err != nil {
+			t.Fatalf("failed to seed ingestion record: %v", err)
+		}
+
+		creatorServer := NewHTTPMCPServer(store, multiWalletValidator, nil, testIngestionSvc, scannerManager, nil, auth.NewChallengeStore(10*time.Minute))
 
 		proposal := smart_contract.Proposal{
 			ID:               "proposal-creator-test",
@@ -430,8 +485,10 @@ func TestProposalCreationRequiresWish(t *testing.T) {
 			BudgetSats:       1000,
 			Status:           "pending",
 			Metadata: map[string]interface{}{
-				"creator_api_key_hash": apiKeyHash(creatorKey),
-				"visible_pixel_hash":   visibleHash,
+				// This is the proposer's wallet, NOT the wish creator's wallet.
+				// The bug was that this field was incorrectly used for approval auth.
+				"creator_wallet":     proposerWallet,
+				"visible_pixel_hash": visibleHash,
 			},
 		}
 		if err := store.CreateProposal(context.Background(), proposal); err != nil {
@@ -456,15 +513,16 @@ func TestProposalCreationRequiresWish(t *testing.T) {
 		}
 		body, _ := json.Marshal(req)
 
+		// 1. Non-creator (otherKey) should be rejected
 		w := httptest.NewRecorder()
 		r := httptest.NewRequest("POST", "/mcp/call", bytes.NewReader(body))
 		r.Header.Set("Content-Type", "application/json")
 		r.Header.Set("X-API-Key", otherKey)
 
-		server.handleToolCall(w, r)
+		creatorServer.handleToolCall(w, r)
 
 		if w.Code != http.StatusOK {
-			t.Fatalf("expected 401, got %d: %s", w.Code, w.Body.String())
+			t.Fatalf("expected 200 with error payload, got %d: %s", w.Code, w.Body.String())
 		}
 
 		var resp MCPResponse
@@ -477,50 +535,220 @@ func TestProposalCreationRequiresWish(t *testing.T) {
 		if resp.ErrorCode != "UNAUTHORIZED" {
 			t.Fatalf("expected UNAUTHORIZED error code, got: %s", resp.ErrorCode)
 		}
-		if !strings.Contains(resp.Error, "approver does not match proposal creator") {
+		if !strings.Contains(resp.Error, "does not match wish creator") {
 			t.Fatalf("expected creator mismatch error, got: %s", resp.Error)
+		}
+
+		// 2. Proposer (proposerKey) should also be rejected — this is the
+		//    self-approval bug. The proposer's wallet is in
+		//    proposal.Metadata["creator_wallet"] but they did NOT create the wish.
+		w = httptest.NewRecorder()
+		r = httptest.NewRequest("POST", "/mcp/call", bytes.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("X-API-Key", proposerKey)
+
+		creatorServer.handleToolCall(w, r)
+
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to unmarshal response: %v", err)
+		}
+		if resp.Success {
+			t.Fatalf("expected failure when proposal creator tries to self-approve")
+		}
+		if resp.ErrorCode != "UNAUTHORIZED" {
+			t.Fatalf("expected UNAUTHORIZED for self-approval, got: %s", resp.ErrorCode)
+		}
+
+		// 3. Wish creator (creatorKey) should succeed
+		w = httptest.NewRecorder()
+		r = httptest.NewRequest("POST", "/mcp/call", bytes.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("X-API-Key", creatorKey)
+
+		creatorServer.handleToolCall(w, r)
+
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to unmarshal response: %v", err)
+		}
+		if !resp.Success {
+			t.Fatalf("expected wish creator to approve successfully, got: %s", resp.Error)
 		}
 	})
 }
 
 // For PostgreSQL testing with an in-memory simulation, you could use a test database.
-// Note: PostgreSQL doesn't have true in-memory mode, but you can use a temporary test DB.
-// Example using testcontainers (requires docker):
-//
-// import "github.com/testcontainers/testcontainers-go/postgres"
-//
-// func TestHTTPMCPServerWithPostgres(t *testing.T) {
-//     ctx := context.Background()
-//     pgContainer, err := postgres.RunContainer(ctx,
-//         testcontainers.WithImage("postgres:15-alpine"),
-//         postgres.WithDatabase("testdb"),
-//         postgres.WithUsername("postgres"),
-//         postgres.WithPassword("password"),
-//         testcontainers.WithWaitStrategy(
-//             wait.ForLog("database system is ready to accept connections").
-//                 WithOccurrence(2).WithStartupTimeout(5*time.Second)),
-//     )
-//     if err != nil {
-//         t.Fatalf("failed to start container: %v", err)
-//     }
-//     defer pgContainer.Terminate(ctx)
-//
-//     dsn, err := pgContainer.ConnectionString(ctx, "sslmode=disable")
-//     if err != nil {
-//         t.Fatalf("failed to get connection string: %v", err)
-//     }
-//
-//     store, err := scstore.NewPGStore(ctx, dsn, 72*time.Hour, false)
-//     if err != nil {
-//         t.Fatalf("failed to create PG store: %v", err)
-//     }
-//
-//     ingestionSvc, err := services.NewIngestionService(dsn)
-//     if err != nil {
-//         t.Fatalf("failed to create ingestion service: %v", err)
-//     }
-//
-//     server := NewHTTPMCPServer(store, "test-key", ingestionSvc)
-//
-//     // Run similar subtests as TestHTTPMCPServer
-// }
+func TestScanTransactionTool(t *testing.T) {
+	store := scstore.NewMemoryStore(72 * time.Hour)
+	ingestionSvc := &services.IngestionService{}
+	scannerManager := &starlight.ScannerManager{}
+	server := NewHTTPMCPServer(store, allowAllValidator{}, nil, ingestionSvc, scannerManager, nil, auth.NewChallengeStore(10*time.Minute))
+
+	t.Run("scan_transaction_requires_tx_id", func(t *testing.T) {
+		req := MCPRequest{
+			Tool:      "scan_transaction",
+			Arguments: map[string]interface{}{},
+		}
+		body, _ := json.Marshal(req)
+
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("POST", "/mcp/call", bytes.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+
+		server.handleToolCall(w, r)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		var resp MCPResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to unmarshal response: %v", err)
+		}
+		if resp.Success {
+			t.Fatalf("expected failure due to missing transaction_id")
+		}
+		if resp.ErrorCode != "VALIDATION_FAILED" {
+			t.Fatalf("expected VALIDATION_FAILED error code, got: %s", resp.ErrorCode)
+		}
+	})
+
+	t.Run("scan_transaction_requires_valid_tx_id", func(t *testing.T) {
+		req := MCPRequest{
+			Tool: "scan_transaction",
+			Arguments: map[string]interface{}{
+				"transaction_id": "invalid-tx-id",
+			},
+		}
+		body, _ := json.Marshal(req)
+
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("POST", "/mcp/call", bytes.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+
+		server.handleToolCall(w, r)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		var resp MCPResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to unmarshal response: %v", err)
+		}
+		if resp.Success {
+			t.Fatalf("expected failure due to invalid transaction_id length")
+		}
+		if resp.ErrorCode != "VALIDATION_FAILED" {
+			t.Fatalf("expected VALIDATION_FAILED error code, got: %s", resp.ErrorCode)
+		}
+	})
+
+	t.Run("scan_transaction_returns_structure", func(t *testing.T) {
+		if server.bitcoinClient == nil {
+			t.Skip("bitcoin client not available")
+		}
+		req := MCPRequest{
+			Tool: "scan_transaction",
+			Arguments: map[string]interface{}{
+				"transaction_id": strings.Repeat("a", 64),
+			},
+		}
+		body, _ := json.Marshal(req)
+
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("POST", "/mcp/call", bytes.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+
+		server.handleToolCall(w, r)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		var resp MCPResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to unmarshal response: %v", err)
+		}
+		if !resp.Success {
+			t.Logf("Note: Transaction scan may have failed due to network issues: %s", resp.Error)
+			return
+		}
+
+		data, ok := resp.Result.(map[string]interface{})
+		if !ok {
+			t.Fatalf("expected result to be a map")
+		}
+
+		if data["transaction_id"] != strings.Repeat("a", 64) {
+			t.Fatalf("expected transaction_id in response")
+		}
+		if _, ok := data["status"].(string); !ok {
+			t.Fatalf("expected status in response")
+		}
+	})
+}
+
+func TestSubmitWorkRequiresArtifactsForRemoteAgents(t *testing.T) {
+	store := scstore.NewMemoryStore(72 * time.Hour)
+	ingestionSvc := &services.IngestionService{}
+	scannerManager := &starlight.ScannerManager{}
+	server := NewHTTPMCPServer(store, allowAllValidator{}, nil, ingestionSvc, scannerManager, nil, auth.NewChallengeStore(10*time.Minute))
+
+	callSubmit := func(t *testing.T, deliverables map[string]interface{}) MCPResponse {
+		t.Helper()
+		req := MCPRequest{
+			Tool: "submit_work",
+			Arguments: map[string]interface{}{
+				"claim_id":     "claim-remote-1",
+				"deliverables": deliverables,
+			},
+		}
+		body, _ := json.Marshal(req)
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("POST", "/mcp/call", bytes.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("X-API-Key", "test-key")
+		server.handleToolCall(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+		var resp MCPResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to unmarshal response: %v", err)
+		}
+		return resp
+	}
+
+	t.Run("rejects_missing_artifacts", func(t *testing.T) {
+		resp := callSubmit(t, map[string]interface{}{
+			"notes": "finished without uploading files",
+		})
+		if resp.Success {
+			t.Fatalf("expected failure when artifacts are missing")
+		}
+		validationErrors, ok := resp.Details["validation_errors"].(map[string]interface{})
+		if !ok {
+			t.Fatalf("expected validation_errors in details, got: %#v", resp.Details)
+		}
+		if _, ok := validationErrors["deliverables.artifacts"]; !ok {
+			t.Fatalf("expected deliverables.artifacts validation error, got: %#v", validationErrors)
+		}
+	})
+
+	t.Run("rejects_empty_artifacts_array", func(t *testing.T) {
+		resp := callSubmit(t, map[string]interface{}{
+			"notes":     "finished with empty artifacts",
+			"artifacts": []interface{}{},
+		})
+		if resp.Success {
+			t.Fatalf("expected failure when artifacts array is empty")
+		}
+		validationErrors, ok := resp.Details["validation_errors"].(map[string]interface{})
+		if !ok {
+			t.Fatalf("expected validation_errors in details, got: %#v", resp.Details)
+		}
+		if _, ok := validationErrors["deliverables.artifacts"]; !ok {
+			t.Fatalf("expected deliverables.artifacts validation error, got: %#v", validationErrors)
+		}
+	})
+}

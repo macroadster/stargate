@@ -32,27 +32,20 @@ if ! command -v docker &> /dev/null; then
     exit 1
 fi
 
-# Build frontend with optimization
-print_status "Building frontend image with layer caching optimization..."
+# Build unified single-binary image (primary for feature/single-binary)
+print_status "Building unified single-binary image (stargate:latest) with layer caching..."
 docker build \
-    -t stargate-frontend:latest \
-    -f frontend/Dockerfile \
-    ./frontend
-
-# Build backend with optimization
-print_status "Building backend image with layer caching optimization..."
-docker build \
-    -t stargate-backend:latest \
-    -f backend/Dockerfile \
-    ./backend
+    -t stargate:latest \
+    -f Dockerfile \
+    .
 
 # Show image sizes
 print_status "Image sizes after optimization:"
 docker images | grep stargate | head -10
 
 print_warning "To test the builds locally:"
-echo "  docker run -p 3000:80 stargate-frontend:latest"
-echo "  docker run -p 3001:3001 stargate-backend:latest"
+echo "  docker run -p 3001:3001 stargate:latest"
+echo "  (Legacy separate images can be built with make backend-legacy / make frontend-legacy if needed)"
 
 print_status "✅ Optimized builds completed successfully!"
 echo ""

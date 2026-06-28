@@ -12,6 +12,9 @@ import (
 
 // checkRateLimit checks if the API key has exceeded rate limit (100 requests per minute)
 func (h *HTTPMCPServer) checkRateLimit(key string) bool {
+	h.rateLimiterMu.Lock()
+	defer h.rateLimiterMu.Unlock()
+
 	now := time.Now()
 	window := now.Add(-time.Minute)
 	times := h.rateLimiter[key]

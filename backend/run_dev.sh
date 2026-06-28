@@ -5,10 +5,13 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT_DIR"
 
-export STARGATE_STORAGE="${STARGATE_STORAGE:-filesystem}"
+# Recommended default for local development and single-binary usage is sqlite
+# (durable embedded). Use STARGATE_STORAGE=memory for fast debugging of business logic
+# or unit tests (ephemeral, no DB files).
+export STARGATE_STORAGE="${STARGATE_STORAGE:-sqlite}"
 export BLOCKS_DIR="${BLOCKS_DIR:-$ROOT_DIR/blocks}"
 export UPLOADS_DIR="${UPLOADS_DIR:-$ROOT_DIR/uploads}"
-export STARGATE_PROXY_BASE="${STARGATE_PROXY_BASE:-http://localhost:8080}"
+export STARGATE_PROXY_BASE="${STARGATE_PROXY_BASE:-}"
 export STARGATE_API_KEY="${STARGATE_API_KEY:-demo-api-key}"
 export ALLOW_ORIGINS="${ALLOW_ORIGINS:-*}"
 

@@ -3,9 +3,11 @@ package middleware
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	auth "stargate-backend/storage/auth"
@@ -14,9 +16,14 @@ import (
 // CORS middleware
 func CORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key")
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			origin = "*"
+		}
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH")
+		w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, Authorization, X-API-Key, X-Requested-With")
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
 
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
@@ -82,25 +89,70 @@ func Recovery(next http.Handler) http.Handler {
 func SecurityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload")
-		w.Header().Set("X-Frame-Options", "SAMEORIGIN")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
+
+		// Sandbox paths serve user-generated HTML apps that need full web
+		// capabilities (external scripts, remote APIs). Skip the restrictive
+		// CSP and allow framing so the modal iframe preview works too.
+		if strings.HasPrefix(r.URL.Path, "/sandbox/") {
+			w.Header().Set("X-Frame-Options", "ALLOWALL")
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		w.Header().Set("X-Frame-Options", "SAMEORIGIN")
 		w.Header().Set("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+
+		// Content Security Policy
+		// - connect-src 'self' prevents sending data to external domains
+		// - script-src 'self' 'unsafe-inline' 'unsafe-eval' (unsafe-eval is needed for wasm/sql.js)
+		// - worker-src 'self' blob: (needed for sql.js if used in a worker)
+		origin := r.Header.Get("Origin")
+		connectSrc := "connect-src 'self';"
+		if origin != "" && origin != "null" {
+			connectSrc = fmt.Sprintf("connect-src 'self' %s;", origin)
+		}
+
+		csp := fmt.Sprintf("default-src 'self'; "+
+			"script-src 'self' 'unsafe-inline' 'unsafe-eval'; "+
+			"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "+
+			"font-src 'self' https://fonts.gstatic.com; "+
+			"img-src 'self' data: blob: https:; "+
+			"%s "+
+			"worker-src 'self' blob:; "+
+			"frame-src 'self' blob:; "+
+			"object-src 'none';", connectSrc)
+		w.Header().Set("Content-Security-Policy", csp)
+
 		next.ServeHTTP(w, r)
 	})
 }
 
-// Timeout middleware
+// Timeout middleware. Uses a mutex-protected response writer so that when the
+// timeout fires the handler goroutine can no longer write to the real
+// connection. This prevents the "wrote more than the declared Content-Length"
+// race that previously caused goroutine leaks and crash loops.
 func Timeout(timeout time.Duration) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Skip timeout for streaming endpoints and health probes.
+			if r.Header.Get("Accept") == "text/event-stream" ||
+				strings.Contains(r.URL.Path, "/chat/stream") ||
+				strings.Contains(r.URL.Path, "/mcp/events") ||
+				strings.Contains(r.URL.Path, "/smart_contract/events") ||
+				r.URL.Path == "/api/health" ||
+				r.URL.Path == "/bitcoin/v1/health" {
+				next.ServeHTTP(w, r)
+				return
+			}
+
 			ctx, cancel := context.WithTimeout(r.Context(), timeout)
 			defer cancel()
 
 			r = r.WithContext(ctx)
 
-			// Wrap response writer to track if data was sent
-			tracked := &timeoutTrackingWriter{ResponseWriter: w}
+			tracked := &timeoutTrackingWriter{w: w}
 
 			done := make(chan struct{})
 			go func() {
@@ -112,9 +164,14 @@ func Timeout(timeout time.Duration) func(http.Handler) http.Handler {
 			case <-done:
 				// Request completed normally
 			case <-ctx.Done():
-				// Request timed out
-				// Only write error if response hasn't been committed yet
-				if !tracked.committed {
+				// Set timedOut under the lock so the handler goroutine
+				// can no longer write to the real ResponseWriter.
+				tracked.mu.Lock()
+				alreadyCommitted := tracked.committed
+				tracked.timedOut = true
+				tracked.mu.Unlock()
+
+				if !alreadyCommitted {
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(http.StatusRequestTimeout)
 
@@ -134,25 +191,55 @@ func Timeout(timeout time.Duration) func(http.Handler) http.Handler {
 	}
 }
 
+// timeoutTrackingWriter wraps an http.ResponseWriter with a mutex so that
+// after a timeout, the handler goroutine's writes are silently discarded
+// instead of racing with the timeout response.
 type timeoutTrackingWriter struct {
-	http.ResponseWriter
+	w          http.ResponseWriter
+	mu         sync.Mutex
 	committed  bool
+	timedOut   bool
 	statusCode int
 }
 
+func (tw *timeoutTrackingWriter) Header() http.Header {
+	return tw.w.Header()
+}
+
 func (tw *timeoutTrackingWriter) WriteHeader(statusCode int) {
+	tw.mu.Lock()
+	defer tw.mu.Unlock()
+	if tw.timedOut || tw.committed {
+		return
+	}
 	tw.committed = true
 	tw.statusCode = statusCode
-	tw.ResponseWriter.WriteHeader(statusCode)
+	tw.w.WriteHeader(statusCode)
 }
 
 func (tw *timeoutTrackingWriter) Write(b []byte) (int, error) {
+	tw.mu.Lock()
+	defer tw.mu.Unlock()
+	if tw.timedOut {
+		return 0, http.ErrHandlerTimeout
+	}
 	if !tw.committed {
 		tw.statusCode = http.StatusOK
-		tw.ResponseWriter.WriteHeader(http.StatusOK)
+		tw.w.WriteHeader(http.StatusOK)
 		tw.committed = true
 	}
-	return tw.ResponseWriter.Write(b)
+	return tw.w.Write(b)
+}
+
+func (tw *timeoutTrackingWriter) Flush() {
+	tw.mu.Lock()
+	defer tw.mu.Unlock()
+	if tw.timedOut {
+		return
+	}
+	if f, ok := tw.w.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 // ContentType middleware
@@ -237,16 +324,35 @@ type responseWriter struct {
 	http.ResponseWriter
 	statusCode     int
 	headersWritten bool
+	flushed        bool
 }
 
 func (rw *responseWriter) WriteHeader(code int) {
 	if rw.headersWritten {
-		// Headers already written, ignore superfluous calls
 		return
 	}
 	rw.statusCode = code
 	rw.ResponseWriter.WriteHeader(code)
 	rw.headersWritten = true
+}
+
+func (rw *responseWriter) Flush() {
+	if rw.ResponseWriter == nil {
+		return
+	}
+	if f, ok := rw.ResponseWriter.(http.Flusher); ok {
+		rw.flushed = true
+		f.Flush()
+	}
+}
+
+func (rw *responseWriter) Write(b []byte) (int, error) {
+	if !rw.headersWritten {
+		rw.statusCode = http.StatusOK
+		rw.ResponseWriter.WriteHeader(http.StatusOK)
+		rw.headersWritten = true
+	}
+	return rw.ResponseWriter.Write(b)
 }
 
 // APIAuth validates API keys against the validator
@@ -255,9 +361,16 @@ func APIAuth(validator auth.APIKeyValidator) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			apiKey := r.Header.Get("X-API-Key")
 			if apiKey == "" {
-				auth := r.Header.Get("Authorization")
-				if strings.HasPrefix(auth, "Bearer ") {
-					apiKey = strings.TrimPrefix(auth, "Bearer ")
+				authHeader := r.Header.Get("Authorization")
+				if strings.HasPrefix(authHeader, "Bearer ") {
+					apiKey = strings.TrimPrefix(authHeader, "Bearer ")
+				}
+			}
+
+			// Check cookie if header is missing
+			if apiKey == "" {
+				if cookie, err := r.Cookie("X-API-Key"); err == nil {
+					apiKey = cookie.Value
 				}
 			}
 

@@ -1,70 +1,57 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
+import { initDB, getAuthState, setAuthState, clearAuthState, getWalletKeysFromDB, updateWalletKeyInDB, removeWalletKeyFromDB, removeStaleKeysFromDB } from '../utils/db';
+import { apiFetch } from '../utils/api';
 
 const AuthContext = createContext(null);
 
-const STORAGE_KEY = 'X-API-Key';
-const STORAGE_WALLET_MAP = 'X-Wallet-Key-Map';
 const STALE_THRESHOLD_MS = 7 * 24 * 60 * 60 * 1000;
+const API_BASE = import.meta.env.VITE_API_BASE || '';
 
 export function AuthProvider({ children }) {
-  const [auth, setAuth] = useState(() => {
-    const key = localStorage.getItem(STORAGE_KEY) || '';
-    const wallet = localStorage.getItem('X-Wallet-Address') || '';
-    const email = localStorage.getItem('X-User-Email') || '';
-    return { apiKey: key, wallet, email };
-  });
+  const [isReady, setIsReady] = useState(false);
+  const [auth, setAuth] = useState({ apiKey: '', wallet: '', email: '' });
+  const [walletKeys, setWalletKeys] = useState({});
 
-  const [walletKeys, setWalletKeys] = useState(() => {
-    try {
-      const raw = localStorage.getItem(STORAGE_WALLET_MAP) || '{}';
-      const parsed = JSON.parse(raw);
-      const now = Date.now();
-      const cleaned = {};
-      for (const [wallet, data] of Object.entries(parsed)) {
-        if (now - data.lastUsed < STALE_THRESHOLD_MS) {
-          cleaned[wallet] = data;
-        }
+  useEffect(() => {
+    async function setup() {
+      try {
+        await initDB();
+        setAuth(getAuthState());
+        setWalletKeys(getWalletKeysFromDB());
+        setIsReady(true);
+      } catch (err) {
+        console.error("Auth initialization failed", err);
+        // Fallback to empty state if DB fails
+        setIsReady(true);
       }
-      return cleaned;
-    } catch {
-      return {};
     }
-  });
+    setup();
+  }, []);
 
   useEffect(() => {
+    if (!isReady) return;
+
     if (auth.apiKey && auth.wallet) {
-      localStorage.setItem(STORAGE_KEY, auth.apiKey);
-      localStorage.setItem('X-Wallet-Address', auth.wallet || '');
-      localStorage.setItem('X-User-Email', auth.email || '');
-      
-      setWalletKeys((prev) => {
-        const updated = { ...prev };
-        updated[auth.wallet] = {
-          apiKey: auth.apiKey,
-          email: auth.email,
-          lastUsed: Date.now(),
-        };
-        return updated;
-      });
+      setAuthState(auth.apiKey, auth.wallet, auth.email || '');
+      updateWalletKeyInDB(auth.wallet, auth.apiKey, auth.email || '');
+      setWalletKeys(getWalletKeysFromDB());
     } else {
-      localStorage.removeItem(STORAGE_KEY);
-      localStorage.removeItem('X-Wallet-Address');
-      localStorage.removeItem('X-User-Email');
+      clearAuthState();
     }
-  }, [auth]);
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_WALLET_MAP, JSON.stringify(walletKeys));
-  }, [walletKeys]);
+  }, [auth, isReady]);
 
   const signIn = (apiKey, wallet, email) => {
     setAuth({ apiKey, wallet, email });
   };
 
-  const signOut = () => {
-    localStorage.removeItem(STORAGE_KEY);
-    localStorage.removeItem('X-Wallet-Address');
-    localStorage.removeItem('X-User-Email');
+  const signOut = async () => {
+    try {
+      // Also call backend to clear httpOnly cookie
+      await apiFetch('/api/auth/logout', { method: 'POST' });
+    } catch (e) {
+      console.error("Failed to call logout endpoint", e);
+    }
+    clearAuthState();
     setAuth({ apiKey: '', wallet: '', email: '' });
   };
 
@@ -78,20 +65,21 @@ export function AuthProvider({ children }) {
   };
 
   const removeStaleKeys = () => {
-    const now = Date.now();
-    setWalletKeys((prev) => {
-      const cleaned = {};
-      for (const [wallet, data] of Object.entries(prev)) {
-        if (now - data.lastUsed < STALE_THRESHOLD_MS) {
-          cleaned[wallet] = data;
-        }
-      }
-      return cleaned;
-    });
+    removeStaleKeysFromDB(STALE_THRESHOLD_MS);
+    setWalletKeys(getWalletKeysFromDB());
   };
 
+  const deleteWalletKey = (wallet) => {
+    removeWalletKeyFromDB(wallet);
+    setWalletKeys(getWalletKeysFromDB());
+  };
+
+  if (!isReady) {
+    return null; // Or a loading spinner
+  }
+
   return (
-    <AuthContext.Provider value={{ auth, signIn, signOut, walletKeys, getSavedWallets, removeStaleKeys }}>
+    <AuthContext.Provider value={{ auth, signIn, signOut, walletKeys, getSavedWallets, removeStaleKeys, deleteWalletKey }}>
       {children}
     </AuthContext.Provider>
   );

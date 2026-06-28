@@ -13,7 +13,7 @@
 - **Runtime:** `stargate_backend.go` starts the REST API, HTTP MCP tool bridge, UI assets, metrics, and Bitcoin scanners in a single binary.
 - **Storage:** Pluggable store (`MCP_STORE_DRIVER` = memory | postgres) with claim TTL (`MCP_DEFAULT_CLAIM_TTL_HOURS`) and optional seeding (`MCP_SEED_FIXTURES`). PG path enables ingestion sync and funding-proof refresh services.
 - **Smart contract services:** Integrated `SmartContractService` to create witness records (visible pixel hash, funding address) when proposals are created from stego ingestions.
-- **Evidence refresh:** Background funding sync (provider selectable; default Blockstream API) keeps Merkle/funding proofs current when Postgres is enabled.
+- **Evidence refresh:** Background funding sync (provider selectable; **opt-in** via `STARGATE_ENABLE_FUNDING_SYNC=true`) keeps Merkle/funding proofs current when Postgres is enabled. Disabled by default (direct PSBT + block monitor is the primary confirmation path).
 - **Auth:** Optional API key (`MCP_API_KEY`) enforced on `/mcp/*` and `/api/smart_contract/*`; other `/api/*` routes remain open unless fronted by ingress auth.
 
 ## Implemented API Surface (shared, stable)

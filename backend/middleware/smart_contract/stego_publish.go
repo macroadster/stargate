@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"stargate-backend/core/smart_contract"
-	"stargate-backend/ipfs"
+	"stargate-backend/storage/ipfs"
 	"stargate-backend/services"
 	"stargate-backend/stego"
 	scstore "stargate-backend/storage/smart_contract"
@@ -48,22 +48,20 @@ type stegoTaskPayload = stego.PayloadTask
 type stegoMetadataEntry = stego.MetadataEntry
 
 type stegoAnnouncement struct {
-	Type             string `json:"type"`
-	StegoCID         string `json:"stego_cid"`
-	ExpectedHash     string `json:"expected_hash,omitempty"`
-	ProposalID       string `json:"proposal_id,omitempty"`
-	VisiblePixelHash string `json:"visible_pixel_hash,omitempty"`
-	PayloadCID       string `json:"payload_cid,omitempty"`
-	Issuer           string `json:"issuer,omitempty"`
-	Timestamp        int64  `json:"timestamp"`
+	Type              string `json:"type"`
+	StegoCID          string `json:"stego_cid"`
+	ExpectedHash      string `json:"expected_hash,omitempty"`
+	ProposalID        string `json:"proposal_id,omitempty"`
+	VisiblePixelHash  string `json:"visible_pixel_hash,omitempty"`
+	PayloadCID        string `json:"payload_cid,omitempty"`
+	Issuer            string `json:"issuer,omitempty"`
+	SandboxTarballCID string `json:"sandbox_tarball_cid,omitempty"`
+	Timestamp         int64  `json:"timestamp"`
 }
 
 func loadStegoApprovalConfig() stegoApprovalConfig {
-	enabled := strings.EqualFold(strings.TrimSpace(os.Getenv("STARGATE_STEGO_APPROVAL_ENABLED")), "true")
+	enabled := !strings.EqualFold(strings.TrimSpace(os.Getenv("STARGATE_STEGO_APPROVAL_ENABLED")), "false")
 	proxyBase := strings.TrimSpace(os.Getenv("STARGATE_PROXY_BASE"))
-	if proxyBase == "" {
-		proxyBase = "http://localhost:8080"
-	}
 	method := strings.TrimSpace(os.Getenv("STARGATE_STEGO_METHOD"))
 	if method == "" {
 		method = "lsb"
@@ -116,15 +114,283 @@ func loadStegoApprovalConfig() stegoApprovalConfig {
 		IngestPoll:      ingestPoll,
 		IngestTimeout:   ingestTimeout,
 		InscribeTimeout: inscribeTimeout,
-		PayloadSchema:   1,
+		PayloadSchema:   2,
 		ManifestSchema:  1,
 		PayloadMaxTasks: 2000,
 	}
 }
 
+// PublishArtifacts holds the stego image hash and sandbox tarball hash
+// produced at PSBT build time.  These go into the OP_RETURN so remote
+// peers can locate the files by hash alone — no pubsub or flags required.
+type PublishArtifacts struct {
+	StegoImageHash string // SHA256 of the stego image (product image with embedded payload)
+	SandboxHash    string // SHA256 of the sandbox tarball
+	StegoBytes     []byte // raw stego image bytes (written to UPLOADS_DIR/<StegoImageHash>)
+}
+
+// PreparePublishArtifacts creates the stego image and sandbox tarball for a
+// proposal BEFORE the PSBT is built.  The returned hashes are inscribed in
+// the OP_RETURN so any peer can confirm from on-chain data alone.
+//
+// This replaces the old flow where publishStegoForProposal ran AFTER the
+// PSBT and was gated by STARGATE_STEGO_APPROVAL_ENABLED.  Now the artifacts
+// are always created when a PSBT is requested — the flag only controls the
+// optional IPFS pubsub announcement.
+func (s *Server) PreparePublishArtifacts(ctx context.Context, proposalID string) (*PublishArtifacts, error) {
+	if s.ingestionSvc == nil {
+		return nil, fmt.Errorf("ingestion service not configured")
+	}
+	if proposalID == "" {
+		return nil, fmt.Errorf("proposal id missing")
+	}
+	p, err := s.store.GetProposal(ctx, proposalID)
+	if err != nil {
+		return nil, fmt.Errorf("get proposal: %w", err)
+	}
+	meta := copyMeta(p.Metadata)
+	if meta == nil {
+		meta = map[string]interface{}{}
+	}
+
+	// If artifacts were already prepared (idempotent), return cached hashes.
+	if h := strings.TrimSpace(toString(meta["stego_contract_id"])); h != "" {
+		result := &PublishArtifacts{StegoImageHash: h}
+		if sh := strings.TrimSpace(toString(meta["sandbox_hash"])); sh != "" {
+			result.SandboxHash = sh
+		}
+		log.Printf("stego prepare: artifacts already prepared for proposal %s (stego=%s sandbox=%s)", proposalID, result.StegoImageHash, result.SandboxHash)
+		return result, nil
+	}
+
+	// Load the cover image from the ingestion record.
+	ingestionID := strings.TrimSpace(toString(meta["ingestion_id"]))
+	if ingestionID == "" {
+		visible := strings.TrimSpace(p.VisiblePixelHash)
+		if visible == "" {
+			visible = strings.TrimSpace(toString(meta["visible_pixel_hash"]))
+		}
+		ingestionID = visible
+		if ingestionID != "" {
+			meta["ingestion_id"] = ingestionID
+		} else {
+			return nil, fmt.Errorf("proposal %s missing ingestion_id metadata", proposalID)
+		}
+	}
+	coverRec, err := s.ingestionSvc.Get(ingestionID)
+	if err != nil || coverRec == nil {
+		return nil, fmt.Errorf("failed to load ingestion %s: %w", ingestionID, err)
+	}
+	if strings.TrimSpace(coverRec.ImageBase64) == "" {
+		return nil, fmt.Errorf("ingestion %s missing image data", ingestionID)
+	}
+	coverBytes, err := base64.StdEncoding.DecodeString(coverRec.ImageBase64)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode ingestion image: %w", err)
+	}
+
+	cfg := loadStegoApprovalConfig()
+
+	mergeStegoLinkage(meta, coverRec.Metadata)
+	addProposalStegoMeta(meta, p)
+	addWishStegoMeta(meta, coverRec.Metadata)
+
+	visibleHash := strings.TrimSpace(p.VisiblePixelHash)
+	if visibleHash == "" {
+		visibleHash = strings.TrimSpace(toString(meta["visible_pixel_hash"]))
+	}
+	if visibleHash == "" {
+		return nil, fmt.Errorf("proposal %s missing visible_pixel_hash", proposalID)
+	}
+
+	uploadsDir := strings.TrimSpace(os.Getenv("UPLOADS_DIR"))
+	result := &PublishArtifacts{}
+
+	// 1. Build sandbox tarball.
+	sandboxDir := filepath.Join(uploadsDir, "results", visibleHash)
+	tarballPath := filepath.Join(uploadsDir, fmt.Sprintf("sandbox-%s.tar", visibleHash))
+	if h, err := stego.WriteSandboxTarball(sandboxDir, tarballPath); err == nil {
+		result.SandboxHash = h
+		log.Printf("stego prepare: sandbox tarball hash=%s for %s (results dir=%s)", h, proposalID, sandboxDir)
+		// Store tarball by its SHA256 hash in UPLOADS_DIR.
+		hashPath := filepath.Join(uploadsDir, h)
+		if _, statErr := os.Stat(hashPath); os.IsNotExist(statErr) {
+			if linkErr := os.Link(tarballPath, hashPath); linkErr != nil {
+				if data, readErr := os.ReadFile(tarballPath); readErr == nil {
+					_ = os.WriteFile(hashPath, data, 0600)
+				}
+			}
+			log.Printf("stego prepare: sandbox tarball stored as %s", hashPath)
+		}
+	} else {
+		log.Printf("stego prepare: sandbox tarball skipped for %s: %v", proposalID, err)
+	}
+
+	// 2. Build stego image with embedded v2 payload.
+	manifestCreatedAt := time.Now().Unix()
+	payload := buildStegoPayload(p, meta, cfg.PayloadSchema, cfg.PayloadMaxTasks)
+	payload.ProposalID = proposalID
+	payload.VisiblePixelHash = visibleHash
+	payload.Issuer = cfg.Issuer
+	payload.CreatedAt = manifestCreatedAt
+	payload.SandboxHash = result.SandboxHash
+	manifestBytes, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal embedded payload: %w", err)
+	}
+
+	method := strings.TrimSpace(coverRec.Method)
+	if method == "" {
+		method = cfg.DefaultMethod
+	}
+	filename := strings.TrimSpace(coverRec.Filename)
+	if filename == "" {
+		filename = "cover.png"
+	}
+
+	stegoBytes, _, err := s.inscribeStego(ctx, cfg, coverBytes, filename, method, manifestBytes)
+	if err != nil {
+		return nil, fmt.Errorf("inscribe stego failed: %w", err)
+	}
+
+	sum := sha256.Sum256(stegoBytes)
+	stegoHash := hex.EncodeToString(sum[:])
+	result.StegoImageHash = stegoHash
+	result.StegoBytes = stegoBytes
+
+	// Write stego image to UPLOADS_DIR/<stegoHash> so the IPFS mirror
+	// syncs it to peers using hash-based filenames.
+	stegoPath := filepath.Join(uploadsDir, stegoHash)
+	if err := os.WriteFile(stegoPath, stegoBytes, 0644); err != nil {
+		log.Printf("stego prepare: failed to write stego image to %s: %v", stegoPath, err)
+	} else {
+		log.Printf("stego prepare: stego image stored as %s (%d bytes)", stegoPath, len(stegoBytes))
+	}
+
+	// Persist hashes into proposal metadata so they survive restarts
+	// and so downloadSandboxArtifacts can find the sandbox_hash.
+	meta["stego_contract_id"] = stegoHash
+	meta["sandbox_hash"] = result.SandboxHash
+	meta["stego_manifest_created_at"] = strconv.FormatInt(manifestCreatedAt, 10)
+	if err := s.store.UpdateProposalMetadata(ctx, p.ID, meta); err != nil {
+		log.Printf("stego prepare: failed to update proposal metadata: %v", err)
+	}
+
+	log.Printf("stego prepare: artifacts ready for %s: stego=%s sandbox=%s", proposalID, stegoHash, result.SandboxHash)
+	return result, nil
+}
+
+// FinalizePublishArtifacts runs AFTER the PSBT is built.  It handles
+// optional IPFS upload and pubsub announcement — things that are nice to
+// have but NOT required for peers to replicate (they use on-chain hashes).
+func (s *Server) FinalizePublishArtifacts(ctx context.Context, proposalID string, artifacts *PublishArtifacts) {
+	if artifacts == nil || proposalID == "" {
+		return
+	}
+	cfg := loadStegoApprovalConfig()
+
+	p, err := s.store.GetProposal(ctx, proposalID)
+	if err != nil {
+		log.Printf("stego finalize: failed to get proposal %s: %v", proposalID, err)
+		return
+	}
+	meta := copyMeta(p.Metadata)
+	if meta == nil {
+		meta = map[string]interface{}{}
+	}
+	visibleHash := strings.TrimSpace(p.VisiblePixelHash)
+
+	// Upload stego image + sandbox tarball to IPFS (best-effort).
+	ipfsClient := ipfs.NewClientFromEnv()
+	if ipfsClient != nil && len(artifacts.StegoBytes) > 0 {
+		stegoName := fmt.Sprintf("proposal-%s-stego.png", proposalID)
+		if stegoCID, err := ipfsClient.AddBytes(ctx, stegoName, artifacts.StegoBytes); err == nil {
+			meta["stego_image_cid"] = stegoCID
+			meta["stego_payload_cid"] = "inline"
+			log.Printf("stego finalize: stego image uploaded to IPFS: %s", stegoCID)
+		} else {
+			log.Printf("stego finalize: IPFS stego upload failed: %v", err)
+		}
+
+		// Upload sandbox tarball.
+		uploadsDir := strings.TrimSpace(os.Getenv("UPLOADS_DIR"))
+		if artifacts.SandboxHash != "" {
+			tarballPath := filepath.Join(uploadsDir, artifacts.SandboxHash)
+			if tarballData, readErr := os.ReadFile(tarballPath); readErr == nil {
+				if tarballCID, addErr := ipfsClient.AddBytes(ctx, artifacts.SandboxHash, tarballData); addErr == nil {
+					meta["sandbox_tarball_cid"] = tarballCID
+					log.Printf("stego finalize: sandbox tarball uploaded to IPFS: %s", tarballCID)
+				}
+			}
+		}
+
+		_ = s.store.UpdateProposalMetadata(ctx, p.ID, meta)
+
+		// Pubsub announcement (optional, best-effort).
+		if cfg.AnnounceEnabled && strings.TrimSpace(cfg.AnnounceTopic) != "" {
+			announce := stegoAnnouncement{
+				Type:              "stego",
+				StegoCID:          strings.TrimSpace(toString(meta["stego_image_cid"])),
+				ExpectedHash:      visibleHash,
+				ProposalID:        proposalID,
+				VisiblePixelHash:  visibleHash,
+				Issuer:            cfg.Issuer,
+				SandboxTarballCID: strings.TrimSpace(toString(meta["sandbox_tarball_cid"])),
+				Timestamp:         time.Now().Unix(),
+			}
+			if payload, err := json.Marshal(announce); err == nil {
+				if err := ipfsClient.PubsubPublish(ctx, cfg.AnnounceTopic, payload); err != nil {
+					log.Printf("stego finalize: pubsub announce failed: %v", err)
+				}
+			}
+		}
+	}
+
+	// Update ingestion metadata.
+	ingestionID := strings.TrimSpace(toString(meta["ingestion_id"]))
+	if s.ingestionSvc != nil && ingestionID != "" {
+		updates := map[string]interface{}{
+			"stego_payload_cid":          "inline",
+			"stego_image_cid":            toString(meta["stego_image_cid"]),
+			"stego_contract_id":          artifacts.StegoImageHash,
+			"stego_manifest_created_at":  toString(meta["stego_manifest_created_at"]),
+			"stego_manifest_proposal_id": proposalID,
+			"stego_manifest_issuer":      cfg.Issuer,
+			"visible_pixel_hash":         visibleHash,
+		}
+		_ = s.ingestionSvc.UpdateMetadata(ingestionID, updates)
+	}
+
+	// Archive the wish contract now that the product stego is published.
+	if strings.EqualFold(strings.TrimSpace(p.Status), "approved") {
+		s.archiveWishContract(ctx, visibleHash)
+	}
+
+	// Mark contract as funded.
+	if visibleHash != "" {
+		wishID := "wish-" + strings.TrimPrefix(visibleHash, "wish-")
+		_ = s.store.UpdateContractStatus(ctx, wishID, "funded")
+		_ = s.store.UpdateContractStatus(ctx, visibleHash, "funded")
+	}
+
+	s.recordEvent(smart_contract.Event{
+		Type:      "stego_publish",
+		EntityID:  proposalID,
+		Actor:     "system",
+		Message:   fmt.Sprintf("stego artifacts published (stego=%s sandbox=%s)", artifacts.StegoImageHash, artifacts.SandboxHash),
+		CreatedAt: time.Now(),
+	})
+}
+
 func (s *Server) maybePublishStegoForProposal(ctx context.Context, proposalID string) error {
+	log.Printf("stego publish: starting for proposal %s", proposalID)
 	cfg := loadStegoApprovalConfig()
 	if !cfg.Enabled {
+		log.Printf("stego publish: DISABLED via STARGATE_STEGO_APPROVAL_ENABLED for proposal %s", proposalID)
+		return nil
+	}
+	if !ipfs.IsEnabled() {
+		log.Printf("stego publish: IPFS disabled, skipping for proposal %s", proposalID)
 		return nil
 	}
 	timeout := cfg.InscribeTimeout + cfg.IngestTimeout + (5 * time.Second)
@@ -161,6 +427,8 @@ func (s *Server) publishStegoForProposal(ctx context.Context, proposalID string,
 	if strings.TrimSpace(toString(meta["stego_contract_id"])) != "" &&
 		strings.TrimSpace(toString(meta["stego_image_cid"])) != "" &&
 		(commitmentLock == "" || commitmentLock == stegoCommitmentLock) {
+		log.Printf("stego publish: already published for proposal %s (contract=%s cid=%s), skipping",
+			proposalID, toString(meta["stego_contract_id"]), toString(meta["stego_image_cid"]))
 		return nil
 	}
 	ingestionID := strings.TrimSpace(toString(meta["ingestion_id"]))
@@ -200,16 +468,9 @@ func (s *Server) publishStegoForProposal(ctx context.Context, proposalID string,
 	if p.VisiblePixelHash != visibleHash {
 		p.VisiblePixelHash = visibleHash
 	}
-	payload := buildStegoPayload(p, meta, cfg.PayloadSchema, cfg.PayloadMaxTasks)
-	payloadBytes, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Errorf("failed to marshal stego payload: %w", err)
-	}
 	ipfsClient := ipfs.NewClientFromEnv()
-	payloadName := fmt.Sprintf("proposal-%s-payload.json", proposalID)
-	payloadCID, err := ipfsClient.AddBytes(ctx, payloadName, payloadBytes)
-	if err != nil {
-		return fmt.Errorf("ipfs payload add failed: %w", err)
+	if ipfsClient == nil {
+		return fmt.Errorf("IPFS client is disabled - cannot publish stego")
 	}
 	manifestCreatedAt := time.Now().Unix()
 	if raw := strings.TrimSpace(toString(meta["stego_manifest_created_at"])); raw != "" {
@@ -217,16 +478,58 @@ func (s *Server) publishStegoForProposal(ctx context.Context, proposalID string,
 			manifestCreatedAt = v
 		}
 	}
-	manifestBytes, err := stego.BuildManifestYAML(stego.Manifest{
-		SchemaVersion:    cfg.ManifestSchema,
-		ProposalID:       proposalID,
-		VisiblePixelHash: visibleHash,
-		PayloadCID:       payloadCID,
-		CreatedAt:        manifestCreatedAt,
-		Issuer:           cfg.Issuer,
-	})
+	// Build sandbox tarball at publish time so it captures the final state of
+	// all submitted artifacts across every task/agent, not a partial snapshot
+	// from a single submit_work call.  The tarball is written to disk and
+	// uploaded to IPFS so peers can retrieve the full artifact set.
+	sandboxHash := ""
+	uploadsDir := strings.TrimSpace(os.Getenv("UPLOADS_DIR"))
+	sandboxDir := filepath.Join(uploadsDir, "results", visibleHash)
+	tarballPath := filepath.Join(uploadsDir, fmt.Sprintf("sandbox-%s.tar", visibleHash))
+	if h, err := stego.WriteSandboxTarball(sandboxDir, tarballPath); err == nil {
+		sandboxHash = h
+		log.Printf("stego publish: sandbox tarball for %s written to %s (hash=%s, results dir=%s)", proposalID, tarballPath, sandboxHash, sandboxDir)
+		// Store tarball by its SHA256 hash in UPLOADS_DIR so the IPFS mirror
+		// syncs it to peers using the same hash-based filename convention.
+		// Receivers find it via UPLOADS_DIR/<sandbox_hash> at confirmation time.
+		hashPath := filepath.Join(uploadsDir, sandboxHash)
+		if _, statErr := os.Stat(hashPath); os.IsNotExist(statErr) {
+			if linkErr := os.Link(tarballPath, hashPath); linkErr != nil {
+				// Hardlink failed (cross-device?), fall back to copy.
+				if data, readErr := os.ReadFile(tarballPath); readErr == nil {
+					_ = os.WriteFile(hashPath, data, 0600)
+				}
+			}
+			log.Printf("stego publish: sandbox tarball stored as %s", hashPath)
+		}
+		// Also upload to IPFS for content-addressed retrieval by peers
+		// that haven't received the file via the mirror yet.
+		if tarballData, readErr := os.ReadFile(tarballPath); readErr == nil {
+			tarballName := sandboxHash // use hash as the IPFS object name
+			if tarballCID, addErr := ipfsClient.AddBytes(ctx, tarballName, tarballData); addErr == nil {
+				meta["sandbox_tarball_cid"] = tarballCID
+				log.Printf("stego publish: sandbox tarball uploaded to IPFS: %s", tarballCID)
+			} else {
+				log.Printf("stego publish: failed to upload sandbox tarball to IPFS: %v", addErr)
+			}
+		} else {
+			log.Printf("stego publish: failed to read sandbox tarball for IPFS upload: %v", readErr)
+		}
+	} else {
+		// Sandbox dir may not exist yet (no results submitted) — that's OK
+		log.Printf("stego publish: sandbox tarball skipped for %s: %v", proposalID, err)
+	}
+	// Schema v2: embed the full payload JSON directly in the alpha channel.
+	// No separate IPFS file needed — peers extract everything from the image.
+	payload := buildStegoPayload(p, meta, cfg.PayloadSchema, cfg.PayloadMaxTasks)
+	payload.ProposalID = proposalID
+	payload.VisiblePixelHash = visibleHash
+	payload.Issuer = cfg.Issuer
+	payload.CreatedAt = manifestCreatedAt
+	payload.SandboxHash = sandboxHash
+	manifestBytes, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("failed to build manifest: %w", err)
+		return fmt.Errorf("failed to marshal embedded payload: %w", err)
 	}
 	method := strings.TrimSpace(coverRec.Method)
 	if method == "" {
@@ -250,7 +553,7 @@ func (s *Server) publishStegoForProposal(ctx context.Context, proposalID string,
 	if err != nil {
 		return fmt.Errorf("ipfs stego add failed: %w", err)
 	}
-	meta["stego_payload_cid"] = payloadCID
+	meta["stego_payload_cid"] = "inline" // v2: payload embedded in stego image
 	meta["stego_image_cid"] = stegoCID
 	meta["stego_contract_id"] = contractID
 	meta["stego_manifest_created_at"] = strconv.FormatInt(manifestCreatedAt, 10)
@@ -264,7 +567,7 @@ func (s *Server) publishStegoForProposal(ctx context.Context, proposalID string,
 	}
 	if s.ingestionSvc != nil && ingestionID != "" {
 		updates := map[string]interface{}{
-			"stego_payload_cid":          payloadCID,
+			"stego_payload_cid":          "inline",
 			"stego_image_cid":            stegoCID,
 			"stego_contract_id":          contractID,
 			"stego_manifest_created_at":  strconv.FormatInt(manifestCreatedAt, 10),
@@ -279,16 +582,25 @@ func (s *Server) publishStegoForProposal(ctx context.Context, proposalID string,
 	if strings.EqualFold(strings.TrimSpace(p.Status), "approved") {
 		s.archiveWishContract(ctx, visibleHash)
 	}
+	// After publishing the stego (post-PSBT), ensure the contract is marked funded
+	// so it appears in open contracts / discovery as work completed (PSBT built,
+	// artifacts captured) and waiting for on-chain confirmation. This overrides
+	// any superseded from approve for the committed contract.
+	if visibleHash != "" {
+		wishID := "wish-" + strings.TrimPrefix(visibleHash, "wish-")
+		_ = s.store.UpdateContractStatus(ctx, wishID, "funded")
+		_ = s.store.UpdateContractStatus(ctx, visibleHash, "funded")
+	}
 	if cfg.AnnounceEnabled && strings.TrimSpace(cfg.AnnounceTopic) != "" {
 		announce := stegoAnnouncement{
-			Type:             "stego",
-			StegoCID:         stegoCID,
-			ExpectedHash:     visibleHash,
-			ProposalID:       proposalID,
-			VisiblePixelHash: visibleHash,
-			PayloadCID:       payloadCID,
-			Issuer:           cfg.Issuer,
-			Timestamp:        time.Now().Unix(),
+			Type:              "stego",
+			StegoCID:          stegoCID,
+			ExpectedHash:      visibleHash,
+			ProposalID:        proposalID,
+			VisiblePixelHash:  visibleHash,
+			Issuer:            cfg.Issuer,
+			SandboxTarballCID: strings.TrimSpace(toString(meta["sandbox_tarball_cid"])),
+			Timestamp:         time.Now().Unix(),
 		}
 		if payload, err := json.Marshal(announce); err != nil {
 			log.Printf("stego announce marshal failed: %v", err)
@@ -506,6 +818,7 @@ func buildStegoTasks(p smart_contract.Proposal, meta map[string]interface{}, max
 			Description:      t.Description,
 			BudgetSats:       t.BudgetSats,
 			Skills:           t.Skills,
+			Status:           t.Status,
 			ContractorWallet: t.ContractorWallet,
 		})
 	}
@@ -559,245 +872,159 @@ func formatStegoMetaValue(value interface{}) (string, bool) {
 }
 
 func (s *Server) inscribeStego(ctx context.Context, cfg stegoApprovalConfig, cover []byte, filename, method string, message []byte) ([]byte, string, error) {
-	if strings.TrimSpace(cfg.ProxyBase) == "" {
-		return nil, "", fmt.Errorf("stego proxy base not configured")
-	}
-
-	// Validate inputs before sending request
+	// Validate inputs
 	if len(cover) == 0 {
 		return nil, "", fmt.Errorf("cover image cannot be empty")
 	}
-	if strings.TrimSpace(filename) == "" {
-		return nil, "", fmt.Errorf("filename cannot be empty")
-	}
 	if strings.TrimSpace(method) == "" {
-		return nil, "", fmt.Errorf("method cannot be empty")
-	}
-	if len(message) == 0 {
-		return nil, "", fmt.Errorf("message cannot be empty")
+		method = "alpha"
 	}
 
-	var buf bytes.Buffer
-	writer := multipart.NewWriter(&buf)
-	part, err := writer.CreateFormFile("image", filename)
-	if err != nil {
-		return nil, "", err
-	}
-	if _, err := io.Copy(part, bytes.NewReader(cover)); err != nil {
-		return nil, "", err
-	}
-	if err := writer.WriteField("message", string(message)); err != nil {
-		return nil, "", err
-	}
-	if err := writer.WriteField("method", method); err != nil {
-		return nil, "", err
-	}
-	if err := writer.Close(); err != nil {
-		return nil, "", err
-	}
-	reqURL := fmt.Sprintf("%s/inscribe", strings.TrimRight(cfg.ProxyBase, "/"))
-
-	var lastErr error
-	var resp *http.Response
-	var body []byte
-
-	// Retry inscribe with exponential backoff for transient failures
-	for attempt := 0; attempt < 3; attempt++ {
-		if attempt > 0 {
-			waitTime := time.Duration(attempt*attempt) * time.Second
-			if waitTime > 10*time.Second {
-				waitTime = 10 * time.Second
-			}
-			log.Printf("inscribe retry attempt %d/%d after %v wait", attempt+1, 3, waitTime)
-			time.Sleep(waitTime)
-		}
-
-		// Create fresh request for each attempt
-		var buf bytes.Buffer
-		writer := multipart.NewWriter(&buf)
-		part, err := writer.CreateFormFile("image", filename)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		if _, err := io.Copy(part, bytes.NewReader(cover)); err != nil {
-			lastErr = err
-			continue
-		}
-		if err := writer.WriteField("message", string(message)); err != nil {
-			lastErr = err
-			continue
-		}
-		if err := writer.WriteField("method", method); err != nil {
-			lastErr = err
-			continue
-		}
-		if err := writer.Close(); err != nil {
-			lastErr = err
-			continue
-		}
-
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, &buf)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		req.Header.Set("Content-Type", writer.FormDataContentType())
-		if cfg.APIKey != "" {
-			req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
-		}
-
-		client := &http.Client{Timeout: cfg.InscribeTimeout}
-		resp, err = client.Do(req)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-
-		body, _ = io.ReadAll(resp.Body)
-		resp.Body.Close()
-
-		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			// Success!
-			break
-		}
-
-		// Log failure and continue to retry
-		lastErr = fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
-		log.Printf("inscribe attempt %d failed - URL: %s, Status: %s, Response: %s",
-			attempt+1, reqURL, resp.Status, strings.TrimSpace(string(body)))
-		log.Printf("inscribe request details - filename: %s, method: %s, message length: %d", filename, method, len(message))
-
-		// Don't retry on client errors (4xx) except 429 (rate limit)
-		if resp.StatusCode >= 400 && resp.StatusCode < 500 && resp.StatusCode != 429 {
-			break
-		}
-	}
-
-	if lastErr != nil {
-		return nil, "", fmt.Errorf("inscribe failed after retries: %w", lastErr)
-	}
-	var payload struct {
-		RequestID   string `json:"request_id"`
-		ID          string `json:"id"`
-		ImageSHA256 string `json:"image_sha256"`
-		ImageBase64 string `json:"image_base64"`
-	}
-	if err := json.Unmarshal(body, &payload); err != nil {
-		return nil, "", fmt.Errorf("inscribe response parse failed: %w", err)
-	}
-	ingestionID := strings.TrimSpace(payload.ImageSHA256)
-	if ingestionID == "" {
-		ingestionID = strings.TrimSpace(payload.ID)
-	}
-	if ingestionID == "" {
-		return nil, "", fmt.Errorf("inscribe response missing image_sha256 or id")
-	}
-	requestID := strings.TrimSpace(payload.RequestID)
-	if requestID == "" {
-		requestID = ingestionID
-	}
-
+	var ingestionID string
 	var stegoBytes []byte
+	if strings.TrimSpace(cfg.ProxyBase) != "" {
+		// PROXY PATH: call starlight /inscribe with retry
+		log.Printf("stego: proxy path selected, proxyBase=%s", cfg.ProxyBase)
 
-	if strings.TrimSpace(payload.ImageBase64) != "" {
-		log.Printf("stego: using image_base64 from inscribe response for %s", ingestionID)
-		var decodeErr error
-		stegoBytes, decodeErr = base64.StdEncoding.DecodeString(payload.ImageBase64)
-		if decodeErr != nil {
-			return nil, "", fmt.Errorf("failed to decode stego image from response: %w", decodeErr)
+		if strings.TrimSpace(filename) == "" {
+			filename = "image.png"
+		}
+		if len(message) == 0 {
+			return nil, "", fmt.Errorf("message cannot be empty")
 		}
 
-		if s.ingestionSvc != nil {
-			ingestionRec := &services.IngestionRecord{
-				ID:            ingestionID,
-				ImageBase64:   payload.ImageBase64,
-				Status:        "verified",
-				MessageLength: len(message),
-				Filename:      ingestionID, // Use just the hash for stealth
-				Method:        method,
-				Metadata: map[string]interface{}{
-					"stego_request_id":   requestID,
-					"stego_ingestion_id": ingestionID,
-				},
-			}
-			if createErr := s.ingestionSvc.Create(*ingestionRec); createErr != nil {
-				log.Printf("stego: failed to create ingestion record for %s: %v", ingestionID, createErr)
-			} else {
-				log.Printf("stego: created ingestion record for %s with image data from response", ingestionID)
+		reqURL := fmt.Sprintf("%s/inscribe", strings.TrimRight(cfg.ProxyBase, "/"))
+		var lastErr error
+		var resp *http.Response
+		var body []byte
+
+		for attempt := 0; attempt < 3; attempt++ {
+			if attempt > 0 {
+				waitTime := time.Duration(attempt*attempt) * time.Second
+				if waitTime > 10*time.Second {
+					waitTime = 10 * time.Second
+				}
+				log.Printf("inscribe retry attempt %d/%d after %v wait", attempt+1, 3, waitTime)
+				time.Sleep(waitTime)
 			}
 
-			uploadsDir := os.Getenv("UPLOADS_DIR")
-			if uploadsDir == "" {
-				uploadsDir = "/data/uploads"
+			var buf bytes.Buffer
+			writer := multipart.NewWriter(&buf)
+			part, err := writer.CreateFormFile("image", filename)
+			if err != nil {
+				lastErr = err
+				continue
 			}
-			// Use just the hash as filename for stealth
-			uploadPath := filepath.Join(uploadsDir, ingestionID)
-			if writeErr := os.WriteFile(uploadPath, stegoBytes, 0644); writeErr != nil {
-				log.Printf("stego: failed to write stego image to %s: %v", uploadPath, writeErr)
-			} else {
-				log.Printf("stego: wrote stego image to %s (%d bytes)", uploadPath, len(stegoBytes))
+			if _, err := io.Copy(part, bytes.NewReader(cover)); err != nil {
+				lastErr = err
+				continue
+			}
+			if err := writer.WriteField("message", string(message)); err != nil {
+				lastErr = err
+				continue
+			}
+			if err := writer.WriteField("method", method); err != nil {
+				lastErr = err
+				continue
+			}
+			if err := writer.Close(); err != nil {
+				lastErr = err
+				continue
 			}
 
-			topic := strings.TrimSpace(os.Getenv("IPFS_STEGO_TOPIC"))
-			if topic == "" {
-				topic = "stargate-stego"
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, &buf)
+			if err != nil {
+				lastErr = err
+				continue
 			}
-			if strings.TrimSpace(topic) != "" && len(stegoBytes) > 0 {
-				pubCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-				defer cancel()
-				client := ipfs.NewClientFromEnv()
-				ext := filepath.Ext(filename)
-				if ext == "" {
-					ext = ".png"
-				}
-				name := fmt.Sprintf("stego-%s%s", ingestionID, ext)
-				imageCID, err := client.AddBytes(pubCtx, name, stegoBytes)
-				if err != nil {
-					log.Printf("stego: ipfs add failed for %s: %v", ingestionID, err)
-				} else {
-					log.Printf("stego: ipfs added %s -> %s", ingestionID, imageCID)
-					ann := struct {
-						Type        string `json:"type"`
-						IngestionID string `json:"ingestion_id"`
-						ImageCID    string `json:"image_cid"`
-						Filename    string `json:"filename,omitempty"`
-						Method      string `json:"method,omitempty"`
-						Message     string `json:"message,omitempty"`
-						Timestamp   int64  `json:"timestamp"`
-					}{
-						Type:        "stego_ingest",
-						IngestionID: ingestionID,
-						ImageCID:    imageCID,
-						Filename:    filename,
-						Method:      method,
-						Message:     string(message),
-						Timestamp:   time.Now().Unix(),
-					}
-					if payload, err := json.Marshal(ann); err != nil {
-						log.Printf("stego: announce marshal failed: %v", err)
-					} else if err := client.PubsubPublish(pubCtx, topic, payload); err != nil {
-						log.Printf("stego: announce publish failed: %v", err)
-					} else {
-						log.Printf("stego: published announcement to topic %s", topic)
-					}
-				}
+			req.Header.Set("Content-Type", writer.FormDataContentType())
+			if cfg.APIKey != "" {
+				req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
+			}
+
+			client := &http.Client{Timeout: cfg.InscribeTimeout}
+			resp, err = client.Do(req)
+			if err != nil {
+				lastErr = err
+				continue
+			}
+
+			body, _ = io.ReadAll(resp.Body)
+			resp.Body.Close()
+
+			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				lastErr = nil
+				break
+			}
+
+			lastErr = fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+			log.Printf("inscribe attempt %d failed - URL: %s, Status: %s, Response: %s",
+				attempt+1, reqURL, resp.Status, strings.TrimSpace(string(body)))
+
+			// Don't retry on client errors (4xx) except 429 (rate limit)
+			if resp.StatusCode >= 400 && resp.StatusCode < 500 && resp.StatusCode != 429 {
+				break
+			}
+		}
+
+		if lastErr != nil {
+			return nil, "", fmt.Errorf("inscribe failed after retries: %w", lastErr)
+		}
+
+		var payload struct {
+			RequestID   string `json:"request_id"`
+			ID          string `json:"id"`
+			ImageSHA256 string `json:"image_sha256"`
+			ImageBase64 string `json:"image_base64"`
+		}
+		if err := json.Unmarshal(body, &payload); err != nil {
+			return nil, "", fmt.Errorf("inscribe response parse failed: %w", err)
+		}
+		ingestionID = strings.TrimSpace(payload.ImageSHA256)
+		if ingestionID == "" {
+			ingestionID = strings.TrimSpace(payload.ID)
+		}
+		if ingestionID == "" {
+			return nil, "", fmt.Errorf("inscribe response missing image_sha256 or id")
+		}
+
+		if strings.TrimSpace(payload.ImageBase64) != "" {
+			log.Printf("stego: using image_base64 from inscribe response for %s", ingestionID)
+			var decodeErr error
+			stegoBytes, decodeErr = base64.StdEncoding.DecodeString(payload.ImageBase64)
+			if decodeErr != nil {
+				return nil, "", fmt.Errorf("failed to decode stego image from response: %w", decodeErr)
+			}
+		} else {
+			// Fallback: wait for ingestion to populate image
+			rec, waitErr := s.waitForIngestion(ctx, ingestionID, cfg.IngestTimeout, cfg.IngestPoll)
+			if waitErr != nil {
+				return nil, "", waitErr
+			}
+			if rec.ImageBase64 == "" {
+				return nil, "", fmt.Errorf("ingestion %s missing image payload", ingestionID)
+			}
+			var decodeErr error
+			stegoBytes, decodeErr = base64.StdEncoding.DecodeString(rec.ImageBase64)
+			if decodeErr != nil {
+				return nil, "", fmt.Errorf("failed to decode stego image: %w", decodeErr)
 			}
 		}
 	} else {
-		rec, waitErr := s.waitForIngestion(ctx, ingestionID, cfg.IngestTimeout, cfg.IngestPoll)
-		if waitErr != nil {
-			return nil, "", waitErr
+		// NATIVE PATH: use local Go stego module
+		log.Printf("stego: performing native %s embedding", method)
+		inscribeResult, err := stego.Inscribe(cover, string(message), method)
+		if err != nil {
+			return nil, "", fmt.Errorf("native inscribe failed: %w", err)
 		}
-		if rec.ImageBase64 == "" {
-			return nil, "", fmt.Errorf("ingestion %s missing image payload", ingestionID)
-		}
-		var decodeErr error
-		stegoBytes, decodeErr = base64.StdEncoding.DecodeString(rec.ImageBase64)
-		if decodeErr != nil {
-			return nil, "", fmt.Errorf("failed to decode stego image: %w", decodeErr)
-		}
+		ingestionID = inscribeResult.ID
+		stegoBytes = inscribeResult.ImageBytes
 	}
+
+	// NOTE: IPFS upload, ingestion records, and stego announcement are handled
+	// by the caller (publishStegoForProposal). Writing the product stego to
+	// disk here would create a duplicate file alongside the wish stego.
+
 	return stegoBytes, ingestionID, nil
 }
 

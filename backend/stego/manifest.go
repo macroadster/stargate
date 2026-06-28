@@ -13,6 +13,7 @@ type Manifest struct {
 	VisiblePixelHash string `yaml:"visible_pixel_hash"`
 	PayloadCID       string `yaml:"payload_cid"`
 	TasksCID         string `yaml:"tasks_cid"`
+	SandboxHash      string `yaml:"sandbox_hash"`
 	CreatedAt        int64  `yaml:"created_at"`
 	Issuer           string `yaml:"issuer"`
 }
@@ -26,9 +27,6 @@ func BuildManifestYAML(m Manifest) ([]byte, error) {
 	}
 	if m.VisiblePixelHash == "" {
 		return nil, fmt.Errorf("visible_pixel_hash must be set")
-	}
-	if m.PayloadCID == "" {
-		return nil, fmt.Errorf("payload_cid must be set")
 	}
 	if m.CreatedAt <= 0 {
 		return nil, fmt.Errorf("created_at must be set")
@@ -44,9 +42,14 @@ func BuildManifestYAML(m Manifest) ([]byte, error) {
 	}
 	writeField(&b, "proposal_id", formatYAMLValue(m.ProposalID))
 	writeField(&b, "visible_pixel_hash", formatYAMLValue(m.VisiblePixelHash))
-	writeField(&b, "payload_cid", formatYAMLValue(m.PayloadCID))
+	if m.PayloadCID != "" {
+		writeField(&b, "payload_cid", formatYAMLValue(m.PayloadCID))
+	}
 	if m.TasksCID != "" {
 		writeField(&b, "tasks_cid", formatYAMLValue(m.TasksCID))
+	}
+	if m.SandboxHash != "" {
+		writeField(&b, "sandbox_hash", formatYAMLValue(m.SandboxHash))
 	}
 	writeField(&b, "created_at", strconv.FormatInt(m.CreatedAt, 10))
 	writeField(&b, "issuer", formatYAMLValue(m.Issuer))

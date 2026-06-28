@@ -283,10 +283,13 @@ func (ds *DataStorage) saveBlockDataToFile(data interface{}) error {
 // loadBlockDataFromFile loads block data from JSON file
 func (ds *DataStorage) loadBlockDataFromFile(height int64) (interface{}, error) {
 	// Try blocks directory structure (height_hash/inscriptions.json)
-	blockDirPattern := filepath.Join(ds.dataDir, fmt.Sprintf("%d_00000000", height))
-	inscriptionsPath := filepath.Join(blockDirPattern, "inscriptions.json")
+	// The directory name is height_hashprefix, so glob to find it.
+	matches, _ := filepath.Glob(filepath.Join(ds.dataDir, fmt.Sprintf("%d_*/inscriptions.json", height)))
+	if len(matches) == 0 {
+		return nil, fmt.Errorf("no block data file for height %d", height)
+	}
 
-	data, err := os.ReadFile(inscriptionsPath)
+	data, err := os.ReadFile(matches[0])
 	if err != nil {
 		return nil, fmt.Errorf("failed to read block data file: %w", err)
 	}
@@ -341,15 +344,16 @@ func (ds *DataStorage) loadCache() {
 		}
 
 		var blockInfo struct {
-			BlockHash   string `json:"block_hash"`
-			BlockHeight int64  `json:"block_height"`
-			Images      []struct {
+			BlockHash      string `json:"block_hash"`
+			BlockHeight    int64  `json:"block_height"`
+			Images         []struct {
 				TxID      string `json:"tx_id"`
 				Format    string `json:"format"`
 				SizeBytes int    `json:"size_bytes"`
 				FileName  string `json:"file_name"`
 				FilePath  string `json:"file_path"`
 			} `json:"images"`
+			SmartContracts []bitcoin.SmartContractData `json:"smart_contracts"`
 		}
 
 		if err := json.Unmarshal(blockData, &blockInfo); err != nil {
@@ -358,13 +362,17 @@ func (ds *DataStorage) loadCache() {
 		}
 
 		// Convert to our cache format
+		contracts := blockInfo.SmartContracts
+		if contracts == nil {
+			contracts = make([]bitcoin.SmartContractData, 0)
+		}
 		cacheEntry := &BlockDataCache{
 			BlockHeight:    blockInfo.BlockHeight,
 			BlockHash:      blockInfo.BlockHash,
 			Timestamp:      0, // Not in inscriptions.json, using 0
 			Inscriptions:   make([]bitcoin.InscriptionData, len(blockInfo.Images)),
 			Images:         make([]bitcoin.ExtractedImageData, len(blockInfo.Images)),
-			SmartContracts: make([]bitcoin.SmartContractData, 0),
+			SmartContracts: contracts,
 			ScanResults:    make([]map[string]interface{}, 0),
 			ProcessingTime: 0,
 			Success:        true,

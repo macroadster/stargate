@@ -19,6 +19,8 @@ backend/cmd/tests/build-verification
 # Embedded frontend build artifacts (generated, not source)
 backend/assets/frontend/
 
+stargate
+data
 **/*.log
 .gocache/*
 .beads/*
@@ -33,3 +35,11 @@ test-results/
 *.swp
 
 opencode.json
+# Compiled binaries with stargate-backend prefix
+backend/stargate-backend*
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
+\n# IPFS storage\nipfs_objects/\nipfs_repo/\n\n# Build\nstargate

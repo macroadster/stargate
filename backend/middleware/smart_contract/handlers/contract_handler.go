@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/btcsuite/btcd/chaincfg"
@@ -108,14 +109,50 @@ func (h *ContractHandler) validatePSBTRequest(w http.ResponseWriter, r *http.Req
 // handleGetContracts handles GET /contracts
 func (h *ContractHandler) handleGetContracts(w http.ResponseWriter, r *http.Request) {
 	filter := smart_contract.ContractFilter{}
+	query := r.URL.Query()
+	if status := query.Get("status"); status != "" {
+		filter.Status = status
+	}
+	if limitStr := query.Get("limit"); limitStr != "" {
+		if limit, err := strconv.Atoi(limitStr); err == nil && limit > 0 {
+			filter.Limit = limit
+		}
+	}
+	if cursorStr := query.Get("cursor_height"); cursorStr != "" {
+		if cursor, err := strconv.Atoi(cursorStr); err == nil && cursor > 0 {
+			filter.CursorHeight = &cursor
+		}
+	}
+	if orderBy := query.Get("order_by"); orderBy == "confirmed_at" {
+		filter.OrderByConfirmedAt = true
+	}
+
 	contracts, err := h.store.ListContracts(filter)
 	if err != nil {
 		middleware.Error(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
+	// Standardize on MCP-style response shape (Cat 4.4) for consistency across handlers.
+	hasMore := false
+	if filter.Limit > 0 && len(contracts) == filter.Limit {
+		checkFilter := filter
+		checkFilter.Offset = filter.Offset + filter.Limit
+		checkFilter.Limit = 1
+		more, merr := h.store.ListContracts(checkFilter)
+		if merr == nil && len(more) > 0 {
+			hasMore = true
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(contracts)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"contracts": contracts,
+		"total":     len(contracts),
+		"limit":     filter.Limit,
+		"offset":    filter.Offset,
+		"has_more":  hasMore,
+	})
 }
 
 // handleCreateContract handles POST /contracts
@@ -127,4 +164,35 @@ func (h *ContractHandler) handleCreateContract(w http.ResponseWriter, r *http.Re
 	}
 
 	middleware.Error(w, http.StatusNotImplemented, "contract creation not implemented")
+}
+
+// ContractsConfirmed handles GET /contracts-confirmed
+func (h *ContractHandler) ContractsConfirmed(w http.ResponseWriter, r *http.Request) {
+	filter := smart_contract.ContractFilter{
+		Status: "confirmed",
+	}
+	query := r.URL.Query()
+
+	if limitStr := query.Get("limit"); limitStr != "" {
+		if limit, err := strconv.Atoi(limitStr); err == nil && limit > 0 {
+			filter.Limit = limit
+		}
+	}
+	if cursorStr := query.Get("cursor_height"); cursorStr != "" {
+		if cursor, err := strconv.Atoi(cursorStr); err == nil && cursor > 0 {
+			filter.CursorHeight = &cursor
+		}
+	}
+	if orderBy := query.Get("order_by"); orderBy == "confirmed_at" {
+		filter.OrderByConfirmedAt = true
+	}
+
+	contracts, err := h.store.ListContracts(filter)
+	if err != nil {
+		middleware.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(contracts)
 }

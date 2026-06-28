@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -8,8 +9,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"stargate-backend/core/smart_contract"
 )
 
 func (h *HTTPMCPServer) handleListTools(w http.ResponseWriter, r *http.Request) {
@@ -28,22 +27,12 @@ func (h *HTTPMCPServer) handleListTools(w http.ResponseWriter, r *http.Request) 
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"tools":      tools,
-		"tool_names": toolNames,
-		"total":      len(tools),
-		"categories": map[string]bool{
-			"discovery": true,
-			"write":     true,
-			"utility":   true,
-		},
-		"http_endpoints": map[string]interface{}{
-			"inscribe": map[string]interface{}{
-				"method":          "POST",
-				"endpoint":        base + "/api/inscribe",
-				"required_fields": []string{"message", "image_base64"},
-				"description":     "Create a wish/inscription that seeds a proposal and contract metadata. Requires image payload.",
-			},
-		},
+		"tools":          tools,
+		"tool_names":     toolNames,
+		"total":          len(tools),
+		"categories":     h.getCategoriesMap(),
+		"http_endpoints": h.getHTTPEndpointsMap(base),
+		"agent_assets":   h.getAgentAssetsMap(base),
 		"endpoints": []string{
 			"/api/inscribe",
 			"/api/smart_contract/contracts",
@@ -70,53 +59,53 @@ func (h *HTTPMCPServer) handleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.URL.Path != "/mcp" && r.URL.Path != "/mcp/" {
-		h.writeHTTPError(w, http.StatusNotFound, "MCP_ENDPOINT_NOT_FOUND", "Unknown MCP endpoint", "See available MCP endpoints at /mcp/docs or /mcp/discover.")
 		return
 	}
 
+	sessionID := h.createSession()
 	base := h.externalBaseURL(r)
-	taskCount := 0
-	contractCount := 0
-	if h.store != nil {
-		if tasks, err := h.store.ListTasks(smart_contract.TaskFilter{}); err == nil {
-			taskCount = len(tasks)
-		}
-		if contracts, err := h.store.ListContracts(smart_contract.ContractFilter{}); err == nil {
-			contractCount = len(contracts)
-		}
-	}
-	resp := map[string]interface{}{
-		"message": "MCP HTTP server is running. Use /mcp/tools or /mcp/discover to list tools.",
-		"links": map[string]string{
-			"tools":        base + "/mcp/tools",
-			"discover":     base + "/mcp/discover",
-			"docs":         base + "/mcp/docs",
-			"openapi":      base + "/mcp/openapi.json",
-			"health":       base + "/mcp/health",
-			"events":       base + "/mcp/events",
-			"tool_call":    base + "/mcp/call",
-			"mcp_base_url": base + "/mcp",
-		},
-		"quick_start": []string{
-			"GET /mcp/tools to fetch available tools.",
-			"POST /mcp/call with {\"tool\": \"list_contracts\"} to execute a tool.",
-			"GET /mcp/docs for full examples.",
-		},
-		"counts": map[string]int{
-			"tools":     len(h.getToolSchemas()),
-			"contracts": contractCount,
-			"tasks":     taskCount,
-		},
-		"agent_playbook": []string{
-			"Agent 1: POST /api/inscribe to create a wish (message + image required).",
-			"Agent 2: POST /api/smart_contract/proposals to draft tasks from the wish.",
-			"Agent 1: POST /api/smart_contract/proposals/{id}/approve to publish tasks.",
-			"Agent 2: claim and submit work via tasks/claims endpoints.",
-			"Agent 1: review submissions and build PSBT.",
-		},
-	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(resp)
+	w.Header().Set("MCP-Session-Id", sessionID)
+	w.Header().Set("Accept", "application/json, text/event-stream")
+
+	// Build rich AI guidance block (injected early for agents)
+	ai := h.guidance.GetAIGuidance(base)
+
+	result := map[string]interface{}{
+		"protocolVersion": "2025-03-26",
+		"capabilities": map[string]interface{}{
+			"tools": map[string]bool{
+				"list": true,
+				"call": true,
+			},
+			"resources": map[string]bool{
+				"list": false,
+				"read": false,
+			},
+			"prompts": map[string]bool{
+				"list": false,
+				"get":  false,
+			},
+			"logging":   map[string]bool{},
+			"streaming": map[string]bool{"accept": true},
+		},
+		"serverInfo": map[string]string{
+			"name":    "starlight",
+			"version": "2026.06",
+		},
+		"instructions":        ai.Instructions,
+		"skill_md_url":        ai.SkillMDURL,
+		"sdk_url":             ai.SDKURL,
+		"recommended_workflow": ai.RecommendedWorkflow,
+		"ai_guidance":         ai.AIGuidance,
+		"links":               ai.Links,
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      nil,
+		"result":  result,
+	})
 }
 
 // handleDiscover advertises available tools and base routes for agents.
@@ -132,20 +121,24 @@ func (h *HTTPMCPServer) handleDiscover(w http.ResponseWriter, r *http.Request) {
 		toolNames = append(toolNames, name)
 	}
 	sort.Strings(toolNames)
+
+	// Inject early AI guidance at the top level (highest impact discovery endpoint)
+	ai := h.guidance.GetAIGuidance(base)
+
 	resp := map[string]interface{}{
-		"version": "1.0",
+		"version":        "2026.06",
+		"instructions":   ai.Instructions,
+		"skill_md_url":   ai.SkillMDURL,
+		"sdk_url":        ai.SDKURL,
+		"ai_guidance":    ai.AIGuidance,
+		"recommended_workflow": ai.RecommendedWorkflow,
+		"links":          ai.Links,
 		"base_urls": map[string]string{
 			"api": base + "/api/smart_contract",
 			"mcp": base + "/mcp",
 		},
-		"http_endpoints": map[string]interface{}{
-			"inscribe": map[string]interface{}{
-				"method":          "POST",
-				"endpoint":        base + "/api/inscribe",
-				"required_fields": []string{"message", "image_base64"},
-				"description":     "Create a wish/inscription that seeds a proposal and contract metadata. Requires image payload.",
-			},
-		},
+		"http_endpoints": h.getHTTPEndpointsMap(base),
+		"agent_assets":   h.getAgentAssetsMap(base),
 		"endpoints": []string{
 			"/api/inscribe",
 			"/api/smart_contract/contracts",
@@ -183,9 +176,9 @@ func (h *HTTPMCPServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"status":    "healthy",
 		"timestamp": time.Now().Format(time.RFC3339),
-		"version":   "1.0.0",
+		"version":   "2026.06",
 		"service":   "stargate-mcp",
-		"endpoints": []string{"/mcp", "/mcp/tools", "/mcp/call", "/mcp/docs"},
+		"endpoints": []string{"/mcp", "/mcp/tools", "/mcp/call", "/mcp/docs", "/mcp/SKILL.md", "/mcp/starlight_sdk.sh"},
 		"components": map[string]string{
 			"store":              fmt.Sprintf("%t", h.store != nil),
 			"api_key_store":      fmt.Sprintf("%t", h.apiKeyStore != nil),
@@ -196,9 +189,218 @@ func (h *HTTPMCPServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleGetAIGuidanceTool is the implementation for the get_ai_guidance MCP tool.
+// It returns the structured guidance plus links. Agents are directed to fetch /mcp/SKILL.md for the full canonical markdown.
+func (h *HTTPMCPServer) handleGetAIGuidanceTool(ctx context.Context, args map[string]interface{}, r *http.Request) (interface{}, error) {
+	base := h.externalBaseURL(r)
+	ai := h.guidance.GetAIGuidance(base)
+
+	// Also surface a short pointer to the full content
+	return map[string]interface{}{
+		"guidance":            ai,
+		"full_skill_md_url":   ai.SkillMDURL,
+		"full_sdk_url":        ai.SDKURL,
+		"note":                "Fetch the complete canonical workflow from the skill_md_url. This tool exists so agents can explicitly request guidance via the normal tool discovery path.",
+		"recommended_next": []string{
+			"GET " + ai.SkillMDURL,
+			"Download " + ai.SDKURL + " for file operations",
+		},
+	}, nil
+}
+
 func (h *HTTPMCPServer) handleEventsProxy(w http.ResponseWriter, r *http.Request) {
-	// This would proxy to the events endpoint
-	h.writeHTTPError(w, http.StatusNotImplemented, "NOT_IMPLEMENTED", "Events proxy not implemented", "Use /api/smart_contract/events directly.")
+	// Support Streamable HTTP for real-time events
+	// Set the necessary headers for streaming
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	// Ensure the ResponseWriter supports flushing
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		h.writeHTTPError(w, http.StatusInternalServerError, "STREAMING_NOT_SUPPORTED", "Streaming not supported", "Streaming not possible with current server configuration.")
+		return
+	}
+
+	// Send the 'endpoint' event telling the client where to send POST requests
+	// This is standard for MCP over HTTP (Streamable HTTP)
+	base := h.externalBaseURL(r)
+	endpointURL := base + "/mcp/call"
+	fmt.Fprintf(w, "event: endpoint\ndata: %s\n\n", endpointURL)
+	flusher.Flush()
+
+	// Keep the connection open for the client session
+	// We can also send a periodic heartbeat to prevent timeouts
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	notify := r.Context().Done()
+	for {
+		select {
+		case <-notify:
+			// Client disconnected
+			return
+		case <-ticker.C:
+			// Send heartbeat/ping to keep connection alive
+			fmt.Fprintf(w, ": heartbeat\n\n")
+			flusher.Flush()
+		}
+	}
+}
+
+type ChatSendRequest struct {
+	RoomID  string                 `json:"room_id"`
+	AgentID string                 `json:"agent_id"`
+	Content string                 `json:"content"`
+	Type    string                 `json:"type"` // "message", "typing"
+	Meta    map[string]interface{} `json:"meta,omitempty"`
+}
+
+type ChatSendResponse struct {
+	Success   bool   `json:"success"`
+	MessageID int64  `json:"message_id,omitempty"`
+	Error     string `json:"error,omitempty"`
+}
+
+func (h *HTTPMCPServer) handleChatStream(w http.ResponseWriter, r *http.Request) {
+	roomID := r.URL.Query().Get("room")
+	agentID := r.URL.Query().Get("agent")
+
+	if roomID == "" {
+		h.writeHTTPError(w, http.StatusBadRequest, "MISSING_ROOM", "Room ID required", "Specify 'room' query parameter.")
+		return
+	}
+	if agentID == "" {
+		h.writeHTTPError(w, http.StatusBadRequest, "MISSING_AGENT", "Agent ID required", "Specify 'agent' query parameter.")
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		h.writeHTTPError(w, http.StatusInternalServerError, "SSE_NOT_SUPPORTED", "SSE not supported", "Streaming not possible with current server configuration.")
+		return
+	}
+
+	connID := generateRandomString(16)
+	msgs := h.chatHub.JoinRoom(roomID, agentID, connID)
+	defer h.chatHub.LeaveRoom(roomID, agentID, connID)
+
+	recentMsgs := h.chatHub.GetRecentMessages(roomID, 50)
+	if len(recentMsgs) > 0 {
+		historyMsg := &ChatMessage{
+			Type:      "history",
+			RoomID:    roomID,
+			AgentID:   agentID,
+			Timestamp: time.Now().UnixMilli(),
+			Meta:      map[string]interface{}{"messages": recentMsgs},
+		}
+		historyJSON, _ := json.Marshal(historyMsg)
+		fmt.Fprintf(w, "event: chat\ndata: %s\n\n", historyJSON)
+		flusher.Flush()
+	}
+
+	joinMsg := &ChatMessage{
+		Type:      "join",
+		RoomID:    roomID,
+		AgentID:   agentID,
+		Timestamp: time.Now().UnixMilli(),
+	}
+	joinJSON, _ := json.Marshal(joinMsg)
+	fmt.Fprintf(w, "event: chat\ndata: %s\n\n", joinJSON)
+	flusher.Flush()
+
+	notify := r.Context().Done()
+	for {
+		select {
+		case <-notify:
+			leaveMsg := &ChatMessage{
+				Type:      "leave",
+				RoomID:    roomID,
+				AgentID:   agentID,
+				Timestamp: time.Now().UnixMilli(),
+			}
+			leaveJSON, _ := json.Marshal(leaveMsg)
+			fmt.Fprintf(w, "event: chat\ndata: %s\n\n", leaveJSON)
+			return
+		case msg := <-msgs:
+			fmt.Fprintf(w, "event: chat\ndata: %s\n\n", msg)
+			flusher.Flush()
+		case <-time.After(30 * time.Second):
+			fmt.Fprintf(w, ": heartbeat\n\n")
+			flusher.Flush()
+		}
+	}
+}
+
+func (h *HTTPMCPServer) handleChatSend(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		h.writeHTTPError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "Method not allowed", "Use POST /mcp/chat/send.")
+		return
+	}
+
+	var req ChatSendRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.writeHTTPError(w, http.StatusBadRequest, "INVALID_JSON", "Invalid JSON", "Request body must be valid JSON.")
+		return
+	}
+
+	if req.RoomID == "" {
+		h.writeHTTPError(w, http.StatusBadRequest, "MISSING_ROOM", "Room ID required", "Specify 'room_id' field in request.")
+		return
+	}
+	if req.AgentID == "" {
+		h.writeHTTPError(w, http.StatusBadRequest, "MISSING_AGENT", "Agent ID required", "Specify 'agent_id' field in request.")
+		return
+	}
+	if req.Content == "" && req.Type != "typing" {
+		h.writeHTTPError(w, http.StatusBadRequest, "MISSING_CONTENT", "Content required", "Specify 'content' field in request.")
+		return
+	}
+
+	msgType := req.Type
+	if msgType == "" {
+		msgType = "message"
+	}
+
+	msg := &ChatMessage{
+		Type:      msgType,
+		RoomID:    req.RoomID,
+		AgentID:   req.AgentID,
+		Content:   req.Content,
+		Timestamp: time.Now().UnixMilli(),
+		Meta:      req.Meta,
+	}
+
+	h.chatHub.SendToRoom(req.RoomID, msg)
+
+	resp := ChatSendResponse{
+		Success:   true,
+		MessageID: msg.Timestamp,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+func (h *HTTPMCPServer) handleChatMembers(w http.ResponseWriter, r *http.Request) {
+	roomID := r.URL.Query().Get("room")
+
+	if roomID == "" {
+		h.writeHTTPError(w, http.StatusBadRequest, "MISSING_ROOM", "Room ID required", "Specify 'room' query parameter.")
+		return
+	}
+
+	members := h.chatHub.GetRoomMembers(roomID)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"room_id": roomID,
+		"members": members,
+	})
 }
 
 func (h *HTTPMCPServer) handleToolCall(w http.ResponseWriter, r *http.Request) {
@@ -228,20 +430,25 @@ func (h *HTTPMCPServer) handleToolCall(w http.ResponseWriter, r *http.Request) {
 
 	if h.toolRequiresAuth(req.Tool) {
 		if apiKey == "" {
-			h.writeHTTPError(w, http.StatusUnauthorized, "API_KEY_REQUIRED", "API key required", "Tool '"+req.Tool+"' requires authentication. Send X-API-Key or Authorization: Bearer <key>.")
+			h.writeStructuredErrorJSONRPC(w, NewUnauthorizedError(req.Tool, "API key required. Tool '"+req.Tool+"' requires authentication. Send X-API-Key or Authorization: Bearer <key>."))
 			return
 		}
 		if h.apiKeyStore != nil && !h.apiKeyStore.Validate(apiKey) {
-			h.writeHTTPError(w, http.StatusForbidden, "API_KEY_INVALID", "Invalid API key", "Double-check the X-API-Key header value.")
+			h.writeStructuredErrorJSONRPC(w, NewUnauthorizedError(req.Tool, "Invalid API key. Double-check the X-API-Key header value."))
 			return
 		}
 		if h.apiKeyStore != nil && !h.checkRateLimit(apiKey) {
-			h.writeHTTPError(w, http.StatusTooManyRequests, "RATE_LIMITED", "Rate limit exceeded", "Retry after a short delay.")
+			h.writeStructuredErrorJSONRPC(w, &ToolError{
+				Code:    ErrCodeRateLimited,
+				Message: "Rate limit exceeded. Retry after a short delay.",
+				Tool:    req.Tool,
+				HttpStatus: 429,
+			})
 			return
 		}
 	}
 
-	result, err := h.callToolDirect(r.Context(), req.Tool, req.Arguments, apiKey)
+	result, err := h.callToolDirect(r.Context(), req.Tool, req.Arguments, apiKey, r)
 	if err != nil {
 		// Handle structured errors - always return 200 OK with error in JSON-RPC format
 		h.writeStructuredErrorJSONRPC(w, err)
@@ -274,8 +481,19 @@ func (h *HTTPMCPServer) handleToolSearch(w http.ResponseWriter, r *http.Request)
 
 	results := h.searchTools(query, category, limit)
 
+	// Prefix search results with AI guidance so agents see the "read SKILL.md + use SDK" directive
+	// as early as possible in the primary discovery path (search_tool / use_tool flows).
+	base := h.externalBaseURL(r)
+	ai := h.guidance.GetAIGuidance(base)
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
+		"guidance": map[string]interface{}{
+			"message":       "Starlight MCP AI Guidance: Read " + ai.SkillMDURL + " before using tools. For local files/artifacts, strongly prefer the starlight_sdk.sh wrapper over raw tool calls. See the 'ai_guidance' section at the root /mcp or /mcp/discover endpoint.",
+			"sdk_recommended": true,
+			"sdk_download":  ai.SDKURL,
+			"skill_md":      ai.SkillMDURL,
+		},
 		"query":    query,
 		"category": category,
 		"limit":    limit,

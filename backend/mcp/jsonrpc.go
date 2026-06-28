@@ -56,7 +56,7 @@ func (h *HTTPMCPServer) handleJSONRPC(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *HTTPMCPServer) handleJSONRPCInitialize(w http.ResponseWriter, req jsonRPCRequest) {
-	protocolVersion := "2024-11-05"
+	protocolVersion := "2025-03-26"
 	if req.Params != nil {
 		if v, ok := req.Params["protocolVersion"].(string); ok && v != "" {
 			protocolVersion = v
@@ -79,6 +79,10 @@ func (h *HTTPMCPServer) handleJSONRPCInitialize(w http.ResponseWriter, req jsonR
 				"prompts": map[string]bool{
 					"list": false,
 					"get":  false,
+				},
+				"logging": map[string]bool{},
+				"streaming": map[string]bool{
+					"accept": true,
 				},
 			},
 			"serverInfo": map[string]string{
@@ -120,9 +124,68 @@ func (h *HTTPMCPServer) handleJSONRPCToolsCall(w http.ResponseWriter, r *http.Re
 		}
 	}
 	apiKey := strings.TrimSpace(r.Header.Get("X-API-Key"))
-	result, err := h.callToolDirect(r.Context(), name, args, apiKey)
+	if apiKey == "" {
+		auth := r.Header.Get("Authorization")
+		if strings.HasPrefix(auth, "Bearer ") {
+			apiKey = strings.TrimPrefix(auth, "Bearer ")
+		}
+	}
+
+	if h.toolRequiresAuth(name) {
+		if apiKey == "" {
+			h.writeJSONRPCError(w, req.ID, -32001, "Authentication required", map[string]interface{}{
+				"code":    "API_KEY_REQUIRED",
+				"message": "API key required",
+				"tool":    name,
+				"hint":    "Tool '" + name + "' requires authentication. Send X-API-Key or Authorization: Bearer <key>.",
+			})
+			return
+		}
+		if h.apiKeyStore != nil && !h.apiKeyStore.Validate(apiKey) {
+			h.writeJSONRPCError(w, req.ID, -32002, "Invalid API key", map[string]interface{}{
+				"code":    "API_KEY_INVALID",
+				"message": "Invalid API key",
+				"tool":    name,
+				"hint":    "Double-check the X-API-Key header value. Get a new key using get_auth_challenge and verify_auth_challenge tools.",
+			})
+			return
+		}
+		if h.apiKeyStore != nil && !h.checkRateLimit(apiKey) {
+			h.writeJSONRPCError(w, req.ID, -32003, "Rate limit exceeded", map[string]interface{}{
+				"code":    "RATE_LIMITED",
+				"message": "Rate limit exceeded",
+				"tool":    name,
+				"hint":    "Retry after a short delay.",
+			})
+			return
+		}
+	}
+
+	result, err := h.callToolDirect(r.Context(), name, args, apiKey, r)
 	if err != nil {
-		h.writeJSONRPCError(w, req.ID, -32000, "Tool execution error", err.Error())
+		if toolErr, ok := err.(*ToolError); ok {
+			h.writeJSONRPCError(w, req.ID, -32000, toolErr.Message, map[string]interface{}{
+				"code":    toolErr.Code,
+				"message": toolErr.Message,
+				"tool":    toolErr.Tool,
+				"hint":    toolErr.Hint,
+			})
+		} else if validationErr, ok := err.(*ValidationError); ok {
+			h.writeJSONRPCError(w, req.ID, -32000, validationErr.Error(), map[string]interface{}{
+				"code":    "VALIDATION_FAILED",
+				"message": validationErr.Message,
+				"tool":    validationErr.Tool,
+				"fields":  validationErr.Fields,
+				"hint":    validationErr.Hint,
+			})
+		} else {
+			h.writeJSONRPCError(w, req.ID, -32000, "Tool execution error", map[string]interface{}{
+				"code":    "INTERNAL_ERROR",
+				"message": err.Error(),
+				"tool":    name,
+				"hint":    "An unexpected error occurred. Please try again.",
+			})
+		}
 		return
 	}
 	payload, err := json.Marshal(result)

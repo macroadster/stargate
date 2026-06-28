@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Eye, Code, Shield, Download, Copy, Check } from 'lucide-react';
 import { API_BASE } from './apiBase';
+import { apiFetch } from './utils/api';
 
 const StegoAnalysisViewer = ({ contract, onClose, copiedText, copyToClipboard }) => {
   const [activeTab, setActiveTab] = useState('overview');
@@ -16,7 +17,7 @@ const StegoAnalysisViewer = ({ contract, onClose, copiedText, copyToClipboard })
   const fetchAnalysis = useCallback(async () => {
     setIsAnalyzing(true);
     try {
-      const response = await fetch(`${API_BASE}/api/contract-stego/${contract.contract_id}/analyze`);
+      const response = await apiFetch(`/api/contract-stego/${contract.contract_id}/analyze`);
       if (response.ok) {
         const data = await response.json();
         setAnalysis(data);
@@ -63,8 +64,8 @@ contract ${contract.contract_type.replace(/\s+/g, '')} {
   };
 
   return (
-    <div className="fixed inset-0 bg-black dark:bg-black bg-white bg-opacity-90 z-50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white dark:bg-gray-900 rounded-xl max-w-6xl w-full max-h-[90vh] overflow-hidden border border-gray-300 dark:border-gray-700 flex flex-col" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 bg-black dark:bg-black bg-gray-50 bg-opacity-90 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-gray-50 dark:bg-gray-900 rounded-xl max-w-6xl w-full max-h-[90vh] overflow-hidden border border-gray-300 dark:border-gray-700 flex flex-col" onClick={(e) => e.stopPropagation()}>
         {/* Header */}
         <div className="p-6 border-b border-gray-300 dark:border-gray-800">
           <div className="flex justify-between items-start">

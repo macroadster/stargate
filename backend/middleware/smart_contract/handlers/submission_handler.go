@@ -105,16 +105,33 @@ func (h *SubmissionHandler) handleListSubmissions(w http.ResponseWriter, r *http
 
 // handleGetSubmission handles GET /submissions/{id}
 func (h *SubmissionHandler) handleGetSubmission(w http.ResponseWriter, r *http.Request, submissionID string) {
-	// TODO: Implement get single submission logic
-	// This requires extracting from the original handler
-	middleware.Error(w, http.StatusNotImplemented, "get submission not yet extracted")
+	sub, err := h.store.GetSubmission(r.Context(), submissionID)
+	if err != nil {
+		middleware.Error(w, http.StatusNotFound, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(sub)
 }
 
 // handleSubmitWork handles POST /submissions
 func (h *SubmissionHandler) handleSubmitWork(w http.ResponseWriter, r *http.Request) {
-	// TODO: Implement work submission logic
-	// This needs to be extracted from the original server.go
-	middleware.Error(w, http.StatusNotImplemented, "work submission not yet extracted")
+	var req struct {
+		ClaimID     string                 `json:"claim_id"`
+		Deliverables map[string]interface{} `json:"deliverables"`
+		Proof       map[string]interface{} `json:"proof"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		middleware.Error(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	sub, err := h.store.SubmitWork(req.ClaimID, req.Deliverables, req.Proof)
+	if err != nil {
+		middleware.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(sub)
 }
 
 // splitCSV splits comma-separated values

@@ -1,8 +1,25 @@
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom';
+import { vi } from 'vitest';
 import DeliverablesReview from './DeliverablesReview';
 import { AuthProvider } from '../../context/AuthContext';
+
+// Mock sql.js to prevent WASM file loading attempts in test (jsdom has no /sql-wasm.wasm)
+vi.mock('sql.js', () => {
+  const mockDatabase = {
+    run: vi.fn(),
+    export: vi.fn(() => new Uint8Array(0)),
+    exec: vi.fn(() => []),
+  };
+  return {
+    default: vi.fn().mockResolvedValue({
+      Database: vi.fn().mockImplementation(function () {
+        return mockDatabase;
+      }),
+    }),
+  };
+});
 
 // Mock API_BASE
 jest.mock('../../apiBase', () => ({
@@ -32,7 +49,7 @@ jest.mock('../Common/CopyButton', () => {
 global.fetch = jest.fn();
 
 describe('DeliverablesReview', () => {
-  test('renders no deliverables message when empty', () => {
+  test('renders no deliverables message when empty', async () => {
     render(
       <AuthProvider>
         <DeliverablesReview
@@ -43,6 +60,8 @@ describe('DeliverablesReview', () => {
       </AuthProvider>
     );
 
-    expect(screen.getByText('No Deliverables Found')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText('No Deliverables Found')).toBeInTheDocument();
+    });
   });
 });
