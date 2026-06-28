@@ -89,3 +89,32 @@ func ProposalMaxPerWishMsg(visibleHash string) error {
 
 // MaxProposalsPerWish is the safeguard applied by both dialects on create.
 const MaxProposalsPerWish = 5
+
+// VisibleHashFromProposalMeta returns the best-effort visible pixel hash from proposal fields.
+func VisibleHashFromProposalMeta(visiblePixelHash string, meta map[string]interface{}) string {
+	visible := strings.TrimSpace(visiblePixelHash)
+	if visible != "" {
+		return visible
+	}
+	if meta == nil {
+		return ""
+	}
+	if v, ok := meta["visible_pixel_hash"].(string); ok {
+		if visible = strings.TrimSpace(v); visible != "" {
+			return visible
+		}
+	}
+	if v, ok := meta["contract_id"].(string); ok {
+		return strings.TrimSpace(v)
+	}
+	return ""
+}
+
+// WishIDToSupersedeOnApproval returns wish-<hash> when approval should archive the wish contract.
+func WishIDToSupersedeOnApproval(visiblePixelHash string, meta map[string]interface{}) string {
+	visible := VisibleHashFromProposalMeta(visiblePixelHash, meta)
+	if visible == "" {
+		return ""
+	}
+	return identity.ToWishID(visible)
+}

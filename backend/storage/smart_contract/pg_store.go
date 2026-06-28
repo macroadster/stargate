@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"stargate-backend/core/identity"
 	"stargate-backend/core/smart_contract"
 )
 
@@ -1890,7 +1891,7 @@ WHERE id<>$1 AND status='pending' AND (
 		}
 	}
 	if visible != "" {
-		wishID := "wish-" + visible
+		wishID := identity.ToWishID(visible)
 		_, _ = tx.Exec(ctx, `UPDATE mcp_contracts SET status='superseded' WHERE contract_id=$1`, wishID)
 	}
 
@@ -2205,7 +2206,7 @@ func (s *PGStore) DeleteWish(ctx context.Context, visiblePixelHash string) error
 		return fmt.Errorf("delete proposals: %w", err)
 	}
 
-	wishID := "wish-" + visiblePixelHash
+	wishID := identity.ToWishID(visiblePixelHash)
 
 	// 2. Delete from mcp_escort_status (for any tasks linked to this wish)
 	if _, err := tx.Exec(ctx, `

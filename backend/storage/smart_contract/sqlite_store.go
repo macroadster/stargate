@@ -10,6 +10,7 @@ import (
 	"time"
 
 	_ "modernc.org/sqlite"
+	"stargate-backend/core/identity"
 	"stargate-backend/core/smart_contract"
 )
 
@@ -1315,7 +1316,7 @@ WHERE id<>? AND status='pending' AND (
 		}
 	}
 	if visible != "" {
-		wishID := "wish-" + visible
+		wishID := identity.ToWishID(visible)
 		if _, err := tx.ExecContext(ctx, `UPDATE mcp_contracts SET status='superseded' WHERE contract_id=?`, wishID); err != nil {
 			return err
 		}
@@ -1426,7 +1427,7 @@ UPDATE mcp_submissions SET status=?, deliverables=?, completion_proof=? WHERE su
 }
 
 func (s *SQLiteStore) DeleteWish(ctx context.Context, visiblePixelHash string) error {
-	wishID := "wish-" + visiblePixelHash
+	wishID := identity.ToWishID(visiblePixelHash)
 
 	_, err := s.db.ExecContext(ctx, `DELETE FROM mcp_proposals WHERE id=? OR visible_pixel_hash=?`, wishID, visiblePixelHash)
 	if err != nil {

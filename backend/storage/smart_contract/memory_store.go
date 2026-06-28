@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"stargate-backend/core/identity"
 	"stargate-backend/core/smart_contract"
 )
 
@@ -767,7 +768,7 @@ func (s *MemoryStore) CreateProposal(ctx context.Context, p smart_contract.Propo
 			}
 		}
 		if visible != "" {
-			wishID := "wish-" + visible
+			wishID := identity.ToWishID(visible)
 			if contract, ok := s.contracts[wishID]; ok {
 				contract.Status = "superseded"
 				s.contracts[wishID] = contract
@@ -1069,7 +1070,7 @@ func (s *MemoryStore) ApproveProposal(ctx context.Context, id string) error {
 		}
 	}
 	if visible != "" {
-		wishID := "wish-" + visible
+		wishID := identity.ToWishID(visible)
 		if contract, ok := s.contracts[wishID]; ok {
 			contract.Status = "superseded"
 			s.contracts[wishID] = contract
@@ -1301,7 +1302,7 @@ func (s *MemoryStore) DeleteWish(ctx context.Context, visiblePixelHash string) e
 		}
 	}
 
-	wishID := "wish-" + visiblePixelHash
+	wishID := identity.ToWishID(visiblePixelHash)
 
 	// 2. Collect task IDs for this wish to cascade delete claims and submissions
 	taskIDs := make(map[string]bool)
