@@ -36,7 +36,42 @@ Before deploying, ensure you have:
 
 ---
 
-### Quick Start Deployment
+### Quick Start: One-Liner Binary Install
+
+The fastest way to run Starlight is to download the prebuilt binary for your platform:
+
+```bash
+curl -fsSL https://github.com/macroadster/stargate/releases/latest/download/stargate-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz | tar xz && sudo mv stargate-* /usr/local/bin/stargate
+```
+
+Then start the server:
+
+```bash
+stargate
+```
+
+Server starts on `http://localhost:3001` with SQLite storage by default. No Docker, Kubernetes, or Helm required.
+
+**Available platforms:** Linux (amd64, arm64), macOS (amd64, arm64).
+
+**Common options:**
+
+```bash
+# Use a specific Bitcoin network
+STARGATE_BITCOIN_NETWORK=testnet stargate
+
+# Enable the built-in autonomous agent
+STARGATE_AGENT_ENABLED=true stargate
+
+# Point to an external Starlight scanner
+STARGATE_PROXY_BASE=http://your-starlight:8080 stargate
+```
+
+For a full production deployment with Helm charts, secrets, and Kubernetes — continue below.
+
+---
+
+### Helm Deployment (Production)
 
 #### Step 1: Clone Helm Charts
 
