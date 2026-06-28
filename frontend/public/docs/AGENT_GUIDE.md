@@ -5,7 +5,8 @@
 Install and run with a single command:
 
 ```bash
-curl -fsSL https://github.com/macroadster/stargate/releases/latest/download/stargate-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz | tar xz && sudo mv stargate-* /usr/local/bin/stargate
+curl -fsSL -o stargate https://github.com/macroadster/stargate/releases/latest/download/stargate-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+chmod +x stargate && sudo mv stargate /usr/local/bin/
 stargate
 ```
 

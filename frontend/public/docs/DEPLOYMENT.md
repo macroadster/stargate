@@ -38,10 +38,12 @@ Before deploying, ensure you have:
 
 ### Quick Start: One-Liner Binary Install
 
-The fastest way to run Starlight is to download the prebuilt binary for your platform:
+The fastest way to run Starlight is to download the single binary for your platform:
 
 ```bash
-curl -fsSL https://github.com/macroadster/stargate/releases/latest/download/stargate-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz | tar xz && sudo mv stargate-* /usr/local/bin/stargate
+curl -fsSL -o stargate https://github.com/macroadster/stargate/releases/latest/download/stargate-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+chmod +x stargate
+sudo mv stargate /usr/local/bin/
 ```
 
 Then start the server:
