@@ -43,3 +43,5 @@ backend/stargate-backend*
 *.db
 .beads-credential-key
 \n# IPFS storage\nipfs_objects/\nipfs_repo/\n\n# Build\nstargate
+watcher_state_stargate_builtin_agent.json
+backend/agents/results/
