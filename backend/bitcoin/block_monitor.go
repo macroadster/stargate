@@ -1728,6 +1728,17 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 			bm.markIngestionConfirmed(match, tx.TxID, blockHeight, imageFile, imagePath)
 			bm.updateTaskFundingProofsFromTx(match.ID, tx, blockHeight)
 			bm.confirmContractTasks(match.ID, tx.TxID, blockHeight)
+			// Scan OP_RETURN outputs for stego hash so we can reconcile
+			// the stego image (extract proposal/tasks) and sandbox tarball.
+			// The funding_txid path confirms the contract but doesn't
+			// trigger stego reconcile or sandbox extraction on its own.
+			for _, output := range tx.Outputs {
+				_, stegoHash, opOk := parseOPReturnHashes(output.ScriptPubKey)
+				if opOk && stegoHash != "" {
+					bm.reconcileOnChainArtifacts(match.ID, stegoHash)
+					break
+				}
+			}
 			for _, candidate := range candidatesByID[match.ID] {
 				delete(primaryCandidates, candidate)
 				delete(fallbackCandidates, candidate)
