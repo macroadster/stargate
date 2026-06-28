@@ -3,10 +3,8 @@ package smart_contract
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -427,74 +425,8 @@ func eventMatches(evt smart_contract.Event, t string, actor string, entity strin
 
 // PublishProposalTasks publishes the tasks stored in a proposal into MCP tasks.
 func (s *Server) PublishProposalTasks(ctx context.Context, proposalID string) error {
-	p, err := s.store.GetProposal(ctx, proposalID)
-	if err != nil {
-		return err
-	}
-	if len(p.Tasks) == 0 {
-		// Try to derive tasks from metadata embedded_message.
-		if em, ok := p.Metadata["embedded_message"].(string); ok && em != "" {
-			p.Tasks = scstore.BuildTasksFromMarkdown(p.ID, em, p.VisiblePixelHash, p.BudgetSats, scstore.FundingAddressFromMeta(p.Metadata))
-		}
-		if len(p.Tasks) == 0 {
-			return nil
-		}
-	}
-	// Build a contract from the proposal, then upsert tasks.
-	contractID := contractIDFromMeta(p.Metadata, p.ID)
-	contract := smart_contract.Contract{
-		ContractID:          contractID,
-		Title:               p.Title,
-		TotalBudgetSats:     p.BudgetSats,
-		GoalsCount:          1,
-		AvailableTasksCount: len(p.Tasks),
-		Status:              "active",
-	}
-	// Preserve hashes/funding if present.
-	fundingAddr := scstore.FundingAddressFromMeta(p.Metadata)
-	tasks := make([]smart_contract.Task, 0, len(p.Tasks))
-	for i, t := range p.Tasks {
-		task := t
-		if strings.TrimSpace(task.TaskID) == "" {
-			task.TaskID = proposalID + "-task-" + strconv.Itoa(i+1)
-		}
-		if task.ContractID == "" || task.ContractID == p.ID {
-			task.ContractID = contractID
-		}
-		if task.MerkleProof == nil && p.VisiblePixelHash != "" {
-			task.MerkleProof = &smart_contract.MerkleProof{
-				VisiblePixelHash:   p.VisiblePixelHash,
-				FundedAmountSats:   p.BudgetSats / int64(len(p.Tasks)),
-				FundingAddress:     fundingAddr,
-				ConfirmationStatus: "provisional",
-			}
-		}
-		if task.MerkleProof != nil && task.MerkleProof.FundingAddress == "" {
-			task.MerkleProof.FundingAddress = fundingAddr
-		}
-		tasks = append(tasks, task)
-	}
-	if pg, ok := s.store.(interface {
-		UpsertContractWithTasks(context.Context, smart_contract.Contract, []smart_contract.Task) error
-	}); ok {
-		if err := pg.UpsertContractWithTasks(ctx, contract, tasks); err != nil {
-			return err
-		}
-		s.recordEvent(smart_contract.Event{
-			Type:      "contract_upsert",
-			EntityID:  contract.ContractID,
-			Actor:     "system",
-			Message:   fmt.Sprintf("contract upserted with %d tasks", len(tasks)),
-			CreatedAt: time.Now(),
-		})
-		s.recordEvent(smart_contract.Event{
-			Type:      "publish",
-			EntityID:  proposalID,
-			Actor:     "system",
-			Message:   "proposal tasks published",
-			CreatedAt: time.Now(),
-		})
+	if s.eventSvc == nil {
 		return nil
 	}
-	return nil
+	return s.eventSvc.PublishProposalTasks(ctx, proposalID)
 }

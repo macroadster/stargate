@@ -6,6 +6,7 @@ import (
 
 	"stargate-backend/bitcoin"
 	"stargate-backend/core/smart_contract"
+	scservices "stargate-backend/middleware/smart_contract/services"
 	"stargate-backend/services"
 	auth "stargate-backend/storage/auth"
 )
@@ -21,6 +22,11 @@ type Server struct {
 	listeners    []chan smart_contract.Event
 	mempool      *bitcoin.MempoolClient
 	escort       *smart_contract.EscortService
+
+	// Domain services (business logic extracted from HTTP handlers).
+	eventSvc *scservices.EventService
+	psbtSvc  *scservices.PSBTService
+	taskSvc  *scservices.TaskService
 }
 
 // SetEscortService sets the escort service for the server.
@@ -55,12 +61,17 @@ type ProposalUpdateBody struct {
 
 // NewServer builds a Server with the given store.
 func NewServer(store Store, apiKeys auth.APIKeyValidator, ingest *services.IngestionService) *Server {
+	mempool := bitcoin.NewMempoolClient()
 	srv := &Server{
 		store:        store,
 		apiKeys:      apiKeys,
 		ingestionSvc: ingest,
-		mempool:      bitcoin.NewMempoolClient(),
+		mempool:      mempool,
+		eventSvc:     scservices.NewEventService(store, nil),
+		psbtSvc:      scservices.NewPSBTService(store, mempool, ingest),
+		taskSvc:      scservices.NewTaskService(store, ingest),
 	}
+	srv.eventSvc.SetRecorder(srv.recordEvent)
 	RegisterEventSink(srv.recordEvent)
 	return srv
 }

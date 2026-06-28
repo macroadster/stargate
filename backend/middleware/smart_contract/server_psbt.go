@@ -3,7 +3,6 @@ package smart_contract
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -16,6 +15,7 @@ import (
 
 	"stargate-backend/bitcoin"
 	"stargate-backend/core/smart_contract"
+	scservices "stargate-backend/middleware/smart_contract/services"
 	"stargate-backend/services"
 	"stargate-backend/storage/ipfs"
 	scstore "stargate-backend/storage/smart_contract"
@@ -857,90 +857,24 @@ func (s *Server) publishPendingStegoIngest(ctx context.Context, proposalID, visi
 }
 
 func (s *Server) resolveFundingMode(ctx context.Context, contractID string) (string, string) {
-	var meta map[string]interface{}
-	var proposal *smart_contract.Proposal
-	if s.store != nil {
-		if stored, err := s.store.GetProposal(ctx, contractID); err == nil {
-			proposal = &stored
-			meta = stored.Metadata
-		} else if proposals, err := s.store.ListProposals(ctx, smart_contract.ProposalFilter{ContractID: contractID}); err == nil && len(proposals) > 0 {
-			proposal = &proposals[0]
-			meta = proposals[0].Metadata
-		}
+	if s.psbtSvc == nil {
+		return "", ""
 	}
-	if meta == nil && s.ingestionSvc != nil {
-		if rec, err := s.ingestionSvc.Get(contractID); err == nil && rec != nil {
-			meta = rec.Metadata
-		}
-	}
-	mode := strings.ToLower(strings.TrimSpace(toString(meta["funding_mode"])))
-	if mode == "" && proposal != nil {
-		if looksLikeRaiseFund(proposal.Title) || looksLikeRaiseFund(proposal.DescriptionMD) {
-			mode = "raise_fund"
-		}
-	}
-	return mode, fundingAddressFromMeta(meta)
+	return s.psbtSvc.ResolveFundingMode(ctx, contractID)
 }
 
 func (s *Server) resolveIngestionRecord(ctx context.Context, contractID string) *services.IngestionRecord {
-	if s.ingestionSvc == nil || strings.TrimSpace(contractID) == "" {
+	if s.psbtSvc == nil {
 		return nil
 	}
-	if rec, err := s.ingestionSvc.Get(contractID); err == nil && rec != nil {
-		return rec
-	}
-	if s.store != nil {
-		if stored, err := s.store.GetProposal(ctx, contractID); err == nil {
-			if rec := s.ingestionFromProposalMeta(stored.Metadata, stored.VisiblePixelHash); rec != nil {
-				return rec
-			}
-		} else if proposals, err := s.store.ListProposals(ctx, smart_contract.ProposalFilter{ContractID: contractID}); err == nil && len(proposals) > 0 {
-			if rec := s.ingestionFromProposalMeta(proposals[0].Metadata, proposals[0].VisiblePixelHash); rec != nil {
-				return rec
-			}
-		}
-	}
-	return nil
+	return s.psbtSvc.ResolveIngestionRecord(ctx, contractID)
 }
 
 func (s *Server) resolveProposalIDForContract(ctx context.Context, contractID string, rec *services.IngestionRecord) string {
-	if s.store != nil {
-		if proposals, err := s.store.ListProposals(ctx, smart_contract.ProposalFilter{ContractID: contractID}); err == nil && len(proposals) > 0 {
-			for _, proposal := range proposals {
-				if status := strings.ToLower(strings.TrimSpace(proposal.Status)); status == "approved" || status == "published" {
-					if id := strings.TrimSpace(proposal.ID); id != "" {
-						return id
-					}
-				}
-			}
-			if id := strings.TrimSpace(proposals[0].ID); id != "" {
-				return id
-			}
-		}
-		if stored, err := s.store.GetProposal(ctx, contractID); err == nil && strings.TrimSpace(stored.ID) != "" {
-			return strings.TrimSpace(stored.ID)
-		}
-		// Handle wish-<hash> contracts by stripping the prefix and looking for proposal
-		candidateID := strings.TrimSpace(contractID)
-		if strings.HasPrefix(candidateID, "wish-") {
-			stripped := strings.TrimPrefix(candidateID, "wish-")
-			if stored, err := s.store.GetProposal(ctx, stripped); err == nil && strings.TrimSpace(stored.ID) != "" {
-				return strings.TrimSpace(stored.ID)
-			}
-		}
+	if s.psbtSvc == nil {
+		return strings.TrimSpace(contractID)
 	}
-	if rec != nil && rec.Metadata != nil {
-		if id := strings.TrimSpace(toString(rec.Metadata["origin_proposal_id"])); id != "" {
-			return id
-		}
-		if id := strings.TrimSpace(toString(rec.Metadata["stego_manifest_proposal_id"])); id != "" {
-			return id
-		}
-		if id := strings.TrimSpace(toString(rec.Metadata["proposal_id"])); id != "" {
-			return id
-		}
-	}
-	return strings.TrimSpace(contractID)
+	return s.psbtSvc.ResolveProposalIDForContract(ctx, contractID, rec)
 }
 
 func (s *Server) updateProposalMetadataBestEffort(ctx context.Context, proposalID string, updates map[string]interface{}) {
@@ -953,23 +887,10 @@ func (s *Server) updateProposalMetadataBestEffort(ctx context.Context, proposalI
 }
 
 func (s *Server) ingestionFromProposalMeta(meta map[string]interface{}, visiblePixelHash string) *services.IngestionRecord {
-	if s.ingestionSvc == nil {
+	if s.psbtSvc == nil {
 		return nil
 	}
-	ingestionID := strings.TrimSpace(toString(meta["ingestion_id"]))
-	if ingestionID == "" {
-		ingestionID = strings.TrimSpace(visiblePixelHash)
-	}
-	if ingestionID == "" {
-		ingestionID = strings.TrimSpace(toString(meta["visible_pixel_hash"]))
-	}
-	if ingestionID == "" {
-		return nil
-	}
-	if rec, err := s.ingestionSvc.Get(ingestionID); err == nil && rec != nil {
-		return rec
-	}
-	return nil
+	return s.psbtSvc.IngestionFromProposalMeta(meta, visiblePixelHash)
 }
 
 func isRaiseFund(mode string) bool {
@@ -1078,39 +999,7 @@ func (s *Server) resolveContractorPayers(ctx context.Context, contractID string,
 }
 
 func resolvePixelHashFromIngestion(rec *services.IngestionRecord, normalize func([]byte) []byte) []byte {
-	if rec == nil {
-		return nil
-	}
-
-	for _, key := range []string{"pixel_hash", "visible_pixel_hash"} {
-		if v, ok := rec.Metadata[key].(string); ok {
-			if b, err := hex.DecodeString(strings.TrimSpace(v)); err == nil {
-				if normalized := normalize(b); normalized != nil {
-					return normalized
-				}
-			}
-		}
-	}
-
-	message := ""
-	if v, ok := rec.Metadata["embedded_message"].(string); ok {
-		message = v
-	}
-	if message == "" {
-		if v, ok := rec.Metadata["message"].(string); ok {
-			message = v
-		}
-	}
-	if rec.ImageBase64 == "" {
-		return nil
-	}
-	imageBytes, err := base64.StdEncoding.DecodeString(rec.ImageBase64)
-	if err != nil {
-		return nil
-	}
-
-	sum := sha256.Sum256(imageBytes)
-	return normalize(sum[:])
+	return scservices.ResolvePixelHashFromIngestion(rec, normalize)
 }
 
 func pixelSourceForBytes(pixel []byte) string {
@@ -1174,52 +1063,10 @@ func buildScriptHashes(scripts [][]byte) ([]string, []string) {
 }
 
 func (s *Server) updateTaskCommitmentProof(ctx context.Context, taskID string, res *bitcoin.PSBTResult, pixelBytes []byte, commitmentTarget string) error {
-	task, err := s.store.GetTask(taskID)
-	if err != nil {
-		return err
+	if s.taskSvc == nil {
+		return nil
 	}
-	proof := task.MerkleProof
-	if proof == nil {
-		proof = &smart_contract.MerkleProof{}
-	}
-	if len(pixelBytes) == 32 {
-		proof.VisiblePixelHash = hex.EncodeToString(pixelBytes)
-	}
-	if res.FundingTxID != "" {
-		proof.TxID = res.FundingTxID
-	}
-	if proof.ConfirmationStatus == "" {
-		proof.ConfirmationStatus = "provisional"
-	}
-	if proof.SeenAt.IsZero() {
-		proof.SeenAt = time.Now()
-	}
-	if len(res.RedeemScript) > 0 {
-		proof.CommitmentRedeemScript = hex.EncodeToString(res.RedeemScript)
-	}
-	if len(res.RedeemScriptHash) > 0 {
-		proof.CommitmentRedeemHash = hex.EncodeToString(res.RedeemScriptHash)
-	}
-	if res.CommitmentAddr != "" {
-		proof.CommitmentAddress = res.CommitmentAddr
-	}
-	if res.CommitmentVout > 0 {
-		proof.CommitmentVout = res.CommitmentVout
-	}
-	if res.CommitmentSats > 0 {
-		proof.CommitmentSats = res.CommitmentSats
-	}
-	if len(pixelBytes) == 32 {
-		proof.CommitmentPixelHash = hex.EncodeToString(pixelBytes)
-	}
-	// Track commitment source: "product" means hashlock deferred to delivery,
-	// "donation" means funded at PSBT time with wish image hash.
-	if commitmentTarget == "product" {
-		proof.CommitmentSource = "product"
-	} else if proof.CommitmentSource == "" {
-		proof.CommitmentSource = "wish"
-	}
-	return s.store.UpdateTaskProof(ctx, taskID, proof)
+	return s.taskSvc.UpdateTaskCommitmentProof(ctx, taskID, res, pixelBytes, commitmentTarget)
 }
 
 func (s *Server) handleCommitmentPSBT(w http.ResponseWriter, r *http.Request, contractID string) {
