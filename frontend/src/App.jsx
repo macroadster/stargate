@@ -1,21 +1,26 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { Suspense, lazy, useState, useEffect, useRef } from 'react';
 import { Check, Copy, Github, Linkedin } from 'lucide-react';
 import { Routes, Route, useParams, useNavigate } from 'react-router-dom';
-
 
 import BlockCard from './components/Block/BlockCard';
 import InscriptionCard from './components/Inscription/InscriptionCard';
 import OpenContractsView from './components/Block/OpenContractsView';
-import InscribeModal from './components/Inscription/InscribeModal';
-import InscriptionModal from './components/Inscription/InscriptionModal';
-import DiscoverPage from './components/Discover/DiscoverPage';
-import AuthPage from './pages/AuthPage';
-import ContractsPage from './pages/ContractsPage';
-import McpDocsPage from './pages/McpDocsPage';
-import DocsPage from './pages/DocsPage';
 import AppHeader from './components/Common/AppHeader';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
+
+// Heavy modals / secondary routes — load on demand to keep the main bundle smaller.
+const InscribeModal = lazy(() => import('./components/Inscription/InscribeModal'));
+const InscriptionModal = lazy(() => import('./components/Inscription/InscriptionModal'));
+const DiscoverPage = lazy(() => import('./components/Discover/DiscoverPage'));
+const AuthPage = lazy(() => import('./pages/AuthPage'));
+const ContractsPage = lazy(() => import('./pages/ContractsPage'));
+const McpDocsPage = lazy(() => import('./pages/McpDocsPage'));
+const DocsPage = lazy(() => import('./pages/DocsPage'));
+
+const RouteFallback = () => (
+  <div className="flex min-h-[40vh] items-center justify-center text-sm opacity-70">Loading…</div>
+);
 
 import { useBlocks } from './hooks/useBlocks';
 import { useInscriptions } from './hooks/useInscriptions';
@@ -1142,20 +1147,22 @@ function MainContent() {
         )}
        </div>
 
-      {showInscribeModal && (
-        <InscribeModal
-          onClose={() => setShowInscribeModal(false)}
-          onSuccess={handleInscribeSuccess}
-        />
-      )}
+      <Suspense fallback={null}>
+        {showInscribeModal && (
+          <InscribeModal
+            onClose={() => setShowInscribeModal(false)}
+            onSuccess={handleInscribeSuccess}
+          />
+        )}
 
-      {selectedInscription && (
-        <InscriptionModal
-          inscription={selectedInscription}
-          onClose={() => setSelectedInscription(null)}
-          initialTab={proposalId ? 'proposals' : 'content'}
-        />
-      )}
+        {selectedInscription && (
+          <InscriptionModal
+            inscription={selectedInscription}
+            onClose={() => setSelectedInscription(null)}
+            initialTab={proposalId ? 'proposals' : 'content'}
+          />
+        )}
+      </Suspense>
     </div>
   );
 }
@@ -1164,24 +1171,26 @@ export default function App() {
   return (
     <AuthProvider>
       <ThemeProvider>
-        <Routes>
-          <Route path="/" element={<MainContent />} />
-          <Route path="/pending" element={<MainContent />} />
-          <Route path="/contracts" element={<ContractsPage />} />
-          <Route path="/discover" element={<DiscoverPage />} />
-          <Route path="/auth" element={<AuthPage />} />
-          <Route path="/mcp/docs" element={<McpDocsPage />} />
-          <Route path="/docs/*" element={<DocsPage />} />
-          
-          {/* Dynamic routes */}
-          <Route path="/block/:height" element={<MainContent />} />
-          <Route path="/wish/:wishId" element={<MainContent />} />
-          <Route path="/contract/:contractId" element={<MainContent />} />
-          <Route path="/proposal/:proposalId" element={<MainContent />} />
+        <Suspense fallback={<RouteFallback />}>
+          <Routes>
+            <Route path="/" element={<MainContent />} />
+            <Route path="/pending" element={<MainContent />} />
+            <Route path="/contracts" element={<ContractsPage />} />
+            <Route path="/discover" element={<DiscoverPage />} />
+            <Route path="/auth" element={<AuthPage />} />
+            <Route path="/mcp/docs" element={<McpDocsPage />} />
+            <Route path="/docs/*" element={<DocsPage />} />
 
-          {/* Fallback */}
-          <Route path="*" element={<MainContent />} />
-        </Routes>
+            {/* Dynamic routes */}
+            <Route path="/block/:height" element={<MainContent />} />
+            <Route path="/wish/:wishId" element={<MainContent />} />
+            <Route path="/contract/:contractId" element={<MainContent />} />
+            <Route path="/proposal/:proposalId" element={<MainContent />} />
+
+            {/* Fallback */}
+            <Route path="*" element={<MainContent />} />
+          </Routes>
+        </Suspense>
       </ThemeProvider>
     </AuthProvider>
   );
