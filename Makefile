@@ -4,20 +4,15 @@ AI_ID ?= codex-e2e
 CONTRACT_ID ?=
 PROPOSAL_ID ?=
 
-FRONTEND_IMAGE := stargate-frontend:latest
-BACKEND_IMAGE := stargate-backend:latest
 SINGLE_IMAGE := stargate:latest
 
-.PHONY: all frontend frontend-legacy backend backend-legacy mcp-e2e single-binary docker
+.PHONY: all docker single-binary mcp-e2e backend frontend backend-legacy frontend-legacy
 all: single-binary
 
+# Primary build: unified image for Helm / local k8s (ADR 0001).
 docker:
 	@echo "Building single Docker image: $(SINGLE_IMAGE) (linux/amd64 for cluster)"
 	docker build --platform linux/amd64 -t $(SINGLE_IMAGE) .
-
-# Legacy convenience aliases. The documented primary path (single-binary + starlight-helm) is `make docker`.
-backend: backend-legacy
-frontend: frontend-legacy
 
 single-binary:
 	@echo "Building single binary project..."
@@ -31,13 +26,12 @@ single-binary:
 	@cd backend && CGO_ENABLED=0 go build -tags gms_pure_go -o ../stargate .
 	@echo "Done! Binary produced as ./stargate"
 
-frontend-legacy:
-	@echo "Building frontend Docker image (LEGACY): $(FRONTEND_IMAGE) (linux/amd64)"
-	@cd frontend && docker build --platform linux/amd64 -t $(FRONTEND_IMAGE) .
-
-backend-legacy:
-	@echo "Building backend Docker image (LEGACY): $(BACKEND_IMAGE) (linux/amd64)"
-	@cd backend && docker build --platform linux/amd64 -t $(BACKEND_IMAGE) .
+# Retired split-image targets (stargate-3bk.8). Use `make docker` or `make single-binary`.
+backend frontend backend-legacy frontend-legacy:
+	@echo "ERROR: Split backend/frontend images are retired (ADR 0001 / stargate-3bk.8)." >&2
+	@echo "Use:  make docker          # stargate:latest single image" >&2
+	@echo "  or:  make single-binary   # local ./stargate binary with embedded UI" >&2
+	@exit 1
 
 mcp-e2e:
 	@echo "Running MCP E2E against $(MCP_BASE) (AI_ID=$(AI_ID))"

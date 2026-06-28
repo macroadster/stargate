@@ -43,14 +43,11 @@ var DefaultPrimary = map[string]string{
 	"health":         "/api/health",
 }
 
-// DefaultAliases are overlapping/legacy paths that share handlers with a primary route.
+// DefaultAliases are remaining compatibility paths (see docs/arch/LEGACY_RETIREMENT.md).
+// Retired in 3bk.8 (no longer registered): /api/smart-contracts, /api/contracts-confirmed,
+// /api/data/contracts-with-pagination, /api/blocks, /api/block-images.
 var DefaultAliases = []RouteAlias{
-	{Path: "/api/smart-contracts", Primary: "/api/open-contracts", Surface: "ui_contracts", Description: "Legacy alias; same contract list handler"},
-	{Path: "/api/contracts-confirmed", Primary: "/api/open-contracts", Surface: "ui_contracts", Description: "Legacy alias; same contract list handler"},
-	{Path: "/api/data/contracts-with-pagination", Primary: "/api/open-contracts", Surface: "ui_contracts", Description: "Legacy alias under /api/data; prefer /api/open-contracts or /api/smart_contract/contracts"},
-	{Path: "/api/block-images", Primary: "/api/data/block-images", Surface: "block_data", Description: "Legacy alias; block image listing lives under /api/data"},
-	{Path: "/api/blocks", Primary: "/api/data/blocks", Surface: "block_data", Description: "Legacy alias; prefer /api/data/blocks for paginated/block APIs"},
-	{Path: "/api/contract-stego", Primary: "/api/smart_contract/contracts", Surface: "smart_contract", Description: "Legacy UI path for single contract/stego detail"},
+	{Path: "/api/contract-stego", Primary: "/api/smart_contract/contracts", Surface: "smart_contract", Description: "UI analyze path; prefer /api/smart_contract/contracts"},
 	{Path: "/api/contract-stego/create", Primary: "/api/smart_contract/proposals", Surface: "smart_contract", Description: "Legacy create path; proposals are the lifecycle entry"},
 }
 

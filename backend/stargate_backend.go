@@ -586,16 +586,15 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 	mux.HandleFunc("/api/surfaces", api.HandleSurfaces)
 
 	// Block endpoints — primary browse APIs live under /api/data/*; /api/blocks is a legacy alias.
-	mux.HandleFunc("/api/blocks", api.WithDeprecation("/api/data/blocks", container.BlockHandler.HandleGetBlocks))
+	// /api/blocks retired (3bk.8); use /api/data/blocks
+	_ = container.BlockHandler // keep handler in container for data API parity if needed
 
 	// UI contract list (inscription-shaped for the frontend). Prefer /api/open-contracts.
 	// Lifecycle CRUD for agents stays on /api/smart_contract/*; MCP tools shim the same store.
+	// Primary UI wish/contract browse (inscription-shaped). Removed unused aliases:
+	// /api/smart-contracts, /api/contracts-confirmed, /api/data/contracts-with-pagination (3bk.8).
 	mux.HandleFunc("/api/open-contracts", container.SmartContractHandler.HandleGetContracts)
-	api.RegisterAliases(mux, "/api/open-contracts", container.SmartContractHandler.HandleGetContracts,
-		"/api/smart-contracts",
-		"/api/contracts-confirmed",
-		"/api/data/contracts-with-pagination",
-	)
+	// Legacy UI analyze path still used by StegoAnalysisViewer; header points at smart_contract REST.
 	mux.HandleFunc("/api/contract-stego", api.WithDeprecation("/api/smart_contract/contracts", container.SmartContractHandler.HandleGetContract))
 	mux.Handle("/api/contract-stego/create", wrapWithAuth(api.WithDeprecation("/api/smart_contract/proposals", container.SmartContractHandler.HandleCreateContract)))
 
@@ -770,7 +769,7 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 	mux.HandleFunc("/api/data/updates", dataAPI.HandleRealtimeUpdates)
 	mux.HandleFunc("/api/data/scan", dataAPI.HandleScanBlockOnDemand)
 	mux.HandleFunc("/api/data/block-images", dataAPI.HandleGetBlockImages)
-	mux.HandleFunc("/api/block-images", api.WithDeprecation("/api/data/block-images", dataAPI.HandleGetBlockImages))
+	// /api/block-images retired (3bk.8); use /api/data/block-images
 	mux.HandleFunc("/api/stego/callback", dataAPI.HandleStegoCallback)
 	mux.HandleFunc("/content/", dataAPI.HandleContent)
 

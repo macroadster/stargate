@@ -221,7 +221,8 @@ func (h *APIKeyHandler) HandleVerify(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// VerifyBTCSignature supports legacy signmessage (compact) and BIP-322 simple witness signatures.
+// VerifyBTCSignature supports Bitcoin Core wallet "signmessage" (compact ECDSA) and BIP-322 simple witness signatures.
+// Compact signmessage is a wallet protocol (not an app compatibility shim); both formats remain supported.
 // It tries both the provided message and a hex-decoded variant to be lenient with wallets that
 // interpret hex-looking nonces differently.
 func VerifyBTCSignature(address, signature, message string) (bool, error) {
@@ -296,7 +297,8 @@ type SignatureVerificationResult struct {
 	Error        error    `json:"-"`
 }
 
-// VerifyLegacySignMessage verifies a legacy Bitcoin signmessage signature (base64 compact) against a wallet address.
+// VerifyLegacySignMessage verifies a Bitcoin Core wallet signmessage signature (base64 compact ECDSA)
+// against a wallet address. Name retains "Legacy" for historical call sites; this is protocol support.
 func VerifyLegacySignMessage(address, signatureB64, message string) (bool, error) {
 	params := ChooseParams(address)
 	if params == nil {
