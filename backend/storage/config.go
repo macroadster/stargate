@@ -127,7 +127,7 @@ func LoadStorageConfigFromEnv() StorageConfig {
 			cfg.SeedFixtures = v
 		}
 	} else {
-		cfg.SeedFixtures = true // default matches previous behaviour
+		cfg.SeedFixtures = false
 	}
 
 	// Contract cache
