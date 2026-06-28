@@ -119,7 +119,9 @@ type SmartContractData struct {
 	Metadata    map[string]any `json:"metadata"`
 }
 
-// StegoReconciler runs a stego reconcile given a CID + expected hash.
+// StegoReconciler is the seam from block confirmation into the stego/contract app layer.
+// Implemented by app/smart_contract.Server.ReconcileStego — bitcoin must not decode
+// manifests or write proposals itself. See docs/arch/DOMAIN_SEAMS.md.
 type StegoReconciler interface {
 	ReconcileStego(ctx context.Context, stegoCID, expectedHash string) error
 }

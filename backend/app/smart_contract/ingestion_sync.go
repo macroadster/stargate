@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"stargate-backend/core/identity"
 	"stargate-backend/core/smart_contract"
 	"stargate-backend/storage/ipfs"
 	"stargate-backend/services"
@@ -284,29 +285,7 @@ func contractExistsForIngestion(store Store, visible, ingestionID string) bool {
 }
 
 func candidateContractIDs(visible, ingestionID string) []string {
-	seen := make(map[string]struct{})
-	var out []string
-	add := func(id string) {
-		id = strings.TrimSpace(id)
-		if id == "" {
-			return
-		}
-		if _, ok := seen[id]; ok {
-			return
-		}
-		seen[id] = struct{}{}
-		out = append(out, id)
-	}
-	add(visible)
-	add(ingestionID)
-	for _, base := range []string{visible, ingestionID} {
-		base = strings.TrimSpace(base)
-		if base == "" || strings.HasPrefix(base, "wish-") {
-			continue
-		}
-		add("wish-" + base)
-	}
-	return out
+	return identity.CandidateIDs(visible, ingestionID)
 }
 
 func ensureProposal(ctx context.Context, store Store, proposal smart_contract.Proposal) error {

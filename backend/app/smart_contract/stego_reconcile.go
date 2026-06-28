@@ -28,6 +28,7 @@ import (
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/txscript"
 
+	"stargate-backend/core/identity"
 	"stargate-backend/core/smart_contract"
 	"stargate-backend/services"
 	"stargate-backend/stego"
@@ -219,7 +220,7 @@ func (s *Server) reconcileStegoFromLocalFile(ctx context.Context, stegoHash stri
 			return fmt.Errorf("payload json decode failed: %w", err)
 		}
 	}
-	if err := s.upsertContractFromStegoPayload(ctx, contractID, stegoHash, stegoHash, manifest, payload); err != nil {
+	if err := s.UpsertContractFromStegoPayload(ctx, contractID, stegoHash, stegoHash, manifest, payload); err != nil {
 		return err
 	}
 	s.ensureStegoIngestion(ctx, contractID, stegoHash, stegoHash, stegoBytes, manifest)
@@ -309,7 +310,7 @@ func (s *Server) ReconcileStegoWithAnnouncement(ctx context.Context, ann *stegoA
 	}
 
 	// Upsert contract from payload
-	if err := s.upsertContractFromStegoPayload(ctx, contractID, ann.StegoCID, stegoHash, manifest, payload); err != nil {
+	if err := s.UpsertContractFromStegoPayload(ctx, contractID, ann.StegoCID, stegoHash, manifest, payload); err != nil {
 		return fmt.Errorf("failed to upsert contract: %w", err)
 	}
 
@@ -387,7 +388,7 @@ func (s *Server) reconcileStegoFromIPFS(ctx context.Context, stegoCID string, ex
 			return stegoReconcileResponse{}, fmt.Errorf("payload json decode failed: %w", err)
 		}
 	}
-	if err := s.upsertContractFromStegoPayload(ctx, contractID, stegoCID, stegoHash, manifest, payload); err != nil {
+	if err := s.UpsertContractFromStegoPayload(ctx, contractID, stegoCID, stegoHash, manifest, payload); err != nil {
 		return stegoReconcileResponse{}, err
 	}
 	s.ensureStegoIngestion(ctx, contractID, stegoCID, stegoHash, stegoBytes, manifest)
@@ -565,7 +566,7 @@ func (s *Server) fillProofFromIngestion(contractID string, proof *smart_contract
 	}
 }
 
-func (s *Server) upsertContractFromStegoPayload(ctx context.Context, contractID, stegoCID, stegoHash string, manifest stego.Manifest, payload stego.Payload) error {
+func (s *Server) UpsertContractFromStegoPayload(ctx context.Context, contractID, stegoCID, stegoHash string, manifest stego.Manifest, payload stego.Payload) error {
 	if contractID == "" {
 		return fmt.Errorf("contract id missing")
 	}
@@ -627,7 +628,7 @@ func (s *Server) upsertContractFromStegoPayload(ctx context.Context, contractID,
 	if vh == "" {
 		vh = strings.TrimSpace(payload.Proposal.VisiblePixelHash)
 	}
-	if vh != "" && looksLikeHash(contractID) {
+	if vh != "" && identity.IsPixelHash(contractID) {
 		contractID = "wish-" + strings.TrimPrefix(vh, "wish-")
 	}
 	// If the stego was published after PSBT (funding info present in meta), mark as funded

@@ -46,3 +46,6 @@ HTTP middleware remains `stargate-backend/middleware`.
 ## Surfaces vs packages
 
 API ownership (REST vs MCP vs data) is documented separately in `GET /api/surfaces` and [MCP_UNIFIED_PLAN.md](./MCP_UNIFIED_PLAN.md). That is **route** ownership; this document is **Go package** ownership.
+
+## Domain entanglement
+See [DOMAIN_SEAMS.md](./DOMAIN_SEAMS.md) for stego / ingestion / bitcoin / contract seams and `core/identity`.

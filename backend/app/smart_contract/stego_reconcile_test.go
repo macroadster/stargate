@@ -47,8 +47,8 @@ func TestUpsertContractFromStegoPayload(t *testing.T) {
 	}
 	contractID := "contract-stego-2"
 
-	if err := server.upsertContractFromStegoPayload(ctx, contractID, "stegocid456", "stegohash456", manifest, payload); err != nil {
-		t.Fatalf("upsertContractFromStegoPayload error: %v", err)
+	if err := server.UpsertContractFromStegoPayload(ctx, contractID, "stegocid456", "stegohash456", manifest, payload); err != nil {
+		t.Fatalf("UpsertContractFromStegoPayload error: %v", err)
 	}
 
 	contract, err := store.GetContract(contractID)
@@ -114,9 +114,9 @@ func TestUpsertStegoSetsProductPixelHash(t *testing.T) {
 		Issuer:           "tester",
 	}
 
-	err := server.upsertContractFromStegoPayload(ctx, "contract-product", "stegocid", stegoHash, manifest, payload)
+	err := server.UpsertContractFromStegoPayload(ctx, "contract-product", "stegocid", stegoHash, manifest, payload)
 	if err != nil {
-		t.Fatalf("upsertContractFromStegoPayload: %v", err)
+		t.Fatalf("UpsertContractFromStegoPayload: %v", err)
 	}
 
 	tasks, err := store.ListTasks(core.TaskFilter{ContractID: "contract-product"})
@@ -215,9 +215,9 @@ func TestUpsertStegoPreservesWishHashWhenDonationExists(t *testing.T) {
 		Issuer:           "tester",
 	}
 
-	err := server.upsertContractFromStegoPayload(ctx, contractID, "stegocid2", stegoHash, manifest, payload)
+	err := server.UpsertContractFromStegoPayload(ctx, contractID, "stegocid2", stegoHash, manifest, payload)
 	if err != nil {
-		t.Fatalf("upsertContractFromStegoPayload: %v", err)
+		t.Fatalf("UpsertContractFromStegoPayload: %v", err)
 	}
 
 	tasks, _ := store.ListTasks(core.TaskFilter{ContractID: contractID})
