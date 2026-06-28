@@ -99,7 +99,6 @@ func (h *InscriptionHandler) HandleGetInscriptions(w http.ResponseWriter, r *htt
 
 	var inscriptions []models.InscriptionRequest
 	dedupe := make(map[string]int) // id -> index in inscriptions
-	includeLegacyOnly := r.URL.Query().Get("legacy") == "true" || r.URL.Query().Get("legacy") == "1"
 
 	// Prefer open-contracts (MCP store) to keep UI + AI in sync.
 	if h.store != nil {
@@ -158,32 +157,14 @@ func (h *InscriptionHandler) HandleGetInscriptions(w http.ResponseWriter, r *htt
 					if inscriptions[idx].Status == "" {
 						inscriptions[idx].Status = item.Status
 					}
-				} else if includeLegacyOnly {
-					// Only add new ingestion-only rows when legacy flag set
+				} else {
+					// Ingestion-only pending rows (replaces retired ?legacy=1 + file-store merge).
 					dedupe[item.ID] = len(inscriptions)
 					inscriptions = append(inscriptions, item)
 				}
 			}
 		} else {
 			fmt.Printf("Failed to read ingestion records: %v\n", err)
-		}
-	}
-
-	// Include legacy file-based pending items for compatibility
-	if includeLegacyOnly {
-		if fileInscriptions, err := h.inscriptionService.GetAllInscriptions(); err == nil {
-			for _, ins := range fileInscriptions {
-				if idx, ok := dedupe[ins.ID]; ok {
-					if inscriptions[idx].ImageData == "" && ins.ImageData != "" {
-						inscriptions[idx].ImageData = ins.ImageData
-					}
-				} else {
-					dedupe[ins.ID] = len(inscriptions)
-					inscriptions = append(inscriptions, ins)
-				}
-			}
-		} else {
-			fmt.Printf("Failed to get file-based inscriptions: %v\n", err)
 		}
 	}
 

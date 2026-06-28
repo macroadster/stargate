@@ -1,30 +1,28 @@
 # Legacy retirement inventory (stargate-3bk.8)
 
-Status: **in progress / partially complete**  
-Related: ADR 0001, 0002, 0005; related: **stargate-3bk.3** (unify stores, keep both dialects)
+Status: **complete for app/API legacy** (Postgres remains first-class — not legacy)  
+Related: ADR 0001, 0002, 0005; storage DRY: **stargate-3bk.3** (keep both dialects)
 
-## Retired in this change
+## Retired
 
 | Item | Action |
 | --- | --- |
-| `getToolSchemasLegacy` + hardcoded MCP schema table in `mcp/tools.go` | **Removed** — schemas only from `GuidanceManifest` |
-| `make backend` / `make frontend` / `*-legacy` images | **Fail fast** with message to use `make docker` / `make single-binary` |
-| Routes `/api/smart-contracts`, `/api/contracts-confirmed`, `/api/data/contracts-with-pagination` | **Unregistered** (unused by current frontend; use `/api/open-contracts`) |
-| Routes `/api/blocks`, `/api/block-images` | **Unregistered** (use `/api/data/blocks`, `/api/data/block-images`) |
+| `getToolSchemasLegacy` + hardcoded MCP schema table | **Removed** — `GuidanceManifest` only |
+| `make backend` / `make frontend` / `*-legacy` images | **Fail fast** → `make docker` / `make single-binary` |
+| Routes `/api/smart-contracts`, `/api/contracts-confirmed`, `/api/data/contracts-with-pagination` | **Unregistered** |
+| Routes `/api/blocks`, `/api/block-images` | **Unregistered** → `/api/data/*` |
+| Routes `/api/contract-stego`, `/api/contract-stego/create` | **Unregistered** — UI uses `/api/smart_contract/contracts/{id}` |
+| Inscriptions `?legacy=1` + file-based pending merge | **Removed** — always store + ingestion queue |
 
-## Kept intentionally
+## Kept intentionally (not app legacy)
 
-| Item | Reason | Sunset |
-| --- | --- | --- |
-| `VerifyLegacySignMessage` (compact wallet signmessage) | Bitcoin Core wallet protocol, not app debt | None — keep alongside BIP-322 |
-| `/api/contract-stego` (+ create) | Still used by `StegoAnalysisViewer` | Migrate UI → `/api/smart_contract/*` then remove |
-| Postgres store implementations (`pg_store`, `apikey_store_pg`) | **First-class** dialect for multi-writer / shared deploys (ADR 0002); SQLite is default only | **Keep forever** unless a new ADR supersedes; 3bk.3 = reduce duplication, not remove PG |
-| Filesystem block path `height_00000000` fallback | On-disk layout compatibility | Keep until data migration tool exists |
-| Inscription `?legacy=1` query | Opt-in file-based pending items | Prefer ingestion store; remove after one release without callers |
+| Item | Reason |
+| --- | --- |
+| `VerifyLegacySignMessage` (compact wallet signmessage) | Bitcoin Core **wallet protocol** (with BIP-322) |
+| Postgres (`pg_store`, `apikey_store_pg`, `PostgresStorage`) | **First-class** dialect (ADR 0002); SQLite is default only |
+| Filesystem block path `height_00000000` fallback | On-disk layout compatibility |
 
-## Deprecation window (external clients)
-
-If any out-of-repo client used retired routes, switch to:
+## Client migration
 
 | Old | New |
 | --- | --- |
@@ -33,12 +31,8 @@ If any out-of-repo client used retired routes, switch to:
 | `GET /api/data/contracts-with-pagination` | `GET /api/open-contracts` |
 | `GET /api/blocks` | `GET /api/data/blocks` |
 | `GET /api/block-images` | `GET /api/data/block-images` |
+| `GET /api/contract-stego/...` | `GET /api/smart_contract/contracts/{id}` |
+| `POST /api/contract-stego/create` | `POST /api/smart_contract/proposals` |
+| `GET /api/inscriptions?legacy=1` | `GET /api/inscriptions` (ingestion-only rows included by default) |
 
-Catalog of remaining surfaces: `GET /api/surfaces`.
-
-## Verification checklist
-
-- [x] Frontend uses `/api/open-contracts` (useContracts) and `/api/data/*` for blocks
-- [x] MCP tests pass with guidance-only schemas
-- [ ] Optional PG↔SQLite migration tooling / shared tests for both dialects — **3bk.3** (do **not** remove Postgres)
-- [ ] StegoAnalysisViewer migrated off `/api/contract-stego`
+Catalog: `GET /api/surfaces` (documents retired paths under `aliases` for discovery).

@@ -504,7 +504,6 @@ func runHTTPServer(store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, api
 	log.Printf("Frontend available at: http://localhost:%s", httpPort)
 	log.Printf("Stargate API endpoints at: http://localhost:%s/api/", httpPort)
 	log.Printf("Bitcoin steganography API at: http://localhost:%s/bitcoin/v1/", httpPort)
-	log.Printf("Smart contract steganography at: http://localhost:%s/api/contract-stego/", httpPort)
 	log.Printf("Smart contract API at: http://localhost:%s/api/smart_contract/", httpPort)
 	log.Printf("MCP HTTP tools at: http://localhost:%s/mcp/tools", httpPort)
 	log.Printf("MCP HTTP calls at: http://localhost:%s/mcp/call", httpPort)
@@ -591,12 +590,10 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 
 	// UI contract list (inscription-shaped for the frontend). Prefer /api/open-contracts.
 	// Lifecycle CRUD for agents stays on /api/smart_contract/*; MCP tools shim the same store.
-	// Primary UI wish/contract browse (inscription-shaped). Removed unused aliases:
-	// /api/smart-contracts, /api/contracts-confirmed, /api/data/contracts-with-pagination (3bk.8).
+	// Primary UI wish/contract browse (inscription-shaped).
+	// Retired (3bk.8): /api/smart-contracts, /api/contracts-confirmed,
+	// /api/data/contracts-with-pagination, /api/contract-stego(+ /create).
 	mux.HandleFunc("/api/open-contracts", container.SmartContractHandler.HandleGetContracts)
-	// Legacy UI analyze path still used by StegoAnalysisViewer; header points at smart_contract REST.
-	mux.HandleFunc("/api/contract-stego", api.WithDeprecation("/api/smart_contract/contracts", container.SmartContractHandler.HandleGetContract))
-	mux.Handle("/api/contract-stego/create", wrapWithAuth(api.WithDeprecation("/api/smart_contract/proposals", container.SmartContractHandler.HandleCreateContract)))
 
 	// Ingestion endpoints
 	mux.Handle("/api/ingest-inscription", wrapWithAuth(container.IngestionHandler.HandleIngest))

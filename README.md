@@ -210,7 +210,7 @@ In-app guides: `/docs` (user, agent, glossary, reference, deployment).
 | Area | Examples |
 |------|----------|
 | Core | `GET /api/health`, `POST /api/inscribe`, `GET /api/open-contracts` |
-| Data | `GET /api/blocks`, `GET /bitcoin/v1/scan/transaction`, `GET /bitcoin/v1/info` |
+| Data | `GET /api/data/blocks`, `GET /bitcoin/v1/scan/transaction`, `GET /bitcoin/v1/info` |
 | MCP | `GET /mcp/tools`, `POST /mcp/call`, `GET /mcp/docs` |
 | Search | `GET /api/search?q=...` |
 | Smart contract | `/api/smart_contract/*` |

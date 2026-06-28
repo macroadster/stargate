@@ -59,7 +59,7 @@ Tool names map to the same store used by REST. Where possible they already reuse
 
 ### Auxiliary endpoints (still live)
 - `/api/open-contracts` is the human-wish ingress; MCP tool `get_open_contracts` proxies it so agents can turn wishes into executable smart-contract proposals.
-- `/api/contract-stego/*`, `/api/smart-contracts` remain for compatibility with existing UI code.
+- `/api/contract-stego/*` and `/api/smart-contracts` were retired (3bk.8); use `/api/smart_contract/*` and `/api/open-contracts`.
 - `/api/health`, `/metrics`, `/api/docs` (Swagger for general backend; MCP-specific OpenAPI planned).
 - `/api/docs/mcp/openapi.json` serves the MCP/Smart Contract surface (stub, keep updated).
 - `/api/smart_contract/discover` and `/mcp/discover` advertise base URLs, endpoints, tools, and auth expectations.
@@ -111,7 +111,7 @@ Machine-readable catalog: **`GET /api/surfaces`** (`backend/api/surfaces.go`).
 | UI wish/contract browse (inscription-shaped) | `/api/open-contracts` | `/api/smart-contracts`, `/api/contracts-confirmed`, `/api/data/contracts-with-pagination` |
 | Block / inscription data | `/api/data/*` | `/api/blocks`, `/api/block-images` |
 | Scan / extract | `/bitcoin/v1/*` | — |
-| Contract stego UI | prefer `/api/smart_contract/contracts` | `/api/contract-stego`, `/api/contract-stego/create` → proposals |
+| Contract stego UI | `/api/smart_contract/contracts` | retired `/api/contract-stego*` (3bk.8) |
 
 ## Backlog (next steps, ordered)
 1) ~~**Collapse dual API surfaces**~~ — done via `/api/surfaces`, alias deprecation headers, tool→REST map (3bk.2). MCP still calls the store in-process (same data as REST); optional HTTP round-trip proxy deferred.  

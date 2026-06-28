@@ -21,7 +21,7 @@ Requirements:
 
 - Build: `make docker` / release workflows produce `stargate` with embedded `assets/frontend`
 - Runtime: one listen port (`STARGATE_HTTP_PORT`, default `3001`) serves `/`, `/api/*`, `/mcp/*`, `/bitcoin/v1/*`, static uploads
-- Legacy split images (`make backend-legacy` / `make frontend-legacy`) may exist for transition but are **deprecated**
+- Split images (`make backend` / `make frontend` / `*-legacy`) are **retired** (fail with message to use `make docker` / `make single-binary`; see stargate-3bk.8)
 - Helm / k8s: one container per pod for the stargate stack (see Agents.md deployment workflow)
 
 ## Consequences

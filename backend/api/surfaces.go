@@ -43,12 +43,17 @@ var DefaultPrimary = map[string]string{
 	"health":         "/api/health",
 }
 
-// DefaultAliases are remaining compatibility paths (see docs/arch/LEGACY_RETIREMENT.md).
-// Retired in 3bk.8 (no longer registered): /api/smart-contracts, /api/contracts-confirmed,
-// /api/data/contracts-with-pagination, /api/blocks, /api/block-images.
+// DefaultAliases lists historical paths that are no longer registered (3bk.8).
+// Kept here for GET /api/surfaces documentation / client migration.
+// Active legacy routes: none — use primary surfaces only.
 var DefaultAliases = []RouteAlias{
-	{Path: "/api/contract-stego", Primary: "/api/smart_contract/contracts", Surface: "smart_contract", Description: "UI analyze path; prefer /api/smart_contract/contracts"},
-	{Path: "/api/contract-stego/create", Primary: "/api/smart_contract/proposals", Surface: "smart_contract", Description: "Legacy create path; proposals are the lifecycle entry"},
+	{Path: "/api/smart-contracts", Primary: "/api/open-contracts", Surface: "ui_contracts", Description: "Retired; use /api/open-contracts"},
+	{Path: "/api/contracts-confirmed", Primary: "/api/open-contracts", Surface: "ui_contracts", Description: "Retired; use /api/open-contracts"},
+	{Path: "/api/data/contracts-with-pagination", Primary: "/api/open-contracts", Surface: "ui_contracts", Description: "Retired; use /api/open-contracts"},
+	{Path: "/api/blocks", Primary: "/api/data/blocks", Surface: "block_data", Description: "Retired; use /api/data/blocks"},
+	{Path: "/api/block-images", Primary: "/api/data/block-images", Surface: "block_data", Description: "Retired; use /api/data/block-images"},
+	{Path: "/api/contract-stego", Primary: "/api/smart_contract/contracts", Surface: "smart_contract", Description: "Retired; use /api/smart_contract/contracts/{id}"},
+	{Path: "/api/contract-stego/create", Primary: "/api/smart_contract/proposals", Surface: "smart_contract", Description: "Retired; use POST /api/smart_contract/proposals"},
 }
 
 // DefaultToolREST maps MCP tool names to their REST backing paths (docs/parity).

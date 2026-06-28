@@ -232,7 +232,7 @@ For more details, see README.md and QUICKSTART.md.
    make docker   # Build stargate:latest (unified binary with embedded frontend)
    ```
 
-   Legacy separate images are still available via `make backend-legacy` / `make frontend-legacy` if needed during transition.
+   Split backend/frontend images are retired (`make backend-legacy` fails by design); use `make docker` / `make single-binary` only.
 
 3. **Deploy to cluster** (see Deployment Workflow section)
 

@@ -17,7 +17,8 @@ const StegoAnalysisViewer = ({ contract, onClose, copiedText, copyToClipboard })
   const fetchAnalysis = useCallback(async () => {
     setIsAnalyzing(true);
     try {
-      const response = await apiFetch(`/api/contract-stego/${contract.contract_id}/analyze`);
+      // Prefer smart_contract REST (legacy /api/contract-stego/.../analyze retired in 3bk.8).
+      const response = await apiFetch(`/api/smart_contract/contracts/${encodeURIComponent(contract.contract_id)}`);
       if (response.ok) {
         const data = await response.json();
         setAnalysis(data);
