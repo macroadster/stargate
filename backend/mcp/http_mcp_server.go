@@ -21,7 +21,7 @@ import (
 	"stargate-backend/core"
 	"stargate-backend/core/smart_contract"
 	"stargate-backend/handlers"
-	scmiddleware "stargate-backend/middleware/smart_contract"
+	scmiddleware "stargate-backend/app/smart_contract"
 	"stargate-backend/services"
 	"stargate-backend/starlight"
 	auth "stargate-backend/storage/auth"

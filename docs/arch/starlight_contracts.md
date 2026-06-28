@@ -823,9 +823,9 @@ proposal metadata       — title, description, budget, tasks
 |---|---|
 | `backend/bitcoin/psbt_builder.go` | PSBT construction, `buildDonationOutputs()` — 2 hashes only |
 | `backend/bitcoin/block_monitor.go` | OP_RETURN parsing (`parseOPReturnHashes`), `reconcileOnChainArtifacts()`, `confirmContractTasks()` |
-| `backend/middleware/smart_contract/stego_publish.go` | `PreparePublishArtifacts()` — builds stego + sandbox BEFORE PSBT; `FinalizePublishArtifacts()` — optional IPFS upload after |
-| `backend/middleware/smart_contract/stego_reconcile.go` | `ReconcileStego()`, `reconcileStegoFromLocalFile()`, `downloadSandboxArtifacts()`, `upsertContractFromStegoPayload()` |
-| `backend/middleware/smart_contract/server.go` | `handleContractPSBT()` — calls PreparePublishArtifacts, passes stego hash to PSBT builder |
+| `backend/app/smart_contract/stego_publish.go` | `PreparePublishArtifacts()` — builds stego + sandbox BEFORE PSBT; `FinalizePublishArtifacts()` — optional IPFS upload after |
+| `backend/app/smart_contract/stego_reconcile.go` | `ReconcileStego()`, `reconcileStegoFromLocalFile()`, `downloadSandboxArtifacts()`, `upsertContractFromStegoPayload()` |
+| `backend/app/smart_contract/server.go` | `handleContractPSBT()` — calls PreparePublishArtifacts, passes stego hash to PSBT builder |
 | `backend/stego/payload.go` | `Payload` struct with `SandboxHash` field |
 | `backend/stego/sandbox.go` | `WriteSandboxTarball()`, `VerifySandboxHash()`, `HashSandboxDir()` |
 | `backend/storage/ipfs/mirror.go` | IPFS mirror — syncs hash-named files between peers |

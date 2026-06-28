@@ -25,7 +25,7 @@ import (
 	"stargate-backend/storage/ipfs"
 	"stargate-backend/mcp"
 	"stargate-backend/middleware"
-	scmiddleware "stargate-backend/middleware/smart_contract"
+	scmiddleware "stargate-backend/app/smart_contract"
 	"stargate-backend/services"
 	"stargate-backend/starlight"
 	"stargate-backend/storage"

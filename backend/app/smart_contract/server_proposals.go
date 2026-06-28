@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"stargate-backend/core/smart_contract"
-	scservices "stargate-backend/middleware/smart_contract/services"
+	scservices "stargate-backend/app/smart_contract/services"
 	"stargate-backend/services"
 )
 

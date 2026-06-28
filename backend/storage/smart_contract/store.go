@@ -11,7 +11,7 @@ import (
 // This is the single source of truth for the smart contract / MCP store interface.
 // Implementations in this package (MemoryStore, SQLiteStore, PGStore) satisfy it.
 // All higher layers (middleware, mcp, handlers, main) should import via the
-// compatibility alias in middleware/smart_contract or directly from here.
+// Prefer importing this package directly. app/smart_contract re-exports Store for compatibility.
 type Store interface {
 	ListContracts(filter smart_contract.ContractFilter) ([]smart_contract.Contract, error)
 	ListTasks(filter smart_contract.TaskFilter) ([]smart_contract.Task, error)

@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"stargate-backend/handlers"
-	scmiddleware "stargate-backend/middleware/smart_contract"
+	scmiddleware "stargate-backend/app/smart_contract"
 	"stargate-backend/services"
 	"stargate-backend/storage"
 	"stargate-backend/storage/auth"

@@ -1,13 +1,11 @@
 package smart_contract
 
-// Compatibility re-exports for the MCP/Store interface and errors.
-// The authoritative definitions now live in:
+// Compatibility re-exports for the Store interface and errors.
+// The authoritative definitions live in:
 //   stargate-backend/storage/smart_contract/{store.go, errors.go}
 //
-// This allows a gradual migration. All existing imports of
-// "stargate-backend/middleware/smart_contract" (as scmiddleware or smartstore)
-// continue to work unchanged. New code should prefer importing directly from
-// the storage package.
+// Prefer importing storage/smart_contract directly in new code.
+// This package (app/smart_contract) is the application layer, not storage.
 
 import scstore "stargate-backend/storage/smart_contract"
 

@@ -130,5 +130,5 @@ Machine-readable catalog: **`GET /api/surfaces`** (`backend/api/surfaces.go`).
 - **Testing locally:** `MCP_SEED_FIXTURES=true go run stargate_backend.go` then hit `http://localhost:3001/api/smart_contract/tasks`.
 
 ## Ownership & Change Control
-- Code: `backend/mcp`, `backend/middleware/smart_contract`, `backend/stargate_backend.go`.
+- Code: `backend/mcp`, `backend/app/smart_contract` (application layer; formerly `middleware/smart_contract`), `backend/stargate_backend.go`. See [PACKAGE_BOUNDARIES.md](./PACKAGE_BOUNDARIES.md).
 - This document is the single canonical plan/spec. Update here first when adding or changing endpoints; keep `/mcp` tools and `/api/smart_contract` routes in lockstep.

@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"stargate-backend/core/smart_contract"
-	scmiddleware "stargate-backend/middleware/smart_contract"
+	scmiddleware "stargate-backend/app/smart_contract"
 	scstore "stargate-backend/storage/smart_contract"
 )
 
