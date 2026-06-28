@@ -1803,12 +1803,34 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 				}
 				matchedTxIDs[tx.TxID] = match.ID
 			} else {
-				// No candidate match — log for debugging but do NOT create a
-				// contract.  Any OP_RETURN with 32/64 bytes of data would be
-				// treated as a wish hash, causing false "Smart Contract" entries.
-				// Contracts should only be created when the hash is confirmed
-				// via IPFS sync (stego reconcile / ingestion).
-				log.Printf("oracle reconcile: block %d tx %s: OP_RETURN wish=%s stego=%s has no matching candidate, skipping (will be created when IPFS sync delivers the image)", blockHeight, tx.TxID, wishHash, stegoHash)
+				// No candidate match in ingestion/proposal/contract databases.
+				// If the stego image exists on disk, reconcile from it — the
+				// embedded v2 payload contains the full proposal, tasks, and
+				// sandbox_hash.  reconcileOnChainArtifacts will create the
+				// contract via the stego reconciler.
+				if stegoHash != "" {
+					log.Printf("oracle reconcile: block %d tx %s: OP_RETURN wish=%s stego=%s has no candidate, attempting stego reconcile from disk", blockHeight, tx.TxID, wishHash, stegoHash)
+					bm.reconcileOnChainArtifacts(wishHash, stegoHash)
+					// After reconciliation, confirm the newly-created contract
+					// and trigger sandbox extraction.
+					normalizedWish := wishHash
+					if len(normalizedWish) == 64 {
+						if _, decErr := hex.DecodeString(normalizedWish); decErr == nil {
+							normalizedWish = "wish-" + normalizedWish
+						}
+					}
+					if bm.sweepStore != nil {
+						_ = bm.sweepStore.ConfirmContract(context.Background(), normalizedWish, int(blockHeight), tx.TxID)
+						bm.updateTaskFundingProofsFromTx(normalizedWish, tx, blockHeight)
+						bm.confirmContractTasks(normalizedWish, tx.TxID, blockHeight)
+						// Now that the contract is confirmed, reconcile again
+						// so downloadSandboxArtifacts fires (it checks for
+						// confirmed status before extracting).
+						bm.reconcileOnChainArtifacts(normalizedWish, stegoHash)
+					}
+				} else {
+					log.Printf("oracle reconcile: block %d tx %s: OP_RETURN wish=%s (no stego hash), skipping", blockHeight, tx.TxID, wishHash)
+				}
 			}
 			break // one OP_RETURN match per tx
 		}
