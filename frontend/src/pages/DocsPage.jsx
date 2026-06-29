@@ -89,44 +89,69 @@ const DocsPage = () => {
 
   const currentDoc = docs[docPath || ''] || docs['README.md'] || { title: 'Documentation', icon: FileText };
 
+  const docEntries = Object.entries(docs).filter(([p]) => p !== '');
+  const isActiveDoc = (path) =>
+    docPath === path || (!docPath && path === 'README.md');
+
   return (
     <div className="min-h-screen bg-app-main text-gray-900 dark:text-gray-100 page-docs">
       <AppHeader onInscribe={() => navigate('/')} />
 
-      <div className="container mx-auto px-6 py-10 space-y-8">
+      <div className="w-full max-w-full mx-auto px-4 sm:px-6 py-10 space-y-6 sm:space-y-8 overflow-x-hidden">
         {/* Header */}
-        <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-6">
-          <div className="flex-1">
-            <h1 className="text-4xl font-black page-title uppercase tracking-tight leading-none mb-2">Documentation</h1>
+        <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4 sm:gap-6 min-w-0">
+          <div className="flex-1 min-w-0">
+            <h1 className="text-3xl sm:text-4xl font-black page-title uppercase tracking-tight leading-none mb-2">Documentation</h1>
             <p className="text-xs page-subtitle font-bold uppercase tracking-widest opacity-70">
               Complete guides and reference materials for the Starlight platform.
             </p>
           </div>
         </div>
 
-        <div className="grid lg:grid-cols-4 gap-6">
+        {/* Mobile doc nav — sidebar is desktop-only */}
+        <nav
+          className="lg:hidden flex gap-2 overflow-x-auto pb-1 -mx-1 px-1 docs-mobile-nav"
+          aria-label="Documentation sections"
+        >
+          {docEntries.map(([path, doc]) => (
+            <Link
+              key={path}
+              to={`/docs/${path}`}
+              className={`flex-shrink-0 inline-flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium whitespace-nowrap border transition-colors ${
+                isActiveDoc(path)
+                  ? 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-700'
+                  : 'bg-white/5 text-gray-600 dark:text-gray-400 border-white/10 hover:bg-gray-100 dark:hover:bg-gray-800'
+              }`}
+            >
+              <doc.icon className="w-3.5 h-3.5 flex-shrink-0" />
+              {doc.title}
+            </Link>
+          ))}
+        </nav>
+
+        <div className="grid lg:grid-cols-4 gap-6 min-w-0">
           {/* Sidebar Navigation */}
-          <aside className="hidden lg:block lg:col-span-1">
+          <aside className="hidden lg:block lg:col-span-1 min-w-0">
             <div className="card-premium p-4 md:p-5 space-y-4">
               <div>
                 <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500 mb-3">
                   Documentation
                 </h3>
                 <nav className="space-y-1">
-                  {Object.entries(docs).filter(([p]) => p !== '').map(([path, doc]) => (
+                  {docEntries.map(([path, doc]) => (
                     <Link
                       key={path}
                       to={`/docs/${path}`}
-                      className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
-                        (docPath === path) || (!docPath && path === 'README.md')
+                      className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors min-w-0 ${
+                        isActiveDoc(path)
                           ? 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 font-medium'
                           : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-gray-200'
                       }`}
                     >
-                      <doc.icon className={`w-4 h-4 ${
-                        (docPath === path) || (!docPath && path === 'README.md') ? 'text-indigo-600 dark:text-indigo-400' : 'text-gray-400'
+                      <doc.icon className={`w-4 h-4 flex-shrink-0 ${
+                        isActiveDoc(path) ? 'text-indigo-600 dark:text-indigo-400' : 'text-gray-400'
                       }`} />
-                      {doc.title}
+                      <span className="truncate">{doc.title}</span>
                     </Link>
                   ))}
                 </nav>
@@ -135,7 +160,7 @@ const DocsPage = () => {
               {currentDoc.description && (
                 <div className="p-4 rounded-xl bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-100 dark:border-indigo-800/50">
                   <h4 className="text-sm font-semibold text-indigo-900 dark:text-indigo-100 mb-1 flex items-center gap-2">
-                    <HelpCircle className="w-4 h-4" />
+                    <HelpCircle className="w-4 h-4 flex-shrink-0" />
                     About this guide
                   </h4>
                   <p className="text-xs text-indigo-700 dark:text-indigo-300 leading-relaxed">
@@ -147,15 +172,15 @@ const DocsPage = () => {
           </aside>
 
           {/* Main Content */}
-          <main className="lg:col-span-3 min-w-0">
+          <main className="lg:col-span-3 min-w-0 max-w-full">
             {/* Breadcrumbs */}
-            <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400 mb-6">
-              <Link to="/docs" className="hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors">Docs</Link>
-              <ChevronRight className="w-4 h-4" />
-              <span className="font-medium text-gray-900 dark:text-gray-100">{currentDoc.title}</span>
+            <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400 mb-6 min-w-0">
+              <Link to="/docs" className="hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors flex-shrink-0">Docs</Link>
+              <ChevronRight className="w-4 h-4 flex-shrink-0" />
+              <span className="font-medium text-gray-900 dark:text-gray-100 truncate">{currentDoc.title}</span>
             </div>
 
-            <div className="card-premium overflow-hidden">
+            <div className="card-premium overflow-hidden max-w-full">
               {loading ? (
                 <div className="p-12 flex flex-col items-center justify-center text-gray-500">
                   <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 mb-4"></div>
@@ -167,7 +192,7 @@ const DocsPage = () => {
                     <FileText className="w-8 h-8" />
                   </div>
                   <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-2">Document Not Found</h2>
-                  <p className="text-gray-600 dark:text-gray-400 mb-6">{error}</p>
+                  <p className="text-gray-600 dark:text-gray-400 mb-6 break-words">{error}</p>
                   <Link 
                     to="/docs"
                     className="btn-primary inline-flex items-center px-4 py-2 rounded-lg text-sm font-medium"
@@ -176,8 +201,8 @@ const DocsPage = () => {
                   </Link>
                 </div>
               ) : (
-                <article className="px-6 py-8 lg:px-10 lg:py-10">
-                  <div className="prose max-w-none">
+                <article className="px-4 py-6 sm:px-6 sm:py-8 lg:px-10 lg:py-10 min-w-0 max-w-full">
+                  <div className="prose prose-docs max-w-none min-w-0">
                     <ReactMarkdown 
                       remarkPlugins={[remarkGfm]}
                       components={{
@@ -193,7 +218,18 @@ const DocsPage = () => {
                             return <Link to={resolved} {...props}>{children}</Link>;
                           }
                           return <a href={href} target="_blank" rel="noopener noreferrer" {...props}>{children}</a>;
-                        }
+                        },
+                        pre: ({ children, ...props }) => (
+                          <pre className="docs-pre" {...props}>{children}</pre>
+                        ),
+                        code: ({ className, children, ...props }) => (
+                          <code className={`docs-code-inline ${className || ''}`} {...props}>{children}</code>
+                        ),
+                        table: ({ children, ...props }) => (
+                          <div className="docs-table-wrap">
+                            <table {...props}>{children}</table>
+                          </div>
+                        ),
                       }}
                     >
                       {content}

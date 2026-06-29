@@ -956,10 +956,12 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
                                   {stegoProposal.description_md}
                                 </div>
                               )}
-                              <div className="modal-stego-label mt-3 flex flex-wrap gap-4">
-                                <span>Budget: {stegoProposal.budget_sats || 0} sats</span>
-                                <span>Visible Hash: {stegoProposal.visible_pixel_hash || '—'}</span>
-                                {stegoProposalStatus && <span>Status: {stegoProposalStatus}</span>}
+                              <div className="modal-stego-label mt-3 flex flex-col sm:flex-row sm:flex-wrap gap-2 sm:gap-4 min-w-0">
+                                <span className="flex-shrink-0">Budget: {stegoProposal.budget_sats || 0} sats</span>
+                                <span className="hash-display min-w-0" title={stegoProposal.visible_pixel_hash || undefined}>
+                                  Visible Hash: {stegoProposal.visible_pixel_hash || '—'}
+                                </span>
+                                {stegoProposalStatus && <span className="flex-shrink-0">Status: {stegoProposalStatus}</span>}
                               </div>
                             </div>
 

@@ -287,7 +287,7 @@ const InscriptionCard = ({ inscription, onClick }) => {
       
       <div className="mt-2 space-y-1">
         <div className="flex items-center justify-between gap-2">
-          <div className="text-xs text-secondary text-gray-500 dark:text-gray-400 font-mono text-[9px] truncate font-medium flex-1" title={inscription.id}>
+          <div className="text-xs text-secondary text-gray-500 dark:text-gray-400 font-mono text-[9px] hash-display-truncate font-medium flex-1" title={inscription.id}>
             ID: {inscription.id}
           </div>
         </div>

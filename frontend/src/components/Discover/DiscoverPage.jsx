@@ -305,7 +305,7 @@ export default function DiscoverPage() {
                           {isRaiseFund ? `Funding target: ${totalBudget || p.budget_sats} sats` : `Budget: ${p.budget_sats} sats`}
                         </span>
                         {isRaiseFund && fundDepositAddress && (
-                          <span className="text-xs text-gray-500 font-mono truncate max-w-[240px]">
+                          <span className="text-xs text-gray-500 font-mono hash-display-truncate max-w-[min(240px,50vw)]">
                             Fund deposit: {fundDepositAddress}
                           </span>
                         )}

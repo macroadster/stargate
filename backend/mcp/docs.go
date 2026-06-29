@@ -19,11 +19,12 @@ func (h *HTTPMCPServer) handleDocs(w http.ResponseWriter, r *http.Request) {
     <title>MCP API Documentation</title>
     <meta charset="UTF-8">
     <style>
-        body { font-family: Arial, sans-serif; margin: 20px; }
-        h1, h2, h3 { color: #333; }
+        body { font-family: Arial, sans-serif; margin: 20px; max-width: 100%; overflow-x: hidden; }
+        h1, h2, h3 { color: #333; overflow-wrap: anywhere; }
         ul { line-height: 1.6; }
         .endpoint { font-weight: bold; }
-        pre { background: #f4f4f4; padding: 10px; border-radius: 4px; }
+        code { overflow-wrap: anywhere; word-break: break-word; }
+        pre { background: #f4f4f4; padding: 10px; border-radius: 4px; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; white-space: pre; }
     </style>
 </head>
 <body>

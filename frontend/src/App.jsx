@@ -548,7 +548,7 @@ function MainContent() {
     };
 
     return (
-      <div className="absolute mt-2 w-96 max-h-96 overflow-y-auto dropdown-menu rounded-lg shadow-lg z-50">
+      <div className="absolute mt-2 w-[min(24rem,calc(100vw-2rem))] max-w-[calc(100vw-2rem)] max-h-96 overflow-y-auto overflow-x-hidden dropdown-menu rounded-lg shadow-lg z-50">
         {inscriptionResults.length > 0 && (
           <div className="p-3 border-b border-white/10">
             <div className="text-xs uppercase tracking-wide text-secondary mb-2">Inscriptions</div>
@@ -735,16 +735,16 @@ function MainContent() {
                           clearSearch();
                         }}
                       >
-                        <div className="flex justify-between items-start mb-3">
-                          <div className="flex items-center gap-3">
-                            <div className="px-3 py-1 rounded text-xs font-semibold bg-yellow-600 text-white">
+                        <div className="flex justify-between items-start gap-2 mb-3 min-w-0">
+                          <div className="flex items-center gap-3 min-w-0 flex-1">
+                            <div className="px-3 py-1 rounded text-xs font-semibold bg-yellow-600 text-white flex-shrink-0">
                               Inscription
                             </div>
-                            <div className="text-primary font-mono text-sm">
+                            <div className="text-primary font-mono text-sm hash-display-truncate" title={tx.id}>
                               {tx.id}
                             </div>
                           </div>
-                          <div className="px-2 py-1 rounded text-xs font-semibold bg-white/5 text-secondary border border-white/10">
+                          <div className="px-2 py-1 rounded text-xs font-semibold bg-white/5 text-secondary border border-white/10 flex-shrink-0">
                             {tx.status || 'confirmed'}
                           </div>
                         </div>
@@ -788,16 +788,16 @@ function MainContent() {
                           clearSearch();
                         }}
                       >
-                        <div className="flex justify-between items-start mb-3">
-                          <div className="flex items-center gap-3">
-                            <div className="px-3 py-1 rounded text-xs font-semibold bg-blue-600 text-white">
+                        <div className="flex justify-between items-start gap-2 mb-3 min-w-0">
+                          <div className="flex items-center gap-3 min-w-0 flex-1">
+                            <div className="px-3 py-1 rounded text-xs font-semibold bg-blue-600 text-white flex-shrink-0">
                               Transaction
                             </div>
-                            <div className="text-primary font-mono text-sm">
+                            <div className="text-primary font-mono text-sm hash-display-truncate" title={tx.id}>
                               {tx.id}
                             </div>
                           </div>
-                          <div className="px-2 py-1 rounded text-xs font-semibold bg-white/5 text-secondary border border-white/10">
+                          <div className="px-2 py-1 rounded text-xs font-semibold bg-white/5 text-secondary border border-white/10 flex-shrink-0">
                             {tx.status || 'confirmed'}
                           </div>
                         </div>
@@ -839,16 +839,19 @@ function MainContent() {
                           clearSearch();
                         }}
                       >
-                        <div className="flex justify-between items-start mb-3">
-                          <div className="flex items-center gap-3">
-                            <div className="px-3 py-1 rounded text-xs font-semibold bg-emerald-600 text-white">
+                        <div className="flex justify-between items-start gap-2 mb-3 min-w-0">
+                          <div className="flex items-center gap-3 min-w-0 flex-1">
+                            <div className="px-3 py-1 rounded text-xs font-semibold bg-emerald-600 text-white flex-shrink-0">
                               Contract
                             </div>
-                            <div className="text-primary font-mono text-sm">
+                            <div
+                              className="text-primary font-mono text-sm hash-display-truncate"
+                              title={contract.contract_id || contract.id}
+                            >
                               {contract.contract_id || contract.id}
                             </div>
                           </div>
-                          <div className="px-2 py-1 rounded text-xs font-semibold bg-white/5 text-secondary border border-white/10">
+                          <div className="px-2 py-1 rounded text-xs font-semibold bg-white/5 text-secondary border border-white/10 flex-shrink-0">
                             {contract.status || 'open'}
                           </div>
                         </div>
@@ -894,16 +897,19 @@ function MainContent() {
                           clearSearch();
                         }}
                       >
-                        <div className="flex justify-between items-start mb-3">
-                          <div className="flex items-center gap-3">
-                            <div className="px-3 py-1 rounded text-xs font-semibold bg-purple-600 text-white">
+                        <div className="flex justify-between items-start gap-2 mb-3 min-w-0">
+                          <div className="flex items-center gap-3 min-w-0 flex-1">
+                            <div className="px-3 py-1 rounded text-xs font-semibold bg-purple-600 text-white flex-shrink-0">
                               Proposal
                             </div>
-                            <div className="text-primary font-mono text-sm">
+                            <div
+                              className="text-primary font-mono text-sm hash-display-truncate"
+                              title={proposal.proposal_id || proposal.id}
+                            >
                               {proposal.proposal_id || proposal.id}
                             </div>
                           </div>
-                          <div className="px-2 py-1 rounded text-xs font-semibold bg-white/5 text-purple-400 border border-white/10">
+                          <div className="px-2 py-1 rounded text-xs font-semibold bg-white/5 text-purple-400 border border-white/10 flex-shrink-0">
                             {proposal.status || 'pending'}
                           </div>
                         </div>
@@ -922,7 +928,10 @@ function MainContent() {
                         </div>
 
                         {proposal.visible_pixel_hash && (
-                          <div className="mt-3 text-xs text-secondary truncate">
+                          <div
+                            className="mt-3 text-xs text-secondary hash-display-truncate"
+                            title={proposal.visible_pixel_hash}
+                          >
                             Pixel Hash: {proposal.visible_pixel_hash}
                           </div>
                         )}
@@ -1028,9 +1037,14 @@ function MainContent() {
             <>
               <div className="mb-8">
                 <h2 className="text-4xl font-bold mb-4 text-primary">Block {selectedBlock.height}</h2>
-                <div className="flex items-center gap-4 text-sm">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className="text-secondary truncate max-w-[200px] sm:max-w-none">{selectedBlock.hash}</span>
+                <div className="flex items-center gap-4 text-sm min-w-0 max-w-full">
+                  <div className="flex items-center gap-2 min-w-0 flex-1 max-w-full">
+                    <span
+                      className="text-secondary hash-display-truncate flex-1"
+                      title={selectedBlock.hash}
+                    >
+                      {selectedBlock.hash}
+                    </span>
                     {copiedText === selectedBlock.hash ? (
                       <Check className="w-4 h-4 text-success flex-shrink-0" />
                     ) : (

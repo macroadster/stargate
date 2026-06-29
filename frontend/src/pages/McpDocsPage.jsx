@@ -3,6 +3,18 @@ import { API_BASE } from '../apiBase';
 import { apiFetch } from '../utils/api';
 import AppHeader from '../components/Common/AppHeader';
 
+/** Prefer <body> inner HTML so we do not inject a nested document shell. */
+function extractMcpDocsBody(html) {
+  if (!html) return '';
+  const bodyMatch = html.match(/<body[^>]*>([\s\S]*)<\/body>/i);
+  if (bodyMatch) return bodyMatch[1].trim();
+  return html
+    .replace(/<!DOCTYPE[^>]*>/i, '')
+    .replace(/<\/?html[^>]*>/gi, '')
+    .replace(/<head[\s\S]*?<\/head>/i, '')
+    .trim();
+}
+
 export default function McpDocsPage() {
   const [docs, setDocs] = useState('');
   const [loading, setLoading] = useState(true);
@@ -16,7 +28,7 @@ export default function McpDocsPage() {
           throw new Error(`HTTP ${response.status}`);
         }
         const html = await response.text();
-        setDocs(html);
+        setDocs(extractMcpDocsBody(html));
       } catch (err) {
         console.error('Failed to load MCP docs:', err);
         setError(err.message);
@@ -29,12 +41,12 @@ export default function McpDocsPage() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-950 text-black dark:text-white">
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-950 text-black dark:text-white page-docs page-mcp-docs">
       <AppHeader />
       
-      <div className="container mx-auto px-6 py-8">
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold mb-2">MCP API Documentation</h1>
+      <div className="w-full max-w-full mx-auto px-4 sm:px-6 py-8 overflow-x-hidden">
+        <div className="mb-8 min-w-0">
+          <h1 className="text-2xl sm:text-3xl font-bold mb-2">MCP API Documentation</h1>
           <p className="text-gray-600 dark:text-gray-400">
             Complete API documentation for the Starlight Model Context Protocol (MCP) interface.
           </p>
@@ -64,16 +76,16 @@ export default function McpDocsPage() {
 
         {error && (
           <div className="bg-red-50 dark:bg-red-900/40 border border-red-200 dark:border-red-800 rounded-lg p-4 mb-6">
-            <div className="text-red-800 dark:text-red-200">
+            <div className="text-red-800 dark:text-red-200 break-words">
               Failed to load documentation: {error}
             </div>
           </div>
         )}
 
         {!loading && !error && (
-          <div className="bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 overflow-hidden">
-            <div 
-              className="p-6"
+          <div className="bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 overflow-hidden max-w-full">
+            <div
+              className="p-4 sm:p-6 mcp-docs-content min-w-0 max-w-full"
               dangerouslySetInnerHTML={{ __html: docs }}
             />
           </div>
