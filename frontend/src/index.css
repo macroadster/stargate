@@ -2916,11 +2916,12 @@ html[data-theme="light"] .modal-deliverables-box {
 }
 
 .modal-deliverables-row span:first-child {
-    flex: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    flex: 1 1 0%;
     min-width: 0;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    word-break: break-all;
+    white-space: normal;
 }
 
 .modal-deliverables-row span:last-child {
@@ -5632,13 +5633,14 @@ html[data-theme="dark"] .mcp-docs-content pre,
     overflow-wrap: anywhere;
 }
 
-/* Long hash / id display utility used across mobile views */
+/* Long hash / id / address display — do not rely on missing min-w-0 / max-w-full utilities */
 .hash-display {
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
     overflow-wrap: anywhere;
     word-break: break-all;
     max-width: 100%;
     min-width: 0;
+    display: inline-block;
 }
 
 .hash-display-truncate {
@@ -5648,6 +5650,75 @@ html[data-theme="dark"] .mcp-docs-content pre,
     white-space: nowrap;
     max-width: 100%;
     min-width: 0;
+    display: block;
+}
+
+/* Block detail: hash under "Block {height}" must not overflow mobile width */
+.block-detail-header {
+    max-width: 100%;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.block-hash-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    max-width: 100%;
+    min-width: 0;
+}
+
+.block-hash-text {
+    flex: 1 1 0%;
+    min-width: 0;
+    max-width: 100%;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    overflow-wrap: anywhere;
+    word-break: break-all;
+    line-height: 1.4;
+}
+
+.block-hash-copy {
+    flex-shrink: 0;
+    margin-top: 0.15rem;
+}
+
+/* Modal: long wallet / payout addresses */
+.modal-task-wallet {
+    overflow-wrap: anywhere;
+    word-break: break-all;
+    max-width: 100%;
+    min-width: 0;
+}
+
+.modal-deliverables-box {
+    max-width: 100%;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    word-break: break-all;
+}
+
+.modal-deliverables-contract {
+    overflow-wrap: anywhere;
+    word-break: break-all;
+    max-width: 100%;
+    min-width: 0;
+}
+
+.modal-psbt-row {
+    overflow-wrap: anywhere;
+    word-break: break-all;
+    max-width: 100%;
+    min-width: 0;
+}
+
+.modal-address-text {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    overflow-wrap: anywhere;
+    word-break: break-all;
+    max-width: 100%;
+    min-width: 0;
+    display: block;
 }
 
 /* Keep fixed header within the viewport when page content would overflow */

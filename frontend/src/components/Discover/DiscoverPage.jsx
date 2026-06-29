@@ -305,7 +305,7 @@ export default function DiscoverPage() {
                           {isRaiseFund ? `Funding target: ${totalBudget || p.budget_sats} sats` : `Budget: ${p.budget_sats} sats`}
                         </span>
                         {isRaiseFund && fundDepositAddress && (
-                          <span className="text-xs text-gray-500 font-mono hash-display-truncate max-w-[min(240px,50vw)]">
+                          <span className="text-xs text-gray-500 font-mono modal-address-text">
                             Fund deposit: {fundDepositAddress}
                           </span>
                         )}
@@ -331,13 +331,13 @@ export default function DiscoverPage() {
                             {t.claim_expires_at && <span className="text-xs text-slate-400">expires in {formatCountdown(t.claim_expires_at)}</span>}
                           </div>
                           {isRaiseFund && (t.contractor_wallet || t.merkle_proof?.contractor_wallet) && (
-                            <div className="text-[11px] text-gray-500">Contributor wallet: {t.contractor_wallet || t.merkle_proof?.contractor_wallet}</div>
+                            <div className="text-[11px] text-gray-500 modal-address-text" title={t.contractor_wallet || t.merkle_proof?.contractor_wallet}>Contributor wallet: {t.contractor_wallet || t.merkle_proof?.contractor_wallet}</div>
                           )}
                           {(t.skills_required || []).length > 0 && (
                             <div className="text-[11px] text-gray-500">Skills: {(t.skills_required || []).join(', ')}</div>
                           )}
                           {t.merkle_proof && (
-                            <div className="text-[11px] text-gray-500 mt-1">
+                            <div className="text-[11px] text-gray-500 mt-1 modal-address-text" title={t.merkle_proof.funding_address || undefined}>
                               Funding: {t.merkle_proof.funding_address || 'n/a'} • Funded {t.merkle_proof.funded_amount_sats || 0} sats
                             </div>
                           )}

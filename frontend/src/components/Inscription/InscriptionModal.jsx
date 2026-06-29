@@ -134,14 +134,14 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
                               <span className="modal-data-label">Contract ID</span>
                               <CopyButton text={inscription.contract_id || inscription.id} />
                             </div>
-                            <span className="font-mono text-sm text-primary break-all">{inscription.contract_id || inscription.id}</span>
+                            <span className="font-mono text-sm text-primary modal-address-text">{inscription.contract_id || inscription.id}</span>
                           </div>
                           <div className="flex flex-col gap-1">
                             <div className="flex items-center justify-between">
                               <span className="modal-data-label">Visible Pixel Hash</span>
                               <CopyButton text={pixelHash} />
                             </div>
-                            <span className="font-mono text-sm text-primary break-all">{pixelHash}</span>
+                            <span className="font-mono text-sm text-primary modal-address-text">{pixelHash}</span>
                           </div>
                           {inscription.status && (
                             <div className="flex flex-col gap-1">
@@ -247,7 +247,7 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
                                         {status}
                                       </span>
                                       {t.contractor_wallet && (
-                                        <span className="modal-task-wallet">
+                                        <span className="modal-task-wallet" title={t.contractor_wallet}>
                                           • payout: {t.contractor_wallet}
                                         </span>
                                       )}
@@ -362,8 +362,9 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
                             {isRaiseFund ? 'Fund deposit address' : 'Payer address'}
                           </label>
                           <div
-                            className="modal-deliverables-box"
-                            style={{ minHeight: '2.5rem', padding: '0.5rem 0.75rem', fontFamily: 'monospace', fontSize: '0.7rem' }}
+                            className="modal-deliverables-box modal-address-text"
+                            style={{ minHeight: '2.5rem', padding: '0.5rem 0.75rem', fontSize: '0.7rem' }}
+                            title={isRaiseFund ? (resolvedFundraiserWallet || undefined) : (auth.wallet || fundDepositAddress || undefined)}
                           >
                             {isRaiseFund ? resolvedFundraiserWallet || 'n/a' : auth.wallet || fundDepositAddress || 'n/a'}
                           </div>
@@ -414,10 +415,10 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
                               ? 'Contributor summary by contractor wallet'
                               : 'Payout summary by contractor wallet'}
                           </div>
-                          <div className="modal-deliverables-box" style={{ flexDirection: 'column', gap: '0.5rem' }}>
+                          <div className="modal-deliverables-box" style={{ flexDirection: 'column', gap: '0.5rem', alignItems: 'stretch' }}>
                             {payoutSummaries.map((item) => (
                               <div key={item.wallet} className="modal-deliverables-row">
-                                <span>{item.wallet}</span>
+                                <span className="modal-address-text" title={item.wallet}>{item.wallet}</span>
                                 <span>{item.total} sats</span>
                               </div>
                             ))}
@@ -425,7 +426,7 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
                         </div>
                         <div className="space-y-2 md:col-span-2">
                           <label className="block modal-deliverables-label">Contract ID</label>
-                          <div className="modal-deliverables-contract">
+                          <div className="modal-deliverables-contract modal-address-text" title={psbtForm.contractId || primaryContractId || undefined}>
                             {psbtForm.contractId || primaryContractId || 'n/a'}
                           </div>
                         </div>
@@ -471,7 +472,7 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
                               const payerAddress = entry.payer_address || 'Unknown';
                               return (
                                 <div key={`${payerAddress}-${index}`} className="modal-deliverables-card" style={{ padding: '0.75rem' }}>
-                                  <div className="modal-psbt-row" style={{ fontSize: '0.688rem' }}>
+                                  <div className="modal-psbt-row modal-address-text" style={{ fontSize: '0.688rem' }} title={payerAddress}>
                                     Contributor: {payerAddress}
                                   </div>
                                   <div className="modal-psbt-grid">
@@ -556,15 +557,15 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
                       return (
                         <div className="modal-psbt-result">
                           <div className="modal-psbt-row">
-                            <span>
+                            <span className="modal-address-text" title={payerDisplay !== 'Not signed in' ? payerDisplay : undefined}>
                               {effectiveRaiseFund ? 'Contributors' : 'Payer'}:{' '}
                               <span style={payerDisplay === 'Not signed in' ? { color: '#ef4444' } : {}}>
                                 {payerDisplay}
                               </span>
                             </span>
-                            <span>Network: {psbtResult.network_params || 'testnet4'}</span>
+                            <span className="flex-shrink-0">Network: {psbtResult.network_params || 'testnet4'}</span>
                           </div>
-                          <div className="modal-psbt-row">
+                          <div className="modal-psbt-row modal-address-text">
                             {effectiveRaiseFund ? 'Fund deposit script' : 'Payout script'}: {psbtResult.payout_script}
                           </div>
                           <div className="modal-psbt-grid">
@@ -586,7 +587,7 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
                           {!effectiveRaiseFund && effectiveChangeAddress && (
                             <div className="modal-deliverables-card" style={{ padding: '0.5rem', fontSize: '0.688rem' }}>
                               <div className="modal-deliverables-label" style={{ fontWeight: 600, marginBottom: '0.25rem' }}>Change address</div>
-                              <div style={{ fontFamily: 'monospace', wordBreak: 'break-all' }}>{effectiveChangeAddress}</div>
+                              <div className="modal-address-text" title={effectiveChangeAddress}>{effectiveChangeAddress}</div>
                             </div>
                           )}
                           {effectiveRaiseFund && payoutAmounts.length > 1 && (

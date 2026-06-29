@@ -713,7 +713,7 @@ function MainContent() {
           ))}
         </div>
 
-        <div className="w-full px-4 sm:px-6 lg:px-8 xl:px-12 py-8" style={{ flex: 1 }}>
+        <div className="w-full px-4 sm:px-6 lg:px-8 xl:px-12 py-8 block-page-content" style={{ flex: 1, minWidth: 0, maxWidth: '100%', overflowX: 'hidden' }}>
           {searchResults !== null ? (
             <div className="mb-8">
               <h2 className="text-4xl font-bold mb-4 text-primary">Search Results</h2>
@@ -1035,25 +1035,23 @@ function MainContent() {
             </div>
           ) : selectedBlock && (
             <>
-              <div className="mb-8">
+              <div className="mb-8 block-detail-header">
                 <h2 className="text-4xl font-bold mb-4 text-primary">Block {selectedBlock.height}</h2>
-                <div className="flex items-center gap-4 text-sm min-w-0 max-w-full">
-                  <div className="flex items-center gap-2 min-w-0 flex-1 max-w-full">
-                    <span
-                      className="text-secondary hash-display-truncate flex-1"
-                      title={selectedBlock.hash}
-                    >
-                      {selectedBlock.hash}
-                    </span>
-                    {copiedText === selectedBlock.hash ? (
-                      <Check className="w-4 h-4 text-success flex-shrink-0" />
-                    ) : (
-                      <Copy
-                        className="w-4 h-4 text-secondary hover:text-primary cursor-pointer flex-shrink-0"
-                        onClick={() => copyToClipboard(selectedBlock.hash)}
-                      />
-                    )}
-                  </div>
+                <div className="block-hash-row text-sm">
+                  <span
+                    className="text-secondary block-hash-text"
+                    title={selectedBlock.hash}
+                  >
+                    {selectedBlock.hash}
+                  </span>
+                  {copiedText === selectedBlock.hash ? (
+                    <Check className="w-4 h-4 text-success block-hash-copy" />
+                  ) : (
+                    <Copy
+                      className="w-4 h-4 text-secondary hover:text-primary cursor-pointer block-hash-copy"
+                      onClick={() => copyToClipboard(selectedBlock.hash)}
+                    />
+                  )}
                 </div>
                 <div className="text-secondary text-sm mt-2">
                   {new Date(selectedBlock.timestamp * 1000).toLocaleString()} ({formatTimeAgo(selectedBlock.timestamp)})
