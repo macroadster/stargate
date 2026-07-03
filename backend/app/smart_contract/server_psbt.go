@@ -118,18 +118,19 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		target = scstore.DefaultBudgetSats()
 	}
 
-	// Handle commitment_sats separately from budget_sats
+	// Handle commitment_sats separately from budget_sats.
+	// Both "funding" and "donation" modes need a small commitment output to
+	// anchor the OP_RETURN proof on-chain.  Only "product" mode defers the
+	// commitment to delivery time (commitmentSats=0).
 	commitmentSats := body.CommitmentSats
 	log.Printf("DEBUG: Initial body.CommitmentSats=%d, body.CommitmentTarget=%s", body.CommitmentSats, body.CommitmentTarget)
 	if commitmentSats <= 0 {
-		// If user is skipping donation (commitment_target != 'donation'), set commitment budget to 0
-		// Otherwise fall back to contract budget for task payouts
-		if body.CommitmentTarget != "donation" {
+		if body.CommitmentTarget == "product" {
 			commitmentSats = 0
-			log.Printf("DEBUG: Setting commitmentSats=0 for skipped donation")
+			log.Printf("DEBUG: Setting commitmentSats=0 for product (deferred to delivery)")
 		} else {
 			commitmentSats = 1000
-			log.Printf("DEBUG: Setting commitmentSats=1000 for donation")
+			log.Printf("DEBUG: Setting commitmentSats=1000 for %s mode", body.CommitmentTarget)
 		}
 	}
 	// Only apply default for donation case if it was actually sent but empty
@@ -253,6 +254,11 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		} else {
 			commitmentLockAddr = primaryPayer
 		}
+		// Use the same OP_RETURN + donation-output path as "donation" mode
+		// so funding transactions also carry on-chain pixel-hash proof.
+		// The commitment sats go to commitmentLockAddr (payer/fundraiser)
+		// instead of the global donation address.
+		donationAddr = commitmentLockAddr
 	case "product":
 		// Product commitment: hashlock is deferred to delivery time (stego reconciliation).
 		// No commitment output in the funding PSBT; the hash will be based on the
@@ -576,6 +582,10 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		"budget_sats":             target,
 		"contractor":              contractorAddressFor(contractorAddr),
 		"network_params":          params.Name,
+		"op_return_script":        hex.EncodeToString(res.OPReturnScript),
+		"op_return_vout":          res.OPReturnVout,
+		"donation_vout":           res.DonationVout,
+		"donation_address":        res.DonationAddr,
 	})
 }
 
