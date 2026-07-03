@@ -135,7 +135,14 @@ FROM mcp_contracts c
 	whereConditions := []string{}
 	args := []interface{}{}
 
-	if filter.Status != "" {
+	if len(filter.Statuses) > 0 {
+		placeholders := make([]string, len(filter.Statuses))
+		for i, st := range filter.Statuses {
+			placeholders[i] = "?"
+			args = append(args, st)
+		}
+		whereConditions = append(whereConditions, "c.status IN ("+strings.Join(placeholders, ",")+")")
+	} else if filter.Status != "" {
 		whereConditions = append(whereConditions, "c.status = ?")
 		args = append(args, filter.Status)
 	}
@@ -151,6 +158,9 @@ FROM mcp_contracts c
 	}
 
 	orderBy := "ORDER BY c.confirmed_block_height DESC NULLS LAST, c.created_at DESC, c.contract_id DESC"
+	if filter.OrderByConfirmedAt {
+		orderBy = "ORDER BY c.confirmed_at DESC NULLS FIRST, c.created_at DESC, c.contract_id DESC"
+	}
 	if filter.Limit > 0 {
 		orderBy += fmt.Sprintf(" LIMIT %d", filter.Limit)
 		if filter.Offset > 0 {
@@ -1079,7 +1089,12 @@ func (s *SQLiteStore) ListProposals(ctx context.Context, filter smart_contract.P
 
 	query += " ORDER BY created_at DESC"
 
-	if filter.MaxResults > 0 {
+	// Only apply SQL LIMIT when no Go-side filters (ContractID, MinBudget, Skills)
+	// will further reduce rows.  When those filters are active the SQL LIMIT would
+	// silently discard matching rows before Go can see them (PG store already works
+	// this way — no SQL LIMIT, Go applies MaxResults at the end).
+	hasGoFilter := filter.ContractID != "" || filter.MinBudget > 0 || len(filter.Skills) > 0
+	if filter.MaxResults > 0 && !hasGoFilter {
 		query += fmt.Sprintf(" LIMIT %d", filter.MaxResults)
 	}
 
@@ -1108,7 +1123,8 @@ func (s *SQLiteStore) ListProposals(ctx context.Context, filter smart_contract.P
 		populateProposalTasks(&p)
 		s.hydrateProposalTasks(ctx, &p)
 
-		// Filter by ContractID (mirrors PG: match against multiple metadata fields)
+		// Filter by ContractID (mirrors PG: match against multiple metadata fields).
+		// Normalize wish- prefix: if the filter is "wish-abc" also match "abc" and vice versa.
 		if filter.ContractID != "" {
 			var candidates []string
 			if v, ok := p.Metadata["contract_id"].(string); ok {
@@ -1121,9 +1137,16 @@ func (s *SQLiteStore) ListProposals(ctx context.Context, filter smart_contract.P
 				candidates = append(candidates, v)
 			}
 			candidates = append(candidates, p.VisiblePixelHash, p.ID)
+
+			// Build normalized search terms: both with and without wish- prefix
+			filterNorm := strings.TrimSpace(filter.ContractID)
+			filterBare := strings.TrimPrefix(filterNorm, "wish-")
+			filterWish := "wish-" + filterBare
+
 			match := false
 			for _, candidate := range candidates {
-				if strings.TrimSpace(candidate) == strings.TrimSpace(filter.ContractID) {
+				c := strings.TrimSpace(candidate)
+				if c == filterNorm || c == filterBare || c == filterWish {
 					match = true
 					break
 				}

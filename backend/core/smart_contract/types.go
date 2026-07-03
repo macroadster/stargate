@@ -169,6 +169,7 @@ type Submission struct {
 // ContractFilter captures list filters for contracts.
 type ContractFilter struct {
 	Status             string
+	Statuses           []string   // Match any of these statuses (OR); takes precedence over Status when non-empty
 	Skills             []string
 	Creator            string
 	AiIdentifier       string

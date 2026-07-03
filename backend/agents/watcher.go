@@ -99,8 +99,8 @@ func (w *Watcher) processPendingProposals(ctx context.Context) {
 		return
 	}
 
-	// Cache open contracts for budget/scope checks
-	openContracts, _ := w.store.ListContracts(smart_contract.ContractFilter{Status: "pending"})
+	// Cache open contracts for budget/scope checks (pending, funded, active — all pre-confirmation statuses)
+	openContracts, _ := w.store.ListContracts(smart_contract.ContractFilter{Statuses: []string{"pending", "created", "funded", "active"}})
 	contractMap := make(map[string]smart_contract.Contract)
 	for _, c := range openContracts {
 		contractMap[c.ContractID] = c

@@ -111,8 +111,8 @@ func (w *Worker) ProcessWishes(ctx context.Context) {
 		}
 	}
 
-	// 2. Get open wishes (pending contracts)
-	contracts, err := w.store.ListContracts(smart_contract.ContractFilter{Status: "pending"})
+	// 2. Get open wishes (pending, funded, active — all pre-confirmation statuses)
+	contracts, err := w.store.ListContracts(smart_contract.ContractFilter{Statuses: []string{"pending", "created", "funded", "active"}})
 	if err != nil {
 		log.Printf("agents/worker: list open contracts failed: %v", err)
 		return

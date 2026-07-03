@@ -2166,8 +2166,9 @@ func (h *HTTPMCPServer) handleGetOpenContracts(ctx context.Context, args map[str
 			filter.Status = status
 		}
 	} else {
-		// Default to pending contracts for MCP tool
-		filter.Status = "pending"
+		// Default to all "open" contract statuses: pending wishes, funded contracts,
+		// and active contracts that have not yet been confirmed on-chain.
+		filter.Statuses = []string{"pending", "created", "funded", "active"}
 	}
 
 	// Handle limit parameter
@@ -2217,10 +2218,16 @@ func (h *HTTPMCPServer) handleGetOpenContracts(ctx context.Context, args map[str
 		mcpContracts = append(mcpContracts, mcpContract)
 	}
 
+	// Report which status filter was applied in the response
+	statusLabel := filter.Status
+	if len(filter.Statuses) > 0 {
+		statusLabel = strings.Join(filter.Statuses, ",")
+	}
+
 	return map[string]interface{}{
 		"contracts":   mcpContracts,
 		"total_count": len(mcpContracts),
-		"status":      filter.Status,
+		"status":      statusLabel,
 		"limit":       limit,
 	}, nil
 }

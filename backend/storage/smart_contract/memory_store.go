@@ -137,7 +137,18 @@ func (s *MemoryStore) ListContracts(filter smart_contract.ContractFilter) ([]sma
 	}
 	out := make([]smart_contract.Contract, 0, len(s.contracts))
 	for _, c := range s.contracts {
-		if filter.Status != "" && !strings.EqualFold(filter.Status, c.Status) {
+		if len(filter.Statuses) > 0 {
+			matched := false
+			for _, st := range filter.Statuses {
+				if strings.EqualFold(st, c.Status) {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+		} else if filter.Status != "" && !strings.EqualFold(filter.Status, c.Status) {
 			continue
 		}
 		if len(filter.Skills) > 0 && !containsSkill(c.Skills, filter.Skills) {
@@ -865,9 +876,15 @@ func (s *MemoryStore) ListProposals(ctx context.Context, filter smart_contract.P
 				candidates = append(candidates, v)
 			}
 			candidates = append(candidates, p.VisiblePixelHash, p.ID)
+
+			filterNorm := strings.TrimSpace(filter.ContractID)
+			filterBare := strings.TrimPrefix(filterNorm, "wish-")
+			filterWish := "wish-" + filterBare
+
 			match := false
 			for _, candidate := range candidates {
-				if strings.TrimSpace(candidate) == strings.TrimSpace(filter.ContractID) {
+				c := strings.TrimSpace(candidate)
+				if c == filterNorm || c == filterBare || c == filterWish {
 					match = true
 					break
 				}

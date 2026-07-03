@@ -256,8 +256,16 @@ FROM mcp_contracts c
 	args := []interface{}{}
 	argIndex := 1
 
-	// Status filter
-	if filter.Status != "" {
+	// Status filter — Statuses (multi-value OR) takes precedence over single Status
+	if len(filter.Statuses) > 0 {
+		placeholders := make([]string, len(filter.Statuses))
+		for i, st := range filter.Statuses {
+			placeholders[i] = fmt.Sprintf("$%d", argIndex)
+			args = append(args, st)
+			argIndex++
+		}
+		whereConditions = append(whereConditions, "c.status IN ("+strings.Join(placeholders, ",")+")")
+	} else if filter.Status != "" {
 		whereConditions = append(whereConditions, fmt.Sprintf("c.status = $%d", argIndex))
 		args = append(args, filter.Status)
 		argIndex++
@@ -1594,6 +1602,7 @@ func (s *PGStore) ListProposals(ctx context.Context, filter smart_contract.Propo
 		_ = json.Unmarshal(meta, &p.Metadata)
 		populateProposalTasks(&p)
 		s.hydrateProposalTasks(ctx, &p)
+		// Filter by ContractID: normalize wish- prefix so "wish-abc" also matches "abc" and vice versa.
 		if filter.ContractID != "" {
 			var candidates []string
 			if v, ok := p.Metadata["contract_id"].(string); ok {
@@ -1606,9 +1615,15 @@ func (s *PGStore) ListProposals(ctx context.Context, filter smart_contract.Propo
 				candidates = append(candidates, v)
 			}
 			candidates = append(candidates, p.VisiblePixelHash, p.ID)
+
+			filterNorm := strings.TrimSpace(filter.ContractID)
+			filterBare := strings.TrimPrefix(filterNorm, "wish-")
+			filterWish := "wish-" + filterBare
+
 			match := false
 			for _, candidate := range candidates {
-				if strings.TrimSpace(candidate) == strings.TrimSpace(filter.ContractID) {
+				c := strings.TrimSpace(candidate)
+				if c == filterNorm || c == filterBare || c == filterWish {
 					match = true
 					break
 				}
