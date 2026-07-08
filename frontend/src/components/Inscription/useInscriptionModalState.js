@@ -1,7 +1,7 @@
 import React, { useLayoutEffect, useState, useEffect, useMemo, useCallback } from 'react';
 import toast from 'react-hot-toast';
 import { API_BASE } from '../../apiBase';
-import { apiFetch } from '../../utils/api';
+import { apiFetch, extractApiErrorMessage } from '../../utils/api';
 import { useAuth } from '../../context/AuthContext';
 import { useInscriptionNetwork } from './useInscriptionNetwork';
 import {
@@ -813,16 +813,11 @@ export function useInscriptionModalState(inscription, initialTab = 'content') {
         let errorMessage = body || `HTTP ${res.status}`;
         try {
           const parsedBody = JSON.parse(body);
-          const errorObj = parsedBody?.error;
-          errorMessage = 
-            parsedBody?.message || 
-            (typeof errorObj === 'string' ? errorObj : errorObj?.message || errorObj?.error) || 
-            body || 
-            `HTTP ${res.status}`;
+          errorMessage = extractApiErrorMessage(parsedBody, body || `HTTP ${res.status}`);
         } catch {
           // Use original body if it's not valid JSON
         }
-        throw new Error(errorMessage);
+        throw new Error(String(errorMessage || `HTTP ${res.status}`));
       }
       await loadProposals({ showLoading: true });
       toast.success(isPublish ? 'Proposal published' : 'Proposal approved & published');
@@ -916,17 +911,12 @@ export function useInscriptionModalState(inscription, initialTab = 'content') {
       const data = await res.json();
       const payloadData = data?.data || data;
       if (!res.ok) {
-        const errorObj = payloadData?.error || data?.error;
-        const errorMessage = 
-          data?.message || 
-          payloadData?.message || 
-          (typeof errorObj === 'string' ? errorObj : errorObj?.message || errorObj?.error) || 
-          `HTTP ${res.status}`;
+        const errorMessage = extractApiErrorMessage(data, `HTTP ${res.status}`);
         throw new Error(errorMessage);
       }
       setPsbtResult(payloadData);
     } catch (err) {
-      setPsbtError(err.message);
+      setPsbtError(String(err?.message || err || 'PSBT build failed'));
     } finally {
       setPsbtLoading(false);
     }
@@ -975,7 +965,7 @@ export function useInscriptionModalState(inscription, initialTab = 'content') {
       }
       await generatePSBT();
     } catch (err) {
-      setPsbtError(err.message);
+      setPsbtError(String(err?.message || err || 'PSBT build failed'));
     }
   };
 
