@@ -2,6 +2,7 @@ package stego
 
 import (
 	"archive/tar"
+	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -51,7 +52,8 @@ func HashSandboxDir(dir string) (string, error) {
 	}
 
 	h := sha256.New()
-	tw := tar.NewWriter(h)
+	gw, _ := gzip.NewWriterLevel(h, gzip.BestCompression)
+	tw := tar.NewWriter(gw)
 
 	for _, rel := range files {
 		full := filepath.Join(dir, rel)
@@ -76,6 +78,9 @@ func HashSandboxDir(dir string) (string, error) {
 	}
 	if err := tw.Close(); err != nil {
 		return "", fmt.Errorf("tar close: %w", err)
+	}
+	if err := gw.Close(); err != nil {
+		return "", fmt.Errorf("gzip close: %w", err)
 	}
 
 	return hex.EncodeToString(h.Sum(nil)), nil
@@ -140,7 +145,8 @@ func WriteSandboxTarball(dir, outPath string) (string, error) {
 
 	h := sha256.New()
 	mw := io.MultiWriter(f, h)
-	tw := tar.NewWriter(mw)
+	gw, _ := gzip.NewWriterLevel(mw, gzip.BestCompression)
+	tw := tar.NewWriter(gw)
 
 	for _, rel := range files {
 		full := filepath.Join(dir, rel)
@@ -163,6 +169,9 @@ func WriteSandboxTarball(dir, outPath string) (string, error) {
 	}
 	if err := tw.Close(); err != nil {
 		return "", fmt.Errorf("tar close: %w", err)
+	}
+	if err := gw.Close(); err != nil {
+		return "", fmt.Errorf("gzip close: %w", err)
 	}
 
 	return hex.EncodeToString(h.Sum(nil)), nil

@@ -3,6 +3,7 @@ package smart_contract
 import (
 	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -942,7 +943,13 @@ func (s *Server) extractSandboxTarball(contractID string, tarballBytes []byte, r
 		log.Printf("sandbox: failed to create results dir %s: %v", resultsDir, err)
 		return
 	}
-	tr := tar.NewReader(bytes.NewReader(tarballBytes))
+	gr, err := gzip.NewReader(bytes.NewReader(tarballBytes))
+	if err != nil {
+		log.Printf("sandbox: gzip open failed for %s: %v", contractID, err)
+		return
+	}
+	defer gr.Close()
+	tr := tar.NewReader(gr)
 	fileCount := 0
 	for {
 		hdr, err := tr.Next()
