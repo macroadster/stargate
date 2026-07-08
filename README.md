@@ -162,7 +162,7 @@ curl -fsSL https://raw.githubusercontent.com/macroadster/stargate/main/install.s
 stargate
 ```
 
-Server: `http://localhost:3001` with SQLite. Linux/macOS amd64 and arm64. Installs to `~/.local/bin` (no sudo). If that directory is not on your PATH, the script appends it to your shell profile (`.zshrc` / `.bashrc` / etc.). Set `INSTALL_DIR` to override the install path.
+Server: `http://localhost:3001` with SQLite. Linux/macOS amd64 and arm64. Installs to `~/.local/bin`. If that directory is not on your PATH, the script appends it to your shell profile (`.zshrc` / `.bashrc` / etc.). Set `INSTALL_DIR` to override the install path.
 
 ### Development prerequisites
 

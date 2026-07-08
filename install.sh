@@ -2,7 +2,7 @@
 set -euo pipefail
 
 REPO="macroadster/stargate"
-# User-local install by default — no root/sudo required.
+# User-local install by default.
 INSTALL_DIR="${INSTALL_DIR:-${HOME}/.local/bin}"
 BINARY_NAME="stargate"
 
@@ -35,7 +35,7 @@ fi
 
 chmod +x "$TMP"
 
-# Ensure install directory exists (user-owned; no sudo).
+# Ensure install directory exists.
 if [ ! -d "$INSTALL_DIR" ]; then
   echo "Creating install directory: $INSTALL_DIR"
   mkdir -p "$INSTALL_DIR"
