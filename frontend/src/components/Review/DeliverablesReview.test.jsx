@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import { vi } from 'vitest';
 import DeliverablesReview from './DeliverablesReview';
@@ -62,6 +62,58 @@ describe('DeliverablesReview', () => {
 
     await waitFor(() => {
       expect(screen.getByText('No Deliverables Found')).toBeInTheDocument();
+    });
+  });
+
+  test('expanding a deliverable renders notes via renderMarkdown without crash', async () => {
+    const submission = {
+      submission_id: 'sub-1',
+      task_id: 'task-1',
+      claim_id: 'claim-1',
+      status: 'pending',
+      submitted_at: '2026-01-01T00:00:00Z',
+      deliverables: {
+        notes: '# Work complete\n\n- item one\n- item two',
+        document: '## Document\n\nDetails here.',
+      },
+    };
+
+    render(
+      <AuthProvider>
+        <DeliverablesReview
+          proposalItems={[
+            {
+              id: 'prop-1',
+              title: 'Test Proposal',
+              tasks: [
+                {
+                  task_id: 'task-1',
+                  title: 'Implement feature',
+                  active_claim_id: 'claim-1',
+                },
+              ],
+            },
+          ]}
+          submissions={{ 'task-1': submission }}
+          onRefresh={jest.fn()}
+        />
+      </AuthProvider>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Implement feature')).toBeInTheDocument();
+    });
+
+    const expandBtn = document.querySelector('.deliverables-expand-btn');
+    expect(expandBtn).toBeTruthy();
+    fireEvent.click(expandBtn);
+
+    await waitFor(() => {
+      expect(screen.getByText('Submission Notes')).toBeInTheDocument();
+      expect(screen.getByText('Submission Document')).toBeInTheDocument();
+      // Notes appear in collapsed preview and expanded markdown section
+      expect(screen.getAllByText(/Work complete/).length).toBeGreaterThan(0);
+      expect(screen.getAllByText(/Details here/).length).toBeGreaterThan(0);
     });
   });
 });

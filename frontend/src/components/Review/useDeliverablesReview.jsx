@@ -1,4 +1,5 @@
 import React, { useLayoutEffect, useRef, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
 import { CheckCircle, XCircle, Clock, Eye, FileText, Code } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { apiFetch } from '../../utils/api';
@@ -425,6 +426,6 @@ export function useDeliverablesReview({ proposalItems, submissions, submissionsL
     selectedCount, allSelected, submissionsByTask, comparisonGroups,
     toggleTaskExpansion, reviewDeliverable, toggleSelectSubmission,
     toggleSelectAll, bulkReview, fetchProofContent, exportComparison,
-    getStatusIcon, getStatusColor, renderProofContent,
+    getStatusIcon, getStatusColor, renderProofContent, renderMarkdown,
   };
 }

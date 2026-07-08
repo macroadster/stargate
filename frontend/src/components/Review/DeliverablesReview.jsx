@@ -1,5 +1,4 @@
 import React from 'react';
-import ReactMarkdown from 'react-markdown';
 import { CheckCircle, XCircle, Clock, ExternalLink, Filter, ChevronDown, ChevronUp, Eye, FileText, Code, Columns, List } from 'lucide-react';
 import CopyButton from '../Common/CopyButton';
 import {
@@ -7,6 +6,7 @@ import {
   getSubmissionNotes,
   getNotesPreview,
   getSubmissionId,
+  getSubmissionTimestamp,
   formatTimestamp,
   sortSubmissions,
 } from './deliverablesUtils';
@@ -19,9 +19,9 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
     proofContent, loadingProof, viewMode, setViewMode, sortBy, setSortBy,
     expandedSubmissions, setExpandedSubmissions, expandedDiffs, setExpandedDiffs, selectedSubmissions,
     rootRef, scrollTopRef, submissionsArray, allDeliverables, filteredDeliverables, selectableDeliverables,
-    selectedCount, allSelected, comparisonGroups,
+    selectedCount, allSelected, submissionsByTask, comparisonGroups,
     toggleTaskExpansion, reviewDeliverable, toggleSelectSubmission, toggleSelectAll, bulkReview, fetchProofContent,
-    exportComparison, getStatusIcon, getStatusColor, renderProofContent,
+    exportComparison, getStatusIcon, getStatusColor, renderProofContent, renderMarkdown,
   } = d;
 
   if (allDeliverables.length === 0 && comparisonGroups.length === 0) {
