@@ -567,3 +567,88 @@ func TestSQLiteGetTaskFallsBackContractorWalletFromClaimedBy(t *testing.T) {
 		t.Fatalf("list fallback failed: %#v", listed)
 	}
 }
+
+// Regression: force-scan/oracle reconcile panics when contract metadata is JSON null
+// ("assignment to entry in nil map" in ConfirmContract).
+func TestSQLiteConfirmContractWithNullMetadata(t *testing.T) {
+	store := newTestSQLiteStore(t)
+	ctx := context.Background()
+
+	// Use a non-wish id so ConfirmContract does not self-supersede after confirm.
+	const contractID = "09b23298cdfca94a9ecf332dff923941daf4b2c2f3fe2656398001f70236637e"
+	contract := core.Contract{
+		ContractID:          contractID,
+		Title:               "Null metadata contract",
+		Status:              "active",
+		CreatedAt:           time.Now().UTC(),
+		TotalBudgetSats:     1000,
+		AvailableTasksCount: 0,
+	}
+	if err := store.UpsertContractWithTasks(ctx, contract, nil); err != nil {
+		t.Fatalf("seed contract: %v", err)
+	}
+	// JSON null unmarshals into a nil map — the panic path on force scan.
+	if _, err := store.db.Exec(`UPDATE mcp_contracts SET metadata=? WHERE contract_id=?`, "null", contractID); err != nil {
+		t.Fatalf("set null metadata: %v", err)
+	}
+
+	const txid = "6df5d5c0ec58aa3b000000000000000000000000000000000000000000000000"
+	const height = 143438
+	if err := store.ConfirmContract(ctx, contractID, height, txid); err != nil {
+		t.Fatalf("ConfirmContract with null metadata: %v", err)
+	}
+
+	got, err := store.GetContract(contractID)
+	if err != nil {
+		t.Fatalf("GetContract after confirm: %v", err)
+	}
+	if got.Status != "confirmed" {
+		t.Fatalf("status: got %q want confirmed", got.Status)
+	}
+	if got.Metadata == nil {
+		t.Fatal("metadata should not be nil after confirm")
+	}
+	if got.Metadata["confirmed_txid"] != txid {
+		t.Fatalf("confirmed_txid: got %#v want %q", got.Metadata["confirmed_txid"], txid)
+	}
+}
+
+func TestSQLiteConfirmContractBootstrapsFromWishWithNullMetadata(t *testing.T) {
+	store := newTestSQLiteStore(t)
+	ctx := context.Background()
+
+	const hash = "09b23298cdfca94a9ecf332dff923941daf4b2c2f3fe2656398001f70236637e"
+	wishID := "wish-" + hash
+	wish := core.Contract{
+		ContractID:          wishID,
+		Title:               "Wish with null metadata",
+		Status:              "active",
+		CreatedAt:           time.Now().UTC(),
+		TotalBudgetSats:     500,
+		AvailableTasksCount: 0,
+	}
+	if err := store.UpsertContractWithTasks(ctx, wish, nil); err != nil {
+		t.Fatalf("seed wish: %v", err)
+	}
+	if _, err := store.db.Exec(`UPDATE mcp_contracts SET metadata=? WHERE contract_id=?`, "null", wishID); err != nil {
+		t.Fatalf("set null wish metadata: %v", err)
+	}
+
+	const txid = "6df5d5c0ec58aa3b000000000000000000000000000000000000000000000001"
+	const height = 143438
+	// Confirm the non-wish id so rowsAffected==0 and bootstrap path runs.
+	if err := store.ConfirmContract(ctx, hash, height, txid); err != nil {
+		t.Fatalf("ConfirmContract bootstrap: %v", err)
+	}
+
+	got, err := store.GetContract(hash)
+	if err != nil {
+		t.Fatalf("GetContract confirmed: %v", err)
+	}
+	if got.Status != "confirmed" {
+		t.Fatalf("status: got %q want confirmed", got.Status)
+	}
+	if got.Metadata == nil || got.Metadata["confirmed_txid"] != txid {
+		t.Fatalf("expected confirmed_txid in metadata, got %#v", got.Metadata)
+	}
+}

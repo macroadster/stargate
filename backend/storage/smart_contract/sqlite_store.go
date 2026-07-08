@@ -962,6 +962,10 @@ func (s *SQLiteStore) ConfirmContract(ctx context.Context, contractID string, bl
 	if len(existingMeta) > 0 {
 		_ = json.Unmarshal(existingMeta, &meta)
 	}
+	// json.Unmarshal of JSON null sets the map to nil — re-init before writes.
+	if meta == nil {
+		meta = map[string]interface{}{}
+	}
 	meta["confirmed_txid"] = txid
 	meta["confirmed_block_height"] = blockHeight
 	updatedMeta, _ := json.Marshal(meta)
@@ -995,6 +999,10 @@ FROM mcp_contracts WHERE contract_id=?`, wishID).Scan(&wishTitle, &wishBudget, &
 			wishMetaMap := map[string]interface{}{}
 			if len(wishMeta) > 0 {
 				_ = json.Unmarshal(wishMeta, &wishMetaMap)
+			}
+			// json.Unmarshal of JSON null sets the map to nil — re-init before writes.
+			if wishMetaMap == nil {
+				wishMetaMap = map[string]interface{}{}
 			}
 			// Layer confirmation fields on top of wish metadata.
 			for k, v := range meta {
