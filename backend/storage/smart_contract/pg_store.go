@@ -819,20 +819,6 @@ FROM mcp_tasks WHERE task_id=$1 FOR UPDATE
 	if activeClaimErr != nil {
 		return smart_contract.Claim{}, activeClaimErr
 	}
-	if activeClaim != nil {
-		// Ensure task table matches.
-		_, _ = tx.Exec(ctx, `UPDATE mcp_tasks SET status='claimed', claimed_by=$2 WHERE task_id=$1`, taskID, activeClaim.AiIdentifier)
-		return *activeClaim, tx.Commit(ctx)
-	}
-
-	// New claim logic: task must be available or claimed (for re-claim by same agent)
-	if strings.EqualFold(task.Status, "approved") || strings.EqualFold(task.Status, "completed") || strings.EqualFold(task.Status, "published") || strings.EqualFold(task.Status, "submitted") {
-		return smart_contract.Claim{}, ErrTaskUnavailable
-	}
-
-	if err := ValidateBitcoinAddress(normalizedWallet); err != nil {
-		return smart_contract.Claim{}, fmt.Errorf("wallet address validation failed: %v", err)
-	}
 
 	persistWallet := func(wallet string) error {
 		wallet = strings.TrimSpace(wallet)
@@ -850,6 +836,24 @@ FROM mcp_tasks WHERE task_id=$1 FOR UPDATE
 		proofJSON, _ := json.Marshal(task.MerkleProof)
 		_, err := tx.Exec(ctx, `UPDATE mcp_tasks SET merkle_proof=$2 WHERE task_id=$1`, taskID, string(proofJSON))
 		return err
+	}
+
+	if activeClaim != nil {
+		// Ensure task table matches and contractor_wallet is present (backfill legacy claims).
+		_, _ = tx.Exec(ctx, `UPDATE mcp_tasks SET status='claimed', claimed_by=$2 WHERE task_id=$1`, taskID, activeClaim.AiIdentifier)
+		if err := persistWallet(normalizedWallet); err != nil {
+			return smart_contract.Claim{}, err
+		}
+		return *activeClaim, tx.Commit(ctx)
+	}
+
+	// New claim logic: task must be available or claimed (for re-claim by same agent)
+	if strings.EqualFold(task.Status, "approved") || strings.EqualFold(task.Status, "completed") || strings.EqualFold(task.Status, "published") || strings.EqualFold(task.Status, "submitted") {
+		return smart_contract.Claim{}, ErrTaskUnavailable
+	}
+
+	if err := ValidateBitcoinAddress(normalizedWallet); err != nil {
+		return smart_contract.Claim{}, fmt.Errorf("wallet address validation failed: %v", err)
 	}
 
 	claimID := fmt.Sprintf("CLAIM-%d", time.Now().UnixNano())

@@ -3,6 +3,7 @@ package smart_contract
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -323,5 +324,246 @@ func TestSQLiteStoreProposalWorkflowValidation(t *testing.T) {
 	}
 	if tasks[0].Status != "published" {
 		t.Fatalf("expected task published, got %q", tasks[0].Status)
+	}
+}
+
+func TestSQLiteClaimTaskPersistsContractorWallet(t *testing.T) {
+	store := newTestSQLiteStore(t)
+	ctx := context.Background()
+
+	const wallet = "tb1qcssj2506qzmvryuvqaa83ncm80umfmz9py5qyy"
+	const pixelHash = "09b23298cdfca94a9ecf332dff923941daf4b2c2f3fe2656398001f70236637e"
+
+	contract := core.Contract{
+		ContractID:          "wish-" + pixelHash,
+		Title:               "Spreadsheet Web App Delivery",
+		Status:              "active",
+		CreatedAt:           time.Now().UTC(),
+		TotalBudgetSats:     1000,
+		AvailableTasksCount: 1,
+	}
+	// Seed with provisional merkle proof (as proposal publish does) but no contractor_wallet yet.
+	task := core.Task{
+		TaskID:      "proposal-test-task-1",
+		ContractID:  contract.ContractID,
+		Title:       "Implement Spreadsheet web app",
+		Description: "Ship the app",
+		BudgetSats:  500,
+		Status:      "available",
+		MerkleProof: &core.MerkleProof{
+			VisiblePixelHash:   pixelHash,
+			FundedAmountSats:   500,
+			ConfirmationStatus: "provisional",
+		},
+	}
+	if err := store.UpsertContractWithTasks(ctx, contract, []core.Task{task}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	claim, err := store.ClaimTask(task.TaskID, wallet, nil)
+	if err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	if claim.AiIdentifier != wallet {
+		t.Fatalf("claim ai_identifier: got %q want %q", claim.AiIdentifier, wallet)
+	}
+
+	got, err := store.GetTask(task.TaskID)
+	if err != nil {
+		t.Fatalf("get task: %v", err)
+	}
+	if got.Status != "claimed" {
+		t.Fatalf("status: got %q want claimed", got.Status)
+	}
+	if got.ClaimedBy != wallet {
+		t.Fatalf("claimed_by: got %q want %q", got.ClaimedBy, wallet)
+	}
+	if got.ContractorWallet != wallet {
+		t.Fatalf("contractor_wallet: got %q want %q", got.ContractorWallet, wallet)
+	}
+	if got.MerkleProof == nil {
+		t.Fatal("expected merkle_proof after claim")
+	}
+	if got.MerkleProof.ContractorWallet != wallet {
+		t.Fatalf("merkle_proof.contractor_wallet: got %q want %q", got.MerkleProof.ContractorWallet, wallet)
+	}
+	// Existing provisional fields must survive claim.
+	if got.MerkleProof.VisiblePixelHash != pixelHash {
+		t.Fatalf("visible_pixel_hash wiped: got %q", got.MerkleProof.VisiblePixelHash)
+	}
+	if got.MerkleProof.FundedAmountSats != 500 {
+		t.Fatalf("funded_amount_sats wiped: got %d", got.MerkleProof.FundedAmountSats)
+	}
+	if got.MerkleProof.ConfirmationStatus != "provisional" {
+		t.Fatalf("confirmation_status wiped: got %q", got.MerkleProof.ConfirmationStatus)
+	}
+
+	// ListTasks path also exposes contractor_wallet (build_psbt uses this).
+	listed, err := store.ListTasks(core.TaskFilter{ContractID: contract.ContractID})
+	if err != nil {
+		t.Fatalf("list tasks: %v", err)
+	}
+	if len(listed) != 1 {
+		t.Fatalf("list tasks len: got %d", len(listed))
+	}
+	if listed[0].ContractorWallet != wallet {
+		t.Fatalf("list contractor_wallet: got %q want %q", listed[0].ContractorWallet, wallet)
+	}
+
+	// UpdateTaskProof must not wipe contractor_wallet when callers rewrite provisional proofs.
+	newProof := &core.MerkleProof{
+		VisiblePixelHash:   pixelHash,
+		FundedAmountSats:   500,
+		ConfirmationStatus: "provisional",
+		// intentionally omit ContractorWallet
+	}
+	if err := store.UpdateTaskProof(ctx, task.TaskID, newProof); err != nil {
+		t.Fatalf("update proof: %v", err)
+	}
+	got, err = store.GetTask(task.TaskID)
+	if err != nil {
+		t.Fatalf("get task after proof update: %v", err)
+	}
+	if got.ContractorWallet != wallet || got.MerkleProof == nil || got.MerkleProof.ContractorWallet != wallet {
+		t.Fatalf("contractor_wallet lost after UpdateTaskProof: task=%q proof=%#v", got.ContractorWallet, got.MerkleProof)
+	}
+
+	// Idempotent re-claim still returns the active claim and keeps wallet.
+	claim2, err := store.ClaimTask(task.TaskID, wallet, nil)
+	if err != nil {
+		t.Fatalf("re-claim: %v", err)
+	}
+	if claim2.ClaimID != claim.ClaimID {
+		t.Fatalf("re-claim id: got %q want %q", claim2.ClaimID, claim.ClaimID)
+	}
+	got, err = store.GetTask(task.TaskID)
+	if err != nil {
+		t.Fatalf("get task after re-claim: %v", err)
+	}
+	if got.ContractorWallet != wallet {
+		t.Fatalf("contractor_wallet after re-claim: got %q want %q", got.ContractorWallet, wallet)
+	}
+}
+
+func TestSQLiteClaimTaskBackfillsMissingContractorWallet(t *testing.T) {
+	store := newTestSQLiteStore(t)
+	ctx := context.Background()
+
+	const wallet = "tb1qcssj2506qzmvryuvqaa83ncm80umfmz9py5qyy"
+
+	contract := core.Contract{
+		ContractID:          "contract-backfill",
+		Title:               "Backfill",
+		Status:              "active",
+		CreatedAt:           time.Now().UTC(),
+		TotalBudgetSats:     100,
+		AvailableTasksCount: 1,
+	}
+	task := core.Task{
+		TaskID:     "task-backfill-1",
+		ContractID: contract.ContractID,
+		Title:      "Backfill task",
+		BudgetSats: 100,
+		Status:     "available",
+	}
+	if err := store.UpsertContractWithTasks(ctx, contract, []core.Task{task}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// Simulate legacy claim: status claimed + claim row, but no contractor_wallet in merkle_proof.
+	if _, err := store.ClaimTask(task.TaskID, wallet, nil); err != nil {
+		t.Fatalf("initial claim: %v", err)
+	}
+	// Wipe contractor_wallet as if written by a pre-fix sqlite path.
+	if err := store.UpdateTaskProof(ctx, task.TaskID, &core.MerkleProof{
+		ConfirmationStatus: "provisional",
+		// no contractor_wallet — but UpdateTaskProof now preserves existing; force-wipe via raw SQL
+	}); err != nil {
+		t.Fatalf("update proof: %v", err)
+	}
+	// Force-clear wallet the way the old claim path left tasks (no contractor_wallet in stored proof).
+	if _, err := store.db.Exec(`UPDATE mcp_tasks SET merkle_proof=? WHERE task_id=?`,
+		`{"confirmation_status":"provisional"}`, task.TaskID); err != nil {
+		t.Fatalf("force wipe: %v", err)
+	}
+	var rawProof string
+	if err := store.db.QueryRow(`SELECT merkle_proof FROM mcp_tasks WHERE task_id=?`, task.TaskID).Scan(&rawProof); err != nil {
+		t.Fatalf("read raw proof: %v", err)
+	}
+	if strings.Contains(rawProof, "contractor_wallet") {
+		t.Fatalf("expected raw merkle_proof without contractor_wallet, got %s", rawProof)
+	}
+
+	// Re-claim by same wallet should persist contractor_wallet back into storage.
+	if _, err := store.ClaimTask(task.TaskID, wallet, nil); err != nil {
+		t.Fatalf("re-claim backfill: %v", err)
+	}
+	if err := store.db.QueryRow(`SELECT merkle_proof FROM mcp_tasks WHERE task_id=?`, task.TaskID).Scan(&rawProof); err != nil {
+		t.Fatalf("read raw proof after backfill: %v", err)
+	}
+	if !strings.Contains(rawProof, wallet) {
+		t.Fatalf("expected persisted contractor_wallet in merkle_proof, got %s", rawProof)
+	}
+	got, err := store.GetTask(task.TaskID)
+	if err != nil {
+		t.Fatalf("get after backfill: %v", err)
+	}
+	if got.ContractorWallet != wallet {
+		t.Fatalf("backfill contractor_wallet: got %q want %q", got.ContractorWallet, wallet)
+	}
+	if got.MerkleProof == nil || got.MerkleProof.ContractorWallet != wallet {
+		t.Fatalf("backfill merkle proof wallet missing: %#v", got.MerkleProof)
+	}
+}
+
+func TestSQLiteGetTaskFallsBackContractorWalletFromClaimedBy(t *testing.T) {
+	store := newTestSQLiteStore(t)
+	ctx := context.Background()
+
+	const wallet = "tb1qcssj2506qzmvryuvqaa83ncm80umfmz9py5qyy"
+	contract := core.Contract{
+		ContractID:          "contract-fallback",
+		Title:               "Fallback",
+		Status:              "active",
+		CreatedAt:           time.Now().UTC(),
+		TotalBudgetSats:     100,
+		AvailableTasksCount: 1,
+	}
+	task := core.Task{
+		TaskID:     "task-fallback-1",
+		ContractID: contract.ContractID,
+		Title:      "Fallback task",
+		BudgetSats: 100,
+		Status:     "available",
+	}
+	if err := store.UpsertContractWithTasks(ctx, contract, []core.Task{task}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if _, err := store.ClaimTask(task.TaskID, wallet, nil); err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	// Legacy row shape: claimed_by set, merkle_proof without contractor_wallet.
+	if _, err := store.db.Exec(`UPDATE mcp_tasks SET merkle_proof=? WHERE task_id=?`,
+		`{"confirmation_status":"provisional","funded_amount_sats":100}`, task.TaskID); err != nil {
+		t.Fatalf("wipe proof wallet: %v", err)
+	}
+
+	got, err := store.GetTask(task.TaskID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.ContractorWallet != wallet {
+		t.Fatalf("expected fallback contractor_wallet %q, got %q", wallet, got.ContractorWallet)
+	}
+	if got.MerkleProof == nil || got.MerkleProof.ContractorWallet != wallet {
+		t.Fatalf("expected in-memory merkle proof wallet backfill, got %#v", got.MerkleProof)
+	}
+
+	listed, err := store.ListTasks(core.TaskFilter{ContractID: contract.ContractID})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(listed) != 1 || listed[0].ContractorWallet != wallet {
+		t.Fatalf("list fallback failed: %#v", listed)
 	}
 }

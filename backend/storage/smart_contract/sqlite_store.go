@@ -283,7 +283,23 @@ func scanTaskSQLite(rows *sql.Rows) (smart_contract.Task, error) {
 		_ = json.Unmarshal(requirementsStr, &t.Requirements)
 	}
 	if len(merkleProofStr) > 0 {
-		_ = json.Unmarshal(merkleProofStr, &t.MerkleProof)
+		var proof smart_contract.MerkleProof
+		if err := json.Unmarshal(merkleProofStr, &proof); err == nil {
+			t.MerkleProof = &proof
+			if w := strings.TrimSpace(proof.ContractorWallet); w != "" {
+				t.ContractorWallet = w
+			}
+		}
+	}
+	// Legacy sqlite claims wrote claimed_by but not contractor_wallet; fall back so payouts still resolve.
+	if strings.TrimSpace(t.ContractorWallet) == "" && strings.TrimSpace(t.ClaimedBy) != "" {
+		t.ContractorWallet = strings.TrimSpace(t.ClaimedBy)
+		if t.MerkleProof == nil {
+			t.MerkleProof = &smart_contract.MerkleProof{}
+		}
+		if strings.TrimSpace(t.MerkleProof.ContractorWallet) == "" {
+			t.MerkleProof.ContractorWallet = t.ContractorWallet
+		}
 	}
 	return t, nil
 }
@@ -322,7 +338,23 @@ FROM mcp_tasks WHERE task_id=?
 		_ = json.Unmarshal(requirementsStr, &t.Requirements)
 	}
 	if len(merkleProofStr) > 0 {
-		_ = json.Unmarshal(merkleProofStr, &t.MerkleProof)
+		var proof smart_contract.MerkleProof
+		if err := json.Unmarshal(merkleProofStr, &proof); err == nil {
+			t.MerkleProof = &proof
+			if w := strings.TrimSpace(proof.ContractorWallet); w != "" {
+				t.ContractorWallet = w
+			}
+		}
+	}
+	// Legacy sqlite claims wrote claimed_by but not contractor_wallet; fall back so payouts still resolve.
+	if strings.TrimSpace(t.ContractorWallet) == "" && strings.TrimSpace(t.ClaimedBy) != "" {
+		t.ContractorWallet = strings.TrimSpace(t.ClaimedBy)
+		if t.MerkleProof == nil {
+			t.MerkleProof = &smart_contract.MerkleProof{}
+		}
+		if strings.TrimSpace(t.MerkleProof.ContractorWallet) == "" {
+			t.MerkleProof.ContractorWallet = t.ContractorWallet
+		}
 	}
 	return t, nil
 }
@@ -422,7 +454,8 @@ func (s *SQLiteStore) ClaimTask(taskID, walletAddress string, estimatedCompletio
 	defer tx.Rollback()
 
 	var taskStatus string
-	err = tx.QueryRow(`SELECT status FROM mcp_tasks WHERE task_id=?`, taskID).Scan(&taskStatus)
+	var merkleProofStr []byte
+	err = tx.QueryRow(`SELECT status, COALESCE(merkle_proof, '') FROM mcp_tasks WHERE task_id=?`, taskID).Scan(&taskStatus, &merkleProofStr)
 	if err != nil {
 		return smart_contract.Claim{}, ErrTaskNotFound
 	}
@@ -437,6 +470,41 @@ func (s *SQLiteStore) ClaimTask(taskID, walletAddress string, estimatedCompletio
 		return smart_contract.Claim{}, fmt.Errorf("wallet address required")
 	}
 
+	// Load existing merkle proof so we preserve provisional/funding fields when writing contractor_wallet.
+	var proof *smart_contract.MerkleProof
+	if len(merkleProofStr) > 0 && string(merkleProofStr) != "" {
+		var p smart_contract.MerkleProof
+		if err := json.Unmarshal(merkleProofStr, &p); err == nil {
+			proof = &p
+		}
+	}
+
+	// Persist claimer wallet into merkle_proof (mirrors PGStore.ClaimTask / MemoryStore).
+	// build_psbt and the payout UI read contractor_wallet from here.
+	persistWallet := func(wallet string) error {
+		wallet = strings.TrimSpace(wallet)
+		if wallet == "" {
+			return nil
+		}
+		existing := ""
+		if proof != nil {
+			existing = strings.TrimSpace(proof.ContractorWallet)
+		}
+		if strings.EqualFold(existing, wallet) {
+			return nil
+		}
+		if proof == nil {
+			proof = &smart_contract.MerkleProof{}
+		}
+		proof.ContractorWallet = wallet
+		proofJSON, err := json.Marshal(proof)
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(`UPDATE mcp_tasks SET merkle_proof=? WHERE task_id=?`, string(proofJSON), taskID)
+		return err
+	}
+
 	now := time.Now()
 
 	// Idempotency + conflict check: look for existing claims on this task (matching MemoryStore and PGStore behavior)
@@ -444,13 +512,14 @@ func (s *SQLiteStore) ClaimTask(taskID, walletAddress string, estimatedCompletio
 	if err != nil {
 		return smart_contract.Claim{}, err
 	}
-	defer rows.Close()
 
 	var existingActiveClaim *smart_contract.Claim
+	var idempotentClaim *smart_contract.Claim
 	for rows.Next() {
 		var c smart_contract.Claim
 		var expiresStr, createdStr string
 		if err := rows.Scan(&c.ClaimID, &c.TaskID, &c.AiIdentifier, &c.Status, &expiresStr, &createdStr); err != nil {
+			rows.Close()
 			return smart_contract.Claim{}, err
 		}
 		if t, perr := parseSQLiteTime(expiresStr); perr == nil && t != nil {
@@ -462,13 +531,28 @@ func (s *SQLiteStore) ClaimTask(taskID, walletAddress string, estimatedCompletio
 		if c.Status == "active" && now.Before(c.ExpiresAt) {
 			if strings.EqualFold(c.AiIdentifier, normalizedWallet) {
 				// IDEMPOTENT: same wallet re-claiming active task
-				return c, nil
+				cp := c
+				idempotentClaim = &cp
+				break
 			}
 			existingActiveClaim = &c
 		}
 	}
-	if existingActiveClaim != nil {
+	rows.Close() // close before further writes on this tx (SQLite)
+
+	if existingActiveClaim != nil && idempotentClaim == nil {
 		return smart_contract.Claim{}, ErrTaskTaken
+	}
+	if idempotentClaim != nil {
+		// Ensure task row matches and contractor_wallet is present (may be missing after legacy claims).
+		_, _ = tx.Exec(`UPDATE mcp_tasks SET status='claimed', claimed_by=? WHERE task_id=?`, idempotentClaim.AiIdentifier, taskID)
+		if err := persistWallet(normalizedWallet); err != nil {
+			return smart_contract.Claim{}, err
+		}
+		if err := tx.Commit(); err != nil {
+			return smart_contract.Claim{}, err
+		}
+		return *idempotentClaim, nil
 	}
 
 	expires := now.Add(s.claimTTL)
@@ -497,7 +581,11 @@ UPDATE mcp_tasks SET status='claimed', claimed_by=?, claimed_at=?, claim_expires
 	if err != nil {
 		return smart_contract.Claim{}, err
 	}
+	if err := persistWallet(normalizedWallet); err != nil {
+		return smart_contract.Claim{}, err
+	}
 
+	_ = estimatedCompletion // placeholder to persist ETA later
 	if err := tx.Commit(); err != nil {
 		return smart_contract.Claim{}, err
 	}
@@ -834,6 +922,12 @@ ON CONFLICT(task_id) DO UPDATE SET
 func (s *SQLiteStore) UpdateTaskProof(ctx context.Context, taskID string, proof *smart_contract.MerkleProof) error {
 	if proof == nil {
 		return nil
+	}
+	// Preserve contractor wallet set at claim time when callers rewrite provisional proofs.
+	if existing, err := s.GetTaskProof(taskID); err == nil && existing != nil {
+		if strings.TrimSpace(existing.ContractorWallet) != "" && strings.TrimSpace(proof.ContractorWallet) == "" {
+			proof.ContractorWallet = strings.TrimSpace(existing.ContractorWallet)
+		}
 	}
 	b, err := json.Marshal(proof)
 	if err != nil {
