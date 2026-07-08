@@ -15,7 +15,8 @@ stargate
 - Default storage: **SQLite** (no Postgres required)
 - Embedded frontend in the unified binary
 - Platforms: Linux and macOS (amd64, arm64)
-- Override install location with `INSTALL_DIR` (default `/usr/local/bin`)
+- Installs to `~/.local/bin` by default (no sudo); adds that directory to your shell PATH if missing
+- Override install location with `INSTALL_DIR`
 
 Useful environment variables:
 
