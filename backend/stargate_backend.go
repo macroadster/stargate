@@ -374,9 +374,9 @@ func consolidateEnvironmentPaths() {
 }
 
 func main() {
-	// Handle version/help (and reject unknown flags) before any server setup.
-	// Without this, `stargate --version` (used by install.sh) would start the
-	// HTTP server and hang forever.
+	// CLI dispatch (serve/version/env/doctor/health/completion/help) before any
+	// server setup. Bare `stargate` and `stargate serve` fall through and start
+	// the HTTP server. install.sh uses `stargate --version`.
 	if handleCLI(os.Args[1:]) {
 		return
 	}
