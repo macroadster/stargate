@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
 	"path/filepath"
 	"sync"
-	"time"
 
 	"github.com/ipfs/boxo/bitswap"
 	"github.com/ipfs/boxo/bitswap/network/bsnet"
@@ -24,26 +24,27 @@ import (
 	leveldb "github.com/ipfs/go-ds-leveldb"
 	format "github.com/ipfs/go-ipld-format"
 	"github.com/libp2p/go-libp2p"
+	dht "github.com/libp2p/go-libp2p-kad-dht"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/routing"
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
-	drouting "github.com/libp2p/go-libp2p/p2p/discovery/routing"
-	dht "github.com/libp2p/go-libp2p-kad-dht"
 	multiaddr "github.com/multiformats/go-multiaddr"
 )
 
-// defaultBootstrapPeers are the IPFS network bootstrap nodes operated by
-// Protocol Labs.  Without these the embedded node is completely isolated and
-// cannot discover or serve content to any other IPFS peer.
-var defaultBootstrapPeers = []string{
-	"/dnsaddr/bootstrap.libp2p.io/p2p/QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN",
-	"/dnsaddr/bootstrap.libp2p.io/p2p/QmQCU2EcMqAqQPR2i9bChDtGNJchTbq5TbXJJ16u19uLTa",
-	"/dnsaddr/bootstrap.libp2p.io/p2p/QmbLHAnMoJPWSCR5Zhtx6BHJX9KiKNN6tpvbUcqanj75Nb",
-	"/dnsaddr/bootstrap.libp2p.io/p2p/QmcZf59bWwK5XFi76CZX8cbJ4BhTzzA3gU1ZjYZcYW3dwt",
-	"/ip4/104.131.131.82/tcp/4001/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ",
-}
+// defaultBootstrapPeers is intentionally empty.
+//
+// We cap the embedded node to the stargate-uploads topic only and do not
+// want to participate in or forward arbitrary data on the public IPFS network.
+// Public bootstraps would cause the node to join the global DHT, attract
+// hundreds of random peers, reprovide content broadly, and forward bitswap
+// / pubsub traffic for other data.
+//
+// For multi-instance deployments that need to discover each other, set the
+// IPFS_EMBEDDED_BOOTSTRAP env var to a comma-separated list of your
+// controlled stargate peer multiaddrs (including /p2p/<peerid>).
+var defaultBootstrapPeers = []string{}
 
 // EmbeddedNode is a minimal IPFS node embedded in the application
 type EmbeddedNode struct {
@@ -84,8 +85,11 @@ func NewEmbeddedNode(ctx context.Context, cfg NodeConfig) (*EmbeddedNode, error)
 	bstore := blockstore.NewBlockstore(dstore)
 	bstore = blockstore.NewIdStore(bstore)
 
-	// 3. Initialize libp2p Host with DHT in auto-server mode so the node
-	//    can both discover content and announce (provide) its own.
+	// 3. Initialize libp2p Host + limited DHT.
+	//    DHT is present (for bitswap provider records on our own content)
+	//    but because we use no public bootstrap and no gossipsub discovery,
+	//    the node stays capped and does not attract or forward arbitrary
+	//    public IPFS traffic.
 	var idht *dht.IpfsDHT
 	h, err := libp2p.New(
 		libp2p.ListenAddrStrings(cfg.ListenAddrs...),
@@ -113,13 +117,13 @@ func NewEmbeddedNode(ctx context.Context, cfg NodeConfig) (*EmbeddedNode, error)
 	// 6. Initialize DAGService
 	dag := merkledag.NewDAGService(bserv)
 
-	// 7. Initialize Pubsub with DHT-based peer discovery so nodes
-	//    subscribed to the same topic can find and connect to each other.
-	routingDiscovery := drouting.NewRoutingDiscovery(idht)
-	ps, err := pubsub.NewGossipSub(nodeCtx, h,
-		pubsub.WithDiscovery(routingDiscovery),
-		pubsub.WithPeerExchange(true),
-	)
+	// 7. Initialize Pubsub *without* DHT-based peer discovery.
+	//    This caps participation to the stargate-uploads topic and prevents
+	//    the node from auto-meshing with arbitrary public IPFS peers or
+	//    forwarding data for other topics/content.
+	//    Peers must connect explicitly (mDNS, known addrs via LB, or
+	//    configured bootstrap peers).
+	ps, err := pubsub.NewGossipSub(nodeCtx, h)
 	if err != nil {
 		h.Close()
 		dstore.Close()
@@ -127,19 +131,13 @@ func NewEmbeddedNode(ctx context.Context, cfg NodeConfig) (*EmbeddedNode, error)
 		return nil, fmt.Errorf("failed to initialize pubsub: %w", err)
 	}
 
-	// 8. Initialize Reprovider — periodically announces all blocks in the
-	//    blockstore to the DHT so other peers can discover and fetch them.
-	bstoreKeyProvider := func(ctx context.Context) (<-chan cid.Cid, error) {
-		return bstore.AllKeysChan(ctx)
-	}
-	reprov, err := provider.New(dstore,
-		provider.Online(idht),
-		provider.ReproviderInterval(22*time.Hour),
-		provider.KeyProvider(bstoreKeyProvider),
-	)
-	if err != nil {
-		log.Printf("Warning: failed to initialize reprovider: %v (content won't be announced)", err)
-	}
+	// 8. Reprovider is intentionally not used (or is capped).
+	//    We do not want to announce or forward arbitrary data from the
+	//    blockstore via the DHT. Only explicit Provide() calls for
+	//    stargate-uploads mirror content (in Add) will be made if a
+	//    reprovider is present. The full AllKeysChan reprovider is
+	//    disabled to cap the node.
+	var reprov provider.System
 
 	node := &EmbeddedNode{
 		ctx:        nodeCtx,
@@ -155,8 +153,9 @@ func NewEmbeddedNode(ctx context.Context, cfg NodeConfig) (*EmbeddedNode, error)
 		topics:     make(map[string]*pubsub.Topic),
 	}
 
-	// 9. Bootstrap — connect to IPFS network peers so the node can
-	//    participate in the DHT and exchange blocks with the rest of the network.
+	// 9. Bootstrap — only to explicitly configured peers (capped).
+	//    We intentionally avoid public IPFS bootstraps so the node does
+	//    not join the global network or forward other data.
 	bootstrapPeers := cfg.Bootstrap
 	if len(bootstrapPeers) == 0 {
 		bootstrapPeers = defaultBootstrapPeers
@@ -208,7 +207,7 @@ func (n *EmbeddedNode) bootstrap(peers []string) {
 			log.Printf("Connected to bootstrap peer %s", pi.ID)
 		}
 	}
-	
+
 	// Refresh DHT
 	if n.dht != nil {
 		go func() {
@@ -219,8 +218,10 @@ func (n *EmbeddedNode) bootstrap(peers []string) {
 	}
 }
 
-// Add adds data to the embedded IPFS node and announces the CID to the
-// network so other peers can discover and fetch it.
+// Add adds data to the embedded IPFS node.
+// Because the node is capped to the stargate-uploads topic, we do not
+// broadly announce via public DHT (reprovider is capped); peers primarily
+// learn about content via the topic pubsub manifest.
 func (n *EmbeddedNode) Add(ctx context.Context, r io.Reader) (cid.Cid, error) {
 	params := helpers.DagBuilderParams{
 		Dagserv:   n.dag,
@@ -313,6 +314,17 @@ func (n *EmbeddedNode) PubsubSubscribe(ctx context.Context, topicName string) (<
 func (n *EmbeddedNode) getTopic(name string) (*pubsub.Topic, error) {
 	n.topicsMu.Lock()
 	defer n.topicsMu.Unlock()
+
+	// Cap to stargate-uploads topic only. We do not want the node to
+	// subscribe to, forward messages for, or participate in any other
+	// pubsub topics or IPFS data.
+	allowed := os.Getenv("IPFS_MIRROR_TOPIC")
+	if allowed == "" {
+		allowed = "stargate-uploads"
+	}
+	if name != allowed {
+		return nil, fmt.Errorf("refusing pubsub topic %q (node is capped to %s only; no forwarding of other data)", name, allowed)
+	}
 
 	if t, ok := n.topics[name]; ok {
 		return t, nil

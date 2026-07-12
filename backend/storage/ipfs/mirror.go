@@ -279,11 +279,11 @@ func StartMirror(ctx context.Context, cfg MirrorConfig) (*Mirror, error) {
 	ipfsClient := NewClientFromEnv()
 
 	m := &Mirror{
-		cfg:          cfg,
-		client:       &http.Client{Timeout: cfg.HTTPTimeout},
-		streamClient: &http.Client{},
-		ipfsClient:   ipfsClient,
-		knownFiles:   make(map[string]fileState),
+		cfg:              cfg,
+		client:           &http.Client{Timeout: cfg.HTTPTimeout},
+		streamClient:     &http.Client{},
+		ipfsClient:       ipfsClient,
+		knownFiles:       make(map[string]fileState),
 		deletedFiles:     make(map[string]bool),
 		onFileDownloaded: cfg.OnFileDownloaded,
 	}
