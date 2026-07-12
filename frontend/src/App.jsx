@@ -1008,11 +1008,11 @@ function MainContent() {
                   ? 'Establishing connection to your Bitcoin node and checking network status...'
                   : 'Your node is syncing and processing blocks. Blocks will appear here automatically as they are scanned.'}
               </p>
-              <div className="flex items-center gap-3 text-secondary text-sm">
+              <div className="flex items-center gap-3 text-secondary text-sm mb-12">
                 <div className="spinner border-2" style={{ width: '1rem', height: '1rem' }} />
                 <span>{isInitializing ? 'Initializing...' : 'Waiting for first blocks...'}</span>
               </div>
-              <div className="mt-10 card p-6 max-w-sm text-left">
+              <div className="card p-6 max-w-sm text-left">
                 <h3 className="text-sm font-semibold text-primary mb-3">What's happening?</h3>
                 <ul className="space-y-2 text-xs text-secondary">
                   <li className="flex items-start gap-2">
