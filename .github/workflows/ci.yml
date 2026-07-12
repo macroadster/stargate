@@ -74,4 +74,11 @@ jobs:
           mkdir -p backend/assets/frontend
           cp -r frontend/build/* backend/assets/frontend/
           cd backend
-          CGO_ENABLED=0 go build -trimpath -ldflags='-w -s' -o ../stargate .
+          VERSION="${GITHUB_REF_NAME:-dev}"
+          COMMIT="${GITHUB_SHA:-unknown}"
+          COMMIT="${COMMIT:0:7}"
+          CGO_ENABLED=0 go build -trimpath \
+            -ldflags="-w -s -X main.version=${VERSION} -X main.gitCommit=${COMMIT}" \
+            -o ../stargate .
+          ./../stargate --version
+          ./../stargate --help >/dev/null

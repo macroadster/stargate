@@ -26,8 +26,10 @@ RUN go mod download
 COPY backend/ ./
 # Copy built frontend assets from Stage 1 into backend/assets/frontend
 COPY --from=frontend-builder /app/frontend/build ./assets/frontend
+ARG VERSION=dev
+ARG GIT_COMMIT=unknown
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
-    -ldflags='-w -s' \
+    -ldflags="-w -s -X main.version=${VERSION} -X main.gitCommit=${GIT_COMMIT}" \
     -o /out/stargate .
 
 # Stage 3: Final lightweight image

@@ -23,7 +23,11 @@ single-binary:
 	@rm -rf backend/assets/frontend/*
 	@cp -rv frontend/build/* backend/assets/frontend/
 	@echo "3. Building backend binary..."
-	@cd backend && CGO_ENABLED=0 go build -tags gms_pure_go -o ../stargate .
+	@VERSION=$$(git describe --tags --always --dirty 2>/dev/null || echo dev); \
+	 COMMIT=$$(git rev-parse --short HEAD 2>/dev/null || echo unknown); \
+	 cd backend && CGO_ENABLED=0 go build -tags gms_pure_go \
+	   -ldflags="-w -s -X main.version=$${VERSION} -X main.gitCommit=$${COMMIT}" \
+	   -o ../stargate .
 	@echo "Done! Binary produced as ./stargate"
 
 # Retired split-image targets (stargate-3bk.8). Use `make docker` or `make single-binary`.

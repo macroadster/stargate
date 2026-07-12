@@ -374,6 +374,13 @@ func consolidateEnvironmentPaths() {
 }
 
 func main() {
+	// Handle version/help (and reject unknown flags) before any server setup.
+	// Without this, `stargate --version` (used by install.sh) would start the
+	// HTTP server and hang forever.
+	if handleCLI(os.Args[1:]) {
+		return
+	}
+
 	log.Println("=== STARTING STARGATE BACKEND ===")
 
 	// Ensure consistent data paths
