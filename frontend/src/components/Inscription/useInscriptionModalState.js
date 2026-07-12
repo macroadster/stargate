@@ -1005,6 +1005,7 @@ export function useInscriptionModalState(inscription, initialTab = 'content') {
     scanAttempted,
     scrollContainerRef,
     reworkRequests,
+    setReworkRequests,
     isLoadingRework,
     showReworkForm,
     setShowReworkForm,

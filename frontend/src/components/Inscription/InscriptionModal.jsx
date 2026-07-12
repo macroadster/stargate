@@ -1,8 +1,10 @@
 import React from 'react';
 import { X } from 'lucide-react';
+import toast from 'react-hot-toast';
 import CopyButton from '../Common/CopyButton';
 import SafeQrCodeCanvas from '../Common/SafeQrCodeCanvas';
 import DeliverablesReview from '../Review/DeliverablesReview';
+import { apiFetch } from '../../utils/api';
 import { QR_BYTE_LIMIT, shouldShowProposalAction } from './inscriptionUtils';
 import { useInscriptionModalState } from './useInscriptionModalState';
 
@@ -15,7 +17,7 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
     psbtForm, setPsbtForm, psbtResult, psbtError, psbtLoading, authBlocked, copiedPsbt,
     showPsbtQr, setShowPsbtQr, stegoPayload, stegoPayloadLoading, stegoPayloadError,
     scanMessage, scanLoading, scanError, scrollContainerRef,
-    reworkRequests, isLoadingRework, showReworkForm, setShowReworkForm, reworkNotes, setReworkNotes,
+    reworkRequests, setReworkRequests, isLoadingRework, showReworkForm, setShowReworkForm, reworkNotes, setReworkNotes,
     isSubmittingRework, setIsSubmittingRework,
     allTasks, approvedProposal, psbtTasks, deliverableTasks, approvedBudgetsTotal, payoutSummaries,
     stegoProposal, stegoTasks, stegoProposalStatus, stegoTaskStatusMap, hiddenMessageText,
