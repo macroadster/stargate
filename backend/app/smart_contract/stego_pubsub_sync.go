@@ -45,6 +45,12 @@ func StartStegoPubsubSync(ctx context.Context, server *Server) error {
 					log.Printf("stego pubsub sync stopped: %v", err)
 					return
 				}
+				// Permanent stop on cap refusal — do not waste resources
+				// retrying unproven non-mirror pubsub paths.
+				if strings.Contains(err.Error(), "capped to") || strings.Contains(err.Error(), "refusing pubsub topic") {
+					log.Printf("stego pubsub sync stopped permanently: %v", err)
+					return
+				}
 				log.Printf("stego pubsub sync error: %v, retrying in %v", err, cfg.Interval)
 				time.Sleep(cfg.Interval)
 			}
@@ -81,6 +87,16 @@ func loadStegoPubsubConfig() stegoPubsubConfig {
 				enabled = false
 			}
 		}
+	}
+
+	// When the embedded IPFS node is active, only the stargate-uploads
+	// mirror topic is supported. The stego pubsub on stargate-stego is
+	// an unproven add-on path. Disable it automatically under the cap
+	// so we do not waste resources on unproven / abuse-prone mechanisms.
+	embeddedEnabled := strings.ToLower(os.Getenv("IPFS_EMBEDDED_ENABLED")) != "false"
+	if enabled && embeddedEnabled {
+		log.Printf("stego pubsub sync disabled: embedded IPFS node only supports the stargate-uploads mirror. Non-mirror pubsub features are turned off to prevent unnecessary electricity use on unproven paths.")
+		enabled = false
 	}
 
 	issuer := strings.TrimSpace(os.Getenv("STARGATE_STEGO_ISSUER"))

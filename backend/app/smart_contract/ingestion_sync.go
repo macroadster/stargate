@@ -27,10 +27,16 @@ func publishProposalEvent(ctx context.Context, proposal smart_contract.Proposal)
 		return nil
 	}
 
-	// Get sync configuration
-	topic := "stargate-stego" // Default topic
-	if envTopic := os.Getenv("STARGATE_SYNC_TOPIC"); envTopic != "" {
-		topic = envTopic
+	// Get sync configuration.
+	// Note: this legacy path also defaults to stargate-stego.
+	// Only the stargate-uploads mirror is the supported/official replication
+	// mechanism. Non-mirror pubsub is not recommended with the embedded node.
+	topic := os.Getenv("IPFS_SYNC_TOPIC")
+	if topic == "" {
+		topic = os.Getenv("STARGATE_SYNC_TOPIC")
+	}
+	if topic == "" {
+		topic = "stargate-stego"
 	}
 
 	// Create sync announcement for proposal creation

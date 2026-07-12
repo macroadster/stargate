@@ -41,6 +41,12 @@ func StartSyncPubsubSync(ctx context.Context, server *Server) error {
 				if ctx.Err() != nil {
 					return
 				}
+				// If the embedded node is capping the topic (by design),
+				// stop retrying to avoid burning CPU on a known-unwanted path.
+				if strings.Contains(err.Error(), "capped to") || strings.Contains(err.Error(), "refusing pubsub topic") {
+					log.Printf("mcp sync pubsub stopped permanently: %v (non-mirror pubsub is not supported on the capped embedded node)", err)
+					return
+				}
 				log.Printf("mcp sync pubsub error: %v, retrying in %v", err, cfg.Interval)
 				time.Sleep(cfg.Interval)
 			}
@@ -63,6 +69,20 @@ func loadSyncPubsubConfig() syncPubsubConfig {
 	if !ipfs.IsEnabled() {
 		enabled = false
 	}
+
+	// When using the embedded IPFS node (the normal single-binary case),
+	// we strictly limit it to the stargate-uploads mirror topic only.
+	// The MCP sync pubsub (and stego pubsub) on other topics are not
+	// part of the official replication path and can cause unnecessary
+	// CPU/network activity ("burning electricity for nothing").
+	// Only the mirror on stargate-uploads is considered the robust,
+	// supported approach.
+	embeddedEnabled := strings.ToLower(os.Getenv("IPFS_EMBEDDED_ENABLED")) != "false"
+	if enabled && embeddedEnabled {
+		log.Printf("mcp sync pubsub disabled: embedded IPFS node is capped to the stargate-uploads mirror topic only. Non-mirror pubsub features are disabled to avoid unproven paths and unnecessary resource usage.")
+		enabled = false
+	}
+
 	topic := os.Getenv("IPFS_SYNC_TOPIC")
 	if topic == "" {
 		topic = "stargate-stego"

@@ -35,15 +35,16 @@ import (
 
 // defaultBootstrapPeers is intentionally empty.
 //
-// We cap the embedded node to the stargate-uploads topic only and do not
-// want to participate in or forward arbitrary data on the public IPFS network.
-// Public bootstraps would cause the node to join the global DHT, attract
-// hundreds of random peers, reprovide content broadly, and forward bitswap
-// / pubsub traffic for other data.
+// The embedded node is capped to the stargate-uploads mirror topic only.
+// stargate-uploads is the only official robust replication path (hash-named
+// files + manifests for stego images and sandboxes). Other pubsub mechanisms
+// were added over time and are not considered proven or safe from abuse.
 //
-// For multi-instance deployments that need to discover each other, set the
-// IPFS_EMBEDDED_BOOTSTRAP env var to a comma-separated list of your
-// controlled stargate peer multiaddrs (including /p2p/<peerid>).
+// We deliberately avoid the public IPFS network so the node does not waste
+// electricity connecting to random peers or forwarding traffic for unproven paths.
+//
+// For intentional multi-instance setups, use IPFS_EMBEDDED_BOOTSTRAP with
+// your own controlled peers.
 var defaultBootstrapPeers = []string{}
 
 // EmbeddedNode is a minimal IPFS node embedded in the application
@@ -219,9 +220,8 @@ func (n *EmbeddedNode) bootstrap(peers []string) {
 }
 
 // Add adds data to the embedded IPFS node.
-// Because the node is capped to the stargate-uploads topic, we do not
-// broadly announce via public DHT (reprovider is capped); peers primarily
-// learn about content via the topic pubsub manifest.
+// The node is capped to the stargate-uploads mirror only (the official
+// file replication path). We do not broadly announce via public DHT.
 func (n *EmbeddedNode) Add(ctx context.Context, r io.Reader) (cid.Cid, error) {
 	params := helpers.DagBuilderParams{
 		Dagserv:   n.dag,
@@ -315,9 +315,14 @@ func (n *EmbeddedNode) getTopic(name string) (*pubsub.Topic, error) {
 	n.topicsMu.Lock()
 	defer n.topicsMu.Unlock()
 
-	// Cap to stargate-uploads topic only. We do not want the node to
-	// subscribe to, forward messages for, or participate in any other
-	// pubsub topics or IPFS data.
+	// Cap to stargate-uploads topic only.
+	//
+	// stargate-uploads (the file mirror) is the only official, proven
+	// replication approach. Other topics (historically "stargate-stego"
+	// for stego announcements and MCP state sync) are secondary features
+	// added over time. They have not been proven robust and are vulnerable
+	// to abuse. When using the embedded node we strictly limit participation
+	// so we do not burn electricity on unproven paths.
 	allowed := os.Getenv("IPFS_MIRROR_TOPIC")
 	if allowed == "" {
 		allowed = "stargate-uploads"
