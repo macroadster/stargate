@@ -96,8 +96,11 @@ func (api *DataAPI) listAvailableBlockHeights() []int64 {
 	// Collect from storage layer (works for Postgres/SQLite; for default FS storage
 	// this may be limited by in-memory pruning, so we always supplement below).
 	if api.dataStorage != nil {
-		// Request a large limit so PG returns many/all stored heights.
-		if cached, err := api.dataStorage.GetRecentBlocks(1000000); err == nil {
+		// Ask the storage for a modest number of recent blocks (by height).
+		// This is only a supplement; the on-disk walk below is the primary
+		// source for full history and avoids loading millions of full block
+		// payloads just to discover heights.
+		if cached, err := api.dataStorage.GetRecentBlocks(500); err == nil {
 			for _, b := range cached {
 				if block, ok := b.(*storage.BlockDataCache); ok && block.BlockHeight > 0 {
 					heights = append(heights, block.BlockHeight)

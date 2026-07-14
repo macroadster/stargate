@@ -24,6 +24,11 @@ type DataStorage struct {
 	cacheTimeout time.Duration
 }
 
+// hotCacheSize controls the keepCount for the in-memory hot cache
+// (used by GetBlockData/GetRecentBlocks). Older blocks fall back to disk.
+// keepCount = 10000 (as specified).
+const hotCacheSize = 10000
+
 // ExtendedDataStorage includes the core interface plus helper methods used by APIs.
 type ExtendedDataStorage interface {
 	bitcoin.DataStorageInterface
@@ -150,7 +155,10 @@ func (ds *DataStorage) GetBlockData(height int64) (interface{}, error) {
 	return loaded, nil
 }
 
-// GetRecentBlocks retrieves recent blocks with steganography data
+// GetRecentBlocks retrieves up to `limit` blocks from the hot in-memory cache
+// (sorted by height desc). The hot cache is bounded (keepCount=10000) so this
+// naturally returns only recent/recently-touched blocks. Historical data comes
+// from disk.
 func (ds *DataStorage) GetRecentBlocks(limit int) ([]interface{}, error) {
 	ds.mu.RLock()
 	defer ds.mu.RUnlock()
@@ -351,7 +359,9 @@ func (ds *DataStorage) loadBlockDataFromFile(height int64) (interface{}, error) 
 	return &cacheEntry, nil
 }
 
-// loadCache loads block data from blocks/[height]_[hash]/block.json files into cache
+// loadCache pre-populates the hot cache with a bounded number of the most
+// recent (highest height) blocks found on disk. This gives fast access to
+// the current tip after restart without pulling the entire history into RAM.
 func (ds *DataStorage) loadCache() {
 	// Check if blocks directory exists
 	if _, err := os.Stat(ds.dataDir); err != nil {
@@ -394,6 +404,7 @@ func (ds *DataStorage) loadCache() {
 		var blockInfo struct {
 			BlockHash      string `json:"block_hash"`
 			BlockHeight    int64  `json:"block_height"`
+			Timestamp      int64  `json:"timestamp"`
 			Images         []struct {
 				TxID      string `json:"tx_id"`
 				Format    string `json:"format"`
@@ -417,7 +428,7 @@ func (ds *DataStorage) loadCache() {
 		cacheEntry := &BlockDataCache{
 			BlockHeight:    blockInfo.BlockHeight,
 			BlockHash:      blockInfo.BlockHash,
-			Timestamp:      0, // Not in inscriptions.json, using 0
+			Timestamp:      blockInfo.Timestamp,
 			Inscriptions:   make([]bitcoin.InscriptionData, len(blockInfo.Images)),
 			Images:         make([]bitcoin.ExtractedImageData, len(blockInfo.Images)),
 			SmartContracts: contracts,
@@ -461,13 +472,35 @@ func (ds *DataStorage) loadCache() {
 		return nil
 	})
 
-	log.Printf("Loaded %d blocks into cache from blocks/ directory", loadedCount)
+	// At startup we may have discovered far more blocks on disk than we want
+	// in the hot cache (keepCount=10000). Keep only the most recent (highest height) ones.
+	// Older blocks will be loaded on demand from disk and (temporarily)
+	// promoted into the cache by GetBlockData.
+	if len(ds.cache) > hotCacheSize {
+		type hpair struct {
+			h int64
+			b *BlockDataCache
+		}
+		pairs := make([]hpair, 0, len(ds.cache))
+		for h, b := range ds.cache {
+			pairs = append(pairs, hpair{h, b})
+		}
+		sort.Slice(pairs, func(i, j int) bool {
+			return pairs[i].h > pairs[j].h
+		})
+		for i := hotCacheSize; i < len(pairs); i++ {
+			delete(ds.cache, pairs[i].h)
+		}
+		loadedCount = len(ds.cache)
+	}
+
+	log.Printf("Loaded %d blocks into hot cache (keepCount=%d) from blocks/ directory", loadedCount, hotCacheSize)
 }
 
-// cleanOldCache removes expired cache entries but keeps a large number of blocks
-// (historical + recent) so that GetRecentBlocks and block scrollback continue to
-// work after cacheTimeout. The on-disk artifacts are the source of truth; the map
-// is just a hot cache. We keep up to 100k to avoid unbounded growth in extreme cases.
+// cleanOldCache removes expired cache entries but keeps at most keepCount=10000
+// blocks in the in-memory map. The on-disk artifacts (partitioned blocks/ dirs)
+// are the source of truth. Access to blocks outside the hot cache falls back to
+// disk reads.
 func (ds *DataStorage) cleanOldCache() {
 	now := time.Now()
 
@@ -486,9 +519,10 @@ func (ds *DataStorage) cleanOldCache() {
 		return entries[i].timestamp.After(entries[j].timestamp)
 	})
 
-	// Keep a large number (supports scrollback over historical scanned blocks).
-	// Only evict beyond this if they are also expired.
-	keepCount := 100000
+	// Keep at most keepCount (=10000) entries (by recency of CacheTimestamp).
+	// This bounds memory. Callers that need older blocks fall back to
+	// disk via loadBlockDataFromFile / loadBlockFromDisk.
+	keepCount := hotCacheSize
 	if len(entries) < keepCount {
 		keepCount = len(entries)
 	}
