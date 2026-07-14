@@ -208,21 +208,36 @@ func customUploadsHandler(uploadsDir string) http.HandlerFunc {
 }
 
 // findImagePath searches for an image file within the blocks directory using the real block hash folder.
-func findImagePath(height string, filename string) (string, bool) {
+// Updated to support the 3-level partitioned layout (000/141/141985_xxxx/images/...).
+func findImagePath(heightStr string, filename string) (string, bool) {
 	baseDir := os.Getenv("BLOCKS_DIR")
 	if baseDir == "" {
 		baseDir = storage.DefaultPath("blocks")
 	}
 
-	// Try explicit directory pattern first (height_*)
-	pattern := filepath.Join(baseDir, fmt.Sprintf("%s_*", height), "images", filename)
-	matches, err := filepath.Glob(pattern)
-	if err == nil && len(matches) > 0 {
-		return matches[0], true
+	height, err := strconv.ParseInt(heightStr, 10, 64)
+	if err != nil {
+		// fallback to legacy flat search if height parse fails
+		pattern := filepath.Join(baseDir, fmt.Sprintf("%s_*", heightStr), "images", filename)
+		if matches, _ := filepath.Glob(pattern); len(matches) > 0 {
+			return matches[0], true
+		}
+		return "", false
 	}
 
-	// Fallback to legacy pattern with zero hash suffix
-	legacy := filepath.Join(baseDir, fmt.Sprintf("%s_00000000", height), "images", filename)
+	blockDir, err := bitcoin.FindBlockDir(baseDir, height)
+	if err != nil {
+		return "", false
+	}
+
+	// The image is stored under <blockDir>/images/<filename>
+	candidate := filepath.Join(blockDir, "images", filename)
+	if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+		return candidate, true
+	}
+
+	// Legacy fallback (in case some old data is still flat)
+	legacy := filepath.Join(baseDir, fmt.Sprintf("%s_00000000", heightStr), "images", filename)
 	if info, err := os.Stat(legacy); err == nil && !info.IsDir() {
 		return legacy, true
 	}

@@ -1255,24 +1255,8 @@ func (bm *BlockMonitor) GetBlockInscriptions(height int64) (*BlockInscriptionsRe
 	return &response, nil
 }
 
-// findBlockDirectory finds the directory for a given block height
+// findBlockDirectory finds the directory for a given block height using
+// the partitioned-aware FindBlockDir (no more full root scan).
 func (bm *BlockMonitor) findBlockDirectory(height int64) (string, error) {
-	entries, err := os.ReadDir(bm.blocksDir)
-	if err != nil {
-		return "", err
-	}
-
-	for _, entry := range entries {
-		if entry.IsDir() {
-			// Extract height from directory name (format: height_hash)
-			parts := strings.Split(entry.Name(), "_")
-			if len(parts) >= 1 {
-				if dirHeight, err := strconv.ParseInt(parts[0], 10, 64); err == nil && dirHeight == height {
-					return filepath.Join(bm.blocksDir, entry.Name()), nil
-				}
-			}
-		}
-	}
-
-	return "", fmt.Errorf("block directory not found for height %d", height)
+	return FindBlockDir(bm.blocksDir, height)
 }

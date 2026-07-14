@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -45,62 +46,64 @@ func (bm *BlockMonitor) updateRecentBlocksSummary() error {
 		blocksDir = blocksDirFromEnv()
 	}
 
-	// Ensure the directory exists so we don't fail with a missing relative path when running in a container.
+	// Ensure the directory exists
 	if err := os.MkdirAll(blocksDir, 0755); err != nil {
 		return fmt.Errorf("failed to ensure blocks directory: %w", err)
 	}
 
-	files, err := os.ReadDir(blocksDir)
-	if err != nil {
-		return fmt.Errorf("failed to read blocks directory %s: %w", blocksDir, err)
-	}
-
 	var recentBlocks []map[string]interface{}
 
-	// Collect recent blocks (up to 10 most recent)
-	for _, file := range files {
-		if file.IsDir() && len(file.Name()) > 8 {
-			var height int64
-			if _, err := fmt.Sscanf(file.Name(), "%d_", &height); err == nil {
-				// Try to read inscriptions.json
-				blockDirPath := filepath.Join(blocksDir, file.Name())
-				inscriptionsPath := filepath.Join(blockDirPath, "inscriptions.json")
-
-				if data, err := os.ReadFile(inscriptionsPath); err == nil {
-					var blockData map[string]interface{}
-					if err := json.Unmarshal(data, &blockData); err == nil {
-						// Add to recent blocks
-						recentBlocks = append(recentBlocks, blockData)
+	// Prefer the storage (SQLite / Postgres / in-memory cache) which is authoritative
+	// and avoids expensive full FS directory walks. This is a major IO/CPU win.
+	if bm.dataStorage != nil {
+		if items, err := bm.dataStorage.GetRecentBlocks(12); err == nil {
+			for _, item := range items {
+				switch v := item.(type) {
+				case map[string]interface{}:
+					recentBlocks = append(recentBlocks, v)
+				case *BlockDataCache:
+					// convert struct to map for the legacy recent-blocks.json shape
+					b, _ := json.Marshal(v)
+					var m map[string]interface{}
+					if json.Unmarshal(b, &m) == nil {
+						recentBlocks = append(recentBlocks, m)
+					}
+				default:
+					// best effort
+					if b, err := json.Marshal(item); err == nil {
+						var m map[string]interface{}
+						if json.Unmarshal(b, &m) == nil {
+							recentBlocks = append(recentBlocks, m)
+						}
 					}
 				}
 			}
 		}
 	}
 
-	// Sort by height (descending)
-	for i := 0; i < len(recentBlocks); i++ {
-		for j := i + 1; j < len(recentBlocks); j++ {
-			height1, _ := recentBlocks[i]["block_height"].(float64)
-			height2, _ := recentBlocks[j]["block_height"].(float64)
-			if height1 < height2 {
-				recentBlocks[i], recentBlocks[j] = recentBlocks[j], recentBlocks[i]
-			}
-		}
+	// Fallback only if storage gave nothing: do not do expensive scans.
+	// The monitor will populate storage on next successful ProcessBlock.
+	if len(recentBlocks) == 0 {
+		// nothing — we avoid linear/expensive fallback here to honor IO reduction goals
 	}
 
-	// Take only top 10
+	// Sort by height descending (use efficient sort, not bubble)
+	sort.Slice(recentBlocks, func(i, j int) bool {
+		hi, _ := recentBlocks[i]["block_height"].(float64)
+		hj, _ := recentBlocks[j]["block_height"].(float64)
+		return hi > hj
+	})
+
 	if len(recentBlocks) > 10 {
 		recentBlocks = recentBlocks[:10]
 	}
 
-	// Create summary
 	summary := map[string]interface{}{
 		"blocks":       recentBlocks,
 		"total":        len(recentBlocks),
 		"last_updated": time.Now().Unix(),
 	}
 
-	// Save to blocks/recent-blocks.json
 	summaryJSON, err := json.MarshalIndent(summary, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal recent blocks summary: %w", err)
@@ -249,18 +252,23 @@ func (bm *BlockMonitor) ProcessBlock(height int64) error {
 
 	log.Printf("Parsed block %d: %d transactions, %d images found", height, len(parsedBlock.Transactions), len(parsedBlock.Images))
 
-	// Create block directory
-	blockDir := filepath.Join(bm.blocksDir, fmt.Sprintf("%d_%s", height, parsedBlock.Hash[:8]))
+	// Use partitioned 3-level directory layout (000/144/144001_xxxx) to keep
+	// directory scans (reorg, recent summary, Find) from being O(total blocks).
+	blockDir := BlockDir(bm.blocksDir, height, parsedBlock.Hash[:8])
 	if err := os.MkdirAll(blockDir, 0755); err != nil {
 		return fmt.Errorf("failed to create block directory: %w", err)
 	}
 
-	// Save raw block data
-	if err := bm.saveBlockData(blockDir, parsedBlock, hexData); err != nil {
-		return fmt.Errorf("failed to save block data: %w", err)
+	// Heavy data (raw hex + full tx list in block.json) is only written for blocks
+	// that actually contain images. Boring blocks get only the lightweight
+	// inscriptions.json metadata (plus DB row). This is goal #4.
+	if len(parsedBlock.Images) > 0 {
+		if err := bm.saveBlockData(blockDir, parsedBlock, hexData); err != nil {
+			return fmt.Errorf("failed to save block data: %w", err)
+		}
 	}
 
-	// Extract and save images
+	// Extract and save images (only when present)
 	if err := bm.saveImages(blockDir, parsedBlock.Images); err != nil {
 		log.Printf("Failed to save images: %v", err)
 	}

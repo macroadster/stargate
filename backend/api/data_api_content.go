@@ -24,7 +24,12 @@ func (api *DataAPI) sniffContentType(height int64, filePath string) string {
 		return ""
 	}
 	base := strings.TrimRight(api.resolveBlocksDir(), "/")
-	fsPath := filepath.Join(fmt.Sprintf("%s/%d_00000000", base, height), filePath)
+	fsPath := ""
+	if dir, err := bitcoin.FindBlockDir(base, height); err == nil {
+		fsPath = filepath.Join(dir, filePath)
+	} else {
+		fsPath = filepath.Join(fmt.Sprintf("%s/%d_00000000", base, height), filePath)
+	}
 	file, err := os.Open(fsPath)
 	if err != nil {
 		return ""
@@ -370,7 +375,12 @@ func (api *DataAPI) loadInscriptionContent(height int64, ins bitcoin.Inscription
 	mimeType := inferMime(ins.ContentType, content, ins.FileName)
 
 	base := strings.TrimRight(api.resolveBlocksDir(), "/")
-	blockDir := fmt.Sprintf("%s/%d_00000000", base, height)
+	blockDir := ""
+	if d, err := bitcoin.FindBlockDir(base, height); err == nil {
+		blockDir = d
+	} else {
+		blockDir = fmt.Sprintf("%s/%d_00000000", base, height)
+	}
 	safePath, err := security.SanitizePath(blockDir, ins.FilePath)
 	if err == nil {
 		if data, err := os.ReadFile(safePath); err == nil {

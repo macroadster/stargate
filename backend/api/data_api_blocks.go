@@ -26,63 +26,49 @@ func (api *DataAPI) resolveBlocksDir() string {
 }
 
 // loadBlockFromDisk reads a single block JSON file into a cache struct.
+// Uses the new partitioned layout via bitcoin.FindBlockDir (with legacy fallback).
 func (api *DataAPI) loadBlockFromDisk(height int64) (*storage.BlockDataCache, error) {
 	baseDir := strings.TrimRight(api.resolveBlocksDir(), "/")
-	filePath := fmt.Sprintf("%s/block_%d.json", baseDir, height)
 
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		// Try directory-based layout: <height>_00000000/inscriptions.json
-		dirPath := fmt.Sprintf("%s/%d_00000000/inscriptions.json", baseDir, height)
-		if data2, err2 := os.ReadFile(dirPath); err2 == nil {
-			data = data2
-		} else {
-			return nil, fmt.Errorf("read block file: %w", err)
+	// Preferred: use centralized finder (partitioned + legacy)
+	dir, err := bitcoin.FindBlockDir(baseDir, height)
+	if err == nil {
+		// try inscriptions.json (always written) or block.json
+		for _, candidate := range []string{
+			filepath.Join(dir, "inscriptions.json"),
+			filepath.Join(dir, "block.json"),
+		} {
+			if d, e := os.ReadFile(candidate); e == nil {
+				data := d
+				var raw struct {
+					BlockHeight  int64                        `json:"block_height"`
+					BlockHash    string                       `json:"block_hash"`
+					Timestamp    int64                        `json:"timestamp"`
+					TxCount      int                          `json:"tx_count"`
+					Inscriptions []bitcoin.InscriptionData    `json:"inscriptions"`
+					Images       []bitcoin.ExtractedImageData `json:"images"`
+					Smart        []bitcoin.SmartContractData  `json:"smart_contracts"`
+					ScanResults  []map[string]interface{}     `json:"scan_results"`
+				}
+				if uerr := json.Unmarshal(data, &raw); uerr == nil {
+					return &storage.BlockDataCache{
+						BlockHeight:    raw.BlockHeight,
+						BlockHash:      raw.BlockHash,
+						Timestamp:      raw.Timestamp,
+						TxCount:        raw.TxCount,
+						Inscriptions:   raw.Inscriptions,
+						Images:         raw.Images,
+						SmartContracts: raw.Smart,
+						ScanResults:    raw.ScanResults,
+						ProcessingTime: 0,
+						Success:        true,
+					}, nil
+				}
+			}
 		}
 	}
 
-	var raw struct {
-		BlockHeight  int64                        `json:"block_height"`
-		BlockHash    string                       `json:"block_hash"`
-		Timestamp    int64                        `json:"timestamp"`
-		TxCount      int                          `json:"tx_count"`
-		Inscriptions []bitcoin.InscriptionData    `json:"inscriptions"`
-		Images       []bitcoin.ExtractedImageData `json:"images"`
-		Smart        []bitcoin.SmartContractData  `json:"smart_contracts"`
-		ScanResults  []map[string]interface{}     `json:"scan_results"`
-	}
-
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil, fmt.Errorf("decode block file: %w", err)
-	}
-
-	cache := &storage.BlockDataCache{
-		BlockHeight:    raw.BlockHeight,
-		BlockHash:      raw.BlockHash,
-		Timestamp:      raw.Timestamp,
-		TxCount:        raw.TxCount,
-		Inscriptions:   raw.Inscriptions,
-		Images:         raw.Images,
-		SmartContracts: raw.Smart,
-		ScanResults:    raw.ScanResults,
-		ProcessingTime: 0,
-		Success:        true,
-		CacheTimestamp: time.Now(),
-		SteganographySummary: &bitcoin.SteganographySummary{
-			TotalImages:   len(raw.Images),
-			StegoDetected: false,
-			StegoCount:    0,
-			ScanTimestamp: time.Now().Unix(),
-			AvgConfidence: 0,
-			StegoTypes:    []string{},
-		},
-	}
-
-	if cache.SmartContracts == nil {
-		cache.SmartContracts = []bitcoin.SmartContractData{}
-	}
-
-	return cache, nil
+	return nil, fmt.Errorf("no block data found for height %d", height)
 }
 
 // loadBlock tries storage first, then disk.
@@ -96,44 +82,55 @@ func (api *DataAPI) loadBlock(height int64) (*storage.BlockDataCache, error) {
 }
 
 // listAvailableBlockHeights discovers block files and returns heights sorted desc.
+// Strongly prefers the storage layer (no expensive root walk). Walk fallback
+// supports both partitioned and legacy layouts.
 func (api *DataAPI) listAvailableBlockHeights() []int64 {
-	baseDir := api.resolveBlocksDir()
-	entries, err := os.ReadDir(baseDir)
 	var heights []int64
-	if err == nil {
-		for _, entry := range entries {
-			name := entry.Name()
-			if entry.IsDir() {
-				// Support directory naming like 926464_00000000
-				if idx := strings.Index(name, "_"); idx > 0 {
-					if h, err := strconv.ParseInt(name[:idx], 10, 64); err == nil {
-						heights = append(heights, h)
+
+	// 1. Best: use storage (DB or cache) - this is the fast path and works
+	//    regardless of FS layout.
+	if api.dataStorage != nil {
+		if cached, err := api.dataStorage.GetRecentBlocks(1000); err == nil {
+			for _, b := range cached {
+				if block, ok := b.(*storage.BlockDataCache); ok && block.BlockHeight > 0 {
+					heights = append(heights, block.BlockHeight)
+				} else if m, ok := b.(map[string]interface{}); ok {
+					if h, ok := m["block_height"].(float64); ok && h > 0 {
+						heights = append(heights, int64(h))
 					}
 				}
-				continue
 			}
-			if strings.HasPrefix(name, "block_") && strings.HasSuffix(name, ".json") {
-				raw := strings.TrimSuffix(strings.TrimPrefix(name, "block_"), ".json")
-				if h, err := strconv.ParseInt(raw, 10, 64); err == nil {
+		}
+	}
+
+	if len(heights) == 0 {
+		// 2. Fallback FS walk that understands partitioned dirs
+		baseDir := api.resolveBlocksDir()
+		_ = filepath.WalkDir(baseDir, func(path string, d os.DirEntry, err error) error {
+			if err != nil || !d.IsDir() {
+				return nil
+			}
+			name := d.Name()
+			if idx := strings.Index(name, "_"); idx > 0 {
+				if h, err := strconv.ParseInt(name[:idx], 10, 64); err == nil {
 					heights = append(heights, h)
 				}
 			}
-		}
+			return nil
+		})
 	}
 
-	// Fallback to data storage if filesystem is empty (e.g., Postgres mode).
-	if len(heights) == 0 {
-		if cached, err := api.dataStorage.GetRecentBlocks(200); err == nil {
-			for _, b := range cached {
-				if block, ok := b.(*storage.BlockDataCache); ok {
-					heights = append(heights, block.BlockHeight)
-				}
-			}
+	// dedup + desc
+	seen := map[int64]bool{}
+	out := []int64{}
+	for _, h := range heights {
+		if h > 0 && !seen[h] {
+			seen[h] = true
+			out = append(out, h)
 		}
 	}
-
-	sort.Slice(heights, func(i, j int) bool { return heights[i] > heights[j] })
-	return heights
+	sort.Slice(out, func(i, j int) bool { return out[i] > out[j] })
+	return out
 }
 
 // EnableCORS enables CORS headers
@@ -926,11 +923,13 @@ func (api *DataAPI) HandleGetBlockInscriptionsPaginated(w http.ResponseWriter, r
 			// Detect placeholder content and attempt to read the actual file.
 			looksPlaceholder := inscriptionContent == "" || strings.HasPrefix(inscriptionContent, "Extracted from transaction")
 			if looksPlaceholder {
-				blockDir := fmt.Sprintf("%s/%d_00000000", strings.TrimRight(api.resolveBlocksDir(), "/"), height)
-				safePath, err := security.SanitizePath(blockDir, ins.FilePath)
-				if err == nil {
-					if data, err := os.ReadFile(safePath); err == nil {
-						inscriptionContent = string(data)
+				base := strings.TrimRight(api.resolveBlocksDir(), "/")
+				if blockDir, err := bitcoin.FindBlockDir(base, height); err == nil {
+					safePath, err := security.SanitizePath(blockDir, ins.FilePath)
+					if err == nil {
+						if data, err := os.ReadFile(safePath); err == nil {
+							inscriptionContent = string(data)
+						}
 					}
 				}
 			}
@@ -962,12 +961,34 @@ func (api *DataAPI) serveBlockImage(w http.ResponseWriter, height int64, filePat
 		return
 	}
 	base := strings.TrimRight(api.resolveBlocksDir(), "/")
-	baseDir := fmt.Sprintf("%s/%d_00000000", base, height)
-	safePath, err := security.SanitizePath(baseDir, filePath)
+	blockDir, err := bitcoin.FindBlockDir(base, height)
 	if err != nil {
 		http.Error(w, "inscription not found", http.StatusNotFound)
 		return
 	}
+
+	// Try the provided path, and also under images/ subdir (for callers that pass bare filename)
+	candidates := []string{filePath}
+	if !strings.HasPrefix(filePath, "images/") && !strings.HasPrefix(filePath, "images\\") {
+		candidates = append(candidates, filepath.Join("images", filePath))
+	}
+
+	var safePath string
+	for _, cand := range candidates {
+		p, err := security.SanitizePath(blockDir, cand)
+		if err != nil {
+			continue
+		}
+		if _, err := os.Stat(p); err == nil {
+			safePath = p
+			break
+		}
+	}
+	if safePath == "" {
+		http.Error(w, "inscription not found", http.StatusNotFound)
+		return
+	}
+
 	data, err := os.ReadFile(safePath)
 	if err != nil {
 		http.Error(w, "inscription not found", http.StatusNotFound)
@@ -1059,14 +1080,21 @@ func appendIfNotPresent(list []string, v string) []string {
 // in the loaded BlockDataCache is empty.
 func (api *DataAPI) findFirstBlockImageThumbnail(height int64) string {
 	base := strings.TrimRight(api.resolveBlocksDir(), "/")
-	// Try the two common directory shapes used by the system.
-	candidates := []string{
+	var candidates []string
+
+	// Use centralized finder (handles partitioned + legacy)
+	if blockD, err := bitcoin.FindBlockDir(base, height); err == nil {
+		candidates = append(candidates, filepath.Join(blockD, "images"))
+		// also support old glob style if needed
+		if matches, _ := filepath.Glob(filepath.Join(blockD, "images", "*")); len(matches) > 0 {
+			// we only need the dir
+		}
+	}
+
+	// Legacy fallbacks
+	candidates = append(candidates,
 		filepath.Join(base, fmt.Sprintf("%d_00000000", height), "images"),
-	}
-	// Also support the hashed suffix form <height>_<hash>
-	if matches, err := filepath.Glob(filepath.Join(base, fmt.Sprintf("%d_*", height), "images")); err == nil {
-		candidates = append(candidates, matches...)
-	}
+	)
 
 	for _, imgDir := range candidates {
 		entries, err := os.ReadDir(imgDir)

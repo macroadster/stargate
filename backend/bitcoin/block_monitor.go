@@ -261,6 +261,12 @@ func (bm *BlockMonitor) Start() error {
 		return fmt.Errorf("failed to create blocks directory: %w", err)
 	}
 
+	// One-time (idempotent) migration from old flat layout to 3-level partitioned layout.
+	// This is the follow-up to the IO reduction changes. Safe to call repeatedly.
+	if err := MigrateOldBlockLayoutIfNeeded(bm.blocksDir); err != nil {
+		log.Printf("block layout migration warning (non-fatal): %v", err)
+	}
+
 	log.Printf("Starting block monitor with %s interval, bitcoinAPI set: %v", bm.checkInterval, bm.bitcoinAPI != nil)
 
 	go bm.monitorLoop()

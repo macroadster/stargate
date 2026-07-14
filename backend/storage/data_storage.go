@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -66,7 +68,11 @@ func NewDataStorage(dataDir string) *DataStorage {
 		log.Printf("Failed to create data directory: %v", err)
 	}
 
-	// Load existing cache
+	// Migrate legacy flat block layout to partitioned early, *before* loading cache.
+	// This ensures the in-memory cache and any subsequent FS walks see the new layout.
+	bitcoin.MigrateOldBlockLayoutIfNeeded(dataDir)
+
+	// Load existing cache (now from the correct layout)
 	storage.loadCache()
 
 	return storage
@@ -266,7 +272,13 @@ func (ds *DataStorage) saveBlockDataToFile(data interface{}) error {
 	if !ok {
 		return fmt.Errorf("invalid data type, expected *BlockDataCache")
 	}
-	filename := filepath.Join(ds.dataDir, fmt.Sprintf("block_%d.json", cacheData.BlockHeight))
+	// Write inside the (partitioned) block dir to avoid polluting the root.
+	// Falls back gracefully if dir not found.
+	dir, _ := bitcoin.FindBlockDir(ds.dataDir, cacheData.BlockHeight)
+	if dir == "" {
+		dir = ds.dataDir // very old fallback
+	}
+	filename := filepath.Join(dir, "block.json")
 
 	jsonData, err := json.MarshalIndent(data, "", "  ")
 	if err != nil {
@@ -282,16 +294,16 @@ func (ds *DataStorage) saveBlockDataToFile(data interface{}) error {
 
 // loadBlockDataFromFile loads block data from JSON file
 func (ds *DataStorage) loadBlockDataFromFile(height int64) (interface{}, error) {
-	// Try blocks directory structure (height_hash/inscriptions.json)
-	// The directory name is height_hashprefix, so glob to find it.
-	matches, _ := filepath.Glob(filepath.Join(ds.dataDir, fmt.Sprintf("%d_*/inscriptions.json", height)))
-	if len(matches) == 0 {
-		return nil, fmt.Errorf("no block data file for height %d", height)
+	// Use centralized finder that understands partitioned + legacy layout.
+	dir, err := bitcoin.FindBlockDir(ds.dataDir, height)
+	if err != nil {
+		return nil, fmt.Errorf("no block data for height %d: %w", height, err)
 	}
 
-	data, err := os.ReadFile(matches[0])
+	insPath := filepath.Join(dir, "inscriptions.json")
+	data, err := os.ReadFile(insPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read block data file: %w", err)
+		return nil, fmt.Errorf("failed to read inscriptions for height %d: %w", height, err)
 	}
 
 	var cacheEntry BlockDataCache
@@ -318,29 +330,32 @@ func (ds *DataStorage) loadCache() {
 		return
 	}
 
-	blockEntries, err := os.ReadDir(ds.dataDir)
-	if err != nil {
-		log.Printf("Failed to read blocks directory: %v", err)
-		return
-	}
-
+	// Walk the (possibly partitioned) tree to find any <height>_* dirs that have inscriptions.json.
+	// This supports both legacy flat layout and the new 3-level partitioned layout.
 	loadedCount := 0
-	for _, blockEntry := range blockEntries {
-		if !blockEntry.IsDir() {
-			continue
+	_ = filepath.WalkDir(ds.dataDir, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil || !d.IsDir() {
+			return nil
+		}
+		// Look for a directory whose name starts with digits_ (the leaf block dir)
+		name := d.Name()
+		underscore := strings.Index(name, "_")
+		if underscore <= 0 {
+			return nil
+		}
+		if _, err := strconv.ParseInt(name[:underscore], 10, 64); err != nil {
+			return nil
 		}
 
-		// Try to load inscriptions.json from this directory
-		inscriptionsJsonPath := filepath.Join(ds.dataDir, blockEntry.Name(), "inscriptions.json")
-		if _, err := os.Stat(inscriptionsJsonPath); err != nil {
-			continue // Skip if inscriptions.json doesn't exist
+		insPath := filepath.Join(path, "inscriptions.json")
+		if _, err := os.Stat(insPath); err != nil {
+			return nil // not a block dir with data, or skip deeper?
 		}
 
-		// Read and parse the inscriptions.json file
-		blockData, err := os.ReadFile(inscriptionsJsonPath)
+		blockData, err := os.ReadFile(insPath)
 		if err != nil {
-			log.Printf("Warning: failed to read inscriptions file %s: %v", inscriptionsJsonPath, err)
-			continue
+			log.Printf("Warning: failed to read inscriptions file %s: %v", insPath, err)
+			return nil
 		}
 
 		var blockInfo struct {
@@ -357,8 +372,8 @@ func (ds *DataStorage) loadCache() {
 		}
 
 		if err := json.Unmarshal(blockData, &blockInfo); err != nil {
-			log.Printf("Warning: failed to parse inscriptions file %s: %v", inscriptionsJsonPath, err)
-			continue
+			log.Printf("Warning: failed to parse inscriptions file %s: %v", insPath, err)
+			return nil
 		}
 
 		// Convert to our cache format
@@ -410,7 +425,8 @@ func (ds *DataStorage) loadCache() {
 		// Store in cache
 		ds.cache[blockInfo.BlockHeight] = cacheEntry
 		loadedCount++
-	}
+		return nil
+	})
 
 	log.Printf("Loaded %d blocks into cache from blocks/ directory", loadedCount)
 }

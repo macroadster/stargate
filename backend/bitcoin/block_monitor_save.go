@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,6 +20,85 @@ func blocksDirFromEnv() string {
 		return v
 	}
 	return "blocks"
+}
+
+// partitionedBlockSubdir returns a 3-level partitioned path for the block dir
+// e.g. "000/144/144001_abc12345" for height 144001.
+// This greatly reduces the cost of directory scans.
+func partitionedBlockSubdir(height int64, hash8 string) string {
+	if len(hash8) > 8 {
+		hash8 = hash8[:8]
+	}
+	if hash8 == "" {
+		hash8 = "00000000"
+	}
+	l1 := height / 1000000
+	l2 := (height / 1000) % 1000
+	return fmt.Sprintf("%03d/%03d/%d_%s", l1, l2, height, hash8)
+}
+
+// BlockDir returns the full filesystem path using the partitioned layout.
+func BlockDir(blocksRoot string, height int64, hash8 string) string {
+	if blocksRoot == "" {
+		blocksRoot = blocksDirFromEnv()
+	}
+	return filepath.Join(blocksRoot, partitionedBlockSubdir(height, hash8))
+}
+
+// FindBlockDir locates an existing block directory for a height.
+// It checks the partitioned layout first, then falls back to the legacy flat layout
+// (for migration / old data compatibility). Returns the full path or error.
+func FindBlockDir(blocksRoot string, height int64) (string, error) {
+	if blocksRoot == "" {
+		blocksRoot = blocksDirFromEnv()
+	}
+	if blocksRoot == "" {
+		return "", fmt.Errorf("no blocks dir configured")
+	}
+
+	// 1. Partitioned layout (new): glob inside the expected leaf dir
+	l1 := height / 1000000
+	l2 := (height / 1000) % 1000
+	partBase := filepath.Join(blocksRoot, fmt.Sprintf("%03d/%03d", l1, l2))
+	if matches, _ := filepath.Glob(filepath.Join(partBase, fmt.Sprintf("%d_*", height))); len(matches) > 0 {
+		return matches[0], nil
+	}
+
+	// 2. Legacy flat layout at root: <height>_<hash8>
+	if matches, _ := filepath.Glob(filepath.Join(blocksRoot, fmt.Sprintf("%d_*", height))); len(matches) > 0 {
+		return matches[0], nil
+	}
+
+	// 3. Legacy hack some code used with explicit _00000000
+	hack := filepath.Join(blocksRoot, fmt.Sprintf("%d_00000000", height))
+	if fi, err := os.Stat(hack); err == nil && fi.IsDir() {
+		return hack, nil
+	}
+
+	return "", fmt.Errorf("no block directory found for height %d under %s", height, blocksRoot)
+}
+
+// getBlockHashForDir returns the stored block hash for a block directory.
+// Tries block.json first (for full data), falls back to inscriptions.json "block_hash"
+// (works for lightweight "metadata only" boring blocks).
+func getBlockHashForDir(blockDir string) (string, error) {
+	// Prefer block.json
+	if h, err := readBlockHeaderHash(filepath.Join(blockDir, "block.json")); err == nil && h != "" {
+		return h, nil
+	}
+	// Fallback for light blocks
+	ip := filepath.Join(blockDir, "inscriptions.json")
+	data, err := os.ReadFile(ip)
+	if err != nil {
+		return "", err
+	}
+	var p struct {
+		BlockHash string `json:"block_hash"`
+	}
+	if json.Unmarshal(data, &p) == nil && strings.TrimSpace(p.BlockHash) != "" {
+		return strings.TrimSpace(p.BlockHash), nil
+	}
+	return "", fmt.Errorf("could not extract block hash from %s", blockDir)
 }
 
 func (bm *BlockMonitor) getCanonicalBlockHash(height int64) (string, error) {
@@ -50,20 +130,18 @@ func (bm *BlockMonitor) pruneBlockDirsForHeight(height int64, canonicalHash stri
 	if blocksDir == "" {
 		return false, nil
 	}
-	entries, err := os.ReadDir(blocksDir)
-	if err != nil {
-		return false, err
-	}
+
+	// Use targeted lookup instead of full linear ReadDir over all blocks.
+	// This is a major IO win thanks to partitioning + find.
+	candidateDirs := findCandidateDirsForHeight(blocksDir, height)
+
 	var removed bool
 	var hasCanonical bool
-	heightPrefix := fmt.Sprintf("%d_", height)
 	reorgDir := filepath.Join(blocksDir, "reorgs")
-	for _, entry := range entries {
-		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), heightPrefix) {
-			continue
-		}
-		dirPath := filepath.Join(blocksDir, entry.Name())
-		hash, err := readBlockHeaderHash(filepath.Join(dirPath, "block.json"))
+
+	for _, dirPath := range candidateDirs {
+		entryName := filepath.Base(dirPath)
+		hash, err := getBlockHashForDir(dirPath)
 		if err != nil || hash == "" {
 			continue
 		}
@@ -71,11 +149,26 @@ func (bm *BlockMonitor) pruneBlockDirsForHeight(height int64, canonicalHash stri
 			hasCanonical = true
 			continue
 		}
-		log.Printf("Reorg cleanup: moving stale block dir %s to reorgs (hash=%s canonical=%s)", entry.Name(), hash, canonicalHash)
+		log.Printf("Reorg cleanup: moving stale block dir %s to reorgs (hash=%s canonical=%s)", entryName, hash, canonicalHash)
 		if err := os.MkdirAll(reorgDir, 0755); err != nil {
 			return removed, err
 		}
-		dest := filepath.Join(reorgDir, entry.Name())
+
+		// Place into partitioned layout under reorgs/ too (e.g. reorgs/000/144/144001_xxx)
+		dest := filepath.Join(reorgDir, entryName) // default flat under reorgs
+		if parts := strings.SplitN(entryName, "_", 2); len(parts) == 2 {
+			if h, perr := strconv.ParseInt(parts[0], 10, 64); perr == nil {
+				h8 := parts[1]
+				if len(h8) > 8 {
+					h8 = h8[:8]
+				}
+				dest = BlockDir(reorgDir, h, h8)
+			}
+		}
+
+		if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
+			log.Printf("reorg move: mkdir %s failed: %v", dest, err)
+		}
 		if err := os.Rename(dirPath, dest); err != nil {
 			if err := copyDir(dirPath, dest); err != nil {
 				return removed, err
@@ -90,6 +183,42 @@ func (bm *BlockMonitor) pruneBlockDirsForHeight(height int64, canonicalHash stri
 		return true, nil
 	}
 	return false, nil
+}
+
+// findCandidateDirsForHeight returns possible directories for a height using
+// partitioned layout + legacy flat (no full root directory scan).
+func findCandidateDirsForHeight(blocksDir string, height int64) []string {
+	var candidates []string
+
+	// New partitioned layout (preferred)
+	l1 := height / 1000000
+	l2 := (height / 1000) % 1000
+	partBase := filepath.Join(blocksDir, fmt.Sprintf("%03d/%03d", l1, l2))
+	if matches, _ := filepath.Glob(filepath.Join(partBase, fmt.Sprintf("%d_*", height))); len(matches) > 0 {
+		candidates = append(candidates, matches...)
+	}
+
+	// Legacy flat layout at root
+	if matches, _ := filepath.Glob(filepath.Join(blocksDir, fmt.Sprintf("%d_*", height))); len(matches) > 0 {
+		candidates = append(candidates, matches...)
+	}
+
+	// Support old _00000000 hack in root
+	hack := filepath.Join(blocksDir, fmt.Sprintf("%d_00000000", height))
+	if fi, err := os.Stat(hack); err == nil && fi.IsDir() {
+		candidates = append(candidates, hack)
+	}
+
+	// Dedup just in case
+	seen := map[string]bool{}
+	out := make([]string, 0, len(candidates))
+	for _, c := range candidates {
+		if !seen[c] {
+			seen[c] = true
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 func copyDir(src, dest string) error {
@@ -324,4 +453,124 @@ func encodeVarIntSize(value int) int {
 	} else {
 		return 9
 	}
+}
+
+// MigrateOldBlockLayoutIfNeeded performs a one-time (or safe re-runnable) migration
+// of legacy flat block directories (<height>_<hash8>) into the 3-level partitioned
+// layout under the same blocksRoot.
+//
+// This reduces future directory scan costs for reorgs, recent summaries, and
+// discovery. It is called early during startup.
+//
+// A marker file (.layout-v2) is written so we don't rescan on every restart.
+func MigrateOldBlockLayoutIfNeeded(blocksRoot string) error {
+	if blocksRoot == "" {
+		blocksRoot = blocksDirFromEnv()
+	}
+	if blocksRoot == "" {
+		return nil
+	}
+
+	marker := filepath.Join(blocksRoot, ".layout-v2")
+
+	// Always clean up known obsolete top-level block_*.json files.
+	// This is cheap and idempotent, so we do it on every start even if the
+	// main dir migration marker is present (from a previous deployment on the
+	// same volume).
+	cleanupLegacyTopLevelBlockFiles(blocksRoot)
+
+	if _, err := os.Stat(marker); err == nil {
+		return nil // main dir migration already done
+	}
+
+	// Migrate direct children that look like height dirs
+	migrated, err := migrateFlatHeightDirs(blocksRoot, blocksRoot)
+	if err != nil {
+		log.Printf("block layout migration: %v", err)
+	}
+
+	// Also migrate anything sitting flat inside reorgs/ (keep them under reorgs/ partitioned or flat)
+	reorgRoot := filepath.Join(blocksRoot, "reorgs")
+	if fi, _ := os.Stat(reorgRoot); fi != nil && fi.IsDir() {
+		if m2, _ := migrateFlatHeightDirs(reorgRoot, reorgRoot); m2 > 0 {
+			migrated += m2
+		}
+	}
+
+	if migrated > 0 {
+		log.Printf("Block dir layout migration: moved %d legacy flat directories into partitioned structure", migrated)
+	}
+
+	// Write marker (best effort)
+	_ = os.WriteFile(marker, []byte("2\n"), 0644)
+	return nil
+}
+
+// cleanupLegacyTopLevelBlockFiles removes old top-level block_*.json files
+// that were written by the legacy DataStorage.saveBlockDataToFile.
+// These are now superseded by the per-height directories (inscriptions.json etc.).
+func cleanupLegacyTopLevelBlockFiles(blocksRoot string) {
+	if blocksRoot == "" {
+		blocksRoot = blocksDirFromEnv()
+	}
+	if blocksRoot == "" {
+		return
+	}
+	matches, _ := filepath.Glob(filepath.Join(blocksRoot, "block_*.json"))
+	for _, f := range matches {
+		if err := os.Remove(f); err != nil {
+			log.Printf("cleanup: failed to remove legacy %s: %v", f, err)
+		} else {
+			log.Printf("cleanup: removed legacy top-level block file %s", filepath.Base(f))
+		}
+	}
+}
+
+// migrateFlatHeightDirs scans srcRoot for direct flat height_ dirs and moves
+// them under the partitioned layout relative to dstBase (usually same as srcRoot).
+// Returns number migrated.
+func migrateFlatHeightDirs(srcRoot, dstBase string) (int, error) {
+	entries, err := os.ReadDir(srcRoot)
+	if err != nil {
+		return 0, nil
+	}
+	count := 0
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		parts := strings.SplitN(name, "_", 2)
+		if len(parts) != 2 || len(parts[1]) < 8 {
+			continue
+		}
+		height, err := strconv.ParseInt(parts[0], 10, 64)
+		if err != nil {
+			continue
+		}
+		hash8 := parts[1][:8]
+
+		oldPath := filepath.Join(srcRoot, name)
+		newPath := BlockDir(dstBase, height, hash8)
+
+		if _, statErr := os.Stat(newPath); statErr == nil {
+			// target already exists; skip (or could remove old if wanted)
+			continue
+		}
+
+		if err := os.MkdirAll(filepath.Dir(newPath), 0755); err != nil {
+			log.Printf("migration mkdir failed for %s: %v", newPath, err)
+			continue
+		}
+
+		if err := os.Rename(oldPath, newPath); err != nil {
+			if cErr := copyDir(oldPath, newPath); cErr != nil {
+				log.Printf("migration copy failed %s -> %s: %v", oldPath, newPath, cErr)
+				continue
+			}
+			_ = os.RemoveAll(oldPath)
+		}
+		count++
+	}
+	return count, nil
 }
