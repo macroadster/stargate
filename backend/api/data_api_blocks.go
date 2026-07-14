@@ -41,21 +41,26 @@ func (api *DataAPI) loadBlockFromDisk(height int64) (*storage.BlockDataCache, er
 			if d, e := os.ReadFile(candidate); e == nil {
 				data := d
 				var raw struct {
-					BlockHeight  int64                        `json:"block_height"`
-					BlockHash    string                       `json:"block_hash"`
-					Timestamp    int64                        `json:"timestamp"`
-					TxCount      int                          `json:"tx_count"`
-					Inscriptions []bitcoin.InscriptionData    `json:"inscriptions"`
-					Images       []bitcoin.ExtractedImageData `json:"images"`
-					Smart        []bitcoin.SmartContractData  `json:"smart_contracts"`
-					ScanResults  []map[string]interface{}     `json:"scan_results"`
+					BlockHeight       int64                        `json:"block_height"`
+					BlockHash         string                       `json:"block_hash"`
+					Timestamp         int64                        `json:"timestamp"`
+					TxCount           int                          `json:"tx_count"`
+					TotalTransactions int                          `json:"total_transactions"`
+					Inscriptions      []bitcoin.InscriptionData    `json:"inscriptions"`
+					Images            []bitcoin.ExtractedImageData `json:"images"`
+					Smart             []bitcoin.SmartContractData  `json:"smart_contracts"`
+					ScanResults       []map[string]interface{}     `json:"scan_results"`
 				}
 				if uerr := json.Unmarshal(data, &raw); uerr == nil {
+					txc := raw.TxCount
+					if txc == 0 {
+						txc = raw.TotalTransactions
+					}
 					return &storage.BlockDataCache{
 						BlockHeight:    raw.BlockHeight,
 						BlockHash:      raw.BlockHash,
 						Timestamp:      raw.Timestamp,
-						TxCount:        raw.TxCount,
+						TxCount:        txc,
 						Inscriptions:   raw.Inscriptions,
 						Images:         raw.Images,
 						SmartContracts: raw.Smart,
@@ -82,15 +87,17 @@ func (api *DataAPI) loadBlock(height int64) (*storage.BlockDataCache, error) {
 }
 
 // listAvailableBlockHeights discovers block files and returns heights sorted desc.
-// Strongly prefers the storage layer (no expensive root walk). Walk fallback
-// supports both partitioned and legacy layouts.
+// It unions heights from storage (for PG etc) with on-disk walk (partitioned layout aware)
+// so that scrollback works for historical blocks even if the in-memory cache has been
+// pruned by cleanOldCache or only a subset is hot.
 func (api *DataAPI) listAvailableBlockHeights() []int64 {
 	var heights []int64
 
-	// 1. Best: use storage (DB or cache) - this is the fast path and works
-	//    regardless of FS layout.
+	// Collect from storage layer (works for Postgres/SQLite; for default FS storage
+	// this may be limited by in-memory pruning, so we always supplement below).
 	if api.dataStorage != nil {
-		if cached, err := api.dataStorage.GetRecentBlocks(1000); err == nil {
+		// Request a large limit so PG returns many/all stored heights.
+		if cached, err := api.dataStorage.GetRecentBlocks(1000000); err == nil {
 			for _, b := range cached {
 				if block, ok := b.(*storage.BlockDataCache); ok && block.BlockHeight > 0 {
 					heights = append(heights, block.BlockHeight)
@@ -103,22 +110,33 @@ func (api *DataAPI) listAvailableBlockHeights() []int64 {
 		}
 	}
 
-	if len(heights) == 0 {
-		// 2. Fallback FS walk that understands partitioned dirs
-		baseDir := api.resolveBlocksDir()
-		_ = filepath.WalkDir(baseDir, func(path string, d os.DirEntry, err error) error {
-			if err != nil || !d.IsDir() {
-				return nil
-			}
-			name := d.Name()
-			if idx := strings.Index(name, "_"); idx > 0 {
-				if h, err := strconv.ParseInt(name[:idx], 10, 64); err == nil {
+	// Always perform on-disk discovery. This is required for partitioned layout
+	// and ensures we can scroll back to any block that has a dir + inscriptions.json
+	// (i.e. any block we have ever processed), independent of cache eviction.
+	baseDir := api.resolveBlocksDir()
+	_ = filepath.WalkDir(baseDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil || !d.IsDir() {
+			return nil
+		}
+		name := d.Name()
+		if idx := strings.Index(name, "_"); idx > 0 {
+			if h, err := strconv.ParseInt(name[:idx], 10, 64); err == nil && h > 0 {
+				// Only include if it looks like it has data (inscriptions or block json)
+				ins := filepath.Join(path, "inscriptions.json")
+				blk := filepath.Join(path, "block.json")
+				hasData := false
+				if _, e := os.Stat(ins); e == nil {
+					hasData = true
+				} else if _, e := os.Stat(blk); e == nil {
+					hasData = true
+				}
+				if hasData {
 					heights = append(heights, h)
 				}
 			}
-			return nil
-		})
-	}
+		}
+		return nil
+	})
 
 	// dedup + desc
 	seen := map[int64]bool{}

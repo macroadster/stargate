@@ -120,22 +120,34 @@ func (ds *DataStorage) StoreBlockData(blockResponse *bitcoin.BlockInscriptionsRe
 	return nil
 }
 
-// GetBlockData retrieves block data with caching
+// GetBlockData retrieves block data with caching.
+// On cache miss or stale, loads from disk and promotes into the in-memory cache
+// (so that GetRecentBlocks and scrollers can see recently accessed historical blocks).
 func (ds *DataStorage) GetBlockData(height int64) (interface{}, error) {
 	ds.mu.RLock()
-	defer ds.mu.RUnlock()
-
-	// Check cache first
 	if cached, exists := ds.cache[height]; exists {
 		if time.Since(cached.CacheTimestamp) < ds.cacheTimeout {
-			return cached, nil
+			cpy := *cached
+			ds.mu.RUnlock()
+			return &cpy, nil
 		}
-		// Cache expired, remove it
-		delete(ds.cache, height)
+	}
+	ds.mu.RUnlock()
+
+	// Load from disk (outside lock)
+	loaded, err := ds.loadBlockDataFromFile(height)
+	if err != nil {
+		return nil, err
 	}
 
-	// Load from file
-	return ds.loadBlockDataFromFile(height)
+	// Promote into cache under write lock (refresh timestamp already set by loader)
+	if entry, ok := loaded.(*BlockDataCache); ok {
+		ds.mu.Lock()
+		ds.cache[height] = entry
+		ds.mu.Unlock()
+	}
+
+	return loaded, nil
 }
 
 // GetRecentBlocks retrieves recent blocks with steganography data
@@ -300,16 +312,37 @@ func (ds *DataStorage) loadBlockDataFromFile(height int64) (interface{}, error) 
 		return nil, fmt.Errorf("no block data for height %d: %w", height, err)
 	}
 
-	insPath := filepath.Join(dir, "inscriptions.json")
-	data, err := os.ReadFile(insPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read inscriptions for height %d: %w", height, err)
+	// inscriptions.json is the summary (written with total_transactions), block.json is raw.
+	candidates := []string{
+		filepath.Join(dir, "inscriptions.json"),
+		filepath.Join(dir, "block.json"),
+	}
+	var data []byte
+	for _, p := range candidates {
+		if b, e := os.ReadFile(p); e == nil {
+			data = b
+			break
+		}
+	}
+	if len(data) == 0 {
+		return nil, fmt.Errorf("no block json found for height %d", height)
 	}
 
 	var cacheEntry BlockDataCache
 	if err := json.Unmarshal(data, &cacheEntry); err != nil {
 		log.Printf("Failed to unmarshal block data for height %d: %v", height, err)
 		return nil, fmt.Errorf("failed to unmarshal block data: %w", err)
+	}
+
+	// The summary file uses "total_transactions"; ensure TxCount is populated.
+	if cacheEntry.TxCount == 0 {
+		// Try secondary unmarshal for the common key.
+		var aux struct {
+			TotalTransactions int `json:"total_transactions"`
+		}
+		if uerr := json.Unmarshal(data, &aux); uerr == nil && aux.TotalTransactions > 0 {
+			cacheEntry.TxCount = aux.TotalTransactions
+		}
 	}
 
 	// Set cache timestamp
@@ -431,7 +464,10 @@ func (ds *DataStorage) loadCache() {
 	log.Printf("Loaded %d blocks into cache from blocks/ directory", loadedCount)
 }
 
-// cleanOldCache removes expired cache entries but keeps at least 10 recent blocks
+// cleanOldCache removes expired cache entries but keeps a large number of blocks
+// (historical + recent) so that GetRecentBlocks and block scrollback continue to
+// work after cacheTimeout. The on-disk artifacts are the source of truth; the map
+// is just a hot cache. We keep up to 100k to avoid unbounded growth in extreme cases.
 func (ds *DataStorage) cleanOldCache() {
 	now := time.Now()
 
@@ -450,28 +486,30 @@ func (ds *DataStorage) cleanOldCache() {
 		return entries[i].timestamp.After(entries[j].timestamp)
 	})
 
-	// Keep at least 10 most recent blocks, remove expired ones beyond that
-	keepCount := 10
+	// Keep a large number (supports scrollback over historical scanned blocks).
+	// Only evict beyond this if they are also expired.
+	keepCount := 100000
 	if len(entries) < keepCount {
 		keepCount = len(entries)
 	}
 
-	// Remove expired entries beyond the keep count
+	removed := 0
 	for i := keepCount; i < len(entries); i++ {
 		if now.Sub(entries[i].timestamp) > ds.cacheTimeout {
 			delete(ds.cache, entries[i].height)
-			log.Printf("Removed expired block %d from cache (older than %v minutes)", entries[i].height, ds.cacheTimeout.Minutes())
+			removed++
 		}
 	}
+	if removed > 0 {
+		log.Printf("cleanOldCache: removed %d expired blocks beyond keep window", removed)
+	}
 
-	// Keep recent blocks even if expired (if we have less than 10 total)
-	for i := 0; i < keepCount; i++ {
-		if now.Sub(entries[i].timestamp) > ds.cacheTimeout {
-			// Refresh expired but keep it if we don't have enough blocks
-			log.Printf("Block %d expired but keeping in cache (only %d blocks cached)", entries[i].height, len(entries))
-		} else {
-			// Keep non-expired blocks
-			log.Printf("Keeping block %d in cache (age: %v minutes)", entries[i].height, now.Sub(entries[i].timestamp).Minutes())
+	// Light logging for the kept head (avoid spam)
+	if len(entries) > 0 {
+		kept := entries[:keepCount]
+		// Only log occasionally or for the very newest
+		if now.Sub(kept[0].timestamp) < ds.cacheTimeout {
+			log.Printf("Keeping %d blocks in cache (newest age: %v min)", len(kept), now.Sub(kept[0].timestamp).Minutes())
 		}
 	}
 }
