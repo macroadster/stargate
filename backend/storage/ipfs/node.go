@@ -30,22 +30,29 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/routing"
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
+	drouting "github.com/libp2p/go-libp2p/p2p/discovery/routing"
 	multiaddr "github.com/multiformats/go-multiaddr"
 )
 
-// defaultBootstrapPeers is intentionally empty.
+// defaultBootstrapPeers are the IPFS network bootstrap nodes operated by
+// Protocol Labs. They allow the embedded node to join the public DHT for
+// decentralised peer discovery — this avoids making any single server
+// (e.g. starlight-ai.freemyip.com) the sole bottleneck.
 //
-// The embedded node is capped to the stargate-uploads mirror topic only.
-// stargate-uploads is the only official robust replication path (hash-named
-// files + manifests for stego images and sandboxes). Other pubsub mechanisms
-// were added over time and are not considered proven or safe from abuse.
+// Note: the full AllKeysChan reprovider is intentionally kept disabled
+// because at 20k+ data blocks the periodic blockstore scan causes heavy
+// filesystem I/O. Discovery and bitswap still work; only the expensive
+// bulk re-announcement is skipped.
 //
-// We deliberately avoid the public IPFS network so the node does not waste
-// electricity connecting to random peers or forwarding traffic for unproven paths.
-//
-// For intentional multi-instance setups, use IPFS_EMBEDDED_BOOTSTRAP with
-// your own controlled peers.
-var defaultBootstrapPeers = []string{}
+// Additional bootstrap peers (e.g. your own stargate instances) can be
+// supplied via IPFS_EMBEDDED_BOOTSTRAP (comma-separated multiaddrs).
+var defaultBootstrapPeers = []string{
+	"/dnsaddr/bootstrap.libp2p.io/p2p/QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN",
+	"/dnsaddr/bootstrap.libp2p.io/p2p/QmQCU2EcMqAqQPR2i9bChDtGNJchTbq5TbXJJ16u19uLTa",
+	"/dnsaddr/bootstrap.libp2p.io/p2p/QmbLHAnMoJPWSCR5Zhtx6BHJX9KiKNN6tpvbUcqanj75Nb",
+	"/dnsaddr/bootstrap.libp2p.io/p2p/QmcZf59bWwK5XFi76CZX8cbJ4BhTzzA3gU1ZjYZcYW3dwt",
+	"/ip4/104.131.131.82/tcp/4001/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ",
+}
 
 // EmbeddedNode is a minimal IPFS node embedded in the application
 type EmbeddedNode struct {
@@ -86,11 +93,11 @@ func NewEmbeddedNode(ctx context.Context, cfg NodeConfig) (*EmbeddedNode, error)
 	bstore := blockstore.NewBlockstore(dstore)
 	bstore = blockstore.NewIdStore(bstore)
 
-	// 3. Initialize libp2p Host + limited DHT.
-	//    DHT is present (for bitswap provider records on our own content)
-	//    but because we use no public bootstrap and no gossipsub discovery,
-	//    the node stays capped and does not attract or forward arbitrary
-	//    public IPFS traffic.
+	// 3. Initialize libp2p Host with DHT in auto-server mode so the node
+	//    can discover content and announce (provide) its own CIDs.
+	//    The full AllKeysChan reprovider is kept disabled to avoid heavy
+	//    filesystem I/O at scale (20k+ blocks); only per-CID Provide()
+	//    calls in Add() are used when a reprovider is present.
 	var idht *dht.IpfsDHT
 	h, err := libp2p.New(
 		libp2p.ListenAddrStrings(cfg.ListenAddrs...),
@@ -118,13 +125,16 @@ func NewEmbeddedNode(ctx context.Context, cfg NodeConfig) (*EmbeddedNode, error)
 	// 6. Initialize DAGService
 	dag := merkledag.NewDAGService(bserv)
 
-	// 7. Initialize Pubsub *without* DHT-based peer discovery.
-	//    This caps participation to the stargate-uploads topic and prevents
-	//    the node from auto-meshing with arbitrary public IPFS peers or
-	//    forwarding data for other topics/content.
-	//    Peers must connect explicitly (mDNS, known addrs via LB, or
-	//    configured bootstrap peers).
-	ps, err := pubsub.NewGossipSub(nodeCtx, h)
+	// 7. Initialize Pubsub with DHT-based peer discovery so nodes
+	//    subscribed to the same topic can find and connect to each other.
+	//    The topic guard in getTopic() still restricts participation to
+	//    stargate-uploads only, so the node won't forward messages for
+	//    arbitrary topics even though it can discover peers via the DHT.
+	routingDiscovery := drouting.NewRoutingDiscovery(idht)
+	ps, err := pubsub.NewGossipSub(nodeCtx, h,
+		pubsub.WithDiscovery(routingDiscovery),
+		pubsub.WithPeerExchange(true),
+	)
 	if err != nil {
 		h.Close()
 		dstore.Close()
@@ -132,12 +142,12 @@ func NewEmbeddedNode(ctx context.Context, cfg NodeConfig) (*EmbeddedNode, error)
 		return nil, fmt.Errorf("failed to initialize pubsub: %w", err)
 	}
 
-	// 8. Reprovider is intentionally not used (or is capped).
-	//    We do not want to announce or forward arbitrary data from the
-	//    blockstore via the DHT. Only explicit Provide() calls for
-	//    stargate-uploads mirror content (in Add) will be made if a
-	//    reprovider is present. The full AllKeysChan reprovider is
-	//    disabled to cap the node.
+	// 8. Reprovider is intentionally disabled.
+	//    The full AllKeysChan reprovider scans the entire blockstore every
+	//    22 hours. At 20k+ data blocks this causes heavy filesystem I/O
+	//    (LevelDB iteration) and CPU burn. Only explicit per-CID Provide()
+	//    calls in Add() are used, keeping the cost proportional to new
+	//    content rather than total content.
 	var reprov provider.System
 
 	node := &EmbeddedNode{
@@ -154,9 +164,10 @@ func NewEmbeddedNode(ctx context.Context, cfg NodeConfig) (*EmbeddedNode, error)
 		topics:     make(map[string]*pubsub.Topic),
 	}
 
-	// 9. Bootstrap — only to explicitly configured peers (capped).
-	//    We intentionally avoid public IPFS bootstraps so the node does
-	//    not join the global network or forward other data.
+	// 9. Bootstrap — connect to IPFS network peers so the node can
+	//    participate in the DHT and exchange blocks with other peers.
+	//    IPFS_EMBEDDED_BOOTSTRAP adds extra peers (e.g. your own stargate
+	//    instances) alongside the Protocol Labs defaults.
 	bootstrapPeers := cfg.Bootstrap
 	if len(bootstrapPeers) == 0 {
 		bootstrapPeers = defaultBootstrapPeers
@@ -219,9 +230,10 @@ func (n *EmbeddedNode) bootstrap(peers []string) {
 	}
 }
 
-// Add adds data to the embedded IPFS node.
-// The node is capped to the stargate-uploads mirror only (the official
-// file replication path). We do not broadly announce via public DHT.
+// Add adds data to the embedded IPFS node and announces the CID to the
+// DHT so other peers can discover and fetch it. The full reprovider is
+// disabled to avoid filesystem I/O at scale; only this per-CID announce
+// is used.
 func (n *EmbeddedNode) Add(ctx context.Context, r io.Reader) (cid.Cid, error) {
 	params := helpers.DagBuilderParams{
 		Dagserv:   n.dag,
@@ -317,12 +329,12 @@ func (n *EmbeddedNode) getTopic(name string) (*pubsub.Topic, error) {
 
 	// Cap to stargate-uploads topic only.
 	//
-	// stargate-uploads (the file mirror) is the only official, proven
-	// replication approach. Other topics (historically "stargate-stego"
-	// for stego announcements and MCP state sync) are secondary features
-	// added over time. They have not been proven robust and are vulnerable
-	// to abuse. When using the embedded node we strictly limit participation
-	// so we do not burn electricity on unproven paths.
+	// stargate-uploads (the file mirror) is the proven replication path.
+	// Other topics (e.g. "stargate-stego") are secondary features that
+	// have not been shown to be robust and are vulnerable to abuse.
+	// Even though the node now participates in the public DHT for peer
+	// discovery, we restrict pubsub to prevent forwarding messages for
+	// arbitrary topics.
 	allowed := os.Getenv("IPFS_MIRROR_TOPIC")
 	if allowed == "" {
 		allowed = "stargate-uploads"
