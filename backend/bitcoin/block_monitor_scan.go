@@ -25,6 +25,7 @@ import (
 	"stargate-backend/core"
 	"stargate-backend/security"
 	"stargate-backend/services"
+	"stargate-backend/storage/datadir"
 )
 
 // sanitizeExtractedImage removes opcode prefixes and stray metadata from payloads before persisting to disk.
@@ -703,8 +704,8 @@ func (bm *BlockMonitor) moveIngestionImageWithFilename(blockDir string, rec *ser
 		}
 	}
 	if sourcePath == "" && rec.ID != "" {
-		// First try hash-only filename (new stealth naming)
-		hashPath := filepath.Join(uploadsDir, rec.ID)
+		// Try partitioned and flat hash-only locations.
+		hashPath := datadir.PartResolve(uploadsDir, rec.ID)
 		if _, err := os.Stat(hashPath); err == nil {
 			sourcePath = hashPath
 		} else {
@@ -747,8 +748,8 @@ func (bm *BlockMonitor) stegoImagePath(rec *services.IngestionRecord) (string, b
 		return "", false
 	}
 	uploadsDir := os.Getenv("UPLOADS_DIR")
-	// First try hash-only filename (new stealth naming)
-	hashPath := filepath.Join(uploadsDir, stegoCID)
+	// Try partitioned and flat hash-only locations.
+	hashPath := datadir.PartResolve(uploadsDir, stegoCID)
 	if _, err := os.Stat(hashPath); err == nil {
 		return hashPath, true
 	}
@@ -826,8 +827,8 @@ func (bm *BlockMonitor) cleanupUploadArtifacts(rec *services.IngestionRecord) {
 		return
 	}
 	uploadsDir := os.Getenv("UPLOADS_DIR")
-	// First try hash-only filename (new stealth naming)
-	hashPath := filepath.Join(uploadsDir, id)
+	// Try partitioned and flat hash-only locations.
+	hashPath := datadir.PartResolve(uploadsDir, id)
 	if _, err := os.Stat(hashPath); err == nil {
 		bm.unpinUploadPath(hashPath)
 	}
@@ -894,7 +895,7 @@ func (bm *BlockMonitor) reconcileOnChainArtifacts(contractID, stegoHash string) 
 	// Reconcile stego image: find UPLOADS_DIR/<stegoHash> and extract
 	// the embedded v2 payload (proposal + tasks + sandbox_hash + metadata).
 	if stegoHash != "" {
-		stegoPath := filepath.Join(uploadsDir, stegoHash)
+		stegoPath := datadir.PartResolve(uploadsDir, stegoHash)
 		if _, err := os.Stat(stegoPath); err == nil {
 			log.Printf("oracle reconcile: found stego image on disk for %s at %s, reconciling", contractID, stegoPath)
 			if bm.stegoReconciler != nil {

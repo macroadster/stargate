@@ -1292,10 +1292,18 @@ func backfillMirroredUploadsIngestion(ctx context.Context, ingest *services.Inge
 			return walkErr
 		}
 		if entry.IsDir() {
-			if path != uploadsDir {
+			if path == uploadsDir {
+				return nil
+			}
+			// Walk into ab/cd/ef partition dirs so we find migrated hash files.
+			rel, err := filepath.Rel(uploadsDir, path)
+			if err != nil {
 				return filepath.SkipDir
 			}
-			return nil
+			if isPartitionDir(filepath.ToSlash(rel)) {
+				return nil
+			}
+			return filepath.SkipDir
 		}
 		if strings.HasPrefix(entry.Name(), ".") {
 			return nil
@@ -1343,4 +1351,29 @@ func isImageFile(path string) bool {
 	default:
 		return false
 	}
+}
+
+// isPartitionDir reports whether a slash-separated relative path is a
+// partition prefix directory (1-3 levels of 2-char hex segments, e.g.
+// "ab", "ab/cd", "ab/cd/ef") that should be walked into when scanning
+// UPLOADS_DIR.
+func isPartitionDir(rel string) bool {
+	if rel == "" || rel == "." {
+		return false
+	}
+	parts := strings.Split(rel, "/")
+	if len(parts) == 0 || len(parts) > 3 {
+		return false
+	}
+	for _, p := range parts {
+		if len(p) != 2 {
+			return false
+		}
+		for _, c := range p {
+			if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+				return false
+			}
+		}
+	}
+	return true
 }

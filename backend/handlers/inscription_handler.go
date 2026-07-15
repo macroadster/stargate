@@ -680,9 +680,13 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 		h.sendError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to create uploads directory %s: %v", uploadsDir, err))
 		return
 	}
-	// Use hash-only filename for stealth
+	// Use hash-only filename in partitioned layout for stealth.
 	imageFilename := ingestionID
-	imagePath := security.SafeFilePath(uploadsDir, imageFilename)
+	imagePath := datadir.PartPath(uploadsDir, imageFilename)
+	if err := os.MkdirAll(filepath.Dir(imagePath), 0755); err != nil {
+		h.sendError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to create partition directory: %v", err))
+		return
+	}
 	log.Printf("DEBUG: Attempting to write stego image to %s (size: %d bytes)", imagePath, len(stegoImgBytes))
 	if err := os.WriteFile(imagePath, stegoImgBytes, 0644); err != nil {
 		h.sendError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to write image to %s: %v", imagePath, err))
@@ -921,15 +925,20 @@ func (h *InscriptionHandler) fromIngestion(rec services.IngestionRecord) models.
 	uploadsDir := os.Getenv("UPLOADS_DIR")
 	_ = os.MkdirAll(uploadsDir, 0755)
 
-	// Use just the hash for consistency with HandleCreateInscription
+	// Use partitioned layout for consistency with HandleCreateInscription.
+	// PartResolve checks partitioned first, then flat legacy fallback.
 	filename := rec.ID
-	targetPath := security.SafeFilePath(uploadsDir, filename)
+	targetPath := datadir.PartResolve(uploadsDir, filename)
 
 	if _, err := os.Stat(targetPath); os.IsNotExist(err) {
 		if rec.ImageBase64 != "" {
 			if data, err := base64.StdEncoding.DecodeString(rec.ImageBase64); err == nil {
-				if err := os.WriteFile(targetPath, data, 0644); err != nil {
-					fmt.Printf("Failed to write ingestion image to %s: %v\n", targetPath, err)
+				// Write new files into the partitioned location.
+				targetPath = datadir.PartPath(uploadsDir, filename)
+				if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
+					log.Printf("Failed to create partition dir for %s: %v", filename, err)
+				} else if err := os.WriteFile(targetPath, data, 0644); err != nil {
+					log.Printf("Failed to write ingestion image to %s: %v", targetPath, err)
 				} else {
 					log.Printf("DEBUG: lazy-stored ingestion image to %s", targetPath)
 				}
@@ -1043,8 +1052,8 @@ func (h *InscriptionHandler) fromProposal(p sc.Proposal) models.InscriptionReque
 		}
 	}
 	if baseID != "" {
-		// First try hash-only filename (new stealth naming)
-		hashPath := filepath.Join(uploadsDir, baseID)
+		// Try partitioned and flat hash-only locations.
+		hashPath := datadir.PartResolve(uploadsDir, baseID)
 		if _, err := os.Stat(hashPath); err == nil {
 			imagePath = hashPath
 		} else {
