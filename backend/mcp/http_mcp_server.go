@@ -1176,19 +1176,10 @@ func (h *HTTPMCPServer) handleScanTransaction(ctx context.Context, args map[stri
 		baseDir = storage.DefaultPath("blocks")
 	}
 
-	// First try old block directory structure: BLOCKS_DIR/{blockHeight}_*/
-	blockDirPattern := filepath.Join(baseDir, fmt.Sprintf("%d_*", blockHeight))
-	matches, err := filepath.Glob(blockDirPattern)
-	if err != nil || len(matches) == 0 {
-		legacyDir := filepath.Join(baseDir, fmt.Sprintf("%d_00000000", blockHeight))
-		if _, err := os.Stat(legacyDir); err == nil {
-			matches = []string{legacyDir}
-		}
-	}
-
+	// Use the centralized finder that checks the 3-level partitioned layout
+	// first (000/144/144001_xxxx/) then falls back to legacy flat dirs.
 	var imagePath string
-	if len(matches) > 0 {
-		blockDir := matches[0]
+	if blockDir, err := bitcoin.FindBlockDir(baseDir, int64(blockHeight)); err == nil {
 		inscriptionsPath := filepath.Join(blockDir, "inscriptions.json")
 
 		inscriptionsData, err := os.ReadFile(inscriptionsPath)
