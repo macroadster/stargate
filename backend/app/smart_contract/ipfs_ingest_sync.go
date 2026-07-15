@@ -16,9 +16,10 @@ import (
 	"time"
 
 	"stargate-backend/core/smart_contract"
-	"stargate-backend/storage/ipfs"
 	"stargate-backend/services"
 	"stargate-backend/stego"
+       "stargate-backend/storage/datadir"
+       "stargate-backend/storage/ipfs"
 )
 
 type ipfsIngestSyncConfig struct {
@@ -434,7 +435,9 @@ func ipfsIngestProcessManifest(ctx context.Context, ingest *services.IngestionSe
 		if err != nil {
 			// Plain-text wish images are mirrored alongside approved stego manifests.
 			uploadsDir := strings.TrimSpace(os.Getenv("UPLOADS_DIR"))
-			filePath := filepath.Join(uploadsDir, filepath.Base(entry.Path))
+                       baseName := filepath.Base(entry.Path)
+                       filePath := datadir.PartPath(uploadsDir, baseName)
+                       _ = os.MkdirAll(filepath.Dir(filePath), 0755)
 			if ingestPlainStegoWish(ctx, ingest, filePath, entry.CID, rawBytes, blob) {
 				processed++
 			}
@@ -771,9 +774,11 @@ func ipfsIngestProcessPending(ctx context.Context, ingest *services.IngestionSer
 		}
 	}
 	// Write wish image to disk so the /uploads/ endpoint can serve it.
+	// Uses partitioned layout (ab/cd/ef/<hash>) for hash-keyed files.
 	uploadsDir := strings.TrimSpace(os.Getenv("UPLOADS_DIR"))
 	_ = os.MkdirAll(uploadsDir, 0755)
-	uploadPath := filepath.Join(uploadsDir, id)
+	uploadPath := datadir.PartPath(uploadsDir, id)
+	_ = os.MkdirAll(filepath.Dir(uploadPath), 0755)
 	if _, statErr := os.Stat(uploadPath); statErr != nil {
 		if writeErr := os.WriteFile(uploadPath, imageBytes, 0644); writeErr != nil {
 			log.Printf("ipfs ingestion sync: failed to write wish image to %s: %v", uploadPath, writeErr)

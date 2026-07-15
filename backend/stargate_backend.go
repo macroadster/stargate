@@ -30,6 +30,7 @@ import (
 	"stargate-backend/starlight"
 	"stargate-backend/storage"
 	auth "stargate-backend/storage/auth"
+       "stargate-backend/storage/datadir"
 	scstore "stargate-backend/storage/smart_contract"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -142,8 +143,9 @@ func customUploadsHandler(uploadsDir string) http.HandlerFunc {
 			return
 		}
 
-		// Construct full file path and clean it
-		filePath := filepath.Join(uploadsDir, relPath)
+               // Resolve path through the partition layout (tries
+               // partitioned ab/cd/ef/<key> first, then flat fallback).
+               filePath := datadir.ResolveUploadRelPath(uploadsDir, relPath)
 
 		// Security check: ensure the cleaned path is still within uploads directory
 		if !strings.HasPrefix(filepath.Clean(filePath), uploadsDir) {
@@ -401,6 +403,13 @@ func main() {
 	// Ensure consistent data paths
 	consolidateEnvironmentPaths()
 
+       // Migrate flat uploads into three-level partitioned layout (idempotent).
+       if uDir := os.Getenv("UPLOADS_DIR"); uDir != "" {
+               if err := datadir.MigrateUploads(uDir); err != nil {
+                       log.Printf("WARNING: uploads partition migration failed: %v", err)
+               }
+       }
+
 	// Initialize MCP components (needed for both server and background)
 	store, apiKeyIssuer, apiKeyValidator, ingestionSvc, challengeStore := initializeMCPComponents()
 
@@ -638,10 +647,24 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 	_ = os.MkdirAll(uploadsDir, 0755)
 	mux.HandleFunc("/uploads/", customUploadsHandler(uploadsDir))
 
-	// Serve sandbox files (alias for /uploads/results)
+       // Serve sandbox files (alias for /uploads/results).
+       // Uses partition-aware resolution so /sandbox/<hash>/file resolves to
+       // results/ab/cd/ef/<hash>/file on disk.
 	resultsDir := filepath.Join(uploadsDir, "results")
 	_ = os.MkdirAll(resultsDir, 0755)
-	mux.Handle("/sandbox/", http.StripPrefix("/sandbox/", http.FileServer(http.Dir(resultsDir))))
+       mux.HandleFunc("/sandbox/", func(w http.ResponseWriter, r *http.Request) {
+               rel := strings.TrimPrefix(r.URL.Path, "/sandbox/")
+               if rel == "" || rel == "." {
+                       http.NotFound(w, r)
+                       return
+               }
+               resolved := datadir.ResolveUploadRelPath(uploadsDir, "results/"+rel)
+               if !strings.HasPrefix(filepath.Clean(resolved), filepath.Clean(resultsDir)) {
+                       http.Error(w, "Forbidden", http.StatusForbidden)
+                       return
+               }
+               http.ServeFile(w, r, resolved)
+       })
 
 	// Serve frontend files from embedded FS
 	frontendFS, _ := fs.Sub(frontendAssets, "assets/frontend")
@@ -823,7 +846,7 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 
 		// Fallback: check UPLOADS_DIR (images received via IPFS or local creation)
 		if uDir := os.Getenv("UPLOADS_DIR"); uDir != "" {
-			uploadPath := filepath.Join(uDir, filename)
+                       uploadPath := datadir.PartResolve(uDir, filename)
 			if !strings.HasPrefix(filepath.Clean(uploadPath), filepath.Clean(uDir)) {
 				http.Error(w, "Invalid filename", http.StatusBadRequest)
 				return

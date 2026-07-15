@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"stargate-backend/core/smart_contract"
+       "stargate-backend/storage/datadir"
 	scstore "stargate-backend/storage/smart_contract"
 )
 
@@ -193,7 +194,7 @@ func TestWorkerPerformWork_Basic(t *testing.T) {
 		t.Error("expected notes to contain task title")
 	}
 
-	dir := filepath.Join(tmp, "results", "test-hash")
+       dir := datadir.PartPath(filepath.Join(tmp, "results"), "test-hash")
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
 		t.Errorf("results directory not created: %s", dir)
 	}

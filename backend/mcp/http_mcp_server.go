@@ -26,6 +26,7 @@ import (
 	"stargate-backend/starlight"
 	auth "stargate-backend/storage/auth"
 	"stargate-backend/storage"
+       "stargate-backend/storage/datadir"
 	scstore "stargate-backend/storage/smart_contract"
 
 	"github.com/btcsuite/btcd/btcutil"
@@ -2013,12 +2014,10 @@ func (h *HTTPMCPServer) handleSubmitWork(ctx context.Context, args map[string]in
 			// Get uploads directory
 			uploadsDir := os.Getenv("UPLOADS_DIR")
 
-			// Create results directory: UPLOADS_DIR/results/[contract_id]
+                       // Create results directory: UPLOADS_DIR/results/ab/cd/ef/[contract_id]
 			// Look up the contract/task relationship to get contract_id for file organization
-			var resultsDir string
-			resultsDir = filepath.Join(uploadsDir, "results", subDir)
-
-			if err := os.MkdirAll(resultsDir, 0755); err != nil {
+                       resultsDir, err := datadir.PartMkdirAll(filepath.Join(uploadsDir, "results"), subDir, 0755)
+                       if err != nil {
 				return nil, NewInternalError("submit_work", fmt.Sprintf("Failed to create results directory: %v", err))
 			}
 

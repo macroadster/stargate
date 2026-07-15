@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+       "stargate-backend/storage/datadir"
 )
 
 // ExecutionRequest describes a unit of work the worker wants performed.
@@ -71,9 +73,12 @@ func (e *StubExecutor) Execute(ctx context.Context, req ExecutionRequest) (Execu
 
 	workdir := req.Workdir
 	if workdir == "" {
-		workdir = filepath.Join(e.uploadsDir, "results", hash)
-	}
-	if err := os.MkdirAll(workdir, 0755); err != nil {
+               var err error
+               workdir, err = datadir.PartMkdirAll(filepath.Join(e.uploadsDir, "results"), hash, 0755)
+               if err != nil {
+                       return ExecutionResult{}, fmt.Errorf("failed to create workdir: %w", err)
+               }
+       } else if err := os.MkdirAll(workdir, 0755); err != nil {
 		return ExecutionResult{}, fmt.Errorf("failed to create workdir: %w", err)
 	}
 
@@ -323,9 +328,12 @@ func (e *AutoDetectExecutor) Execute(ctx context.Context, req ExecutionRequest) 
 
 	workdir := req.Workdir
 	if workdir == "" {
-		workdir = filepath.Join(e.uploadsDir, "results", hash)
-	}
-	if err := os.MkdirAll(workdir, 0755); err != nil {
+               var err error
+               workdir, err = datadir.PartMkdirAll(filepath.Join(e.uploadsDir, "results"), hash, 0755)
+               if err != nil {
+                       return ExecutionResult{}, fmt.Errorf("failed to create workdir: %w", err)
+               }
+       } else if err := os.MkdirAll(workdir, 0755); err != nil {
 		return ExecutionResult{}, fmt.Errorf("failed to create workdir: %w", err)
 	}
 

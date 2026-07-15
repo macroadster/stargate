@@ -31,6 +31,7 @@ import (
 	"stargate-backend/services"
 	"stargate-backend/stego"
 	auth "stargate-backend/storage/auth"
+	"stargate-backend/storage/datadir"
 	"stargate-backend/storage/ipfs"
 )
 
@@ -967,7 +968,9 @@ func (h *InscriptionHandler) fromContract(c sc.Contract) models.InscriptionReque
 		// Extract hash from contract ID and try hash-only filename first
 		baseID := baseContractID(c.ContractID)
 		if baseID != "" {
-			hashPath := filepath.Join(uploadsDir, baseID)
+			// Resolve through partitioned layout (ab/cd/ef/<hash>),
+			// falling back to flat path for legacy files.
+			hashPath := datadir.PartResolve(uploadsDir, baseID)
 			if _, err := os.Stat(hashPath); err == nil {
 				imagePath = hashPath
 			} else {

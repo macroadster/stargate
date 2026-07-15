@@ -33,6 +33,7 @@ import (
 	"stargate-backend/core/smart_contract"
 	"stargate-backend/services"
 	"stargate-backend/stego"
+       "stargate-backend/storage/datadir"
 	"stargate-backend/storage/ipfs"
 	scstore "stargate-backend/storage/smart_contract"
 )
@@ -182,7 +183,7 @@ func (s *Server) reconcileStegoFromLocalFile(ctx context.Context, stegoHash stri
 	if uploadsDir == "" {
 		return fmt.Errorf("UPLOADS_DIR not set")
 	}
-	stegoPath := filepath.Join(uploadsDir, stegoHash)
+       stegoPath := datadir.PartResolve(uploadsDir, stegoHash)
 	stegoBytes, err := os.ReadFile(stegoPath)
 	if err != nil {
 		return fmt.Errorf("read local stego %s: %w", stegoPath, err)
@@ -255,7 +256,10 @@ func (s *Server) ReconcileStegoWithAnnouncement(ctx context.Context, ann *stegoA
 	sum := sha256.Sum256(stegoBytes)
 	stegoHash := hex.EncodeToString(sum[:])
 	uploadsDir := strings.TrimSpace(os.Getenv("UPLOADS_DIR"))
-	uploadPath := filepath.Join(uploadsDir, stegoHash)
+       uploadPath := datadir.PartPath(uploadsDir, stegoHash)
+       if err := os.MkdirAll(filepath.Dir(uploadPath), 0755); err != nil {
+               return fmt.Errorf("failed to create partition dir: %w", err)
+       }
 	if err := os.WriteFile(uploadPath, stegoBytes, 0644); err != nil {
 		return fmt.Errorf("failed to write stego image: %w", err)
 	}
@@ -816,7 +820,7 @@ func (s *Server) downloadSandboxArtifacts(ctx context.Context, contractID string
 	}
 
 	uploadsDir := strings.TrimSpace(os.Getenv("UPLOADS_DIR"))
-	resultsDir := filepath.Join(uploadsDir, "results", normalizedID)
+       resultsDir := datadir.PartResolve(filepath.Join(uploadsDir, "results"), normalizedID)
 
 	// If results already exist and match the expected hash, skip extraction.
 	if info, err := os.Stat(resultsDir); err == nil && info.IsDir() {
@@ -828,9 +832,9 @@ func (s *Server) downloadSandboxArtifacts(ctx context.Context, contractID string
 	}
 
 	// Try to read the tarball from the local uploads directory first.
-	// The publisher stores it as UPLOADS_DIR/<sandbox_hash> and the IPFS
-	// mirror replicates it to peers using the same hash-based filename.
-	tarballBytes, err := os.ReadFile(filepath.Join(uploadsDir, sandboxHash))
+       // The publisher stores it as UPLOADS_DIR/ab/cd/ef/<sandbox_hash> and
+       // the IPFS mirror replicates it to peers using the same hash-based filename.
+       tarballBytes, err := os.ReadFile(datadir.PartResolve(uploadsDir, sandboxHash))
 	if err != nil {
 		// Not available locally — try IPFS content-addressed fetch.
 		// Also try sandbox_tarball_cid for backward compat with older publishers.

@@ -11,8 +11,9 @@ import (
 	"sync"
 	"time"
 
-	"stargate-backend/core/smart_contract"
 	scmiddleware "stargate-backend/app/smart_contract"
+       "stargate-backend/core/smart_contract"
+       "stargate-backend/storage/datadir"
 )
 
 // Worker is responsible for discovering open wishes (contracts), creating proposals,
@@ -534,13 +535,12 @@ func (w *Worker) performWork(task smart_contract.Task) map[string]interface{} {
 		}
 	}
 
-	// Build workdir
+       // Build workdir (partitioned: results/ab/cd/ef/<hash>)
 	base := w.cfg.UploadsDir
 	if base == "" {
 		base = os.Getenv("UPLOADS_DIR")
 	}
-	workdir := filepath.Join(base, "results", visible)
-	os.MkdirAll(workdir, 0755)
+       workdir, _ := datadir.PartMkdirAll(filepath.Join(base, "results"), visible, 0755)
 
 	// Copy/inject AGENTS.md guide
 	w.ensureAgentsGuide(workdir)
