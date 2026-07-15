@@ -36,18 +36,21 @@ func Path(subpath string) string {
 // Public URL paths (e.g. /uploads/results/<hash>/<file>) stay unchanged;
 // the HTTP handlers resolve them to the partitioned on-disk location.
 
-// isHexHash reports whether s is a 64-char hex string.
-func isHexHash(s string) bool {
-       if len(s) != 64 {
-               return false
-       }
-       for _, c := range s {
-               if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
-                       return false
-               }
-       }
-       return true
+// IsHexHash reports whether s is a 64-char hex string (SHA-256 hex key).
+func IsHexHash(s string) bool {
+	if len(s) != 64 {
+		return false
+	}
+	for _, c := range s {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return true
 }
+
+// isHexHash is kept as an unexported alias for call sites inside this package.
+func isHexHash(s string) bool { return IsHexHash(s) }
 
 // PartPrefix returns the three-level directory prefix for a key,
 // e.g. "ab/cd/ef" for key "abcdef…". Returns ("", false) when key

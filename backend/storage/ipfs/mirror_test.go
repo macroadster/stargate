@@ -1,0 +1,272 @@
+package ipfs
+
+import (
+	"context"
+	"net/http"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"stargate-backend/storage/datadir"
+)
+
+const testHash = "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
+
+func TestLogicalMirrorPath(t *testing.T) {
+	partRel := filepath.ToSlash(filepath.Join("ab", "cd", "ef", testHash))
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{testHash, testHash},
+		{partRel, testHash},
+		{"plain-file.png", "plain-file.png"},
+		{"nested/plain-file.png", "nested/plain-file.png"},
+		{"./" + testHash, testHash},
+	}
+	for _, tt := range tests {
+		got := logicalMirrorPath(tt.in)
+		if got != tt.want {
+			t.Errorf("logicalMirrorPath(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestIsPartitionDirRel(t *testing.T) {
+	tests := []struct {
+		rel  string
+		want bool
+	}{
+		{"ab", true},
+		{"ab/cd", true},
+		{"ab/cd/ef", true},
+		{"ab/cd/ef/extra", false},
+		{"results", false},
+		{"results/ab", false},
+		{"abc", false},
+		{"", false},
+		{".", false},
+	}
+	for _, tt := range tests {
+		got := isPartitionDirRel(tt.rel)
+		if got != tt.want {
+			t.Errorf("isPartitionDirRel(%q) = %v, want %v", tt.rel, got, tt.want)
+		}
+	}
+}
+
+func TestResolveMirrorWriteTarget_Partitioned(t *testing.T) {
+	base := t.TempDir()
+	target, ok := resolveMirrorWriteTarget(base, testHash)
+	if !ok {
+		t.Fatal("expected ok")
+	}
+	want := datadir.PartPath(base, testHash)
+	if target != want {
+		t.Fatalf("write target = %q, want %q", target, want)
+	}
+}
+
+func TestResolveMirrorTarget_ExistingFlat(t *testing.T) {
+	base := t.TempDir()
+	flat := filepath.Join(base, testHash)
+	if err := os.WriteFile(flat, []byte("x"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	target, ok := resolveMirrorTarget(base, testHash)
+	if !ok {
+		t.Fatal("expected ok")
+	}
+	if target != flat {
+		t.Fatalf("resolve existing flat = %q, want %q", target, flat)
+	}
+}
+
+func TestScanAndAdd_FindsPartitionedHashFiles(t *testing.T) {
+	uploads := t.TempDir()
+	storage := t.TempDir()
+
+	// Partitioned hash file (the post-migration layout).
+	partPath := datadir.PartPath(uploads, testHash)
+	if err := os.MkdirAll(filepath.Dir(partPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(partPath, []byte("stego-image-bytes"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Nested results tree must be skipped.
+	resultsFile := filepath.Join(uploads, "results", testHash, "out.txt")
+	if err := os.MkdirAll(filepath.Dir(resultsFile), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(resultsFile, []byte("sandbox"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Root-level non-hash file should still be mirrored.
+	rootFile := filepath.Join(uploads, "inscription-123.png")
+	if err := os.WriteFile(rootFile, []byte("root-bytes"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := &Mirror{
+		cfg: MirrorConfig{
+			UploadsDir: uploads,
+			MaxFiles:   100,
+		},
+		client:       &http.Client{Timeout: 2 * time.Second},
+		knownFiles:   make(map[string]fileState),
+		deletedFiles: make(map[string]bool),
+		ipfsClient: &Client{
+			apiURL:     "http://127.0.0.1:9", // unreachable → local fallback
+			client:     &http.Client{Timeout: 200 * time.Millisecond},
+			storageDir: storage,
+		},
+	}
+
+	changed, err := m.scanAndAdd(context.Background())
+	if err != nil {
+		t.Fatalf("scanAndAdd: %v", err)
+	}
+	if !changed {
+		t.Fatal("expected changed=true when new files are added")
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if _, ok := m.knownFiles[testHash]; !ok {
+		t.Fatalf("expected partitioned hash file under logical key %q; known=%v", testHash, keysOf(m.knownFiles))
+	}
+	// Must NOT use the on-disk partition prefix as the wire path.
+	partKey := filepath.ToSlash(filepath.Join("ab", "cd", "ef", testHash))
+	if _, ok := m.knownFiles[partKey]; ok {
+		t.Fatalf("knownFiles must not use partition prefix key %q", partKey)
+	}
+	if _, ok := m.knownFiles["inscription-123.png"]; !ok {
+		t.Fatalf("expected root-level file; known=%v", keysOf(m.knownFiles))
+	}
+	// results/ tree must not appear.
+	for k := range m.knownFiles {
+		if filepath.Base(k) == "out.txt" || len(k) > 20 && k[:7] == "results" {
+			t.Fatalf("results tree leaked into knownFiles: %q", k)
+		}
+	}
+	if len(m.knownFiles) != 2 {
+		t.Fatalf("knownFiles count = %d, want 2; known=%v", len(m.knownFiles), keysOf(m.knownFiles))
+	}
+}
+
+func TestDownloadEntry_WritesPartitionedPath(t *testing.T) {
+	uploads := t.TempDir()
+	storage := t.TempDir()
+
+	payload := []byte("mirrored-stego")
+	// Use AddBytes local fallback so cat works without a live IPFS node.
+	client := &Client{
+		apiURL:     "http://127.0.0.1:9",
+		client:     &http.Client{Timeout: 200 * time.Millisecond},
+		storageDir: storage,
+	}
+	cid, err := client.AddBytes(context.Background(), "blob", payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m := &Mirror{
+		cfg: MirrorConfig{
+			UploadsDir: uploads,
+		},
+		client:       &http.Client{Timeout: 2 * time.Second},
+		knownFiles:   make(map[string]fileState),
+		deletedFiles: make(map[string]bool),
+		ipfsClient:   client,
+	}
+
+	applied, err := m.downloadEntry(context.Background(), manifestEntry{
+		Path:    testHash, // logical flat path as published by peers
+		CID:     cid,
+		Size:    int64(len(payload)),
+		ModTime: time.Now().Unix(),
+	})
+	if err != nil {
+		t.Fatalf("downloadEntry: %v", err)
+	}
+	if !applied {
+		t.Fatal("expected applied=true")
+	}
+
+	wantPath := datadir.PartPath(uploads, testHash)
+	got, err := os.ReadFile(wantPath)
+	if err != nil {
+		t.Fatalf("expected partitioned file at %s: %v", wantPath, err)
+	}
+	if string(got) != string(payload) {
+		t.Fatalf("content mismatch: %q", got)
+	}
+
+	// Second download should skip (same size at partitioned location).
+	applied, err = m.downloadEntry(context.Background(), manifestEntry{
+		Path: testHash,
+		CID:  cid,
+		Size: int64(len(payload)),
+	})
+	if err != nil {
+		t.Fatalf("second downloadEntry: %v", err)
+	}
+	if applied {
+		t.Fatal("expected skip when partitioned file already exists")
+	}
+}
+
+func TestDownloadEntry_SkipsExistingFlat(t *testing.T) {
+	uploads := t.TempDir()
+	storage := t.TempDir()
+	payload := []byte("already-flat")
+
+	// Legacy flat location still present (pre-migration peer / partial migrate).
+	flat := filepath.Join(uploads, testHash)
+	if err := os.WriteFile(flat, payload, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	client := &Client{
+		apiURL:     "http://127.0.0.1:9",
+		client:     &http.Client{Timeout: 200 * time.Millisecond},
+		storageDir: storage,
+	}
+	cid, err := client.AddBytes(context.Background(), "blob", payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m := &Mirror{
+		cfg:          MirrorConfig{UploadsDir: uploads},
+		client:       &http.Client{Timeout: 2 * time.Second},
+		knownFiles:   make(map[string]fileState),
+		deletedFiles: make(map[string]bool),
+		ipfsClient:   client,
+	}
+
+	applied, err := m.downloadEntry(context.Background(), manifestEntry{
+		Path: testHash,
+		CID:  cid,
+		Size: int64(len(payload)),
+	})
+	if err != nil {
+		t.Fatalf("downloadEntry: %v", err)
+	}
+	if applied {
+		t.Fatal("expected skip when flat file already exists with matching size")
+	}
+}
+
+func keysOf(m map[string]fileState) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}

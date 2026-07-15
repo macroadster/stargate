@@ -19,6 +19,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"stargate-backend/storage/datadir"
 )
 
 type MirrorConfig struct {
@@ -150,7 +152,8 @@ func (m *Mirror) UnpinPath(ctx context.Context, path string) error {
 			rel = r
 		}
 	}
-	rel = filepath.ToSlash(filepath.Clean(rel))
+	// Normalize to the logical mirror path (hash basename, not ab/cd/ef/hash).
+	rel = logicalMirrorPath(filepath.ToSlash(filepath.Clean(rel)))
 	m.mu.Lock()
 	state, ok := m.knownFiles[rel]
 	if ok {
@@ -391,15 +394,27 @@ func (m *Mirror) scanAndAdd(ctx context.Context) (bool, error) {
 		if walkErr != nil {
 			return walkErr
 		}
-		// Skip subdirectories entirely — only root-level stego images and
-		// tarballs belong in IPFS.  Execution-result trees (results/wish-*)
-		// and other nested content must not be mirrored.
-		if entry.IsDir() {
-			if path != m.cfg.UploadsDir {
-				return filepath.SkipDir
-			}
+
+		rel, err := filepath.Rel(m.cfg.UploadsDir, path)
+		if err != nil {
 			return nil
 		}
+		rel = filepath.ToSlash(rel)
+
+		// Directory policy after the three-level partition layout:
+		//   - walk into ab/cd/ef hash partitions (so hash files are found)
+		//   - skip results/ and every other non-partition tree (sandboxes,
+		//     nested execution output, etc. must not be mirrored)
+		if entry.IsDir() {
+			if path == m.cfg.UploadsDir {
+				return nil
+			}
+			if isPartitionDirRel(rel) {
+				return nil
+			}
+			return filepath.SkipDir
+		}
+
 		if m.cfg.MaxFiles > 0 && count >= m.cfg.MaxFiles {
 			return nil
 		}
@@ -407,11 +422,10 @@ func (m *Mirror) scanAndAdd(ctx context.Context) (bool, error) {
 			return nil
 		}
 
-		rel, err := filepath.Rel(m.cfg.UploadsDir, path)
-		if err != nil {
-			return nil
-		}
-		rel = filepath.ToSlash(rel)
+		// Manifest/wire path stays the logical name (hash basename), not the
+		// on-disk partition prefix. Peers still advertise path="<hash>" so
+		// public URLs remain /uploads/<hash> and older nodes stay compatible.
+		logical := logicalMirrorPath(rel)
 
 		info, err := entry.Info()
 		if err != nil {
@@ -424,7 +438,7 @@ func (m *Mirror) scanAndAdd(ctx context.Context) (bool, error) {
 		}
 
 		m.mu.Lock()
-		prev, ok := m.knownFiles[rel]
+		prev, ok := m.knownFiles[logical]
 		m.mu.Unlock()
 
 		if ok && prev.Size == state.Size && prev.ModTime == state.ModTime {
@@ -434,13 +448,13 @@ func (m *Mirror) scanAndAdd(ctx context.Context) (bool, error) {
 
 		cid, err := m.addFile(ctx, path, entry.Name())
 		if err != nil {
-			log.Printf("IPFS mirror add failed for %s: %v", rel, err)
+			log.Printf("IPFS mirror add failed for %s: %v", logical, err)
 			return nil
 		}
 
 		state.CID = cid
 		m.mu.Lock()
-		m.knownFiles[rel] = state
+		m.knownFiles[logical] = state
 		m.mu.Unlock()
 
 		changed = true
@@ -453,6 +467,84 @@ func (m *Mirror) scanAndAdd(ctx context.Context) (bool, error) {
 	}
 
 	return changed, nil
+}
+
+// isPartitionDirRel reports whether rel (slash-separated, relative to
+// UploadsDir) is a directory that is part of the three-level ab/cd/ef
+// partition layout and should be walked into.
+func isPartitionDirRel(rel string) bool {
+	if rel == "" || rel == "." {
+		return false
+	}
+	parts := strings.Split(rel, "/")
+	if len(parts) == 0 || len(parts) > 3 {
+		return false
+	}
+	for _, p := range parts {
+		if !isTwoHex(p) {
+			return false
+		}
+	}
+	return true
+}
+
+func isTwoHex(s string) bool {
+	if len(s) != 2 {
+		return false
+	}
+	for _, c := range s {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return true
+}
+
+// logicalMirrorPath normalizes an on-disk relative path to the logical
+// mirror path used in manifests and knownFiles.
+//
+//	ab/cd/ef/<64-hex>  →  <64-hex>
+//	<64-hex>           →  <64-hex>
+//	other/file         →  other/file (unchanged)
+func logicalMirrorPath(rel string) string {
+	rel = filepath.ToSlash(filepath.Clean(rel))
+	if rel == "." || rel == "" {
+		return rel
+	}
+	base := filepath.Base(rel)
+	if datadir.IsHexHash(base) {
+		// Accept both flat and ab/cd/ef/<hash> (or accidental deeper paths).
+		return base
+	}
+	return rel
+}
+
+// resolveMirrorTarget maps a logical (or legacy) mirror path to the on-disk
+// write/read location under UploadsDir, honoring the partition layout for
+// hash-keyed files.
+func resolveMirrorTarget(uploadsDir, rel string) (string, bool) {
+	logical := logicalMirrorPath(rel)
+	if logical == "" || logical == "." {
+		return "", false
+	}
+	if datadir.IsHexHash(logical) {
+		// Prefer existing location (partitioned or flat), default to partitioned.
+		return datadir.PartResolve(uploadsDir, logical), true
+	}
+	return safeJoin(uploadsDir, logical)
+}
+
+// resolveMirrorWriteTarget is like resolveMirrorTarget but always returns the
+// partitioned path for new hash files (never the flat legacy path).
+func resolveMirrorWriteTarget(uploadsDir, rel string) (string, bool) {
+	logical := logicalMirrorPath(rel)
+	if logical == "" || logical == "." {
+		return "", false
+	}
+	if datadir.IsHexHash(logical) {
+		return datadir.PartPath(uploadsDir, logical), true
+	}
+	return safeJoin(uploadsDir, logical)
 }
 
 func (m *Mirror) publishManifest(ctx context.Context) (string, error) {
@@ -635,18 +727,30 @@ func (m *Mirror) processManifest(ctx context.Context, manifestCID string) error 
 }
 
 func (m *Mirror) downloadEntry(ctx context.Context, entry manifestEntry) (bool, error) {
-	if m.isDeleted(entry.Path) {
+	logical := logicalMirrorPath(entry.Path)
+	if m.isDeleted(logical) || m.isDeleted(entry.Path) {
 		return false, nil
 	}
-	target, ok := safeJoin(m.cfg.UploadsDir, entry.Path)
-	if !ok {
-		return false, fmt.Errorf("invalid path: %s", entry.Path)
-	}
 
-	if info, err := os.Stat(target); err == nil {
-		if info.Size() == entry.Size {
+	// Skip if the file already exists at partitioned or flat location.
+	if existing, ok := resolveMirrorTarget(m.cfg.UploadsDir, logical); ok {
+		if info, err := os.Stat(existing); err == nil && info.Size() == entry.Size {
+			// Track under the logical key so later scans/publishes stay consistent.
+			m.mu.Lock()
+			m.knownFiles[logical] = fileState{
+				Size:    entry.Size,
+				ModTime: entry.ModTime,
+				CID:     entry.CID,
+			}
+			m.mu.Unlock()
 			return false, nil
 		}
+	}
+
+	// New files go into the partitioned layout for hash keys.
+	target, ok := resolveMirrorWriteTarget(m.cfg.UploadsDir, logical)
+	if !ok {
+		return false, fmt.Errorf("invalid path: %s", entry.Path)
 	}
 
 	if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
@@ -679,7 +783,7 @@ func (m *Mirror) downloadEntry(ctx context.Context, entry manifestEntry) (bool, 
 	}
 
 	m.mu.Lock()
-	m.knownFiles[entry.Path] = fileState{
+	m.knownFiles[logical] = fileState{
 		Size:    entry.Size,
 		ModTime: entry.ModTime,
 		CID:     entry.CID,
@@ -689,7 +793,7 @@ func (m *Mirror) downloadEntry(ctx context.Context, entry manifestEntry) (bool, 
 
 	if fn != nil {
 		fn(ctx, FileDownloadedEvent{
-			Path:     entry.Path,
+			Path:     logical,
 			CID:      entry.CID,
 			FilePath: target,
 			Size:     entry.Size,

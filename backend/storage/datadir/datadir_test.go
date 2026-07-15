@@ -217,16 +217,16 @@ func TestMigrateUploads_NonexistentDir(t *testing.T) {
 }
 
 func TestIsHexHash(t *testing.T) {
-       if !isHexHash(testHash) {
-               t.Error("should accept valid 64-char hex")
-       }
-       if isHexHash("not-a-hash") {
-               t.Error("should reject non-hex")
-       }
-       if isHexHash("abcdef") {
-               t.Error("should reject short hex")
-       }
-       if isHexHash(testHash + "ff") {
-               t.Error("should reject >64 chars")
-       }
+	if !IsHexHash(testHash) {
+		t.Error("should accept valid 64-char hex")
+	}
+	if IsHexHash("not-a-hash") {
+		t.Error("should reject non-hex")
+	}
+	if IsHexHash("abcdef") {
+		t.Error("should reject short hex")
+	}
+	if IsHexHash(testHash + "ff") {
+		t.Error("should reject >64 chars")
+	}
 }
