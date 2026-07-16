@@ -29,61 +29,83 @@ func NewRawBlockClient(network string) *RawBlockClient {
 	}
 	return &RawBlockClient{
 		httpClient: &http.Client{
-			Timeout: 60 * time.Second, // Longer timeout for large blocks
+			Timeout: 90 * time.Second, // Slightly longer for large blocks + retries
 		},
-		rateLimiter: NewRateLimiter(30, time.Hour, 5*time.Second), // Ultra conservative: 30 requests/hour, min 5s between requests
+		rateLimiter: NewRateLimiter(60, time.Hour, 3*time.Second), // Relaxed for reliability: still respectful to public explorers
 		connected:   false,
 		network:     network,
 	}
 }
 
-// GetRawBlockHex downloads raw block data as hex from multiple sources
+// GetRawBlockHex downloads raw block data as hex from multiple sources.
+// Includes limited retries for transient network / 5xx / 429 errors to improve
+// reliability (especially inside Kubernetes) while the rate limiter still
+// protects the public explorers.
 func (rbc *RawBlockClient) GetRawBlockHex(blockHeight int64) (string, error) {
-	rbc.totalRequests++
+	const maxAttempts = 3
+	var lastErr error
 
-	// Apply rate limiting
-	if !rbc.rateLimiter.AllowRequest() {
-		return "", fmt.Errorf("rate limit exceeded")
-	}
-
-	// Try multiple APIs for raw block hex
-	apis := rbc.getRawBlockAPIs(blockHeight)
-
-	for _, apiURL := range apis {
-		log.Printf("Trying to download raw block %d from %s", blockHeight, apiURL)
-
-		resp, err := rbc.httpClient.Get(apiURL)
-		if err != nil {
-			log.Printf("Failed to fetch from %s: %v", apiURL, err)
-			continue
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		if attempt > 0 {
+			// Small backoff between retry attempts (rate limiter min-interval
+			// will also space real requests).
+			time.Sleep(time.Duration(attempt) * 2 * time.Second)
 		}
-		defer resp.Body.Close()
 
-		if resp.StatusCode == 200 {
-			body, err := io.ReadAll(resp.Body)
+		rbc.totalRequests++
+
+		if !rbc.rateLimiter.AllowRequest() {
+			return "", fmt.Errorf("rate limit exceeded")
+		}
+
+		apis := rbc.getRawBlockAPIs(blockHeight)
+
+		for _, apiURL := range apis {
+			log.Printf("Trying to download raw block %d from %s (attempt %d/%d)", blockHeight, apiURL, attempt+1, maxAttempts)
+
+			resp, err := rbc.httpClient.Get(apiURL)
 			if err != nil {
-				log.Printf("Failed to read response from %s: %v", apiURL, err)
+				lastErr = err
+				log.Printf("Failed to fetch from %s: %v", apiURL, err)
 				continue
 			}
 
-			var hexData string
-			if strings.Contains(apiURL, "blockstream.info") || strings.Contains(apiURL, "mempool.space") {
-				// Blockstream returns binary data, convert to hex
-				hexData = hex.EncodeToString(body)
-			} else {
-				// blockchain.info returns hex string
-				hexData = strings.TrimSpace(string(body))
+			status := resp.StatusCode
+			if status == 200 {
+				body, readErr := io.ReadAll(resp.Body)
+				resp.Body.Close()
+				if readErr != nil {
+					lastErr = readErr
+					log.Printf("Failed to read from %s: %v", apiURL, readErr)
+					continue
+				}
+
+				var hexData string
+				if strings.Contains(apiURL, "blockstream.info") || strings.Contains(apiURL, "mempool.space") {
+					hexData = hex.EncodeToString(body)
+				} else {
+					hexData = strings.TrimSpace(string(body))
+				}
+				if len(hexData) > 0 {
+					log.Printf("Successfully downloaded raw block %d (%d hex chars)", blockHeight, len(hexData))
+					return hexData, nil
+				}
+				continue
 			}
 
-			if len(hexData) > 0 {
-				log.Printf("Successfully downloaded raw block %d (%d hex chars)", blockHeight, len(hexData))
-				return hexData, nil
+			resp.Body.Close()
+			if status >= 500 || status == 429 {
+				lastErr = fmt.Errorf("transient status %d from %s", status, apiURL)
+				log.Printf("Transient error (will retry) from %s: status %d", apiURL, status)
+				continue
 			}
-		} else {
-			log.Printf("API %s returned status %d", apiURL, resp.StatusCode)
+			log.Printf("API %s returned status %d", apiURL, status)
 		}
 	}
 
+	if lastErr != nil {
+		return "", fmt.Errorf("failed to fetch raw block after %d attempts: %w", maxAttempts, lastErr)
+	}
 	return "", fmt.Errorf("failed to fetch raw block from all APIs")
 }
 

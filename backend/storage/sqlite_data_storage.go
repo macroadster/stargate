@@ -146,6 +146,15 @@ func (s *SQLiteDataStorage) GetRecentBlocks(limit int) ([]interface{}, error) {
 	return out, nil
 }
 
+func (s *SQLiteDataStorage) GetMaxBlockHeight() (int64, error) {
+	var maxH int64
+	q := fmt.Sprintf(`SELECT COALESCE(MAX(block_height), 0) FROM %s`, s.tableName)
+	if err := s.db.QueryRow(q).Scan(&maxH); err != nil {
+		return 0, err
+	}
+	return maxH, nil
+}
+
 func (s *SQLiteDataStorage) GetSteganographyStats() map[string]interface{} {
 	stats := map[string]interface{}{"total_blocks": 0, "total_images": 0, "total_stego_detected": 0, "stego_detection_rate": 0.0, "last_updated": time.Now().Unix()}
 	q := fmt.Sprintf(`SELECT COUNT(*), COALESCE(SUM(images_scanned),0), COALESCE(SUM(CASE WHEN stego_detected>0 THEN 1 ELSE 0 END),0) FROM %s`, s.tableName)

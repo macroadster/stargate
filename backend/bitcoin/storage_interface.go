@@ -42,4 +42,9 @@ type DataStorageInterface interface {
 	GetRecentBlocks(limit int) ([]interface{}, error)
 	GetSteganographyStats() map[string]interface{}
 	ValidateDataIntegrity(height int64) error
+	// GetMaxBlockHeight returns the highest block height for which we have
+	// successfully stored data (from block_scans or equivalent). Returns 0
+	// if no blocks have been stored yet. Used by the block monitor to resume
+	// progress across restarts instead of always re-seeding only the last 3.
+	GetMaxBlockHeight() (int64, error)
 }

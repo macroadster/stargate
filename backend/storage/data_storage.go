@@ -22,6 +22,7 @@ type DataStorage struct {
 	mu           sync.RWMutex
 	cache        map[int64]*BlockDataCache
 	cacheTimeout time.Duration
+	maxHeight    int64 // high-water mark updated on Store for fast GetMaxBlockHeight
 }
 
 // hotCacheSize controls the keepCount for the in-memory hot cache
@@ -110,6 +111,11 @@ func (ds *DataStorage) StoreBlockData(blockResponse *bitcoin.BlockInscriptionsRe
 	// Update cache
 	ds.cache[blockResponse.BlockHeight] = cacheEntry
 
+	// Track high water mark for reliable resume across restarts
+	if blockResponse.BlockHeight > ds.maxHeight {
+		ds.maxHeight = blockResponse.BlockHeight
+	}
+
 	// Save to file
 	if err := ds.saveBlockDataToFile(cacheEntry); err != nil {
 		log.Printf("Failed to save block data to file: %v", err)
@@ -182,6 +188,26 @@ func (ds *DataStorage) GetRecentBlocks(limit int) ([]interface{}, error) {
 	}
 
 	return result, nil
+}
+
+// GetMaxBlockHeight returns the highest height we have stored (from hot cache tracker
+// or by scanning cache keys as fallback). For cold starts with only on-disk data the
+// monitor's first-run seeding from chain tip + recent reconcile will still populate.
+func (ds *DataStorage) GetMaxBlockHeight() (int64, error) {
+	ds.mu.RLock()
+	defer ds.mu.RUnlock()
+
+	if ds.maxHeight > 0 {
+		return ds.maxHeight, nil
+	}
+	// Fallback: compute from current cache (may be pruned but better than 0)
+	var maxH int64
+	for h := range ds.cache {
+		if h > maxH {
+			maxH = h
+		}
+	}
+	return maxH, nil
 }
 
 // GetSteganographyStats returns overall steganography statistics
@@ -492,6 +518,13 @@ func (ds *DataStorage) loadCache() {
 			delete(ds.cache, pairs[i].h)
 		}
 		loadedCount = len(ds.cache)
+	}
+
+	// Establish high-water mark from whatever we loaded (supports resume on FS-only storage)
+	for h := range ds.cache {
+		if h > ds.maxHeight {
+			ds.maxHeight = h
+		}
 	}
 
 	log.Printf("Loaded %d blocks into hot cache (keepCount=%d) from blocks/ directory", loadedCount, hotCacheSize)

@@ -97,6 +97,7 @@ func (m *mockDataStorage) GetSteganographyStats() map[string]interface{} {
 	return map[string]interface{}{}
 }
 func (m *mockDataStorage) ValidateDataIntegrity(int64) error { return nil }
+func (m *mockDataStorage) GetMaxBlockHeight() (int64, error) { return 0, nil }
 
 // ExtendedDataStorage methods
 func (m *mockDataStorage) CreateRealtimeUpdate(string, int64, interface{}) *storage.RealtimeUpdate {

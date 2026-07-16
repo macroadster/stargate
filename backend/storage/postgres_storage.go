@@ -183,6 +183,16 @@ func (ps *PostgresStorage) GetRecentBlocks(limit int) ([]interface{}, error) {
 	return result, nil
 }
 
+// GetMaxBlockHeight returns the highest successfully stored block height.
+func (ps *PostgresStorage) GetMaxBlockHeight() (int64, error) {
+	var maxH int64
+	query := fmt.Sprintf(`SELECT COALESCE(MAX(block_height), 0) FROM %s`, ps.tableName)
+	if err := ps.db.QueryRow(query).Scan(&maxH); err != nil {
+		return 0, err
+	}
+	return maxH, nil
+}
+
 // GetSteganographyStats returns aggregate stats from cached columns.
 func (ps *PostgresStorage) GetSteganographyStats() map[string]interface{} {
 	stats := map[string]interface{}{

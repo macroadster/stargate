@@ -34,9 +34,33 @@ func (bm *BlockMonitor) monitorLoop() {
 }
 
 func (bm *BlockMonitor) reconcileSweepLoop() {
-	// OP_RETURN donation flow: the funding transaction IS the final transaction.
-	// No sweep or recommitment is needed, so the periodic reconcile loop is disabled.
-	log.Printf("reconcile sweep loop disabled — OP_RETURN donation flow supersedes hashlock sweep")
+	// Lightweight periodic healer. Re-processing the most recent N blocks is
+	// cheap (idempotent upserts + rate limiter will naturally throttle) and
+	// heals gaps caused by restarts, partial failures, or brief API blips.
+	// It also helps with short reorgs in addition to reconcileCanonicalTip.
+	interval := monitorReconcileInterval()
+	window := monitorRecentReconcileWindow()
+	log.Printf("Starting periodic recent-block reconciler every %s (window=%d)", interval, window)
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	// Initial small delay so startup forward scan + first reconcileCanonicalTip settle first
+	time.Sleep(15 * time.Second)
+
+	for {
+		select {
+		case <-ticker.C:
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			if err := bm.ReconcileRecentBlocks(ctx, window); err != nil {
+				log.Printf("periodic reconcile: %v", err)
+			}
+			cancel()
+		case <-bm.stopChan:
+			log.Println("reconcile sweep loop stopped")
+			return
+		}
+	}
 }
 
 // updateRecentBlocksSummary creates a recent blocks summary file for frontend
@@ -120,69 +144,78 @@ func (bm *BlockMonitor) updateRecentBlocksSummary() error {
 
 // checkForNewBlocks checks for and processes new blocks more efficiently
 func (bm *BlockMonitor) checkForNewBlocks() error {
-	// Get current blockchain height from blockchain.info
-	currentHeight, err := bm.getCurrentHeightFromBlockchainInfo()
+	// Get current blockchain height from the configured source
+	tip, err := bm.getCurrentHeightFromBlockchainInfo()
 	if err != nil {
 		return fmt.Errorf("failed to get current height: %w", err)
 	}
 
-	log.Printf("Current blockchain height: %d, monitor height: %d", currentHeight, bm.currentHeight)
-	if err := bm.reconcileCanonicalTip(currentHeight, 6); err != nil {
+	log.Printf("Current blockchain height: %d, monitor height: %d", tip, bm.currentHeight)
+	if err := bm.reconcileCanonicalTip(tip, 6); err != nil {
 		log.Printf("Failed to reconcile canonical tip: %v", err)
 	}
 
-	var startHeight int64
-	var maxBlocksPerCycle int64 = 2            // Very conservative: only 2 blocks per cycle
-	var delayBetweenRequests = 5 * time.Second // 5 second delay between requests
+	// === Reliability improvement ===
+	// Use the *maximum* of:
+	//   - our in-memory high-water mark (what this instance has sequentially advanced)
+	//   - the max height persisted in storage (from prior runs, on-demand scans, etc.)
+	// This prevents "only last 3 on restart" and allows jumping forward when
+	// storage was populated by other means.
+	lastGood := bm.currentHeight
+	if stored := bm.getMaxStoredHeight(); stored > lastGood {
+		lastGood = stored
+	}
+	if lastGood > bm.currentHeight {
+		bm.currentHeight = lastGood
+	}
 
-	// If this is first run, process some recent blocks
-	if bm.currentHeight == 0 {
-		// Process last 3 blocks as initial seed (reduced from 5)
-		startHeight = currentHeight - 2
-		if startHeight < 1 {
-			startHeight = 1
-		}
-		log.Printf("First run - processing blocks from %d to %d with %v delay between requests", startHeight, currentHeight, delayBetweenRequests)
+	startHeight := lastGood + 1
+	maxPerCycle := monitorMaxBlocksPerCycle()
+	delayBetween := 6 * time.Second // slightly higher base delay to stay kind to explorers
 
-		for height := startHeight; height <= currentHeight; height++ {
-			if err := bm.ProcessBlock(height); err != nil {
-				log.Printf("Error processing block %d: %v", height, err)
-				continue
-			}
-			bm.currentHeight = height
-			bm.blocksProcessed++
+	// Always do a bounded recent heal pass first. This is the main defense
+	// against gaps after restarts: the most recent N blocks around the live
+	// tip get (re)processed regardless of our high-water mark.
+	healWindow := monitorRecentReconcileWindow()
+	if healWindow > 0 {
+		_ = bm.ReconcileRecentBlocks(context.Background(), healWindow)
+	}
 
-			// Add delay between requests to avoid rate limiting
-			if height < currentHeight {
-				log.Printf("Waiting %v before processing next block...", delayBetweenRequests)
-				time.Sleep(delayBetweenRequests)
-			}
-		}
-	} else {
-		// Process new blocks in batches with throttling
+	// If we were at 0 (fresh or long downtime) and tip is high, treat the
+	// recent window as "caught" for the purpose of the sequential pointer.
+	// We do *not* want to try crawling thousands of blocks from 1 on the next
+	// cycle (that would be slow and API-unfriendly). Future blocks will be
+	// picked up incrementally. Deep historical gaps can be filled on-demand.
+	if bm.currentHeight == 0 && tip > 100 {
+		bm.currentHeight = tip - 1
 		startHeight = bm.currentHeight + 1
+	}
 
-		log.Printf("Processing new blocks from %d to %d (max %d per cycle) with %v delay between requests", startHeight, currentHeight, maxBlocksPerCycle, delayBetweenRequests)
+	// Forward incremental scan with safe error handling:
+	// - On any ProcessBlock failure we *break* (do not advance the pointer).
+	//   Next cycle (plus the healer) will retry. Eliminates silent skips.
+	log.Printf("Processing new blocks from %d to %d (max %d per cycle)", startHeight, tip, maxPerCycle)
 
-		for height := startHeight; height <= currentHeight && height < startHeight+maxBlocksPerCycle; height++ {
-			if err := bm.ProcessBlock(height); err != nil {
-				log.Printf("Error processing block %d: %v", height, err)
-				continue
-			}
-			bm.currentHeight = height
-			bm.blocksProcessed++
+	processedThisCycle := int64(0)
+	for height := startHeight; height <= tip && height < startHeight+maxPerCycle; height++ {
+		if err := bm.ProcessBlock(height); err != nil {
+			log.Printf("Error processing block %d (will retry next cycle): %v", height, err)
+			// Do NOT advance currentHeight past the failure.
+			break
+		}
+		bm.currentHeight = height
+		bm.blocksProcessed++
+		processedThisCycle++
 
-			// Add delay between requests to avoid rate limiting
-			if height < currentHeight && height < startHeight+maxBlocksPerCycle-1 {
-				log.Printf("Waiting %v before processing next block...", delayBetweenRequests)
-				time.Sleep(delayBetweenRequests)
-			}
+		if height < tip && height < startHeight+maxPerCycle-1 {
+			log.Printf("Waiting %v before processing next block...", delayBetween)
+			time.Sleep(delayBetween)
 		}
 	}
 
-	// If we still have more blocks to process, continue in next cycle
-	if currentHeight > startHeight+maxBlocksPerCycle-1 {
-		log.Printf("Processed %d blocks this cycle, %d more blocks remaining for next cycle", maxBlocksPerCycle, currentHeight-startHeight+1)
+	remaining := tip - (lastGood + processedThisCycle)
+	if remaining > 0 {
+		log.Printf("Processed %d blocks this cycle, ~%d more remaining (will continue next cycle or via healer)", processedThisCycle, remaining)
 	}
 
 	bm.lastChecked = time.Now()

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -164,12 +165,55 @@ type BlockInscriptionsResponse struct {
 	Error             string               `json:"error,omitempty"`
 }
 
+// monitor config helpers (overridable via env for K8s tuning without rebuild)
+func monitorCheckInterval() time.Duration {
+	if v := os.Getenv("BLOCK_MONITOR_INTERVAL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return 5 * time.Minute
+}
+
+func monitorMaxBlocksPerCycle() int64 {
+	if v := os.Getenv("BLOCK_MONITOR_MAX_PER_CYCLE"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			if n > 50 {
+				n = 50 // safety cap
+			}
+			return n
+		}
+	}
+	return 5 // was 2; increased for better catch-up while still throttled
+}
+
+func monitorRecentReconcileWindow() int {
+	if v := os.Getenv("BLOCK_MONITOR_RECONCILE_WINDOW"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			if n > 100 {
+				n = 100
+			}
+			return n
+		}
+	}
+	return 12
+}
+
+func monitorReconcileInterval() time.Duration {
+	if v := os.Getenv("BLOCK_MONITOR_RECONCILE_INTERVAL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return 20 * time.Minute
+}
+
 // NewBlockMonitor creates a new block monitor
 func NewBlockMonitor(client *BitcoinNodeClient) *BlockMonitor {
 	return &BlockMonitor{
 		bitcoinClient: client,
 		rawClient:     NewRawBlockClient(client.GetNetwork()),
-		checkInterval: 5 * time.Minute, // Check every 5 minutes
+		checkInterval: monitorCheckInterval(),
 		blocksDir:     blocksDirFromEnv(),
 		maxRetries:    3,
 		retryDelay:    10 * time.Second,
@@ -180,17 +224,19 @@ func NewBlockMonitor(client *BitcoinNodeClient) *BlockMonitor {
 
 // NewBlockMonitorWithStorage creates a new block monitor with data storage
 func NewBlockMonitorWithStorage(client *BitcoinNodeClient, dataStorage DataStorageInterface) *BlockMonitor {
-	return &BlockMonitor{
+	m := &BlockMonitor{
 		bitcoinClient: client,
 		rawClient:     NewRawBlockClient(client.GetNetwork()),
 		dataStorage:   dataStorage,
-		checkInterval: 5 * time.Minute, // Check every 5 minutes
+		checkInterval: monitorCheckInterval(),
 		blocksDir:     blocksDirFromEnv(),
 		maxRetries:    3,
 		retryDelay:    10 * time.Second,
 		lastChecked:   time.Now(),
 		ipfsClient:    ipfs.NewClientFromEnv(),
 	}
+	m.bootstrapCurrentHeightFromStorage()
+	return m
 }
 
 // NewBlockMonitorWithAPI creates a new block monitor with Bitcoin API
@@ -199,7 +245,7 @@ func NewBlockMonitorWithAPI(client *BitcoinNodeClient, bitcoinAPI *BitcoinAPI) *
 		bitcoinClient: client,
 		rawClient:     NewRawBlockClient(client.GetNetwork()),
 		bitcoinAPI:    bitcoinAPI,
-		checkInterval: 5 * time.Minute, // Check every 5 minutes
+		checkInterval: monitorCheckInterval(),
 		blocksDir:     blocksDirFromEnv(),
 		maxRetries:    3,
 		retryDelay:    10 * time.Second,
@@ -211,18 +257,22 @@ func NewBlockMonitorWithAPI(client *BitcoinNodeClient, bitcoinAPI *BitcoinAPI) *
 // NewBlockMonitorWithStorageAndAPI creates a new block monitor with data storage and Bitcoin API
 func NewBlockMonitorWithStorageAndAPI(client *BitcoinNodeClient, dataStorage DataStorageInterface, bitcoinAPI *BitcoinAPI) *BlockMonitor {
 	log.Printf("Creating block monitor with bitcoinAPI set: %v", bitcoinAPI != nil)
-	return &BlockMonitor{
+	m := &BlockMonitor{
 		bitcoinClient: client,
 		rawClient:     NewRawBlockClient(client.GetNetwork()),
 		dataStorage:   dataStorage,
 		bitcoinAPI:    bitcoinAPI,
-		checkInterval: 5 * time.Minute, // Check every 5 minutes
+		checkInterval: monitorCheckInterval(),
 		blocksDir:     blocksDirFromEnv(),
 		maxRetries:    3,
 		retryDelay:    10 * time.Second,
 		lastChecked:   time.Now(),
 		ipfsClient:    ipfs.NewClientFromEnv(),
 	}
+	// Bootstrap from persistent storage as early as possible so restarts do not
+	// cause us to only look at the last 3 blocks.
+	m.bootstrapCurrentHeightFromStorage()
+	return m
 }
 
 // SetIngestionService enables ingestion-aware reconciliation (optional).
@@ -310,10 +360,36 @@ func (bm *BlockMonitor) GetStatistics() map[string]any {
 		"total_stego_contracts": bm.totalStegoContracts,
 		"total_inscriptions":    bm.totalInscriptions,
 		"current_height":        bm.currentHeight,
+		"max_stored_height":     bm.getMaxStoredHeight(),
 		"last_process_time":     bm.lastProcessTime.Milliseconds(),
 		"is_running":            bm.isRunning,
 		"check_interval":        bm.checkInterval.Milliseconds(),
 	}
+}
+
+// bootstrapCurrentHeightFromStorage sets currentHeight from the storage's
+// persisted max if it is higher. This is the key fix for gaps after pod
+// restarts: we resume from the last thing we successfully wrote instead of
+// resetting to "only the last 3 blocks".
+func (bm *BlockMonitor) bootstrapCurrentHeightFromStorage() {
+	if bm.dataStorage == nil {
+		return
+	}
+	if maxH, err := bm.dataStorage.GetMaxBlockHeight(); err == nil && maxH > bm.currentHeight {
+		bm.currentHeight = maxH
+		log.Printf("Block monitor bootstrapped currentHeight=%d from storage (resume across restart)", maxH)
+	}
+}
+
+// getMaxStoredHeight returns the max height known to storage (best effort).
+func (bm *BlockMonitor) getMaxStoredHeight() int64 {
+	if bm.dataStorage == nil {
+		return 0
+	}
+	if h, err := bm.dataStorage.GetMaxBlockHeight(); err == nil {
+		return h
+	}
+	return 0
 }
 
 type scanPayload struct {
