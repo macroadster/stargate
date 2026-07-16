@@ -39,12 +39,18 @@ func (bm *BlockMonitor) monitorLoop() {
 }
 
 func (bm *BlockMonitor) reconcileSweepLoop() {
-	// Lightweight periodic healer. Re-processing the most recent N blocks is
-	// cheap (idempotent upserts + rate limiter will naturally throttle) and
-	// heals gaps caused by restarts, partial failures, or brief API blips.
-	// It also helps with short reorgs in addition to reconcileCanonicalTip.
-	interval := monitorReconcileInterval()
 	window := monitorRecentReconcileWindow()
+	interval := monitorReconcileInterval()
+
+	if window <= 0 || monitorTrackTipOnly() {
+		log.Printf("block monitor: periodic reconcile sweep disabled (tip-only tracking)")
+		// Still need to react to stopChan.
+		<-bm.stopChan
+		log.Println("reconcile sweep loop stopped")
+		return
+	}
+
+	// Legacy periodic healer path (only when explicitly configured for full monitoring).
 	log.Printf("block monitor: Starting periodic recent-block reconciler every %s (window=%d)", interval, window)
 
 	ticker := time.NewTicker(interval)
@@ -150,7 +156,10 @@ func (bm *BlockMonitor) updateRecentBlocksSummary() error {
 	return nil
 }
 
-// checkForNewBlocks checks for and processes new blocks more efficiently
+// checkForNewBlocks checks for and processes new blocks.
+// In the default "track tip only" mode this is extremely lightweight:
+// we only ever process the live tip when it advances. No repeated
+// reprocessing of the last N blocks, no background catch-up crawls.
 func (bm *BlockMonitor) checkForNewBlocks() error {
 	// Get current blockchain height from the configured source
 	tip, err := bm.getCurrentHeightFromBlockchainInfo()
@@ -158,17 +167,18 @@ func (bm *BlockMonitor) checkForNewBlocks() error {
 		return fmt.Errorf("failed to get current height: %w", err)
 	}
 
-	log.Printf("block monitor: checkForNewBlocks tip=%d monitor_height=%d", tip, bm.currentHeight)
-	if err := bm.reconcileCanonicalTip(tip, 6); err != nil {
+	log.Printf("block monitor: checkForNewBlocks tip=%d current=%d", tip, bm.currentHeight)
+
+	// Light reorg safety (only re-processes on actual hash mismatch).
+	if err := bm.reconcileCanonicalTip(tip, 2); err != nil {
 		log.Printf("Failed to reconcile canonical tip: %v", err)
 	}
 
-	// === Reliability improvement ===
-	// Use the *maximum* of:
-	//   - our in-memory high-water mark (what this instance has sequentially advanced)
-	//   - the max height persisted in storage (from prior runs, on-demand scans, etc.)
-	// This prevents "only last 3 on restart" and allows jumping forward when
-	// storage was populated by other means.
+	if monitorTrackTipOnly() {
+		return bm.trackTip(tip)
+	}
+
+	// --- legacy / full monitoring path (opt-in via BLOCK_MONITOR_TRACK_TIP_ONLY=false) ---
 	lastGood := bm.currentHeight
 	if stored := bm.getMaxStoredHeight(); stored > lastGood {
 		lastGood = stored
@@ -179,37 +189,25 @@ func (bm *BlockMonitor) checkForNewBlocks() error {
 
 	startHeight := lastGood + 1
 	maxPerCycle := monitorMaxBlocksPerCycle()
-	delayBetween := 6 * time.Second // slightly higher base delay to stay kind to explorers
+	delayBetween := 6 * time.Second
 
-	// Always do a bounded recent heal pass first. This is the main defense
-	// against gaps after restarts: the most recent N blocks around the live
-	// tip get (re)processed regardless of our high-water mark.
 	healWindow := monitorRecentReconcileWindow()
 	if healWindow > 0 {
 		log.Printf("block monitor: running heal/reconcile window of %d recent blocks", healWindow)
 		_ = bm.ReconcileRecentBlocks(context.Background(), healWindow)
 	}
 
-	// If we were at 0 (fresh or long downtime) and tip is high, treat the
-	// recent window as "caught" for the purpose of the sequential pointer.
-	// We do *not* want to try crawling thousands of blocks from 1 on the next
-	// cycle (that would be slow and API-unfriendly). Future blocks will be
-	// picked up incrementally. Deep historical gaps can be filled on-demand.
 	if bm.currentHeight == 0 && tip > 100 {
 		bm.currentHeight = tip - 1
 		startHeight = bm.currentHeight + 1
 	}
 
-	// Forward incremental scan with safe error handling:
-	// - On any ProcessBlock failure we *break* (do not advance the pointer).
-	//   Next cycle (plus the healer) will retry. Eliminates silent skips.
 	log.Printf("Processing new blocks from %d to %d (max %d per cycle)", startHeight, tip, maxPerCycle)
 
 	processedThisCycle := int64(0)
 	for height := startHeight; height <= tip && height < startHeight+maxPerCycle; height++ {
 		if err := bm.ProcessBlock(height); err != nil {
 			log.Printf("Error processing block %d (will retry next cycle): %v", height, err)
-			// Do NOT advance currentHeight past the failure.
 			break
 		}
 		bm.currentHeight = height
@@ -228,12 +226,65 @@ func (bm *BlockMonitor) checkForNewBlocks() error {
 	}
 
 	bm.lastChecked = time.Now()
-
-	// Update recent blocks summary for frontend
 	if err := bm.updateRecentBlocksSummary(); err != nil {
 		log.Printf("Failed to update recent blocks summary: %v", err)
 	}
+	return nil
+}
 
+// trackTip implements the lightweight "just track the live tip" behavior.
+// When the tip advances we process only a tiny trailing window (new tip + at
+// most a couple of predecessors). We never repeatedly re-scan the same recent
+// blocks on every poll. Historical gaps remain available via on-demand scan.
+func (bm *BlockMonitor) trackTip(tip int64) error {
+	const maxCatchup = 3 // process at most the last N blocks when we see an advance
+
+	if bm.currentHeight == 0 {
+		// Brand new: start at tip (or tip - a tiny bit) so first real advance
+		// is cheap. Process the current tip.
+		start := tip
+		if tip > maxCatchup {
+			start = tip - (maxCatchup - 1)
+		}
+		bm.currentHeight = start - 1
+		log.Printf("block monitor: tip-only initialized; will track from near tip=%d", tip)
+	}
+
+	if tip <= bm.currentHeight {
+		return nil
+	}
+
+	// Figure out the first block we need to process this time.
+	first := bm.currentHeight + 1
+	if tip-first+1 > maxCatchup {
+		first = tip - (maxCatchup - 1)
+		if first < bm.currentHeight+1 {
+			first = bm.currentHeight + 1
+		}
+	}
+
+	if first > tip {
+		first = tip
+	}
+
+	log.Printf("block monitor: tip advanced to %d (processing %d..%d)", tip, first, tip)
+
+	processed := int64(0)
+	for h := first; h <= tip; h++ {
+		if err := bm.ProcessBlock(h); err != nil {
+			log.Printf("Error processing block %d: %v (will retry on next tick)", h, err)
+			// Stop advancing past the failure.
+			break
+		}
+		bm.currentHeight = h
+		bm.blocksProcessed++
+		processed++
+	}
+
+	bm.lastChecked = time.Now()
+	if err := bm.updateRecentBlocksSummary(); err != nil {
+		log.Printf("Failed to update recent blocks summary: %v", err)
+	}
 	return nil
 }
 
@@ -389,6 +440,11 @@ func (bm *BlockMonitor) ProcessBlock(height int64) error {
 }
 
 // ReconcileRecentBlocks forces a reprocess of the most recent N blocks.
+// This is intentionally not called by the background monitor loop in
+// tip-only mode (the default). It is still used for:
+//   - explicit on-demand scans
+//   - IPFS ingestion sync (after a new upload is seen)
+//   - manual / debugging use
 func (bm *BlockMonitor) ReconcileRecentBlocks(ctx context.Context, count int) error {
 	if count <= 0 {
 		return nil

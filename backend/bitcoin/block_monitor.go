@@ -172,6 +172,11 @@ func monitorCheckInterval() time.Duration {
 			return d
 		}
 	}
+	if monitorTrackTipOnly() {
+		// Tip-only tracking is cheap; poll more frequently so we notice
+		// new blocks with lower latency.
+		return 60 * time.Second
+	}
 	return 5 * time.Minute
 }
 
@@ -184,7 +189,7 @@ func monitorMaxBlocksPerCycle() int64 {
 			return n
 		}
 	}
-	return 5 // was 2; increased for better catch-up while still throttled
+	return 3
 }
 
 func monitorRecentReconcileWindow() int {
@@ -196,7 +201,12 @@ func monitorRecentReconcileWindow() int {
 			return n
 		}
 	}
-	return 12
+	if monitorTrackTipOnly() {
+		// In tip-only mode we do not periodically reprocess recent blocks.
+		// Explicit ReconcileRecentBlocks calls (e.g. after an ingestion) are still honored.
+		return 0
+	}
+	return 1
 }
 
 func monitorReconcileInterval() time.Duration {
@@ -206,6 +216,18 @@ func monitorReconcileInterval() time.Duration {
 		}
 	}
 	return 20 * time.Minute
+}
+
+// monitorTrackTipOnly returns whether the block monitor should run in
+// lightweight "just track the live tip" mode (the default). This avoids
+// repeated re-processing of recent blocks and the associated CPU cost
+// from parsing + oracle reconciliation on every ticker and heal window.
+func monitorTrackTipOnly() bool {
+	if v := os.Getenv("BLOCK_MONITOR_TRACK_TIP_ONLY"); v != "" {
+		// Explicit opt-out supported.
+		return v != "false" && v != "0" && v != "off"
+	}
+	return true
 }
 
 // NewBlockMonitor creates a new block monitor
@@ -317,7 +339,11 @@ func (bm *BlockMonitor) Start() error {
 		log.Printf("block layout migration warning (non-fatal): %v", err)
 	}
 
-	log.Printf("Starting block monitor with %s interval, bitcoinAPI set: %v", bm.checkInterval, bm.bitcoinAPI != nil)
+	mode := "full"
+	if monitorTrackTipOnly() {
+		mode = "tip-only"
+	}
+	log.Printf("Starting block monitor (%s mode) with %s interval, bitcoinAPI set: %v", mode, bm.checkInterval, bm.bitcoinAPI != nil)
 
 	go bm.monitorLoop()
 	go bm.reconcileSweepLoop()

@@ -530,12 +530,21 @@ func (p *BitcoinParser) extractImages(transactions []Transaction) []ExtractedIma
 	var images []ExtractedImageData
 	seen := make(map[string]bool) // content hash dedupe
 
-	log.Printf("extractImages: Processing %d transactions", len(transactions))
-	for txIndex, tx := range transactions {
-		log.Printf("extractImages: Transaction %d has %d inputs with witness", txIndex, len(tx.InputWitnesses))
+	totalWitnessItems := 0
+	for _, tx := range transactions {
+		for _, stack := range tx.InputWitnesses {
+			totalWitnessItems += len(stack)
+		}
+	}
+	if len(transactions) > 0 {
+		log.Printf("extractImages: Processing %d transactions (%d witness items)", len(transactions), totalWitnessItems)
+	}
+
+	for _, tx := range transactions {
 		for inIdx, stack := range tx.InputWitnesses {
 			for itemIdx, witness := range stack {
-				log.Printf("extractImages: Input %d witness %d has %d bytes", inIdx, itemIdx, len(witness))
+				// Detailed per-item logging removed for CPU/log volume.
+				// Only log when we actually extract something interesting (below).
 
 				if ordinalPayloads := extractOrdinalPayloads(witness); len(ordinalPayloads) > 0 {
 					for ordIdx, payload := range ordinalPayloads {
@@ -579,7 +588,6 @@ func (p *BitcoinParser) extractImages(transactions []Transaction) []ExtractedIma
 			// First try to detect Ordinals inscriptions (text, BRC-20, etc.)
 			contentType, content, ok := parseOrdinals(witness)
 			if ok {
-				log.Printf("extractImages: Found Ordinals inscription: %s", contentType)
 				format := formatFromContentType(contentType)
 
 				image := ExtractedImageData{
