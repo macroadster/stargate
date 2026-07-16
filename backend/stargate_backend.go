@@ -9,8 +9,10 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	_ "net/http/pprof" // registers pprof handlers on http.DefaultServeMux for CPU/memory profiling
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -432,6 +434,17 @@ func main() {
 func runHTTPServer(store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, apiKeyValidator auth.APIKeyValidator, ingestionSvc *services.IngestionService, challengeStore *auth.ChallengeStore, ipfsClient *ipfs.Client) {
 	log.Println("=== STARTING STARGATE HTTP SERVER ===")
 
+	// Diagnostic snapshot of config that drives background CPU load.
+	log.Printf("DIAG: STARGATE_AGENT_ENABLED=%s WATCHER=%s WORKER=%s POLL=%s",
+		os.Getenv("STARGATE_AGENT_ENABLED"), os.Getenv("STARGATE_AGENT_WATCHER_ENABLED"), os.Getenv("STARGATE_AGENT_WORKER_ENABLED"),
+		os.Getenv("STARGATE_AGENT_POLL_INTERVAL"))
+	log.Printf("DIAG: BLOCK_MONITOR_INTERVAL=%s MAX_PER_CYCLE=%s RECONCILE_INTERVAL=%s RECONCILE_WINDOW=%s",
+		os.Getenv("BLOCK_MONITOR_INTERVAL"), os.Getenv("BLOCK_MONITOR_MAX_PER_CYCLE"),
+		os.Getenv("BLOCK_MONITOR_RECONCILE_INTERVAL"), os.Getenv("BLOCK_MONITOR_RECONCILE_WINDOW"))
+	log.Printf("DIAG: INGEST_SYNC=%s FUNDING_SYNC=%s IPFS_MIRROR=%s GOMAXPROCS=%d goroutines_at_startup=%d",
+		os.Getenv("STARGATE_ENABLE_INGEST_SYNC"), os.Getenv("STARGATE_ENABLE_FUNDING_SYNC"),
+		os.Getenv("IPFS_MIRROR_ENABLED"), runtime.GOMAXPROCS(0), runtime.NumGoroutine())
+
 	// Initialize IPFS native storage
 	ipfsStorageDir := os.Getenv("IPFS_STORAGE_DIR")
 	if ipfsStorageDir == "" {
@@ -539,6 +552,22 @@ func runHTTPServer(store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, api
 	log.Printf("MCP HTTP tools at: http://localhost:%s/mcp/tools", httpPort)
 	log.Printf("MCP HTTP calls at: http://localhost:%s/mcp/call", httpPort)
 	log.Printf("Proxy to steganography API (port 8080) at: http://localhost:%s/stego/", httpPort)
+	log.Printf("Metrics at: http://localhost:%s/metrics", httpPort)
+	log.Printf("pprof (CPU/heap/goroutine profiling) at: http://localhost:%s/debug/pprof/", httpPort)
+	log.Printf("Runtime info: GOMAXPROCS=%d numCPU=%d", runtime.GOMAXPROCS(0), runtime.NumCPU())
+
+	// Lightweight periodic diagnostic heartbeat to correlate CPU with activity.
+	go func() {
+		t := time.NewTicker(5 * time.Minute)
+		defer t.Stop()
+		for {
+			select {
+			case <-t.C:
+				g := runtime.NumGoroutine()
+				log.Printf("DIAG heartbeat: goroutines=%d", g)
+			}
+		}
+	}()
 
 	log.Fatal(http.ListenAndServe(":"+httpPort, handler))
 }
@@ -606,6 +635,12 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 	})
 
 	mux.Handle("/metrics", promhttp.Handler())
+
+	// pprof for runtime profiling (CPU, heap, goroutines, etc). Use:
+	//   go tool pprof http://localhost:PORT/debug/pprof/profile?seconds=30
+	//   go tool pprof http://localhost:PORT/debug/pprof/heap
+	//   curl http://localhost:PORT/debug/pprof/goroutine?debug=1
+	mux.Handle("/debug/pprof/", http.DefaultServeMux)
 
 	// Inscription endpoints
 	mux.HandleFunc("/api/inscriptions", container.InscriptionHandler.HandleGetInscriptions)
@@ -729,6 +764,7 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 		dataStorage,
 		bitcoinAPI,
 	)
+	log.Printf("DIAG: block monitor created (effective intervals logged at start)")
 	blockMonitor.SetIngestionService(container.IngestionService)
 	blockMonitor.SetStegoReconciler(bitcoin.StegoReconcilerFunc(func(ctx context.Context, stegoCID, expectedHash string) error {
 		return mcpRestServer.ReconcileStego(ctx, stegoCID, expectedHash)

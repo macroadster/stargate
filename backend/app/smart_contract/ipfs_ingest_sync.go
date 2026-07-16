@@ -881,6 +881,8 @@ func ipfsIngestProcessUpdateQueue(ctx context.Context, ingest *services.Ingestio
 	ticker := time.NewTicker(cfg.Interval)
 	defer ticker.Stop()
 
+	log.Printf("ipfs ingestion sync: update queue processor started (interval=%v)", cfg.Interval)
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -888,9 +890,14 @@ func ipfsIngestProcessUpdateQueue(ctx context.Context, ingest *services.Ingestio
 		case <-ticker.C:
 		case <-state.queueWake:
 		}
+		start := time.Now()
 		updated, err := processIngestUpdateBatch(ctx, ingest, store)
 		if err != nil {
 			log.Printf("ipfs ingestion sync update retry failed: %v", err)
+		}
+		d := time.Since(start)
+		if updated || d > 500*time.Millisecond {
+			log.Printf("ipfs ingestion sync: batch processed (updated=%v) in %v", updated, d)
 		}
 		if updated {
 			maybeTriggerReconcile(ctx, reconcileFn, cfg, state)

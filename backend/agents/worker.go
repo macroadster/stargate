@@ -79,8 +79,10 @@ func (w *Worker) saveState() {
 // ProcessWishes scans for pending wishes and creates proposals (respecting all rate limits and dedup rules).
 // This is the Go equivalent of the Python Worker.process_wishes().
 func (w *Worker) ProcessWishes(ctx context.Context) {
+	start := time.Now()
 	// Gate: do not create new proposals while we have active work
 	if w.hasActiveWork() {
+		log.Printf("agents/worker: ProcessWishes skipped (has active work)")
 		return
 	}
 
@@ -189,6 +191,10 @@ func (w *Worker) ProcessWishes(ctx context.Context) {
 
 	if created > 0 {
 		log.Printf("agents/worker: created %d proposal(s) this cycle", created)
+	}
+	dur := time.Since(start)
+	if dur > 1*time.Second || created > 0 {
+		log.Printf("agents/worker: ProcessWishes completed in %v (created=%d)", dur, created)
 	}
 }
 

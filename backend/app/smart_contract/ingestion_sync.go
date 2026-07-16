@@ -76,13 +76,20 @@ func StartIngestionSync(ctx context.Context, dsn string, store Store, interval t
 	go func() {
 		t := time.NewTicker(interval)
 		defer t.Stop()
+		log.Printf("ingestion sync: started (interval=%v)", interval)
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-t.C:
+				start := time.Now()
 				if err := syncOnce(ctx, ingest, store); err != nil {
 					log.Printf("ingestion sync error: %v", err)
+				} else {
+					d := time.Since(start)
+					if d > 500*time.Millisecond {
+						log.Printf("ingestion sync: syncOnce took %v", d)
+					}
 				}
 			}
 		}
@@ -118,6 +125,9 @@ func syncOnce(ctx context.Context, ingest *services.IngestionService, store Stor
 	recs, err := ingest.ListRecent("pending", 25)
 	if err != nil {
 		return err
+	}
+	if len(recs) > 0 {
+		log.Printf("ingestion sync: syncOnce saw %d pending recs", len(recs))
 	}
 	if len(recs) == 0 {
 		return nil

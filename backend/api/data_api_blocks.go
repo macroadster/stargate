@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -613,13 +614,15 @@ func (api *DataAPI) HandleScanBlockOnDemand(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Process the block
-	log.Printf("On-demand scan requested for block %d-%d, force_scan=%v", startHeight, endHeight, forceScan)
+	log.Printf("On-demand scan requested for block %d-%d, force_scan=%v (goroutines=%d)", startHeight, endHeight, forceScan, runtime.NumGoroutine())
+	scanStart := time.Now()
 	for height := startHeight; height <= endHeight; height++ {
 		if err := api.blockMonitor.ProcessBlock(height); err != nil {
 			http.Error(w, fmt.Sprintf("Failed to scan block %d: %v", height, err), http.StatusInternalServerError)
 			return
 		}
 	}
+	log.Printf("On-demand scan for %d-%d completed in %v", startHeight, endHeight, time.Since(scanStart))
 
 	// Get the processed data
 	blockData, err := api.dataStorage.GetBlockData(endHeight)

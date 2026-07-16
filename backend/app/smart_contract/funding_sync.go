@@ -141,13 +141,20 @@ func StartFundingSync(ctx context.Context, store Store, provider FundingProvider
 	go func() {
 		t := time.NewTicker(interval)
 		defer t.Stop()
+		log.Printf("funding sync: started (interval=%v)", interval)
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-t.C:
+				start := time.Now()
 				if err := refreshProofs(ctx, store, provider, escort, mempool); err != nil {
 					log.Printf("funding sync error: %v", err)
+				} else {
+					d := time.Since(start)
+					if d > 1*time.Second {
+						log.Printf("funding sync: refreshProofs took %v", d)
+					}
 				}
 			}
 		}

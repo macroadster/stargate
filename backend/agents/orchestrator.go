@@ -3,6 +3,7 @@ package agents
 import (
 	"context"
 	"log"
+	"runtime"
 	"sync"
 	"time"
 
@@ -91,6 +92,8 @@ func (o *Orchestrator) run(ctx context.Context) {
 		maxCycles = 10000
 	}
 
+	log.Printf("agents: run loop starting (poll_interval=%s)", o.cfg.PollInterval)
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -99,21 +102,37 @@ func (o *Orchestrator) run(ctx context.Context) {
 		}
 
 		cycle++
-		if cycle%50 == 0 {
-			log.Printf("agents: cycle %d/%d", cycle, maxCycles)
+		cycleStart := time.Now()
+		if cycle%10 == 0 || cycle == 1 {
+			log.Printf("agents: cycle %d (goroutines=%d)", cycle, runtime.NumGoroutine())
 		}
 
+		workerDur := time.Duration(0)
 		if o.worker != nil {
+			wStart := time.Now()
 			o.worker.ProcessWishes(ctx)
+			workerDur = time.Since(wStart)
 		}
+		watcherDur := time.Duration(0)
 		var tasks []smart_contract.Task
 		if o.watcher != nil {
+			wStart := time.Now()
 			tasks = o.watcher.RunOnce(ctx)
+			watcherDur = time.Since(wStart)
 		}
+		taskProcessDur := time.Duration(0)
 		if len(tasks) > 0 && o.worker != nil {
+			tpStart := time.Now()
 			for _, t := range tasks {
 				o.worker.ProcessTask(t)
 			}
+			taskProcessDur = time.Since(tpStart)
+		}
+
+		cycleDur := time.Since(cycleStart)
+		if cycleDur > 5*time.Second || len(tasks) > 0 || cycle%20 == 0 {
+			log.Printf("agents: cycle %d complete in %v (worker=%v watcher=%v tasks=%v processed=%d)",
+				cycle, cycleDur, workerDur, watcherDur, taskProcessDur, len(tasks))
 		}
 
 		// Sleep with cancellation awareness

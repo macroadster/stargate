@@ -77,14 +77,22 @@ func (w *Watcher) RunOnce(ctx context.Context) []smart_contract.Task {
 	if w == nil {
 		return nil
 	}
+	start := time.Now()
 	// Light resource check (can be expanded)
 	w.checkResources()
 
 	w.processPendingProposals(ctx)
+	subsStart := time.Now()
 	w.processSubmissions(ctx)
+	subsDur := time.Since(subsStart)
 	w.saveState()
 
-	return w.findAvailableTasks(ctx)
+	tasks := w.findAvailableTasks(ctx)
+	dur := time.Since(start)
+	if dur > 2*time.Second || len(tasks) > 0 {
+		log.Printf("agents/watcher: RunOnce completed in %v (subs=%v) -> %d actionable task(s)", dur, subsDur, len(tasks))
+	}
+	return tasks
 }
 
 // processPendingProposals audits pending proposals and rejects obviously bad ones.
@@ -163,6 +171,9 @@ func (w *Watcher) processPendingProposals(ctx context.Context) {
 				log.Printf("agents/watcher: auto-approved proposal %s", pid)
 			}
 		}
+	}
+	if len(proposals) > 0 {
+		log.Printf("agents/watcher: processed %d proposals this cycle", len(proposals))
 	}
 }
 

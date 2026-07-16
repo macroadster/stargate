@@ -20,12 +20,17 @@ func (bm *BlockMonitor) monitorLoop() {
 	ticker := time.NewTicker(bm.checkInterval)
 	defer ticker.Stop()
 
+	log.Printf("block monitor: monitorLoop started (check_interval=%v)", bm.checkInterval)
+
 	for {
 		select {
 		case <-ticker.C:
+			log.Printf("block monitor: ticker fired (interval=%v), running checkForNewBlocks", bm.checkInterval)
+			start := time.Now()
 			if err := bm.checkForNewBlocks(); err != nil {
 				log.Printf("Error checking for new blocks: %v", err)
 			}
+			log.Printf("block monitor: checkForNewBlocks completed in %v", time.Since(start))
 		case <-bm.stopChan:
 			log.Println("Block monitor stopped")
 			return
@@ -40,7 +45,7 @@ func (bm *BlockMonitor) reconcileSweepLoop() {
 	// It also helps with short reorgs in addition to reconcileCanonicalTip.
 	interval := monitorReconcileInterval()
 	window := monitorRecentReconcileWindow()
-	log.Printf("Starting periodic recent-block reconciler every %s (window=%d)", interval, window)
+	log.Printf("block monitor: Starting periodic recent-block reconciler every %s (window=%d)", interval, window)
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -51,11 +56,14 @@ func (bm *BlockMonitor) reconcileSweepLoop() {
 	for {
 		select {
 		case <-ticker.C:
+			log.Printf("block monitor: reconcileSweep tick (window=%d)", window)
+			start := time.Now()
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			if err := bm.ReconcileRecentBlocks(ctx, window); err != nil {
 				log.Printf("periodic reconcile: %v", err)
 			}
 			cancel()
+			log.Printf("block monitor: ReconcileRecentBlocks (sweep) took %v", time.Since(start))
 		case <-bm.stopChan:
 			log.Println("reconcile sweep loop stopped")
 			return
@@ -150,7 +158,7 @@ func (bm *BlockMonitor) checkForNewBlocks() error {
 		return fmt.Errorf("failed to get current height: %w", err)
 	}
 
-	log.Printf("Current blockchain height: %d, monitor height: %d", tip, bm.currentHeight)
+	log.Printf("block monitor: checkForNewBlocks tip=%d monitor_height=%d", tip, bm.currentHeight)
 	if err := bm.reconcileCanonicalTip(tip, 6); err != nil {
 		log.Printf("Failed to reconcile canonical tip: %v", err)
 	}
@@ -178,6 +186,7 @@ func (bm *BlockMonitor) checkForNewBlocks() error {
 	// tip get (re)processed regardless of our high-water mark.
 	healWindow := monitorRecentReconcileWindow()
 	if healWindow > 0 {
+		log.Printf("block monitor: running heal/reconcile window of %d recent blocks", healWindow)
 		_ = bm.ReconcileRecentBlocks(context.Background(), healWindow)
 	}
 
@@ -387,10 +396,12 @@ func (bm *BlockMonitor) ReconcileRecentBlocks(ctx context.Context, count int) er
 	bm.reconcileMu.Lock()
 	defer bm.reconcileMu.Unlock()
 
+	start := time.Now()
 	height, err := bm.getCurrentHeightFromBlockchainInfo()
 	if err != nil {
 		return fmt.Errorf("get current height: %w", err)
 	}
+	processed := 0
 	for i := 0; i < count; i++ {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -401,7 +412,13 @@ func (bm *BlockMonitor) ReconcileRecentBlocks(ctx context.Context, count int) er
 		}
 		if err := bm.ProcessBlock(h); err != nil {
 			log.Printf("reconcile recent blocks: failed to process block %d: %v", h, err)
+		} else {
+			processed++
 		}
+	}
+	dur := time.Since(start)
+	if dur > 10*time.Second || processed > 0 {
+		log.Printf("block monitor: ReconcileRecentBlocks(%d) reprocessed %d blocks in %v (tip=%d)", count, processed, dur, height)
 	}
 	return nil
 }
