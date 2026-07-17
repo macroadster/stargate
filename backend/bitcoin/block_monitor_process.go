@@ -42,15 +42,7 @@ func (bm *BlockMonitor) reconcileSweepLoop() {
 	window := monitorRecentReconcileWindow()
 	interval := monitorReconcileInterval()
 
-	if window <= 0 || monitorTrackTipOnly() {
-		log.Printf("block monitor: periodic reconcile sweep disabled (tip-only tracking)")
-		// Still need to react to stopChan.
-		<-bm.stopChan
-		log.Println("reconcile sweep loop stopped")
-		return
-	}
-
-	// Legacy periodic healer path (only when explicitly configured for full monitoring).
+	// Legacy periodic healer path (only started by Start() when not in tip-only mode).
 	log.Printf("block monitor: Starting periodic recent-block reconciler every %s (window=%d)", interval, window)
 
 	ticker := time.NewTicker(interval)

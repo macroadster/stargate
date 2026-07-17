@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -79,12 +80,14 @@ func (api *DataAPI) sendSSEUpdate(w http.ResponseWriter, update *storage.Realtim
 	}
 }
 
-func (api *DataAPI) monitorUpdates(updates chan *storage.RealtimeUpdate) {
+func (api *DataAPI) monitorUpdates(updates chan *storage.RealtimeUpdate, ctx context.Context) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
 	for {
 		select {
+		case <-ctx.Done():
+			return
 		case <-ticker.C:
 			// Send periodic statistics update
 			stats := api.dataStorage.GetSteganographyStats()

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/ipfs/boxo/bitswap"
 	"github.com/ipfs/boxo/bitswap/network/bsnet"
@@ -29,6 +30,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/routing"
+	connmgr "github.com/libp2p/go-libp2p/p2p/net/connmgr"
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
 	drouting "github.com/libp2p/go-libp2p/p2p/discovery/routing"
 	multiaddr "github.com/multiformats/go-multiaddr"
@@ -72,9 +74,11 @@ type EmbeddedNode struct {
 
 // NodeConfig holds configuration for the embedded node
 type NodeConfig struct {
-	RepoPath    string
-	ListenAddrs []string
-	Bootstrap   []string
+	RepoPath      string
+	ListenAddrs   []string
+	Bootstrap     []string
+	ConnLowWater  int // low watermark for libp2p connection manager (0 = default)
+	ConnHighWater int // high watermark for libp2p connection manager (0 = default)
 }
 
 // NewEmbeddedNode initializes and starts an embedded IPFS node
@@ -98,10 +102,32 @@ func NewEmbeddedNode(ctx context.Context, cfg NodeConfig) (*EmbeddedNode, error)
 	//    The full AllKeysChan reprovider is kept disabled to avoid heavy
 	//    filesystem I/O at scale (20k+ blocks); only per-CID Provide()
 	//    calls in Add() are used when a reprovider is present.
+	//
+	// Connection manager is configured to bound the number of peers/connections.
+	// Without it the node accumulates yamux/bitswap goroutines as the DHT and
+	// gossipsub peer exchange discover more peers over time.
+	low := cfg.ConnLowWater
+	if low <= 0 {
+		low = 20
+	}
+	high := cfg.ConnHighWater
+	if high <= 0 {
+		high = 80
+	}
+	cm, err := connmgr.NewConnManager(low, high,
+		connmgr.WithGracePeriod(1*time.Minute),
+	)
+	if err != nil {
+		dstore.Close()
+		cancel()
+		return nil, fmt.Errorf("failed to create connection manager: %w", err)
+	}
+
 	var idht *dht.IpfsDHT
 	h, err := libp2p.New(
 		libp2p.ListenAddrStrings(cfg.ListenAddrs...),
 		libp2p.NATPortMap(),
+		libp2p.ConnectionManager(cm),
 		libp2p.Routing(func(h host.Host) (routing.PeerRouting, error) {
 			idht, err = dht.New(nodeCtx, h, dht.Mode(dht.ModeAutoServer))
 			return idht, err

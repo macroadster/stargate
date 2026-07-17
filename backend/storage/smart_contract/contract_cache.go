@@ -12,6 +12,7 @@ type ContractCache struct {
 	cache   map[string]*ContractCacheEntry
 	ttl     time.Duration
 	maxSize int
+	done    chan struct{}
 }
 
 // ContractCacheEntry represents a cached contract response
@@ -26,9 +27,10 @@ func NewContractCache(ttl time.Duration, maxSize int) *ContractCache {
 		cache:   make(map[string]*ContractCacheEntry),
 		ttl:     ttl,
 		maxSize: maxSize,
+		done:    make(chan struct{}),
 	}
 
-	// Start cleanup goroutine
+	// Start cleanup goroutine. It exits cleanly on Stop().
 	go cache.startCleanup()
 
 	return cache
@@ -105,8 +107,22 @@ func (c *ContractCache) startCleanup() {
 	ticker := time.NewTicker(c.ttl / 2) // Clean at half TTL interval
 	defer ticker.Stop()
 
-	for range ticker.C {
-		c.cleanupExpired()
+	for {
+		select {
+		case <-c.done:
+			return
+		case <-ticker.C:
+			c.cleanupExpired()
+		}
+	}
+}
+
+// Stop requests the cleanup goroutine to exit (for clean shutdown).
+func (c *ContractCache) Stop() {
+	select {
+	case <-c.done:
+	default:
+		close(c.done)
 	}
 }
 

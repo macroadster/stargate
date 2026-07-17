@@ -346,7 +346,14 @@ func (bm *BlockMonitor) Start() error {
 	log.Printf("Starting block monitor (%s mode) with %s interval, bitcoinAPI set: %v", mode, bm.checkInterval, bm.bitcoinAPI != nil)
 
 	go bm.monitorLoop()
-	go bm.reconcileSweepLoop()
+	// Only start the reconcile sweep goroutine when we actually use periodic
+	// recent-block healing (disabled in the default tip-only mode to avoid
+	// parking an idle goroutine forever on stopChan).
+	if !monitorTrackTipOnly() && monitorRecentReconcileWindow() > 0 {
+		go bm.reconcileSweepLoop()
+	} else {
+		log.Printf("block monitor: periodic reconcile sweep disabled (tip-only tracking)")
+	}
 
 	return nil
 }

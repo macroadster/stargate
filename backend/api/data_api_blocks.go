@@ -571,8 +571,9 @@ func (api *DataAPI) HandleRealtimeUpdates(w http.ResponseWriter, r *http.Request
 	})
 	api.sendSSEUpdate(w, initialUpdate)
 
-	// Start monitoring for updates
-	go api.monitorUpdates(updates)
+	// Start monitoring for updates. Pass request context so the goroutine
+	// exits cleanly when the client disconnects (prevents goroutine leak).
+	go api.monitorUpdates(updates, r.Context())
 
 	// Handle client connection
 	defer close(updates)

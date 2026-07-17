@@ -379,14 +379,17 @@ func (s *HealthService) GetHealthStatus() *core.HealthResponse {
 type PeerService struct {
 	peers map[string]time.Time
 	mu    sync.RWMutex
+	done  chan struct{}
 }
 
 // NewPeerService creates a new peer service
 func NewPeerService() *PeerService {
 	ps := &PeerService{
 		peers: make(map[string]time.Time),
+		done:  make(chan struct{}),
 	}
-	// Start cleanup goroutine to remove inactive peers after 5 minutes
+	// Start cleanup goroutine to remove inactive peers after 5 minutes.
+	// The goroutine exits cleanly if Stop() is called (ticker is stopped).
 	go ps.cleanup()
 	return ps
 }
@@ -423,14 +426,29 @@ func (ps *PeerService) GetPeers() []string {
 // cleanup periodically removes peers that haven't checked in recently
 func (ps *PeerService) cleanup() {
 	ticker := time.NewTicker(1 * time.Minute)
-	for range ticker.C {
-		ps.mu.Lock()
-		now := time.Now()
-		for id, lastSeen := range ps.peers {
-			if now.Sub(lastSeen) > 2*time.Minute {
-				delete(ps.peers, id)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ps.done:
+			return
+		case <-ticker.C:
+			ps.mu.Lock()
+			now := time.Now()
+			for id, lastSeen := range ps.peers {
+				if now.Sub(lastSeen) > 2*time.Minute {
+					delete(ps.peers, id)
+				}
 			}
+			ps.mu.Unlock()
 		}
-		ps.mu.Unlock()
+	}
+}
+
+// Stop requests the cleanup goroutine to exit (used for clean shutdown).
+func (ps *PeerService) Stop() {
+	select {
+	case <-ps.done:
+	default:
+		close(ps.done)
 	}
 }

@@ -96,10 +96,27 @@ func NewClientFromEnv() *Client {
 				bootstrapPeers = strings.Split(envBootstrap, ",")
 			}
 
+			// Connection manager watermarks to bound peer connections (and thus
+			// the goroutines from yamux/bitswap/libp2p per connection).
+			lowWater := 20
+			if v := os.Getenv("IPFS_LIBP2P_LOW_WATER"); v != "" {
+				if n, err := strconv.Atoi(v); err == nil && n > 0 {
+					lowWater = n
+				}
+			}
+			highWater := 80
+			if v := os.Getenv("IPFS_LIBP2P_HIGH_WATER"); v != "" {
+				if n, err := strconv.Atoi(v); err == nil && n > lowWater {
+					highWater = n
+				}
+			}
+
 			node, err := NewEmbeddedNode(context.Background(), NodeConfig{
-				RepoPath:    repoPath,
-				ListenAddrs: []string{listenAddr},
-				Bootstrap:   bootstrapPeers,
+				RepoPath:      repoPath,
+				ListenAddrs:   []string{listenAddr},
+				Bootstrap:     bootstrapPeers,
+				ConnLowWater:  lowWater,
+				ConnHighWater: highWater,
 			})
 			if err != nil {
 				log.Printf("Warning: failed to start embedded IPFS node: %v", err)

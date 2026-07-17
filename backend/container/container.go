@@ -179,3 +179,14 @@ func initIngestionService(pgDSN string) *services.IngestionService {
 	log.Printf("ingestion service disabled after retries")
 	return nil
 }
+
+// Close stops background goroutines owned by services in the container
+// (e.g. peer cleanup, contract cache TTL cleaner). Safe to call multiple times.
+func (c *Container) Close() {
+	if c.PeerService != nil {
+		c.PeerService.Stop()
+	}
+	if c.ContractCache != nil {
+		c.ContractCache.Stop()
+	}
+}
