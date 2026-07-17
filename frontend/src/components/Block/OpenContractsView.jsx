@@ -13,13 +13,14 @@ const OpenContractsView = ({ setSelectedInscription, refreshKey }) => {
     loadingRef.current = true;
     setIsLoading(true);
     try {
-      const response = await apiFetch('/api/open-contracts');
+      // Use server-side open filter + reasonable limit to avoid fetching+processing hundreds of rows
+      const response = await apiFetch('/api/open-contracts?open=true&limit=20');
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const data = await response.json();
       const raw = data?.data?.transactions ?? data;
       const normalized = Array.isArray(raw) ? raw : [];
       
-      // Filter out superseded contracts - only show active/open contracts
+      // Safety filter (server should have already filtered, but keep for compatibility)
       const filtered = normalized.filter(contract => 
         contract.status !== 'superseded' && 
         contract.status !== 'completed' && 

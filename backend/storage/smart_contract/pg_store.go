@@ -85,6 +85,7 @@ CREATE TABLE IF NOT EXISTS mcp_contracts (
 );
 CREATE INDEX IF NOT EXISTS idx_mcp_contracts_confirmed_height ON mcp_contracts(confirmed_block_height DESC);
 CREATE INDEX IF NOT EXISTS idx_mcp_contracts_confirmed_at ON mcp_contracts(confirmed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_mcp_contracts_status_confirmed_at ON mcp_contracts(status, confirmed_at DESC);
 CREATE INDEX IF NOT EXISTS idx_mcp_contracts_created_at ON mcp_contracts(created_at DESC);
 CREATE TABLE IF NOT EXISTS mcp_tasks (
   task_id TEXT PRIMARY KEY,

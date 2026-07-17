@@ -114,6 +114,7 @@ CREATE TABLE IF NOT EXISTS ` + TableEscortStatus + ` (
 -- Performance indexes (Postgres)
 CREATE INDEX IF NOT EXISTS idx_mcp_contracts_confirmed_height ON ` + TableContracts + `(confirmed_block_height DESC);
 CREATE INDEX IF NOT EXISTS idx_mcp_contracts_confirmed_at ON ` + TableContracts + `(confirmed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_mcp_contracts_status_confirmed_at ON ` + TableContracts + `(status, confirmed_at DESC);
 CREATE INDEX IF NOT EXISTS idx_mcp_proposals_status ON ` + TableProposals + `(status);
 CREATE INDEX IF NOT EXISTS idx_mcp_tasks_contract_status ON ` + TableTasks + `(contract_id, status);
 `
