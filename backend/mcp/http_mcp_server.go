@@ -252,6 +252,31 @@ func (h *HTTPMCPServer) getSession(sessionID string) *MCPSession {
 	return h.sessions[sessionID]
 }
 
+// extractSessionID looks for common variants of the MCP session header.
+func (h *HTTPMCPServer) extractSessionID(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	for _, key := range []string{"MCP-Session-Id", "Mcp-Session-Id", "mcp-session-id"} {
+		if v := strings.TrimSpace(r.Header.Get(key)); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// ensureSession returns an existing valid session from the request or creates a new one.
+func (h *HTTPMCPServer) ensureSession(r *http.Request) string {
+	if sid := h.extractSessionID(r); sid != "" {
+		if s := h.getSession(sid); s != nil {
+			return sid
+		}
+		// still honor client-provided id even if not yet in our map (client may have it from previous)
+		return sid
+	}
+	return h.createSession()
+}
+
 func (h *HTTPMCPServer) externalBaseURL(r *http.Request) string {
 	if r == nil || r.Host == "" {
 		return h.baseURL

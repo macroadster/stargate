@@ -66,7 +66,8 @@ func (h *HTTPMCPServer) handleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sessionID := h.createSession()
+	// Use ensure for consistency with POST paths (respects client-provided session if valid).
+	sessionID := h.ensureSession(r)
 	base := h.externalBaseURL(r)
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("MCP-Session-Id", sessionID)
@@ -417,6 +418,10 @@ func (h *HTTPMCPServer) handleToolCall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Advertise session for clients using the /mcp/call convenience endpoint.
+	sessionID := h.ensureSession(r)
+	w.Header().Set("MCP-Session-Id", sessionID)
+
 	var req MCPRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.writeHTTPError(w, http.StatusBadRequest, "INVALID_JSON", "Invalid JSON", "Request body must be valid JSON.")
@@ -437,29 +442,56 @@ func (h *HTTPMCPServer) handleToolCall(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if h.toolRequiresAuth(req.Tool) {
+		accept := r.Header.Get("Accept")
+		isStream := strings.Contains(accept, "text/event-stream")
 		if apiKey == "" {
-			h.writeStructuredErrorJSONRPC(w, NewUnauthorizedError(req.Tool, "API key required. Tool '"+req.Tool+"' requires authentication. Send X-API-Key or Authorization: Bearer <key>."))
+			errResp := NewUnauthorizedError(req.Tool, "API key required. Tool '"+req.Tool+"' requires authentication. Send X-API-Key or Authorization: Bearer <key>.")
+			if isStream {
+				data, _ := json.Marshal(map[string]interface{}{"success": false, "error": errResp})
+				w.Header().Set("Content-Type", "text/event-stream")
+				fmt.Fprintf(w, "event: message\ndata: %s\n\n", data)
+			} else {
+				h.writeStructuredErrorJSONRPC(w, errResp)
+			}
 			return
 		}
 		if h.apiKeyStore != nil && !h.apiKeyStore.Validate(apiKey) {
-			h.writeStructuredErrorJSONRPC(w, NewUnauthorizedError(req.Tool, "Invalid API key. Double-check the X-API-Key header value."))
+			errResp := NewUnauthorizedError(req.Tool, "Invalid API key. Double-check the X-API-Key header value.")
+			if isStream {
+				data, _ := json.Marshal(map[string]interface{}{"success": false, "error": errResp})
+				w.Header().Set("Content-Type", "text/event-stream")
+				fmt.Fprintf(w, "event: message\ndata: %s\n\n", data)
+			} else {
+				h.writeStructuredErrorJSONRPC(w, errResp)
+			}
 			return
 		}
 		if h.apiKeyStore != nil && !h.checkRateLimit(apiKey) {
-			h.writeStructuredErrorJSONRPC(w, &ToolError{
-				Code:    ErrCodeRateLimited,
-				Message: "Rate limit exceeded. Retry after a short delay.",
-				Tool:    req.Tool,
-				HttpStatus: 429,
-			})
+			errResp := &ToolError{Code: ErrCodeRateLimited, Message: "Rate limit exceeded. Retry after a short delay.", Tool: req.Tool, HttpStatus: 429}
+			if isStream {
+				data, _ := json.Marshal(map[string]interface{}{"success": false, "error": errResp})
+				w.Header().Set("Content-Type", "text/event-stream")
+				fmt.Fprintf(w, "event: message\ndata: %s\n\n", data)
+			} else {
+				h.writeStructuredErrorJSONRPC(w, errResp)
+			}
 			return
 		}
 	}
 
 	result, err := h.callToolDirect(r.Context(), req.Tool, req.Arguments, apiKey, r)
+	accept := r.Header.Get("Accept")
+	isStream := strings.Contains(accept, "text/event-stream")
+
 	if err != nil {
 		// Handle structured errors - always return 200 OK with error in JSON-RPC format
-		h.writeStructuredErrorJSONRPC(w, err)
+		if isStream {
+			data, _ := json.Marshal(map[string]interface{}{"success": false, "error": err})
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprintf(w, "event: message\ndata: %s\n\n", data)
+		} else {
+			h.writeStructuredErrorJSONRPC(w, err)
+		}
 		return
 	}
 
@@ -467,6 +499,15 @@ func (h *HTTPMCPServer) handleToolCall(w http.ResponseWriter, r *http.Request) {
 		Success: true,
 		Result:  result,
 	}
+
+	// If client wants SSE (Streamable HTTP), wrap the response so it doesn't look like a failed call.
+	if isStream {
+		w.Header().Set("Content-Type", "text/event-stream")
+		data, _ := json.Marshal(resp)
+		fmt.Fprintf(w, "event: message\ndata: %s\n\n", data)
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
 }

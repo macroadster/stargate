@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"sort"
@@ -12,36 +13,42 @@ func (h *HTTPMCPServer) handleJSONRPC(w http.ResponseWriter, r *http.Request) {
 	var req jsonRPCRequest
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		h.writeJSONRPCError(w, nil, -32700, "Failed to read request body", nil)
+		h.writeJSONRPCError(w, r, nil, -32700, "Failed to read request body", nil)
 		return
 	}
 	if len(body) == 0 {
-		h.writeJSONRPCError(w, nil, -32600, "Empty request body", nil)
+		h.writeJSONRPCError(w, r, nil, -32600, "Empty request body", nil)
 		return
 	}
 	if err := json.Unmarshal(body, &req); err != nil {
-		h.writeJSONRPCError(w, nil, -32700, "Invalid JSON", err.Error())
+		h.writeJSONRPCError(w, r, nil, -32700, "Invalid JSON", err.Error())
 		return
 	}
 	if req.JSONRPC == "" {
 		req.JSONRPC = "2.0"
 	}
 	if req.Method == "" {
-		h.writeJSONRPCError(w, req.ID, -32600, "Missing method", nil)
+		h.writeJSONRPCError(w, r, req.ID, -32600, "Missing method", nil)
 		return
 	}
 
+	// Ensure we have (and advertise) a session for Streamable HTTP clients.
+	// Previously sessions were only created on GET /mcp, causing clients to
+	// repeatedly POST initialize/notifications/initialized in a loop.
+	sessionID := h.ensureSession(r)
+	w.Header().Set("MCP-Session-Id", sessionID)
+
 	switch req.Method {
 	case "initialize":
-		h.handleJSONRPCInitialize(w, req)
+		h.handleJSONRPCInitialize(w, r, req, sessionID)
 	case "notifications/initialized":
 		w.WriteHeader(http.StatusNoContent)
 	case "tools/list":
-		h.handleJSONRPCToolsList(w, req)
+		h.handleJSONRPCToolsList(w, r, req)
 	case "tools/call":
 		h.handleJSONRPCToolsCall(w, r, req)
 	case "resources/list":
-		h.writeJSONRPCResponse(w, jsonRPCResponse{
+		h.writeJSONRPCResponse(w, r, jsonRPCResponse{
 			JSONRPC: "2.0",
 			ID:      req.ID,
 			Result: map[string]interface{}{
@@ -49,53 +56,57 @@ func (h *HTTPMCPServer) handleJSONRPC(w http.ResponseWriter, r *http.Request) {
 			},
 		})
 	default:
-		h.writeJSONRPCError(w, req.ID, -32601, "Method not found", map[string]interface{}{
+		h.writeJSONRPCError(w, r, req.ID, -32601, "Method not found", map[string]interface{}{
 			"hint": "Supported methods: initialize, tools/list, tools/call, resources/list.",
 		})
 	}
 }
 
-func (h *HTTPMCPServer) handleJSONRPCInitialize(w http.ResponseWriter, req jsonRPCRequest) {
+func (h *HTTPMCPServer) handleJSONRPCInitialize(w http.ResponseWriter, r *http.Request, req jsonRPCRequest, sessionID string) {
 	protocolVersion := "2025-03-26"
 	if req.Params != nil {
 		if v, ok := req.Params["protocolVersion"].(string); ok && v != "" {
 			protocolVersion = v
 		}
 	}
-	h.writeJSONRPCResponse(w, jsonRPCResponse{
+	result := map[string]interface{}{
+		"protocolVersion": protocolVersion,
+		"capabilities": map[string]interface{}{
+			"tools": map[string]bool{
+				"list": true,
+				"call": true,
+			},
+			"resources": map[string]bool{
+				"list": false,
+				"read": false,
+			},
+			"prompts": map[string]bool{
+				"list": false,
+				"get":  false,
+			},
+			"logging": map[string]bool{},
+			"streaming": map[string]bool{
+				"accept": true,
+			},
+		},
+		"serverInfo": map[string]string{
+			"name":    "starlight",
+			"version": "1.0.0",
+		},
+		"instructions": "Use tools/list to discover available tools and tools/call to invoke them. Provide X-API-Key or Authorization: Bearer <key> if authentication is required.",
+	}
+	if sessionID != "" {
+		result["sessionId"] = sessionID // helpful for some clients
+	}
+	h.writeJSONRPCResponse(w, r, jsonRPCResponse{
 		JSONRPC: "2.0",
 		ID:      req.ID,
-		Result: map[string]interface{}{
-			"protocolVersion": protocolVersion,
-			"capabilities": map[string]interface{}{
-				"tools": map[string]bool{
-					"list": true,
-					"call": true,
-				},
-				"resources": map[string]bool{
-					"list": false,
-					"read": false,
-				},
-				"prompts": map[string]bool{
-					"list": false,
-					"get":  false,
-				},
-				"logging": map[string]bool{},
-				"streaming": map[string]bool{
-					"accept": true,
-				},
-			},
-			"serverInfo": map[string]string{
-				"name":    "starlight",
-				"version": "1.0.0",
-			},
-			"instructions": "Use tools/list to discover available tools and tools/call to invoke them. Provide X-API-Key or Authorization: Bearer <key> if authentication is required.",
-		},
+		Result:  result,
 	})
 }
 
-func (h *HTTPMCPServer) handleJSONRPCToolsList(w http.ResponseWriter, req jsonRPCRequest) {
-	h.writeJSONRPCResponse(w, jsonRPCResponse{
+func (h *HTTPMCPServer) handleJSONRPCToolsList(w http.ResponseWriter, r *http.Request, req jsonRPCRequest) {
+	h.writeJSONRPCResponse(w, r, jsonRPCResponse{
 		JSONRPC: "2.0",
 		ID:      req.ID,
 		Result: map[string]interface{}{
@@ -106,12 +117,12 @@ func (h *HTTPMCPServer) handleJSONRPCToolsList(w http.ResponseWriter, req jsonRP
 
 func (h *HTTPMCPServer) handleJSONRPCToolsCall(w http.ResponseWriter, r *http.Request, req jsonRPCRequest) {
 	if req.Params == nil {
-		h.writeJSONRPCError(w, req.ID, -32602, "Missing params", "Expected params: {\"name\": \"tool_name\", \"arguments\": {}}")
+		h.writeJSONRPCError(w, r, req.ID, -32602, "Missing params", "Expected params: {\"name\": \"tool_name\", \"arguments\": {}}")
 		return
 	}
 	name, ok := req.Params["name"].(string)
 	if !ok || strings.TrimSpace(name) == "" {
-		h.writeJSONRPCError(w, req.ID, -32602, "Missing tool name", "Expected params.name")
+		h.writeJSONRPCError(w, r, req.ID, -32602, "Missing tool name", "Expected params.name")
 		return
 	}
 	args := map[string]interface{}{}
@@ -119,7 +130,7 @@ func (h *HTTPMCPServer) handleJSONRPCToolsCall(w http.ResponseWriter, r *http.Re
 		if castArgs, ok := rawArgs.(map[string]interface{}); ok {
 			args = castArgs
 		} else {
-			h.writeJSONRPCError(w, req.ID, -32602, "Invalid arguments", "Expected params.arguments to be an object")
+			h.writeJSONRPCError(w, r, req.ID, -32602, "Invalid arguments", "Expected params.arguments to be an object")
 			return
 		}
 	}
@@ -133,7 +144,7 @@ func (h *HTTPMCPServer) handleJSONRPCToolsCall(w http.ResponseWriter, r *http.Re
 
 	if h.toolRequiresAuth(name) {
 		if apiKey == "" {
-			h.writeJSONRPCError(w, req.ID, -32001, "Authentication required", map[string]interface{}{
+			h.writeJSONRPCError(w, r, req.ID, -32001, "Authentication required", map[string]interface{}{
 				"code":    "API_KEY_REQUIRED",
 				"message": "API key required",
 				"tool":    name,
@@ -142,7 +153,7 @@ func (h *HTTPMCPServer) handleJSONRPCToolsCall(w http.ResponseWriter, r *http.Re
 			return
 		}
 		if h.apiKeyStore != nil && !h.apiKeyStore.Validate(apiKey) {
-			h.writeJSONRPCError(w, req.ID, -32002, "Invalid API key", map[string]interface{}{
+			h.writeJSONRPCError(w, r, req.ID, -32002, "Invalid API key", map[string]interface{}{
 				"code":    "API_KEY_INVALID",
 				"message": "Invalid API key",
 				"tool":    name,
@@ -151,7 +162,7 @@ func (h *HTTPMCPServer) handleJSONRPCToolsCall(w http.ResponseWriter, r *http.Re
 			return
 		}
 		if h.apiKeyStore != nil && !h.checkRateLimit(apiKey) {
-			h.writeJSONRPCError(w, req.ID, -32003, "Rate limit exceeded", map[string]interface{}{
+			h.writeJSONRPCError(w, r, req.ID, -32003, "Rate limit exceeded", map[string]interface{}{
 				"code":    "RATE_LIMITED",
 				"message": "Rate limit exceeded",
 				"tool":    name,
@@ -164,14 +175,14 @@ func (h *HTTPMCPServer) handleJSONRPCToolsCall(w http.ResponseWriter, r *http.Re
 	result, err := h.callToolDirect(r.Context(), name, args, apiKey, r)
 	if err != nil {
 		if toolErr, ok := err.(*ToolError); ok {
-			h.writeJSONRPCError(w, req.ID, -32000, toolErr.Message, map[string]interface{}{
+			h.writeJSONRPCError(w, r, req.ID, -32000, toolErr.Message, map[string]interface{}{
 				"code":    toolErr.Code,
 				"message": toolErr.Message,
 				"tool":    toolErr.Tool,
 				"hint":    toolErr.Hint,
 			})
 		} else if validationErr, ok := err.(*ValidationError); ok {
-			h.writeJSONRPCError(w, req.ID, -32000, validationErr.Error(), map[string]interface{}{
+			h.writeJSONRPCError(w, r, req.ID, -32000, validationErr.Error(), map[string]interface{}{
 				"code":    "VALIDATION_FAILED",
 				"message": validationErr.Message,
 				"tool":    validationErr.Tool,
@@ -179,7 +190,7 @@ func (h *HTTPMCPServer) handleJSONRPCToolsCall(w http.ResponseWriter, r *http.Re
 				"hint":    validationErr.Hint,
 			})
 		} else {
-			h.writeJSONRPCError(w, req.ID, -32000, "Tool execution error", map[string]interface{}{
+			h.writeJSONRPCError(w, r, req.ID, -32000, "Tool execution error", map[string]interface{}{
 				"code":    "INTERNAL_ERROR",
 				"message": err.Error(),
 				"tool":    name,
@@ -190,10 +201,10 @@ func (h *HTTPMCPServer) handleJSONRPCToolsCall(w http.ResponseWriter, r *http.Re
 	}
 	payload, err := json.Marshal(result)
 	if err != nil {
-		h.writeJSONRPCError(w, req.ID, -32603, "Failed to encode tool result", err.Error())
+		h.writeJSONRPCError(w, r, req.ID, -32603, "Failed to encode tool result", err.Error())
 		return
 	}
-	h.writeJSONRPCResponse(w, jsonRPCResponse{
+	h.writeJSONRPCResponse(w, r, jsonRPCResponse{
 		JSONRPC: "2.0",
 		ID:      req.ID,
 		Result: map[string]interface{}{
@@ -208,14 +219,28 @@ func (h *HTTPMCPServer) handleJSONRPCToolsCall(w http.ResponseWriter, r *http.Re
 	})
 }
 
-func (h *HTTPMCPServer) writeJSONRPCResponse(w http.ResponseWriter, resp jsonRPCResponse) {
+func (h *HTTPMCPServer) writeJSONRPCResponse(w http.ResponseWriter, r *http.Request, resp jsonRPCResponse) {
+	data, _ := json.Marshal(resp)
+
+	accept := ""
+	if r != nil {
+		accept = r.Header.Get("Accept")
+	}
+	if strings.Contains(accept, "text/event-stream") {
+		// Support Streamable HTTP: send JSON-RPC response as SSE event.
+		// This prevents clients from treating the call as failed and retrying,
+		// which was one cause of "infinite" POST /mcp/call loops.
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintf(w, "event: message\ndata: %s\n\n", data)
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	w.Write(data)
 }
 
-func (h *HTTPMCPServer) writeJSONRPCError(w http.ResponseWriter, id interface{}, code int, message string, data interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(jsonRPCResponse{
+func (h *HTTPMCPServer) writeJSONRPCError(w http.ResponseWriter, r *http.Request, id interface{}, code int, message string, data interface{}) {
+	resp := jsonRPCResponse{
 		JSONRPC: "2.0",
 		ID:      id,
 		Error: &jsonRPCError{
@@ -223,7 +248,21 @@ func (h *HTTPMCPServer) writeJSONRPCError(w http.ResponseWriter, id interface{},
 			Message: message,
 			Data:    data,
 		},
-	})
+	}
+	respBytes, _ := json.Marshal(resp)
+
+	accept := ""
+	if r != nil {
+		accept = r.Header.Get("Accept")
+	}
+	if strings.Contains(accept, "text/event-stream") {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintf(w, "event: message\ndata: %s\n\n", respBytes)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(respBytes)
 }
 
 func (h *HTTPMCPServer) buildJSONRPCTools() []map[string]interface{} {
