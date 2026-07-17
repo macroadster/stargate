@@ -38,6 +38,11 @@ func includeConfirmedQuery(r *http.Request) bool {
 	return strings.EqualFold(raw, "true") || strings.EqualFold(raw, "yes") || raw == "1"
 }
 
+func hasCursorParams(r *http.Request) bool {
+	q := r.URL.Query()
+	return q.Get("cursor_height") != "" || q.Get("cursor_date") != "" || q.Get("cursor") != ""
+}
+
 func proofConfirmed(proof *sc.MerkleProof) bool {
 	if proof == nil {
 		return false
@@ -162,12 +167,33 @@ func (h *SmartContractHandler) HandleGetContracts(w http.ResponseWriter, r *http
 		filter.CursorType = cursorType
 	}
 
-	// Query database
-	contracts, err := h.store.ListContracts(filter)
-	if err != nil {
-		log.Printf("Failed to get contracts: %v", err)
-		h.sendError(w, http.StatusInternalServerError, "Failed to get contracts")
-		return
+	// Check cache for non-paginated (or first-page) queries.
+	// generateCacheKey only keys on status/limit/include_confirmed, which is
+	// appropriate for the common "open contracts" / initial list cases.
+	cacheKey := generateCacheKey(r)
+	var contracts []sc.Contract
+	if h.contractCache != nil {
+		if cached, ok := h.contractCache.Get(cacheKey); ok && len(cached) > 0 {
+			if !hasCursorParams(r) {
+				contracts = cached
+			}
+		}
+	}
+
+	if len(contracts) == 0 {
+		// Query database
+		var err error
+		contracts, err = h.store.ListContracts(filter)
+		if err != nil {
+			log.Printf("Failed to get contracts: %v", err)
+			h.sendError(w, http.StatusInternalServerError, "Failed to get contracts")
+			return
+		}
+
+		// Populate cache for cacheable queries (no cursor)
+		if h.contractCache != nil && !hasCursorParams(r) {
+			h.contractCache.Set(cacheKey, contracts)
+		}
 	}
 
 	// Convert results to inscriptions for frontend compatibility

@@ -91,7 +91,30 @@ func (api *DataAPI) loadBlock(height int64) (*storage.BlockDataCache, error) {
 // It unions heights from storage (for PG etc) with on-disk walk (partitioned layout aware)
 // so that scrollback works for historical blocks even if the in-memory cache has been
 // pruned by cleanOldCache or only a subset is hot.
+//
+// Results are cached for a short TTL to avoid repeated expensive WalkDir calls
+// when the UI is scrolling or polling block summaries.
 func (api *DataAPI) listAvailableBlockHeights() []int64 {
+	api.heightsMu.RLock()
+	if len(api.heightsCache) > 0 && time.Since(api.heightsCacheTime) < api.heightsCacheTTL {
+		cached := make([]int64, len(api.heightsCache))
+		copy(cached, api.heightsCache)
+		api.heightsMu.RUnlock()
+		return cached
+	}
+	api.heightsMu.RUnlock()
+
+	// Cache miss or expired — recompute under write lock
+	api.heightsMu.Lock()
+	defer api.heightsMu.Unlock()
+
+	// Double-check after acquiring lock
+	if len(api.heightsCache) > 0 && time.Since(api.heightsCacheTime) < api.heightsCacheTTL {
+		cached := make([]int64, len(api.heightsCache))
+		copy(cached, api.heightsCache)
+		return cached
+	}
+
 	var heights []int64
 
 	// Collect from storage layer (works for Postgres/SQLite; for default FS storage
@@ -152,6 +175,11 @@ func (api *DataAPI) listAvailableBlockHeights() []int64 {
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i] > out[j] })
+
+	// Store in cache
+	api.heightsCache = out
+	api.heightsCacheTime = time.Now()
+
 	return out
 }
 
@@ -1078,6 +1106,11 @@ func (api *DataAPI) IndexBlock(height int64) {
 		}
 	}
 	api.txMu.Unlock()
+
+	// New block arrived → drop the heights cache so block-summaries sees it promptly.
+	api.heightsMu.Lock()
+	api.heightsCache = nil
+	api.heightsMu.Unlock()
 }
 
 func (api *DataAPI) lookupTxHeight(txid string) (int64, bool) {

@@ -24,16 +24,23 @@ type DataAPI struct {
 	// even if the BlockDataCache.Inscriptions list for that height is currently empty.
 	heightIndex map[int64][]string
 	txMu        sync.RWMutex
+
+	// Cached block heights for summaries (avoids expensive WalkDir on every request)
+	heightsCache     []int64
+	heightsCacheTime time.Time
+	heightsMu        sync.RWMutex
+	heightsCacheTTL  time.Duration
 }
 
 // NewDataAPI creates a new data API instance
 func NewDataAPI(dataStorage storage.ExtendedDataStorage, blockMonitor *bitcoin.BlockMonitor, bitcoinAPI *bitcoin.BitcoinAPI) *DataAPI {
 	api := &DataAPI{
-		dataStorage:  dataStorage,
-		blockMonitor: blockMonitor,
-		bitcoinAPI:   bitcoinAPI,
-		txIndex:      make(map[string]int64),
-		heightIndex:  make(map[int64][]string),
+		dataStorage:     dataStorage,
+		blockMonitor:    blockMonitor,
+		bitcoinAPI:      bitcoinAPI,
+		txIndex:         make(map[string]int64),
+		heightIndex:     make(map[int64][]string),
+		heightsCacheTTL: 15 * time.Second, // short TTL; heights only grow
 	}
 	api.buildTxIndex()
 	return api
