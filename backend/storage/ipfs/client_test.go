@@ -27,6 +27,10 @@ func TestClientEmbeddedNode(t *testing.T) {
 	os.Setenv("IPFS_EMBEDDED_REPO", tmpRepo)
 	os.Setenv("IPFS_EMBEDDED_LISTEN", "/ip4/127.0.0.1/tcp/0") // Random port
 	os.Setenv("IPFS_API_URL", "http://127.0.0.1:9999")        // Avoid local node
+	// Private mesh: never join public IPFS during unit tests.
+	os.Unsetenv("IPFS_EMBEDDED_BOOTSTRAP")
+	os.Unsetenv("IPFS_JOIN_PUBLIC_IPFS")
+	os.Unsetenv("IPFS_PUBSUB_PEER_EXCHANGE")
 
 	client := NewClientFromEnv()
 	if client == nil {

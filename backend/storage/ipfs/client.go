@@ -44,6 +44,26 @@ func IsEnabled() bool {
 	return strings.TrimSpace(os.Getenv("IPFS_ENABLED")) != "false"
 }
 
+func envTruthy(key string) bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
+	return v == "1" || v == "true" || v == "yes" || v == "on"
+}
+
+// bootstrapIsPublic reports whether the resolved peer list is the public
+// Protocol Labs bootstrap set (used to decide NAT/reachability defaults).
+func bootstrapIsPublic(peers []string) bool {
+	if len(peers) == 0 {
+		return false
+	}
+	// Heuristic: any public bootstrap multiaddr present.
+	for _, p := range peers {
+		if strings.Contains(p, "bootstrap.libp2p.io") || strings.Contains(p, "104.131.131.82") {
+			return true
+		}
+	}
+	return false
+}
+
 var (
 	globalClient *Client
 	clientOnce   sync.Once
@@ -91,32 +111,69 @@ func NewClientFromEnv() *Client {
 				listenAddr = "/ip4/0.0.0.0/tcp/4001"
 			}
 
-			var bootstrapPeers []string
-			if envBootstrap := os.Getenv("IPFS_EMBEDDED_BOOTSTRAP"); envBootstrap != "" {
-				bootstrapPeers = strings.Split(envBootstrap, ",")
-			}
+			// Bootstrap peers: empty = private mesh (default). Set
+			// IPFS_EMBEDDED_BOOTSTRAP=public to join public IPFS (CPU-heavy),
+			// or a comma-separated multiaddr list for private peers.
+			joinPublic := envTruthy("IPFS_JOIN_PUBLIC_IPFS")
+			bootstrapPeers := resolveBootstrapPeers(os.Getenv("IPFS_EMBEDDED_BOOTSTRAP"), joinPublic)
 
 			// Connection manager watermarks to bound peer connections (and thus
 			// the goroutines from yamux/bitswap/libp2p per connection).
-			lowWater := 20
+			// Defaults are intentionally low for private mesh; raise only if
+			// you deliberately run a larger stargate swarm.
+			lowWater := 10
 			if v := os.Getenv("IPFS_LIBP2P_LOW_WATER"); v != "" {
 				if n, err := strconv.Atoi(v); err == nil && n > 0 {
 					lowWater = n
 				}
 			}
-			highWater := 80
+			highWater := 40
 			if v := os.Getenv("IPFS_LIBP2P_HIGH_WATER"); v != "" {
 				if n, err := strconv.Atoi(v); err == nil && n > lowWater {
 					highWater = n
 				}
 			}
 
+			// DHT client by default. Set IPFS_DHT_MODE=server|auto only if this
+			// node should serve DHT queries for other peers.
+			dhtMode := strings.ToLower(strings.TrimSpace(os.Getenv("IPFS_DHT_MODE")))
+			if dhtMode == "" {
+				dhtMode = DHTModeClient
+			}
+
+			// Peer exchange and DHT routing discovery amplify mesh growth.
+			// Enable only when requested, or when bootstrap peers are set
+			// (routing discovery helps find other stargate nodes via DHT).
+			peerExchange := envTruthy("IPFS_PUBSUB_PEER_EXCHANGE")
+			routingDiscovery := envTruthy("IPFS_PUBSUB_ROUTING_DISCOVERY")
+			if !routingDiscovery && len(bootstrapPeers) > 0 {
+				// Default: enable DHT pubsub discovery only when we have
+				// bootstrap peers that can seed the routing table.
+				if v := os.Getenv("IPFS_PUBSUB_ROUTING_DISCOVERY"); v == "" {
+					routingDiscovery = true
+				}
+			}
+
+			// NAT / reachability: private by default; enable NAT map only when
+			// joining public network or explicitly requested.
+			enableNAT := envTruthy("IPFS_ENABLE_NAT_PORTMAP") || joinPublic || bootstrapIsPublic(bootstrapPeers)
+			forcePrivate := !envTruthy("IPFS_FORCE_PUBLIC_REACHABILITY") && !joinPublic && !bootstrapIsPublic(bootstrapPeers)
+			// If operator set IPFS_FORCE_PUBLIC_REACHABILITY=true, clear private force.
+			if envTruthy("IPFS_FORCE_PUBLIC_REACHABILITY") {
+				forcePrivate = false
+			}
+
 			node, err := NewEmbeddedNode(context.Background(), NodeConfig{
-				RepoPath:      repoPath,
-				ListenAddrs:   []string{listenAddr},
-				Bootstrap:     bootstrapPeers,
-				ConnLowWater:  lowWater,
-				ConnHighWater: highWater,
+				RepoPath:                 repoPath,
+				ListenAddrs:              []string{listenAddr},
+				Bootstrap:                bootstrapPeers,
+				ConnLowWater:             lowWater,
+				ConnHighWater:            highWater,
+				DHTMode:                  dhtMode,
+				PeerExchange:             peerExchange,
+				RoutingDiscovery:         routingDiscovery,
+				EnableNATPortMap:         enableNAT,
+				ForcePrivateReachability: forcePrivate,
 			})
 			if err != nil {
 				log.Printf("Warning: failed to start embedded IPFS node: %v", err)

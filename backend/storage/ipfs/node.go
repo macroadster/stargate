@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -36,19 +37,20 @@ import (
 	multiaddr "github.com/multiformats/go-multiaddr"
 )
 
-// defaultBootstrapPeers are the IPFS network bootstrap nodes operated by
-// Protocol Labs. They allow the embedded node to join the public DHT for
-// decentralised peer discovery — this avoids making any single server
-// (e.g. starlight-ai.freemyip.com) the sole bottleneck.
+// publicBootstrapPeers are Protocol Labs public IPFS bootstrap nodes.
+// They are ONLY used when explicitly requested via IPFS_EMBEDDED_BOOTSTRAP=public
+// (or IPFS_JOIN_PUBLIC_IPFS=true). Joining the public DHT by default burns
+// multi-core CPU on continuous peer discovery, dialing, bitswap queues, and GC.
 //
 // Note: the full AllKeysChan reprovider is intentionally kept disabled
 // because at 20k+ data blocks the periodic blockstore scan causes heavy
 // filesystem I/O. Discovery and bitswap still work; only the expensive
 // bulk re-announcement is skipped.
 //
-// Additional bootstrap peers (e.g. your own stargate instances) can be
-// supplied via IPFS_EMBEDDED_BOOTSTRAP (comma-separated multiaddrs).
-var defaultBootstrapPeers = []string{
+// Default mode is a private mesh: mDNS + optional IPFS_EMBEDDED_BOOTSTRAP
+// multiaddrs (comma-separated). Set IPFS_EMBEDDED_BOOTSTRAP=public only if
+// you intentionally want public-network participation.
+var publicBootstrapPeers = []string{
 	"/dnsaddr/bootstrap.libp2p.io/p2p/QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN",
 	"/dnsaddr/bootstrap.libp2p.io/p2p/QmQCU2EcMqAqQPR2i9bChDtGNJchTbq5TbXJJ16u19uLTa",
 	"/dnsaddr/bootstrap.libp2p.io/p2p/QmbLHAnMoJPWSCR5Zhtx6BHJX9KiKNN6tpvbUcqanj75Nb",
@@ -72,6 +74,13 @@ type EmbeddedNode struct {
 	topicsMu   sync.RWMutex
 }
 
+// DHT mode strings accepted by NodeConfig.DHTMode / IPFS_DHT_MODE.
+const (
+	DHTModeClient = "client"
+	DHTModeServer = "server"
+	DHTModeAuto   = "auto"
+)
+
 // NodeConfig holds configuration for the embedded node
 type NodeConfig struct {
 	RepoPath      string
@@ -79,6 +88,73 @@ type NodeConfig struct {
 	Bootstrap     []string
 	ConnLowWater  int // low watermark for libp2p connection manager (0 = default)
 	ConnHighWater int // high watermark for libp2p connection manager (0 = default)
+
+	// DHTMode is "client" (default), "server", or "auto".
+	// Client mode does not serve DHT queries for the wider network.
+	DHTMode string
+
+	// PeerExchange enables gossipsub peer exchange. Off by default; it
+	// aggressively grows the mesh and is a major source of CPU/goroutine
+	// growth when any public peers are reachable.
+	PeerExchange bool
+
+	// RoutingDiscovery enables DHT-based pubsub peer discovery. Only useful
+	// when bootstrap peers populate the DHT routing table.
+	RoutingDiscovery bool
+
+	// EnableNATPortMap enables UPnP/NAT-PMP. Off by default for private mesh.
+	EnableNATPortMap bool
+
+	// ForcePrivateReachability tells libp2p not to run public reachability
+	// probing (AutoNAT dial-backs). On by default for private mesh.
+	ForcePrivateReachability bool
+}
+
+// resolveBootstrapPeers parses IPFS_EMBEDDED_BOOTSTRAP and optional public join flag.
+//
+//	"" / unset          → no bootstrap (private mesh; mDNS only)
+//	"public" / "default"→ Protocol Labs public bootstrap set
+//	multiaddrs          → those peers only (trimmed, empty tokens dropped)
+//
+// joinPublic=true is equivalent to bootstrap="public" when bootstrap is empty.
+func resolveBootstrapPeers(bootstrapEnv string, joinPublic bool) []string {
+	raw := strings.TrimSpace(bootstrapEnv)
+	if raw == "" {
+		if joinPublic {
+			return append([]string(nil), publicBootstrapPeers...)
+		}
+		return nil
+	}
+	lower := strings.ToLower(raw)
+	if lower == "public" || lower == "default" {
+		return append([]string(nil), publicBootstrapPeers...)
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		// Allow mixing: "public,/ip4/..."
+		if strings.EqualFold(p, "public") || strings.EqualFold(p, "default") {
+			out = append(out, publicBootstrapPeers...)
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+func dhtModeFromString(s string) dht.ModeOpt {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case DHTModeServer:
+		return dht.ModeServer
+	case DHTModeAuto, "autoserver", "auto-server":
+		return dht.ModeAutoServer
+	default:
+		return dht.ModeClient
+	}
 }
 
 // NewEmbeddedNode initializes and starts an embedded IPFS node
@@ -97,25 +173,23 @@ func NewEmbeddedNode(ctx context.Context, cfg NodeConfig) (*EmbeddedNode, error)
 	bstore := blockstore.NewBlockstore(dstore)
 	bstore = blockstore.NewIdStore(bstore)
 
-	// 3. Initialize libp2p Host with DHT in auto-server mode so the node
-	//    can discover content and announce (provide) its own CIDs.
-	//    The full AllKeysChan reprovider is kept disabled to avoid heavy
-	//    filesystem I/O at scale (20k+ blocks); only per-CID Provide()
-	//    calls in Add() are used when a reprovider is present.
-	//
-	// Connection manager is configured to bound the number of peers/connections.
-	// Without it the node accumulates yamux/bitswap goroutines as the DHT and
-	// gossipsub peer exchange discover more peers over time.
+	// 3. Initialize libp2p Host.
+	// Default is a private mesh (DHT client, no public bootstrap, no peer
+	// exchange). Connection manager bounds peers so yamux/bitswap goroutines
+	// cannot grow unbounded if discovery finds unexpected peers.
 	low := cfg.ConnLowWater
 	if low <= 0 {
-		low = 20
+		low = 10
 	}
 	high := cfg.ConnHighWater
 	if high <= 0 {
-		high = 80
+		high = 40
+	}
+	if high <= low {
+		high = low + 10
 	}
 	cm, err := connmgr.NewConnManager(low, high,
-		connmgr.WithGracePeriod(1*time.Minute),
+		connmgr.WithGracePeriod(30*time.Second),
 	)
 	if err != nil {
 		dstore.Close()
@@ -123,16 +197,26 @@ func NewEmbeddedNode(ctx context.Context, cfg NodeConfig) (*EmbeddedNode, error)
 		return nil, fmt.Errorf("failed to create connection manager: %w", err)
 	}
 
+	dhtMode := dhtModeFromString(cfg.DHTMode)
+	bootstrapPeers := cfg.Bootstrap
+
 	var idht *dht.IpfsDHT
-	h, err := libp2p.New(
+	opts := []libp2p.Option{
 		libp2p.ListenAddrStrings(cfg.ListenAddrs...),
-		libp2p.NATPortMap(),
 		libp2p.ConnectionManager(cm),
 		libp2p.Routing(func(h host.Host) (routing.PeerRouting, error) {
-			idht, err = dht.New(nodeCtx, h, dht.Mode(dht.ModeAutoServer))
+			idht, err = dht.New(nodeCtx, h, dht.Mode(dhtMode))
 			return idht, err
 		}),
-	)
+	}
+	if cfg.EnableNATPortMap {
+		opts = append(opts, libp2p.NATPortMap())
+	}
+	if cfg.ForcePrivateReachability {
+		opts = append(opts, libp2p.ForceReachabilityPrivate())
+	}
+
+	h, err := libp2p.New(opts...)
 	if err != nil {
 		dstore.Close()
 		cancel()
@@ -151,16 +235,18 @@ func NewEmbeddedNode(ctx context.Context, cfg NodeConfig) (*EmbeddedNode, error)
 	// 6. Initialize DAGService
 	dag := merkledag.NewDAGService(bserv)
 
-	// 7. Initialize Pubsub with DHT-based peer discovery so nodes
-	//    subscribed to the same topic can find and connect to each other.
-	//    The topic guard in getTopic() still restricts participation to
-	//    stargate-uploads only, so the node won't forward messages for
-	//    arbitrary topics even though it can discover peers via the DHT.
-	routingDiscovery := drouting.NewRoutingDiscovery(idht)
-	ps, err := pubsub.NewGossipSub(nodeCtx, h,
-		pubsub.WithDiscovery(routingDiscovery),
-		pubsub.WithPeerExchange(true),
-	)
+	// 7. Initialize Pubsub. DHT discovery and peer exchange are opt-in —
+	// both amplify mesh growth and CPU when public peers are reachable.
+	// Topic guard in getTopic() still caps participation to stargate-uploads.
+	var psOpts []pubsub.Option
+	if cfg.RoutingDiscovery && idht != nil {
+		routingDiscovery := drouting.NewRoutingDiscovery(idht)
+		psOpts = append(psOpts, pubsub.WithDiscovery(routingDiscovery))
+	}
+	if cfg.PeerExchange {
+		psOpts = append(psOpts, pubsub.WithPeerExchange(true))
+	}
+	ps, err := pubsub.NewGossipSub(nodeCtx, h, psOpts...)
 	if err != nil {
 		h.Close()
 		dstore.Close()
@@ -190,15 +276,13 @@ func NewEmbeddedNode(ctx context.Context, cfg NodeConfig) (*EmbeddedNode, error)
 		topics:     make(map[string]*pubsub.Topic),
 	}
 
-	// 9. Bootstrap — connect to IPFS network peers so the node can
-	//    participate in the DHT and exchange blocks with other peers.
-	//    IPFS_EMBEDDED_BOOTSTRAP adds extra peers (e.g. your own stargate
-	//    instances) alongside the Protocol Labs defaults.
-	bootstrapPeers := cfg.Bootstrap
+	// 9. Bootstrap only when peers are explicitly configured (or public join).
+	// Default is private mesh: mDNS + explicit multiaddrs only.
 	if len(bootstrapPeers) == 0 {
-		bootstrapPeers = defaultBootstrapPeers
+		log.Printf("Embedded IPFS: private mesh mode (no bootstrap peers; set IPFS_EMBEDDED_BOOTSTRAP to join peers or =public for public DHT)")
+	} else {
+		go node.bootstrap(bootstrapPeers)
 	}
-	go node.bootstrap(bootstrapPeers)
 
 	// 10. mDNS discovery — find stargate peers on the local network / k8s
 	//     cluster without relying on the public DHT.
@@ -207,8 +291,20 @@ func NewEmbeddedNode(ctx context.Context, cfg NodeConfig) (*EmbeddedNode, error)
 		log.Printf("Warning: mDNS discovery failed to start: %v", err)
 	}
 
-	log.Printf("Embedded IPFS node started. PeerID: %s, Addrs: %v", h.ID(), h.Addrs())
+	log.Printf("Embedded IPFS node started. PeerID: %s, Addrs: %v, dht=%s, bootstrap=%d, peer_exchange=%v, routing_discovery=%v, connmgr=%d/%d",
+		h.ID(), h.Addrs(), dhtModeLabel(dhtMode), len(bootstrapPeers), cfg.PeerExchange, cfg.RoutingDiscovery, low, high)
 	return node, nil
+}
+
+func dhtModeLabel(m dht.ModeOpt) string {
+	switch m {
+	case dht.ModeServer:
+		return DHTModeServer
+	case dht.ModeAutoServer:
+		return DHTModeAuto
+	default:
+		return DHTModeClient
+	}
 }
 
 // mdnsNotifee automatically connects to peers discovered on the local network.
@@ -228,6 +324,7 @@ func (n *mdnsNotifee) HandlePeerFound(pi peer.AddrInfo) {
 }
 
 func (n *EmbeddedNode) bootstrap(peers []string) {
+	connected := 0
 	for _, p := range peers {
 		ma, err := multiaddr.NewMultiaddr(p)
 		if err != nil {
@@ -242,12 +339,15 @@ func (n *EmbeddedNode) bootstrap(peers []string) {
 		if err := n.host.Connect(n.ctx, *pi); err != nil {
 			log.Printf("Failed to connect to bootstrap peer %s: %v", pi.ID, err)
 		} else {
+			connected++
 			log.Printf("Connected to bootstrap peer %s", pi.ID)
 		}
 	}
 
-	// Refresh DHT
-	if n.dht != nil {
+	// Only run DHT bootstrap when we actually reached at least one peer.
+	// An empty routing table + DHT bootstrap against the public network is
+	// what drove multi-core CPU and thousands of goroutines in production.
+	if connected > 0 && n.dht != nil {
 		go func() {
 			if err := n.dht.Bootstrap(n.ctx); err != nil {
 				log.Printf("DHT bootstrap error: %v", err)
@@ -358,9 +458,7 @@ func (n *EmbeddedNode) getTopic(name string) (*pubsub.Topic, error) {
 	// stargate-uploads (the file mirror) is the proven replication path.
 	// Other topics (e.g. "stargate-stego") are secondary features that
 	// have not been shown to be robust and are vulnerable to abuse.
-	// Even though the node now participates in the public DHT for peer
-	// discovery, we restrict pubsub to prevent forwarding messages for
-	// arbitrary topics.
+	// Restrict pubsub so we never forward messages for arbitrary topics.
 	allowed := os.Getenv("IPFS_MIRROR_TOPIC")
 	if allowed == "" {
 		allowed = "stargate-uploads"
