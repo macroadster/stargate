@@ -111,11 +111,11 @@ func NewClientFromEnv() *Client {
 				listenAddr = "/ip4/0.0.0.0/tcp/4001"
 			}
 
-			// Bootstrap peers: empty = private mesh (default). Set
-			// IPFS_EMBEDDED_BOOTSTRAP=public to join public IPFS (CPU-heavy),
-			// comma-separated multiaddrs, or hostnames/HTTP URLs that are
-			// resolved via GET /api/ipfs-mirror/status (peer ID may change
-			// across server restarts).
+			// Bootstrap peers: empty defaults to starlight-ai.freemyip.com
+			// (peer ID resolved via GET /api/ipfs-mirror/status). Set
+			// IPFS_EMBEDDED_BOOTSTRAP=none for private mesh only, =public for
+			// Protocol Labs DHT (CPU-heavy), or a comma-separated list of
+			// multiaddrs / hostnames / HTTP URLs.
 			joinPublic := envTruthy("IPFS_JOIN_PUBLIC_IPFS")
 			bootstrapPeers := resolveBootstrapPeers(os.Getenv("IPFS_EMBEDDED_BOOTSTRAP"), joinPublic)
 

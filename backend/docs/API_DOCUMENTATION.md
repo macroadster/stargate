@@ -683,15 +683,14 @@ IPFS_MIRROR_PUBLISH_INTERVAL_SEC=30
 IPFS_MIRROR_MAX_FILES=2000
 IPFS_HTTP_TIMEOUT_SEC=30
 
-# Embedded IPFS bootstrap (private mesh by default).
+# Embedded IPFS bootstrap (default when unset: starlight-ai.freemyip.com).
 # Full multiaddrs with /p2p/<PeerID> work as-is. Hostnames and HTTP URLs
 # resolve the live peer ID from GET {base}/api/ipfs-mirror/status so restarts
 # that rotate identity do not require updating the bootstrap string:
-#   IPFS_EMBEDDED_BOOTSTRAP=https://starlight-ai.freemyip.com
-#   IPFS_EMBEDDED_BOOTSTRAP=starlight-ai.freemyip.com
-#   IPFS_EMBEDDED_BOOTSTRAP=/dns4/starlight-ai.freemyip.com/tcp/4001
-#   IPFS_EMBEDDED_BOOTSTRAP=/dns4/host/tcp/4001/p2p/12D3KooW…   # optional fixed
-#   IPFS_EMBEDDED_BOOTSTRAP=public   # Protocol Labs DHT (CPU-heavy; avoid)
+#   IPFS_EMBEDDED_BOOTSTRAP=               # default → starlight-ai.freemyip.com
+#   IPFS_EMBEDDED_BOOTSTRAP=none           # private mesh only (mDNS)
+#   IPFS_EMBEDDED_BOOTSTRAP=public         # Protocol Labs DHT (CPU-heavy; avoid)
+#   IPFS_EMBEDDED_BOOTSTRAP=/dns4/host/tcp/4001/p2p/12D3KooW…  # optional fixed
 ```
 
 ### Store Configuration

@@ -10,11 +10,19 @@ import (
 func TestResolveBootstrapPeers(t *testing.T) {
 	t.Parallel()
 
-	if got := resolveBootstrapPeers("", false); got != nil {
-		t.Fatalf("empty bootstrap want nil, got %v", got)
+	// Unset → Starlight production host (peer ID resolved at dial time).
+	if got := resolveBootstrapPeers("", false); len(got) != 1 || got[0] != defaultStarlightBootstrap {
+		t.Fatalf("empty bootstrap want [%s], got %v", defaultStarlightBootstrap, got)
 	}
-	if got := resolveBootstrapPeers("  ", false); got != nil {
-		t.Fatalf("whitespace bootstrap want nil, got %v", got)
+	if got := resolveBootstrapPeers("  ", false); len(got) != 1 || got[0] != defaultStarlightBootstrap {
+		t.Fatalf("whitespace bootstrap want [%s], got %v", defaultStarlightBootstrap, got)
+	}
+
+	// Opt out of default mesh seed.
+	for _, kw := range []string{"none", "off", "private", "local", "NONE"} {
+		if got := resolveBootstrapPeers(kw, false); got != nil {
+			t.Fatalf("%q bootstrap want nil (private mesh), got %v", kw, got)
+		}
 	}
 
 	pub := resolveBootstrapPeers("public", false)

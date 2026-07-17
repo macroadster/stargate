@@ -37,6 +37,13 @@ import (
 	multiaddr "github.com/multiformats/go-multiaddr"
 )
 
+// defaultStarlightBootstrap is used when IPFS_EMBEDDED_BOOTSTRAP is unset.
+// Peer ID is resolved at dial time via GET /api/ipfs-mirror/status (see
+// expandBootstrapPeers) so restarts that rotate identity still work.
+// Set IPFS_EMBEDDED_BOOTSTRAP=none for private mesh (mDNS only), or =public
+// for the Protocol Labs public DHT (CPU-heavy).
+const defaultStarlightBootstrap = "starlight-ai.freemyip.com"
+
 // publicBootstrapPeers are Protocol Labs public IPFS bootstrap nodes.
 // They are ONLY used when explicitly requested via IPFS_EMBEDDED_BOOTSTRAP=public
 // (or IPFS_JOIN_PUBLIC_IPFS=true). Joining the public DHT by default burns
@@ -46,10 +53,6 @@ import (
 // because at 20k+ data blocks the periodic blockstore scan causes heavy
 // filesystem I/O. Discovery and bitswap still work; only the expensive
 // bulk re-announcement is skipped.
-//
-// Default mode is a private mesh: mDNS + optional IPFS_EMBEDDED_BOOTSTRAP
-// multiaddrs (comma-separated). Set IPFS_EMBEDDED_BOOTSTRAP=public only if
-// you intentionally want public-network participation.
 var publicBootstrapPeers = []string{
 	"/dnsaddr/bootstrap.libp2p.io/p2p/QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN",
 	"/dnsaddr/bootstrap.libp2p.io/p2p/QmQCU2EcMqAqQPR2i9bChDtGNJchTbq5TbXJJ16u19uLTa",
@@ -112,25 +115,32 @@ type NodeConfig struct {
 
 // resolveBootstrapPeers parses IPFS_EMBEDDED_BOOTSTRAP and optional public join flag.
 //
-//	"" / unset          → no bootstrap (private mesh; mDNS only)
-//	"public" / "default"→ Protocol Labs public bootstrap set
-//	full multiaddrs     → /ip4|dns4/.../tcp/4001/p2p/<PeerID> (used as-is)
-//	partial multiaddrs  → /dns4/host/tcp/4001 (peer ID resolved via HTTP status)
-//	http(s)://host      → peer ID from GET {url}/api/ipfs-mirror/status; dial host:4001
-//	bare hostname       → same as https://hostname
+//	"" / unset             → defaultStarlightBootstrap (starlight-ai.freemyip.com)
+//	"none" / "off" / "private" / "local" → no bootstrap (private mesh; mDNS only)
+//	"public" / "ipfs-public" → Protocol Labs public bootstrap set
+//	full multiaddrs        → /ip4|dns4/.../tcp/4001/p2p/<PeerID> (used as-is)
+//	partial multiaddrs     → /dns4/host/tcp/4001 (peer ID resolved via HTTP status)
+//	http(s)://host         → peer ID from GET {url}/api/ipfs-mirror/status; dial host:4001
+//	bare hostname          → same as https://hostname
 //
 // Incomplete entries are expanded at dial time by expandBootstrapPeers.
 // joinPublic=true is equivalent to bootstrap="public" when bootstrap is empty.
+//
+// Note: the keyword "default" historically meant public IPFS; it still does for
+// backward compatibility. The unset default (empty env) is Starlight's host.
 func resolveBootstrapPeers(bootstrapEnv string, joinPublic bool) []string {
 	raw := strings.TrimSpace(bootstrapEnv)
 	if raw == "" {
 		if joinPublic {
 			return append([]string(nil), publicBootstrapPeers...)
 		}
-		return nil
+		return []string{defaultStarlightBootstrap}
 	}
 	lower := strings.ToLower(raw)
-	if lower == "public" || lower == "default" {
+	if lower == "none" || lower == "off" || lower == "private" || lower == "local" {
+		return nil
+	}
+	if lower == "public" || lower == "default" || lower == "ipfs-public" {
 		return append([]string(nil), publicBootstrapPeers...)
 	}
 	parts := strings.Split(raw, ",")
@@ -141,8 +151,12 @@ func resolveBootstrapPeers(bootstrapEnv string, joinPublic bool) []string {
 			continue
 		}
 		// Allow mixing: "public,/ip4/..."
-		if strings.EqualFold(p, "public") || strings.EqualFold(p, "default") {
+		if strings.EqualFold(p, "public") || strings.EqualFold(p, "default") || strings.EqualFold(p, "ipfs-public") {
 			out = append(out, publicBootstrapPeers...)
+			continue
+		}
+		if strings.EqualFold(p, "none") || strings.EqualFold(p, "off") ||
+			strings.EqualFold(p, "private") || strings.EqualFold(p, "local") {
 			continue
 		}
 		out = append(out, p)
@@ -280,10 +294,9 @@ func NewEmbeddedNode(ctx context.Context, cfg NodeConfig) (*EmbeddedNode, error)
 		topics:     make(map[string]*pubsub.Topic),
 	}
 
-	// 9. Bootstrap only when peers are explicitly configured (or public join).
-	// Default is private mesh: mDNS + explicit multiaddrs only.
+	// 9. Bootstrap peers (default: starlight-ai.freemyip.com; none = private mesh).
 	if len(bootstrapPeers) == 0 {
-		log.Printf("Embedded IPFS: private mesh mode (no bootstrap peers; set IPFS_EMBEDDED_BOOTSTRAP to join peers or =public for public DHT)")
+		log.Printf("Embedded IPFS: private mesh mode (no bootstrap peers; unset IPFS_EMBEDDED_BOOTSTRAP defaults to %s, or set =public for public DHT)", defaultStarlightBootstrap)
 	} else {
 		go node.bootstrap(bootstrapPeers)
 	}
