@@ -113,7 +113,9 @@ func NewClientFromEnv() *Client {
 
 			// Bootstrap peers: empty = private mesh (default). Set
 			// IPFS_EMBEDDED_BOOTSTRAP=public to join public IPFS (CPU-heavy),
-			// or a comma-separated multiaddr list for private peers.
+			// comma-separated multiaddrs, or hostnames/HTTP URLs that are
+			// resolved via GET /api/ipfs-mirror/status (peer ID may change
+			// across server restarts).
 			joinPublic := envTruthy("IPFS_JOIN_PUBLIC_IPFS")
 			bootstrapPeers := resolveBootstrapPeers(os.Getenv("IPFS_EMBEDDED_BOOTSTRAP"), joinPublic)
 

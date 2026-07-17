@@ -114,8 +114,12 @@ type NodeConfig struct {
 //
 //	"" / unset          → no bootstrap (private mesh; mDNS only)
 //	"public" / "default"→ Protocol Labs public bootstrap set
-//	multiaddrs          → those peers only (trimmed, empty tokens dropped)
+//	full multiaddrs     → /ip4|dns4/.../tcp/4001/p2p/<PeerID> (used as-is)
+//	partial multiaddrs  → /dns4/host/tcp/4001 (peer ID resolved via HTTP status)
+//	http(s)://host      → peer ID from GET {url}/api/ipfs-mirror/status; dial host:4001
+//	bare hostname       → same as https://hostname
 //
+// Incomplete entries are expanded at dial time by expandBootstrapPeers.
 // joinPublic=true is equivalent to bootstrap="public" when bootstrap is empty.
 func resolveBootstrapPeers(bootstrapEnv string, joinPublic bool) []string {
 	raw := strings.TrimSpace(bootstrapEnv)
@@ -324,6 +328,11 @@ func (n *mdnsNotifee) HandlePeerFound(pi peer.AddrInfo) {
 }
 
 func (n *EmbeddedNode) bootstrap(peers []string) {
+	// Resolve hostname/URL / multiaddr-without-p2p entries to full multiaddrs
+	// using GET /api/ipfs-mirror/status so peer IDs that change on server
+	// restart do not require operators to update bootstrap env vars.
+	peers = expandBootstrapPeers(n.ctx, peers)
+
 	connected := 0
 	for _, p := range peers {
 		ma, err := multiaddr.NewMultiaddr(p)
@@ -333,7 +342,7 @@ func (n *EmbeddedNode) bootstrap(peers []string) {
 		}
 		pi, err := peer.AddrInfoFromP2pAddr(ma)
 		if err != nil {
-			log.Printf("Invalid bootstrap addrinfo %s: %v", p, err)
+			log.Printf("Invalid bootstrap addrinfo %s: %v (need /p2p/<PeerID> or resolvable host/URL)", p, err)
 			continue
 		}
 		if err := n.host.Connect(n.ctx, *pi); err != nil {

@@ -43,6 +43,13 @@ STARGATE_AGENT_WORKER_ENABLED=true
 # IPFS mirror (optional peer file sync)
 # IPFS_API_URL=http://127.0.0.1:5001
 # IPFS_MIRROR_ENABLED=true
+#
+# Join another Stargate peer (peer ID is discovered over HTTP so it can
+# change when that server restarts). Hostname-only and full multiaddrs both work:
+# IPFS_EMBEDDED_BOOTSTRAP=https://starlight-ai.freemyip.com
+# IPFS_EMBEDDED_BOOTSTRAP=starlight-ai.freemyip.com
+# IPFS_EMBEDDED_BOOTSTRAP=/dns4/starlight-ai.freemyip.com/tcp/4001
+# IPFS_EMBEDDED_BOOTSTRAP=/dns4/starlight-ai.freemyip.com/tcp/4001/p2p/12D3KooW…  # optional fixed ID
 ```
 
 Verify:
