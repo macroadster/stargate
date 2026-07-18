@@ -4,7 +4,7 @@ Workstream 3 wires a **Trin/GGUF-backed** Starlight detector behind the existing
 `core.StarlightScannerInterface` in the Stargate Go backend (`backend/starlight`).
 
 No Python runs on the scan path. **Path A is live**: neural forward uses the public
-package `github.com/ericchien/trin/pkg/starlight` (aliased as `trinstar` because
+package `github.com/macroadster/trin/pkg/starlight` (aliased as `trinstar` because
 Stargate's local package is also named `starlight`).
 
 ## Environment variables
@@ -41,33 +41,38 @@ env at that file and restart the Stargate process.
 |-----------|--------|
 | `LoadUnifiedInput` multi-stream preprocess (pixel/meta/alpha/lsb/palette/features) | **Real** — Go port of `scripts/starlight_utils.py` `load_unified_input` |
 | JPEG APP1 EXIF + post-image tail (`extract_post_tail`) | **Real** (EXIF: JPEG only; PNG/etc. usually empty EXIF) |
-| GGUF open / weight session | **Real** — `trinstar.Open` (`github.com/ericchien/trin/pkg/starlight`) |
+| GGUF open / weight session | **Real** — `trinstar.Open` (`github.com/macroadster/trin/pkg/starlight`) |
 | Neural forward (`TrinScanner.forward` → `session.Forward`) | **Real** — BalancedStarlightDetector eval path |
 | Alpha message extract on scan | **Real** — delegates to `stego.ExtractAlpha` when method is alpha/auto |
 | Other extract methods (lsb/palette/exif/eoi) | MVP not-found |
 
 Model version string: `trin-pkg-starlight`.
 
-## go.mod linkage (local Trin)
+## go.mod linkage
 
-Stargate depends on Trin's public API only (never `trin/internal/*`):
+Stargate depends on Trin's public API only (never `trin/internal/*`). Prefer a pure
+GitHub `require` (no machine-local `replace`):
 
 ```go
 // backend/go.mod
-require github.com/ericchien/trin v0.0.0
-
-// Dev / monorepo checkout — replace with the path to your trin clone:
-replace github.com/ericchien/trin => /Users/eric/sandbox/trin
+require github.com/macroadster/trin v0.0.0-<pseudo> // pinned via go get @commit or @main
 ```
 
 ```bash
-cd backend && go mod tidy
+cd backend
+GOPROXY=direct go get github.com/macroadster/trin@62863b8
+# or: GOPROXY=direct go get github.com/macroadster/trin@main
+go mod tidy
 ```
+
+If the module is private and fetch fails, set `GOPRIVATE=github.com/macroadster/*`
+and retry with `GOPROXY=direct`. A local `replace` is only a last-resort fallback
+for offline work — not the supported default.
 
 Import alias (required — package name collision with local `package starlight`):
 
 ```go
-import trinstar "github.com/ericchien/trin/pkg/starlight"
+import trinstar "github.com/macroadster/trin/pkg/starlight"
 ```
 
 ## Unified input layout
