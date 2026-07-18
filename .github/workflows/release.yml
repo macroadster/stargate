@@ -13,6 +13,9 @@ permissions:
 env:
   GO_VERSION: '1.25'
   NODE_VERSION: '22'
+  # Public modules (incl. github.com/macroadster/trin) via proxy; direct fallback.
+  # Do not set GOPRIVATE for public deps — sumdb verification stays enabled.
+  GOPROXY: https://proxy.golang.org,direct
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
