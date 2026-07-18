@@ -54,7 +54,9 @@ func NewCircuitBreaker(maxFailures int, timeout time.Duration) *CircuitBreaker {
 	}
 }
 
-// InitializeScanner initializes the scanner with native AlphaScanner
+// InitializeScanner selects and initializes a scanner.
+// Order: Trin/GGUF (if STARLIGHT_GGUF or STARLIGHT_TRIN_MODEL set) → Alpha → Mock.
+// When env is unset, behavior remains Alpha then Mock (regression-safe; GGUF not required).
 func (sm *ScannerManager) InitializeScanner() error {
 	sm.mutex.Lock()
 	defer sm.mutex.Unlock()
@@ -63,25 +65,48 @@ func (sm *ScannerManager) InitializeScanner() error {
 		return nil
 	}
 
-	// Initialize native AlphaScanner
-	alphaScanner := NewAlphaScanner()
-	initErr := alphaScanner.Initialize()
-	if initErr == nil {
-		sm.scanner = alphaScanner
-		sm.scannerType = "alpha"
-		sm.initialized = true
-		log.Printf("Initialized native AlphaScanner (Go)")
-		return nil
+	scanner, scannerType, err := tryInitScanners()
+	if err != nil {
+		// tryInitScanners always returns a usable scanner (mock last resort);
+		// keep signature defensive.
+		log.Printf("tryInitScanners returned error: %v", err)
 	}
-	log.Printf("AlphaScanner initialization failed: %v, falling back to mock scanner", initErr)
-
-	// Fallback to mock scanner
-	sm.scanner = NewMockStarlightScanner()
-	sm.scannerType = "mock"
+	sm.scanner = scanner
+	sm.scannerType = scannerType
 	sm.initialized = true
-	log.Printf("Initialized mock scanner")
-
+	log.Printf("ScannerManager selected scanner type=%s", scannerType)
 	return nil
+}
+
+// tryInitScanners attempts Trin (optional env) → Alpha → Mock.
+// Extracted for unit tests (avoids fighting GetScannerManager sync.Once).
+// Always returns a non-nil scanner; error is non-nil only if even mock fails (never).
+func tryInitScanners() (core.StarlightScannerInterface, string, error) {
+	// 1. Optional Trin/GGUF when env path is set
+	if modelPath := ResolveTrinModelPath(); modelPath != "" {
+		trin := NewTrinScanner(modelPath)
+		if err := trin.Initialize(); err != nil {
+			log.Printf("TrinScanner initialization failed (path=%s): %v; falling through to Alpha", modelPath, err)
+		} else {
+			log.Printf("Initialized TrinScanner (trin-gguf) path=%s", modelPath)
+			return trin, "trin-gguf", nil
+		}
+	}
+
+	// 2. Native AlphaScanner (default when env unset or Trin init failed)
+	alphaScanner := NewAlphaScanner()
+	if err := alphaScanner.Initialize(); err != nil {
+		log.Printf("AlphaScanner initialization failed: %v, falling back to mock scanner", err)
+	} else {
+		log.Printf("Initialized native AlphaScanner (Go)")
+		return alphaScanner, "alpha", nil
+	}
+
+	// 3. Mock fallback
+	mock := NewMockStarlightScanner()
+	_ = mock.Initialize()
+	log.Printf("Initialized mock scanner")
+	return mock, "mock", nil
 }
 
 // ScanImage scans an image with circuit breaker protection

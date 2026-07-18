@@ -6,8 +6,12 @@ PROPOSAL_ID ?=
 
 SINGLE_IMAGE := stargate:latest
 
-.PHONY: all docker single-binary mcp-e2e backend frontend backend-legacy frontend-legacy
+.PHONY: all docker single-binary mcp-e2e backend frontend backend-legacy frontend-legacy test-starlight
 all: single-binary
+
+# Unit tests for Go Starlight scanners (unified input, Trin/GGUF scaffold, manager selection).
+test-starlight:
+	cd backend && go test ./starlight/ -count=1
 
 # Primary build: unified image for Helm / local k8s (ADR 0001).
 docker:
