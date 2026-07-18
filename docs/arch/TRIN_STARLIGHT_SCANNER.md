@@ -3,7 +3,9 @@
 Workstream 3 wires a **Trin/GGUF-backed** Starlight detector behind the existing
 `core.StarlightScannerInterface` in the Stargate Go backend (`backend/starlight`).
 
-No Python runs on the scan path.
+No Python runs on the scan path. **Path A is live**: neural forward uses the public
+package `github.com/ericchien/trin/pkg/starlight` (aliased as `trinstar` because
+Stargate's local package is also named `starlight`).
 
 ## Environment variables
 
@@ -20,13 +22,16 @@ export STARLIGHT_GGUF=/path/to/starlight.gguf
 export STARLIGHT_TRIN_MODEL=/path/to/starlight.gguf
 ```
 
-Produce `starlight.gguf` via the Trin export pipeline once available; point either env at that file and restart the Stargate process.
+Produce `starlight.gguf` via the Trin / Project Starlight export pipeline; point either
+env at that file and restart the Stargate process.
 
 ## Fallback selection chain
 
 `ScannerManager.InitializeScanner` → `tryInitScanners()`:
 
-1. **Trin** (`scannerType = "trin-gguf"`) — only if env path is non-empty **and** `NewTrinScanner(path).Initialize()` succeeds (file exists, GGUF magic/version valid).
+1. **Trin** (`scannerType = "trin-gguf"`) — only if env path is non-empty **and**
+   `NewTrinScanner(path).Initialize()` succeeds (file exists, `trinstar.Open` loads
+   GGUF, tensor list non-empty).
 2. **Alpha** (`"alpha"`) — Go-native alpha LSB scanner (default when env unset or Trin init fails). Trin failures are logged and **do not** hard-fail the process.
 3. **Mock** (`"mock"`) — last resort if Alpha init fails.
 
@@ -36,14 +41,40 @@ Produce `starlight.gguf` via the Trin export pipeline once available; point eith
 |-----------|--------|
 | `LoadUnifiedInput` multi-stream preprocess (pixel/meta/alpha/lsb/palette/features) | **Real** — Go port of `scripts/starlight_utils.py` `load_unified_input` |
 | JPEG APP1 EXIF + post-image tail (`extract_post_tail`) | **Real** (EXIF: JPEG only; PNG/etc. usually empty EXIF) |
-| Minimal GGUF open (magic `GGUF`, version 2/3, tensor/kv counts) | **Real** — validates file; no full dequant |
-| `ForwardStarlight` neural inference | **Stubbed** — returns neutral logits (stego logit 0 → prob 0.5) |
+| GGUF open / weight session | **Real** — `trinstar.Open` (`github.com/ericchien/trin/pkg/starlight`) |
+| Neural forward (`TrinScanner.forward` → `session.Forward`) | **Real** — BalancedStarlightDetector eval path |
 | Alpha message extract on scan | **Real** — delegates to `stego.ExtractAlpha` when method is alpha/auto |
 | Other extract methods (lsb/palette/exif/eoi) | MVP not-found |
 
+Model version string: `trin-pkg-starlight`.
+
+## go.mod linkage (local Trin)
+
+Stargate depends on Trin's public API only (never `trin/internal/*`):
+
+```go
+// backend/go.mod
+require github.com/ericchien/trin v0.0.0
+
+// Dev / monorepo checkout — replace with the path to your trin clone:
+replace github.com/ericchien/trin => /Users/eric/sandbox/trin
+```
+
+```bash
+cd backend && go mod tidy
+```
+
+Import alias (required — package name collision with local `package starlight`):
+
+```go
+import trinstar "github.com/ericchien/trin/pkg/starlight"
+```
+
 ## Unified input layout
 
-Matches the Python training/inference bundle (CHW-ready floats):
+Matches the Python training/inference bundle (CHW-ready floats). **Production spatial
+size is always H=W=256** (`unifiedSize`); original image width/height are retained on
+`UnifiedInput.Width` / `Height` for feature norms only.
 
 - `Pixel` `(3,256,256)` ∈ [0,1]
 - `Meta` `(2048,)` = pad/truncate(exif+tail)/255
@@ -56,26 +87,42 @@ Matches the Python training/inference bundle (CHW-ready floats):
 
 **Center crop:** if both dims ≥ 256, center crop; if smaller, zero-pad out-of-bounds (black) then center — documented near-equivalent to torchvision `CenterCrop` pad behavior.
 
-## Drop-in path when Trin emit-go lands
+Forward call:
 
-1. Export / generate Go inference package from Trin (e.g. `starlight_infer` or emit-go output).
-2. Replace the body of `ForwardStarlight` in `backend/starlight/trin_scanner.go` to call the generated forward, mapping `UnifiedInput` tensors onto the model inputs.
-3. Keep `OpenMinimalGGUF` or switch to the generated weight loader; **do not** import `trin/internal/*` from Stargate.
-4. Re-run:
+```go
+out, err := s.session.Forward(trinstar.Inputs{
+    Pixel: in.Pixel, Meta: in.Meta, Alpha: in.Alpha, LSB: in.LSB,
+    Palette: in.Palette, PaletteLSB: in.PaletteLSB,
+    FormatFeatures: in.FormatFeatures, ContentFeatures: in.ContentFeatures,
+    H: unifiedSize, W: unifiedSize, // always 256 for UnifiedInput
+    MetaWeight: 0.3,                // 0 ⇒ 0.3 inside Trin
+})
+// stego logit = out.Stego[0]; method logits = out.Method[0:5]
+// ScanImage applies sigmoid → StegoProbability and argmax → MethodID / StegoType
+```
 
-   ```bash
-   cd backend && go test ./starlight/ -count=1
-   ```
+## Lifecycle
 
-5. Point `STARLIGHT_GGUF` at the real `starlight.gguf` and verify `GetScannerType() == "trin-gguf"` plus non-neutral probabilities on known stego fixtures.
+- `Initialize`: closes any previous session, `trinstar.Open(modelPath)`, requires non-empty tensor list.
+- `Close`: releases the weight session (call on re-init and when tearing down if held).
+- `ScanImage`: `LoadUnifiedInput` → `forward` → sigmoid / argmax / optional alpha extract.
 
 ## Package map
 
 - `backend/starlight/unified_input.go` — preprocess
-- `backend/starlight/trin_scanner.go` — `TrinScanner`, GGUF open, `ForwardStarlight` stub
+- `backend/starlight/trin_scanner.go` — `TrinScanner`, session, real `forward`
 - `backend/starlight/scanner_manager.go` — selection order
-- `backend/starlight/trin_scanner_test.go` — shapes, path resolution, selection
+- `backend/starlight/trin_scanner_test.go` — shapes, path resolution, selection, real-forward (skips if no GGUF)
 
 ## Operator note
 
-Unset env → production behavior unchanged (Alpha). Setting a bad GGUF path logs an error and falls through to Alpha; the process keeps serving scans.
+Unset env → production behavior unchanged (Alpha). Setting a bad or empty GGUF path
+logs an error and falls through to Alpha; the process keeps serving scans.
+
+```bash
+cd backend
+go test ./starlight/ -count=1
+STARLIGHT_GGUF=/path/to/starlight.gguf go test ./starlight/ -count=1 -v -run RealForward
+```
+
+Trin API reference: `trin/docs/STARLIGHT_INFER.md`.

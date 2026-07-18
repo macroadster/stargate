@@ -6,6 +6,7 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -208,17 +209,58 @@ func TestNewTrinScannerInitializeInvalidFile(t *testing.T) {
 	}
 }
 
-func TestNewTrinScannerInitializeMinimalGGUF(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "min.gguf")
+func TestNewTrinScannerInitializeEmptyGGUFRejected(t *testing.T) {
+	// Header-only GGUF (0 tensors) must fail init — session open alone is not enough.
+	path := filepath.Join(t.TempDir(), "empty.gguf")
 	if err := os.WriteFile(path, minimalValidGGUF(3), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	s := NewTrinScanner(path)
-	if err := s.Initialize(); err != nil {
-		t.Fatalf("init minimal GGUF: %v", err)
+	if err := s.Initialize(); err == nil {
+		t.Fatal("expected error for GGUF with no tensors")
 	}
+	if s.IsInitialized() {
+		t.Error("should not be initialized")
+	}
+}
+
+// resolveTestGGUF picks a real Starlight GGUF for integration tests.
+// Order: STARLIGHT_GGUF env, known production path, relative paths, trin fixture.
+// Returns "" if none exist (caller should t.Skip).
+func resolveTestGGUF() string {
+	candidates := []string{}
+	if p := os.Getenv("STARLIGHT_GGUF"); p != "" {
+		candidates = append(candidates, p)
+	}
+	candidates = append(candidates,
+		"/Users/eric/sandbox/starlight/starlight/models/starlight.gguf",
+		"../../../starlight/models/starlight.gguf",
+		"../../../../starlight/models/starlight.gguf",
+		"/Users/eric/sandbox/trin/demos/weights/starlight_fixture.gguf",
+		"../../../../trin/demos/weights/starlight_fixture.gguf",
+	)
+	for _, p := range candidates {
+		if st, err := os.Stat(p); err == nil && !st.IsDir() && st.Size() > 1024 {
+			return p
+		}
+	}
+	return ""
+}
+
+func TestTrinScannerRealForward(t *testing.T) {
+	path := resolveTestGGUF()
+	if path == "" {
+		t.Skip("no Starlight GGUF found; set STARLIGHT_GGUF or place starlight.gguf")
+	}
+
+	s := NewTrinScanner(path)
+	if err := s.Initialize(); err != nil {
+		t.Fatalf("Initialize(%s): %v", path, err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+
 	if !s.IsInitialized() {
-		t.Error("want initialized")
+		t.Fatal("want initialized")
 	}
 	info := s.GetScannerInfo()
 	if !info.ModelLoaded {
@@ -227,21 +269,49 @@ func TestNewTrinScannerInitializeMinimalGGUF(t *testing.T) {
 	if info.ModelPath != path {
 		t.Errorf("path %q", info.ModelPath)
 	}
+	if info.ModelVersion != "trin-pkg-starlight" {
+		t.Errorf("ModelVersion %q", info.ModelVersion)
+	}
 	if info.Device != "cpu" {
 		t.Errorf("device %q", info.Device)
 	}
 
-	// ScanImage should run preprocess + stub forward
-	img := solidRGB(256, 256, color.RGBA{R: 0, G: 0, B: 0, A: 255})
+	img := solidRGB(256, 256, color.RGBA{R: 40, G: 80, B: 120, A: 255})
+	// Mild structure so content is not pure black zeros
+	for y := 0; y < 256; y++ {
+		for x := 0; x < 256; x++ {
+			img.Set(x, y, color.RGBA{
+				R: uint8((x + y) % 256),
+				G: uint8((x * 3) % 256),
+				B: uint8((y * 5) % 256),
+				A: 255,
+			})
+		}
+	}
 	data := encodePNG(t, img)
+
 	res, err := s.ScanImage(data, core.ScanOptions{})
 	if err != nil {
 		t.Fatalf("ScanImage: %v", err)
 	}
-	// Stub: logit 0 → prob 0.5, threshold 0.5 → isStego false (strict >)
-	if res.StegoProbability < 0.49 || res.StegoProbability > 0.51 {
-		t.Errorf("stub stego prob got %v want ~0.5", res.StegoProbability)
+	if res == nil {
+		t.Fatal("nil result")
 	}
+	p := res.StegoProbability
+	if math.IsNaN(p) || math.IsInf(p, 0) {
+		t.Fatalf("StegoProbability not finite: %v", p)
+	}
+	if p < 0 || p > 1 {
+		t.Errorf("StegoProbability %v not in [0,1]", p)
+	}
+	if res.MethodID == nil {
+		t.Fatal("MethodID nil")
+	}
+	if *res.MethodID < 0 || *res.MethodID > 4 {
+		t.Errorf("MethodID %d not in 0..4", *res.MethodID)
+	}
+	t.Logf("real forward path=%s stego_prob=%.6f method_id=%d prediction=%s",
+		path, p, *res.MethodID, res.Prediction)
 }
 
 // minimalValidGGUF writes magic+version+0 tensors+0 kv (24 bytes).
@@ -301,9 +371,9 @@ func TestTryInitScannersDefaultAlpha(t *testing.T) {
 }
 
 func TestTryInitScannersTrinSuccess(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "starlight.gguf")
-	if err := os.WriteFile(path, minimalValidGGUF(3), 0o644); err != nil {
-		t.Fatal(err)
+	path := resolveTestGGUF()
+	if path == "" {
+		t.Skip("no Starlight GGUF found; set STARLIGHT_GGUF")
 	}
 	t.Setenv("STARLIGHT_GGUF", path)
 	sc, typ, err := tryInitScanners()
@@ -316,6 +386,9 @@ func TestTryInitScannersTrinSuccess(t *testing.T) {
 	if sc == nil || !sc.IsInitialized() {
 		t.Error("scanner not initialized")
 	}
+	if ts, ok := sc.(*TrinScanner); ok {
+		t.Cleanup(func() { _ = ts.Close() })
+	}
 }
 
 func TestTryInitScannersTrinFailFallsToAlpha(t *testing.T) {
@@ -326,6 +399,24 @@ func TestTryInitScannersTrinFailFallsToAlpha(t *testing.T) {
 	}
 	if typ != "alpha" {
 		t.Errorf("type got %q want alpha (fallthrough)", typ)
+	}
+	if sc == nil {
+		t.Error("nil scanner")
+	}
+}
+
+func TestTryInitScannersEmptyGGUFFallsToAlpha(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "empty.gguf")
+	if err := os.WriteFile(path, minimalValidGGUF(3), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("STARLIGHT_GGUF", path)
+	sc, typ, err := tryInitScanners()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if typ != "alpha" {
+		t.Errorf("type got %q want alpha (empty GGUF fallthrough)", typ)
 	}
 	if sc == nil {
 		t.Error("nil scanner")

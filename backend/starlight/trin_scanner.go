@@ -2,7 +2,6 @@ package starlight
 
 import (
 	"bytes"
-	"encoding/binary"
 	"fmt"
 	"image"
 	_ "image/gif"
@@ -11,10 +10,10 @@ import (
 	"log"
 	"math"
 	"os"
-	"sync"
 
 	_ "golang.org/x/image/bmp"
 	_ "golang.org/x/image/webp"
+	trinstar "github.com/ericchien/trin/pkg/starlight"
 	"stargate-backend/core"
 	"stargate-backend/stego"
 )
@@ -23,21 +22,11 @@ import (
 var trinMethodNames = [5]string{"alpha", "lsb", "palette", "exif", "eoi"}
 
 // TrinScanner is a GGUF-backed Starlight detector implementing StarlightScannerInterface.
-// Preprocessing (LoadUnifiedInput) is real; the neural forward pass is stubbed until
-// Trin emit-go / starlight_infer is linked (see ForwardStarlight).
+// Preprocessing uses LoadUnifiedInput; neural forward runs via trin pkg/starlight Session.
 type TrinScanner struct {
 	modelPath   string
 	initialized bool
-	gguf        *MinimalGGUF
-}
-
-// MinimalGGUF holds a validated GGUF header / open handle (no full dequant in MVP).
-type MinimalGGUF struct {
-	Path     string
-	Version  uint32
-	NTensors uint64
-	NKV      uint64
-	file     *os.File
+	session     *trinstar.Session
 }
 
 // NewTrinScanner creates a TrinScanner for the given model path (not yet initialized).
@@ -54,7 +43,7 @@ func ResolveTrinModelPath() string {
 	return os.Getenv("STARLIGHT_TRIN_MODEL")
 }
 
-// Initialize validates the model path and opens a minimal GGUF header.
+// Initialize opens the GGUF via trin pkg/starlight and retains a session for Forward.
 func (s *TrinScanner) Initialize() error {
 	if s.modelPath == "" {
 		return fmt.Errorf("trin model path empty")
@@ -67,88 +56,84 @@ func (s *TrinScanner) Initialize() error {
 		return fmt.Errorf("trin model path is a directory: %s", s.modelPath)
 	}
 
-	if s.gguf != nil {
-		_ = s.gguf.Close()
-		s.gguf = nil
+	// Close any previous session on re-init.
+	if s.session != nil {
+		_ = s.session.Close()
+		s.session = nil
 	}
+	s.initialized = false
 
-	gguf, err := OpenMinimalGGUF(s.modelPath)
+	sess, err := trinstar.Open(s.modelPath)
 	if err != nil {
 		return fmt.Errorf("trin GGUF open failed (%s): %w", s.modelPath, err)
 	}
-	s.gguf = gguf
+
+	// Require at least one tensor so empty/header-only GGUFs fail fast.
+	names, err := sess.List()
+	if err != nil {
+		_ = sess.Close()
+		return fmt.Errorf("trin GGUF list tensors failed (%s): %w", s.modelPath, err)
+	}
+	if len(names) == 0 {
+		_ = sess.Close()
+		return fmt.Errorf("trin GGUF has no tensors: %s", s.modelPath)
+	}
+
+	s.session = sess
 	s.initialized = true
-	log.Printf("TrinScanner initialized: path=%s version=%d tensors=%d", s.modelPath, gguf.Version, gguf.NTensors)
+	log.Printf("TrinScanner initialized: path=%s tensors=%d (trin/pkg/starlight)", s.modelPath, len(names))
 	return nil
 }
 
-// OpenMinimalGGUF validates GGUF magic/version and records tensor/kv counts.
-// Does not import trin/internal; this is a self-contained MVP loader.
-func OpenMinimalGGUF(path string) (*MinimalGGUF, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-
-	// Header: magic u32 LE, version u32, tensor_count u64, metadata_kv_count u64
-	var hdr struct {
-		Magic      uint32
-		Version    uint32
-		NTensors   uint64
-		NMetadata  uint64
-	}
-	if err := binary.Read(f, binary.LittleEndian, &hdr); err != nil {
-		_ = f.Close()
-		return nil, fmt.Errorf("read GGUF header: %w", err)
-	}
-	// Magic LE 0x46554747 == "GGUF"
-	if hdr.Magic != 0x46554747 {
-		_ = f.Close()
-		return nil, fmt.Errorf("invalid GGUF magic 0x%08x (want GGUF)", hdr.Magic)
-	}
-	if hdr.Version != 2 && hdr.Version != 3 {
-		_ = f.Close()
-		return nil, fmt.Errorf("unsupported GGUF version %d (want 2 or 3)", hdr.Version)
-	}
-
-	return &MinimalGGUF{
-		Path:     path,
-		Version:  hdr.Version,
-		NTensors: hdr.NTensors,
-		NKV:      hdr.NMetadata,
-		file:     f,
-	}, nil
-}
-
-// Close releases the underlying file handle.
-func (g *MinimalGGUF) Close() error {
-	if g == nil || g.file == nil {
+// Close releases the Trin weight session. Safe to call multiple times.
+func (s *TrinScanner) Close() error {
+	if s == nil {
 		return nil
 	}
-	err := g.file.Close()
-	g.file = nil
+	s.initialized = false
+	if s.session == nil {
+		return nil
+	}
+	err := s.session.Close()
+	s.session = nil
 	return err
 }
 
-var forwardStubOnce sync.Once
-
-// ForwardStarlight runs Starlight detector forward.
-// TODO: link trin emit-go / starlight_infer generated package when available.
-// Current MVP: weights handle validates GGUF was opened; forward returns neutral stub
-// (stego logit 0 → sigmoid 0.5, flat method logits) and logs once that forward is stubbed.
-func ForwardStarlight(in *UnifiedInput, w *MinimalGGUF) (stegoLogit float32, methodLogits [5]float32, err error) {
+// forward runs BalancedStarlightDetector via the open Trin session.
+// Spatial dims are always unifiedSize (256) for production UnifiedInput tensors.
+func (s *TrinScanner) forward(in *UnifiedInput) (stegoLogit float32, methodLogits [5]float32, err error) {
 	if in == nil {
 		return 0, methodLogits, fmt.Errorf("nil UnifiedInput")
 	}
-	if w == nil {
-		return 0, methodLogits, fmt.Errorf("nil GGUF weights")
+	if s == nil || s.session == nil {
+		return 0, methodLogits, fmt.Errorf("trin session not open")
 	}
-	forwardStubOnce.Do(func() {
-		log.Printf("ForwardStarlight: neural forward is STUBBED (MVP); GGUF open is real. " +
-			"Replace body with Trin emit-go / starlight_infer when available.")
+
+	out, err := s.session.Forward(trinstar.Inputs{
+		Pixel:           in.Pixel,
+		Meta:            in.Meta,
+		Alpha:           in.Alpha,
+		LSB:             in.LSB,
+		Palette:         in.Palette,
+		PaletteLSB:      in.PaletteLSB,
+		FormatFeatures:  in.FormatFeatures,
+		ContentFeatures: in.ContentFeatures,
+		H:               unifiedSize,
+		W:               unifiedSize,
+		MetaWeight:      0.3,
 	})
-	// Neutral stub: logit 0 → prob 0.5; equal method logits (argmax → 0 = alpha)
-	return 0, [5]float32{0, 0, 0, 0, 0}, nil
+	if err != nil {
+		return 0, methodLogits, err
+	}
+	if out == nil || len(out.Stego) < 1 {
+		return 0, methodLogits, fmt.Errorf("trin forward: empty stego output")
+	}
+	if len(out.Method) < 5 {
+		return 0, methodLogits, fmt.Errorf("trin forward: method logits len=%d want >=5", len(out.Method))
+	}
+	stegoLogit = out.Stego[0]
+	copy(methodLogits[:], out.Method[:5])
+	return stegoLogit, methodLogits, nil
 }
 
 func sigmoid(x float32) float32 {
@@ -165,9 +150,9 @@ func argmax5(v [5]float32) int {
 	return best
 }
 
-// ScanImage preprocesses with LoadUnifiedInput and runs ForwardStarlight.
+// ScanImage preprocesses with LoadUnifiedInput and runs real Trin forward.
 func (s *TrinScanner) ScanImage(imageData []byte, options core.ScanOptions) (*core.ScanResult, error) {
-	if !s.initialized {
+	if !s.initialized || s.session == nil {
 		return nil, fmt.Errorf("TrinScanner not initialized")
 	}
 
@@ -176,7 +161,7 @@ func (s *TrinScanner) ScanImage(imageData []byte, options core.ScanOptions) (*co
 		return nil, fmt.Errorf("unified input: %w", err)
 	}
 
-	stegoLogit, methodLogits, err := ForwardStarlight(input, s.gguf)
+	stegoLogit, methodLogits, err := s.forward(input)
 	if err != nil {
 		return nil, fmt.Errorf("forward: %w", err)
 	}
@@ -278,7 +263,7 @@ func (s *TrinScanner) ExtractMessage(imageData []byte, method string) (*core.Ext
 func (s *TrinScanner) GetScannerInfo() core.ScannerInfo {
 	return core.ScannerInfo{
 		ModelLoaded:  s.initialized,
-		ModelVersion: "trin-gguf-v0.1-stub",
+		ModelVersion: "trin-pkg-starlight",
 		ModelPath:    s.modelPath,
 		Device:       "cpu",
 	}
