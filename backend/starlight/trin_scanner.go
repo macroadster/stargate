@@ -34,15 +34,6 @@ func NewTrinScanner(modelPath string) *TrinScanner {
 	return &TrinScanner{modelPath: modelPath}
 }
 
-// ResolveTrinModelPath reads STARLIGHT_GGUF, then STARLIGHT_TRIN_MODEL as fallback alias.
-// Returns empty string when neither is set.
-func ResolveTrinModelPath() string {
-	if p := os.Getenv("STARLIGHT_GGUF"); p != "" {
-		return p
-	}
-	return os.Getenv("STARLIGHT_TRIN_MODEL")
-}
-
 // Initialize opens the GGUF via trin pkg/starlight and retains a session for Forward.
 func (s *TrinScanner) Initialize() error {
 	if s.modelPath == "" {

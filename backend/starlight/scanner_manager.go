@@ -55,8 +55,8 @@ func NewCircuitBreaker(maxFailures int, timeout time.Duration) *CircuitBreaker {
 }
 
 // InitializeScanner selects and initializes a scanner.
-// Order: Trin/GGUF (if STARLIGHT_GGUF or STARLIGHT_TRIN_MODEL set) → Alpha → Mock.
-// When env is unset, behavior remains Alpha then Mock (regression-safe; GGUF not required).
+// Order: Trin/GGUF (if a model can be resolved or auto-downloaded) → Alpha → Mock.
+// When no GGUF is available, behavior remains Alpha then Mock (regression-safe).
 func (sm *ScannerManager) InitializeScanner() error {
 	sm.mutex.Lock()
 	defer sm.mutex.Unlock()
@@ -78,12 +78,12 @@ func (sm *ScannerManager) InitializeScanner() error {
 	return nil
 }
 
-// tryInitScanners attempts Trin (optional env) → Alpha → Mock.
+// tryInitScanners attempts Trin (resolved/downloaded GGUF) → Alpha → Mock.
 // Extracted for unit tests (avoids fighting GetScannerManager sync.Once).
 // Always returns a non-nil scanner; error is non-nil only if even mock fails (never).
 func tryInitScanners() (core.StarlightScannerInterface, string, error) {
-	// 1. Optional Trin/GGUF when env path is set
-	if modelPath := ResolveTrinModelPath(); modelPath != "" {
+	// 1. Optional Trin/GGUF when a model path can be resolved or auto-downloaded
+	if modelPath := EnsureTrinModel(); modelPath != "" {
 		trin := NewTrinScanner(modelPath)
 		if err := trin.Initialize(); err != nil {
 			log.Printf("TrinScanner initialization failed (path=%s): %v; falling through to Alpha", modelPath, err)
@@ -93,7 +93,7 @@ func tryInitScanners() (core.StarlightScannerInterface, string, error) {
 		}
 	}
 
-	// 2. Native AlphaScanner (default when env unset or Trin init failed)
+	// 2. Native AlphaScanner (default when GGUF unavailable or Trin init failed)
 	alphaScanner := NewAlphaScanner()
 	if err := alphaScanner.Initialize(); err != nil {
 		log.Printf("AlphaScanner initialization failed: %v, falling back to mock scanner", err)

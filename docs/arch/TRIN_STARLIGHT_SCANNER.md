@@ -9,30 +9,49 @@ Stargate's local package is also named `starlight`).
 
 ## Environment variables
 
-| Variable | Role |
-|----------|------|
-| `STARLIGHT_GGUF` | Preferred path to a Starlight GGUF weights file (e.g. `starlight.gguf`) |
-| `STARLIGHT_TRIN_MODEL` | Fallback alias if `STARLIGHT_GGUF` is unset |
+| Variable | Role | Default |
+|----------|------|---------|
+| `STARLIGHT_GGUF` | Preferred path to a Starlight GGUF (used only if the file exists) | — |
+| `STARLIGHT_TRIN_MODEL` | Fallback alias if `STARLIGHT_GGUF` is unset/missing | — |
+| `STARGATE_DATA_DIR` | Data root; default model lands at `$STARGATE_DATA_DIR/models/starlight.gguf` | `data` |
+| `STARLIGHT_HF_REPO` | Hugging Face repo for auto-download | `macroadster/starlight-prod` |
+| `STARLIGHT_HF_FILE` | File name inside the HF repo | `starlight.gguf` |
+| `STARLIGHT_HF_REVISION` | HF revision (branch/tag/commit) | `main` |
+| `STARLIGHT_GGUF_FORCE_DOWNLOAD` | If `1`/`true`/`yes`, re-download into the default path even if a local file exists | unset |
 
-When **neither** is set, selection stays **Alpha → Mock** (regression-safe; GGUF not required).
+### Path resolution (existence-checked)
+
+`ResolveTrinModelPath` / `EnsureTrinModel` (`backend/starlight/trin_model.go`):
+
+1. `STARLIGHT_GGUF` if set **and** the path is a regular file
+2. `STARLIGHT_TRIN_MODEL` if set **and** the path is a regular file
+3. Well-known default: `$STARGATE_DATA_DIR/models/starlight.gguf` (or `data/models/starlight.gguf`) if it exists
+4. **Ensure only:** download from Hugging Face into that default path
+5. On download failure → empty string so Alpha fallthrough works (no crash)
+
+Env values that point at a missing file are **skipped** (not treated as hard failure, and download is never written into the env-specified missing path).
 
 ```bash
+# Optional: pin a local GGUF (must exist)
 export STARLIGHT_GGUF=/path/to/starlight.gguf
-# or
-export STARLIGHT_TRIN_MODEL=/path/to/starlight.gguf
+# alias: STARLIGHT_TRIN_MODEL
+
+# Or rely on auto-download into the data dir (happy path)
+# unset STARLIGHT_GGUF; first init fetches starlight.gguf from HF
+export STARGATE_DATA_DIR=/var/lib/stargate   # optional
 ```
 
-Produce `starlight.gguf` via the Trin / Project Starlight export pipeline; point either
-env at that file and restart the Stargate process.
+URL shape: `https://huggingface.co/{repo}/resolve/{revision}/{file}`.
 
 ## Fallback selection chain
 
 `ScannerManager.InitializeScanner` → `tryInitScanners()`:
 
-1. **Trin** (`scannerType = "trin-gguf"`) — only if env path is non-empty **and**
+1. **Trin** (`scannerType = "trin-gguf"`) — if `EnsureTrinModel()` returns a path **and**
    `NewTrinScanner(path).Initialize()` succeeds (file exists, `trinstar.Open` loads
-   GGUF, tensor list non-empty).
-2. **Alpha** (`"alpha"`) — Go-native alpha LSB scanner (default when env unset or Trin init fails). Trin failures are logged and **do not** hard-fail the process.
+   GGUF, tensor list non-empty). Missing local GGUF triggers HF auto-download.
+2. **Alpha** (`"alpha"`) — Go-native alpha LSB scanner (default when no GGUF is
+   available or Trin init fails). Download/Trin failures are logged and **do not** hard-fail the process.
 3. **Mock** (`"mock"`) — last resort if Alpha init fails.
 
 ## What is real vs stubbed
@@ -115,14 +134,20 @@ out, err := s.session.Forward(trinstar.Inputs{
 ## Package map
 
 - `backend/starlight/unified_input.go` — preprocess
+- `backend/starlight/trin_model.go` — path resolve + HF auto-download (`EnsureTrinModel`)
 - `backend/starlight/trin_scanner.go` — `TrinScanner`, session, real `forward`
 - `backend/starlight/scanner_manager.go` — selection order
-- `backend/starlight/trin_scanner_test.go` — shapes, path resolution, selection, real-forward (skips if no GGUF)
+- `backend/starlight/trin_model_test.go` / `trin_scanner_test.go` — resolve/download (httptest), selection, real-forward (skips if no GGUF)
 
 ## Operator note
 
-Unset env → production behavior unchanged (Alpha). Setting a bad or empty GGUF path
-logs an error and falls through to Alpha; the process keeps serving scans.
+**Happy path:** leave GGUF envs unset; on first init Stargate downloads
+`starlight.gguf` into `$STARGATE_DATA_DIR/models/starlight.gguf` (or `data/models/…`)
+and selects Trin. Offline / missing HF asset / bad weights → log and fall through to
+Alpha; the process keeps serving scans.
+
+A missing `STARLIGHT_GGUF` path is skipped (not fatal). An existing but invalid GGUF
+fails Trin init and falls through to Alpha.
 
 ```bash
 cd backend

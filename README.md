@@ -95,15 +95,22 @@ Then run with SQLite (`STARGATE_STORAGE=sqlite` or remove the PG DSN per your co
 
 Starlight (Python steganalysis) acts as an approval / detection ensemble (alpha, LSB, palette, EXIF, EOI, raw, and related methods). The goal is not perfect secrecy but making silent revision of embedded intent expensive. Stargate consumes Starlight as an optional service during ingestion and reconciliation.
 
-**In-process Go scanner selection** (default remains Alpha when unset):
+**In-process Go scanner selection** (Path A neural forward is live via Trin):
 
 ```bash
-# Optional Trin/GGUF detector (falls through to Alpha on failure)
+# Optional: pin a local GGUF (must exist)
 export STARLIGHT_GGUF=/path/to/starlight.gguf
 # alias: STARLIGHT_TRIN_MODEL
+
+# Or auto-download starlight.gguf from Hugging Face into the data dir when missing:
+#   $STARGATE_DATA_DIR/models/starlight.gguf  (default data dir: data/)
+# Optional HF overrides: STARLIGHT_HF_REPO, STARLIGHT_HF_FILE, STARLIGHT_HF_REVISION
+# Force re-download: STARLIGHT_GGUF_FORCE_DOWNLOAD=1
 ```
 
-Selection order: Trin (`trin-gguf`) → Alpha → Mock. Preprocess is real; neural forward is stubbed until Trin emit-go lands. See [`docs/arch/TRIN_STARLIGHT_SCANNER.md`](docs/arch/TRIN_STARLIGHT_SCANNER.md).
+Selection order: Trin (`trin-gguf`, resolve local or auto-download) → Alpha → Mock.
+Offline / download failure / bad weights fall through to Alpha without crashing.
+See [`docs/arch/TRIN_STARLIGHT_SCANNER.md`](docs/arch/TRIN_STARLIGHT_SCANNER.md).
 
 ## Current status
 
@@ -203,7 +210,7 @@ npm start      # http://localhost:3000
 - MCP: `/mcp/docs`, `/mcp/SKILL.md`, `/mcp/openapi.json`
 - In-app manuals: `/docs` (from `frontend/public/docs/`)
 
-Optional Starlight scanner integration (stego approval pipeline) uses env such as `STARGATE_STEGO_APPROVAL_ENABLED`, `STARGATE_PROXY_BASE`, `STARGATE_API_KEY`, and optional `IPFS_API_URL`. For the native Trin/GGUF path use `STARLIGHT_GGUF` (or `STARLIGHT_TRIN_MODEL`). See deployment docs and `docs/arch/TRIN_STARLIGHT_SCANNER.md`.
+Optional Starlight scanner integration (stego approval pipeline) uses env such as `STARGATE_STEGO_APPROVAL_ENABLED`, `STARGATE_PROXY_BASE`, `STARGATE_API_KEY`, and optional `IPFS_API_URL`. For the native Trin/GGUF path use `STARLIGHT_GGUF` / `STARLIGHT_TRIN_MODEL`, or rely on auto-download into `$STARGATE_DATA_DIR/models/starlight.gguf` (`STARLIGHT_HF_*`). See deployment docs and `docs/arch/TRIN_STARLIGHT_SCANNER.md`.
 
 ## Usage (UI)
 
