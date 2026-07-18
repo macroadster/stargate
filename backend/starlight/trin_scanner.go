@@ -11,9 +11,9 @@ import (
 	"math"
 	"os"
 
+	trinstar "github.com/ericchien/trin/pkg/starlight"
 	_ "golang.org/x/image/bmp"
 	_ "golang.org/x/image/webp"
-	trinstar "github.com/ericchien/trin/pkg/starlight"
 	"stargate-backend/core"
 	"stargate-backend/stego"
 )
