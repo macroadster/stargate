@@ -434,6 +434,11 @@ func main() {
 func runHTTPServer(store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, apiKeyValidator auth.APIKeyValidator, ingestionSvc *services.IngestionService, challengeStore *auth.ChallengeStore, ipfsClient *ipfs.Client) {
 	log.Println("=== STARTING STARGATE HTTP SERVER ===")
 
+	// Wrap the MCP store so ConfirmContract / status updates / upserts invalidate
+	// /api/open-contracts list caches (prevents stale /contracts first pages).
+	notifyingStore := scstore.NewNotifyingStore(store)
+	store = notifyingStore
+
 	// Diagnostic snapshot of config that drives background CPU load.
 	log.Printf("DIAG: STARGATE_AGENT_ENABLED=%s WATCHER=%s WORKER=%s POLL=%s",
 		os.Getenv("STARGATE_AGENT_ENABLED"), os.Getenv("STARGATE_AGENT_WATCHER_ENABLED"), os.Getenv("STARGATE_AGENT_WORKER_ENABLED"),
@@ -487,6 +492,12 @@ func runHTTPServer(store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, api
 	container.SetSmartContractHandler(store)
 	// Also allow inscription handler to mirror into MCP store
 	container.InscriptionHandler.SetStore(store)
+	// Wire cache invalidation after mutations (handler now exists).
+	notifyingStore.SetOnMutation(func() {
+		if container.SmartContractHandler != nil {
+			container.SmartContractHandler.InvalidateContractCache()
+		}
+	})
 
 	// Start MCP background services if using PostgreSQL AND MCP server is not running separately
 	if os.Getenv("STARGATE_MODE") != "mcp-only" && os.Getenv("STARGATE_MODE") != "both" {

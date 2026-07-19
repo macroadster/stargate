@@ -148,8 +148,24 @@ FROM mcp_contracts c
 	}
 
 	if filter.CursorHeight != nil && *filter.CursorHeight > 0 {
-		whereConditions = append(whereConditions, "c.confirmed_block_height < ?")
+		op := "<"
+		if strings.EqualFold(filter.CursorType, "after") {
+			op = ">"
+		}
+		whereConditions = append(whereConditions, "c.confirmed_block_height "+op+" ?")
 		args = append(args, *filter.CursorHeight)
+	}
+
+	// Cursor-based pagination by confirmed_at (used by /contracts infinite scroll).
+	// Normalize mixed SQLite timestamp formats ("2026-07-19 05:31:53" vs RFC3339).
+	if filter.CursorDate != nil {
+		op := "<"
+		if strings.EqualFold(filter.CursorType, "after") {
+			op = ">"
+		}
+		whereConditions = append(whereConditions,
+			"datetime(replace(replace(c.confirmed_at,'T',' '),'Z','')) "+op+" datetime(?)")
+		args = append(args, filter.CursorDate.UTC().Format("2006-01-02 15:04:05"))
 	}
 
 	whereClause := ""
