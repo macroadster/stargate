@@ -80,7 +80,7 @@ type payerSelection struct {
 
 // BuildFundingPSBT selects confirmed UTXOs, estimates fees at the provided feerate, and builds a PSBT.
 // When a pixel hash is provided, a small commitment output is added alongside the contractor payout.
-func BuildFundingPSBT(client *MempoolClient, params *chaincfg.Params, req PSBTRequest) (*PSBTResult, error) {
+func BuildFundingPSBT(client UTXOClient, params *chaincfg.Params, req PSBTRequest) (*PSBTResult, error) {
 	if req.FeeRateSatPerVB < 0 {
 		req.FeeRateSatPerVB = 0
 	}
@@ -202,7 +202,7 @@ func BuildFundingPSBT(client *MempoolClient, params *chaincfg.Params, req PSBTRe
 }
 
 // BuildRaiseFundPSBT builds a multi-payer PSBT with per-payer change outputs.
-func BuildRaiseFundPSBT(client *MempoolClient, params *chaincfg.Params, payers []PayerTarget, payouts []PayoutOutput, pixelHash []byte, commitmentSats int64, commitmentAddress btcutil.Address, feeRate int64) (*PSBTResult, error) {
+func BuildRaiseFundPSBT(client UTXOClient, params *chaincfg.Params, payers []PayerTarget, payouts []PayoutOutput, pixelHash []byte, commitmentSats int64, commitmentAddress btcutil.Address, feeRate int64) (*PSBTResult, error) {
 	if feeRate < 0 {
 		feeRate = 0
 	}

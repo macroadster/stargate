@@ -63,7 +63,7 @@ type SweepTaskStore interface {
 //
 // Single-phase sweep when ProductPixelHash is empty (backward compat):
 //   wish-hash UTXO → STARLIGHT_DONATION_ADDRESS
-func SweepCommitmentIfReady(ctx context.Context, store SweepStore, mempool *MempoolClient, task smart_contract.Task, proof *smart_contract.MerkleProof) error {
+func SweepCommitmentIfReady(ctx context.Context, store SweepStore, mempool UTXOClient, task smart_contract.Task, proof *smart_contract.MerkleProof) error {
 	if proof == nil {
 		log.Printf("commitment sweep: proof is nil for task %s", task.TaskID)
 		return nil
@@ -115,7 +115,7 @@ func sweepFeeRate() int64 {
 }
 
 // sweepPhase1Recommit sweeps the wish-hash UTXO into a product-hash P2WSH hashlock.
-func sweepPhase1Recommit(ctx context.Context, store SweepStore, mempool *MempoolClient, task smart_contract.Task, proof *smart_contract.MerkleProof) error {
+func sweepPhase1Recommit(ctx context.Context, store SweepStore, mempool UTXOClient, task smart_contract.Task, proof *smart_contract.MerkleProof) error {
 	if proof.CommitmentRedeemScript == "" || proof.CommitmentVout == 0 || proof.TxID == "" {
 		return markSweepStatus(ctx, store, task.TaskID, proof, "skipped", "no donation commitment data available")
 	}
@@ -185,7 +185,7 @@ func sweepPhase1Recommit(ctx context.Context, store SweepStore, mempool *Mempool
 }
 
 // sweepPhase2 sweeps the product-hash UTXO to the donation address.
-func sweepPhase2(ctx context.Context, store SweepStore, mempool *MempoolClient, task smart_contract.Task, proof *smart_contract.MerkleProof, donation string) error {
+func sweepPhase2(ctx context.Context, store SweepStore, mempool UTXOClient, task smart_contract.Task, proof *smart_contract.MerkleProof, donation string) error {
 	if proof.RecommitRedeemScript == "" || proof.RecommitTxID == "" {
 		return markSweepStatus(ctx, store, task.TaskID, proof, "skipped", "missing recommitment data for phase2")
 	}
@@ -252,7 +252,7 @@ func sweepPhase2(ctx context.Context, store SweepStore, mempool *MempoolClient, 
 }
 
 // sweepDirect is the legacy single-phase sweep (no product hash).
-func sweepDirect(ctx context.Context, store SweepStore, mempool *MempoolClient, task smart_contract.Task, proof *smart_contract.MerkleProof, donation string) error {
+func sweepDirect(ctx context.Context, store SweepStore, mempool UTXOClient, task smart_contract.Task, proof *smart_contract.MerkleProof, donation string) error {
 	// Allow retry for broadcast or skipped transactions that may have failed
 	if (proof.SweepTxID != "" && proof.SweepStatus == "broadcast") || proof.SweepStatus == "skipped" {
 		if proof.SweepStatus == "broadcast" && proof.SweepAttemptedAt != nil && time.Since(*proof.SweepAttemptedAt) < 10*time.Minute {

@@ -14,12 +14,12 @@ import (
 // PSBTService holds shared resolution helpers used by contract PSBT handlers.
 type PSBTService struct {
 	store        scstore.Store
-	mempool      *bitcoin.MempoolClient
+	mempool      bitcoin.UTXOClient
 	ingestionSvc *appservices.IngestionService
 }
 
 // NewPSBTService creates a PSBTService.
-func NewPSBTService(store scstore.Store, mempool *bitcoin.MempoolClient, ingestionSvc *appservices.IngestionService) *PSBTService {
+func NewPSBTService(store scstore.Store, mempool bitcoin.UTXOClient, ingestionSvc *appservices.IngestionService) *PSBTService {
 	return &PSBTService{store: store, mempool: mempool, ingestionSvc: ingestionSvc}
 }
 

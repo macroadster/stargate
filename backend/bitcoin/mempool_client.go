@@ -14,13 +14,16 @@ import (
 	"github.com/btcsuite/btcd/wire"
 )
 
-// MempoolClient provides lightweight access to mempool.space HTTP APIs for UTXO lookup.
+// MempoolClient provides Esplora HTTP access for UTXO lookup.
+// Deprecated for production: use ChainBackend / BtcdBackend (local full node).
+// Kept for BTCD_MODE=off and unit tests.
 type MempoolClient struct {
 	baseURL string
 	http    *http.Client
 }
 
 // NewMempoolClient builds a client using MEMPOOL_API_BASE or the testnet4 default.
+// Prefer injecting BtcdBackend via SetUTXOClient / StartChainFromEnv in production.
 func NewMempoolClient() *MempoolClient {
 	base := os.Getenv("MEMPOOL_API_BASE")
 	if base == "" {

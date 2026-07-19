@@ -18,6 +18,7 @@ import (
 type BlockMonitor struct {
 	bitcoinClient   *BitcoinNodeClient
 	rawClient       *RawBlockClient
+	chain           ChainBackend
 	bitcoinAPI      *BitcoinAPI
 	currentHeight   int64
 	lastChecked     time.Time
@@ -27,7 +28,7 @@ type BlockMonitor struct {
 	dataStorage     DataStorageInterface
 	ingestion       *services.IngestionService
 	sweepStore      SweepTaskStore
-	sweepMempool    *MempoolClient
+	sweepMempool    UTXOClient
 	stegoReconciler StegoReconciler
 	unpinPath       func(context.Context, string) error
 	ipfsClient      *ipfs.Client
@@ -433,9 +434,26 @@ type scanPayload struct {
 }
 
 // SetSweepDependencies wires commitment sweep support for oracle reconcile.
-func (bm *BlockMonitor) SetSweepDependencies(store SweepTaskStore, mempool *MempoolClient) {
+func (bm *BlockMonitor) SetSweepDependencies(store SweepTaskStore, mempool UTXOClient) {
 	bm.sweepStore = store
 	bm.sweepMempool = mempool
+}
+
+// SetChainBackend wires the local btcd (or esplora fallback) as the primary
+// chain data source for tip tracking, raw blocks, reorg checks, and tx status.
+func (bm *BlockMonitor) SetChainBackend(chain ChainBackend) {
+	bm.chain = chain
+	if bm.rawClient != nil {
+		bm.rawClient.SetChainBackend(chain)
+	}
+	if bm.bitcoinClient != nil {
+		bm.bitcoinClient.SetChainBackend(chain)
+	}
+}
+
+// ChainBackend returns the configured chain backend (may be nil in tests).
+func (bm *BlockMonitor) ChainBackend() ChainBackend {
+	return bm.chain
 }
 
 // contractUpserter is an optional interface satisfied by MCP stores that can

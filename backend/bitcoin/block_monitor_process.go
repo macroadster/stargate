@@ -311,6 +311,12 @@ func (bm *BlockMonitor) reconcileCanonicalTip(currentHeight int64, depth int) er
 
 // getCurrentHeightFromBlockchainInfo gets current height from the configured Bitcoin network
 func (bm *BlockMonitor) getCurrentHeightFromBlockchainInfo() (int64, error) {
+	if bm.chain != nil {
+		return bm.chain.GetTipHeight(context.Background())
+	}
+	if bm.bitcoinClient == nil {
+		return 0, fmt.Errorf("no chain backend or bitcoin client configured")
+	}
 	return bm.bitcoinClient.GetCurrentHeight()
 }
 
@@ -471,9 +477,36 @@ func (bm *BlockMonitor) ReconcileRecentBlocks(ctx context.Context, count int) er
 	return nil
 }
 
-// fetchTxStatus fetches a transaction from the blockchain API and returns the
-// raw JSON map, block height, and whether the tx is confirmed.
+// fetchTxStatus fetches a transaction and returns a JSON-compatible map,
+// block height, and whether the tx is confirmed.
 func (bm *BlockMonitor) fetchTxStatus(txid string) (map[string]any, int64, bool, error) {
+	if bm.chain != nil {
+		height, confirmed, err := bm.chain.GetTxStatus(context.Background(), txid)
+		if err != nil {
+			return nil, 0, false, err
+		}
+		txData := map[string]any{
+			"txid": txid,
+			"status": map[string]any{
+				"confirmed":    confirmed,
+				"block_height": height,
+			},
+		}
+		if confirmed {
+			// Attach outputs for downstream funding-proof helpers.
+			if msg, err := bm.chain.GetRawTx(context.Background(), txid); err == nil && msg != nil {
+				var vouts []any
+				for _, out := range msg.TxOut {
+					vouts = append(vouts, map[string]any{
+						"scriptpubkey": hex.EncodeToString(out.PkScript),
+						"value":        float64(out.Value),
+					})
+				}
+				txData["vout"] = vouts
+			}
+		}
+		return txData, height, confirmed, nil
+	}
 	if bm.bitcoinClient == nil {
 		return nil, 0, false, fmt.Errorf("bitcoin client not configured")
 	}

@@ -19,6 +19,8 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
     -ldflags='-w -s' \
     -o /out/stargate . && \
+    CGO_ENABLED=0 go install -trimpath github.com/btcsuite/btcd@v0.25.0 && \
+    cp "$(go env GOPATH)/bin/btcd" /out/btcd && \
     # Clean up build caches to reduce image size (correct command)
     go clean -cache && \
     go clean -modcache && \
@@ -38,6 +40,7 @@ WORKDIR /app
 
 # Copy binary from builder
 COPY --from=builder /out/stargate /usr/local/bin/stargate
+COPY --from=builder /out/btcd /usr/local/bin/btcd
 
 # Copy documentation and assets
 COPY --from=builder /app/docs ./docs

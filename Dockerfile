@@ -31,6 +31,9 @@ ARG GIT_COMMIT=unknown
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
     -ldflags="-w -s -X main.version=${VERSION} -X main.gitCommit=${GIT_COMMIT}" \
     -o /out/stargate .
+# Bundle btcd full node (no mining) alongside stargate — same container, managed process.
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go install -trimpath github.com/btcsuite/btcd@v0.25.0 \
+    && cp "$(go env GOPATH)/bin/btcd" /out/btcd
 
 # Stage 3: Final lightweight image
 FROM debian:bookworm-slim
@@ -64,13 +67,15 @@ WORKDIR /app
 
 # Copy binary from builder
 COPY --from=backend-builder /out/stargate /usr/local/bin/stargate
+COPY --from=backend-builder /out/btcd /usr/local/bin/btcd
 
 # Copy documentation and assets
 COPY --from=backend-builder /app/backend/docs ./docs
 COPY --from=backend-builder /app/backend/assets ./assets
 
 # Create necessary directories and set ownership (include opencode and home for the user)
-RUN mkdir -p /app/uploads /app/logs /app/ipfs_objects /app/ipfs_repo && \
+# data/btcd holds the full node chainstate — mount a persistent volume in production.
+RUN mkdir -p /app/uploads /app/logs /app/ipfs_objects /app/ipfs_repo /app/data/btcd && \
     chown -R stargate:stargate /app /opt/opencode /home/stargate
 
 # Set environment variables
@@ -79,9 +84,15 @@ RUN mkdir -p /app/uploads /app/logs /app/ipfs_objects /app/ipfs_repo && \
 ENV STARGATE_STORAGE=sqlite
 # HOME is set so opencode (and similar tools) can locate user config and state if needed.
 ENV HOME=/home/stargate
+# Default: managed btcd full node (testnet4), no mining. Override with BTCD_MODE=external|off.
+ENV BITCOIN_NETWORK=testnet4
+ENV BTCD_MODE=managed
+ENV BTCD_BIN=/usr/local/bin/btcd
+ENV BTCD_DATADIR=/app/data/btcd
 # GIN_MODE removed: the project uses net/http + http.ServeMux (no Gin framework)
 
-EXPOSE 3001
+# 3001 = stargate HTTP; 48333 = btcd testnet4 P2P (optional inbound)
+EXPOSE 3001 48333
 
 USER stargate
 

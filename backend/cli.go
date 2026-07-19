@@ -530,7 +530,7 @@ func cmdEnv(args []string, stdout, stderr io.Writer) (bool, int) {
 		"UPLOADS_DIR", "BLOCKS_DIR", "IPFS_STORAGE_DIR", "IPFS_EMBEDDED_REPO",
 		"STARGATE_MCP_DB", "STARGATE_API_KEYS_DB", "STARGATE_INGESTIONS_DB",
 		"STARGATE_AGENT_ENABLED", "STARGATE_API_KEY", "STARLIGHT_DONATION_ADDRESS",
-		"IPFS_ENABLED", "BITCOIN_NETWORK",
+		"IPFS_ENABLED", "BITCOIN_NETWORK", "BTCD_MODE", "BTCD_BIN", "BTCD_DATADIR", "BTCD_RPC_HOST", "BTCD_ALLOW_MAINNET",
 	}
 	for _, k := range keys {
 		v, ok := cfg[k]
@@ -566,6 +566,11 @@ func effectiveConfig() map[string]any {
 		"STARGATE_AGENT_ENABLED":     envOr("STARGATE_AGENT_ENABLED", "false"),
 		"IPFS_ENABLED":               envOr("IPFS_ENABLED", "true"),
 		"BITCOIN_NETWORK":            envOr("BITCOIN_NETWORK", ""),
+		"BTCD_MODE":                  envOr("BTCD_MODE", "managed"),
+		"BTCD_RPC_HOST":              envOr("BTCD_RPC_HOST", ""),
+		"BTCD_DATADIR":               envOr("BTCD_DATADIR", ""),
+		"BTCD_BIN":                   envOr("BTCD_BIN", "btcd"),
+		"BTCD_ALLOW_MAINNET":         envOr("BTCD_ALLOW_MAINNET", "false"),
 		"STARLIGHT_DONATION_ADDRESS": redact(os.Getenv("STARLIGHT_DONATION_ADDRESS")),
 		"STARGATE_API_KEY":           redact(os.Getenv("STARGATE_API_KEY")),
 		"STARGATE_PG_DSN":            redact(os.Getenv("STARGATE_PG_DSN")),

@@ -5,7 +5,9 @@ import (
 	"os"
 )
 
-// NetworkConfig holds configuration for different Bitcoin networks
+// NetworkConfig holds configuration for different Bitcoin networks.
+// BaseURL/HeightURL are used for explorer links and BTCD_MODE=off Esplora fallback only.
+// Production chain data comes from local btcd (see ADR 0006 / StartChainFromEnv).
 type NetworkConfig struct {
 	Name        string
 	BaseURL     string
