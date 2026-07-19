@@ -24,7 +24,8 @@ single-binary:
 	@cd frontend && npm install && npm run build
 	@echo "2. Preparing assets..."
 	@mkdir -p backend/assets/frontend
-	@rm -rf backend/assets/frontend/*
+	@# Remove prior build output but keep EMBED_PLACEHOLDER (tracked for go:embed on clean checkouts)
+	@find backend/assets/frontend -mindepth 1 ! -name 'EMBED_PLACEHOLDER' -exec rm -rf {} + 2>/dev/null || true
 	@cp -rv frontend/build/* backend/assets/frontend/
 	@echo "3. Building backend binary..."
 	@VERSION=$$(git describe --tags --always --dirty 2>/dev/null || echo dev); \

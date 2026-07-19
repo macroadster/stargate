@@ -16,8 +16,10 @@ backend/stargate-test
 backend/tests
 backend/cmd/tests/build-verification
 
-# Embedded frontend build artifacts (generated, not source)
-backend/assets/frontend/
+# Embedded frontend build artifacts (generated, not source).
+# Keep EMBED_PLACEHOLDER tracked so //go:embed assets/frontend/* works on clean checkouts (CI).
+backend/assets/frontend/*
+!backend/assets/frontend/EMBED_PLACEHOLDER
 
 stargate
 data

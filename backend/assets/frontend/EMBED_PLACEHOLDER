@@ -1,0 +1,2 @@
+# Placeholder so //go:embed assets/frontend/* succeeds on clean checkouts.
+# Real UI assets are copied here by `make single-binary` / CI / Docker from frontend/build.
