@@ -228,10 +228,10 @@ func (h *SmartContractHandler) HandleGetContracts(w http.ResponseWriter, r *http
 		filter.CursorType = cursorType
 	}
 
-	// Server-side support for "open" contracts (non-confirmed/non-terminal).
-	// Allows callers like OpenContractsView to pass ?open=true or ?status=open
-	// instead of fetching everything and filtering client-side.
-	// Open rows usually have null confirmed_at, so page by created_at for infinite scroll.
+	// Open contracts are unconfirmed by definition (pending/created/funded/active).
+	// They must not be ordered by confirmed_at/block height — sort created_at DESC
+	// so the newest open wish is at the top and older ones load as the user scrolls.
+	// Callers: OpenContractsView (?open=true or ?status=open).
 	openParam := r.URL.Query().Get("open")
 	openMode := openParam == "true" || openParam == "1" || status == "open"
 	if openMode {
@@ -347,7 +347,7 @@ func (h *SmartContractHandler) HandleGetContracts(w http.ResponseWriter, r *http
 	// Determine next cursors for pagination.
 	// Prefer raw contracts when available; fall back to inscription fields so
 	// cached first pages still return next_cursor_date for infinite scroll.
-	// Open lists page by created_at; confirmed lists page by confirmed_at.
+	// Open (unconfirmed): cursor on created_at. Confirmed lists: cursor on confirmed_at.
 	nextCursor := ""
 	nextCursorDate := ""
 	fullPage := len(inscriptions) >= limit && limit > 0

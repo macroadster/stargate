@@ -110,4 +110,31 @@ describe('OpenContractsView infinite scroll', () => {
       expect(screen.getByText(/No pending transactions/i)).toBeInTheDocument();
     });
   });
+
+  it('renders newest open contracts first (unconfirmed → created_at DESC)', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    apiFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        success: true,
+        data: {
+          transactions: [
+            { id: 'older', status: 'pending', text: 'old', timestamp: now - 1000 },
+            { id: 'newer', status: 'pending', text: 'new', timestamp: now },
+          ],
+          has_more: false,
+          next_cursor_date: '',
+        },
+      }),
+    });
+
+    render(<OpenContractsView setSelectedInscription={vi.fn()} refreshKey={0} />);
+
+    await waitFor(() => {
+      const cards = screen.getAllByTestId('inscription-card');
+      expect(cards).toHaveLength(2);
+      expect(cards[0]).toHaveTextContent('newer');
+      expect(cards[1]).toHaveTextContent('older');
+    });
+  });
 });

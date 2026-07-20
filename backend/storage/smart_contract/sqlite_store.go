@@ -177,12 +177,15 @@ FROM mcp_contracts c
 		whereClause = "WHERE " + strings.Join(whereConditions, " AND ")
 	}
 
-	orderBy := "ORDER BY c.confirmed_block_height DESC NULLS LAST, c.created_at DESC, c.contract_id DESC"
+	// Normalize text timestamps so mixed SQLite formats still sort chronologically.
+	const createdAtOrder = "datetime(replace(replace(c.created_at,'T',' '),'Z',''))"
+	const confirmedAtOrder = "datetime(replace(replace(c.confirmed_at,'T',' '),'Z',''))"
+	orderBy := "ORDER BY c.confirmed_block_height DESC NULLS LAST, " + createdAtOrder + " DESC, c.contract_id DESC"
 	if filter.OrderByCreatedAt {
-		// Open contracts rarely have confirmed_at; page by created_at for infinite scroll.
-		orderBy = "ORDER BY c.created_at DESC, c.contract_id DESC"
+		// Open/unconfirmed: newest created first, oldest at the bottom (scroll loads older).
+		orderBy = "ORDER BY " + createdAtOrder + " DESC, c.contract_id DESC"
 	} else if filter.OrderByConfirmedAt {
-		orderBy = "ORDER BY c.confirmed_at DESC NULLS FIRST, c.created_at DESC, c.contract_id DESC"
+		orderBy = "ORDER BY " + confirmedAtOrder + " DESC NULLS FIRST, " + createdAtOrder + " DESC, c.contract_id DESC"
 	}
 	if filter.Limit > 0 {
 		orderBy += fmt.Sprintf(" LIMIT %d", filter.Limit)

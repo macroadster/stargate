@@ -300,9 +300,10 @@ FROM mcp_contracts c
 		whereClause = "WHERE " + strings.Join(whereConditions, " AND ")
 	}
 
-	// ORDER BY - prefer confirmed_block_height for cursor-based pagination
+	// ORDER BY - open/unconfirmed lists use created_at (newest first); confirmed lists use confirmed_at.
 	orderBy := "ORDER BY c.confirmed_block_height DESC NULLS FIRST, c.created_at DESC, c.contract_id DESC"
 	if filter.OrderByCreatedAt {
+		// Newest open contracts at top; infinite scroll loads older pages below.
 		orderBy = "ORDER BY c.created_at DESC, c.contract_id DESC"
 	} else if filter.OrderByConfirmedAt {
 		orderBy = "ORDER BY c.confirmed_at DESC NULLS FIRST, c.created_at DESC, c.contract_id DESC"

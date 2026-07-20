@@ -178,8 +178,10 @@ type ContractFilter struct {
 	CursorHeight       *int       // For cursor-based pagination using confirmed_block_height
 	CursorDate         *time.Time // Cursor for date pagination (confirmed_at or created_at per OrderBy*)
 	CursorType         string     // 'before' or 'after'
-	OrderByConfirmedAt bool       // Order by confirmed_at instead of block height
-	OrderByCreatedAt   bool       // Order/page by created_at (open contracts; confirmed_at is often null)
+	OrderByConfirmedAt bool       // Order by confirmed_at (confirmed contract lists)
+	// OrderByCreatedAt orders/pages by created_at DESC (newest first).
+	// Use for open/unconfirmed contracts: they have no confirmed_at by definition.
+	OrderByCreatedAt bool
 }
 
 // TaskFilter captures simple query params for listing tasks.

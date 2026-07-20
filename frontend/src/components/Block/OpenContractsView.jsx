@@ -133,6 +133,8 @@ const OpenContractsView = ({ setSelectedInscription, refreshKey }) => {
     return () => observer.disconnect();
   }, [loadMore, hasMore, pendingTxs.length]);
 
+  // Open = unconfirmed: always show newest first, oldest last (API already orders
+  // by created_at DESC; re-sort for stable display after merges/polls).
   const mappedInscriptions = useMemo(() => {
     const list = Array.isArray(pendingTxs) ? pendingTxs : [];
     return list
@@ -190,7 +192,8 @@ const OpenContractsView = ({ setSelectedInscription, refreshKey }) => {
             available_tasks: tx.availableTasks || tx.available_tasks_count || 0
           }
         };
-      });
+      })
+      .sort((a, b) => (Number(b.timestamp) || 0) - (Number(a.timestamp) || 0));
   }, [pendingTxs]);
 
   return (
