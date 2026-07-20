@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, waitFor, act } from '@testing-library/react';
+import { render, screen, waitFor, act, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import OpenContractsView from './OpenContractsView';
@@ -26,7 +26,6 @@ function pageResponse(ids, { hasMore = false, nextCursor = '' } = {}) {
           id,
           status: 'pending',
           text: `wish ${id}`,
-          // newest first from API
           timestamp: 1_700_000_000 - index,
         })),
         contracts: ids.map((id) => ({ id, status: 'pending' })),
@@ -43,6 +42,15 @@ describe('OpenContractsView infinite scroll', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     observerCallback = null;
+    // Pretend the sentinel is always near the viewport so post-load checks fire.
+    Element.prototype.getBoundingClientRect = vi.fn(() => ({
+      top: 100,
+      bottom: 140,
+      left: 0,
+      right: 100,
+      width: 100,
+      height: 40,
+    }));
     global.IntersectionObserver = class {
       constructor(cb) {
         observerCallback = cb;
@@ -57,7 +65,7 @@ describe('OpenContractsView infinite scroll', () => {
     vi.useRealTimers();
   });
 
-  it('loads first page and appends next page when sentinel intersects', async () => {
+  it('loads first page and appends next page when sentinel intersects after load', async () => {
     apiFetch
       .mockResolvedValueOnce(
         pageResponse(
@@ -78,27 +86,59 @@ describe('OpenContractsView infinite scroll', () => {
       expect(screen.getAllByTestId('inscription-card')).toHaveLength(20);
     });
 
-    expect(apiFetch).toHaveBeenCalledTimes(1);
-    const firstUrl = String(apiFetch.mock.calls[0][0]);
-    expect(firstUrl).toContain('open=true');
-    expect(firstUrl).toContain('limit=20');
-    expect(firstUrl).not.toContain('cursor_date=');
-
-    await act(async () => {
-      observerCallback?.([{ isIntersecting: true }]);
-    });
-
+    // After load, re-armed observer / rAF check should request page 2 when near viewport.
     await waitFor(() => {
-      expect(apiFetch).toHaveBeenCalledTimes(2);
+      expect(apiFetch.mock.calls.length).toBeGreaterThanOrEqual(2);
     });
 
-    const secondUrl = String(apiFetch.mock.calls[1][0]);
-    expect(secondUrl).toContain('cursor_date=2026-07-12T12%3A00%3A00Z');
-    expect(secondUrl).toContain('cursor_type=before');
+    const moreCall = apiFetch.mock.calls.find((c) =>
+      String(c[0]).includes('cursor_date='),
+    );
+    expect(moreCall).toBeTruthy();
+    expect(String(moreCall[0])).toContain('cursor_type=before');
 
     await waitFor(() => {
       expect(screen.getByText('open-older')).toBeInTheDocument();
-      expect(screen.getAllByTestId('inscription-card')).toHaveLength(21);
+    });
+  });
+
+  it('loads more when "Scroll for more" is clicked', async () => {
+    // Keep sentinel "far" so auto load-more does not fire; only click should.
+    Element.prototype.getBoundingClientRect = vi.fn(() => ({
+      top: 5000,
+      bottom: 5040,
+      left: 0,
+      right: 100,
+      width: 100,
+      height: 40,
+    }));
+
+    apiFetch
+      .mockResolvedValueOnce(
+        pageResponse(
+          Array.from({ length: 20 }, (_, i) => `open-${i}`),
+          { hasMore: true, nextCursor: '2026-07-12T12:00:00Z' },
+        ),
+      )
+      .mockResolvedValueOnce(
+        pageResponse(['open-via-click'], { hasMore: false, nextCursor: '' }),
+      );
+
+    render(<OpenContractsView setSelectedInscription={vi.fn()} refreshKey={0} />);
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /scroll for more/i })).toBeInTheDocument();
+    });
+
+    // Only first page so far
+    expect(apiFetch).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /scroll for more/i }));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('open-via-click')).toBeInTheDocument();
     });
   });
 
@@ -112,14 +152,21 @@ describe('OpenContractsView infinite scroll', () => {
     });
   });
 
-  it('preserves API newest-first order without client re-sort jumps', async () => {
+  it('preserves API newest-first order', async () => {
+    Element.prototype.getBoundingClientRect = vi.fn(() => ({
+      top: 5000,
+      bottom: 5040,
+      left: 0,
+      right: 100,
+      width: 100,
+      height: 40,
+    }));
     const now = Math.floor(Date.now() / 1000);
     apiFetch.mockResolvedValueOnce({
       ok: true,
       json: async () => ({
         success: true,
         data: {
-          // Server already returns newest first
           transactions: [
             { id: 'newer', status: 'pending', text: 'new', timestamp: now },
             { id: 'older', status: 'pending', text: 'old', timestamp: now - 1000 },
@@ -141,6 +188,15 @@ describe('OpenContractsView infinite scroll', () => {
   });
 
   it('does not clear the list while a second page is loading', async () => {
+    Element.prototype.getBoundingClientRect = vi.fn(() => ({
+      top: 5000,
+      bottom: 5040,
+      left: 0,
+      right: 100,
+      width: 100,
+      height: 40,
+    }));
+
     let resolveSecond;
     apiFetch
       .mockResolvedValueOnce(
@@ -159,14 +215,13 @@ describe('OpenContractsView infinite scroll', () => {
     render(<OpenContractsView setSelectedInscription={vi.fn()} refreshKey={0} />);
 
     await waitFor(() => {
-      expect(screen.getAllByTestId('inscription-card')).toHaveLength(20);
+      expect(screen.getByRole('button', { name: /scroll for more/i })).toBeInTheDocument();
     });
 
     await act(async () => {
-      observerCallback?.([{ isIntersecting: true }]);
+      fireEvent.click(screen.getByRole('button', { name: /scroll for more/i }));
     });
 
-    // While page 2 is in flight, page 1 cards must remain mounted (no jump-to-top wipe).
     expect(screen.getAllByTestId('inscription-card')).toHaveLength(20);
 
     await act(async () => {

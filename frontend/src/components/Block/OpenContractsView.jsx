@@ -7,6 +7,8 @@ const PAGE_LIMIT = 20;
 const POLL_MS = 15000;
 /** Soft poll only when user is near the top of the scroll container. */
 const TOP_SCROLL_PX = 48;
+/** Prefetch when sentinel is within this many px of the scroller bottom. */
+const LOAD_MORE_MARGIN_PX = 200;
 
 const isOpenStatus = (status) => {
   const s = (status || '').toLowerCase();
@@ -18,15 +20,32 @@ const itemKey = (item) => item?.id || item?.contract_id || '';
 /** Find nearest vertically scrollable ancestor (App uses overflow:auto, not window). */
 const getScrollParent = (node) => {
   let el = node?.parentElement;
-  while (el && el !== document.body) {
+  while (el && el !== document.documentElement) {
     const style = window.getComputedStyle(el);
     const oy = style.overflowY;
-    if (oy === 'auto' || oy === 'scroll' || oy === 'overlay') {
+    const canScrollY = oy === 'auto' || oy === 'scroll' || oy === 'overlay';
+    // Prefer real scroll containers (scrollHeight can exceed clientHeight later).
+    if (canScrollY) {
       return el;
     }
     el = el.parentElement;
   }
   return null;
+};
+
+/**
+ * True when the sentinel is in/near the visible area of `root` (or the viewport).
+ * Used after loads because IntersectionObserver does not re-fire if the target
+ * stayed intersecting the whole time loadingRef was true.
+ */
+const isNearViewport = (sentinel, root, margin = LOAD_MORE_MARGIN_PX) => {
+  if (!sentinel) return false;
+  const s = sentinel.getBoundingClientRect();
+  if (root) {
+    const r = root.getBoundingClientRect();
+    return s.top < r.bottom + margin && s.bottom > r.top - margin;
+  }
+  return s.top < window.innerHeight + margin && s.bottom > -margin;
 };
 
 /**
@@ -51,6 +70,19 @@ const softMergeFirstPage = (prev, firstPage) => {
   return brandNew.length ? [...brandNew, ...updated] : updated;
 };
 
+const cursorFromItem = (item) => {
+  if (!item) return '';
+  if (item.timestamp) {
+    const n = Number(item.timestamp);
+    if (Number.isFinite(n) && n > 0) {
+      // API timestamps are unix seconds for inscription-shaped rows.
+      const ms = n < 1e12 ? n * 1000 : n;
+      return new Date(ms).toISOString();
+    }
+  }
+  return '';
+};
+
 const OpenContractsView = ({ setSelectedInscription, refreshKey }) => {
   const [pendingTxs, setPendingTxs] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -65,8 +97,20 @@ const OpenContractsView = ({ setSelectedInscription, refreshKey }) => {
   const rootElRef = useRef(null);
   const scrollParentRef = useRef(null);
 
+  const resolveScrollParent = useCallback(() => {
+    const node = sentinelRef.current || rootElRef.current;
+    const parent = getScrollParent(node);
+    scrollParentRef.current = parent;
+    return parent;
+  }, []);
+
   const applyPageMeta = (payload, filtered, unique, { append }) => {
-    const nextCursor = payload?.next_cursor_date || '';
+    let nextCursor = payload?.next_cursor_date || '';
+    // Fallback: last item timestamp so "more" always has a cursor when the API
+    // claims has_more but omits next_cursor_date (common for open/created_at lists).
+    if (!nextCursor && unique.length > 0) {
+      nextCursor = cursorFromItem(unique[unique.length - 1]);
+    }
     const more = Boolean(payload?.has_more) && filtered.length > 0;
 
     if (append) {
@@ -78,15 +122,10 @@ const OpenContractsView = ({ setSelectedInscription, refreshKey }) => {
       if (unique.length > 0) {
         paginatedRef.current = true;
       }
-      // Keep previous cursor if the API omits next_cursor on a full page (don't blank it).
       if (nextCursor) {
         cursorRef.current = nextCursor;
-      } else if (!more) {
-        // End of list — leave cursor as-is for "we're deep" signals; hasMore=false stops loads.
-        cursorRef.current = cursorRef.current || nextCursor;
       }
     } else {
-      // Full first-page replace (initial / explicit refresh only). Do not clear first.
       const nextSeen = new Set();
       unique.forEach((item) => {
         const k = itemKey(item);
@@ -110,18 +149,22 @@ const OpenContractsView = ({ setSelectedInscription, refreshKey }) => {
 
   const fetchOpenPage = useCallback(async (mode) => {
     // mode: 'initial' | 'more' | 'refreshKey' | 'poll'
-    if (loadingRef.current) return;
-    if (mode === 'more' && !hasMoreRef.current) return;
+    if (loadingRef.current) return false;
+    if (mode === 'more' && !hasMoreRef.current) return false;
+    // Need a cursor for page 2+; without it we'd re-fetch the first page forever.
+    if (mode === 'more' && !cursorRef.current) {
+      hasMoreRef.current = false;
+      setHasMore(false);
+      return false;
+    }
 
-    // Never hard-reset while the user has paginated or scrolled away from the top.
     if (mode === 'poll') {
-      if (paginatedRef.current) return;
+      if (paginatedRef.current) return false;
       const scroller = scrollParentRef.current;
-      if (scroller && scroller.scrollTop > TOP_SCROLL_PX) return;
+      if (scroller && scroller.scrollTop > TOP_SCROLL_PX) return false;
     }
 
     loadingRef.current = true;
-    // Avoid layout thrash: only show the bottom spinner for initial + load-more.
     if (mode === 'initial' || mode === 'more') {
       setIsLoading(true);
     }
@@ -146,15 +189,13 @@ const OpenContractsView = ({ setSelectedInscription, refreshKey }) => {
       const normalized = Array.isArray(raw) ? raw : [];
       const filtered = normalized.filter((contract) => isOpenStatus(contract.status));
 
-      // Soft merge when polling, or when refreshKey fires after the user has
-      // already paginated — never collapse the list / jump scroll position.
       if (mode === 'poll' || (mode === 'refreshKey' && paginatedRef.current)) {
         setPendingTxs((prev) => softMergeFirstPage(prev, filtered));
         filtered.forEach((item) => {
           const k = itemKey(item);
           if (k) seenRef.current.add(k);
         });
-        return;
+        return true;
       }
 
       const unique = [];
@@ -166,7 +207,6 @@ const OpenContractsView = ({ setSelectedInscription, refreshKey }) => {
           }
         });
       } else {
-        // initial / first-page refreshKey: API order (newest first).
         filtered.forEach((item) => {
           const k = itemKey(item);
           if (k) unique.push(item);
@@ -174,6 +214,7 @@ const OpenContractsView = ({ setSelectedInscription, refreshKey }) => {
       }
 
       applyPageMeta(payload, filtered, unique, { append });
+      return true;
     } catch (error) {
       console.error('Error fetching open contracts:', error);
       if (mode === 'initial') {
@@ -181,14 +222,22 @@ const OpenContractsView = ({ setSelectedInscription, refreshKey }) => {
         hasMoreRef.current = false;
         setHasMore(false);
       }
+      return false;
     } finally {
       loadingRef.current = false;
       setIsLoading(false);
     }
   }, []);
 
+  /** Load next page if the sentinel is still near the visible area. */
+  const maybeLoadMore = useCallback(() => {
+    if (loadingRef.current || !hasMoreRef.current) return;
+    const root = scrollParentRef.current || resolveScrollParent();
+    if (!isNearViewport(sentinelRef.current, root)) return;
+    fetchOpenPage('more');
+  }, [fetchOpenPage, resolveScrollParent]);
+
   // Initial load + explicit refresh after inscribe (refreshKey).
-  // Never wipe the list first — replace only after the response arrives.
   useEffect(() => {
     fetchOpenPage(refreshKey ? 'refreshKey' : 'initial');
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only re-run on refreshKey
@@ -202,38 +251,66 @@ const OpenContractsView = ({ setSelectedInscription, refreshKey }) => {
     return () => clearInterval(intervalId);
   }, [fetchOpenPage]);
 
-  // Resolve scroll parent once mounted (App content uses overflow:auto).
+  // Resolve scroll parent after mount / when list size changes (layout shifts).
   useEffect(() => {
-    const node = rootElRef.current || sentinelRef.current;
-    scrollParentRef.current = getScrollParent(node);
-  }, []);
+    resolveScrollParent();
+  }, [resolveScrollParent, pendingTxs.length]);
 
-  // Infinite scroll: observe sentinel against the real scroll container, not the window.
+  // After a load finishes with hasMore, re-check: IntersectionObserver will not
+  // re-fire if the sentinel stayed visible the whole time we were loading.
+  useEffect(() => {
+    if (isLoading || !hasMore) return;
+    const id = requestAnimationFrame(() => {
+      maybeLoadMore();
+    });
+    return () => cancelAnimationFrame(id);
+  }, [isLoading, hasMore, pendingTxs.length, maybeLoadMore]);
+
+  // Scroll listener backup (works even when IO root detection fails).
+  useEffect(() => {
+    if (!hasMore) return;
+    const root = resolveScrollParent();
+    const target = root || window;
+    const onScroll = () => {
+      maybeLoadMore();
+    };
+    target.addEventListener('scroll', onScroll, { passive: true });
+    // Also listen on window in case the real scroller is the document.
+    if (root) {
+      window.addEventListener('scroll', onScroll, { passive: true });
+    }
+    return () => {
+      target.removeEventListener('scroll', onScroll);
+      if (root) window.removeEventListener('scroll', onScroll);
+    };
+  }, [hasMore, pendingTxs.length, maybeLoadMore, resolveScrollParent]);
+
+  // IntersectionObserver — re-create when loading ends so a still-visible
+  // sentinel triggers the next page (same pattern as ContractsPage).
   useEffect(() => {
     const sentinel = sentinelRef.current;
-    if (!sentinel || !hasMore) return;
+    if (!sentinel || !hasMore || isLoading) return;
 
-    const root = scrollParentRef.current || getScrollParent(sentinel);
-    scrollParentRef.current = root;
-
+    const root = resolveScrollParent();
     const observer = new IntersectionObserver(
       ([entry]) => {
-        if (entry.isIntersecting && !loadingRef.current && hasMoreRef.current) {
-          fetchOpenPage('more');
+        if (entry.isIntersecting) {
+          maybeLoadMore();
         }
       },
       {
         root: root || null,
         threshold: 0,
-        rootMargin: '120px 0px',
+        rootMargin: `${LOAD_MORE_MARGIN_PX}px 0px`,
       }
     );
     observer.observe(sentinel);
+    // Synchronous first check for browsers that delay the initial callback.
+    maybeLoadMore();
     return () => observer.disconnect();
-  }, [fetchOpenPage, hasMore]);
+  }, [hasMore, isLoading, maybeLoadMore, resolveScrollParent, pendingTxs.length]);
 
-  // Preserve API order (newest → older appends). Do not re-sort: reordering DOM
-  // nodes mid-scroll is a common cause of jump-to-top / jerky behavior.
+  // Preserve API order (newest → older appends). Do not re-sort.
   const mappedInscriptions = useMemo(() => {
     const list = Array.isArray(pendingTxs) ? pendingTxs : [];
     return list
@@ -329,9 +406,13 @@ const OpenContractsView = ({ setSelectedInscription, refreshKey }) => {
             </span>
           </div>
         ) : hasMore && mappedInscriptions.length > 0 ? (
-          <span className="text-[10px] font-black uppercase tracking-widest text-gray-500">
+          <button
+            type="button"
+            onClick={() => fetchOpenPage('more')}
+            className="text-[10px] font-black uppercase tracking-widest text-gray-500 hover:text-primary underline-offset-2 hover:underline"
+          >
             Scroll for more
-          </span>
+          </button>
         ) : mappedInscriptions.length > 0 ? (
           <div className="text-[10px] font-black uppercase tracking-widest text-gray-500 opacity-60">
             — End of open contracts —
