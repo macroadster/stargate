@@ -22,11 +22,12 @@ function pageResponse(ids, { hasMore = false, nextCursor = '' } = {}) {
     json: async () => ({
       success: true,
       data: {
-        transactions: ids.map((id) => ({
+        transactions: ids.map((id, index) => ({
           id,
           status: 'pending',
           text: `wish ${id}`,
-          timestamp: Date.now() / 1000,
+          // newest first from API
+          timestamp: 1_700_000_000 - index,
         })),
         contracts: ids.map((id) => ({ id, status: 'pending' })),
         has_more: hasMore,
@@ -111,16 +112,17 @@ describe('OpenContractsView infinite scroll', () => {
     });
   });
 
-  it('renders newest open contracts first (unconfirmed → created_at DESC)', async () => {
+  it('preserves API newest-first order without client re-sort jumps', async () => {
     const now = Math.floor(Date.now() / 1000);
     apiFetch.mockResolvedValueOnce({
       ok: true,
       json: async () => ({
         success: true,
         data: {
+          // Server already returns newest first
           transactions: [
-            { id: 'older', status: 'pending', text: 'old', timestamp: now - 1000 },
             { id: 'newer', status: 'pending', text: 'new', timestamp: now },
+            { id: 'older', status: 'pending', text: 'old', timestamp: now - 1000 },
           ],
           has_more: false,
           next_cursor_date: '',
@@ -135,6 +137,46 @@ describe('OpenContractsView infinite scroll', () => {
       expect(cards).toHaveLength(2);
       expect(cards[0]).toHaveTextContent('newer');
       expect(cards[1]).toHaveTextContent('older');
+    });
+  });
+
+  it('does not clear the list while a second page is loading', async () => {
+    let resolveSecond;
+    apiFetch
+      .mockResolvedValueOnce(
+        pageResponse(
+          Array.from({ length: 20 }, (_, i) => `open-${i}`),
+          { hasMore: true, nextCursor: '2026-07-12T12:00:00Z' },
+        ),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveSecond = resolve;
+          }),
+      );
+
+    render(<OpenContractsView setSelectedInscription={vi.fn()} refreshKey={0} />);
+
+    await waitFor(() => {
+      expect(screen.getAllByTestId('inscription-card')).toHaveLength(20);
+    });
+
+    await act(async () => {
+      observerCallback?.([{ isIntersecting: true }]);
+    });
+
+    // While page 2 is in flight, page 1 cards must remain mounted (no jump-to-top wipe).
+    expect(screen.getAllByTestId('inscription-card')).toHaveLength(20);
+
+    await act(async () => {
+      resolveSecond(
+        pageResponse(['open-older'], { hasMore: false, nextCursor: '' }),
+      );
+    });
+
+    await waitFor(() => {
+      expect(screen.getAllByTestId('inscription-card')).toHaveLength(21);
     });
   });
 });
