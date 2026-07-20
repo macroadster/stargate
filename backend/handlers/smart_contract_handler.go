@@ -231,10 +231,14 @@ func (h *SmartContractHandler) HandleGetContracts(w http.ResponseWriter, r *http
 	// Server-side support for "open" contracts (non-confirmed/non-terminal).
 	// Allows callers like OpenContractsView to pass ?open=true or ?status=open
 	// instead of fetching everything and filtering client-side.
+	// Open rows usually have null confirmed_at, so page by created_at for infinite scroll.
 	openParam := r.URL.Query().Get("open")
-	if openParam == "true" || openParam == "1" || status == "open" {
+	openMode := openParam == "true" || openParam == "1" || status == "open"
+	if openMode {
 		filter.Statuses = openStatuses()
 		filter.Status = "" // prefer explicit Statuses
+		filter.OrderByConfirmedAt = false
+		filter.OrderByCreatedAt = true
 	}
 
 	cacheKey := generateCacheKey(r)
@@ -343,6 +347,7 @@ func (h *SmartContractHandler) HandleGetContracts(w http.ResponseWriter, r *http
 	// Determine next cursors for pagination.
 	// Prefer raw contracts when available; fall back to inscription fields so
 	// cached first pages still return next_cursor_date for infinite scroll.
+	// Open lists page by created_at; confirmed lists page by confirmed_at.
 	nextCursor := ""
 	nextCursorDate := ""
 	fullPage := len(inscriptions) >= limit && limit > 0
@@ -353,7 +358,11 @@ func (h *SmartContractHandler) HandleGetContracts(w http.ResponseWriter, r *http
 			if lastContract.ConfirmedBlockHeight != nil && *lastContract.ConfirmedBlockHeight > 0 {
 				nextCursor = fmt.Sprintf("%d", *lastContract.ConfirmedBlockHeight)
 			}
-			if lastContract.ConfirmedAt != nil {
+			if filter.OrderByCreatedAt {
+				if !lastContract.CreatedAt.IsZero() {
+					nextCursorDate = lastContract.CreatedAt.UTC().Format(time.RFC3339)
+				}
+			} else if lastContract.ConfirmedAt != nil {
 				nextCursorDate = lastContract.ConfirmedAt.UTC().Format(time.RFC3339)
 			}
 		}

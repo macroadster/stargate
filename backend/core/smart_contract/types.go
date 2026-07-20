@@ -176,9 +176,10 @@ type ContractFilter struct {
 	Limit              int
 	Offset             int
 	CursorHeight       *int       // For cursor-based pagination using confirmed_block_height
-	CursorDate         *time.Time // For cursor-based pagination using confirmed_at
+	CursorDate         *time.Time // Cursor for date pagination (confirmed_at or created_at per OrderBy*)
 	CursorType         string     // 'before' or 'after'
 	OrderByConfirmedAt bool       // Order by confirmed_at instead of block height
+	OrderByCreatedAt   bool       // Order/page by created_at (open contracts; confirmed_at is often null)
 }
 
 // TaskFilter captures simple query params for listing tasks.

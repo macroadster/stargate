@@ -156,15 +156,19 @@ FROM mcp_contracts c
 		args = append(args, *filter.CursorHeight)
 	}
 
-	// Cursor-based pagination by confirmed_at (used by /contracts infinite scroll).
+	// Cursor-based pagination by date (confirmed_at for confirmed lists, created_at for open).
 	// Normalize mixed SQLite timestamp formats ("2026-07-19 05:31:53" vs RFC3339).
 	if filter.CursorDate != nil {
 		op := "<"
 		if strings.EqualFold(filter.CursorType, "after") {
 			op = ">"
 		}
+		dateCol := "c.confirmed_at"
+		if filter.OrderByCreatedAt {
+			dateCol = "c.created_at"
+		}
 		whereConditions = append(whereConditions,
-			"datetime(replace(replace(c.confirmed_at,'T',' '),'Z','')) "+op+" datetime(?)")
+			"datetime(replace(replace("+dateCol+",'T',' '),'Z','')) "+op+" datetime(?)")
 		args = append(args, filter.CursorDate.UTC().Format("2006-01-02 15:04:05"))
 	}
 
@@ -174,7 +178,10 @@ FROM mcp_contracts c
 	}
 
 	orderBy := "ORDER BY c.confirmed_block_height DESC NULLS LAST, c.created_at DESC, c.contract_id DESC"
-	if filter.OrderByConfirmedAt {
+	if filter.OrderByCreatedAt {
+		// Open contracts rarely have confirmed_at; page by created_at for infinite scroll.
+		orderBy = "ORDER BY c.created_at DESC, c.contract_id DESC"
+	} else if filter.OrderByConfirmedAt {
 		orderBy = "ORDER BY c.confirmed_at DESC NULLS FIRST, c.created_at DESC, c.contract_id DESC"
 	}
 	if filter.Limit > 0 {

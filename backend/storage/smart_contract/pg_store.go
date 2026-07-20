@@ -279,13 +279,17 @@ FROM mcp_contracts c
 		argIndex++
 	}
 
-	// Cursor-based pagination by date
+	// Cursor-based pagination by date (confirmed_at or created_at)
 	if filter.CursorDate != nil {
 		op := "<"
 		if strings.EqualFold(filter.CursorType, "after") {
 			op = ">"
 		}
-		whereConditions = append(whereConditions, fmt.Sprintf("c.confirmed_at %s $%d", op, argIndex))
+		dateCol := "c.confirmed_at"
+		if filter.OrderByCreatedAt {
+			dateCol = "c.created_at"
+		}
+		whereConditions = append(whereConditions, fmt.Sprintf("%s %s $%d", dateCol, op, argIndex))
 		args = append(args, *filter.CursorDate)
 		argIndex++
 	}
@@ -298,7 +302,9 @@ FROM mcp_contracts c
 
 	// ORDER BY - prefer confirmed_block_height for cursor-based pagination
 	orderBy := "ORDER BY c.confirmed_block_height DESC NULLS FIRST, c.created_at DESC, c.contract_id DESC"
-	if filter.OrderByConfirmedAt {
+	if filter.OrderByCreatedAt {
+		orderBy = "ORDER BY c.created_at DESC, c.contract_id DESC"
+	} else if filter.OrderByConfirmedAt {
 		orderBy = "ORDER BY c.confirmed_at DESC NULLS FIRST, c.created_at DESC, c.contract_id DESC"
 	}
 

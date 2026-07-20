@@ -83,6 +83,70 @@ func TestSQLiteListContractsCursorDate(t *testing.T) {
 	}
 }
 
+func TestSQLiteListContractsCursorCreatedAtOpen(t *testing.T) {
+	// Open contracts have null confirmed_at; infinite scroll must page by created_at.
+	store := newTestSQLiteStore(t)
+	ctx := context.Background()
+
+	ids := []string{"open-a", "open-b", "open-c"}
+	times := []string{
+		"2026-07-10 12:00:00",
+		"2026-07-11 12:00:00",
+		"2026-07-12 12:00:00",
+	}
+	for i, id := range ids {
+		c := core.Contract{
+			ContractID: id,
+			Title:      id,
+			Status:     "pending",
+			CreatedAt:  time.Now().UTC(),
+		}
+		if err := store.UpsertContractWithTasks(ctx, c, nil); err != nil {
+			t.Fatalf("upsert %s: %v", id, err)
+		}
+		if _, err := store.db.Exec(`UPDATE mcp_contracts SET created_at=?, confirmed_at=NULL WHERE contract_id=?`, times[i], id); err != nil {
+			t.Fatalf("set created_at %s: %v", id, err)
+		}
+	}
+
+	page1, err := store.ListContracts(core.ContractFilter{
+		Statuses:         []string{"pending", "created", "funded", "active"},
+		Limit:            2,
+		OrderByCreatedAt: true,
+	})
+	if err != nil {
+		t.Fatalf("page1: %v", err)
+	}
+	if len(page1) != 2 {
+		t.Fatalf("page1 len=%d want 2", len(page1))
+	}
+	if page1[0].ContractID != "open-c" || page1[1].ContractID != "open-b" {
+		t.Fatalf("page1 order got %s, %s", page1[0].ContractID, page1[1].ContractID)
+	}
+	if page1[1].CreatedAt.IsZero() {
+		t.Fatal("page1[1] missing CreatedAt")
+	}
+
+	cursor := page1[1].CreatedAt
+	page2, err := store.ListContracts(core.ContractFilter{
+		Statuses:         []string{"pending", "created", "funded", "active"},
+		Limit:            2,
+		OrderByCreatedAt: true,
+		CursorDate:       &cursor,
+		CursorType:       "before",
+	})
+	if err != nil {
+		t.Fatalf("page2: %v", err)
+	}
+	if len(page2) != 1 || page2[0].ContractID != "open-a" {
+		idsOut := make([]string, len(page2))
+		for i, c := range page2 {
+			idsOut[i] = c.ContractID
+		}
+		t.Fatalf("page2 want [open-a], got %v", idsOut)
+	}
+}
+
 func TestSQLiteListContractsCursorDateRFC3339Mix(t *testing.T) {
 	// Ensure RFC3339 stored values still compare correctly against cursor.
 	store := newTestSQLiteStore(t)
