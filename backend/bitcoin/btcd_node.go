@@ -353,6 +353,7 @@ func (n *EmbeddedBtcd) Stop() error {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	if n.cmd == nil || n.cmd.Process == nil {
+		n.started = false
 		return nil
 	}
 	log.Printf("btcd: stopping pid=%d", n.cmd.Process.Pid)
@@ -379,7 +380,26 @@ func (n *EmbeddedBtcd) Stop() error {
 	case <-done:
 	}
 	n.cmd = nil
+	n.started = false
 	return nil
+}
+
+// Restart stops a managed btcd child (if any) and starts it again.
+// Used by tip-lag recovery when the node is wedged behind the network tip.
+func (n *EmbeddedBtcd) Restart(ctx context.Context) error {
+	if n == nil {
+		return fmt.Errorf("nil EmbeddedBtcd")
+	}
+	if err := n.Stop(); err != nil {
+		log.Printf("btcd restart: stop warning: %v", err)
+	}
+	// Brief pause so ports/datadir locks release.
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(2 * time.Second):
+	}
+	return n.Start(ctx)
 }
 
 // WaitRPC polls until the backend answers getblockcount or timeout.
@@ -458,21 +478,26 @@ func StartChainFromEnv(ctx context.Context) (*ChainRuntime, error) {
 			_ = node.Stop()
 			return nil, err
 		}
-		// Log sync status without blocking forever.
-		go logSyncProgress(ctx, backend)
-
-		return &ChainRuntime{
+		rt := &ChainRuntime{
 			Node:    node,
 			Backend: backend,
 			Mode:    cfg.Mode,
-		}, nil
+		}
+		// Log sync status + external tip lag without blocking forever.
+		go logSyncProgress(ctx, rt)
+
+		return rt, nil
 
 	default:
 		return nil, fmt.Errorf("unknown BTCD_MODE %q (want managed|external|off)", cfg.Mode)
 	}
 }
 
-func logSyncProgress(ctx context.Context, backend ChainBackend) {
+func logSyncProgress(ctx context.Context, rt *ChainRuntime) {
+	if rt == nil || rt.Backend == nil {
+		return
+	}
+	backend := rt.Backend
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -488,10 +513,54 @@ func logSyncProgress(ctx context.Context, backend ChainBackend) {
 			log.Printf("btcd sync: blocks=%v headers=%v peers=%v ibd=%v progress=%v synced=%v",
 				st["blocks"], st["headers"], st["peers"], st["initial_block_download"],
 				st["verification_progress"], st["synced"])
-			if synced, _ := st["synced"].(bool); synced {
-				// Log once more at info then slow down is fine; keep periodic for ops.
+
+			// External tip lag check (mempool.space / blockstream reference).
+			// Surfaces stuck nodes that report local synced=true but lag the network
+			// (e.g. future-timestamp block rejects on testnet4).
+			if tipLagExternalCheckEnabled() {
+				localTip, _ := toInt64(st["blocks"])
+				if localTip == 0 {
+					if h, herr := backend.GetTipHeight(ctx); herr == nil {
+						localTip = h
+					}
+				}
+				cctx, cancel := context.WithTimeout(ctx, 12*time.Second)
+				extTip, extErr := FetchExternalTipHeight(cctx, backend.Network())
+				cancel()
+				lag := EvaluateTipLag(localTip, extTip, tipLagThreshold(), extErr, time.Now())
+				if extErr != nil {
+					log.Printf("btcd sync: external tip check failed: %v", extErr)
+				} else if lag.Lagging {
+					log.Printf("btcd sync: TIP LAG local=%d external=%d lag=%d threshold=%d duration=%s — node may be stuck (future-timestamp rejects or peer stall)",
+						lag.LocalTip, lag.ExternalTip, lag.LagBlocks, lag.Threshold, lag.LagDuration)
+					if rt.Mode == BtcdModeManaged {
+						maybeRestartManagedBtcd(ctx, rt.Node, lag)
+					}
+				} else if lag.LagBlocks > 0 {
+					log.Printf("btcd sync: external tip=%d local=%d lag=%d (within threshold=%d)",
+						lag.ExternalTip, lag.LocalTip, lag.LagBlocks, lag.Threshold)
+				}
 			}
 		}
+	}
+}
+
+func toInt64(v any) (int64, bool) {
+	switch n := v.(type) {
+	case int64:
+		return n, true
+	case int32:
+		return int64(n), true
+	case int:
+		return int64(n), true
+	case float64:
+		return int64(n), true
+	case uint64:
+		return int64(n), true
+	case uint32:
+		return int64(n), true
+	default:
+		return 0, false
 	}
 }
 

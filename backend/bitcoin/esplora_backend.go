@@ -120,6 +120,7 @@ func (e *EsploraBackend) NodeStatus(ctx context.Context) (map[string]any, error)
 	}
 	out["blocks"] = h
 	out["synced"] = true
+	mergeTipLagIntoStatus(out)
 	return out, nil
 }
 

@@ -357,6 +357,9 @@ func (b *BtcdBackend) NodeStatus(ctx context.Context) (map[string]any, error) {
 	}
 	synced, _ := b.Synced(ctx)
 	out["synced"] = synced
+	// Overlay external tip lag so health consumers see network lag even when
+	// local IBD is complete (see tip_lag.go).
+	mergeTipLagIntoStatus(out)
 	return out, nil
 }
 

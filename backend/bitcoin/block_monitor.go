@@ -387,7 +387,7 @@ func (bm *BlockMonitor) GetStatistics() map[string]any {
 	bm.mu.RLock()
 	defer bm.mu.RUnlock()
 
-	return map[string]any{
+	out := map[string]any{
 		"blocks_processed":      bm.blocksProcessed,
 		"total_transactions":    bm.totalTransactions,
 		"total_images":          bm.totalImages,
@@ -399,6 +399,11 @@ func (bm *BlockMonitor) GetStatistics() map[string]any {
 		"is_running":            bm.isRunning,
 		"check_interval":        bm.checkInterval.Milliseconds(),
 	}
+	lag := GetTipLagStatus()
+	if !lag.CheckedAt.IsZero() {
+		out["tip_lag"] = lag
+	}
+	return out
 }
 
 // bootstrapCurrentHeightFromStorage sets currentHeight from the storage's

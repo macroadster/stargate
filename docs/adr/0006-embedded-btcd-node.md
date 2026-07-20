@@ -46,9 +46,10 @@ btcd’s server is `package main`, so “embedded” means **managed child proce
 - Chainstate disk (testnet4 multi-GB with indexes; mainnet much larger)
 - First IBD latency before tip tracking is useful
 - Must ship `btcd` binary and persist `BTCD_DATADIR` across restarts
+- Local “synced” can still lag the public network (e.g. testnet future-timestamp rejects); mitigated by external tip lag checks (`CHAIN_*` env, see AGENTS.md) and optional managed restart
 
 ## Related
 
 - ADR 0001 — single-binary / single-container deploy
 - ADR 0004 — bitcoin domain boundaries
-- `backend/bitcoin/btcd_node.go`, `btcd_backend.go`, `chain_backend.go`
+- `backend/bitcoin/btcd_node.go`, `btcd_backend.go`, `chain_backend.go`, `tip_lag.go`

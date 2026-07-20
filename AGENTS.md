@@ -258,6 +258,11 @@ Stargate runs a **local btcd full node** by default (ADR 0006) instead of pollin
 | `BTCD_DATADIR` | `$STARGATE_DATA_DIR/btcd` | Chainstate — **must be on a persistent volume** |
 | `BTCD_RPC_HOST` | network default (e.g. `127.0.0.1:48334`) | RPC host:port |
 | `BTCD_ALLOW_MAINNET` | `false` | Set `true` to allow mainnet (large disk) |
+| `CHAIN_EXTERNAL_TIP_CHECK` | `true` | Compare local tip to explorer; log lag / mark health degraded |
+| `CHAIN_TIP_LAG_THRESHOLD` | `3` | Blocks behind external tip before lagging |
+| `CHAIN_TIP_LAG_RESTART_AFTER` | `15m` | Sustained lag before restarting managed btcd (`0`/`off` disables) |
+| `CHAIN_TIP_LAG_RESTART_COOLDOWN` | `30m` | Min time between auto-restarts |
+| `BLOCK_MONITOR_CATCHUP_BATCH` | `25` | Max blocks/cycle when sequential catch-up is behind |
 
 - Mining is **never** enabled (`--generate` is not passed).
 - Indexes: `--txindex` + `--addrindex` (required for historical txs / address UTXOs).
