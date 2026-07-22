@@ -150,7 +150,9 @@ func (s *Server) handleStegoReconcile(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusBadRequest, "stego_cid is required")
 		return
 	}
-	res, err := s.reconcileStegoFromIPFS(r.Context(), req.StegoCID, req.ExpectedHash)
+	// Public/IPFS: stage bytes only. SQL apply requires on-chain confirmation
+	// (block monitor → ReconcileStego with applySQL=true).
+	res, err := s.reconcileStegoFromIPFS(r.Context(), req.StegoCID, req.ExpectedHash, false)
 	if err != nil {
 		Error(w, http.StatusBadRequest, err.Error())
 		return
@@ -158,32 +160,32 @@ func (s *Server) handleStegoReconcile(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, res)
 }
 
-// ReconcileStego reconciles a stego image and upserts contracts/tasks.
-// It first tries to read the image from the local UPLOADS_DIR (by hash),
-// falling back to IPFS if not found locally.
+// ReconcileStego applies stego payload into MCP SQL. Call only after on-chain
+// evidence (funding match / OP_RETURN stego hash) via the block monitor.
+// It first tries UPLOADS_DIR (by hash), falling back to IPFS for the blob only.
 func (s *Server) ReconcileStego(ctx context.Context, stegoCID, expectedHash string) error {
 	// Try local file first: if the stegoCID looks like a SHA256 hash,
 	// look for UPLOADS_DIR/<hash> on disk (synced by IPFS mirror).
 	if len(stegoCID) == 64 {
 		if _, hexErr := hex.DecodeString(stegoCID); hexErr == nil {
-			if err := s.reconcileStegoFromLocalFile(ctx, stegoCID); err == nil {
+			if err := s.reconcileStegoFromLocalFile(ctx, stegoCID, true); err == nil {
 				return nil
 			}
 			// Fall through to IPFS if local file reconcile failed.
 		}
 	}
-	_, err := s.reconcileStegoFromIPFS(ctx, stegoCID, expectedHash)
+	_, err := s.reconcileStegoFromIPFS(ctx, stegoCID, expectedHash, true)
 	return err
 }
 
-// reconcileStegoFromLocalFile reads a stego image from UPLOADS_DIR/<hash>
-// and runs the same reconciliation as reconcileStegoFromIPFS.
-func (s *Server) reconcileStegoFromLocalFile(ctx context.Context, stegoHash string) error {
+// reconcileStegoFromLocalFile reads a stego image from UPLOADS_DIR/<hash>.
+// When applySQL is true (chain-confirmed path), upserts contracts/tasks/ingestion.
+func (s *Server) reconcileStegoFromLocalFile(ctx context.Context, stegoHash string, applySQL bool) error {
 	uploadsDir := strings.TrimSpace(os.Getenv("UPLOADS_DIR"))
 	if uploadsDir == "" {
 		return fmt.Errorf("UPLOADS_DIR not set")
 	}
-       stegoPath := datadir.PartResolve(uploadsDir, stegoHash)
+	stegoPath := datadir.PartResolve(uploadsDir, stegoHash)
 	stegoBytes, err := os.ReadFile(stegoPath)
 	if err != nil {
 		return fmt.Errorf("read local stego %s: %w", stegoPath, err)
@@ -194,7 +196,11 @@ func (s *Server) reconcileStegoFromLocalFile(ctx context.Context, stegoHash stri
 	if !strings.EqualFold(actualHash, stegoHash) {
 		return fmt.Errorf("stego hash mismatch: expected %s got %s", stegoHash, actualHash)
 	}
-	log.Printf("stego: reconciling from local file %s (%d bytes)", stegoPath, len(stegoBytes))
+	if !applySQL {
+		log.Printf("stego: staged local file %s (%d bytes) — no SQL", stegoPath, len(stegoBytes))
+		return nil
+	}
+	log.Printf("stego: applying from local file %s (%d bytes) after on-chain path", stegoPath, len(stegoBytes))
 
 	rawBytes, err := extractStegoManifest(ctx, stegoBytes, loadStegoReconcileConfig())
 	if err != nil {
@@ -233,18 +239,17 @@ func (s *Server) reconcileStegoFromLocalFile(ctx context.Context, stegoHash stri
 			go s.downloadSandboxArtifacts(context.Background(), contractID)
 		}
 	}
-	log.Printf("stego: reconciled from local file: contract_id=%s, hash=%s", contractID, stegoHash)
+	log.Printf("stego: applied from local file: contract_id=%s, hash=%s", contractID, stegoHash)
 	return nil
 }
 
-// ReconcileStegoWithAnnouncement reconciles a stego image using embedded announcement data.
-// This is for the new architecture where contract info is embedded in the stego image
-// and passed via IPFS pubsub announcement.
+// ReconcileStegoWithAnnouncement stages a stego image from an IPFS pubsub
+// announcement onto local disk only. It does not write SQL — IPFS is untrusted.
 func (s *Server) ReconcileStegoWithAnnouncement(ctx context.Context, ann *stegoAnnouncement) error {
 	// Download stego image from IPFS
 	ipfsClient := ipfs.NewClientFromEnv()
 	if ipfsClient == nil {
-		return fmt.Errorf("IPFS client is disabled - cannot reconcile stego")
+		return fmt.Errorf("IPFS client is disabled - cannot stage stego")
 	}
 	stegoBytes, err := ipfsClient.Cat(ctx, ann.StegoCID)
 	if err != nil {
@@ -256,108 +261,36 @@ func (s *Server) ReconcileStegoWithAnnouncement(ctx context.Context, ann *stegoA
 	sum := sha256.Sum256(stegoBytes)
 	stegoHash := hex.EncodeToString(sum[:])
 	uploadsDir := strings.TrimSpace(os.Getenv("UPLOADS_DIR"))
-       uploadPath := datadir.PartPath(uploadsDir, stegoHash)
-       if err := os.MkdirAll(filepath.Dir(uploadPath), 0755); err != nil {
-               return fmt.Errorf("failed to create partition dir: %w", err)
-       }
+	uploadPath := datadir.PartPath(uploadsDir, stegoHash)
+	if err := os.MkdirAll(filepath.Dir(uploadPath), 0755); err != nil {
+		return fmt.Errorf("failed to create partition dir: %w", err)
+	}
 	if err := os.WriteFile(uploadPath, stegoBytes, 0644); err != nil {
 		return fmt.Errorf("failed to write stego image: %w", err)
 	}
-	log.Printf("stego: wrote stego image to %s (%d bytes)", uploadPath, len(stegoBytes))
-
-	// Extract manifest + payload directly from the stego image.
-	// v2 images contain the full payload inline (JSON); v1 images
-	// only have a YAML manifest and require an IPFS fetch for the payload.
-	rawBytes, err := extractStegoManifest(ctx, stegoBytes, loadStegoReconcileConfig())
-	if err != nil {
-		return fmt.Errorf("stego extraction failed: %w", err)
-	}
-	manifest, payload, err := stego.ParseEmbedded(rawBytes)
-	if err != nil {
-		return fmt.Errorf("stego parse failed: %w", err)
-	}
-	// Fall back to announcement fields when extraction gives empty manifest
-	if manifest.ProposalID == "" {
-		manifest.ProposalID = ann.ProposalID
-	}
-	if manifest.VisiblePixelHash == "" {
-		manifest.VisiblePixelHash = ann.VisiblePixelHash
-	}
-	if manifest.Issuer == "" {
-		manifest.Issuer = ann.Issuer
-	}
-	if manifest.CreatedAt <= 0 {
-		manifest.CreatedAt = time.Now().Unix()
-	}
-	// v1 fallback: payload was not inline — fetch from IPFS
-	if payload.SchemaVersion == 0 && manifest.PayloadCID != "" {
-		payloadBytes, err := ipfsClient.Cat(ctx, manifest.PayloadCID)
-		if err != nil {
-			return fmt.Errorf("ipfs cat payload failed: %w", err)
+	// Also stage under expected hash / visible hash aliases if provided, so the
+	// block monitor can resolve either OP_RETURN field once confirmation lands.
+	for _, alias := range []string{ann.ExpectedHash, ann.VisiblePixelHash} {
+		alias = strings.TrimSpace(alias)
+		if alias == "" || strings.EqualFold(alias, stegoHash) {
+			continue
 		}
-		if err := json.Unmarshal(payloadBytes, &payload); err != nil {
-			return fmt.Errorf("payload json decode failed: %w", err)
+		if len(alias) != 64 {
+			continue
 		}
-	}
-
-	// Determine contract ID. Prefer wish hash (ExpectedHash / visible), fall back to
-	// the stego image's own content hash so either can trigger the ingestion record.
-	contractID := strings.TrimSpace(ann.ExpectedHash)
-	if contractID == "" && ann.ProposalID != "" {
-		contractID = ann.ProposalID
-	}
-	if contractID == "" {
-		// stegoHash was computed above from the downloaded bytes.
-		contractID = stegoHash
-	}
-	if contractID == "" {
-		return fmt.Errorf("unable to determine contract ID from announcement")
-	}
-
-	// Upsert contract from payload
-	if err := s.UpsertContractFromStegoPayload(ctx, contractID, ann.StegoCID, stegoHash, manifest, payload); err != nil {
-		return fmt.Errorf("failed to upsert contract: %w", err)
-	}
-
-	// Ensure stego ingestion record
-	s.ensureStegoIngestion(ctx, contractID, ann.StegoCID, stegoHash, stegoBytes, manifest)
-
-	// If the announcement carries sandbox_tarball_cid that wasn't in the
-	// payload metadata, persist it so downloadSandboxArtifacts can find it.
-	if cid := strings.TrimSpace(ann.SandboxTarballCID); cid != "" {
-		proposalID := strings.TrimSpace(manifest.ProposalID)
-		if proposalID == "" {
-			proposalID = contractID
+		if _, err := hex.DecodeString(alias); err != nil {
+			continue
 		}
-		if p, err := s.store.GetProposal(ctx, proposalID); err == nil {
-			pmeta := copyMeta(p.Metadata)
-			if pmeta == nil {
-				pmeta = map[string]interface{}{}
-			}
-			if strings.TrimSpace(toString(pmeta["sandbox_tarball_cid"])) == "" {
-				pmeta["sandbox_tarball_cid"] = cid
-				_ = s.store.UpdateProposalMetadata(ctx, p.ID, pmeta)
-			}
-		}
+		// Do not write wrong content under an unrelated hash; only symlink-style
+		// alias when alias equals content hash (already handled). Skip otherwise.
 	}
-
-	log.Printf("stego: reconciled from announcement: contract_id=%s, stego_cid=%s", contractID, ann.StegoCID)
-
-	// If the contract is already confirmed (e.g. via prior chain observation or sync),
-	// ensure AI artifacts are decompressed into the sandbox for serving.
-	// This is especially relevant when donation funding was chosen:
-	// the post-PSBT stego publish carries the sandbox tarball cid+hash, and on
-	// confirmation remotes must have the files under UPLOADS_DIR/results/<id>/
-	// so /sandbox/ and /uploads/results/ can serve them.
-	if c, err := s.store.GetContract(contractID); err == nil {
-		if strings.EqualFold(strings.TrimSpace(c.Status), "confirmed") {
-			go s.downloadSandboxArtifacts(context.Background(), contractID)
-		}
-	}
+	log.Printf("stego: staged from IPFS announcement hash=%s cid=%s path=%s (no SQL until on-chain confirm)", stegoHash, ann.StegoCID, uploadPath)
 	return nil
 }
 
-func (s *Server) reconcileStegoFromIPFS(ctx context.Context, stegoCID string, expectedHash string) (stegoReconcileResponse, error) {
+// reconcileStegoFromIPFS downloads stego bytes (and optionally applies SQL).
+// applySQL must be true only for the block-monitor confirmation path.
+func (s *Server) reconcileStegoFromIPFS(ctx context.Context, stegoCID string, expectedHash string, applySQL bool) (stegoReconcileResponse, error) {
 	ipfsClient := ipfs.NewClientFromEnv()
 	if ipfsClient == nil {
 		return stegoReconcileResponse{}, fmt.Errorf("IPFS client is disabled")
@@ -371,6 +304,15 @@ func (s *Server) reconcileStegoFromIPFS(ctx context.Context, stegoCID string, ex
 	if expectedHash != "" && !strings.EqualFold(expectedHash, stegoHash) {
 		return stegoReconcileResponse{}, fmt.Errorf("stego hash mismatch: expected %s got %s", expectedHash, stegoHash)
 	}
+	// Always stage on disk for later chain confirmation.
+	uploadsDir := strings.TrimSpace(os.Getenv("UPLOADS_DIR"))
+	if uploadsDir != "" {
+		uploadPath := datadir.PartPath(uploadsDir, stegoHash)
+		if err := os.MkdirAll(filepath.Dir(uploadPath), 0755); err == nil {
+			_ = os.WriteFile(uploadPath, stegoBytes, 0644)
+		}
+	}
+
 	rawBytes, err := extractStegoManifest(ctx, stegoBytes, loadStegoReconcileConfig())
 	if err != nil {
 		return stegoReconcileResponse{}, err
@@ -393,10 +335,14 @@ func (s *Server) reconcileStegoFromIPFS(ctx context.Context, stegoCID string, ex
 			return stegoReconcileResponse{}, fmt.Errorf("payload json decode failed: %w", err)
 		}
 	}
-	if err := s.UpsertContractFromStegoPayload(ctx, contractID, stegoCID, stegoHash, manifest, payload); err != nil {
-		return stegoReconcileResponse{}, err
+	if applySQL {
+		if err := s.UpsertContractFromStegoPayload(ctx, contractID, stegoCID, stegoHash, manifest, payload); err != nil {
+			return stegoReconcileResponse{}, err
+		}
+		s.ensureStegoIngestion(ctx, contractID, stegoCID, stegoHash, stegoBytes, manifest)
+	} else {
+		log.Printf("stego: staged from IPFS cid=%s hash=%s (no SQL until on-chain confirm)", stegoCID, stegoHash)
 	}
-	s.ensureStegoIngestion(ctx, contractID, stegoCID, stegoHash, stegoBytes, manifest)
 	return stegoReconcileResponse{
 		ContractID:       contractID,
 		StegoCID:         stegoCID,
@@ -571,6 +517,9 @@ func (s *Server) fillProofFromIngestion(contractID string, proof *smart_contract
 	}
 }
 
+// UpsertContractFromStegoPayload writes proposal/contract/task rows from a
+// decoded stego payload. Callers must only invoke this after on-chain evidence
+// (block monitor ReconcileStego). IPFS mirror/pubsub paths must not call this.
 func (s *Server) UpsertContractFromStegoPayload(ctx context.Context, contractID, stegoCID, stegoHash string, manifest stego.Manifest, payload stego.Payload) error {
 	if contractID == "" {
 		return fmt.Errorf("contract id missing")

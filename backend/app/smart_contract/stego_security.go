@@ -1,5 +1,12 @@
 package smart_contract
 
+// Trust model (IPFS vs chain):
+//
+//   IPFS / pubsub / mirror  → stage bytes on disk only (UPLOADS_DIR). No SQL.
+//   Block monitor on-chain  → ReconcileStego(applySQL) → UpsertContractFromStegoPayload
+//
+// IPFS is public and untrusted. Open contracts must not appear from IPFS alone.
+
 import (
 	"log"
 	"strings"
