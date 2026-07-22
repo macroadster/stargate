@@ -799,8 +799,10 @@ func (s *MemoryStore) CreateProposal(ctx context.Context, p smart_contract.Propo
 		if visible != "" {
 			wishID := identity.ToWishID(visible)
 			if contract, ok := s.contracts[wishID]; ok {
-				contract.Status = "superseded"
-				s.contracts[wishID] = contract
+				if !IsNonSupersedableContractStatus(contract.Status) && !strings.EqualFold(contract.Status, "superseded") {
+					contract.Status = "superseded"
+					s.contracts[wishID] = contract
+				}
 			}
 		}
 	}
@@ -860,7 +862,9 @@ func (s *MemoryStore) UpsertContractWithTasks(ctx context.Context, contract smar
 		contract.CreatedAt = time.Now()
 	}
 
-	// Store the contract
+	if existing, ok := s.contracts[contract.ContractID]; ok {
+		contract = ProtectContractUpsert(existing, contract)
+	}
 	s.contracts[contract.ContractID] = contract
 
 	// Store all tasks

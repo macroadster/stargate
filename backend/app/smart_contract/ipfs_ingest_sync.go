@@ -575,13 +575,15 @@ func ensureProposalFromStegoPayload(ctx context.Context, store Store, stegoCID s
 			"stego_manifest_proposal_id": manifest.ProposalID,
 			"stego_manifest_schema":      manifest.SchemaVersion,
 			"origin_proposal_id":         manifest.ProposalID,
+			"stego_replicated":           true,
 		}
 		if visibleHash != "" {
 			updates["visible_pixel_hash"] = visibleHash
 			updates["contract_id"] = visibleHash
 			updates["ingestion_id"] = visibleHash
 		}
-		for k, v := range payloadMetadataMap(payload) {
+		// Allowlisted payload keys only (no funding_txid spoofing).
+		for k, v := range filterStegoPayloadMetadata(payload) {
 			if _, ok := updates[k]; !ok {
 				updates[k] = v
 			}
@@ -608,25 +610,14 @@ func ensureProposalFromStegoPayload(ctx context.Context, store Store, stegoCID s
 		contractID = "wish-" + strings.TrimPrefix(visibleHash, "wish-")
 	}
 	tasks := make([]smart_contract.Task, 0, len(payload.Tasks))
-	for _, t := range payload.Tasks {
-		if strings.TrimSpace(t.TaskID) == "" {
+	for _, raw := range payload.Tasks {
+		t, ok := sanitizeStegoTask(raw)
+		if !ok {
 			continue
 		}
-		st := t.Status
-		if st == "" {
-			st = "available"
-		}
-		tasks = append(tasks, smart_contract.Task{
-			TaskID:           t.TaskID,
-			ContractID:       contractID,
-			GoalID:           "wish",
-			Title:            t.Title,
-			Description:      t.Description,
-			BudgetSats:       t.BudgetSats,
-			Skills:           t.Skills,
-			Status:           st,
-			ContractorWallet: t.ContractorWallet,
-		})
+		t.ContractID = contractID
+		t.GoalID = "wish"
+		tasks = append(tasks, t)
 	}
 	meta := map[string]interface{}{
 		"stego_image_cid":            stegoCID,
@@ -637,23 +628,25 @@ func ensureProposalFromStegoPayload(ctx context.Context, store Store, stegoCID s
 		"stego_manifest_schema":      manifest.SchemaVersion,
 		"origin_proposal_id":         manifest.ProposalID,
 		"visible_pixel_hash":         visibleHash,
+		"stego_replicated":           true,
 	}
 	if visibleHash != "" {
 		meta["contract_id"] = visibleHash
 		meta["ingestion_id"] = visibleHash
 	}
-	for k, v := range payloadMetadataMap(payload) {
+	for k, v := range filterStegoPayloadMetadata(payload) {
 		if _, ok := meta[k]; !ok {
 			meta[k] = v
 		}
 	}
+	// Untrusted stego never auto-approves; chain/API approval is the trust root.
 	proposal := smart_contract.Proposal{
 		ID:               proposalID,
 		Title:            title,
 		DescriptionMD:    payload.Proposal.DescriptionMD,
 		VisiblePixelHash: visibleHash,
 		BudgetSats:       payload.Proposal.BudgetSats,
-		Status:           "approved",
+		Status:           "pending",
 		CreatedAt:        createdAt,
 		Tasks:            tasks,
 		Metadata:         meta,
@@ -662,25 +655,26 @@ func ensureProposalFromStegoPayload(ctx context.Context, store Store, stegoCID s
 		return err
 	}
 
-	// Ensure a contract row exists (for /api/open-contracts, list_contracts, etc.).
-	// For stego published after PSBT build, prefer status "funded" so finished
-	// work (with artifacts) appears as work completed / waiting for on-chain
-	// confirmation rather than disappearing.
-	cStatus := "active"
-	if hasIngestionPSBT(meta) {
-		cStatus = "funded"
+	// Ensure a contract row exists for listings. Never mark funded from stego alone —
+	// funding status is set by chain observation / authenticated ingest updates.
+	var existingContract *smart_contract.Contract
+	if c, err := store.GetContract(contractID); err == nil {
+		existingContract = &c
 	}
-	// Also check payload metadata for funding signals (txid etc).
-	for _, e := range payload.Metadata {
-		if strings.Contains(strings.ToLower(e.Key), "funding_tx") && strings.TrimSpace(e.Value) != "" {
-			cStatus = "funded"
-			break
+	cStatus := stegoContractStatus(existingContract)
+	cTitle := title
+	cBudget := payload.Proposal.BudgetSats
+	if shouldPreserveContractFields(existingContract) {
+		cTitle = existingContract.Title
+		cBudget = existingContract.TotalBudgetSats
+		if strings.TrimSpace(cTitle) == "" {
+			cTitle = title
 		}
 	}
 	contract := smart_contract.Contract{
 		ContractID:          contractID,
-		Title:               title,
-		TotalBudgetSats:     payload.Proposal.BudgetSats,
+		Title:               cTitle,
+		TotalBudgetSats:     cBudget,
 		GoalsCount:          1,
 		AvailableTasksCount: len(tasks),
 		Status:              cStatus,

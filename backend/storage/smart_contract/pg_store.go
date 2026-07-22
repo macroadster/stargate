@@ -1249,17 +1249,18 @@ func (s *PGStore) UpsertContractWithTasks(ctx context.Context, contract smart_co
 		createdAt = fmt.Sprintf("'%s'", contract.CreatedAt.Format(time.RFC3339))
 	}
 
+	// Protected statuses keep title/budget/status under concurrent stego upserts.
 	query := fmt.Sprintf(`
 INSERT INTO mcp_contracts (contract_id, title, total_budget_sats, goals_count, available_tasks_count, status, skills, stego_image_url, created_at)
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8, %s)
 ON CONFLICT (contract_id) DO UPDATE SET
-  title = EXCLUDED.title,
-  total_budget_sats = EXCLUDED.total_budget_sats,
-  goals_count = EXCLUDED.goals_count,
+  title = CASE WHEN lower(mcp_contracts.status) IN ('confirmed','completed','superseded') THEN mcp_contracts.title ELSE EXCLUDED.title END,
+  total_budget_sats = CASE WHEN lower(mcp_contracts.status) IN ('confirmed','completed','superseded') THEN mcp_contracts.total_budget_sats ELSE EXCLUDED.total_budget_sats END,
+  goals_count = CASE WHEN lower(mcp_contracts.status) IN ('confirmed','completed','superseded') THEN mcp_contracts.goals_count ELSE EXCLUDED.goals_count END,
   available_tasks_count = EXCLUDED.available_tasks_count,
-  status = EXCLUDED.status,
-  skills = EXCLUDED.skills,
-  stego_image_url = EXCLUDED.stego_image_url
+  status = CASE WHEN lower(mcp_contracts.status) IN ('confirmed','completed','superseded') THEN mcp_contracts.status ELSE EXCLUDED.status END,
+  skills = CASE WHEN EXCLUDED.skills IS NOT NULL AND cardinality(EXCLUDED.skills) > 0 THEN EXCLUDED.skills ELSE mcp_contracts.skills END,
+  stego_image_url = CASE WHEN EXCLUDED.stego_image_url IS NOT NULL AND EXCLUDED.stego_image_url <> '' THEN EXCLUDED.stego_image_url ELSE mcp_contracts.stego_image_url END
  `, createdAt)
 
 	_, err = tx.Exec(ctx, query, contract.ContractID, contract.Title, contract.TotalBudgetSats, contract.GoalsCount, contract.AvailableTasksCount, contract.Status, contract.Skills, contract.StegoImageURL)
@@ -1524,7 +1525,7 @@ ON CONFLICT(contract_id) DO UPDATE SET
 	}
 
 	// Supersede the wish contract (peer nodes don't run archiveWishContract)
-	_, _ = s.pool.Exec(ctx, `UPDATE mcp_contracts SET status='superseded' WHERE contract_id=$1 AND status<>'superseded'`, wishID)
+	_, _ = s.pool.Exec(ctx, `UPDATE mcp_contracts SET status='superseded' WHERE contract_id=$1 AND `+supersedeEligibleStatusSQL, wishID)
 
 	// Handle proposal status updates for confirmed contracts
 	_, err = s.pool.Exec(ctx, `
@@ -1579,7 +1580,8 @@ ON CONFLICT (id) DO UPDATE SET
 		return err
 	}
 	if wishToSupersede != "" {
-		_, _ = s.pool.Exec(ctx, `UPDATE mcp_contracts SET status='superseded' WHERE contract_id=$1`, wishToSupersede)
+		// Never demote confirmed/completed wishes via proposal create.
+		_, _ = s.pool.Exec(ctx, `UPDATE mcp_contracts SET status='superseded' WHERE contract_id=$1 AND `+supersedeEligibleStatusSQL, wishToSupersede)
 	}
 	return nil
 }
@@ -1919,7 +1921,8 @@ WHERE id<>$1 AND status='pending' AND (
 	}
 	if visible != "" {
 		wishID := identity.ToWishID(visible)
-		_, _ = tx.Exec(ctx, `UPDATE mcp_contracts SET status='superseded' WHERE contract_id=$1`, wishID)
+		// Authenticated approval still must not demote confirmed/completed wishes.
+		_, _ = tx.Exec(ctx, `UPDATE mcp_contracts SET status='superseded' WHERE contract_id=$1 AND `+supersedeEligibleStatusSQL, wishID)
 	}
 
 	return tx.Commit(ctx)

@@ -579,6 +579,8 @@ func (s *Server) UpsertContractFromStegoPayload(ctx context.Context, contractID,
 	if proposalID == "" {
 		proposalID = contractID
 	}
+
+	// System metadata written by the reconciler (not attacker payload keys).
 	meta := map[string]interface{}{
 		"stego_contract_id":         stegoHash,
 		"stego_image_cid":           stegoCID,
@@ -589,46 +591,35 @@ func (s *Server) UpsertContractFromStegoPayload(ctx context.Context, contractID,
 		"stego_manifest_schema":     manifest.SchemaVersion,
 		"origin_proposal_id":        manifest.ProposalID,
 		"visible_pixel_hash":        manifest.VisiblePixelHash,
+		"stego_replicated":          true,
 	}
 	// Propagate sandbox artifact metadata so peers can download on confirmation.
 	if manifest.SandboxHash != "" {
 		meta["sandbox_hash"] = manifest.SandboxHash
 	}
-	for _, entry := range payload.Metadata {
-		if entry.Key == "sandbox_tarball_cid" && strings.TrimSpace(entry.Value) != "" {
-			meta["sandbox_tarball_cid"] = entry.Value
-		}
-	}
-	// Merge payload metadata (includes funding_txid etc from PSBT time) so
-	// hasIngestionPSBT can detect funded state for setting contract status.
-	for k, v := range payloadMetadataMap(payload) {
+	// Allowlisted payload metadata only — never import funding_txid etc. from stego.
+	for k, v := range filterStegoPayloadMetadata(payload) {
 		if _, ok := meta[k]; !ok {
 			meta[k] = v
 		}
 	}
-	if payload.Proposal.Title == "" {
-		payload.Proposal.Title = "Stego Contract " + contractID
+
+	title := strings.TrimSpace(payload.Proposal.Title)
+	if title == "" {
+		title = "Stego Contract " + contractID
 	}
-	proposal := smart_contract.Proposal{
-		ID:               proposalID,
-		Title:            payload.Proposal.Title,
-		DescriptionMD:    payload.Proposal.DescriptionMD,
-		VisiblePixelHash: manifest.VisiblePixelHash,
-		BudgetSats:       payload.Proposal.BudgetSats,
-		Status:           "approved",
-		CreatedAt:        time.Unix(payload.Proposal.CreatedAt, 0),
-		Metadata:         meta,
+	if len(title) > scstore.MaxProposalTitle {
+		title = title[:scstore.MaxProposalTitle]
 	}
-	if proposal.CreatedAt.IsZero() {
-		proposal.CreatedAt = time.Now()
+	title, _ = scstore.SanitizeInput(title)
+	desc := payload.Proposal.DescriptionMD
+	if len(desc) > scstore.MaxProposalDesc {
+		desc = desc[:scstore.MaxProposalDesc]
 	}
-	if err := s.store.CreateProposal(ctx, proposal); err != nil {
-		return fmt.Errorf("create proposal failed: %w", err)
-	}
+	desc, _ = scstore.SanitizeInput(desc)
+
 	// For wish-style contracts (identified by 64-hex visible pixel hash), normalize
-	// the stored ContractID to "wish-<hash>" for consistency with wish creation,
-	// open-contracts listings, and GetContract calls. Non-wish or test contractIDs
-	// (e.g. "contract-foo") are left as provided.
+	// the stored ContractID to "wish-<hash>" for consistency with wish creation.
 	vh := strings.TrimSpace(manifest.VisiblePixelHash)
 	if vh == "" {
 		vh = strings.TrimSpace(payload.Proposal.VisiblePixelHash)
@@ -636,52 +627,90 @@ func (s *Server) UpsertContractFromStegoPayload(ctx context.Context, contractID,
 	if vh != "" && identity.IsPixelHash(contractID) {
 		contractID = "wish-" + strings.TrimPrefix(vh, "wish-")
 	}
-	// If the stego was published after PSBT (funding info present in meta), mark as funded
-	// so finished contracts (PSBT built + artifacts) show as work completed / waiting
-	// for on-chain confirmation.
-	contractStatus := "active"
-	if hasIngestionPSBT(meta) {
-		contractStatus = "funded"
+
+	// Load existing rows before write so we never demote trust or overwrite protected fields.
+	var existingContract *smart_contract.Contract
+	if c, err := s.store.GetContract(contractID); err == nil {
+		existingContract = &c
 	}
-	if existing, err := s.store.GetContract(contractID); err == nil {
-		switch strings.ToLower(existing.Status) {
-		case "confirmed", "completed", "superseded":
-			contractStatus = existing.Status
+	var existingProposal *smart_contract.Proposal
+	if p, err := s.store.GetProposal(ctx, proposalID); err == nil {
+		existingProposal = &p
+	}
+
+	proposalStatus := stegoProposalStatus(existingProposal)
+	// If proposal already exists, only refresh stego metadata — do not demote status
+	// or re-trigger CreateProposal supersede side effects with approved status.
+	if existingProposal != nil && strings.TrimSpace(existingProposal.ID) != "" {
+		updates := map[string]interface{}{}
+		for k, v := range meta {
+			updates[k] = v
+		}
+		_ = s.store.UpdateProposalMetadata(ctx, proposalID, updates)
+	} else {
+		proposal := smart_contract.Proposal{
+			ID:               proposalID,
+			Title:            title,
+			DescriptionMD:    desc,
+			VisiblePixelHash: manifest.VisiblePixelHash,
+			BudgetSats:       payload.Proposal.BudgetSats,
+			Status:           proposalStatus, // pending — never auto-approved from stego
+			CreatedAt:        time.Unix(payload.Proposal.CreatedAt, 0),
+			Metadata:         meta,
+		}
+		if proposal.CreatedAt.IsZero() {
+			proposal.CreatedAt = time.Now()
+		}
+		if err := s.store.CreateProposal(ctx, proposal); err != nil {
+			return fmt.Errorf("create proposal failed: %w", err)
 		}
 	}
+
+	// Contract status: never "funded" from stego metadata alone.
+	contractStatus := stegoContractStatus(existingContract)
+	contractTitle := title
+	contractBudget := payload.Proposal.BudgetSats
+	if shouldPreserveContractFields(existingContract) {
+		// Active/funded/confirmed/etc. keep identity fields from the existing row.
+		contractTitle = existingContract.Title
+		contractBudget = existingContract.TotalBudgetSats
+		if strings.TrimSpace(contractTitle) == "" {
+			contractTitle = title
+		}
+	}
+
 	contract := smart_contract.Contract{
 		ContractID:      contractID,
-		Title:           proposal.Title,
-		TotalBudgetSats: proposal.BudgetSats,
+		Title:           contractTitle,
+		TotalBudgetSats: contractBudget,
 		GoalsCount:      1,
 		Status:          contractStatus,
+		Metadata:        meta,
 	}
+
 	tasks := make([]smart_contract.Task, 0, len(payload.Tasks))
-	for _, t := range payload.Tasks {
-		if strings.TrimSpace(t.TaskID) == "" {
+	for _, rawTask := range payload.Tasks {
+		t, ok := sanitizeStegoTask(rawTask)
+		if !ok {
 			continue
 		}
+		t.ContractID = contractID
+		t.GoalID = contractID
 
 		// Load existing task to preserve existing merkle_proof
 		existingTask, err := s.store.GetTask(t.TaskID)
 		var merkleProof *smart_contract.MerkleProof
 		if err == nil && existingTask.MerkleProof != nil {
-			// Preserve existing merkle_proof to avoid overwriting with nil
 			merkleProof = existingTask.MerkleProof
 		}
 
-		// Update MerkleProof for commitment script - use hashlock script for donation sweeping
-		// Do NOT overwrite with P2WPKH since contractors are paid directly via PSBT payouts
+		// Build hashlock proof only when a validated contractor wallet is present.
 		if strings.TrimSpace(t.ContractorWallet) != "" {
-			// The PSBT donation commitment uses the wish image hash (VisiblePixelHash).
-			// The product image hash (stegoHash) is stored separately in ProductPixelHash
-			// for the two-phase sweep: wish-hashlock → product-hashlock → donation addr.
 			commitmentHashHex := manifest.VisiblePixelHash
 			pixelHashBytes, err := hex.DecodeString(commitmentHashHex)
 			if err != nil {
 				log.Printf("stego reconcile: failed to decode commitment hash for task %s: %v", t.TaskID, err)
 			} else {
-				// Build hashlock script locally (same logic as PSBT builder)
 				lockHash := sha256.Sum256(pixelHashBytes)
 				builder := txscript.NewScriptBuilder()
 				builder.AddOp(txscript.OP_SHA256)
@@ -691,24 +720,21 @@ func (s *Server) UpsertContractFromStegoPayload(ctx context.Context, contractID,
 				if err != nil {
 					log.Printf("stego reconcile: failed to build hashlock redeem script for task %s: %v", t.TaskID, err)
 				} else {
-					// Calculate script hashes for proper redemption matching
 					scriptHash := sha256.Sum256(redeemScript)
 					contractorProof := &smart_contract.MerkleProof{
 						VisiblePixelHash:       manifest.VisiblePixelHash,
 						CommitmentPixelHash:    commitmentHashHex,
 						CommitmentSource:       "wish",
-						ProductPixelHash:       stegoHash, // product hash for two-phase recommitment sweep
+						ProductPixelHash:       stegoHash,
 						ContractorWallet:       t.ContractorWallet,
-						CommitmentAddress:      t.ContractorWallet, // Use contractor wallet as display address
+						CommitmentAddress:      t.ContractorWallet,
 						CommitmentRedeemScript: hex.EncodeToString(redeemScript),
 						CommitmentRedeemHash:   hex.EncodeToString(scriptHash[:]),
 						ConfirmationStatus:     "provisional",
 						SeenAt:                 time.Now(),
 					}
 
-					// Merge with existing proof or use new one
 					if merkleProof == nil {
-						// Preserve funding fields from existing task if available
 						if existingTask.MerkleProof != nil {
 							contractorProof.TxID = existingTask.MerkleProof.TxID
 							contractorProof.BlockHeight = existingTask.MerkleProof.BlockHeight
@@ -719,17 +745,17 @@ func (s *Server) UpsertContractFromStegoPayload(ctx context.Context, contractID,
 							contractorProof.CommitmentVout = existingTask.MerkleProof.CommitmentVout
 							contractorProof.CommitmentSats = existingTask.MerkleProof.CommitmentSats
 						}
-						// Fill funding fields from ingestion metadata if still
-						// missing (peer nodes receive funding info via IPFS
-						// announcement but the task proof may not have it yet).
 						if contractorProof.TxID == "" || contractorProof.CommitmentVout == 0 {
 							s.fillProofFromIngestion(contractID, contractorProof)
 						}
 						merkleProof = contractorProof
 					} else {
-						// Update contractor-specific fields while preserving existing data
-						merkleProof.ContractorWallet = contractorProof.ContractorWallet
-						merkleProof.CommitmentAddress = contractorProof.CommitmentAddress
+						// Preserve existing contractor wallet on protected/funded tasks —
+						// do not let stego redirect payouts if wallet already set.
+						if strings.TrimSpace(merkleProof.ContractorWallet) == "" {
+							merkleProof.ContractorWallet = contractorProof.ContractorWallet
+							merkleProof.CommitmentAddress = contractorProof.CommitmentAddress
+						}
 						merkleProof.CommitmentRedeemScript = contractorProof.CommitmentRedeemScript
 						merkleProof.CommitmentRedeemHash = contractorProof.CommitmentRedeemHash
 						merkleProof.VisiblePixelHash = contractorProof.VisiblePixelHash
@@ -739,31 +765,19 @@ func (s *Server) UpsertContractFromStegoPayload(ctx context.Context, contractID,
 						if merkleProof.SeenAt.IsZero() {
 							merkleProof.SeenAt = contractorProof.SeenAt
 						}
-						// Backfill funding fields that may have arrived later via IPFS.
 						if merkleProof.TxID == "" || merkleProof.CommitmentVout == 0 {
 							s.fillProofFromIngestion(contractID, merkleProof)
 						}
 					}
 				}
 			}
+		} else if merkleProof != nil {
+			// Always stamp product pixel hash for two-phase sweep even without new wallet.
+			merkleProof.ProductPixelHash = stegoHash
 		}
 
-		status := t.Status
-		if status == "" {
-			status = "available"
-		}
-		tasks = append(tasks, smart_contract.Task{
-			TaskID:           t.TaskID,
-			ContractID:       contractID,
-			GoalID:           contractID,
-			Title:            t.Title,
-			Description:      t.Description,
-			BudgetSats:       t.BudgetSats,
-			Skills:           t.Skills,
-			Status:           status,
-			ContractorWallet: t.ContractorWallet,
-			MerkleProof:      merkleProof,
-		})
+		t.MerkleProof = merkleProof
+		tasks = append(tasks, t)
 	}
 	sort.Slice(tasks, func(i, j int) bool {
 		return tasks[i].TaskID < tasks[j].TaskID

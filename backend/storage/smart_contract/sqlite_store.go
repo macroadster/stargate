@@ -890,17 +890,19 @@ func (s *SQLiteStore) UpsertContractWithTasks(ctx context.Context, contract smar
 		createdAt = contract.CreatedAt.Format(time.RFC3339)
 	}
 
+	// Protected statuses (confirmed/completed/superseded) keep title, budget,
+	// and status; stego URL / skills / task counts may still refresh.
 	_, err = tx.ExecContext(ctx, `
 INSERT INTO mcp_contracts (contract_id, title, total_budget_sats, goals_count, available_tasks_count, status, skills, stego_image_url, created_at, metadata)
 VALUES (?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT(contract_id) DO UPDATE SET
-  title = excluded.title,
-  total_budget_sats = excluded.total_budget_sats,
-  goals_count = excluded.goals_count,
+  title = CASE WHEN lower(mcp_contracts.status) IN ('confirmed','completed','superseded') THEN mcp_contracts.title ELSE excluded.title END,
+  total_budget_sats = CASE WHEN lower(mcp_contracts.status) IN ('confirmed','completed','superseded') THEN mcp_contracts.total_budget_sats ELSE excluded.total_budget_sats END,
+  goals_count = CASE WHEN lower(mcp_contracts.status) IN ('confirmed','completed','superseded') THEN mcp_contracts.goals_count ELSE excluded.goals_count END,
   available_tasks_count = excluded.available_tasks_count,
-  status = excluded.status,
-  skills = excluded.skills,
-  stego_image_url = excluded.stego_image_url
+  status = CASE WHEN lower(mcp_contracts.status) IN ('confirmed','completed','superseded') THEN mcp_contracts.status ELSE excluded.status END,
+  skills = CASE WHEN excluded.skills IS NOT NULL AND excluded.skills <> '' THEN excluded.skills ELSE mcp_contracts.skills END,
+  stego_image_url = CASE WHEN excluded.stego_image_url IS NOT NULL AND excluded.stego_image_url <> '' THEN excluded.stego_image_url ELSE mcp_contracts.stego_image_url END
 `, contract.ContractID, contract.Title, contract.TotalBudgetSats, contract.GoalsCount, contract.AvailableTasksCount, contract.Status, skills, contract.StegoImageURL, createdAt, string(metadata))
 	if err != nil {
 		return err
@@ -1048,8 +1050,9 @@ FROM mcp_tasks WHERE contract_id=?
 		}
 	}
 
-	// Supersede the wish contract (peer nodes don't run archiveWishContract)
-	_, _ = s.db.ExecContext(ctx, `UPDATE mcp_contracts SET status='superseded' WHERE contract_id=? AND status<>'superseded'`, wishID)
+	// Supersede the wish contract (peer nodes don't run archiveWishContract).
+	// Confirmed/completed wishes must not be demoted (defense in depth).
+	_, _ = s.db.ExecContext(ctx, `UPDATE mcp_contracts SET status='superseded' WHERE contract_id=? AND `+supersedeEligibleStatusSQL, wishID)
 
 	// Update matching proposals to confirmed (mirrors PG behavior)
 	_, err = s.db.ExecContext(ctx, `
@@ -1197,7 +1200,8 @@ ON CONFLICT(id) DO UPDATE SET
 		return err
 	}
 	if wishToSupersede != "" {
-		_, _ = s.db.ExecContext(ctx, `UPDATE mcp_contracts SET status='superseded' WHERE contract_id=?`, wishToSupersede)
+		// Never demote confirmed/completed wishes via proposal create (stego/IPFS attack surface).
+		_, _ = s.db.ExecContext(ctx, `UPDATE mcp_contracts SET status='superseded' WHERE contract_id=? AND `+supersedeEligibleStatusSQL, wishToSupersede)
 	}
 	return nil
 }
@@ -1468,7 +1472,8 @@ WHERE id<>? AND status='pending' AND (
 	}
 	if visible != "" {
 		wishID := identity.ToWishID(visible)
-		if _, err := tx.ExecContext(ctx, `UPDATE mcp_contracts SET status='superseded' WHERE contract_id=?`, wishID); err != nil {
+		// Authenticated approval still must not demote confirmed/completed wishes.
+		if _, err := tx.ExecContext(ctx, `UPDATE mcp_contracts SET status='superseded' WHERE contract_id=? AND `+supersedeEligibleStatusSQL, wishID); err != nil {
 			return err
 		}
 	}
