@@ -859,6 +859,32 @@ func (h *InscriptionHandler) HandleDeleteInscription(w http.ResponseWriter, r *h
 	})
 }
 
+// normalizeBlockImageURL rewrites /api/block-image/<h>/wish-<hash> to bare hash.
+// ConfirmContract historically embedded the full contract_id (including wish-)
+// while on-disk keys are always the visible pixel hash.
+func normalizeBlockImageURL(imageURL string) string {
+	imageURL = strings.TrimSpace(imageURL)
+	if imageURL == "" {
+		return imageURL
+	}
+	const prefix = "/api/block-image/"
+	if !strings.HasPrefix(imageURL, prefix) {
+		return imageURL
+	}
+	rest := strings.TrimPrefix(imageURL, prefix)
+	parts := strings.SplitN(rest, "/", 2)
+	if len(parts) != 2 {
+		return imageURL
+	}
+	height, file := parts[0], parts[1]
+	// Strip a single wish- prefix from the file key.
+	if strings.HasPrefix(file, "wish-") {
+		file = strings.TrimPrefix(file, "wish-")
+		return prefix + height + "/" + file
+	}
+	return imageURL
+}
+
 // contractToInscriptionRequest converts a smart_contract.Contract to models.InscriptionRequest
 func contractToInscriptionRequest(contract sc.Contract) models.InscriptionRequest {
 	// Use persisted stego image URL or compute fallback
@@ -868,9 +894,13 @@ func contractToInscriptionRequest(contract sc.Contract) models.InscriptionReques
 	if imageURL != "" && !strings.HasPrefix(imageURL, "/") && !strings.HasPrefix(imageURL, "http") {
 		if contract.ConfirmedBlockHeight != nil {
 			filename := filepath.Base(imageURL)
+			// Bare pixel hash only — never wish- contract ids as filenames.
+			filename = strings.TrimPrefix(filename, "wish-")
 			imageURL = fmt.Sprintf("/api/block-image/%d/%s", *contract.ConfirmedBlockHeight, filename)
 		}
 	}
+
+	imageURL = normalizeBlockImageURL(imageURL)
 
 	if imageURL == "" {
 		imageURL = computeStegoImageURL(contract.ContractID)

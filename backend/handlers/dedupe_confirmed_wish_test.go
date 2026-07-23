@@ -6,6 +6,21 @@ import (
 	sc "stargate-backend/core/smart_contract"
 )
 
+func TestNormalizeBlockImageURLStripsWishPrefix(t *testing.T) {
+	hash := "a72d3bcda257ff166b14393b96651a8a49bdc20d8ab7e8a8d239be662db21f59"
+	in := "/api/block-image/145333/wish-" + hash
+	want := "/api/block-image/145333/" + hash
+	if got := normalizeBlockImageURL(in); got != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+	if got := normalizeBlockImageURL(want); got != want {
+		t.Fatalf("idempotent: got %q", got)
+	}
+	if got := normalizeBlockImageURL("/uploads/" + hash); got != "/uploads/"+hash {
+		t.Fatalf("non block-image unchanged: %q", got)
+	}
+}
+
 func TestDedupeConfirmedWishTwins(t *testing.T) {
 	hash := "a72d3bcda257ff166b14393b96651a8a49bdc20d8ab7e8a8d239be662db21f59"
 	in := []sc.Contract{

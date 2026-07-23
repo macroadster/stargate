@@ -987,7 +987,12 @@ func (s *SQLiteStore) ConfirmContract(ctx context.Context, contractID string, bl
 	if !plan.IsPixelHash {
 		wishID = "wish-" + normalized
 	}
-	stegoImageURL := fmt.Sprintf("/api/block-image/%d/%s", blockHeight, contractID)
+	// Image files on disk are keyed by bare pixel hash, never "wish-" contract ids.
+	imageFileKey := BlockImageFileKey(contractID)
+	if imageFileKey == "" {
+		imageFileKey = contractID
+	}
+	stegoImageURL := fmt.Sprintf("/api/block-image/%d/%s", blockHeight, imageFileKey)
 
 	confirmRow := func(id string) (bool, error) {
 		var existingMeta []byte

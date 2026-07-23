@@ -57,6 +57,25 @@ func PlanConfirmContractIDs(contractID string) ConfirmContractIDPlan {
 	}
 }
 
+// BlockImageFileKey returns the on-disk /uploads and block-image filename key
+// for a contract id. Filenames are always the bare visible pixel hash (or other
+// bare id) — never the "wish-" contract-id prefix.
+func BlockImageFileKey(contractID string) string {
+	id := strings.TrimSpace(contractID)
+	if id == "" {
+		return ""
+	}
+	// Prefer identity normalize so wish-/proposal-/task- prefixes drop once.
+	if n := identity.Normalize(id); n != "" {
+		// For pure pixel hashes keep lowercase hex for path stability.
+		if identity.IsPixelHash(n) {
+			return strings.ToLower(n)
+		}
+		return n
+	}
+	return strings.TrimPrefix(id, "wish-")
+}
+
 // ConfirmTryOrder is the preference order of existing rows to UPDATE.
 // Pixel hashes: canonical wish- first, then caller id, then bare hash.
 func (p ConfirmContractIDPlan) ConfirmTryOrder(callerID string) []string {

@@ -1489,20 +1489,36 @@ func (s *PGStore) ConfirmContract(ctx context.Context, contractID string, blockH
 		wishID = "wish-" + normalized
 	}
 
-	// Get image_file from contract metadata to construct the URL
+	// Get image_file from ingestion metadata when present; otherwise bare hash.
+	// On-disk keys never use the wish- contract-id prefix.
+	bareKey := BlockImageFileKey(contractID)
 	var imageFile string
-	err := s.pool.QueryRow(ctx,
+	_ = s.pool.QueryRow(ctx,
 		`SELECT COALESCE((metadata->>'image_file'), '') 
 		 FROM starlight_ingestions
-		 WHERE id=$1`, contractID).Scan(&imageFile)
-	if err != nil {
-		// Fallback: use contract_id directly (stealthy design)
+		 WHERE id=$1`, bareKey).Scan(&imageFile)
+	if strings.TrimSpace(imageFile) == "" && bareKey != contractID {
+		_ = s.pool.QueryRow(ctx,
+			`SELECT COALESCE((metadata->>'image_file'), '') 
+			 FROM starlight_ingestions
+			 WHERE id=$1`, contractID).Scan(&imageFile)
+	}
+	imageFile = strings.TrimSpace(imageFile)
+	if imageFile == "" {
+		imageFile = bareKey
+	}
+	// If metadata still carried a wish- key, strip it for the URL path.
+	if strings.HasPrefix(imageFile, "wish-") {
+		imageFile = strings.TrimPrefix(imageFile, "wish-")
+	}
+	if imageFile == "" {
 		imageFile = contractID
 	}
 	stegoImageURL := ""
 	if imageFile != "" {
 		stegoImageURL = fmt.Sprintf("/api/block-image/%d/%s", blockHeight, imageFile)
 	}
+	var err error
 
 	confirmRow := func(id string) (bool, error) {
 		tag, err := s.pool.Exec(ctx, `

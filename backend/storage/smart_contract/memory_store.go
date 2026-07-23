@@ -682,7 +682,10 @@ func (s *MemoryStore) ConfirmContract(ctx context.Context, contractID string, bl
 	if !plan.IsPixelHash {
 		wishID = "wish-" + normalized
 	}
-	imageFile := contractID
+	imageFile := BlockImageFileKey(contractID)
+	if imageFile == "" {
+		imageFile = contractID
+	}
 	stegoImageURL := fmt.Sprintf("/api/block-image/%d/%s", blockHeight, imageFile)
 
 	// Prefer canonical wish-<hash> for pixel hashes (single confirmed listing).

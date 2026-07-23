@@ -613,6 +613,47 @@ func TestSQLiteConfirmContractWithNullMetadata(t *testing.T) {
 	}
 }
 
+func TestBlockImageFileKeyStripsWishPrefix(t *testing.T) {
+	const hash = "a72d3bcda257ff166b14393b96651a8a49bdc20d8ab7e8a8d239be662db21f59"
+	if got := BlockImageFileKey("wish-" + hash); got != hash {
+		t.Fatalf("wish prefix: got %q want %q", got, hash)
+	}
+	if got := BlockImageFileKey(hash); got != hash {
+		t.Fatalf("bare: got %q want %q", got, hash)
+	}
+}
+
+func TestSQLiteConfirmContractStegoURLUsesBareHash(t *testing.T) {
+	store := newTestSQLiteStore(t)
+	ctx := context.Background()
+	const hash = "a72d3bcda257ff166b14393b96651a8a49bdc20d8ab7e8a8d239be662db21f59"
+	wishID := "wish-" + hash
+	if err := store.UpsertContractWithTasks(ctx, core.Contract{
+		ContractID: wishID,
+		Title:      "Twin Dragons",
+		Status:     "active",
+		CreatedAt:  time.Now().UTC(),
+	}, nil); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	const height = 145333
+	const txid = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	if err := store.ConfirmContract(ctx, wishID, height, txid); err != nil {
+		t.Fatalf("confirm: %v", err)
+	}
+	got, err := store.GetContract(wishID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "/api/block-image/145333/" + hash
+	if got.StegoImageURL != want {
+		t.Fatalf("stego_image_url: got %q want %q", got.StegoImageURL, want)
+	}
+	if strings.Contains(got.StegoImageURL, "wish-") {
+		t.Fatalf("stego_image_url must not contain wish- prefix: %q", got.StegoImageURL)
+	}
+}
+
 func TestSQLiteConfirmContractBootstrapsFromWishWithNullMetadata(t *testing.T) {
 	store := newTestSQLiteStore(t)
 	ctx := context.Background()

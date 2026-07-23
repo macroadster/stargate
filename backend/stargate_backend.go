@@ -910,6 +910,8 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 
 		height := pathParts[0]
 		filename := pathParts[1]
+		// Contract ids use wish-<hash>; on-disk image keys are bare pixel hash.
+		filename = strings.TrimPrefix(filename, "wish-")
 
 		// Try to locate the image on disk (blocks/<height>_<hash>/images/<filename>)
 		if fsPath, ok := findImagePath(height, filename); ok {
