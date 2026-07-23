@@ -434,6 +434,11 @@ func main() {
 func runHTTPServer(store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, apiKeyValidator auth.APIKeyValidator, ingestionSvc *services.IngestionService, challengeStore *auth.ChallengeStore, ipfsClient *ipfs.Client) {
 	log.Println("=== STARTING STARGATE HTTP SERVER ===")
 
+	// Wrap the MCP store so ConfirmContract / status updates / upserts invalidate
+	// /api/open-contracts list caches (prevents stale /contracts first pages).
+	notifyingStore := scstore.NewNotifyingStore(store)
+	store = notifyingStore
+
 	// Diagnostic snapshot of config that drives background CPU load.
 	log.Printf("DIAG: STARGATE_AGENT_ENABLED=%s WATCHER=%s WORKER=%s POLL=%s",
 		os.Getenv("STARGATE_AGENT_ENABLED"), os.Getenv("STARGATE_AGENT_WATCHER_ENABLED"), os.Getenv("STARGATE_AGENT_WORKER_ENABLED"),
@@ -470,6 +475,22 @@ func runHTTPServer(store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, api
 	// Initialize dependency container
 	container := container.NewContainer(apiKeyIssuer, apiKeyValidator)
 
+	// Start Bitcoin full node (btcd, no mining) or external/off chain backend.
+	// This replaces unreliable public mempool.space polling for block data.
+	chainCtx, chainCancel := context.WithCancel(context.Background())
+	chainRuntime, err := bitcoin.StartChainFromEnv(chainCtx)
+	if err != nil {
+		chainCancel()
+		log.Fatalf("bitcoin chain backend failed to start: %v", err)
+	}
+	defer func() {
+		chainCancel()
+		if err := chainRuntime.Close(); err != nil {
+			log.Printf("bitcoin chain close: %v", err)
+		}
+	}()
+	log.Printf("bitcoin chain ready (mode=%s network=%s)", chainRuntime.Mode, chainRuntime.Backend.Network())
+
 	// Initialize EscortService
 	rpcURL := bitcoin.GetNetworkConfig(bitcoin.GetCurrentNetwork()).BaseURL
 	if env := os.Getenv("STARGATE_FUNDING_API_BASE"); env != "" {
@@ -482,11 +503,18 @@ func runHTTPServer(store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, api
 	// Initialize HTTP MCP server (always enabled)
 	scannerManager := starlight.GetScannerManager()
 	httpMCPServer := mcp.NewHTTPMCPServer(store, apiKeyValidator, apiKeyIssuer, ingestionSvc, scannerManager, container.SmartContractService, challengeStore)
+	httpMCPServer.SetChainBackend(chainRuntime.Backend)
 
 	// Set the smart contract handler with the store
 	container.SetSmartContractHandler(store)
 	// Also allow inscription handler to mirror into MCP store
 	container.InscriptionHandler.SetStore(store)
+	// Wire cache invalidation after mutations (handler now exists).
+	notifyingStore.SetOnMutation(func() {
+		if container.SmartContractHandler != nil {
+			container.SmartContractHandler.InvalidateContractCache()
+		}
+	})
 
 	// Start MCP background services if using PostgreSQL AND MCP server is not running separately
 	if os.Getenv("STARGATE_MODE") != "mcp-only" && os.Getenv("STARGATE_MODE") != "both" {
@@ -524,10 +552,14 @@ func runHTTPServer(store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, api
 	httpMCPServer.RegisterRoutes(mux)
 
 	// Apply middleware to all routes
-	routes, mcpRestServer := setupRoutes(mux, container, store, apiKeyIssuer, apiKeyValidator, challengeStore, ingestionSvc, &mirror, escort)
+	routes, mcpRestServer := setupRoutes(mux, container, store, apiKeyIssuer, apiKeyValidator, challengeStore, ingestionSvc, &mirror, escort, chainRuntime.Backend)
 
 	// Set smart_contract server reference on MCP server (must be done after mcpRestServer is created)
 	httpMCPServer.SetServer(mcpRestServer)
+	// Wire chain backend into REST smart-contract server (PSBT / UTXO).
+	if mcpRestServer != nil {
+		mcpRestServer.SetUTXOClient(chainRuntime.Backend)
+	}
 
 	handler := middleware.Recovery(
 		middleware.Logging(
@@ -569,14 +601,20 @@ func runHTTPServer(store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, api
 		}
 	}()
 
-	log.Fatal(http.ListenAndServe(":"+httpPort, handler))
+	// Do not use log.Fatal here — it skips defers (would orphan managed btcd).
+	if err := http.ListenAndServe(":"+httpPort, handler); err != nil {
+		log.Printf("HTTP server exited: %v", err)
+	}
 }
 
-func setupRoutes(mux *http.ServeMux, container *container.Container, store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, apiKeyValidator auth.APIKeyValidator, challengeStore *auth.ChallengeStore, ingestionSvc *services.IngestionService, mirror *mirrorState, escort *smart_contract.EscortService) (http.Handler, *scmiddleware.Server) {
+func setupRoutes(mux *http.ServeMux, container *container.Container, store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, apiKeyValidator auth.APIKeyValidator, challengeStore *auth.ChallengeStore, ingestionSvc *services.IngestionService, mirror *mirrorState, escort *smart_contract.EscortService, chainBackend bitcoin.ChainBackend) (http.Handler, *scmiddleware.Server) {
 	// Initialize MCP REST server for HTTP routes
 	mcpRestServer := scmiddleware.NewServer(store, apiKeyValidator, ingestionSvc)
 	if escort != nil {
 		mcpRestServer.SetEscortService(escort)
+	}
+	if chainBackend != nil {
+		mcpRestServer.SetUTXOClient(chainBackend)
 	}
 	mcpRestServer.RegisterRoutes(mux)
 	if err := scmiddleware.StartStegoPubsubSync(context.Background(), mcpRestServer); err != nil {
@@ -753,17 +791,23 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 	})
 
 	// Bitcoin API for scanning
-	bitcoinAPI := bitcoin.NewBitcoinAPI()
+	bitcoinNetwork := bitcoin.GetCurrentNetwork()
+	bitcoinClient := bitcoin.NewBitcoinNodeClientForNetwork(bitcoinNetwork)
+	if chainBackend != nil {
+		bitcoinClient.SetChainBackend(chainBackend)
+	}
+	bitcoinAPI := bitcoin.NewBitcoinAPIWithClient(bitcoinClient)
 
 	// Enhanced data API endpoints (keep existing functionality)
 	dataStorage := container.DataStorage
-	bitcoinNetwork := bitcoin.GetCurrentNetwork()
-	bitcoinClient := bitcoin.NewBitcoinNodeClientForNetwork(bitcoinNetwork)
 	blockMonitor := bitcoin.NewBlockMonitorWithStorageAndAPI(
 		bitcoinClient,
 		dataStorage,
 		bitcoinAPI,
 	)
+	if chainBackend != nil {
+		blockMonitor.SetChainBackend(chainBackend)
+	}
 	log.Printf("DIAG: block monitor created (effective intervals logged at start)")
 	blockMonitor.SetIngestionService(container.IngestionService)
 	blockMonitor.SetStegoReconciler(bitcoin.StegoReconcilerFunc(func(ctx context.Context, stegoCID, expectedHash string) error {
@@ -774,7 +818,11 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 	})
 	// All Store implementations (Memory, SQLite, PG) now satisfy bitcoin.SweepTaskStore
 	// because the required methods are part of the core Store interface (Phase 5).
-	blockMonitor.SetSweepDependencies(store, bitcoin.NewMempoolClient())
+	var sweepClient bitcoin.UTXOClient = chainBackend
+	if sweepClient == nil {
+		sweepClient = bitcoin.NewMempoolClient()
+	}
+	blockMonitor.SetSweepDependencies(store, sweepClient)
 	// OP_RETURN-based matching: block monitor discovers contracts during normal
 	// block processing — no event-driven reconciliation needed.
 	if err := scmiddleware.StartIPFSIngestionSync(context.Background(), ingestionSvc, store, func(ctx context.Context, recent int) error {

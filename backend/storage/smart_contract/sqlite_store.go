@@ -148,8 +148,28 @@ FROM mcp_contracts c
 	}
 
 	if filter.CursorHeight != nil && *filter.CursorHeight > 0 {
-		whereConditions = append(whereConditions, "c.confirmed_block_height < ?")
+		op := "<"
+		if strings.EqualFold(filter.CursorType, "after") {
+			op = ">"
+		}
+		whereConditions = append(whereConditions, "c.confirmed_block_height "+op+" ?")
 		args = append(args, *filter.CursorHeight)
+	}
+
+	// Cursor-based pagination by date (confirmed_at for confirmed lists, created_at for open).
+	// Normalize mixed SQLite timestamp formats ("2026-07-19 05:31:53" vs RFC3339).
+	if filter.CursorDate != nil {
+		op := "<"
+		if strings.EqualFold(filter.CursorType, "after") {
+			op = ">"
+		}
+		dateCol := "c.confirmed_at"
+		if filter.OrderByCreatedAt {
+			dateCol = "c.created_at"
+		}
+		whereConditions = append(whereConditions,
+			"datetime(replace(replace("+dateCol+",'T',' '),'Z','')) "+op+" datetime(?)")
+		args = append(args, filter.CursorDate.UTC().Format("2006-01-02 15:04:05"))
 	}
 
 	whereClause := ""
@@ -157,9 +177,15 @@ FROM mcp_contracts c
 		whereClause = "WHERE " + strings.Join(whereConditions, " AND ")
 	}
 
-	orderBy := "ORDER BY c.confirmed_block_height DESC NULLS LAST, c.created_at DESC, c.contract_id DESC"
-	if filter.OrderByConfirmedAt {
-		orderBy = "ORDER BY c.confirmed_at DESC NULLS FIRST, c.created_at DESC, c.contract_id DESC"
+	// Normalize text timestamps so mixed SQLite formats still sort chronologically.
+	const createdAtOrder = "datetime(replace(replace(c.created_at,'T',' '),'Z',''))"
+	const confirmedAtOrder = "datetime(replace(replace(c.confirmed_at,'T',' '),'Z',''))"
+	orderBy := "ORDER BY c.confirmed_block_height DESC NULLS LAST, " + createdAtOrder + " DESC, c.contract_id DESC"
+	if filter.OrderByCreatedAt {
+		// Open/unconfirmed: newest created first, oldest at the bottom (scroll loads older).
+		orderBy = "ORDER BY " + createdAtOrder + " DESC, c.contract_id DESC"
+	} else if filter.OrderByConfirmedAt {
+		orderBy = "ORDER BY " + confirmedAtOrder + " DESC NULLS FIRST, " + createdAtOrder + " DESC, c.contract_id DESC"
 	}
 	if filter.Limit > 0 {
 		orderBy += fmt.Sprintf(" LIMIT %d", filter.Limit)
@@ -864,17 +890,19 @@ func (s *SQLiteStore) UpsertContractWithTasks(ctx context.Context, contract smar
 		createdAt = contract.CreatedAt.Format(time.RFC3339)
 	}
 
+	// Protected statuses (confirmed/completed/superseded) keep title, budget,
+	// and status; stego URL / skills / task counts may still refresh.
 	_, err = tx.ExecContext(ctx, `
 INSERT INTO mcp_contracts (contract_id, title, total_budget_sats, goals_count, available_tasks_count, status, skills, stego_image_url, created_at, metadata)
 VALUES (?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT(contract_id) DO UPDATE SET
-  title = excluded.title,
-  total_budget_sats = excluded.total_budget_sats,
-  goals_count = excluded.goals_count,
+  title = CASE WHEN lower(mcp_contracts.status) IN ('confirmed','completed','superseded') THEN mcp_contracts.title ELSE excluded.title END,
+  total_budget_sats = CASE WHEN lower(mcp_contracts.status) IN ('confirmed','completed','superseded') THEN mcp_contracts.total_budget_sats ELSE excluded.total_budget_sats END,
+  goals_count = CASE WHEN lower(mcp_contracts.status) IN ('confirmed','completed','superseded') THEN mcp_contracts.goals_count ELSE excluded.goals_count END,
   available_tasks_count = excluded.available_tasks_count,
-  status = excluded.status,
-  skills = excluded.skills,
-  stego_image_url = excluded.stego_image_url
+  status = CASE WHEN lower(mcp_contracts.status) IN ('confirmed','completed','superseded') THEN mcp_contracts.status ELSE excluded.status END,
+  skills = CASE WHEN excluded.skills IS NOT NULL AND excluded.skills <> '' THEN excluded.skills ELSE mcp_contracts.skills END,
+  stego_image_url = CASE WHEN excluded.stego_image_url IS NOT NULL AND excluded.stego_image_url <> '' THEN excluded.stego_image_url ELSE mcp_contracts.stego_image_url END
 `, contract.ContractID, contract.Title, contract.TotalBudgetSats, contract.GoalsCount, contract.AvailableTasksCount, contract.Status, skills, contract.StegoImageURL, createdAt, string(metadata))
 	if err != nil {
 		return err
@@ -1022,8 +1050,9 @@ FROM mcp_tasks WHERE contract_id=?
 		}
 	}
 
-	// Supersede the wish contract (peer nodes don't run archiveWishContract)
-	_, _ = s.db.ExecContext(ctx, `UPDATE mcp_contracts SET status='superseded' WHERE contract_id=? AND status<>'superseded'`, wishID)
+	// Supersede the wish contract (peer nodes don't run archiveWishContract).
+	// Confirmed/completed wishes must not be demoted (defense in depth).
+	_, _ = s.db.ExecContext(ctx, `UPDATE mcp_contracts SET status='superseded' WHERE contract_id=? AND `+supersedeEligibleStatusSQL, wishID)
 
 	// Update matching proposals to confirmed (mirrors PG behavior)
 	_, err = s.db.ExecContext(ctx, `
@@ -1171,7 +1200,8 @@ ON CONFLICT(id) DO UPDATE SET
 		return err
 	}
 	if wishToSupersede != "" {
-		_, _ = s.db.ExecContext(ctx, `UPDATE mcp_contracts SET status='superseded' WHERE contract_id=?`, wishToSupersede)
+		// Never demote confirmed/completed wishes via proposal create (stego/IPFS attack surface).
+		_, _ = s.db.ExecContext(ctx, `UPDATE mcp_contracts SET status='superseded' WHERE contract_id=? AND `+supersedeEligibleStatusSQL, wishToSupersede)
 	}
 	return nil
 }
@@ -1442,7 +1472,8 @@ WHERE id<>? AND status='pending' AND (
 	}
 	if visible != "" {
 		wishID := identity.ToWishID(visible)
-		if _, err := tx.ExecContext(ctx, `UPDATE mcp_contracts SET status='superseded' WHERE contract_id=?`, wishID); err != nil {
+		// Authenticated approval still must not demote confirmed/completed wishes.
+		if _, err := tx.ExecContext(ctx, `UPDATE mcp_contracts SET status='superseded' WHERE contract_id=? AND `+supersedeEligibleStatusSQL, wishID); err != nil {
 			return err
 		}
 	}

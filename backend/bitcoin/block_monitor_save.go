@@ -1,11 +1,10 @@
 package bitcoin
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -102,24 +101,13 @@ func getBlockHashForDir(blockDir string) (string, error) {
 }
 
 func (bm *BlockMonitor) getCanonicalBlockHash(height int64) (string, error) {
-	baseURL := strings.TrimSpace(bm.bitcoinClient.baseURL)
-	if baseURL == "" {
-		return "", fmt.Errorf("bitcoin client baseURL missing")
+	if bm.chain != nil {
+		return bm.chain.GetBlockHash(context.Background(), height)
 	}
-	url := fmt.Sprintf("%s/block-height/%d", baseURL, height)
-	resp, err := bm.bitcoinClient.httpClient.Get(url)
-	if err != nil {
-		return "", err
+	if bm.bitcoinClient != nil {
+		return bm.bitcoinClient.GetBlockHash(int(height))
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("block hash status %d", resp.StatusCode)
-	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(body)), nil
+	return "", fmt.Errorf("no chain backend configured for block hash")
 }
 
 func (bm *BlockMonitor) pruneBlockDirsForHeight(height int64, canonicalHash string) (bool, error) {

@@ -67,8 +67,8 @@ func TestEnsureProposalFromStegoPayloadCreatesProposal(t *testing.T) {
 	if got.ID != expectedID {
 		t.Fatalf("expected proposal id %s, got %s", expectedID, got.ID)
 	}
-	if got.Status != "approved" {
-		t.Fatalf("expected proposal status approved, got %s", got.Status)
+	if got.Status != "pending" {
+		t.Fatalf("expected proposal status pending from stego (no auto-approve), got %s", got.Status)
 	}
 	if got.VisiblePixelHash != payload.Proposal.VisiblePixelHash {
 		t.Fatalf("visible_pixel_hash mismatch: %s", got.VisiblePixelHash)

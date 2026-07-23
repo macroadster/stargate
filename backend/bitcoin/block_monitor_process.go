@@ -224,53 +224,58 @@ func (bm *BlockMonitor) checkForNewBlocks() error {
 	return nil
 }
 
-// trackTip implements the lightweight "just track the live tip" behavior.
-// When the tip advances we process only a tiny trailing window (new tip + at
-// most a couple of predecessors). We never repeatedly re-scan the same recent
-// blocks on every poll. Historical gaps remain available via on-demand scan.
+// trackTip implements lightweight tip tracking with sequential gap backfill.
+//
+// Unlike the old "jump to tip-N" behavior, we never skip intermediate heights
+// once we have a known currentHeight. When behind, we process up to
+// monitorCatchupBatch() blocks per cycle until we catch the local tip.
+// Cold start (currentHeight==0, empty storage) still seeds near the tip so we
+// do not scan the entire chain; historical gaps remain available via on-demand scan.
 func (bm *BlockMonitor) trackTip(tip int64) error {
-	const maxCatchup = 3 // process at most the last N blocks when we see an advance
-
-	if bm.currentHeight == 0 {
-		// Brand new: start at tip (or tip - a tiny bit) so first real advance
-		// is cheap. Process the current tip.
-		start := tip
-		if tip > maxCatchup {
-			start = tip - (maxCatchup - 1)
-		}
-		bm.currentHeight = start - 1
-		log.Printf("block monitor: tip-only initialized; will track from near tip=%d", tip)
+	maxPerCycle := monitorMaxBlocksPerCycle()
+	catchupBatch := monitorCatchupBatch()
+	// Cold-start window: process a small trailing set near tip on first run.
+	coldWindow := maxPerCycle
+	if coldWindow < 3 {
+		coldWindow = 3
 	}
 
-	if tip <= bm.currentHeight {
+	first, last, seededCurrent, seeded := tipCatchupWindow(
+		bm.currentHeight, tip, maxPerCycle, catchupBatch, coldWindow,
+	)
+	if seeded {
+		bm.currentHeight = seededCurrent
+		log.Printf("block monitor: tip-only initialized; will track from near tip=%d (seeded current=%d)", tip, bm.currentHeight)
+	}
+
+	if first == 0 || last == 0 || first > last {
+		bm.lastChecked = time.Now()
 		return nil
 	}
 
-	// Figure out the first block we need to process this time.
-	first := bm.currentHeight + 1
-	if tip-first+1 > maxCatchup {
-		first = tip - (maxCatchup - 1)
-		if first < bm.currentHeight+1 {
-			first = bm.currentHeight + 1
-		}
+	behind := tip - bm.currentHeight
+	if behind > maxPerCycle {
+		log.Printf("block monitor: tip advanced to %d (sequential catch-up %d..%d, %d behind, batch=%d)",
+			tip, first, last, behind, last-first+1)
+	} else {
+		log.Printf("block monitor: tip advanced to %d (processing %d..%d)", tip, first, last)
 	}
-
-	if first > tip {
-		first = tip
-	}
-
-	log.Printf("block monitor: tip advanced to %d (processing %d..%d)", tip, first, tip)
 
 	processed := int64(0)
-	for h := first; h <= tip; h++ {
+	for h := first; h <= last; h++ {
 		if err := bm.ProcessBlock(h); err != nil {
 			log.Printf("Error processing block %d: %v (will retry on next tick)", h, err)
-			// Stop advancing past the failure.
+			// Stop advancing past the failure — preserves gap-free progress.
 			break
 		}
 		bm.currentHeight = h
 		bm.blocksProcessed++
 		processed++
+	}
+
+	if tip > bm.currentHeight && processed > 0 {
+		log.Printf("block monitor: catch-up progress current=%d tip=%d remaining=%d",
+			bm.currentHeight, tip, tip-bm.currentHeight)
 	}
 
 	bm.lastChecked = time.Now()
@@ -311,6 +316,12 @@ func (bm *BlockMonitor) reconcileCanonicalTip(currentHeight int64, depth int) er
 
 // getCurrentHeightFromBlockchainInfo gets current height from the configured Bitcoin network
 func (bm *BlockMonitor) getCurrentHeightFromBlockchainInfo() (int64, error) {
+	if bm.chain != nil {
+		return bm.chain.GetTipHeight(context.Background())
+	}
+	if bm.bitcoinClient == nil {
+		return 0, fmt.Errorf("no chain backend or bitcoin client configured")
+	}
 	return bm.bitcoinClient.GetCurrentHeight()
 }
 
@@ -471,9 +482,36 @@ func (bm *BlockMonitor) ReconcileRecentBlocks(ctx context.Context, count int) er
 	return nil
 }
 
-// fetchTxStatus fetches a transaction from the blockchain API and returns the
-// raw JSON map, block height, and whether the tx is confirmed.
+// fetchTxStatus fetches a transaction and returns a JSON-compatible map,
+// block height, and whether the tx is confirmed.
 func (bm *BlockMonitor) fetchTxStatus(txid string) (map[string]any, int64, bool, error) {
+	if bm.chain != nil {
+		height, confirmed, err := bm.chain.GetTxStatus(context.Background(), txid)
+		if err != nil {
+			return nil, 0, false, err
+		}
+		txData := map[string]any{
+			"txid": txid,
+			"status": map[string]any{
+				"confirmed":    confirmed,
+				"block_height": height,
+			},
+		}
+		if confirmed {
+			// Attach outputs for downstream funding-proof helpers.
+			if msg, err := bm.chain.GetRawTx(context.Background(), txid); err == nil && msg != nil {
+				var vouts []any
+				for _, out := range msg.TxOut {
+					vouts = append(vouts, map[string]any{
+						"scriptpubkey": hex.EncodeToString(out.PkScript),
+						"value":        float64(out.Value),
+					})
+				}
+				txData["vout"] = vouts
+			}
+		}
+		return txData, height, confirmed, nil
+	}
 	if bm.bitcoinClient == nil {
 		return nil, 0, false, fmt.Errorf("bitcoin client not configured")
 	}

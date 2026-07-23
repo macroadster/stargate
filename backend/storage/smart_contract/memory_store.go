@@ -165,14 +165,25 @@ func (s *MemoryStore) ListContracts(filter smart_contract.ContractFilter) ([]sma
 			}
 		}
 
-		// Cursor pagination by date
-		if filter.CursorDate != nil && c.ConfirmedAt != nil {
+		// Cursor pagination by date (created_at for open lists, confirmed_at otherwise)
+		if filter.CursorDate != nil {
+			var t *time.Time
+			if filter.OrderByCreatedAt {
+				if !c.CreatedAt.IsZero() {
+					t = &c.CreatedAt
+				}
+			} else if c.ConfirmedAt != nil {
+				t = c.ConfirmedAt
+			}
+			if t == nil {
+				continue
+			}
 			if strings.EqualFold(filter.CursorType, "after") {
-				if !c.ConfirmedAt.After(*filter.CursorDate) {
+				if !t.After(*filter.CursorDate) {
 					continue
 				}
 			} else {
-				if !c.ConfirmedAt.Before(*filter.CursorDate) {
+				if !t.Before(*filter.CursorDate) {
 					continue
 				}
 			}
@@ -183,7 +194,14 @@ func (s *MemoryStore) ListContracts(filter smart_contract.ContractFilter) ([]sma
 	}
 
 	// Sort based on filter preference
-	if filter.OrderByConfirmedAt {
+	if filter.OrderByCreatedAt {
+		sort.Slice(out, func(i, j int) bool {
+			if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
+				return out[i].CreatedAt.After(out[j].CreatedAt)
+			}
+			return out[i].ContractID > out[j].ContractID
+		})
+	} else if filter.OrderByConfirmedAt {
 		sort.Slice(out, func(i, j int) bool {
 			if out[i].ConfirmedAt == nil {
 				return false
@@ -781,8 +799,10 @@ func (s *MemoryStore) CreateProposal(ctx context.Context, p smart_contract.Propo
 		if visible != "" {
 			wishID := identity.ToWishID(visible)
 			if contract, ok := s.contracts[wishID]; ok {
-				contract.Status = "superseded"
-				s.contracts[wishID] = contract
+				if !IsNonSupersedableContractStatus(contract.Status) && !strings.EqualFold(contract.Status, "superseded") {
+					contract.Status = "superseded"
+					s.contracts[wishID] = contract
+				}
 			}
 		}
 	}
@@ -842,7 +862,9 @@ func (s *MemoryStore) UpsertContractWithTasks(ctx context.Context, contract smar
 		contract.CreatedAt = time.Now()
 	}
 
-	// Store the contract
+	if existing, ok := s.contracts[contract.ContractID]; ok {
+		contract = ProtectContractUpsert(existing, contract)
+	}
 	s.contracts[contract.ContractID] = contract
 
 	// Store all tasks

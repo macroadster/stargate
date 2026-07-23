@@ -1,1 +1,3 @@
-frontend/
+# Generated UI embed tree (from frontend/build). Keep EMBED_PLACEHOLDER for go:embed.
+frontend/*
+!frontend/EMBED_PLACEHOLDER

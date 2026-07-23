@@ -23,7 +23,7 @@ type CommitmentSweepResult struct {
 }
 
 // BuildCommitmentSweepTx builds a signed-less hashlock sweep transaction with the preimage witness.
-func BuildCommitmentSweepTx(client *MempoolClient, params *chaincfg.Params, txid string, vout uint32, redeemScript, preimage []byte, dest btcutil.Address, feeRate int64) (*CommitmentSweepResult, error) {
+func BuildCommitmentSweepTx(client UTXOClient, params *chaincfg.Params, txid string, vout uint32, redeemScript, preimage []byte, dest btcutil.Address, feeRate int64) (*CommitmentSweepResult, error) {
 	if client == nil {
 		return nil, fmt.Errorf("mempool client required")
 	}
@@ -90,7 +90,7 @@ func BuildCommitmentSweepTx(client *MempoolClient, params *chaincfg.Params, txid
 }
 
 // BuildRegularSweepTx builds a regular sweep transaction (no commitment script)
-func BuildRegularSweepTx(client *MempoolClient, params *chaincfg.Params, txid string, vout uint32, redeemScript, preimage []byte, dest btcutil.Address, feeRate int64) (*CommitmentSweepResult, error) {
+func BuildRegularSweepTx(client UTXOClient, params *chaincfg.Params, txid string, vout uint32, redeemScript, preimage []byte, dest btcutil.Address, feeRate int64) (*CommitmentSweepResult, error) {
 	if client == nil {
 		return nil, fmt.Errorf("mempool client required")
 	}
@@ -199,7 +199,7 @@ type RecommitSweepResult struct {
 // BuildRecommitSweepTx sweeps a wish-hash hashlock UTXO and re-locks the funds
 // into a new P2WSH hashlock keyed to the product image hash. This is phase 1 of
 // the two-phase donation sweep: wish-hashlock → product-hashlock → donation addr.
-func BuildRecommitSweepTx(client *MempoolClient, params *chaincfg.Params, txid string, vout uint32, wishRedeemScript, wishPreimage, productHash []byte, feeRate int64) (*RecommitSweepResult, error) {
+func BuildRecommitSweepTx(client UTXOClient, params *chaincfg.Params, txid string, vout uint32, wishRedeemScript, wishPreimage, productHash []byte, feeRate int64) (*RecommitSweepResult, error) {
 	if client == nil {
 		return nil, fmt.Errorf("mempool client required")
 	}

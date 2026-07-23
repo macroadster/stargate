@@ -652,3 +652,74 @@ func TestSQLiteConfirmContractBootstrapsFromWishWithNullMetadata(t *testing.T) {
 		t.Fatalf("expected confirmed_txid in metadata, got %#v", got.Metadata)
 	}
 }
+
+func TestSQLiteCreateProposalDoesNotSupersedeConfirmed(t *testing.T) {
+	store := newTestSQLiteStore(t)
+	ctx := context.Background()
+	hash := strings.Repeat("ab", 32)
+	wishID := "wish-" + hash
+
+	if err := store.UpsertContractWithTasks(ctx, core.Contract{
+		ContractID: wishID,
+		Title:      "Confirmed wish",
+		Status:     "confirmed",
+	}, nil); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	err := store.CreateProposal(ctx, core.Proposal{
+		ID:               "attacker-proposal",
+		Title:            "Hijack",
+		Status:           "approved",
+		VisiblePixelHash: hash,
+		CreatedAt:        time.Now(),
+		Metadata: map[string]interface{}{
+			"visible_pixel_hash": hash,
+		},
+	})
+	if err != nil {
+		t.Fatalf("create proposal: %v", err)
+	}
+
+	c, err := store.GetContract(wishID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if c.Status != "confirmed" {
+		t.Fatalf("confirmed wish demoted to %s", c.Status)
+	}
+}
+
+func TestSQLiteUpsertPreservesConfirmedFields(t *testing.T) {
+	store := newTestSQLiteStore(t)
+	ctx := context.Background()
+	id := "wish-" + strings.Repeat("cd", 32)
+
+	if err := store.UpsertContractWithTasks(ctx, core.Contract{
+		ContractID:      id,
+		Title:           "Original",
+		TotalBudgetSats: 5000,
+		Status:          "confirmed",
+	}, nil); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := store.UpsertContractWithTasks(ctx, core.Contract{
+		ContractID:      id,
+		Title:           "Hijacked",
+		TotalBudgetSats: 1,
+		Status:          "funded",
+		StegoImageURL:   "/stego/x.png",
+	}, nil); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	c, err := store.GetContract(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Title != "Original" || c.TotalBudgetSats != 5000 || c.Status != "confirmed" {
+		t.Fatalf("protected fields changed: %+v", c)
+	}
+	if c.StegoImageURL != "/stego/x.png" {
+		t.Fatalf("expected stego url refresh, got %q", c.StegoImageURL)
+	}
+}

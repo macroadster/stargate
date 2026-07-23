@@ -2,6 +2,7 @@ package bitcoin
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
@@ -20,6 +21,12 @@ type RawBlockClient struct {
 	connected     bool
 	totalRequests int64
 	network       string
+	chain         ChainBackend // preferred: local btcd
+}
+
+// SetChainBackend prefers local-node raw block fetch over public explorers.
+func (rbc *RawBlockClient) SetChainBackend(chain ChainBackend) {
+	rbc.chain = chain
 }
 
 // NewRawBlockClient creates a new raw block client
@@ -42,6 +49,18 @@ func NewRawBlockClient(network string) *RawBlockClient {
 // reliability (especially inside Kubernetes) while the rate limiter still
 // protects the public explorers.
 func (rbc *RawBlockClient) GetRawBlockHex(blockHeight int64) (string, error) {
+	// Prefer local full node (btcd) — complete blocks, no public rate limits.
+	if rbc.chain != nil {
+		hexData, err := rbc.chain.GetRawBlockHex(context.Background(), blockHeight)
+		if err != nil {
+			return "", fmt.Errorf("chain backend raw block %d: %w", blockHeight, err)
+		}
+		if len(hexData) > 0 {
+			log.Printf("Downloaded raw block %d from chain backend (%d hex chars)", blockHeight, len(hexData))
+			return hexData, nil
+		}
+	}
+
 	const maxAttempts = 3
 	var lastErr error
 

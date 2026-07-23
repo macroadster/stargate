@@ -33,7 +33,7 @@ func TestUpsertContractFromStegoPayload(t *testing.T) {
 				Description:      "Do the work",
 				BudgetSats:       2000,
 				Skills:           []string{"manual-review"},
-				ContractorWallet: "tb1qcontractor",
+				ContractorWallet: "tb1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
 			},
 		},
 	}
@@ -62,6 +62,9 @@ func TestUpsertContractFromStegoPayload(t *testing.T) {
 	proposal, err := store.GetProposal(ctx, payload.Proposal.ID)
 	if err != nil {
 		t.Fatalf("proposal not created: %v", err)
+	}
+	if proposal.Status != "pending" {
+		t.Fatalf("expected pending proposal from stego (no auto-approve), got %s", proposal.Status)
 	}
 	if proposal.Metadata["stego_image_cid"] != "stegocid456" {
 		t.Fatalf("stego metadata missing from proposal")
@@ -101,7 +104,7 @@ func TestUpsertStegoSetsProductPixelHash(t *testing.T) {
 				TaskID:           "task-product-1",
 				Title:            "Task 1",
 				BudgetSats:       1000,
-				ContractorWallet: "tb1qcontractor",
+				ContractorWallet: "tb1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
 			},
 		},
 	}
@@ -178,7 +181,7 @@ func TestUpsertStegoPreservesWishHashWhenDonationExists(t *testing.T) {
 			GoalID:           contractID,
 			Title:            "Funded Task",
 			Status:           "available",
-			ContractorWallet: "tb1qcontractor",
+			ContractorWallet: "tb1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
 			MerkleProof: &core.MerkleProof{
 				CommitmentSats:      1000,
 				VisiblePixelHash:    visibleHash,
@@ -202,7 +205,7 @@ func TestUpsertStegoPreservesWishHashWhenDonationExists(t *testing.T) {
 				TaskID:           "task-donation-1",
 				Title:            "Funded Task",
 				BudgetSats:       1000,
-				ContractorWallet: "tb1qcontractor",
+				ContractorWallet: "tb1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
 			},
 		},
 	}

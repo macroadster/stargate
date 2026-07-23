@@ -12,6 +12,7 @@ Agents and humans should treat this directory as the source of truth for *why* t
 | [0003](./0003-lifecycle-pixel-hash-identity.md) | Proposal / wish / contract lifecycle + pixel-hash identity | Accepted |
 | [0004](./0004-stego-ingestion-bitcoin-boundaries.md) | Stego / ingestion / bitcoin / contract boundaries | Accepted |
 | [0005](./0005-rest-vs-mcp-ownership.md) | REST vs MCP ownership | Accepted |
+| [0006](./0006-embedded-btcd-node.md) | Embedded btcd full node (no mining) | Accepted |
 
 ## Format
 

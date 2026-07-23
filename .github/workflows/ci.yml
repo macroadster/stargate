@@ -25,8 +25,10 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: backend/go.sum
 
+      # //go:embed assets/frontend/* needs ≥1 file; EMBED_PLACEHOLDER is tracked for clean checkouts.
       - name: Run tests
         run: |
+          test -f backend/assets/frontend/EMBED_PLACEHOLDER
           cd backend
           go test ./...
 

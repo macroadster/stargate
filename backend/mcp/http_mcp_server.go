@@ -180,6 +180,7 @@ type HTTPMCPServer struct {
 	scannerManager   *starlight.ScannerManager
 	smartContractSvc *services.SmartContractService
 	bitcoinClient    *bitcoin.BitcoinNodeClient
+	utxoClient       bitcoin.UTXOClient
 	server           *scmiddleware.Server
 	httpClient       *http.Client
 	baseURL          string
@@ -227,6 +228,18 @@ func NewHTTPMCPServer(store scmiddleware.Store, apiKeyStore auth.APIKeyValidator
 		chatHub:          NewChatHub(),
 		sessions:         make(map[string]*MCPSession),
 	}
+}
+
+// SetChainBackend wires the local btcd (or fallback) chain source for tools.
+func (h *HTTPMCPServer) SetChainBackend(chain bitcoin.ChainBackend) {
+	if chain == nil {
+		return
+	}
+	h.utxoClient = chain
+	if h.bitcoinClient != nil {
+		h.bitcoinClient.SetChainBackend(chain)
+	}
+	h.network = chain.Network()
 }
 
 // SetServer sets the smart_contract server reference
@@ -2590,15 +2603,10 @@ func (h *HTTPMCPServer) handleBuildPSBT(ctx context.Context, args map[string]int
 	}
 
 	params := h.chainParams()
-	origMempoolBase := os.Getenv("MEMPOOL_API_BASE")
-	if netConfig := bitcoin.GetNetworkConfig(h.network); netConfig.BaseURL != "" {
-		os.Setenv("MEMPOOL_API_BASE", netConfig.BaseURL)
-	}
-	mempoolClient := bitcoin.NewMempoolClient()
-	if origMempoolBase != "" {
-		os.Setenv("MEMPOOL_API_BASE", origMempoolBase)
-	} else {
-		os.Unsetenv("MEMPOOL_API_BASE")
+	mempoolClient := h.utxoClient
+	if mempoolClient == nil {
+		// Dev/test fallback only when chain was not wired.
+		mempoolClient = bitcoin.NewMempoolClient()
 	}
 
 	payerAddress, err := btcutil.DecodeAddress(payerAddressStr, params)

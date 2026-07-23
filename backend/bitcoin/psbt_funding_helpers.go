@@ -15,7 +15,7 @@ type payerUTXO struct {
 }
 
 // collectPayerUTXOs lists confirmed UTXOs for each payer address.
-func collectPayerUTXOs(client *MempoolClient, payerAddrs []btcutil.Address) ([]payerUTXO, error) {
+func collectPayerUTXOs(client UTXOClient, payerAddrs []btcutil.Address) ([]payerUTXO, error) {
 	var candidates []payerUTXO
 	for _, addr := range payerAddrs {
 		if addr == nil {
@@ -121,7 +121,7 @@ func selectFundingUTXOs(candidates []payerUTXO, payoutScriptCount int, donation 
 }
 
 // fetchInputMeta loads previous outputs for selected UTXOs.
-func fetchInputMeta(client *MempoolClient, selected []payerUTXO) (meta []inputMeta, actualInputVBytes int64, err error) {
+func fetchInputMeta(client UTXOClient, selected []payerUTXO) (meta []inputMeta, actualInputVBytes int64, err error) {
 	for _, u := range selected {
 		prevMsg, prevOut, ferr := client.FetchTxOutput(u.utxo.TxID, u.utxo.Vout)
 		if ferr != nil {
@@ -134,7 +134,7 @@ func fetchInputMeta(client *MempoolClient, selected []payerUTXO) (meta []inputMe
 }
 
 // fundingTxIDIfAllSegWit returns txid when all selected inputs are SegWit (non-malleable).
-func fundingTxIDIfAllSegWit(client *MempoolClient, params *chaincfg.Params, selected []payerUTXO, tx *wire.MsgTx) string {
+func fundingTxIDIfAllSegWit(client UTXOClient, params *chaincfg.Params, selected []payerUTXO, tx *wire.MsgTx) string {
 	for _, u := range selected {
 		_, prevOut, err := client.FetchTxOutput(u.utxo.TxID, u.utxo.Vout)
 		if err != nil {
@@ -171,7 +171,7 @@ func addNextRaiseFundUTXO(sel *payerSelection) error {
 }
 
 // initRaiseFundSelections builds per-payer selection state with UTXOs sorted ascending.
-func initRaiseFundSelections(client *MempoolClient, payers []PayerTarget) ([]payerSelection, error) {
+func initRaiseFundSelections(client UTXOClient, payers []PayerTarget) ([]payerSelection, error) {
 	selections := make([]payerSelection, 0, len(payers))
 	for _, payer := range payers {
 		if payer.Address == nil {

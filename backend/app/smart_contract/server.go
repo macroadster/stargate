@@ -20,7 +20,7 @@ type Server struct {
 	eventsMu     sync.Mutex
 	listenersMu  sync.Mutex
 	listeners    []chan smart_contract.Event
-	mempool      *bitcoin.MempoolClient
+	mempool      bitcoin.UTXOClient
 	escort       *smart_contract.EscortService
 
 	// Domain services (business logic extracted from HTTP handlers).
@@ -62,6 +62,8 @@ type ProposalUpdateBody struct {
 }
 
 // NewServer builds a Server with the given store.
+// Default UTXO client is Esplora (for unit tests). Production wiring must call
+// SetUTXOClient with the local btcd ChainBackend.
 func NewServer(store Store, apiKeys auth.APIKeyValidator, ingest *services.IngestionService) *Server {
 	mempool := bitcoin.NewMempoolClient()
 	srv := &Server{
@@ -78,6 +80,15 @@ func NewServer(store Store, apiKeys auth.APIKeyValidator, ingest *services.Inges
 	srv.submissionSvc = scservices.NewSubmissionService(store, srv.recordEvent)
 	RegisterEventSink(srv.recordEvent)
 	return srv
+}
+
+// SetUTXOClient wires the chain backend used for PSBT UTXO selection and sweeps.
+func (s *Server) SetUTXOClient(client bitcoin.UTXOClient) {
+	if client == nil {
+		return
+	}
+	s.mempool = client
+	s.psbtSvc = scservices.NewPSBTService(s.store, client, s.ingestionSvc)
 }
 
 // RegisterRoutes attaches handlers to the mux.

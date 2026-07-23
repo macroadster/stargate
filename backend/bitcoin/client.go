@@ -2,6 +2,7 @@ package bitcoin
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -83,7 +84,19 @@ type BitcoinNodeClient struct {
 	baseURL     string
 	rateLimiter *RateLimiter
 	network     string
+	chain       ChainBackend // preferred local btcd when set
 	mu          sync.RWMutex
+}
+
+// SetChainBackend prefers local-node RPC over public explorer HTTP.
+func (btc *BitcoinNodeClient) SetChainBackend(chain ChainBackend) {
+	btc.mu.Lock()
+	defer btc.mu.Unlock()
+	btc.chain = chain
+	if chain != nil {
+		btc.network = chain.Network()
+		btc.baseURL = "btcd://" + chain.Network()
+	}
 }
 
 // NewBitcoinNodeClient creates a new Bitcoin node client
@@ -108,6 +121,12 @@ func NewBitcoinNodeClient(baseURL string) *BitcoinNodeClient {
 
 // GetCurrentHeight gets the current blockchain height with retry logic
 func (btc *BitcoinNodeClient) GetCurrentHeight() (int64, error) {
+	btc.mu.RLock()
+	chain := btc.chain
+	btc.mu.RUnlock()
+	if chain != nil {
+		return chain.GetTipHeight(context.Background())
+	}
 	return btc.getCurrentHeightWithRetry(3)
 }
 
@@ -315,6 +334,12 @@ func (btc *BitcoinNodeClient) GetTransactionInfo(txID string, includeImages bool
 
 // TestConnection tests the connection to the Bitcoin node
 func (btc *BitcoinNodeClient) TestConnection() bool {
+	btc.mu.RLock()
+	chain := btc.chain
+	btc.mu.RUnlock()
+	if chain != nil {
+		return chain.Ready(context.Background()) == nil
+	}
 	resp, err := btc.httpClient.Get(btc.baseURL + "/blocks/tip/height")
 	if err != nil {
 		return false
@@ -344,6 +369,12 @@ func (btc *BitcoinNodeClient) GetBlockHeight() (int, error) {
 
 // GetBlockHash gets the block hash for a given height
 func (btc *BitcoinNodeClient) GetBlockHash(height int) (string, error) {
+	btc.mu.RLock()
+	chain := btc.chain
+	btc.mu.RUnlock()
+	if chain != nil {
+		return chain.GetBlockHash(context.Background(), int64(height))
+	}
 	if !btc.rateLimiter.AllowRequest() {
 		return "", fmt.Errorf("rate limit exceeded")
 	}

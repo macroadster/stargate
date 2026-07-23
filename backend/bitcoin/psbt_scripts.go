@@ -14,7 +14,7 @@ import (
 
 // allPayerSelectionsAreSegWit checks if all selected UTXOs are SegWit types (P2WPKH, P2WSH, Taproot).
 // Returns true only if all inputs are SegWit, which means the TxID is non-malleable.
-func allPayerSelectionsAreSegWit(selections []payerSelection, client *MempoolClient, params *chaincfg.Params) bool {
+func allPayerSelectionsAreSegWit(selections []payerSelection, client UTXOClient, params *chaincfg.Params) bool {
 	for _, sel := range selections {
 		for _, u := range sel.utxos {
 			_, prevOut, err := client.FetchTxOutput(u.TxID, u.Vout)

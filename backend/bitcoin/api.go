@@ -108,6 +108,10 @@ func (api *BitcoinAPI) HandleHealth(w http.ResponseWriter, r *http.Request) {
 	if !bitcoinConnected || !api.scannerManager.IsInitialized() {
 		status = "degraded"
 	}
+	tipLag := GetTipLagStatus()
+	if tipLag.Lagging {
+		status = "degraded"
+	}
 
 	// Build response
 	response := map[string]any{
@@ -121,6 +125,9 @@ func (api *BitcoinAPI) HandleHealth(w http.ResponseWriter, r *http.Request) {
 		},
 		"network":   GetCurrentNetwork(),
 		"timestamp": time.Now().Format(time.RFC3339),
+	}
+	if !tipLag.CheckedAt.IsZero() {
+		response["tip_lag"] = tipLag
 	}
 
 	// Update cache
