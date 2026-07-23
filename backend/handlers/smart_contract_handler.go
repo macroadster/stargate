@@ -66,6 +66,66 @@ func openStatuses() []string {
 	return []string{"pending", "created", "funded", "active"}
 }
 
+// dedupeConfirmedWishTwins collapses bare-hash + wish-<hash> pairs that both
+// appear as confirmed (legacy ConfirmContract bootstrap race). Prefer the
+// canonical wish- id so /contracts does not list the same wish twice.
+func dedupeConfirmedWishTwins(contracts []sc.Contract) []sc.Contract {
+	if len(contracts) < 2 {
+		return contracts
+	}
+	type pick struct {
+		idx        int
+		preferWish bool
+	}
+	best := make(map[string]pick) // normalized hash → chosen index
+	drop := make(map[int]struct{})
+	for i, c := range contracts {
+		if !strings.EqualFold(strings.TrimSpace(c.Status), "confirmed") {
+			continue
+		}
+		id := strings.TrimSpace(c.ContractID)
+		bare := strings.TrimPrefix(id, "wish-")
+		if len(bare) != 64 {
+			continue
+		}
+		// Only collapse true 64-hex pixel hashes.
+		okHex := true
+		for _, r := range bare {
+			if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+				okHex = false
+				break
+			}
+		}
+		if !okHex {
+			continue
+		}
+		key := strings.ToLower(bare)
+		isWish := strings.HasPrefix(id, "wish-")
+		if prev, exists := best[key]; exists {
+			// Prefer wish- form; drop the other.
+			if isWish && !prev.preferWish {
+				drop[prev.idx] = struct{}{}
+				best[key] = pick{idx: i, preferWish: true}
+			} else {
+				drop[i] = struct{}{}
+			}
+			continue
+		}
+		best[key] = pick{idx: i, preferWish: isWish}
+	}
+	if len(drop) == 0 {
+		return contracts
+	}
+	out := make([]sc.Contract, 0, len(contracts)-len(drop))
+	for i, c := range contracts {
+		if _, skip := drop[i]; skip {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
 func proofConfirmed(proof *sc.MerkleProof) bool {
 	if proof == nil {
 		return false
@@ -289,6 +349,11 @@ func (h *SmartContractHandler) HandleGetContracts(w http.ResponseWriter, r *http
 			}
 		} else {
 			listDur = time.Since(t1)
+		}
+
+		// Safety net for pre-fix DBs: bare-hash + wish- twins both confirmed.
+		if status == "confirmed" || strings.EqualFold(status, "confirmed") {
+			contracts = dedupeConfirmedWishTwins(contracts)
 		}
 
 		// === Enrichment (ListByIDs + conversion) ===

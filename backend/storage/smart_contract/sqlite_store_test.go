@@ -636,12 +636,12 @@ func TestSQLiteConfirmContractBootstrapsFromWishWithNullMetadata(t *testing.T) {
 
 	const txid = "6df5d5c0ec58aa3b000000000000000000000000000000000000000000000001"
 	const height = 143438
-	// Confirm the non-wish id so rowsAffected==0 and bootstrap path runs.
+	// Confirm via bare hash: must land on canonical wish- row (no bare twin).
 	if err := store.ConfirmContract(ctx, hash, height, txid); err != nil {
 		t.Fatalf("ConfirmContract bootstrap: %v", err)
 	}
 
-	got, err := store.GetContract(hash)
+	got, err := store.GetContract(wishID)
 	if err != nil {
 		t.Fatalf("GetContract confirmed: %v", err)
 	}
@@ -650,6 +650,66 @@ func TestSQLiteConfirmContractBootstrapsFromWishWithNullMetadata(t *testing.T) {
 	}
 	if got.Metadata == nil || got.Metadata["confirmed_txid"] != txid {
 		t.Fatalf("expected confirmed_txid in metadata, got %#v", got.Metadata)
+	}
+	// Bare-hash twin must not be a second confirmed listing.
+	if bare, err := store.GetContract(hash); err == nil && bare.Status == "confirmed" {
+		t.Fatalf("bare hash must not stay confirmed when wish- is canonical; got %#v", bare)
+	}
+}
+
+// Regression: ensureMatchedContract confirms wish- then markIngestionConfirmed
+// used to Confirm bare hash, bootstrapping a second confirmed row. Integrity
+// hardening then blocked superseding the confirmed wish → duplicate on /contracts.
+func TestSQLiteConfirmContractNoDuplicateWishAndBare(t *testing.T) {
+	store := newTestSQLiteStore(t)
+	ctx := context.Background()
+
+	const hash = "a72d3bcda257ff166b14393b96651a8a49bdc20d8ab7e8a8d239be662db21f59"
+	wishID := "wish-" + hash
+
+	if err := store.UpsertContractWithTasks(ctx, core.Contract{
+		ContractID: wishID,
+		Title:      "Production wish",
+		Status:     "active",
+		CreatedAt:  time.Now().UTC(),
+	}, nil); err != nil {
+		t.Fatalf("seed wish: %v", err)
+	}
+
+	const txid = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	const height = 200000
+
+	// Path A: ensureMatchedContract / stego reconcile confirms wish-
+	if err := store.ConfirmContract(ctx, wishID, height, txid); err != nil {
+		t.Fatalf("confirm wish: %v", err)
+	}
+	// Path B: markIngestionConfirmed used bare ingestion id
+	if err := store.ConfirmContract(ctx, hash, height, txid); err != nil {
+		t.Fatalf("confirm bare: %v", err)
+	}
+
+	list, err := store.ListContracts(core.ContractFilter{Status: "confirmed", Limit: 50})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	var confirmedForWish int
+	for _, c := range list {
+		id := strings.TrimPrefix(c.ContractID, "wish-")
+		if id == hash || c.ContractID == wishID || c.ContractID == hash {
+			if c.Status == "confirmed" {
+				confirmedForWish++
+			}
+		}
+	}
+	if confirmedForWish != 1 {
+		t.Fatalf("expected exactly 1 confirmed row for wish, got %d: %+v", confirmedForWish, list)
+	}
+	wish, err := store.GetContract(wishID)
+	if err != nil {
+		t.Fatalf("get wish: %v", err)
+	}
+	if wish.Status != "confirmed" {
+		t.Fatalf("canonical wish status=%q want confirmed", wish.Status)
 	}
 }
 

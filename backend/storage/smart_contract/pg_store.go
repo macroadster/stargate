@@ -1482,6 +1482,13 @@ func (s *PGStore) ConfirmContract(ctx context.Context, contractID string, blockH
 		return nil
 	}
 
+	plan := PlanConfirmContractIDs(contractID)
+	normalized := plan.Normalized
+	wishID := plan.Canonical
+	if !plan.IsPixelHash {
+		wishID = "wish-" + normalized
+	}
+
 	// Get image_file from contract metadata to construct the URL
 	var imageFile string
 	err := s.pool.QueryRow(ctx,
@@ -1497,35 +1504,69 @@ func (s *PGStore) ConfirmContract(ctx context.Context, contractID string, blockH
 		stegoImageURL = fmt.Sprintf("/api/block-image/%d/%s", blockHeight, imageFile)
 	}
 
-	// Update status and confirmation tracking, including metadata with confirmed_txid
-	tag, err := s.pool.Exec(ctx, `
+	confirmRow := func(id string) (bool, error) {
+		tag, err := s.pool.Exec(ctx, `
 UPDATE mcp_contracts 
 SET status='confirmed', confirmed_block_height=$2, confirmed_at=NOW(), 
     stego_image_url=COALESCE($3, stego_image_url),
     metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{confirmed_txid}', to_jsonb($4::text))
-WHERE contract_id=$1`, contractID, blockHeight, stegoImageURL, txid)
-	if err != nil {
-		return err
+WHERE contract_id=$1`, id, blockHeight, stegoImageURL, txid)
+		if err != nil {
+			return false, err
+		}
+		return tag.RowsAffected() > 0, nil
 	}
 
-	// If the confirmed contract doesn't exist yet (peer node case), create it from the wish contract
-	normalized := NormalizeContractID(contractID)
-	wishID := "wish-" + normalized
-	if tag.RowsAffected() == 0 {
-		_, _ = s.pool.Exec(ctx, `
+	var confirmedID string
+	for _, id := range plan.ConfirmTryOrder(contractID) {
+		ok, err := confirmRow(id)
+		if err != nil {
+			return err
+		}
+		if ok {
+			confirmedID = id
+			break
+		}
+	}
+
+	// Peer bootstrap onto canonical wish id (never mint a second confirmed bare row).
+	if confirmedID == "" && plan.IsPixelHash {
+		// Prefer copying from bare → wish when only bare exists.
+		sourceID := ""
+		for _, candidate := range []string{wishID, normalized, contractID} {
+			var n int
+			_ = s.pool.QueryRow(ctx, `SELECT COUNT(1)::int FROM mcp_contracts WHERE contract_id=$1`, candidate).Scan(&n)
+			if n > 0 {
+				sourceID = candidate
+				break
+			}
+		}
+		if sourceID != "" {
+			_, _ = s.pool.Exec(ctx, `
 INSERT INTO mcp_contracts (contract_id, title, total_budget_sats, goals_count, available_tasks_count, status, skills, stego_image_url, confirmed_block_height, confirmed_at, created_at, metadata)
-SELECT $1, COALESCE(title, ''), COALESCE(total_budget_sats, 0), 1, 0, 'confirmed', skills, $2, $3, NOW(), NOW(),
+SELECT $1, COALESCE(title, ''), COALESCE(total_budget_sats, 0), COALESCE(goals_count, 1), COALESCE(available_tasks_count, 0), 'confirmed', skills, $2, $3, NOW(), NOW(),
        jsonb_set(COALESCE(metadata, '{}'::jsonb), '{confirmed_txid}', to_jsonb($4::text))
 FROM mcp_contracts WHERE contract_id=$5
 ON CONFLICT(contract_id) DO UPDATE SET
   status='confirmed', confirmed_block_height=$3, confirmed_at=NOW(),
   stego_image_url=COALESCE($2, mcp_contracts.stego_image_url),
   metadata = jsonb_set(COALESCE(mcp_contracts.metadata, '{}'::jsonb), '{confirmed_txid}', to_jsonb($4::text))
-`, normalized, stegoImageURL, blockHeight, txid, wishID)
+`, wishID, stegoImageURL, blockHeight, txid, sourceID)
+			confirmedID = wishID
+		}
 	}
 
-	// Supersede the wish contract (peer nodes don't run archiveWishContract)
-	_, _ = s.pool.Exec(ctx, `UPDATE mcp_contracts SET status='superseded' WHERE contract_id=$1 AND `+supersedeEligibleStatusSQL, wishID)
+	if plan.IsPixelHash {
+		var wishStatus string
+		_ = s.pool.QueryRow(ctx, `SELECT COALESCE(status,'') FROM mcp_contracts WHERE contract_id=$1`, wishID).Scan(&wishStatus)
+		if strings.EqualFold(strings.TrimSpace(wishStatus), "confirmed") {
+			for _, alias := range plan.Aliases {
+				_, _ = s.pool.Exec(ctx, `UPDATE mcp_contracts SET status='superseded' WHERE contract_id=$1 AND lower(status)<>'superseded'`, alias)
+			}
+		}
+	} else {
+		_, _ = s.pool.Exec(ctx, `UPDATE mcp_contracts SET status='superseded' WHERE contract_id=$1 AND `+supersedeEligibleStatusSQL, wishID)
+	}
 
 	// Handle proposal status updates for confirmed contracts
 	_, err = s.pool.Exec(ctx, `

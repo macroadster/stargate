@@ -676,37 +676,60 @@ func (s *MemoryStore) ConfirmContract(ctx context.Context, contractID string, bl
 		return nil
 	}
 
-	normalized := NormalizeContractID(contractID)
-	wishID := "wish-" + normalized
+	plan := PlanConfirmContractIDs(contractID)
+	normalized := plan.Normalized
+	wishID := plan.Canonical
+	if !plan.IsPixelHash {
+		wishID = "wish-" + normalized
+	}
 	imageFile := contractID
 	stegoImageURL := fmt.Sprintf("/api/block-image/%d/%s", blockHeight, imageFile)
 
-	contract, ok := s.contracts[contractID]
-	if !ok {
-		// If the confirmed contract doesn't exist, bootstrap from the wish contract
-		if wishContract, wok := s.contracts[wishID]; wok {
-			contract = wishContract
-			contract.ContractID = normalized
-		} else {
-			return fmt.Errorf("contract %s not found", contractID)
+	// Prefer canonical wish-<hash> for pixel hashes (single confirmed listing).
+	var contract smart_contract.Contract
+	var foundID string
+	for _, id := range plan.ConfirmTryOrder(contractID) {
+		if c, ok := s.contracts[id]; ok {
+			contract = c
+			foundID = id
+			break
 		}
 	}
+	if foundID == "" {
+		return fmt.Errorf("contract %s not found", contractID)
+	}
+	// Migrate bare → canonical wish id when confirming a pixel-hash twin.
+	targetID := foundID
+	if plan.IsPixelHash {
+		targetID = wishID
+		if foundID != wishID {
+			contract.ContractID = wishID
+		}
+	}
+
 	contract.Status = "confirmed"
 	contract.ConfirmedBlockHeight = &blockHeight
 	confirmedAt := time.Now()
 	contract.ConfirmedAt = &confirmedAt
-
-	// Set confirmed_txid in metadata
 	if contract.Metadata == nil {
 		contract.Metadata = make(map[string]interface{})
 	}
 	contract.Metadata["confirmed_txid"] = txid
-
 	contract.StegoImageURL = stegoImageURL
-	s.contracts[contractID] = contract
+	s.contracts[targetID] = contract
 
-	// Supersede the wish contract
-	if wishContract, wok := s.contracts[wishID]; wok && wishContract.Status != "superseded" {
+	// Collapse aliases (including already-confirmed bare rows).
+	if plan.IsPixelHash {
+		for _, alias := range plan.Aliases {
+			if alias == targetID {
+				continue
+			}
+			if c, ok := s.contracts[alias]; ok && !strings.EqualFold(c.Status, "superseded") {
+				c.Status = "superseded"
+				s.contracts[alias] = c
+			}
+		}
+	} else if wishContract, wok := s.contracts[wishID]; wok && wishContract.Status != "superseded" && !IsNonSupersedableContractStatus(wishContract.Status) {
 		wishContract.Status = "superseded"
 		s.contracts[wishID] = wishContract
 	}

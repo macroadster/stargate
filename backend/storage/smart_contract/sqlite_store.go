@@ -981,81 +981,134 @@ func (s *SQLiteStore) ConfirmContract(ctx context.Context, contractID string, bl
 		return nil
 	}
 
+	plan := PlanConfirmContractIDs(contractID)
+	normalized := plan.Normalized
+	wishID := plan.Canonical
+	if !plan.IsPixelHash {
+		wishID = "wish-" + normalized
+	}
 	stegoImageURL := fmt.Sprintf("/api/block-image/%d/%s", blockHeight, contractID)
 
-	// Read existing metadata, merge confirmed_txid, write back (mirrors PG jsonb_set)
-	var existingMeta []byte
-	_ = s.db.QueryRowContext(ctx, `SELECT COALESCE(metadata, '{}') FROM mcp_contracts WHERE contract_id=?`, contractID).Scan(&existingMeta)
-	meta := map[string]interface{}{}
-	if len(existingMeta) > 0 {
-		_ = json.Unmarshal(existingMeta, &meta)
-	}
-	// json.Unmarshal of JSON null sets the map to nil — re-init before writes.
-	if meta == nil {
-		meta = map[string]interface{}{}
-	}
-	meta["confirmed_txid"] = txid
-	meta["confirmed_block_height"] = blockHeight
-	updatedMeta, _ := json.Marshal(meta)
+	confirmRow := func(id string) (bool, error) {
+		var existingMeta []byte
+		_ = s.db.QueryRowContext(ctx, `SELECT COALESCE(metadata, '{}') FROM mcp_contracts WHERE contract_id=?`, id).Scan(&existingMeta)
+		meta := map[string]interface{}{}
+		if len(existingMeta) > 0 {
+			_ = json.Unmarshal(existingMeta, &meta)
+		}
+		// json.Unmarshal of JSON null sets the map to nil — re-init before writes.
+		if meta == nil {
+			meta = map[string]interface{}{}
+		}
+		meta["confirmed_txid"] = txid
+		meta["confirmed_block_height"] = blockHeight
+		updatedMeta, _ := json.Marshal(meta)
 
-	res, err := s.db.ExecContext(ctx, `
-UPDATE mcp_contracts 
-SET status='confirmed', confirmed_block_height=?, confirmed_at=datetime('now'), 
+		res, err := s.db.ExecContext(ctx, `
+UPDATE mcp_contracts
+SET status='confirmed', confirmed_block_height=?, confirmed_at=datetime('now'),
     stego_image_url=COALESCE(?, stego_image_url),
     metadata=?
 WHERE contract_id=?
-`, blockHeight, stegoImageURL, string(updatedMeta), contractID)
-	if err != nil {
-		return err
+`, blockHeight, stegoImageURL, string(updatedMeta), id)
+		if err != nil {
+			return false, err
+		}
+		n, _ := res.RowsAffected()
+		return n > 0, nil
 	}
 
-	// If the confirmed contract doesn't exist yet (peer node case), create it from the wish contract
-	normalized := NormalizeContractID(contractID)
-	wishID := "wish-" + normalized
-	if rowsAffected, _ := res.RowsAffected(); rowsAffected == 0 {
-		// Try to bootstrap the confirmed contract from the wish contract data
-		var wishTitle string
-		var wishBudget int64
-		var wishGoals, wishAvail int
-		var wishSkills, wishMeta []byte
-		err := s.db.QueryRowContext(ctx, `
-SELECT COALESCE(title, ''), COALESCE(total_budget_sats, 0), COALESCE(goals_count, 0), COALESCE(available_tasks_count, 0), skills, COALESCE(metadata, '{}')
-FROM mcp_contracts WHERE contract_id=?`, wishID).Scan(&wishTitle, &wishBudget, &wishGoals, &wishAvail, &wishSkills, &wishMeta)
-		if err == nil {
-			// Merge wish metadata into the confirmed contract so proposal
-			// linkage (origin_proposal_id, sandbox_hash, etc.) is preserved.
-			wishMetaMap := map[string]interface{}{}
-			if len(wishMeta) > 0 {
-				_ = json.Unmarshal(wishMeta, &wishMetaMap)
-			}
-			// json.Unmarshal of JSON null sets the map to nil — re-init before writes.
-			if wishMetaMap == nil {
-				wishMetaMap = map[string]interface{}{}
-			}
-			// Layer confirmation fields on top of wish metadata.
-			for k, v := range meta {
-				wishMetaMap[k] = v
-			}
-			mergedMeta, _ := json.Marshal(wishMetaMap)
-			_, _ = s.db.ExecContext(ctx, `
-INSERT INTO mcp_contracts (contract_id, title, total_budget_sats, goals_count, available_tasks_count, status, skills, stego_image_url, confirmed_block_height, confirmed_at, created_at, metadata)
-VALUES (?,?,?,?,?,'confirmed',?,?,?,datetime('now'),datetime('now'),?)
-`, normalized, wishTitle, wishBudget, wishGoals, wishAvail, string(wishSkills), stegoImageURL, blockHeight, string(mergedMeta))
-			// Copy tasks from wish contract to confirmed contract
-			_, _ = s.db.ExecContext(ctx, `
-INSERT OR IGNORE INTO mcp_tasks (task_id, contract_id, goal_id, title, description, budget_sats, skills, status, claimed_by, claimed_at, claim_expires_at, difficulty, estimated_hours, requirements, merkle_proof)
-SELECT replace(task_id, ?, ?) AS task_id, ? AS contract_id, goal_id, title, description, budget_sats, skills, status, claimed_by, claimed_at, claim_expires_at, difficulty, estimated_hours, requirements, merkle_proof
-FROM mcp_tasks WHERE contract_id=?
-`, wishID, normalized, normalized, wishID)
+	// Prefer canonical wish-<hash> for pixel hashes so ensureMatchedContract +
+	// markIngestionConfirmed + stego reconcile all land on one row.
+	var confirmedID string
+	for _, id := range plan.ConfirmTryOrder(contractID) {
+		ok, err := confirmRow(id)
+		if err != nil {
+			return err
+		}
+		if ok {
+			confirmedID = id
+			break
 		}
 	}
 
-	// Supersede the wish contract (peer nodes don't run archiveWishContract).
-	// Confirmed/completed wishes must not be demoted (defense in depth).
-	_, _ = s.db.ExecContext(ctx, `UPDATE mcp_contracts SET status='superseded' WHERE contract_id=? AND `+supersedeEligibleStatusSQL, wishID)
+	// Peer bootstrap: only the wish row exists under the other id form.
+	// Confirm in place onto the canonical wish id (never mint a second confirmed row).
+	if confirmedID == "" && plan.IsPixelHash {
+		sourceID := ""
+		for _, candidate := range []string{wishID, normalized, contractID} {
+			var n int
+			_ = s.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM mcp_contracts WHERE contract_id=?`, candidate).Scan(&n)
+			if n > 0 {
+				sourceID = candidate
+				break
+			}
+		}
+		if sourceID != "" && sourceID != wishID {
+			// Copy source → canonical wish id, then confirm wish.
+			var title string
+			var budget int64
+			var goals, avail int
+			var skills, srcMeta []byte
+			err := s.db.QueryRowContext(ctx, `
+SELECT COALESCE(title, ''), COALESCE(total_budget_sats, 0), COALESCE(goals_count, 0), COALESCE(available_tasks_count, 0), skills, COALESCE(metadata, '{}')
+FROM mcp_contracts WHERE contract_id=?`, sourceID).Scan(&title, &budget, &goals, &avail, &skills, &srcMeta)
+			if err == nil {
+				metaMap := map[string]interface{}{}
+				if len(srcMeta) > 0 {
+					_ = json.Unmarshal(srcMeta, &metaMap)
+				}
+				if metaMap == nil {
+					metaMap = map[string]interface{}{}
+				}
+				metaMap["confirmed_txid"] = txid
+				metaMap["confirmed_block_height"] = blockHeight
+				mergedMeta, _ := json.Marshal(metaMap)
+				_, _ = s.db.ExecContext(ctx, `
+INSERT INTO mcp_contracts (contract_id, title, total_budget_sats, goals_count, available_tasks_count, status, skills, stego_image_url, confirmed_block_height, confirmed_at, created_at, metadata)
+VALUES (?,?,?,?,?,'confirmed',?,?,?,datetime('now'),datetime('now'),?)
+ON CONFLICT(contract_id) DO UPDATE SET
+  status='confirmed', confirmed_block_height=excluded.confirmed_block_height,
+  confirmed_at=datetime('now'),
+  stego_image_url=COALESCE(excluded.stego_image_url, mcp_contracts.stego_image_url),
+  metadata=excluded.metadata
+`, wishID, title, budget, goals, avail, string(skills), stegoImageURL, blockHeight, string(mergedMeta))
+				_, _ = s.db.ExecContext(ctx, `
+INSERT OR IGNORE INTO mcp_tasks (task_id, contract_id, goal_id, title, description, budget_sats, skills, status, claimed_by, claimed_at, claim_expires_at, difficulty, estimated_hours, requirements, merkle_proof)
+SELECT replace(task_id, ?, ?) AS task_id, ? AS contract_id, goal_id, title, description, budget_sats, skills, status, claimed_by, claimed_at, claim_expires_at, difficulty, estimated_hours, requirements, merkle_proof
+FROM mcp_tasks WHERE contract_id=?
+`, sourceID, wishID, wishID, sourceID)
+				confirmedID = wishID
+			}
+		} else if sourceID == wishID {
+			// Should have been caught by confirmRow; retry once.
+			if ok, err := confirmRow(wishID); err != nil {
+				return err
+			} else if ok {
+				confirmedID = wishID
+			}
+		}
+	}
+
+	// Collapse dual IDs: after confirm, force-supersede bare-hash aliases even if
+	// they were already confirmed. ConfirmContract is the trusted chain path —
+	// untrusted stego/IPFS demotion still uses supersedeEligibleStatusSQL elsewhere.
+	if plan.IsPixelHash {
+		var wishStatus string
+		_ = s.db.QueryRowContext(ctx, `SELECT COALESCE(status,'') FROM mcp_contracts WHERE contract_id=?`, wishID).Scan(&wishStatus)
+		if strings.EqualFold(strings.TrimSpace(wishStatus), "confirmed") {
+			for _, alias := range plan.Aliases {
+				// Force supersede any twin row so /contracts cannot list both.
+				_, _ = s.db.ExecContext(ctx, `UPDATE mcp_contracts SET status='superseded' WHERE contract_id=? AND lower(status)<>'superseded'`, alias)
+			}
+		}
+	} else {
+		// Non-pixel: historical supersede of wish- twin if present.
+		_, _ = s.db.ExecContext(ctx, `UPDATE mcp_contracts SET status='superseded' WHERE contract_id=? AND `+supersedeEligibleStatusSQL, wishID)
+	}
 
 	// Update matching proposals to confirmed (mirrors PG behavior)
-	_, err = s.db.ExecContext(ctx, `
+	_, err := s.db.ExecContext(ctx, `
 UPDATE mcp_proposals SET status='confirmed'
 WHERE status='approved' AND (
   json_extract(metadata, '$.contract_id') IN (?, ?) OR
