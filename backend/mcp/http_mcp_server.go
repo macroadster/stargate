@@ -22,11 +22,12 @@ import (
 	"stargate-backend/core/smart_contract"
 	"stargate-backend/handlers"
 	scmiddleware "stargate-backend/app/smart_contract"
+	scservices "stargate-backend/app/smart_contract/services"
 	"stargate-backend/services"
 	"stargate-backend/starlight"
 	auth "stargate-backend/storage/auth"
 	"stargate-backend/storage"
-       "stargate-backend/storage/datadir"
+	"stargate-backend/storage/datadir"
 	scstore "stargate-backend/storage/smart_contract"
 
 	"github.com/btcsuite/btcd/btcutil"
@@ -174,6 +175,7 @@ type MCPSession struct {
 // HTTPMCPServer provides HTTP endpoints for MCP tools
 type HTTPMCPServer struct {
 	store            scmiddleware.Store
+	claimSvc         *scservices.ClaimService
 	apiKeyStore      auth.APIKeyValidator
 	apiKeyIssuer     auth.APIKeyIssuer
 	ingestionSvc     *services.IngestionService
@@ -211,6 +213,7 @@ func NewHTTPMCPServer(store scmiddleware.Store, apiKeyStore auth.APIKeyValidator
 
 	return &HTTPMCPServer{
 		store:            store,
+		claimSvc:         scservices.NewClaimService(store),
 		apiKeyStore:      apiKeyStore,
 		apiKeyIssuer:     apiKeyIssuer,
 		ingestionSvc:     ingestionSvc,
@@ -834,7 +837,7 @@ func (h *HTTPMCPServer) handleClaimTask(ctx context.Context, args map[string]int
 		return nil, validation
 	}
 
-	claim, err := h.store.ClaimTask(taskID, wallet, nil)
+	claim, err := h.claimSvc.ClaimTask(taskID, wallet, nil)
 	if err != nil {
 		// Convert common errors to structured errors
 		if strings.Contains(err.Error(), "not found") {
@@ -2155,7 +2158,7 @@ func (h *HTTPMCPServer) handleSubmitWork(ctx context.Context, args map[string]in
 		return nil, NewSubmitWorkError("DATA_TOO_LARGE", fmt.Sprintf("Total deliverables data size (%d bytes) exceeds limit of %d bytes", len(delivJSON), maxDeliverablesSize), "deliverables")
 	}
 
-	submission, err := h.store.SubmitWork(claimID, deliverables, nil)
+	submission, err := h.claimSvc.SubmitWork(claimID, deliverables, nil)
 	if err != nil {
 		// Convert common errors to structured errors
 		if strings.Contains(err.Error(), "not found") {

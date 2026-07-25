@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"stargate-backend/core/identity"
 	"stargate-backend/core/smart_contract"
 )
 
@@ -584,16 +583,10 @@ FROM mcp_contracts WHERE contract_id=$1
 
 // CreateContractReworkRequest adds a rework request from the wish creator at contract level.
 func (s *PGStore) CreateContractReworkRequest(ctx context.Context, contractID, requester, notes string) (smart_contract.ContractReworkRequest, error) {
-	requestID := fmt.Sprintf("rework-%s-%d", contractID, time.Now().UnixNano())
 	now := time.Now()
-
-	reworkReq := smart_contract.ContractReworkRequest{
-		RequestID:  requestID,
-		ContractID: contractID,
-		Requester:  requester,
-		Notes:      notes,
-		Status:     "open",
-		CreatedAt:  now,
+	reworkReq, err := BuildReworkRequest(contractID, requester, notes, now, "")
+	if err != nil {
+		return smart_contract.ContractReworkRequest{}, err
 	}
 
 	tx, err := s.pool.Begin(ctx)
@@ -619,21 +612,7 @@ func (s *PGStore) CreateContractReworkRequest(ctx context.Context, contractID, r
 	} else {
 		meta = make(map[string]interface{})
 	}
-
-	reworkReqs := []interface{}{}
-	if existing, ok := meta["rework_requests"].([]interface{}); ok {
-		reworkReqs = existing
-	}
-
-	reworkReqs = append(reworkReqs, map[string]interface{}{
-		"request_id":  reworkReq.RequestID,
-		"contract_id": reworkReq.ContractID,
-		"requester":   reworkReq.Requester,
-		"notes":       reworkReq.Notes,
-		"status":      reworkReq.Status,
-		"created_at":  reworkReq.CreatedAt.Format(time.RFC3339),
-	})
-	meta["rework_requests"] = reworkReqs
+	meta = AppendReworkRequestToMetadata(meta, reworkReq)
 
 	updatedMetadata, err := json.Marshal(meta)
 	if err != nil {
@@ -645,7 +624,7 @@ func (s *PGStore) CreateContractReworkRequest(ctx context.Context, contractID, r
 		return smart_contract.ContractReworkRequest{}, err
 	}
 
-	_, err = tx.Exec(ctx, `UPDATE mcp_tasks SET status='rejected' WHERE contract_id=$1`, contractID)
+	_, err = tx.Exec(ctx, `UPDATE mcp_tasks SET status=$2 WHERE contract_id=$1`, contractID, ReworkTaskStatusOnCreate())
 	if err != nil {
 		return smart_contract.ContractReworkRequest{}, err
 	}
@@ -672,39 +651,7 @@ func (s *PGStore) GetContractReworkRequests(ctx context.Context, contractID stri
 	if len(metadata) > 0 {
 		var meta map[string]interface{}
 		if err := json.Unmarshal(metadata, &meta); err == nil {
-			if reworkReqs, ok := meta["rework_requests"].([]interface{}); ok {
-				for _, r := range reworkReqs {
-					if rMap, ok := r.(map[string]interface{}); ok {
-						req := smart_contract.ContractReworkRequest{}
-						if id, ok := rMap["request_id"].(string); ok {
-							req.RequestID = id
-						}
-						if contractID, ok := rMap["contract_id"].(string); ok {
-							req.ContractID = contractID
-						}
-						if requester, ok := rMap["requester"].(string); ok {
-							req.Requester = requester
-						}
-						if notes, ok := rMap["notes"].(string); ok {
-							req.Notes = notes
-						}
-						if status, ok := rMap["status"].(string); ok {
-							req.Status = status
-						}
-						if createdAt, ok := rMap["created_at"].(string); ok {
-							if t, err := time.Parse(time.RFC3339, createdAt); err == nil {
-								req.CreatedAt = t
-							}
-						}
-						if resolvedAt, ok := rMap["resolved_at"].(string); ok {
-							if t, err := time.Parse(time.RFC3339, resolvedAt); err == nil {
-								req.ResolvedAt = &t
-							}
-						}
-						reqs = append(reqs, req)
-					}
-				}
-			}
+			reqs = ParseReworkRequestsFromMetadata(meta)
 		}
 	}
 	return reqs, nil
@@ -736,30 +683,10 @@ func (s *PGStore) ResolveContractReworkRequest(ctx context.Context, contractID, 
 		meta = make(map[string]interface{})
 	}
 
-	reworkReqs := []interface{}{}
-	if existing, ok := meta["rework_requests"].([]interface{}); ok {
-		reworkReqs = existing
+	meta, err = ResolveReworkRequestInMetadata(meta, requestID, time.Now())
+	if err != nil {
+		return err
 	}
-
-	found := false
-	now := time.Now().Format(time.RFC3339)
-	for i, r := range reworkReqs {
-		if rMap, ok := r.(map[string]interface{}); ok {
-			if rid, ok := rMap["request_id"].(string); ok && rid == requestID {
-				rMap["status"] = "resolved"
-				rMap["resolved_at"] = now
-				reworkReqs[i] = rMap
-				found = true
-				break
-			}
-		}
-	}
-
-	if !found {
-		return fmt.Errorf("rework request %s not found", requestID)
-	}
-
-	meta["rework_requests"] = reworkReqs
 	updatedMetadata, err := json.Marshal(meta)
 	if err != nil {
 		return err
@@ -2118,29 +2045,29 @@ WHERE submission_id=$1
 }
 
 func (s *PGStore) DeleteWish(ctx context.Context, visiblePixelHash string) error {
+	plan, err := BuildDeleteWishPlan(visiblePixelHash)
+	if err != nil {
+		return err
+	}
+
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
 
-	// 1. Delete associated proposals
-	if _, err := tx.Exec(ctx, `DELETE FROM mcp_proposals WHERE visible_pixel_hash = $1`, visiblePixelHash); err != nil {
+	if _, err := tx.Exec(ctx, `DELETE FROM mcp_proposals WHERE visible_pixel_hash = $1`, plan.VisiblePixelHash); err != nil {
 		return fmt.Errorf("delete proposals: %w", err)
 	}
 
-	wishID := identity.ToWishID(visiblePixelHash)
-
-	// 2. Delete from mcp_escort_status (for any tasks linked to this wish)
 	if _, err := tx.Exec(ctx, `
 		DELETE FROM mcp_escort_status 
 		WHERE task_id IN (SELECT task_id FROM mcp_tasks WHERE contract_id = $1)
-	`, wishID); err != nil {
+	`, plan.WishID); err != nil {
 		return fmt.Errorf("delete escort status: %w", err)
 	}
 
-	// 3. Delete the wish contract (cascades to tasks, claims, and submissions)
-	if _, err := tx.Exec(ctx, `DELETE FROM mcp_contracts WHERE contract_id = $1`, wishID); err != nil {
+	if _, err := tx.Exec(ctx, `DELETE FROM mcp_contracts WHERE contract_id = $1`, plan.WishID); err != nil {
 		return fmt.Errorf("delete wish contract: %w", err)
 	}
 

@@ -222,3 +222,28 @@ func TestBuildConfirmApply(t *testing.T) {
 		t.Fatal(meta)
 	}
 }
+
+func TestBuildDeleteWishAndRework(t *testing.T) {
+	hash := strings.Repeat("cd", 32)
+	plan, err := BuildDeleteWishPlan(hash)
+	if err != nil || plan.WishID == "" {
+		t.Fatalf("%+v %v", plan, err)
+	}
+	req, err := BuildReworkRequest("c1", "w1", "fix", time.Now(), "rework-1")
+	if err != nil || req.Status != "open" {
+		t.Fatal(err, req)
+	}
+	meta := AppendReworkRequestToMetadata(nil, req)
+	parsed := ParseReworkRequestsFromMetadata(meta)
+	if len(parsed) != 1 || parsed[0].RequestID != "rework-1" {
+		t.Fatalf("%+v", parsed)
+	}
+	meta2, err := ResolveReworkRequestInMetadata(meta, "rework-1", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed = ParseReworkRequestsFromMetadata(meta2)
+	if parsed[0].Status != "resolved" || parsed[0].ResolvedAt == nil {
+		t.Fatalf("%+v", parsed[0])
+	}
+}

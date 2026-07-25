@@ -1274,29 +1274,28 @@ func (s *MemoryStore) DeleteWish(ctx context.Context, visiblePixelHash string) e
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// 1. Delete associated proposals
+	plan, err := BuildDeleteWishPlan(visiblePixelHash)
+	if err != nil {
+		return err
+	}
+
 	for id, p := range s.proposals {
-		if p.VisiblePixelHash == visiblePixelHash {
+		if p.VisiblePixelHash == plan.VisiblePixelHash {
 			delete(s.proposals, id)
 		}
 	}
 
-	wishID := identity.ToWishID(visiblePixelHash)
-
-	// 2. Collect task IDs for this wish to cascade delete claims and submissions
 	taskIDs := make(map[string]bool)
 	for id, t := range s.tasks {
-		if t.ContractID == wishID {
+		if t.ContractID == plan.WishID {
 			taskIDs[id] = true
 			delete(s.tasks, id)
 		}
 	}
 
-	// 3. Delete claims and submissions for those tasks
 	for id, c := range s.claims {
 		if taskIDs[c.TaskID] {
 			delete(s.claims, id)
-			// Delete submissions linked to this claim
 			for sid, sub := range s.submissions {
 				if sub.ClaimID == id {
 					delete(s.submissions, sid)
@@ -1305,9 +1304,7 @@ func (s *MemoryStore) DeleteWish(ctx context.Context, visiblePixelHash string) e
 		}
 	}
 
-	// 4. Delete the contract itself
-	delete(s.contracts, wishID)
-
+	delete(s.contracts, plan.WishID)
 	return nil
 }
 
@@ -1321,23 +1318,17 @@ func (s *MemoryStore) CreateContractReworkRequest(ctx context.Context, contractI
 		return smart_contract.ContractReworkRequest{}, fmt.Errorf("contract %s not found", contractID)
 	}
 
-	requestID := fmt.Sprintf("rework-%s-%d", contractID, time.Now().UnixNano())
 	now := time.Now()
-
-	reworkReq := smart_contract.ContractReworkRequest{
-		RequestID:  requestID,
-		ContractID: contractID,
-		Requester:  requester,
-		Notes:      notes,
-		Status:     "open",
-		CreatedAt:  now,
+	reworkReq, err := BuildReworkRequest(contractID, requester, notes, now, "")
+	if err != nil {
+		return smart_contract.ContractReworkRequest{}, err
 	}
 
 	c.ReworkRequests = append(c.ReworkRequests, reworkReq)
-	// Mark all pending tasks for this contract as rejected
+	taskStatus := ReworkTaskStatusOnCreate()
 	for tID, t := range s.tasks {
 		if t.ContractID == contractID {
-			t.Status = "rejected"
+			t.Status = taskStatus
 			s.tasks[tID] = t
 		}
 	}
@@ -1373,7 +1364,7 @@ func (s *MemoryStore) ResolveContractReworkRequest(ctx context.Context, contract
 	now := time.Now()
 	for i, req := range c.ReworkRequests {
 		if req.RequestID == requestID {
-			c.ReworkRequests[i].Status = "resolved"
+			c.ReworkRequests[i].Status = smart_contract.ReworkStatusResolved
 			c.ReworkRequests[i].ResolvedAt = &now
 			found = true
 			break
