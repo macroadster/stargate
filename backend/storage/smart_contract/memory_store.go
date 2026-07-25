@@ -1045,17 +1045,13 @@ func (s *MemoryStore) ApproveProposal(ctx context.Context, id string) error {
 		return fmt.Errorf("proposal validation failed: %v", err)
 	}
 
-	// Check if proposal is already in final state
-	if strings.EqualFold(p.Status, "approved") || strings.EqualFold(p.Status, "published") {
-		return fmt.Errorf("proposal %s is already %s", id, p.Status)
+	if err := CheckProposalApprovable(id, p.Status); err != nil {
+		return err
 	}
 
-	if !strings.EqualFold(p.Status, "pending") {
-		return fmt.Errorf("proposal %s must be pending to approve, current status: %s", id, p.Status)
-	}
-
-	contractID := contractIDFromMeta(p.Metadata, id)
-	normalizedContractID := NormalizeContractID(contractID)
+	keys := ResolveApproveKeys(p.Metadata, id)
+	contractID := keys.ContractID
+	normalizedContractID := keys.NormalizedContractID
 	hasTasks := len(p.Tasks) > 0
 	if !hasTasks {
 		for _, task := range s.tasks {
@@ -1069,24 +1065,28 @@ func (s *MemoryStore) ApproveProposal(ctx context.Context, id string) error {
 		return fmt.Errorf("approved proposals must contain at least one task")
 	}
 
-	// Reject if another proposal is already approved/published for the same contract.
+	// Reject if another proposal is already approved/published for the same contract/pixel.
 	for pid, other := range s.proposals {
 		if pid == id {
 			continue
 		}
-		otherCID := NormalizeContractID(contractIDFromMeta(other.Metadata, other.ID))
-		if otherCID == normalizedContractID && (strings.EqualFold(other.Status, "approved") || strings.EqualFold(other.Status, "published")) {
+		if !ProposalMatchesApproveConflict(other.ID, other.VisiblePixelHash, other.Metadata, keys) {
+			continue
+		}
+		if strings.EqualFold(other.Status, "approved") || strings.EqualFold(other.Status, "published") {
 			return fmt.Errorf("another proposal is already approved/published for contract %s", normalizedContractID)
 		}
 	}
 
-	// Auto-reject other pending proposals for this contract.
+	// Auto-reject other pending proposals for this contract/pixel.
 	for pid, other := range s.proposals {
 		if pid == id {
 			continue
 		}
-		otherCID := NormalizeContractID(contractIDFromMeta(other.Metadata, other.ID))
-		if otherCID == normalizedContractID && strings.EqualFold(other.Status, "pending") {
+		if !ProposalMatchesApproveConflict(other.ID, other.VisiblePixelHash, other.Metadata, keys) {
+			continue
+		}
+		if strings.EqualFold(other.Status, "pending") {
 			other.Status = "rejected"
 			s.proposals[pid] = other
 		}
@@ -1102,9 +1102,8 @@ func (s *MemoryStore) ApproveProposal(ctx context.Context, id string) error {
 			visible = strings.TrimSpace(v)
 		}
 	}
-	if visible != "" {
-		wishID := identity.ToWishID(visible)
-		if contract, ok := s.contracts[wishID]; ok {
+	if wishID := WishContractIDForSupersede(p.VisiblePixelHash, p.Metadata); wishID != "" {
+		if contract, ok := s.contracts[wishID]; ok && ContractStatusMaySupersede(contract.Status) {
 			contract.Status = "superseded"
 			s.contracts[wishID] = contract
 		}
@@ -1129,27 +1128,24 @@ func (s *MemoryStore) PublishProposal(ctx context.Context, id string) error {
 	if !ok {
 		return fmt.Errorf("proposal %s not found", id)
 	}
-	if !strings.EqualFold(p.Status, "approved") && !strings.EqualFold(p.Status, "published") {
-		return fmt.Errorf("proposal %s must be approved before publish", id)
+	if err := CheckProposalPublishable(id, p.Status); err != nil {
+		return err
 	}
 	contractID := contractIDFromMeta(p.Metadata, id)
 	for i, t := range s.tasks {
-		if t.ContractID == contractID {
-			switch strings.ToLower(t.Status) {
-			case "submitted", "pending_review", "claimed", "approved":
-				t.Status = "published"
-				s.tasks[i] = t
-			}
+		if t.ContractID == contractID && TaskStatusShouldPublishOnPublish(t.Status) {
+			t.Status = "published"
+			s.tasks[i] = t
 		}
 	}
-	for id, c := range s.claims {
+	for cid, c := range s.claims {
 		task, ok := s.tasks[c.TaskID]
 		if !ok || task.ContractID != contractID {
 			continue
 		}
-		if strings.EqualFold(c.Status, "submitted") || strings.EqualFold(c.Status, "pending_review") || strings.EqualFold(c.Status, "active") || strings.EqualFold(c.Status, "approved") {
+		if ClaimStatusShouldCompleteOnPublish(c.Status) {
 			c.Status = "complete"
-			s.claims[id] = c
+			s.claims[cid] = c
 		}
 	}
 	p.Status = "published"

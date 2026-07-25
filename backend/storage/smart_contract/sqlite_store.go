@@ -1406,11 +1406,8 @@ func (s *SQLiteStore) ApproveProposal(ctx context.Context, id string) error {
 		return err
 	}
 
-	if strings.EqualFold(currentStatus, "approved") || strings.EqualFold(currentStatus, "published") {
-		return fmt.Errorf("proposal %s is already %s", id, currentStatus)
-	}
-	if !strings.EqualFold(currentStatus, "pending") {
-		return fmt.Errorf("proposal %s must be pending to approve, current status: %s", id, currentStatus)
+	if err := CheckProposalApprovable(id, currentStatus); err != nil {
+		return err
 	}
 
 	var meta map[string]interface{}
@@ -1511,8 +1508,8 @@ func (s *SQLiteStore) PublishProposal(ctx context.Context, id string) error {
 	if err := tx.QueryRowContext(ctx, `SELECT status, metadata FROM mcp_proposals WHERE id=?`, id).Scan(&status, &metaJSON); err != nil {
 		return err
 	}
-	if !strings.EqualFold(status, "approved") && !strings.EqualFold(status, "published") {
-		return fmt.Errorf("proposal %s must be approved before publish", id)
+	if err := CheckProposalPublishable(id, status); err != nil {
+		return err
 	}
 
 	var meta map[string]interface{}

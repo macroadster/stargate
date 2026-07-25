@@ -153,3 +153,27 @@ func TestDecideSubmissionStatusUpdate(t *testing.T) {
 		t.Fatalf("%+v", p)
 	}
 }
+
+func TestCheckProposalApprovableAndPublishable(t *testing.T) {
+	if err := CheckProposalApprovable("p1", "pending"); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckProposalApprovable("p1", "approved"); err == nil {
+		t.Fatal("expected already approved")
+	}
+	if err := CheckProposalPublishable("p1", "approved"); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckProposalPublishable("p1", "pending"); err == nil {
+		t.Fatal("expected must be approved")
+	}
+}
+
+func TestContractStatusMaySupersede(t *testing.T) {
+	if ContractStatusMaySupersede("confirmed") || ContractStatusMaySupersede("completed") {
+		t.Fatal("must not supersede confirmed/completed")
+	}
+	if !ContractStatusMaySupersede("active") {
+		t.Fatal("active should supersede")
+	}
+}
