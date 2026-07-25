@@ -644,19 +644,11 @@ func (s *MemoryStore) ConfirmContract(ctx context.Context, contractID string, bl
 		return nil
 	}
 
-	plan := PlanConfirmContractIDs(contractID)
-	normalized := plan.Normalized
-	wishID := plan.Canonical
-	if !plan.IsPixelHash {
-		wishID = "wish-" + normalized
-	}
-	imageFile := BlockImageFileKey(contractID)
-	if imageFile == "" {
-		imageFile = contractID
-	}
-	stegoImageURL := fmt.Sprintf("/api/block-image/%d/%s", blockHeight, imageFile)
+	apply := BuildConfirmApply(contractID, blockHeight, "")
+	plan := apply.Plan
+	normalized := apply.Normalized
+	wishID := apply.WishID
 
-	// Prefer canonical wish-<hash> for pixel hashes (single confirmed listing).
 	var contract smart_contract.Contract
 	var foundID string
 	for _, id := range plan.ConfirmTryOrder(contractID) {
@@ -669,29 +661,16 @@ func (s *MemoryStore) ConfirmContract(ctx context.Context, contractID string, bl
 	if foundID == "" {
 		return fmt.Errorf("contract %s not found", contractID)
 	}
-	// Migrate bare → canonical wish id when confirming a pixel-hash twin.
 	targetID := foundID
 	if plan.IsPixelHash {
 		targetID = wishID
-		if foundID != wishID {
-			contract.ContractID = wishID
-		}
 	}
 
-	contract.Status = "confirmed"
-	contract.ConfirmedBlockHeight = &blockHeight
-	confirmedAt := time.Now()
-	contract.ConfirmedAt = &confirmedAt
-	if contract.Metadata == nil {
-		contract.Metadata = make(map[string]interface{})
-	}
-	contract.Metadata["confirmed_txid"] = txid
-	contract.StegoImageURL = stegoImageURL
+	ApplyConfirmToContract(&contract, targetID, blockHeight, txid, apply.StegoImageURL, time.Now())
 	s.contracts[targetID] = contract
 
-	// Collapse aliases (including already-confirmed bare rows).
 	if plan.IsPixelHash {
-		for _, alias := range plan.Aliases {
+		for _, alias := range apply.AliasesToForceSupersede {
 			if alias == targetID {
 				continue
 			}
@@ -700,16 +679,17 @@ func (s *MemoryStore) ConfirmContract(ctx context.Context, contractID string, bl
 				s.contracts[alias] = c
 			}
 		}
-	} else if wishContract, wok := s.contracts[wishID]; wok && wishContract.Status != "superseded" && !IsNonSupersedableContractStatus(wishContract.Status) {
-		wishContract.Status = "superseded"
-		s.contracts[wishID] = wishContract
+	} else if apply.SupersedeWishIfNonPixel {
+		if wishContract, wok := s.contracts[wishID]; wok && ContractStatusMaySupersede(wishContract.Status) {
+			wishContract.Status = "superseded"
+			s.contracts[wishID] = wishContract
+		}
 	}
 
-	for id, proposal := range s.proposals {
-		proposalCID := NormalizeContractID(contractIDFromMeta(proposal.Metadata, proposal.ID))
-		if proposalCID == normalized && strings.EqualFold(proposal.Status, "approved") {
+	for pid, proposal := range s.proposals {
+		if ProposalShouldConfirmOnChain(proposal.Status, proposal.ID, proposal.VisiblePixelHash, proposal.Metadata, normalized, wishID) {
 			proposal.Status = "confirmed"
-			s.proposals[id] = proposal
+			s.proposals[pid] = proposal
 		}
 	}
 	return nil
@@ -1037,35 +1017,21 @@ func (s *MemoryStore) ApproveProposal(ctx context.Context, id string) error {
 		return fmt.Errorf("proposal %s not found", id)
 	}
 
-	// Derive tasks from markdown if not already populated
 	populateProposalTasks(&p)
-
-	// Validate proposal for approval without modifying status
-	if err := ValidateProposalForApproval(&p); err != nil {
-		return fmt.Errorf("proposal validation failed: %v", err)
-	}
-
-	if err := CheckProposalApprovable(id, p.Status); err != nil {
-		return err
-	}
-
-	keys := ResolveApproveKeys(p.Metadata, id)
-	contractID := keys.ContractID
-	normalizedContractID := keys.NormalizedContractID
-	hasTasks := len(p.Tasks) > 0
-	if !hasTasks {
-		for _, task := range s.tasks {
-			if task.ContractID == contractID {
-				hasTasks = true
-				break
-			}
+	contractTaskCount := 0
+	// provisional keys for task count before BuildApprovePlan
+	preKeys := ResolveApproveKeys(p.Metadata, id)
+	for _, task := range s.tasks {
+		if task.ContractID == preKeys.ContractID {
+			contractTaskCount++
 		}
 	}
-	if !hasTasks {
-		return fmt.Errorf("approved proposals must contain at least one task")
+	plan, err := BuildApprovePlan(id, p.Status, &p, contractTaskCount)
+	if err != nil {
+		return err
 	}
+	keys := plan.Keys
 
-	// Reject if another proposal is already approved/published for the same contract/pixel.
 	for pid, other := range s.proposals {
 		if pid == id {
 			continue
@@ -1074,11 +1040,9 @@ func (s *MemoryStore) ApproveProposal(ctx context.Context, id string) error {
 			continue
 		}
 		if strings.EqualFold(other.Status, "approved") || strings.EqualFold(other.Status, "published") {
-			return fmt.Errorf("another proposal is already approved/published for contract %s", normalizedContractID)
+			return ErrApproveConflict(keys.NormalizedContractID)
 		}
 	}
-
-	// Auto-reject other pending proposals for this contract/pixel.
 	for pid, other := range s.proposals {
 		if pid == id {
 			continue
@@ -1092,31 +1056,24 @@ func (s *MemoryStore) ApproveProposal(ctx context.Context, id string) error {
 		}
 	}
 
-	// Update proposal status atomically
-	p.Status = "approved"
+	p.Status = plan.NewProposalStatus
 	s.proposals[id] = p
 
-	visible := strings.TrimSpace(p.VisiblePixelHash)
-	if visible == "" {
-		if v, ok := p.Metadata["visible_pixel_hash"].(string); ok {
-			visible = strings.TrimSpace(v)
-		}
-	}
-	if wishID := WishContractIDForSupersede(p.VisiblePixelHash, p.Metadata); wishID != "" {
-		if contract, ok := s.contracts[wishID]; ok && ContractStatusMaySupersede(contract.Status) {
+	if plan.WishToSupersede != "" {
+		if contract, ok := s.contracts[plan.WishToSupersede]; ok && ContractStatusMaySupersede(contract.Status) {
 			contract.Status = "superseded"
-			s.contracts[wishID] = contract
+			s.contracts[plan.WishToSupersede] = contract
 		}
 	}
 
-	// Update related tasks
-	for i, t := range s.tasks {
-		if t.ContractID == contractID {
-			t.Status = "approved"
-			s.tasks[i] = t
+	if plan.SetRelatedTasksApproved {
+		for i, t := range s.tasks {
+			if t.ContractID == keys.ContractID {
+				t.Status = "approved"
+				s.tasks[i] = t
+			}
 		}
 	}
-
 	return nil
 }
 
@@ -1128,19 +1085,19 @@ func (s *MemoryStore) PublishProposal(ctx context.Context, id string) error {
 	if !ok {
 		return fmt.Errorf("proposal %s not found", id)
 	}
-	if err := CheckProposalPublishable(id, p.Status); err != nil {
+	plan, err := BuildPublishPlan(id, p.Status, p.Metadata)
+	if err != nil {
 		return err
 	}
-	contractID := contractIDFromMeta(p.Metadata, id)
 	for i, t := range s.tasks {
-		if t.ContractID == contractID && TaskStatusShouldPublishOnPublish(t.Status) {
+		if t.ContractID == plan.ContractID && TaskStatusShouldPublishOnPublish(t.Status) {
 			t.Status = "published"
 			s.tasks[i] = t
 		}
 	}
 	for cid, c := range s.claims {
 		task, ok := s.tasks[c.TaskID]
-		if !ok || task.ContractID != contractID {
+		if !ok || task.ContractID != plan.ContractID {
 			continue
 		}
 		if ClaimStatusShouldCompleteOnPublish(c.Status) {
@@ -1148,7 +1105,7 @@ func (s *MemoryStore) PublishProposal(ctx context.Context, id string) error {
 			s.claims[cid] = c
 		}
 	}
-	p.Status = "published"
+	p.Status = plan.NewProposalStatus
 	s.proposals[id] = p
 	return nil
 }

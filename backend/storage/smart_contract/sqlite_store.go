@@ -941,18 +941,12 @@ func (s *SQLiteStore) ConfirmContract(ctx context.Context, contractID string, bl
 		return nil
 	}
 
-	plan := PlanConfirmContractIDs(contractID)
-	normalized := plan.Normalized
-	wishID := plan.Canonical
-	if !plan.IsPixelHash {
-		wishID = "wish-" + normalized
-	}
-	// Image files on disk are keyed by bare pixel hash, never "wish-" contract ids.
-	imageFileKey := BlockImageFileKey(contractID)
-	if imageFileKey == "" {
-		imageFileKey = contractID
-	}
-	stegoImageURL := fmt.Sprintf("/api/block-image/%d/%s", blockHeight, imageFileKey)
+	apply := BuildConfirmApply(contractID, blockHeight, "")
+	plan := apply.Plan
+	normalized := apply.Normalized
+	wishID := apply.WishID
+	stegoImageURL := apply.StegoImageURL
+	_ = apply // keep for alias fields below
 
 	confirmRow := func(id string) (bool, error) {
 		var existingMeta []byte
@@ -961,12 +955,7 @@ func (s *SQLiteStore) ConfirmContract(ctx context.Context, contractID string, bl
 		if len(existingMeta) > 0 {
 			_ = json.Unmarshal(existingMeta, &meta)
 		}
-		// json.Unmarshal of JSON null sets the map to nil — re-init before writes.
-		if meta == nil {
-			meta = map[string]interface{}{}
-		}
-		meta["confirmed_txid"] = txid
-		meta["confirmed_block_height"] = blockHeight
+		meta = MergeConfirmMetadata(meta, txid, blockHeight)
 		updatedMeta, _ := json.Marshal(meta)
 
 		res, err := s.db.ExecContext(ctx, `
@@ -1406,24 +1395,13 @@ func (s *SQLiteStore) ApproveProposal(ctx context.Context, id string) error {
 		return err
 	}
 
-	if err := CheckProposalApprovable(id, currentStatus); err != nil {
-		return err
-	}
-
 	var meta map[string]interface{}
 	if len(metaJSON) > 0 {
 		if err := json.Unmarshal(metaJSON, &meta); err != nil {
 			return err
 		}
 	}
-	if meta == nil {
-		meta = map[string]interface{}{}
-	}
-	if strings.TrimSpace(visiblePixelHash) != "" {
-		if vph, ok := meta["visible_pixel_hash"].(string); !ok || strings.TrimSpace(vph) == "" {
-			meta["visible_pixel_hash"] = visiblePixelHash
-		}
-	}
+	meta = EnsureVisibleInMeta(meta, visiblePixelHash)
 
 	proposal, err := s.GetProposal(ctx, id)
 	if err != nil {
@@ -1434,13 +1412,19 @@ func (s *SQLiteStore) ApproveProposal(ctx context.Context, id string) error {
 		proposal.VisiblePixelHash = strings.TrimSpace(visiblePixelHash)
 	}
 	populateProposalTasks(&proposal)
-	if err := ValidateProposalForApproval(&proposal); err != nil {
-		return fmt.Errorf("proposal validation failed: %v", err)
-	}
 
-	contractID := contractIDFromMeta(meta, id)
-	normalizedContractID := NormalizeContractID(contractID)
-	wishContractID := "wish-" + normalizedContractID
+	// Task count for shared BuildApprovePlan
+	preKeys := ResolveApproveKeys(meta, id)
+	var taskCount int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM mcp_tasks WHERE contract_id=?`, preKeys.ContractID).Scan(&taskCount); err != nil {
+		return err
+	}
+	plan, err := BuildApprovePlan(id, currentStatus, &proposal, taskCount)
+	if err != nil {
+		return err
+	}
+	keys := plan.Keys
+	n, w := keys.NormalizedContractID, keys.WishContractID
 
 	var conflict int
 	if err := tx.QueryRowContext(ctx, `
@@ -1450,11 +1434,11 @@ AND (
   id IN (?, ?) OR
   visible_pixel_hash IN (?, ?)
 )
-`, id, normalizedContractID, wishContractID, normalizedContractID, wishContractID).Scan(&conflict); err != nil {
+`, id, n, w, n, w).Scan(&conflict); err != nil {
 		return err
 	}
 	if conflict > 0 {
-		return fmt.Errorf("another proposal is already approved/published for contract %s", normalizedContractID)
+		return ErrApproveConflict(keys.NormalizedContractID)
 	}
 
 	if _, err := tx.ExecContext(ctx, `
@@ -1463,32 +1447,16 @@ WHERE id<>? AND status='pending' AND (
   id IN (?, ?) OR
   visible_pixel_hash IN (?, ?)
 )
-`, id, normalizedContractID, wishContractID, normalizedContractID, wishContractID); err != nil {
+`, id, n, w, n, w); err != nil {
 		return err
 	}
 
-	var taskCount int
-	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM mcp_tasks WHERE contract_id=?`, contractID).Scan(&taskCount); err != nil {
-		return err
-	}
-	if len(proposal.Tasks) == 0 && taskCount == 0 {
-		return fmt.Errorf("approved proposals must contain at least one task")
-	}
-
-	if _, err := tx.ExecContext(ctx, `UPDATE mcp_proposals SET status='approved' WHERE id=?`, id); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE mcp_proposals SET status=? WHERE id=?`, plan.NewProposalStatus, id); err != nil {
 		return err
 	}
 
-	visible := strings.TrimSpace(visiblePixelHash)
-	if visible == "" {
-		if v, ok := meta["visible_pixel_hash"].(string); ok {
-			visible = strings.TrimSpace(v)
-		}
-	}
-	if visible != "" {
-		wishID := identity.ToWishID(visible)
-		// Authenticated approval still must not demote confirmed/completed wishes.
-		if _, err := tx.ExecContext(ctx, `UPDATE mcp_contracts SET status='superseded' WHERE contract_id=? AND `+supersedeEligibleStatusSQL, wishID); err != nil {
+	if plan.WishToSupersede != "" {
+		if _, err := tx.ExecContext(ctx, `UPDATE mcp_contracts SET status='superseded' WHERE contract_id=? AND `+supersedeEligibleStatusSQL, plan.WishToSupersede); err != nil {
 			return err
 		}
 	}
@@ -1508,23 +1476,22 @@ func (s *SQLiteStore) PublishProposal(ctx context.Context, id string) error {
 	if err := tx.QueryRowContext(ctx, `SELECT status, metadata FROM mcp_proposals WHERE id=?`, id).Scan(&status, &metaJSON); err != nil {
 		return err
 	}
-	if err := CheckProposalPublishable(id, status); err != nil {
-		return err
-	}
-
 	var meta map[string]interface{}
 	if len(metaJSON) > 0 {
 		_ = json.Unmarshal(metaJSON, &meta)
 	}
-	contractID := contractIDFromMeta(meta, id)
+	plan, err := BuildPublishPlan(id, status, meta)
+	if err != nil {
+		return err
+	}
 
-	if _, err := tx.ExecContext(ctx, `UPDATE mcp_tasks SET status='published' WHERE contract_id=? AND status IN ('submitted','pending_review','claimed','approved')`, contractID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE mcp_tasks SET status='published' WHERE contract_id=? AND status IN (`+PublishTaskStatusSQL+`)`, plan.ContractID); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE mcp_claims SET status='complete' WHERE task_id IN (SELECT task_id FROM mcp_tasks WHERE contract_id=?) AND status IN ('submitted','pending_review','active','approved')`, contractID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE mcp_claims SET status='complete' WHERE task_id IN (SELECT task_id FROM mcp_tasks WHERE contract_id=?) AND status IN (`+PublishClaimStatusSQL+`)`, plan.ContractID); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE mcp_proposals SET status='published' WHERE id=?`, id); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE mcp_proposals SET status=? WHERE id=?`, plan.NewProposalStatus, id); err != nil {
 		return err
 	}
 

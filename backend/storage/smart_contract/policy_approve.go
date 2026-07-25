@@ -13,16 +13,20 @@ type ApproveKeys struct {
 	ContractID           string // raw from metadata / proposal id
 	NormalizedContractID string
 	WishContractID       string // wish-<normalized>
+	// MatchValues is the set used in SQL IN (...) / conflict scans (normalized + wish- form).
+	MatchValues []string
 }
 
 // ResolveApproveKeys derives conflict keys for a proposal being approved.
 func ResolveApproveKeys(meta map[string]interface{}, proposalID string) ApproveKeys {
 	cid := contractIDFromMeta(meta, proposalID)
 	norm := NormalizeContractID(cid)
+	wish := "wish-" + norm
 	return ApproveKeys{
 		ContractID:           cid,
 		NormalizedContractID: norm,
-		WishContractID:       "wish-" + norm,
+		WishContractID:       wish,
+		MatchValues:          []string{norm, wish},
 	}
 }
 
@@ -58,6 +62,16 @@ func ProposalMatchesApproveConflict(otherID, otherVisible string, otherMeta map[
 	return otherCID != "" && otherCID == keys.NormalizedContractID
 }
 
+// ErrApproveConflict is the dual-approve error (shared wording).
+func ErrApproveConflict(normalizedContractID string) error {
+	return fmt.Errorf("another proposal is already approved/published for contract %s", normalizedContractID)
+}
+
+// ErrApproveNoTasks is returned when neither proposal nor contract has tasks.
+func ErrApproveNoTasks() error {
+	return fmt.Errorf("approved proposals must contain at least one task")
+}
+
 // VisibleHashForSupersede picks the pixel hash used to supersede the wish contract.
 func VisibleHashForSupersede(visiblePixelHash string, meta map[string]interface{}) string {
 	visible := strings.TrimSpace(visiblePixelHash)
@@ -81,12 +95,72 @@ func WishContractIDForSupersede(visiblePixelHash string, meta map[string]interfa
 // ContractStatusMaySupersede mirrors supersedeEligibleStatusSQL for in-memory paths.
 // confirmed / completed / already-superseded must not be demoted.
 func ContractStatusMaySupersede(status string) bool {
-	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "confirmed", "completed", "superseded":
-		return false
-	default:
-		return true
+	return !IsProtectedContractStatus(status)
+}
+
+// EnsureVisibleInMeta copies column visible_pixel_hash into metadata when missing.
+func EnsureVisibleInMeta(meta map[string]interface{}, visiblePixelHash string) map[string]interface{} {
+	if meta == nil {
+		meta = map[string]interface{}{}
 	}
+	if strings.TrimSpace(visiblePixelHash) != "" {
+		if vph, ok := meta["visible_pixel_hash"].(string); !ok || strings.TrimSpace(vph) == "" {
+			meta["visible_pixel_hash"] = visiblePixelHash
+		}
+	}
+	return meta
+}
+
+// ApprovePlan is the dialect-agnostic result after pure approval checks pass.
+// Stores still run conflict queries / writes, but all decisions live here.
+type ApprovePlan struct {
+	Keys              ApproveKeys
+	WishToSupersede   string // empty if none
+	NewProposalStatus string // "approved"
+	// SetRelatedTasksApproved is true for Memory (SQL dialects leave tasks alone at approve).
+	SetRelatedTasksApproved bool
+}
+
+// BuildApprovePlan runs shared approve preconditions.
+// proposal must already have Tasks populated (populateProposalTasks) and Metadata set.
+// contractTaskCount is COUNT of mcp_tasks for keys.ContractID (0 if unknown / none).
+func BuildApprovePlan(proposalID, currentStatus string, proposal *smart_contract.Proposal, contractTaskCount int) (ApprovePlan, error) {
+	if proposal == nil {
+		return ApprovePlan{}, fmt.Errorf("proposal %s not found", proposalID)
+	}
+	if err := CheckProposalApprovable(proposalID, currentStatus); err != nil {
+		return ApprovePlan{}, err
+	}
+	if err := ValidateProposalForApproval(proposal); err != nil {
+		return ApprovePlan{}, fmt.Errorf("proposal validation failed: %v", err)
+	}
+	if len(proposal.Tasks) == 0 && contractTaskCount == 0 {
+		return ApprovePlan{}, ErrApproveNoTasks()
+	}
+	keys := ResolveApproveKeys(proposal.Metadata, proposalID)
+	return ApprovePlan{
+		Keys:                    keys,
+		WishToSupersede:         WishContractIDForSupersede(proposal.VisiblePixelHash, proposal.Metadata),
+		NewProposalStatus:       smart_contract.ProposalStatusApproved,
+		SetRelatedTasksApproved: true, // Memory applies; SQL ignores
+	}, nil
+}
+
+// PublishPlan is the dialect-agnostic publish decision.
+type PublishPlan struct {
+	ContractID        string
+	NewProposalStatus string
+}
+
+// BuildPublishPlan validates status and resolves the contract id for task/claim updates.
+func BuildPublishPlan(proposalID, currentStatus string, meta map[string]interface{}) (PublishPlan, error) {
+	if err := CheckProposalPublishable(proposalID, currentStatus); err != nil {
+		return PublishPlan{}, err
+	}
+	return PublishPlan{
+		ContractID:        contractIDFromMeta(meta, proposalID),
+		NewProposalStatus: smart_contract.ProposalStatusPublished,
+	}, nil
 }
 
 // CheckProposalPublishable requires approved or already published.
@@ -117,3 +191,9 @@ func ClaimStatusShouldCompleteOnPublish(claimStatus string) bool {
 		return false
 	}
 }
+
+// SQL IN-list fragments for publish (shared across dialects; placeholders differ).
+const (
+	PublishTaskStatusSQL  = `'submitted','pending_review','claimed','approved'`
+	PublishClaimStatusSQL = `'submitted','pending_review','active','approved'`
+)

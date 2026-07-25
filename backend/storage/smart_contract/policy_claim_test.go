@@ -2,6 +2,7 @@ package smart_contract
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -175,5 +176,49 @@ func TestContractStatusMaySupersede(t *testing.T) {
 	}
 	if !ContractStatusMaySupersede("active") {
 		t.Fatal("active should supersede")
+	}
+}
+
+func TestBuildApprovePlanAndPublish(t *testing.T) {
+	hash := strings.Repeat("ab", 32)
+	p := &smart_contract.Proposal{
+		ID: "p1", Status: "pending",
+		VisiblePixelHash: hash,
+		Tasks:            []smart_contract.Task{{TaskID: "t1", BudgetSats: 1000, Title: "t"}},
+		Metadata:         map[string]interface{}{"contract_id": "abc", "visible_pixel_hash": hash},
+	}
+	plan, err := BuildApprovePlan("p1", "pending", p, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.NewProposalStatus != "approved" || plan.Keys.NormalizedContractID == "" {
+		t.Fatalf("%+v", plan)
+	}
+	_, err = BuildApprovePlan("p1", "pending", &smart_contract.Proposal{
+		ID: "p1", Status: "pending", VisiblePixelHash: hash,
+		Metadata: map[string]interface{}{"visible_pixel_hash": hash},
+	}, 0)
+	if err == nil {
+		t.Fatal("expected no tasks error")
+	}
+	pub, err := BuildPublishPlan("p1", "approved", map[string]interface{}{"contract_id": "c1"})
+	if err != nil || pub.ContractID != "c1" {
+		t.Fatalf("%+v %v", pub, err)
+	}
+}
+
+func TestBuildConfirmApply(t *testing.T) {
+	// 64-hex pixel hash
+	hash := strings.Repeat("ab", 32)
+	apply := BuildConfirmApply(hash, 100, "")
+	if !apply.Plan.IsPixelHash {
+		t.Fatal("expected pixel hash")
+	}
+	if apply.StegoImageURL == "" || !strings.Contains(apply.StegoImageURL, hash) {
+		t.Fatalf("url: %s", apply.StegoImageURL)
+	}
+	meta := MergeConfirmMetadata(nil, "txid1", 100)
+	if meta["confirmed_txid"] != "txid1" {
+		t.Fatal(meta)
 	}
 }

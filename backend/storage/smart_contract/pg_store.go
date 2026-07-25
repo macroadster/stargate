@@ -1381,15 +1381,7 @@ func (s *PGStore) ConfirmContract(ctx context.Context, contractID string, blockH
 		return nil
 	}
 
-	plan := PlanConfirmContractIDs(contractID)
-	normalized := plan.Normalized
-	wishID := plan.Canonical
-	if !plan.IsPixelHash {
-		wishID = "wish-" + normalized
-	}
-
-	// Get image_file from ingestion metadata when present; otherwise bare hash.
-	// On-disk keys never use the wish- contract-id prefix.
+	// Optional image_file from ingestion metadata.
 	bareKey := BlockImageFileKey(contractID)
 	var imageFile string
 	_ = s.pool.QueryRow(ctx,
@@ -1402,21 +1394,12 @@ func (s *PGStore) ConfirmContract(ctx context.Context, contractID string, blockH
 			 FROM starlight_ingestions
 			 WHERE id=$1`, contractID).Scan(&imageFile)
 	}
-	imageFile = strings.TrimSpace(imageFile)
-	if imageFile == "" {
-		imageFile = bareKey
-	}
-	// If metadata still carried a wish- key, strip it for the URL path.
-	if strings.HasPrefix(imageFile, "wish-") {
-		imageFile = strings.TrimPrefix(imageFile, "wish-")
-	}
-	if imageFile == "" {
-		imageFile = contractID
-	}
-	stegoImageURL := ""
-	if imageFile != "" {
-		stegoImageURL = fmt.Sprintf("/api/block-image/%d/%s", blockHeight, imageFile)
-	}
+
+	apply := BuildConfirmApply(contractID, blockHeight, imageFile)
+	plan := apply.Plan
+	normalized := apply.Normalized
+	wishID := apply.WishID
+	stegoImageURL := apply.StegoImageURL
 	var err error
 
 	confirmRow := func(id string) (bool, error) {
@@ -1785,7 +1768,6 @@ func (s *PGStore) ApproveProposal(ctx context.Context, id string) error {
 	}
 	defer tx.Rollback(ctx)
 
-	// Load and lock the proposal row
 	var metaJSON []byte
 	var currentStatus string
 	var visiblePixelHash string
@@ -1793,27 +1775,36 @@ func (s *PGStore) ApproveProposal(ctx context.Context, id string) error {
 		return err
 	}
 
-	if err := CheckProposalApprovable(id, currentStatus); err != nil {
-		return err
-	}
-
 	var meta map[string]interface{}
-	if err := json.Unmarshal(metaJSON, &meta); err != nil {
+	if len(metaJSON) > 0 {
+		if err := json.Unmarshal(metaJSON, &meta); err != nil {
+			return err
+		}
+	}
+	meta = EnsureVisibleInMeta(meta, visiblePixelHash)
+
+	proposal, err := s.GetProposal(ctx, id)
+	if err != nil {
 		return err
 	}
-	if strings.TrimSpace(visiblePixelHash) != "" {
-		if meta == nil {
-			meta = map[string]interface{}{}
-		}
-		if vph, ok := meta["visible_pixel_hash"].(string); !ok || strings.TrimSpace(vph) == "" {
-			meta["visible_pixel_hash"] = visiblePixelHash
-		}
+	proposal.Metadata = meta
+	if strings.TrimSpace(proposal.VisiblePixelHash) == "" {
+		proposal.VisiblePixelHash = strings.TrimSpace(visiblePixelHash)
 	}
-	contractID := contractIDFromMeta(meta, id)
-	normalizedContractID := NormalizeContractID(contractID)
-	wishContractID := "wish-" + normalizedContractID
+	populateProposalTasks(&proposal)
 
-	// Block double-approval/publish for the same contract.
+	preKeys := ResolveApproveKeys(meta, id)
+	var taskCount int
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM mcp_tasks WHERE contract_id=$1`, preKeys.ContractID).Scan(&taskCount); err != nil {
+		return err
+	}
+	plan, err := BuildApprovePlan(id, currentStatus, &proposal, taskCount)
+	if err != nil {
+		return err
+	}
+	keys := plan.Keys
+	n, w := keys.NormalizedContractID, keys.WishContractID
+
 	var conflict int
 	if err := tx.QueryRow(ctx, `
 SELECT count(*) FROM mcp_proposals
@@ -1823,13 +1814,12 @@ AND (
   metadata->>'ingestion_id' IN ($2, $3) OR
   metadata->>'visible_pixel_hash' IN ($2, $3) OR
   id IN ($2, $3)
-)`, id, normalizedContractID, wishContractID).Scan(&conflict); err != nil {
+)`, id, n, w).Scan(&conflict); err != nil {
 		return err
 	}
 	if conflict > 0 {
-		return fmt.Errorf("another proposal is already approved/published for contract %s", normalizedContractID)
+		return ErrApproveConflict(keys.NormalizedContractID)
 	}
-	// Auto-reject any other pending proposals for this contract.
 	_, _ = tx.Exec(ctx, `
 UPDATE mcp_proposals SET status='rejected'
 WHERE id<>$1 AND status='pending' AND (
@@ -1837,43 +1827,15 @@ WHERE id<>$1 AND status='pending' AND (
   metadata->>'ingestion_id' IN ($2, $3) OR
   metadata->>'visible_pixel_hash' IN ($2, $3) OR
   id IN ($2, $3)
-)`, id, normalizedContractID, wishContractID)
+)`, id, n, w)
 
-	// Load complete proposal for validation
-	proposal, err := s.GetProposal(ctx, id)
-	if err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE mcp_proposals SET status=$2 WHERE id=$1`, id, plan.NewProposalStatus); err != nil {
 		return err
 	}
-
-	// Validate proposal for approval without modifying status
-	if err := ValidateProposalForApproval(&proposal); err != nil {
-		return fmt.Errorf("proposal validation failed: %v", err)
-	}
-	if len(proposal.Tasks) == 0 {
-		var taskCount int
-		if err := tx.QueryRow(ctx, `SELECT count(*) FROM mcp_tasks WHERE contract_id=$1`, contractID).Scan(&taskCount); err != nil {
-			return err
-		}
-		if taskCount == 0 {
-			return fmt.Errorf("approved proposals must contain at least one task")
-		}
-	}
-
-	if _, err := tx.Exec(ctx, `UPDATE mcp_proposals SET status='approved' WHERE id=$1`, id); err != nil {
-		return err
-	}
-	// Clean up suggested_tasks from metadata - task status now comes from mcp_tasks (single source of truth)
 	_, _ = tx.Exec(ctx, `UPDATE mcp_proposals SET metadata = metadata - 'suggested_tasks' WHERE id=$1`, id)
-	visible := strings.TrimSpace(visiblePixelHash)
-	if visible == "" {
-		if v, ok := meta["visible_pixel_hash"].(string); ok {
-			visible = strings.TrimSpace(v)
-		}
-	}
-	if visible != "" {
-		wishID := identity.ToWishID(visible)
-		// Authenticated approval still must not demote confirmed/completed wishes.
-		_, _ = tx.Exec(ctx, `UPDATE mcp_contracts SET status='superseded' WHERE contract_id=$1 AND `+supersedeEligibleStatusSQL, wishID)
+
+	if plan.WishToSupersede != "" {
+		_, _ = tx.Exec(ctx, `UPDATE mcp_contracts SET status='superseded' WHERE contract_id=$1 AND `+supersedeEligibleStatusSQL, plan.WishToSupersede)
 	}
 
 	return tx.Commit(ctx)
@@ -1892,26 +1854,22 @@ func (s *PGStore) PublishProposal(ctx context.Context, id string) error {
 	if err := tx.QueryRow(ctx, `SELECT status, metadata FROM mcp_proposals WHERE id=$1`, id).Scan(&status, &metaJSON); err != nil {
 		return err
 	}
-	if err := CheckProposalPublishable(id, status); err != nil {
-		return err
-	}
-
 	var meta map[string]interface{}
 	_ = json.Unmarshal(metaJSON, &meta)
-	contractID := contractIDFromMeta(meta, id)
+	plan, err := BuildPublishPlan(id, status, meta)
+	if err != nil {
+		return err
+	}
 
-	if _, err := tx.Exec(ctx, `UPDATE mcp_tasks SET status='published' WHERE contract_id=$1 AND status IN ('submitted','pending_review','claimed','approved')`, contractID); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE mcp_tasks SET status='published' WHERE contract_id=$1 AND status IN (`+PublishTaskStatusSQL+`)`, plan.ContractID); err != nil {
 		return err
 	}
-	// Keep "available" tasks as "available" - only publish when contract is actually funded
-	// Do NOT update available tasks to published
-	if _, err := tx.Exec(ctx, `UPDATE mcp_claims SET status='complete' WHERE task_id IN (SELECT task_id FROM mcp_tasks WHERE contract_id=$1) AND status IN ('submitted','pending_review','active','approved')`, contractID); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE mcp_claims SET status='complete' WHERE task_id IN (SELECT task_id FROM mcp_tasks WHERE contract_id=$1) AND status IN (`+PublishClaimStatusSQL+`)`, plan.ContractID); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `UPDATE mcp_proposals SET status='published' WHERE id=$1`, id); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE mcp_proposals SET status=$2 WHERE id=$1`, id, plan.NewProposalStatus); err != nil {
 		return err
 	}
-	// Clean up suggested_tasks from metadata - task status now comes from mcp_tasks (single source of truth)
 	_, _ = tx.Exec(ctx, `UPDATE mcp_proposals SET metadata = metadata - 'suggested_tasks' WHERE id=$1`, id)
 
 	return tx.Commit(ctx)

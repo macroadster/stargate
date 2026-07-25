@@ -27,6 +27,7 @@ type Server struct {
 	eventSvc      *scservices.EventService
 	psbtSvc       *scservices.PSBTService
 	taskSvc       *scservices.TaskService
+	claimSvc      *scservices.ClaimService
 	proposalSvc   *scservices.ProposalService
 	submissionSvc *scservices.SubmissionService
 }
@@ -74,6 +75,7 @@ func NewServer(store Store, apiKeys auth.APIKeyValidator, ingest *services.Inges
 		eventSvc:     scservices.NewEventService(store, nil),
 		psbtSvc:      scservices.NewPSBTService(store, mempool, ingest),
 		taskSvc:      scservices.NewTaskService(store, ingest),
+		claimSvc:     scservices.NewClaimService(store),
 	}
 	srv.eventSvc.SetRecorder(srv.recordEvent)
 	srv.proposalSvc = scservices.NewProposalService(store, ingest, apiKeys, srv.recordEvent, srv.eventSvc.PublishProposalTasks, srv.archiveWishContract)
