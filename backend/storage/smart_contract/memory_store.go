@@ -371,64 +371,52 @@ func (s *MemoryStore) ClaimTask(taskID, walletAddress string, estimatedCompletio
 	if !ok {
 		return smart_contract.Claim{}, ErrTaskNotFound
 	}
-	normalizedWallet := strings.TrimSpace(walletAddress)
-	if normalizedWallet == "" {
-		return smart_contract.Claim{}, fmt.Errorf("wallet address required")
-	}
 
-	// Existing claim by this user? (IDEMPOTENCY)
+	existing := make([]smart_contract.Claim, 0)
 	for _, c := range s.claims {
 		if c.TaskID == taskID {
-			if strings.EqualFold(c.AiIdentifier, normalizedWallet) && c.Status == "active" && time.Now().Before(c.ExpiresAt) {
-				if task.ContractorWallet == "" {
-					task.ContractorWallet = normalizedWallet
-					if task.MerkleProof == nil {
-						task.MerkleProof = &smart_contract.MerkleProof{}
-					}
-					task.MerkleProof.ContractorWallet = normalizedWallet
-					s.tasks[taskID] = task
-				}
-				return c, nil
-			}
-			if c.Status == "active" && time.Now().Before(c.ExpiresAt) {
-				return smart_contract.Claim{}, ErrTaskTaken
-			}
+			existing = append(existing, c)
 		}
 	}
-
-	// New claim checks
-	if strings.EqualFold(task.Status, "approved") || strings.EqualFold(task.Status, "completed") || strings.EqualFold(task.Status, "published") || strings.EqualFold(task.Status, "submitted") || strings.EqualFold(task.Status, "claimed") {
-		return smart_contract.Claim{}, ErrTaskUnavailable
+	now := time.Now()
+	plan, err := DecideClaim(ClaimInput{
+		TaskID:            taskID,
+		TaskStatus:        task.Status,
+		Wallet:            walletAddress,
+		ExistingClaims:    existing,
+		CurrentProof:      task.MerkleProof,
+		CurrentContractor: task.ContractorWallet,
+		ClaimTTL:          s.claimTTL,
+		Now:               now,
+		NewClaimID:        fmt.Sprintf("CLAIM-%d", now.UnixNano()),
+	})
+	if err != nil {
+		return smart_contract.Claim{}, err
 	}
 
-	claimID := fmt.Sprintf("CLAIM-%d", time.Now().UnixNano())
-	expires := time.Now().Add(s.claimTTL)
-	claim := smart_contract.Claim{
-		ClaimID:      claimID,
-		TaskID:       taskID,
-		AiIdentifier: walletAddress,
-		Status:       "active",
-		ExpiresAt:    expires,
-		CreatedAt:    time.Now(),
+	task.Status = plan.TaskStatus
+	task.ClaimedBy = plan.ClaimedBy
+	if plan.ClaimedAt != nil {
+		task.ClaimedAt = plan.ClaimedAt
 	}
-	task.Status = "claimed"
-	task.ClaimedBy = walletAddress
-	task.ClaimedAt = &claim.CreatedAt
-	task.ClaimExpires = &expires
-	task.ActiveClaimID = claimID
-	if task.ContractorWallet == "" {
-		task.ContractorWallet = normalizedWallet
-		if task.MerkleProof == nil {
-			task.MerkleProof = &smart_contract.MerkleProof{}
-		}
-		task.MerkleProof.ContractorWallet = normalizedWallet
+	if plan.ClaimExpires != nil {
+		task.ClaimExpires = plan.ClaimExpires
+	}
+	task.ActiveClaimID = plan.Claim.ClaimID
+	if plan.UpdateProof {
+		task.MerkleProof = plan.Proof
+		task.ContractorWallet = plan.ContractorWallet
+	} else if plan.ContractorWallet != "" && task.ContractorWallet == "" {
+		task.ContractorWallet = plan.ContractorWallet
 	}
 	s.tasks[taskID] = task
 
-	s.claims[claimID] = claim
+	if plan.Action == ClaimActionCreate {
+		s.claims[plan.Claim.ClaimID] = plan.Claim
+	}
 
 	_ = estimatedCompletion // placeholder until persisted in model
-	return claim, nil
+	return plan.Claim, nil
 }
 
 // SubmitWork records a submission for a claim.
@@ -440,52 +428,32 @@ func (s *MemoryStore) SubmitWork(claimID string, deliverables map[string]interfa
 	if !ok {
 		return smart_contract.Submission{}, ErrClaimNotFound
 	}
-	// Allow submissions on active claims OR submitted claims with existing rejected/reviewed submissions
-	if claim.Status != "active" && claim.Status != "submitted" {
-		return smart_contract.Submission{}, fmt.Errorf("claim %s not active or submitted", claimID)
-	}
 
-	// For submitted claims, check if there's an existing submission that allows resubmission
-	if claim.Status == "submitted" {
-		for _, sub := range s.submissions {
-			if sub.ClaimID == claimID && (sub.Status == "rejected" || sub.Status == "reviewed") {
-				// Allow resubmission - reactivate the claim for new submission
-				claim.Status = "active"
-				s.claims[claimID] = claim
-				goto SubmitWork
-			}
+	var statuses []string
+	for _, sub := range s.submissions {
+		if sub.ClaimID == claimID {
+			statuses = append(statuses, sub.Status)
 		}
-		// If submitted claim has no rejected/reviewed submissions, don't allow new submission
-		return smart_contract.Submission{}, fmt.Errorf("claim %s already submitted with no eligible resubmission", claimID)
 	}
-
-SubmitWork:
-	if time.Now().After(claim.ExpiresAt) {
+	now := time.Now()
+	plan, err := DecideSubmit(SubmitInput{
+		Claim:                      claim,
+		ExistingSubmissionStatuses: statuses,
+		Deliverables:               deliverables,
+		Proof:                      proof,
+		Now:                        now,
+		NewSubmissionID:            fmt.Sprintf("SUB-%d", now.UnixNano()),
+	})
+	if plan.MarkClaimExpired {
 		claim.Status = "expired"
 		s.claims[claimID] = claim
-		return smart_contract.Submission{}, fmt.Errorf("claim %s expired", claimID)
+	}
+	if err != nil {
+		return smart_contract.Submission{}, err
 	}
 
-	// Safeguard: Ensure internal fields cannot be overridden by external tool calls
-	delete(deliverables, "status")
-	if proof != nil {
-		delete(proof, "status")
-	}
+	s.submissions[plan.Submission.SubmissionID] = plan.Submission
 
-	subID := fmt.Sprintf("SUB-%d", time.Now().UnixNano())
-
-	sub := smart_contract.Submission{
-		SubmissionID:    subID,
-		ClaimID:         claimID,
-		TaskID:          claim.TaskID,
-		Status:          "pending_review",
-		Deliverables:    deliverables,
-		CompletionProof: proof,
-		CreatedAt:       time.Now(),
-	}
-	s.submissions[subID] = sub
-
-	// Update task/claim state to submitted.
 	task := s.tasks[claim.TaskID]
 	task.Status = "submitted"
 	task.ActiveClaimID = claimID
@@ -494,7 +462,7 @@ SubmitWork:
 	claim.Status = "submitted"
 	s.claims[claimID] = claim
 
-	return sub, nil
+	return plan.Submission, nil
 }
 
 // ListSubmissions returns submissions for the provided task IDs.
@@ -1283,51 +1251,44 @@ func (s *MemoryStore) UpdateSubmissionStatus(ctx context.Context, submissionID, 
 		return ErrClaimNotFound // close enough
 	}
 
-	sub.Status = status
-	if status == "rejected" {
-		note := strings.TrimSpace(reviewerNotes)
-		rejType := strings.TrimSpace(rejectionType)
-		sub.RejectionReason = note
-		sub.RejectionType = rejType
-		now := time.Now()
-		sub.RejectedAt = &now
-	} else {
-		sub.RejectionReason = ""
-		sub.RejectionType = ""
-		sub.RejectedAt = nil
-	}
+	plan := DecideSubmissionStatusUpdate(status, reviewerNotes, rejectionType, time.Now())
+	sub.Status = plan.Status
+	sub.RejectionReason = plan.RejectionReason
+	sub.RejectionType = plan.RejectionType
+	sub.RejectedAt = plan.RejectedAt
 	s.submissions[submissionID] = sub
 
-	switch status {
-	case "accepted", "approved":
+	switch plan.Cascade {
+	case SubmissionCascadeApprove:
 		claim, ok := s.claims[sub.ClaimID]
 		if !ok {
-			return nil // should not happen
+			return nil
 		}
-		claim.Status = "complete"
+		claim.Status = plan.ClaimStatus
 		s.claims[sub.ClaimID] = claim
-
 		task, ok := s.tasks[claim.TaskID]
 		if !ok {
-			return nil // should not happen
+			return nil
 		}
-		task.Status = "approved"
+		task.Status = plan.TaskStatus
 		s.tasks[claim.TaskID] = task
-	case "rejected":
+	case SubmissionCascadeReject:
 		claim, ok := s.claims[sub.ClaimID]
+		if !ok {
+			return nil
+		}
+		claim.Status = plan.ClaimStatus
+		s.claims[sub.ClaimID] = claim
+		task, ok := s.tasks[claim.TaskID]
 		if ok {
-			claim.Status = "rejected"
-			s.claims[sub.ClaimID] = claim
-
-			task, ok := s.tasks[claim.TaskID]
-			if ok {
-				task.Status = "available"
+			task.Status = plan.TaskStatus
+			if plan.ClearClaimOnTask {
 				task.ClaimedBy = ""
 				task.ClaimedAt = nil
 				task.ClaimExpires = nil
 				task.ActiveClaimID = ""
-				s.tasks[claim.TaskID] = task
 			}
+			s.tasks[claim.TaskID] = task
 		}
 	}
 

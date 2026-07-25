@@ -790,129 +790,81 @@ FROM mcp_tasks WHERE task_id=$1 FOR UPDATE
 		return smart_contract.Claim{}, ErrTaskNotFound
 	}
 
-	normalizedWallet := strings.TrimSpace(walletAddress)
-	if normalizedWallet == "" {
-		return smart_contract.Claim{}, fmt.Errorf("wallet address required")
-	}
-
-	// Check for existing active claim by this wallet
 	rows, err := tx.Query(ctx, `SELECT claim_id, task_id, ai_identifier, status, expires_at, created_at FROM mcp_claims WHERE task_id=$1`, taskID)
 	if err != nil {
 		return smart_contract.Claim{}, err
 	}
-
-	var activeClaim *smart_contract.Claim
-	var activeClaimErr error
-	now := time.Now()
-
+	var existing []smart_contract.Claim
 	for rows.Next() {
 		var c smart_contract.Claim
 		if err := rows.Scan(&c.ClaimID, &c.TaskID, &c.AiIdentifier, &c.Status, &c.ExpiresAt, &c.CreatedAt); err != nil {
 			rows.Close()
 			return smart_contract.Claim{}, err
 		}
-		if c.Status == "active" && now.Before(c.ExpiresAt) {
-			if strings.EqualFold(c.AiIdentifier, normalizedWallet) {
-				// IDEMPOTENT: Same user re-claiming active task.
-				activeClaim = &c
-				break
-			}
-			// Another user has it
-			activeClaimErr = ErrTaskTaken
-			break
-		}
+		existing = append(existing, c)
 	}
-	rows.Close() // Close BEFORE executing updates on tx
+	rows.Close()
 
-	if activeClaimErr != nil {
-		return smart_contract.Claim{}, activeClaimErr
-	}
-
-	persistWallet := func(wallet string) error {
-		wallet = strings.TrimSpace(wallet)
-		if wallet == "" {
-			return nil
-		}
-		if strings.EqualFold(strings.TrimSpace(task.ContractorWallet), wallet) {
-			return nil
-		}
-		task.ContractorWallet = wallet
-		if task.MerkleProof == nil {
-			task.MerkleProof = &smart_contract.MerkleProof{}
-		}
-		task.MerkleProof.ContractorWallet = wallet
-		proofJSON, _ := json.Marshal(task.MerkleProof)
-		_, err := tx.Exec(ctx, `UPDATE mcp_tasks SET merkle_proof=$2 WHERE task_id=$1`, taskID, string(proofJSON))
-		return err
-	}
-
-	if activeClaim != nil {
-		// Ensure task table matches and contractor_wallet is present (backfill legacy claims).
-		_, _ = tx.Exec(ctx, `UPDATE mcp_tasks SET status='claimed', claimed_by=$2 WHERE task_id=$1`, taskID, activeClaim.AiIdentifier)
-		if err := persistWallet(normalizedWallet); err != nil {
-			return smart_contract.Claim{}, err
-		}
-		return *activeClaim, tx.Commit(ctx)
-	}
-
-	// New claim logic: task must be available or claimed (for re-claim by same agent)
-	if strings.EqualFold(task.Status, "approved") || strings.EqualFold(task.Status, "completed") || strings.EqualFold(task.Status, "published") || strings.EqualFold(task.Status, "submitted") {
-		return smart_contract.Claim{}, ErrTaskUnavailable
-	}
-
-	if err := ValidateBitcoinAddress(normalizedWallet); err != nil {
-		return smart_contract.Claim{}, fmt.Errorf("wallet address validation failed: %v", err)
-	}
-
-	claimID := fmt.Sprintf("CLAIM-%d", time.Now().UnixNano())
-	expires := now.Add(s.claimTTL)
-	claim := smart_contract.Claim{
-		ClaimID:      claimID,
-		TaskID:       taskID,
-		AiIdentifier: walletAddress,
-		Status:       "active",
-		ExpiresAt:    expires,
-		CreatedAt:    now,
-	}
-
-	if _, err := tx.Exec(ctx, `
-INSERT INTO mcp_claims (claim_id, task_id, ai_identifier, status, expires_at, created_at)
-VALUES ($1,$2,$3,$4,$5,$6)
-`, claim.ClaimID, claim.TaskID, claim.AiIdentifier, claim.Status, claim.ExpiresAt, claim.CreatedAt); err != nil {
-		return smart_contract.Claim{}, err
-	}
-
-	_, err = tx.Exec(ctx, `
-UPDATE mcp_tasks SET status='claimed', claimed_by=$2, claimed_at=$3, claim_expires_at=$4 WHERE task_id=$1
-`, taskID, claim.AiIdentifier, claim.CreatedAt, claim.ExpiresAt)
+	now := time.Now()
+	plan, err := DecideClaim(ClaimInput{
+		TaskID:            taskID,
+		TaskStatus:        task.Status,
+		Wallet:            walletAddress,
+		ExistingClaims:    existing,
+		CurrentProof:      task.MerkleProof,
+		CurrentContractor: task.ContractorWallet,
+		ClaimTTL:          s.claimTTL,
+		Now:               now,
+		NewClaimID:        fmt.Sprintf("CLAIM-%d", now.UnixNano()),
+	})
 	if err != nil {
 		return smart_contract.Claim{}, err
 	}
-	if err := persistWallet(normalizedWallet); err != nil {
-		return smart_contract.Claim{}, err
+
+	// PG-only extra: validate Bitcoin address format for brand-new claims.
+	if plan.Action == ClaimActionCreate {
+		if err := ValidateBitcoinAddress(strings.TrimSpace(walletAddress)); err != nil {
+			return smart_contract.Claim{}, fmt.Errorf("wallet address validation failed: %v", err)
+		}
+		if _, err := tx.Exec(ctx, `
+INSERT INTO mcp_claims (claim_id, task_id, ai_identifier, status, expires_at, created_at)
+VALUES ($1,$2,$3,$4,$5,$6)
+`, plan.Claim.ClaimID, plan.Claim.TaskID, plan.Claim.AiIdentifier, plan.Claim.Status, plan.Claim.ExpiresAt, plan.Claim.CreatedAt); err != nil {
+			return smart_contract.Claim{}, err
+		}
+		_, err = tx.Exec(ctx, `
+UPDATE mcp_tasks SET status=$2, claimed_by=$3, claimed_at=$4, claim_expires_at=$5 WHERE task_id=$1
+`, taskID, plan.TaskStatus, plan.ClaimedBy, plan.Claim.CreatedAt, plan.Claim.ExpiresAt)
+		if err != nil {
+			return smart_contract.Claim{}, err
+		}
+	} else {
+		_, _ = tx.Exec(ctx, `UPDATE mcp_tasks SET status=$2, claimed_by=$3 WHERE task_id=$1`, taskID, plan.TaskStatus, plan.ClaimedBy)
 	}
 
-	_ = estimatedCompletion // placeholder to persist ETA later
+	if plan.UpdateProof && plan.Proof != nil {
+		proofJSON, _ := json.Marshal(plan.Proof)
+		if _, err := tx.Exec(ctx, `UPDATE mcp_tasks SET merkle_proof=$2 WHERE task_id=$1`, taskID, string(proofJSON)); err != nil {
+			return smart_contract.Claim{}, err
+		}
+	}
+
+	_ = estimatedCompletion
 	if err := tx.Commit(ctx); err != nil {
 		return smart_contract.Claim{}, err
 	}
-	return claim, nil
+	return plan.Claim, nil
 }
 
 // SubmitWork records a submission for a claim.
 func (s *PGStore) SubmitWork(claimID string, deliverables map[string]interface{}, proof map[string]interface{}) (smart_contract.Submission, error) {
 	ctx := context.Background()
-
-	// Log the submission attempt
 	log.Printf("SubmitWork called for claimID: %s", claimID)
 
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		log.Printf("Failed to begin transaction: %v", err)
 		return smart_contract.Submission{}, fmt.Errorf("database transaction failed: %v", err)
 	}
-
-	// Track if transaction was committed to avoid unnecessary rollback warnings
 	txCommitted := false
 	defer func() {
 		if !txCommitted {
@@ -928,112 +880,59 @@ func (s *PGStore) SubmitWork(claimID string, deliverables map[string]interface{}
 	if err != nil {
 		return smart_contract.Submission{}, ErrClaimNotFound
 	}
-	// Allow submissions on active claims OR submitted claims with existing rejected/reviewed submissions
-	if claim.Status != "active" && claim.Status != "submitted" {
-		return smart_contract.Submission{}, fmt.Errorf("claim %s not active or submitted", claimID)
+
+	rows, err := tx.Query(ctx, `SELECT status FROM mcp_submissions WHERE claim_id=$1`, claimID)
+	if err != nil {
+		return smart_contract.Submission{}, err
 	}
-	if time.Now().After(claim.ExpiresAt) {
+	var statuses []string
+	for rows.Next() {
+		var st string
+		if err := rows.Scan(&st); err != nil {
+			rows.Close()
+			return smart_contract.Submission{}, err
+		}
+		statuses = append(statuses, st)
+	}
+	rows.Close()
+
+	now := time.Now()
+	plan, err := DecideSubmit(SubmitInput{
+		Claim:                      claim,
+		ExistingSubmissionStatuses: statuses,
+		Deliverables:               deliverables,
+		Proof:                      proof,
+		Now:                        now,
+		NewSubmissionID:            fmt.Sprintf("SUB-%d", now.UnixNano()),
+	})
+	if plan.MarkClaimExpired {
 		_, _ = tx.Exec(ctx, `UPDATE mcp_claims SET status='expired' WHERE claim_id=$1`, claimID)
-		return smart_contract.Submission{}, fmt.Errorf("claim %s expired", claimID)
+	}
+	if err != nil {
+		return smart_contract.Submission{}, err
 	}
 
-	// For submitted claims, check if there's an existing submission that allows resubmission
-	if claim.Status == "submitted" {
-		// Query existing submissions for this claim
-		log.Printf("Querying existing submissions for claimID: %s", claimID)
-		rows, err := tx.Query(ctx, `SELECT status FROM mcp_submissions WHERE claim_id=$1`, claimID)
-		if err != nil {
-			log.Printf("Failed to query existing submissions: %v", err)
-			return smart_contract.Submission{}, err
-		}
-		defer rows.Close()
-
-		canResubmit := false
-		existingStatuses := make([]string, 0)
-		for rows.Next() {
-			var existingStatus string
-			if err := rows.Scan(&existingStatus); err != nil {
-				log.Printf("Failed to scan submission status: %v", err)
-				continue
-			}
-			existingStatuses = append(existingStatuses, existingStatus)
-			if existingStatus == "rejected" || existingStatus == "reviewed" {
-				canResubmit = true
-				log.Printf("Found eligible resubmission status: %s", existingStatus)
-				break
-			}
-		}
-
-		// Close rows before any updates
-		rows.Close()
-
-		log.Printf("Existing submission statuses for claim %s: %v", claimID, existingStatuses)
-
-		if !canResubmit {
-			return smart_contract.Submission{}, fmt.Errorf("claim %s already submitted with no eligible resubmission", claimID)
-		}
-
-		// Reactivate the claim for resubmission
-		log.Printf("Reactivating claim %s for resubmission", claimID)
-		if _, err := tx.Exec(ctx, `UPDATE mcp_claims SET status='active' WHERE claim_id=$1`, claimID); err != nil {
-			log.Printf("Failed to reactivate claim: %v", err)
-			return smart_contract.Submission{}, err
-		}
-		log.Printf("Successfully reactivated claim %s", claimID)
-
-		// Brief pause to allow connection pool to recover
-		time.Sleep(10 * time.Millisecond)
-	}
-
-	// Safeguard: Ensure internal fields cannot be overridden by external tool calls
-	delete(deliverables, "status")
-	if proof != nil {
-		delete(proof, "status")
-	}
-
-	subID := fmt.Sprintf("SUB-%d", time.Now().UnixNano())
-
-	delivJSON, _ := json.Marshal(deliverables)
-	proofJSON, _ := json.Marshal(proof)
-	sub := smart_contract.Submission{
-		SubmissionID:    subID,
-		ClaimID:         claimID,
-		Status:          "pending_review",
-		Deliverables:    deliverables,
-		CompletionProof: proof,
-		CreatedAt:       time.Now(),
-	}
-
-	log.Printf("Creating new submission: ID=%s, ClaimID=%s", subID, claimID)
-
+	delivJSON, _ := json.Marshal(plan.Submission.Deliverables)
+	proofJSON, _ := json.Marshal(plan.Submission.CompletionProof)
 	if _, err := tx.Exec(ctx, `
 	INSERT INTO mcp_submissions (submission_id, claim_id, task_id, status, deliverables, completion_proof, created_at)
 	VALUES ($1,$2,$3,$4,$5,$6,$7)
-	`, sub.SubmissionID, sub.ClaimID, claim.TaskID, sub.Status, delivJSON, proofJSON, sub.CreatedAt); err != nil {
-		log.Printf("Failed to insert submission: %v", err)
+	`, plan.Submission.SubmissionID, plan.Submission.ClaimID, claim.TaskID, plan.Submission.Status, delivJSON, proofJSON, plan.Submission.CreatedAt); err != nil {
 		return smart_contract.Submission{}, err
 	}
-	log.Printf("Inserted submission, updating claim and task status to submitted")
-
-	// Update claim and task status to submitted for the new submission
 	if _, err := tx.Exec(ctx, `UPDATE mcp_claims SET status='submitted' WHERE claim_id=$1`, claimID); err != nil {
-		log.Printf("Failed to update claim status: %v", err)
 		return smart_contract.Submission{}, err
 	}
 	if _, err := tx.Exec(ctx, `UPDATE mcp_tasks SET status='submitted' WHERE task_id=$1`, claim.TaskID); err != nil {
-		log.Printf("Failed to update task status: %v", err)
 		return smart_contract.Submission{}, err
 	}
 
-	log.Printf("Committing transaction for submission %s", subID)
 	if err := tx.Commit(ctx); err != nil {
-		log.Printf("Failed to commit transaction: %v", err)
 		return smart_contract.Submission{}, err
 	}
 	txCommitted = true
-
-	log.Printf("Successfully created submission %s for claim %s", subID, claimID)
-	return sub, nil
+	log.Printf("Successfully created submission %s for claim %s", plan.Submission.SubmissionID, claimID)
+	return plan.Submission, nil
 }
 
 // GetSubmission returns a submission by ID.
@@ -2184,7 +2083,6 @@ func (s *PGStore) UpdateSubmissionStatus(ctx context.Context, submissionID, stat
 	}
 	defer tx.Rollback(ctx)
 
-	// Get claim_id from submission
 	var claimID string
 	err = tx.QueryRow(ctx, `SELECT claim_id FROM mcp_submissions WHERE submission_id=$1`, submissionID).Scan(&claimID)
 	if err != nil {
@@ -2194,57 +2092,42 @@ func (s *PGStore) UpdateSubmissionStatus(ctx context.Context, submissionID, stat
 		return err
 	}
 
-	// Update submission status
-	rejectionReason := strings.TrimSpace(reviewerNotes)
-	rejectionType = strings.TrimSpace(rejectionType)
-	var rejectedAt *time.Time
-	if status == "rejected" {
-		now := time.Now()
-		rejectedAt = &now
-	} else {
-		rejectionReason = ""
-		rejectionType = ""
-	}
+	plan := DecideSubmissionStatusUpdate(status, reviewerNotes, rejectionType, time.Now())
 	if _, err := tx.Exec(ctx, `
 UPDATE mcp_submissions
 SET status=$2, rejection_reason=$3, rejection_type=$4, rejected_at=$5
 WHERE submission_id=$1
-`, submissionID, status, rejectionReason, rejectionType, rejectedAt); err != nil {
+`, submissionID, plan.Status, plan.RejectionReason, plan.RejectionType, plan.RejectedAt); err != nil {
 		return err
 	}
 
-	// On approval, update task and claim
-	if status == "accepted" || status == "approved" {
-		var taskID string
-		err = tx.QueryRow(ctx, `SELECT task_id FROM mcp_claims WHERE claim_id=$1`, claimID).Scan(&taskID)
-		if err != nil {
-			return err // should not happen if submission existed
-		}
-
-		if _, err := tx.Exec(ctx, `UPDATE mcp_tasks SET status='approved' WHERE task_id=$1`, taskID); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(ctx, `UPDATE mcp_claims SET status='complete' WHERE claim_id=$1`, claimID); err != nil {
-			return err
-		}
-	}
-
-	// On rejection, release claim and reset task status
-	if status == "rejected" {
+	switch plan.Cascade {
+	case SubmissionCascadeApprove:
 		var taskID string
 		err = tx.QueryRow(ctx, `SELECT task_id FROM mcp_claims WHERE claim_id=$1`, claimID).Scan(&taskID)
 		if err != nil {
 			return err
 		}
-
+		if _, err := tx.Exec(ctx, `UPDATE mcp_tasks SET status=$2 WHERE task_id=$1`, taskID, plan.TaskStatus); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE mcp_claims SET status=$2 WHERE claim_id=$1`, claimID, plan.ClaimStatus); err != nil {
+			return err
+		}
+	case SubmissionCascadeReject:
+		var taskID string
+		err = tx.QueryRow(ctx, `SELECT task_id FROM mcp_claims WHERE claim_id=$1`, claimID).Scan(&taskID)
+		if err != nil {
+			return err
+		}
 		if _, err := tx.Exec(ctx, `
 UPDATE mcp_tasks
-SET status='available', claimed_by=NULL, claimed_at=NULL, claim_expires_at=NULL
+SET status=$2, claimed_by=NULL, claimed_at=NULL, claim_expires_at=NULL
 WHERE task_id=$1
-`, taskID); err != nil {
+`, taskID, plan.TaskStatus); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE mcp_claims SET status='rejected' WHERE claim_id=$1`, claimID); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE mcp_claims SET status=$2 WHERE claim_id=$1`, claimID, plan.ClaimStatus); err != nil {
 			return err
 		}
 	}
