@@ -9,26 +9,32 @@ import (
 	"strings"
 	"time"
 
-	_ "modernc.org/sqlite"
+	"gorm.io/gorm"
 	"stargate-backend/core/smart_contract"
+	"stargate-backend/storage/gormdb"
 )
 
-type SQLiteStore struct {
-	db       *sql.DB
+// SQLStore is the unified durable MCP store (SQLite + Postgres) opened via gormdb.
+// Business rules live in policy_*.go; this type owns persistence only.
+type SQLStore struct {
+	gdb      *gorm.DB
+	db       *sql.DB // exposed for tests and transactional helpers
 	claimTTL time.Duration
+	dialect  gormdb.Dialect
 }
+
+// Legacy names — same concrete type.
+type (
+	SQLiteStore = SQLStore
+	PGStore     = SQLStore
+)
 
 func parseSQLiteTime(raw string) (*time.Time, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return nil, nil
 	}
-	layouts := []string{
-		time.RFC3339Nano,
-		time.RFC3339,
-		"2006-01-02 15:04:05",
-	}
-	for _, layout := range layouts {
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02 15:04:05"} {
 		if t, err := time.Parse(layout, raw); err == nil {
 			return &t, nil
 		}
@@ -36,18 +42,73 @@ func parseSQLiteTime(raw string) (*time.Time, error) {
 	return nil, fmt.Errorf("parse sqlite time %q", raw)
 }
 
-func NewSQLiteStore(dbPath string, claimTTL time.Duration, seed bool) (*SQLiteStore, error) {
-	db, err := sql.Open("sqlite", dbPath+"?_foreign_keys=on")
-	if err != nil {
-		return nil, fmt.Errorf("open sqlite3: %w", err)
+// rebind converts "?" placeholders to "$1,$2,..." for Postgres (database/sql + pgx).
+func (s *SQLStore) rebind(q string) string {
+	if s == nil || s.dialect != gormdb.DialectPostgres {
+		return q
 	}
-	db.SetMaxOpenConns(20)
-	db.SetMaxIdleConns(10)
-	db.SetConnMaxLifetime(1 * time.Hour)
+	var b strings.Builder
+	n := 0
+	for i := 0; i < len(q); i++ {
+		if q[i] == '?' {
+			n++
+			b.WriteByte('$')
+			b.WriteString(fmt.Sprintf("%d", n))
+			continue
+		}
+		b.WriteByte(q[i])
+	}
+	return b.String()
+}
 
-	s := &SQLiteStore{db: db, claimTTL: claimTTL}
+func (s *SQLStore) execContext(ctx context.Context, q string, args ...interface{}) (sql.Result, error) {
+	return s.db.ExecContext(ctx, s.rebind(q), args...)
+}
+
+func (s *SQLStore) exec(q string, args ...interface{}) (sql.Result, error) {
+	return s.db.Exec(s.rebind(q), args...)
+}
+
+func (s *SQLStore) queryContext(ctx context.Context, q string, args ...interface{}) (*sql.Rows, error) {
+	return s.db.QueryContext(ctx, s.rebind(q), args...)
+}
+
+func (s *SQLStore) query(q string, args ...interface{}) (*sql.Rows, error) {
+	return s.db.Query(s.rebind(q), args...)
+}
+
+func (s *SQLStore) queryRowContext(ctx context.Context, q string, args ...interface{}) *sql.Row {
+	return s.db.QueryRowContext(ctx, s.rebind(q), args...)
+}
+
+func (s *SQLStore) queryRow(q string, args ...interface{}) *sql.Row {
+	return s.db.QueryRow(s.rebind(q), args...)
+}
+
+func (s *SQLStore) isPostgres() bool { return s.dialect == gormdb.DialectPostgres }
+
+// skillsExpr returns a SQL expression that yields comma-separated skills text.
+func (s *SQLStore) skillsExpr(col string) string {
+	if s.isPostgres() {
+		return "COALESCE(array_to_string(" + col + ", ','), '')"
+	}
+	return "COALESCE(" + col + ", '')"
+}
+
+// NewSQLStore wraps a GORM DB, ensures MCP schema, optional seed.
+func NewSQLStore(gdb *gorm.DB, claimTTL time.Duration, seed bool) (*SQLStore, error) {
+	if gdb == nil {
+		return nil, fmt.Errorf("nil gorm DB")
+	}
+	sqlDB, err := gdb.DB()
+	if err != nil {
+		return nil, err
+	}
+	s := &SQLStore{gdb: gdb, db: sqlDB, claimTTL: claimTTL, dialect: gormdb.DialectOf(gdb)}
+	if s.claimTTL <= 0 {
+		s.claimTTL = time.Hour
+	}
 	if err := s.initSchema(context.Background()); err != nil {
-		db.Close()
 		return nil, err
 	}
 	if seed {
@@ -58,28 +119,73 @@ func NewSQLiteStore(dbPath string, claimTTL time.Duration, seed bool) (*SQLiteSt
 	return s, nil
 }
 
-func (s *SQLiteStore) initSchema(ctx context.Context) error {
-	// Use the single source of truth defined in schema.go.
-	// This eliminates the previous massive duplication with the PG schema.
-	schema := GetMCPSchema("sqlite")
-	_, err := s.db.ExecContext(ctx, schema)
-	return err
+// NewSQLiteStore opens SQLite via gormdb (pure-Go) and returns SQLStore.
+func NewSQLiteStore(dbPath string, claimTTL time.Duration, seed bool) (*SQLStore, error) {
+	gdb, err := gormdb.OpenSQLite(dbPath, gormdb.Config{
+		MaxOpenConns: 20, MaxIdleConns: 10, ConnMaxLifetime: time.Hour,
+	})
+	if err != nil {
+		return nil, err
+	}
+	s, err := NewSQLStore(gdb, claimTTL, seed)
+	if err != nil {
+		_ = gormdb.Close(gdb)
+		return nil, err
+	}
+	return s, nil
 }
 
-func (s *SQLiteStore) seedFixtures(ctx context.Context) error {
+// NewPGStore opens Postgres via gormdb and returns SQLStore.
+func NewPGStore(ctx context.Context, dsn string, claimTTL time.Duration, seed bool) (*SQLStore, error) {
+	_ = ctx
+	gdb, err := gormdb.OpenPostgres(dsn, gormdb.Config{
+		MaxOpenConns: 20, MaxIdleConns: 10, ConnMaxLifetime: time.Hour, ConnMaxIdleTime: 30 * time.Minute,
+	})
+	if err != nil {
+		return nil, err
+	}
+	s, err := NewSQLStore(gdb, claimTTL, seed)
+	if err != nil {
+		_ = gormdb.Close(gdb)
+		return nil, err
+	}
+	return s, nil
+}
+
+func (s *SQLStore) initSchema(ctx context.Context) error {
+	name := "sqlite"
+	if s.isPostgres() {
+		name = "postgres"
+	}
+	return s.gdb.WithContext(ctx).Exec(GetMCPSchema(name)).Error
+}
+
+func (s *SQLStore) seedFixtures(ctx context.Context) error {
 	var count int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM mcp_tasks`).Scan(&count); err != nil {
+	if err := s.queryRowContext(ctx, `SELECT COUNT(*) FROM mcp_tasks`).Scan(&count); err != nil {
 		return err
 	}
 	if count > 0 {
 		return nil
 	}
-
 	contracts, tasks := SeedData()
 	for _, c := range contracts {
 		metadata, _ := json.Marshal(c.Metadata)
 		skills := strings.Join(c.Skills, ",")
-		_, err := s.db.ExecContext(ctx, `
+		if s.isPostgres() {
+			// Insert skills as PG text array via string cast workaround: use '{}' empty + update — use simple text array literal
+			skillsArr := pgTextArray(c.Skills)
+			_, err := s.execContext(ctx, `
+INSERT INTO mcp_contracts (contract_id, title, total_budget_sats, goals_count, available_tasks_count, status, skills, stego_image_url, metadata)
+VALUES (?,?,?,?,?,?,?::text[],?,?,?::jsonb)
+ON CONFLICT DO NOTHING
+`, c.ContractID, c.Title, c.TotalBudgetSats, c.GoalsCount, c.AvailableTasksCount, c.Status, skillsArr, c.StegoImageURL, string(metadata))
+			if err != nil {
+				return err
+			}
+			continue
+		}
+		_, err := s.execContext(ctx, `
 INSERT OR IGNORE INTO mcp_contracts (contract_id, title, total_budget_sats, goals_count, available_tasks_count, status, skills, stego_image_url, metadata)
 VALUES (?,?,?,?,?,?,?,?,?)
 `, c.ContractID, c.Title, c.TotalBudgetSats, c.GoalsCount, c.AvailableTasksCount, c.Status, skills, c.StegoImageURL, string(metadata))
@@ -87,7 +193,6 @@ VALUES (?,?,?,?,?,?,?,?,?)
 			return err
 		}
 	}
-
 	for _, t := range tasks {
 		reqJSON, _ := json.Marshal(t.Requirements)
 		var proofJSON []byte
@@ -95,7 +200,18 @@ VALUES (?,?,?,?,?,?,?,?,?)
 			proofJSON, _ = json.Marshal(t.MerkleProof)
 		}
 		taskSkills := strings.Join(t.Skills, ",")
-		_, err := s.db.ExecContext(ctx, `
+		if s.isPostgres() {
+			_, err := s.execContext(ctx, `
+INSERT INTO mcp_tasks (task_id, contract_id, goal_id, title, description, budget_sats, skills, status, difficulty, estimated_hours, requirements, merkle_proof)
+VALUES (?,?,?,?,?,?,?::text[],?,?,?,?::jsonb,?::jsonb)
+ON CONFLICT DO NOTHING
+`, t.TaskID, t.ContractID, t.GoalID, t.Title, t.Description, t.BudgetSats, pgTextArray(t.Skills), t.Status, t.Difficulty, t.EstimatedHours, string(reqJSON), string(proofJSON))
+			if err != nil {
+				return err
+			}
+			continue
+		}
+		_, err := s.execContext(ctx, `
 INSERT OR IGNORE INTO mcp_tasks (task_id, contract_id, goal_id, title, description, budget_sats, skills, status, difficulty, estimated_hours, requirements, merkle_proof)
 VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
 `, t.TaskID, t.ContractID, t.GoalID, t.Title, t.Description, t.BudgetSats, taskSkills, t.Status, t.Difficulty, t.EstimatedHours, string(reqJSON), string(proofJSON))
@@ -106,13 +222,38 @@ VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
 	return nil
 }
 
-func (s *SQLiteStore) Close() {
-	if s.db != nil {
-		s.db.Close()
+func pgTextArray(skills []string) string {
+	if len(skills) == 0 {
+		return "{}"
+	}
+	parts := make([]string, len(skills))
+	for i, sk := range skills {
+		parts[i] = `"` + strings.ReplaceAll(sk, `"`, `\"`) + `"`
+	}
+	return "{" + strings.Join(parts, ",") + "}"
+}
+
+func (s *SQLStore) Close() {
+	if s.gdb != nil {
+		_ = gormdb.Close(s.gdb)
+		s.gdb = nil
+		s.db = nil
 	}
 }
 
-func (s *SQLiteStore) containsSkill(all []string, skills []string) bool {
+
+// Transaction helpers rebind placeholders for the store dialect.
+func (s *SQLStore) txExec(tx *sql.Tx, ctx context.Context, q string, args ...interface{}) (sql.Result, error) {
+	return tx.ExecContext(ctx, s.rebind(q), args...)
+}
+func (s *SQLStore) txQuery(tx *sql.Tx, ctx context.Context, q string, args ...interface{}) (*sql.Rows, error) {
+	return tx.QueryContext(ctx, s.rebind(q), args...)
+}
+func (s *SQLStore) txQueryRow(tx *sql.Tx, ctx context.Context, q string, args ...interface{}) *sql.Row {
+	return tx.QueryRowContext(ctx, s.rebind(q), args...)
+}
+
+func (s *SQLStore) containsSkill(all []string, skills []string) bool {
 	for _, want := range skills {
 		for _, have := range all {
 			if strings.EqualFold(have, want) {
@@ -123,7 +264,7 @@ func (s *SQLiteStore) containsSkill(all []string, skills []string) bool {
 	return len(skills) == 0
 }
 
-func (s *SQLiteStore) ListContracts(filter smart_contract.ContractFilter) ([]smart_contract.Contract, error) {
+func (s *SQLStore) ListContracts(filter smart_contract.ContractFilter) ([]smart_contract.Contract, error) {
 	baseSelect := `
 SELECT c.contract_id, COALESCE(c.title, ''), COALESCE(c.total_budget_sats, 0), COALESCE(c.goals_count, 0),
 	(SELECT COUNT(*) FROM mcp_tasks t WHERE t.contract_id = c.contract_id AND t.status = 'available') AS available_tasks_count,
@@ -197,7 +338,7 @@ FROM mcp_contracts c
 
 	query := baseSelect + " " + whereClause + " " + orderBy
 
-	rows, err := s.db.QueryContext(context.Background(), query, args...)
+	rows, err := s.queryContext(context.Background(), query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -239,7 +380,7 @@ FROM mcp_contracts c
 	return allContracts, nil
 }
 
-func (s *SQLiteStore) ListTasks(filter smart_contract.TaskFilter) ([]smart_contract.Task, error) {
+func (s *SQLStore) ListTasks(filter smart_contract.TaskFilter) ([]smart_contract.Task, error) {
 	query := `
 SELECT task_id, contract_id, goal_id, title, description, budget_sats, skills, status, claimed_by, claimed_at, claim_expires_at, difficulty, estimated_hours, requirements, merkle_proof
 FROM mcp_tasks
@@ -249,7 +390,7 @@ AND (? = '' OR claimed_by = ?)
 `
 	args := []interface{}{filter.Status, filter.Status, filter.ContractID, filter.ContractID, filter.ClaimedBy, filter.ClaimedBy}
 
-	rows, err := s.db.QueryContext(context.Background(), query, args...)
+	rows, err := s.queryContext(context.Background(), query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -329,8 +470,8 @@ func scanTaskSQLite(rows *sql.Rows) (smart_contract.Task, error) {
 	return t, nil
 }
 
-func (s *SQLiteStore) GetTask(id string) (smart_contract.Task, error) {
-	row := s.db.QueryRowContext(context.Background(), `
+func (s *SQLStore) GetTask(id string) (smart_contract.Task, error) {
+	row := s.queryRowContext(context.Background(), `
 SELECT task_id, contract_id, goal_id, title, description, budget_sats, skills, status, claimed_by, claimed_at, claim_expires_at, difficulty, estimated_hours, requirements, merkle_proof
 FROM mcp_tasks WHERE task_id=?
 `, id)
@@ -384,11 +525,11 @@ FROM mcp_tasks WHERE task_id=?
 	return t, nil
 }
 
-func (s *SQLiteStore) GetContract(id string) (smart_contract.Contract, error) {
+func (s *SQLStore) GetContract(id string) (smart_contract.Contract, error) {
 	var c smart_contract.Contract
 	var metadata, skillsStr []byte
 	var confirmedAtStr sql.NullString
-	err := s.db.QueryRowContext(context.Background(), `
+	err := s.queryRowContext(context.Background(), `
 SELECT contract_id, COALESCE(title, ''), COALESCE(total_budget_sats, 0), COALESCE(goals_count, 0),
        (SELECT COUNT(*) FROM mcp_tasks t WHERE t.contract_id = mcp_contracts.contract_id AND t.status = 'available') AS available_tasks_count,
        COALESCE(status, 'pending'), skills, COALESCE(stego_image_url, ''), confirmed_block_height, confirmed_at, metadata
@@ -448,10 +589,10 @@ FROM mcp_contracts WHERE contract_id=?
 	return c, nil
 }
 
-func (s *SQLiteStore) GetClaim(id string) (smart_contract.Claim, error) {
+func (s *SQLStore) GetClaim(id string) (smart_contract.Claim, error) {
 	var c smart_contract.Claim
 	var createdAt, expiresAt sql.NullString
-	err := s.db.QueryRowContext(context.Background(), `
+	err := s.queryRowContext(context.Background(), `
 SELECT claim_id, task_id, ai_identifier, status, expires_at, created_at
 FROM mcp_claims WHERE claim_id=?
 `, id).Scan(&c.ClaimID, &c.TaskID, &c.AiIdentifier, &c.Status, &expiresAt, &createdAt)
@@ -471,7 +612,7 @@ FROM mcp_claims WHERE claim_id=?
 	return c, nil
 }
 
-func (s *SQLiteStore) ClaimTask(taskID, walletAddress string, estimatedCompletion *time.Time) (smart_contract.Claim, error) {
+func (s *SQLStore) ClaimTask(taskID, walletAddress string, estimatedCompletion *time.Time) (smart_contract.Claim, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return smart_contract.Claim{}, err
@@ -480,7 +621,7 @@ func (s *SQLiteStore) ClaimTask(taskID, walletAddress string, estimatedCompletio
 
 	var taskStatus string
 	var merkleProofStr []byte
-	err = tx.QueryRow(`SELECT status, COALESCE(merkle_proof, '') FROM mcp_tasks WHERE task_id=?`, taskID).Scan(&taskStatus, &merkleProofStr)
+	err = s.txQueryRow(tx, context.Background(), `SELECT status, COALESCE(merkle_proof, '') FROM mcp_tasks WHERE task_id=?`, taskID).Scan(&taskStatus, &merkleProofStr)
 	if err != nil {
 		return smart_contract.Claim{}, ErrTaskNotFound
 	}
@@ -493,7 +634,7 @@ func (s *SQLiteStore) ClaimTask(taskID, walletAddress string, estimatedCompletio
 		}
 	}
 
-	rows, err := tx.Query(`SELECT claim_id, task_id, ai_identifier, status, expires_at, created_at FROM mcp_claims WHERE task_id=?`, taskID)
+	rows, err := s.txQuery(tx, context.Background(), `SELECT claim_id, task_id, ai_identifier, status, expires_at, created_at FROM mcp_claims WHERE task_id=?`, taskID)
 	if err != nil {
 		return smart_contract.Claim{}, err
 	}
@@ -531,8 +672,8 @@ func (s *SQLiteStore) ClaimTask(taskID, walletAddress string, estimatedCompletio
 	}
 
 	if plan.Action == ClaimActionCreate {
-		_, err = tx.Exec(`
-INSERT INTO mcp_claims (claim_id, task_id, ai_identifier, status, expires_at, created_at)
+		_, err = s.txExec(tx, context.Background(), `
+INSERT OR IGNORE INTO mcp_claims (claim_id, task_id, ai_identifier, status, expires_at, created_at)
 VALUES (?,?,?,?,?,?)
 `, plan.Claim.ClaimID, plan.Claim.TaskID, plan.Claim.AiIdentifier, plan.Claim.Status,
 			plan.Claim.ExpiresAt.Format(time.RFC3339), plan.Claim.CreatedAt.Format(time.RFC3339))
@@ -541,14 +682,14 @@ VALUES (?,?,?,?,?,?)
 		}
 		claimedAt := plan.Claim.CreatedAt.Format(time.RFC3339)
 		expiresAt := plan.Claim.ExpiresAt.Format(time.RFC3339)
-		_, err = tx.Exec(`
+		_, err = s.txExec(tx, context.Background(), `
 UPDATE mcp_tasks SET status=?, claimed_by=?, claimed_at=?, claim_expires_at=? WHERE task_id=?
 `, plan.TaskStatus, plan.ClaimedBy, claimedAt, expiresAt, taskID)
 		if err != nil {
 			return smart_contract.Claim{}, err
 		}
 	} else {
-		_, _ = tx.Exec(`UPDATE mcp_tasks SET status=?, claimed_by=? WHERE task_id=?`, plan.TaskStatus, plan.ClaimedBy, taskID)
+		_, _ = s.txExec(tx, context.Background(), `UPDATE mcp_tasks SET status=?, claimed_by=? WHERE task_id=?`, plan.TaskStatus, plan.ClaimedBy, taskID)
 	}
 
 	if plan.UpdateProof && plan.Proof != nil {
@@ -556,7 +697,7 @@ UPDATE mcp_tasks SET status=?, claimed_by=?, claimed_at=?, claim_expires_at=? WH
 		if err != nil {
 			return smart_contract.Claim{}, err
 		}
-		if _, err := tx.Exec(`UPDATE mcp_tasks SET merkle_proof=? WHERE task_id=?`, string(proofJSON), taskID); err != nil {
+		if _, err := s.txExec(tx, context.Background(), `UPDATE mcp_tasks SET merkle_proof=? WHERE task_id=?`, string(proofJSON), taskID); err != nil {
 			return smart_contract.Claim{}, err
 		}
 	}
@@ -568,10 +709,10 @@ UPDATE mcp_tasks SET status=?, claimed_by=?, claimed_at=?, claim_expires_at=? WH
 	return plan.Claim, nil
 }
 
-func (s *SQLiteStore) SubmitWork(claimID string, deliverables map[string]interface{}, proof map[string]interface{}) (smart_contract.Submission, error) {
+func (s *SQLStore) SubmitWork(claimID string, deliverables map[string]interface{}, proof map[string]interface{}) (smart_contract.Submission, error) {
 	var claim smart_contract.Claim
 	var expiresAt, createdAt sql.NullString
-	err := s.db.QueryRowContext(context.Background(), `SELECT claim_id, task_id, ai_identifier, status, expires_at, created_at FROM mcp_claims WHERE claim_id=?`, claimID).
+	err := s.queryRowContext(context.Background(), `SELECT claim_id, task_id, ai_identifier, status, expires_at, created_at FROM mcp_claims WHERE claim_id=?`, claimID).
 		Scan(&claim.ClaimID, &claim.TaskID, &claim.AiIdentifier, &claim.Status, &expiresAt, &createdAt)
 	if err != nil {
 		return smart_contract.Submission{}, ErrClaimNotFound
@@ -587,7 +728,7 @@ func (s *SQLiteStore) SubmitWork(claimID string, deliverables map[string]interfa
 		}
 	}
 
-	rows, err := s.db.Query(`SELECT status FROM mcp_submissions WHERE claim_id=?`, claimID)
+	rows, err := s.query(`SELECT status FROM mcp_submissions WHERE claim_id=?`, claimID)
 	if err != nil {
 		return smart_contract.Submission{}, err
 	}
@@ -612,7 +753,7 @@ func (s *SQLiteStore) SubmitWork(claimID string, deliverables map[string]interfa
 		NewSubmissionID:            fmt.Sprintf("SUB-%d", now.UnixNano()),
 	})
 	if plan.MarkClaimExpired {
-		_, _ = s.db.Exec(`UPDATE mcp_claims SET status='expired' WHERE claim_id=?`, claimID)
+		_, _ = s.exec(`UPDATE mcp_claims SET status='expired' WHERE claim_id=?`, claimID)
 	}
 	if err != nil {
 		return smart_contract.Submission{}, err
@@ -620,8 +761,8 @@ func (s *SQLiteStore) SubmitWork(claimID string, deliverables map[string]interfa
 
 	delivJSON, _ := json.Marshal(plan.Submission.Deliverables)
 	proofJSON, _ := json.Marshal(plan.Submission.CompletionProof)
-	_, err = s.db.Exec(`
-INSERT INTO mcp_submissions (submission_id, claim_id, task_id, status, deliverables, completion_proof, created_at)
+	_, err = s.exec(`
+INSERT OR IGNORE INTO mcp_submissions (submission_id, claim_id, task_id, status, deliverables, completion_proof, created_at)
 VALUES (?,?,?,?,?,?,?)
 `, plan.Submission.SubmissionID, plan.Submission.ClaimID, plan.Submission.TaskID, plan.Submission.Status,
 		string(delivJSON), string(proofJSON), plan.Submission.CreatedAt.Format(time.RFC3339))
@@ -629,13 +770,13 @@ VALUES (?,?,?,?,?,?,?)
 		return smart_contract.Submission{}, err
 	}
 
-	_, _ = s.db.Exec(`UPDATE mcp_claims SET status='submitted' WHERE claim_id=?`, claimID)
-	_, _ = s.db.Exec(`UPDATE mcp_tasks SET status='submitted' WHERE task_id=?`, claim.TaskID)
+	_, _ = s.exec(`UPDATE mcp_claims SET status='submitted' WHERE claim_id=?`, claimID)
+	_, _ = s.exec(`UPDATE mcp_tasks SET status='submitted' WHERE task_id=?`, claim.TaskID)
 
 	return plan.Submission, nil
 }
 
-func (s *SQLiteStore) ListSubmissions(ctx context.Context, taskIDs []string) ([]smart_contract.Submission, error) {
+func (s *SQLStore) ListSubmissions(ctx context.Context, taskIDs []string) ([]smart_contract.Submission, error) {
 	if len(taskIDs) == 0 {
 		return nil, nil
 	}
@@ -654,7 +795,7 @@ ORDER BY s.created_at DESC
 		args[i] = id
 	}
 
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := s.queryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -688,8 +829,8 @@ ORDER BY s.created_at DESC
 	return out, rows.Err()
 }
 
-func (s *SQLiteStore) GetSubmission(ctx context.Context, id string) (smart_contract.Submission, error) {
-	rows, err := s.db.QueryContext(ctx, `
+func (s *SQLStore) GetSubmission(ctx context.Context, id string) (smart_contract.Submission, error) {
+	rows, err := s.queryContext(ctx, `
 SELECT s.submission_id, s.claim_id, c.task_id, s.status, s.deliverables, s.completion_proof, s.rejection_reason, s.rejection_type, s.rejected_at, s.created_at
 FROM mcp_submissions s
 JOIN mcp_claims c ON c.claim_id = s.claim_id
@@ -727,7 +868,7 @@ WHERE s.submission_id = ?
 	return smart_contract.Submission{}, fmt.Errorf("submission %s not found", id)
 }
 
-func (s *SQLiteStore) TaskStatus(taskID string) (map[string]interface{}, error) {
+func (s *SQLStore) TaskStatus(taskID string) (map[string]interface{}, error) {
 	task, err := s.GetTask(taskID)
 	if err != nil {
 		return nil, err
@@ -735,7 +876,7 @@ func (s *SQLiteStore) TaskStatus(taskID string) (map[string]interface{}, error) 
 
 	var claim smart_contract.Claim
 	var expiresAt, createdAt sql.NullString
-	err = s.db.QueryRowContext(context.Background(), `
+	err = s.queryRowContext(context.Background(), `
 SELECT claim_id, task_id, ai_identifier, status, expires_at, created_at
 FROM mcp_claims
 WHERE task_id=? AND status IN ('active','submitted','pending_review')
@@ -768,7 +909,7 @@ LIMIT 1
 
 	// Compute submission attempts (unified with MemoryStore for Cat 4.2)
 	var submissionAttempts int
-	_ = s.db.QueryRowContext(context.Background(), `
+	_ = s.queryRowContext(context.Background(), `
 		SELECT COUNT(*) FROM mcp_submissions s
 		JOIN mcp_claims c ON c.claim_id = s.claim_id
 		WHERE c.task_id = ?
@@ -798,7 +939,7 @@ LIMIT 1
 	return resp, nil
 }
 
-func (s *SQLiteStore) GetTaskProof(taskID string) (*smart_contract.MerkleProof, error) {
+func (s *SQLStore) GetTaskProof(taskID string) (*smart_contract.MerkleProof, error) {
 	task, err := s.GetTask(taskID)
 	if err != nil {
 		return nil, err
@@ -806,12 +947,12 @@ func (s *SQLiteStore) GetTaskProof(taskID string) (*smart_contract.MerkleProof, 
 	return task.MerkleProof, nil
 }
 
-func (s *SQLiteStore) ContractFunding(contractID string) (smart_contract.Contract, []smart_contract.MerkleProof, error) {
+func (s *SQLStore) ContractFunding(contractID string) (smart_contract.Contract, []smart_contract.MerkleProof, error) {
 	contract, err := s.GetContract(contractID)
 	if err != nil {
 		return smart_contract.Contract{}, nil, err
 	}
-	rows, err := s.db.QueryContext(context.Background(), `SELECT merkle_proof FROM mcp_tasks WHERE contract_id=?`, contractID)
+	rows, err := s.queryContext(context.Background(), `SELECT merkle_proof FROM mcp_tasks WHERE contract_id=?`, contractID)
 	if err != nil {
 		return smart_contract.Contract{}, nil, err
 	}
@@ -835,7 +976,7 @@ func (s *SQLiteStore) ContractFunding(contractID string) (smart_contract.Contrac
 	return contract, proofs, rows.Err()
 }
 
-func (s *SQLiteStore) UpsertContractWithTasks(ctx context.Context, contract smart_contract.Contract, tasks []smart_contract.Task) error {
+func (s *SQLStore) UpsertContractWithTasks(ctx context.Context, contract smart_contract.Contract, tasks []smart_contract.Task) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -851,8 +992,8 @@ func (s *SQLiteStore) UpsertContractWithTasks(ctx context.Context, contract smar
 
 	// Protected statuses (confirmed/completed/superseded) keep title, budget,
 	// and status; stego URL / skills / task counts may still refresh.
-	_, err = tx.ExecContext(ctx, `
-INSERT INTO mcp_contracts (contract_id, title, total_budget_sats, goals_count, available_tasks_count, status, skills, stego_image_url, created_at, metadata)
+	_, err = s.txExec(tx, ctx, `
+INSERT OR IGNORE INTO mcp_contracts (contract_id, title, total_budget_sats, goals_count, available_tasks_count, status, skills, stego_image_url, created_at, metadata)
 VALUES (?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT(contract_id) DO UPDATE SET
   title = CASE WHEN lower(mcp_contracts.status) IN ('confirmed','completed','superseded') THEN mcp_contracts.title ELSE excluded.title END,
@@ -876,8 +1017,8 @@ ON CONFLICT(contract_id) DO UPDATE SET
 			proofStr = &s
 		}
 		taskSkills := strings.Join(t.Skills, ",")
-		_, err := tx.ExecContext(ctx, `
-INSERT INTO mcp_tasks (task_id, contract_id, goal_id, title, description, budget_sats, skills, status, claimed_by, claimed_at, claim_expires_at, difficulty, estimated_hours, requirements, merkle_proof)
+		_, err := s.txExec(tx, ctx, `
+INSERT OR IGNORE INTO mcp_tasks (task_id, contract_id, goal_id, title, description, budget_sats, skills, status, claimed_by, claimed_at, claim_expires_at, difficulty, estimated_hours, requirements, merkle_proof)
 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT(task_id) DO UPDATE SET
   contract_id = excluded.contract_id,
@@ -906,7 +1047,7 @@ ON CONFLICT(task_id) DO UPDATE SET
 	return tx.Commit()
 }
 
-func (s *SQLiteStore) UpdateTaskProof(ctx context.Context, taskID string, proof *smart_contract.MerkleProof) error {
+func (s *SQLStore) UpdateTaskProof(ctx context.Context, taskID string, proof *smart_contract.MerkleProof) error {
 	if proof == nil {
 		return nil
 	}
@@ -920,21 +1061,21 @@ func (s *SQLiteStore) UpdateTaskProof(ctx context.Context, taskID string, proof 
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `UPDATE mcp_tasks SET merkle_proof=? WHERE task_id=?`, string(b), taskID)
+	_, err = s.execContext(ctx, `UPDATE mcp_tasks SET merkle_proof=? WHERE task_id=?`, string(b), taskID)
 	return err
 }
 
-func (s *SQLiteStore) UpdateContractStatus(ctx context.Context, contractID, status string) error {
+func (s *SQLStore) UpdateContractStatus(ctx context.Context, contractID, status string) error {
 	contractID = strings.TrimSpace(contractID)
 	status = strings.TrimSpace(status)
 	if contractID == "" || status == "" {
 		return nil
 	}
-	_, err := s.db.ExecContext(ctx, `UPDATE mcp_contracts SET status=? WHERE contract_id=?`, status, contractID)
+	_, err := s.execContext(ctx, `UPDATE mcp_contracts SET status=? WHERE contract_id=?`, status, contractID)
 	return err
 }
 
-func (s *SQLiteStore) ConfirmContract(ctx context.Context, contractID string, blockHeight int, txid string) error {
+func (s *SQLStore) ConfirmContract(ctx context.Context, contractID string, blockHeight int, txid string) error {
 	contractID = strings.TrimSpace(contractID)
 	if contractID == "" {
 		return nil
@@ -949,7 +1090,7 @@ func (s *SQLiteStore) ConfirmContract(ctx context.Context, contractID string, bl
 
 	confirmRow := func(id string) (bool, error) {
 		var existingMeta []byte
-		_ = s.db.QueryRowContext(ctx, `SELECT COALESCE(metadata, '{}') FROM mcp_contracts WHERE contract_id=?`, id).Scan(&existingMeta)
+		_ = s.queryRowContext(ctx, `SELECT COALESCE(metadata, '{}') FROM mcp_contracts WHERE contract_id=?`, id).Scan(&existingMeta)
 		meta := map[string]interface{}{}
 		if len(existingMeta) > 0 {
 			_ = json.Unmarshal(existingMeta, &meta)
@@ -957,9 +1098,9 @@ func (s *SQLiteStore) ConfirmContract(ctx context.Context, contractID string, bl
 		meta = MergeConfirmMetadata(meta, txid, blockHeight)
 		updatedMeta, _ := json.Marshal(meta)
 
-		res, err := s.db.ExecContext(ctx, `
+		res, err := s.execContext(ctx, `
 UPDATE mcp_contracts
-SET status='confirmed', confirmed_block_height=?, confirmed_at=datetime('now'),
+SET status='confirmed', confirmed_block_height=?, confirmed_at=CURRENT_TIMESTAMP,
     stego_image_url=COALESCE(?, stego_image_url),
     metadata=?
 WHERE contract_id=?
@@ -991,7 +1132,7 @@ WHERE contract_id=?
 		sourceID := ""
 		for _, candidate := range []string{wishID, normalized, contractID} {
 			var n int
-			_ = s.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM mcp_contracts WHERE contract_id=?`, candidate).Scan(&n)
+			_ = s.queryRowContext(ctx, `SELECT COUNT(1) FROM mcp_contracts WHERE contract_id=?`, candidate).Scan(&n)
 			if n > 0 {
 				sourceID = candidate
 				break
@@ -1003,7 +1144,7 @@ WHERE contract_id=?
 			var budget int64
 			var goals, avail int
 			var skills, srcMeta []byte
-			err := s.db.QueryRowContext(ctx, `
+			err := s.queryRowContext(ctx, `
 SELECT COALESCE(title, ''), COALESCE(total_budget_sats, 0), COALESCE(goals_count, 0), COALESCE(available_tasks_count, 0), skills, COALESCE(metadata, '{}')
 FROM mcp_contracts WHERE contract_id=?`, sourceID).Scan(&title, &budget, &goals, &avail, &skills, &srcMeta)
 			if err == nil {
@@ -1017,16 +1158,16 @@ FROM mcp_contracts WHERE contract_id=?`, sourceID).Scan(&title, &budget, &goals,
 				metaMap["confirmed_txid"] = txid
 				metaMap["confirmed_block_height"] = blockHeight
 				mergedMeta, _ := json.Marshal(metaMap)
-				_, _ = s.db.ExecContext(ctx, `
-INSERT INTO mcp_contracts (contract_id, title, total_budget_sats, goals_count, available_tasks_count, status, skills, stego_image_url, confirmed_block_height, confirmed_at, created_at, metadata)
-VALUES (?,?,?,?,?,'confirmed',?,?,?,datetime('now'),datetime('now'),?)
+				_, _ = s.execContext(ctx, `
+INSERT OR IGNORE INTO mcp_contracts (contract_id, title, total_budget_sats, goals_count, available_tasks_count, status, skills, stego_image_url, confirmed_block_height, confirmed_at, created_at, metadata)
+VALUES (?,?,?,?,?,'confirmed',?,?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,?)
 ON CONFLICT(contract_id) DO UPDATE SET
   status='confirmed', confirmed_block_height=excluded.confirmed_block_height,
-  confirmed_at=datetime('now'),
+  confirmed_at=CURRENT_TIMESTAMP,
   stego_image_url=COALESCE(excluded.stego_image_url, mcp_contracts.stego_image_url),
   metadata=excluded.metadata
 `, wishID, title, budget, goals, avail, string(skills), stegoImageURL, blockHeight, string(mergedMeta))
-				_, _ = s.db.ExecContext(ctx, `
+				_, _ = s.execContext(ctx, `
 INSERT OR IGNORE INTO mcp_tasks (task_id, contract_id, goal_id, title, description, budget_sats, skills, status, claimed_by, claimed_at, claim_expires_at, difficulty, estimated_hours, requirements, merkle_proof)
 SELECT replace(task_id, ?, ?) AS task_id, ? AS contract_id, goal_id, title, description, budget_sats, skills, status, claimed_by, claimed_at, claim_expires_at, difficulty, estimated_hours, requirements, merkle_proof
 FROM mcp_tasks WHERE contract_id=?
@@ -1048,20 +1189,20 @@ FROM mcp_tasks WHERE contract_id=?
 	// untrusted stego/IPFS demotion still uses supersedeEligibleStatusSQL elsewhere.
 	if plan.IsPixelHash {
 		var wishStatus string
-		_ = s.db.QueryRowContext(ctx, `SELECT COALESCE(status,'') FROM mcp_contracts WHERE contract_id=?`, wishID).Scan(&wishStatus)
+		_ = s.queryRowContext(ctx, `SELECT COALESCE(status,'') FROM mcp_contracts WHERE contract_id=?`, wishID).Scan(&wishStatus)
 		if strings.EqualFold(strings.TrimSpace(wishStatus), "confirmed") {
 			for _, alias := range plan.Aliases {
 				// Force supersede any twin row so /contracts cannot list both.
-				_, _ = s.db.ExecContext(ctx, `UPDATE mcp_contracts SET status='superseded' WHERE contract_id=? AND lower(status)<>'superseded'`, alias)
+				_, _ = s.execContext(ctx, `UPDATE mcp_contracts SET status='superseded' WHERE contract_id=? AND lower(status)<>'superseded'`, alias)
 			}
 		}
 	} else {
 		// Non-pixel: historical supersede of wish- twin if present.
-		_, _ = s.db.ExecContext(ctx, `UPDATE mcp_contracts SET status='superseded' WHERE contract_id=? AND `+supersedeEligibleStatusSQL, wishID)
+		_, _ = s.execContext(ctx, `UPDATE mcp_contracts SET status='superseded' WHERE contract_id=? AND `+supersedeEligibleStatusSQL, wishID)
 	}
 
 	// Update matching proposals to confirmed (mirrors PG behavior)
-	_, err := s.db.ExecContext(ctx, `
+	_, err := s.execContext(ctx, `
 UPDATE mcp_proposals SET status='confirmed'
 WHERE status='approved' AND (
   json_extract(metadata, '$.contract_id') IN (?, ?) OR
@@ -1072,9 +1213,9 @@ WHERE status='approved' AND (
 	return err
 }
 
-func (s *SQLiteStore) SyncClaim(ctx context.Context, claim smart_contract.Claim) error {
-	_, err := s.db.ExecContext(ctx, `
-INSERT INTO mcp_claims (claim_id, task_id, ai_identifier, status, expires_at, created_at)
+func (s *SQLStore) SyncClaim(ctx context.Context, claim smart_contract.Claim) error {
+	_, err := s.execContext(ctx, `
+INSERT OR IGNORE INTO mcp_claims (claim_id, task_id, ai_identifier, status, expires_at, created_at)
 VALUES (?,?,?,?,?,?)
 ON CONFLICT(claim_id) DO UPDATE SET
   status = excluded.status,
@@ -1083,19 +1224,19 @@ ON CONFLICT(claim_id) DO UPDATE SET
 	return err
 }
 
-func (s *SQLiteStore) SyncSubmission(ctx context.Context, sub smart_contract.Submission) error {
+func (s *SQLStore) SyncSubmission(ctx context.Context, sub smart_contract.Submission) error {
 	// Ensure parent chain exists so FK constraints are satisfied.
 	// During cross-node sync, submissions may arrive before their claim/task/contract.
 	if sub.TaskID != "" {
-		s.db.ExecContext(ctx, `INSERT OR IGNORE INTO mcp_contracts (contract_id, status, created_at) VALUES (?, 'pending', datetime('now'))`, sub.TaskID)
-		s.db.ExecContext(ctx, `INSERT OR IGNORE INTO mcp_tasks (task_id, contract_id, status) VALUES (?, ?, 'available')`, sub.TaskID, sub.TaskID)
+		s.execContext(ctx, `INSERT OR IGNORE INTO mcp_contracts (contract_id, status, created_at) VALUES (?, 'pending', CURRENT_TIMESTAMP)`, sub.TaskID)
+		s.execContext(ctx, `INSERT OR IGNORE INTO mcp_tasks (task_id, contract_id, status) VALUES (?, ?, 'available')`, sub.TaskID, sub.TaskID)
 	}
 	if sub.ClaimID != "" {
 		taskID := sub.TaskID
 		if taskID == "" {
 			taskID = sub.ClaimID
 		}
-		s.db.ExecContext(ctx, `INSERT OR IGNORE INTO mcp_claims (claim_id, task_id, status, created_at) VALUES (?, ?, 'active', datetime('now'))`, sub.ClaimID, taskID)
+		s.execContext(ctx, `INSERT OR IGNORE INTO mcp_claims (claim_id, task_id, status, created_at) VALUES (?, ?, 'active', CURRENT_TIMESTAMP)`, sub.ClaimID, taskID)
 	}
 
 	if sub.Deliverables != nil {
@@ -1107,8 +1248,8 @@ func (s *SQLiteStore) SyncSubmission(ctx context.Context, sub smart_contract.Sub
 
 	delivJSON, _ := json.Marshal(sub.Deliverables)
 	proofJSON, _ := json.Marshal(sub.CompletionProof)
-	_, err := s.db.ExecContext(ctx, `
-INSERT INTO mcp_submissions (submission_id, claim_id, task_id, status, deliverables, completion_proof, rejection_reason, rejection_type, rejected_at, created_at)
+	_, err := s.execContext(ctx, `
+INSERT OR IGNORE INTO mcp_submissions (submission_id, claim_id, task_id, status, deliverables, completion_proof, rejection_reason, rejection_type, rejected_at, created_at)
 VALUES (?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT(submission_id) DO UPDATE SET
   status = excluded.status,
@@ -1119,11 +1260,11 @@ ON CONFLICT(submission_id) DO UPDATE SET
 	return err
 }
 
-func (s *SQLiteStore) UpsertTask(ctx context.Context, t smart_contract.Task) error {
+func (s *SQLStore) UpsertTask(ctx context.Context, t smart_contract.Task) error {
 	// Ensure parent contract exists so the FK constraint is satisfied.
 	// During cross-node sync, tasks may arrive before their contracts.
 	if t.ContractID != "" {
-		s.db.ExecContext(ctx, `INSERT OR IGNORE INTO mcp_contracts (contract_id, status, created_at) VALUES (?, 'pending', datetime('now'))`, t.ContractID)
+		s.execContext(ctx, `INSERT OR IGNORE INTO mcp_contracts (contract_id, status, created_at) VALUES (?, 'pending', CURRENT_TIMESTAMP)`, t.ContractID)
 	}
 	reqJSON, _ := json.Marshal(t.Requirements)
 	var proofJSON []byte
@@ -1131,8 +1272,8 @@ func (s *SQLiteStore) UpsertTask(ctx context.Context, t smart_contract.Task) err
 		proofJSON, _ = json.Marshal(t.MerkleProof)
 	}
 	taskSkills := strings.Join(t.Skills, ",")
-	_, err := s.db.ExecContext(ctx, `
-INSERT INTO mcp_tasks (task_id, contract_id, goal_id, title, description, budget_sats, skills, status, claimed_by, claimed_at, claim_expires_at, difficulty, estimated_hours, requirements, merkle_proof)
+	_, err := s.execContext(ctx, `
+INSERT OR IGNORE INTO mcp_tasks (task_id, contract_id, goal_id, title, description, budget_sats, skills, status, claimed_by, claimed_at, claim_expires_at, difficulty, estimated_hours, requirements, merkle_proof)
 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT(task_id) DO UPDATE SET
   contract_id = excluded.contract_id,
@@ -1153,10 +1294,10 @@ ON CONFLICT(task_id) DO UPDATE SET
 	return err
 }
 
-func (s *SQLiteStore) SyncEscortStatus(ctx context.Context, status smart_contract.EscortStatus) error {
+func (s *SQLStore) SyncEscortStatus(ctx context.Context, status smart_contract.EscortStatus) error {
 	payload, _ := json.Marshal(status)
-	_, err := s.db.ExecContext(ctx, `
-INSERT INTO mcp_escort_status (task_id, proof_status, last_checked, payload)
+	_, err := s.execContext(ctx, `
+INSERT OR IGNORE INTO mcp_escort_status (task_id, proof_status, last_checked, payload)
 VALUES (?,?,?,?)
 ON CONFLICT(task_id) DO UPDATE SET
   proof_status = excluded.proof_status,
@@ -1166,14 +1307,14 @@ ON CONFLICT(task_id) DO UPDATE SET
 	return err
 }
 
-func (s *SQLiteStore) CreateProposal(ctx context.Context, p smart_contract.Proposal) error {
+func (s *SQLStore) CreateProposal(ctx context.Context, p smart_contract.Proposal) error {
 	visibleHash, metadata, wishToSupersede, err := PrepareProposalForCreate(&p)
 	if err != nil {
 		return err
 	}
 	if visibleHash != "" {
 		var conflictID string
-		err := s.db.QueryRowContext(ctx, `
+		err := s.queryRowContext(ctx, `
 		SELECT id FROM mcp_proposals
 		WHERE visible_pixel_hash=? AND id<>?
 		AND status IN ('approved','published')
@@ -1183,7 +1324,7 @@ func (s *SQLiteStore) CreateProposal(ctx context.Context, p smart_contract.Propo
 			return ProposalConflictApprovedMsg(visibleHash, conflictID)
 		}
 		var count int
-		err = s.db.QueryRowContext(ctx, `
+		err = s.queryRowContext(ctx, `
 		SELECT COUNT(*) FROM mcp_proposals
 		WHERE visible_pixel_hash=? AND id<>?
 		`, visibleHash, p.ID).Scan(&count)
@@ -1191,8 +1332,8 @@ func (s *SQLiteStore) CreateProposal(ctx context.Context, p smart_contract.Propo
 			return ProposalMaxPerWishMsg(visibleHash)
 		}
 	}
-	_, err = s.db.ExecContext(ctx, `
-INSERT INTO mcp_proposals (id, title, description_md, visible_pixel_hash, budget_sats, status, metadata, created_at)
+	_, err = s.execContext(ctx, `
+INSERT OR IGNORE INTO mcp_proposals (id, title, description_md, visible_pixel_hash, budget_sats, status, metadata, created_at)
 VALUES (?,?,?,?,?,?,?,?)
 ON CONFLICT(id) DO UPDATE SET
   status = excluded.status,
@@ -1207,12 +1348,12 @@ ON CONFLICT(id) DO UPDATE SET
 	}
 	if wishToSupersede != "" {
 		// Never demote confirmed/completed wishes via proposal create (stego/IPFS attack surface).
-		_, _ = s.db.ExecContext(ctx, `UPDATE mcp_contracts SET status='superseded' WHERE contract_id=? AND `+supersedeEligibleStatusSQL, wishToSupersede)
+		_, _ = s.execContext(ctx, `UPDATE mcp_contracts SET status='superseded' WHERE contract_id=? AND `+supersedeEligibleStatusSQL, wishToSupersede)
 	}
 	return nil
 }
 
-func (s *SQLiteStore) ListProposals(ctx context.Context, filter smart_contract.ProposalFilter) ([]smart_contract.Proposal, error) {
+func (s *SQLStore) ListProposals(ctx context.Context, filter smart_contract.ProposalFilter) ([]smart_contract.Proposal, error) {
 	query := `SELECT id, title, description_md, visible_pixel_hash, budget_sats, status, metadata, created_at FROM mcp_proposals WHERE 1=1`
 	args := []interface{}{}
 
@@ -1236,7 +1377,7 @@ func (s *SQLiteStore) ListProposals(ctx context.Context, filter smart_contract.P
 		query += fmt.Sprintf(" LIMIT %d", filter.MaxResults)
 	}
 
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := s.queryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1310,11 +1451,11 @@ func (s *SQLiteStore) ListProposals(ctx context.Context, filter smart_contract.P
 	return out, rows.Err()
 }
 
-func (s *SQLiteStore) GetProposal(ctx context.Context, id string) (smart_contract.Proposal, error) {
+func (s *SQLStore) GetProposal(ctx context.Context, id string) (smart_contract.Proposal, error) {
 	var p smart_contract.Proposal
 	var metadata []byte
 	var createdAtStr sql.NullString
-	err := s.db.QueryRowContext(ctx, `
+	err := s.queryRowContext(ctx, `
 SELECT id, title, description_md, visible_pixel_hash, budget_sats, status, metadata, created_at
 FROM mcp_proposals WHERE id=?
 `, id).Scan(&p.ID, &p.Title, &p.DescriptionMD, &p.VisiblePixelHash, &p.BudgetSats, &p.Status, &metadata, &createdAtStr)
@@ -1334,7 +1475,7 @@ FROM mcp_proposals WHERE id=?
 	return p, nil
 }
 
-func (s *SQLiteStore) UpdateProposal(ctx context.Context, p smart_contract.Proposal) error {
+func (s *SQLStore) UpdateProposal(ctx context.Context, p smart_contract.Proposal) error {
 	existing, err := s.GetProposal(ctx, p.ID)
 	if err != nil {
 		return fmt.Errorf("proposal %s not found", p.ID)
@@ -1357,13 +1498,13 @@ func (s *SQLiteStore) UpdateProposal(ctx context.Context, p smart_contract.Propo
 	}
 
 	metadata, _ := json.Marshal(p.Metadata)
-	_, err = s.db.ExecContext(ctx, `
+	_, err = s.execContext(ctx, `
 UPDATE mcp_proposals SET title=?, description_md=?, budget_sats=?, status=?, metadata=? WHERE id=?
 `, p.Title, p.DescriptionMD, p.BudgetSats, p.Status, string(metadata), p.ID)
 	return err
 }
 
-func (s *SQLiteStore) UpdateProposalMetadata(ctx context.Context, id string, updates map[string]interface{}) error {
+func (s *SQLStore) UpdateProposalMetadata(ctx context.Context, id string, updates map[string]interface{}) error {
 	existing, err := s.GetProposal(ctx, id)
 	if err != nil {
 		return err
@@ -1376,11 +1517,11 @@ func (s *SQLiteStore) UpdateProposalMetadata(ctx context.Context, id string, upd
 		meta[k] = v
 	}
 	metadata, _ := json.Marshal(meta)
-	_, err = s.db.ExecContext(ctx, `UPDATE mcp_proposals SET metadata=? WHERE id=?`, string(metadata), id)
+	_, err = s.execContext(ctx, `UPDATE mcp_proposals SET metadata=? WHERE id=?`, string(metadata), id)
 	return err
 }
 
-func (s *SQLiteStore) ApproveProposal(ctx context.Context, id string) error {
+func (s *SQLStore) ApproveProposal(ctx context.Context, id string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -1390,7 +1531,7 @@ func (s *SQLiteStore) ApproveProposal(ctx context.Context, id string) error {
 	var metaJSON []byte
 	var currentStatus string
 	var visiblePixelHash string
-	if err := tx.QueryRowContext(ctx, `SELECT metadata, status, visible_pixel_hash FROM mcp_proposals WHERE id=?`, id).Scan(&metaJSON, &currentStatus, &visiblePixelHash); err != nil {
+	if err := s.txQueryRow(tx, ctx, `SELECT metadata, status, visible_pixel_hash FROM mcp_proposals WHERE id=?`, id).Scan(&metaJSON, &currentStatus, &visiblePixelHash); err != nil {
 		return err
 	}
 
@@ -1415,7 +1556,7 @@ func (s *SQLiteStore) ApproveProposal(ctx context.Context, id string) error {
 	// Task count for shared BuildApprovePlan
 	preKeys := ResolveApproveKeys(meta, id)
 	var taskCount int
-	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM mcp_tasks WHERE contract_id=?`, preKeys.ContractID).Scan(&taskCount); err != nil {
+	if err := s.txQueryRow(tx, ctx, `SELECT count(*) FROM mcp_tasks WHERE contract_id=?`, preKeys.ContractID).Scan(&taskCount); err != nil {
 		return err
 	}
 	plan, err := BuildApprovePlan(id, currentStatus, &proposal, taskCount)
@@ -1426,7 +1567,7 @@ func (s *SQLiteStore) ApproveProposal(ctx context.Context, id string) error {
 	n, w := keys.NormalizedContractID, keys.WishContractID
 
 	var conflict int
-	if err := tx.QueryRowContext(ctx, `
+	if err := s.txQueryRow(tx, ctx, `
 SELECT count(*) FROM mcp_proposals
 WHERE id<>? AND status IN ('approved','published')
 AND (
@@ -1440,7 +1581,7 @@ AND (
 		return ErrApproveConflict(keys.NormalizedContractID)
 	}
 
-	if _, err := tx.ExecContext(ctx, `
+	if _, err := s.txExec(tx, ctx, `
 UPDATE mcp_proposals SET status='rejected'
 WHERE id<>? AND status='pending' AND (
   id IN (?, ?) OR
@@ -1450,12 +1591,12 @@ WHERE id<>? AND status='pending' AND (
 		return err
 	}
 
-	if _, err := tx.ExecContext(ctx, `UPDATE mcp_proposals SET status=? WHERE id=?`, plan.NewProposalStatus, id); err != nil {
+	if _, err := s.txExec(tx, ctx, `UPDATE mcp_proposals SET status=? WHERE id=?`, plan.NewProposalStatus, id); err != nil {
 		return err
 	}
 
 	if plan.WishToSupersede != "" {
-		if _, err := tx.ExecContext(ctx, `UPDATE mcp_contracts SET status='superseded' WHERE contract_id=? AND `+supersedeEligibleStatusSQL, plan.WishToSupersede); err != nil {
+		if _, err := s.txExec(tx, ctx, `UPDATE mcp_contracts SET status='superseded' WHERE contract_id=? AND `+supersedeEligibleStatusSQL, plan.WishToSupersede); err != nil {
 			return err
 		}
 	}
@@ -1463,7 +1604,7 @@ WHERE id<>? AND status='pending' AND (
 	return tx.Commit()
 }
 
-func (s *SQLiteStore) PublishProposal(ctx context.Context, id string) error {
+func (s *SQLStore) PublishProposal(ctx context.Context, id string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -1472,7 +1613,7 @@ func (s *SQLiteStore) PublishProposal(ctx context.Context, id string) error {
 
 	var status string
 	var metaJSON []byte
-	if err := tx.QueryRowContext(ctx, `SELECT status, metadata FROM mcp_proposals WHERE id=?`, id).Scan(&status, &metaJSON); err != nil {
+	if err := s.txQueryRow(tx, ctx, `SELECT status, metadata FROM mcp_proposals WHERE id=?`, id).Scan(&status, &metaJSON); err != nil {
 		return err
 	}
 	var meta map[string]interface{}
@@ -1484,20 +1625,20 @@ func (s *SQLiteStore) PublishProposal(ctx context.Context, id string) error {
 		return err
 	}
 
-	if _, err := tx.ExecContext(ctx, `UPDATE mcp_tasks SET status='published' WHERE contract_id=? AND status IN (`+PublishTaskStatusSQL+`)`, plan.ContractID); err != nil {
+	if _, err := s.txExec(tx, ctx, `UPDATE mcp_tasks SET status='published' WHERE contract_id=? AND status IN (`+PublishTaskStatusSQL+`)`, plan.ContractID); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE mcp_claims SET status='complete' WHERE task_id IN (SELECT task_id FROM mcp_tasks WHERE contract_id=?) AND status IN (`+PublishClaimStatusSQL+`)`, plan.ContractID); err != nil {
+	if _, err := s.txExec(tx, ctx, `UPDATE mcp_claims SET status='complete' WHERE task_id IN (SELECT task_id FROM mcp_tasks WHERE contract_id=?) AND status IN (`+PublishClaimStatusSQL+`)`, plan.ContractID); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE mcp_proposals SET status=? WHERE id=?`, plan.NewProposalStatus, id); err != nil {
+	if _, err := s.txExec(tx, ctx, `UPDATE mcp_proposals SET status=? WHERE id=?`, plan.NewProposalStatus, id); err != nil {
 		return err
 	}
 
 	return tx.Commit()
 }
 
-func (s *SQLiteStore) UpdateSubmissionStatus(ctx context.Context, submissionID, status, reviewerNotes, rejectionType string) error {
+func (s *SQLStore) UpdateSubmissionStatus(ctx context.Context, submissionID, status, reviewerNotes, rejectionType string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -1505,7 +1646,7 @@ func (s *SQLiteStore) UpdateSubmissionStatus(ctx context.Context, submissionID, 
 	defer tx.Rollback()
 
 	var claimID string
-	if err := tx.QueryRowContext(ctx, `SELECT claim_id FROM mcp_submissions WHERE submission_id=?`, submissionID).Scan(&claimID); err != nil {
+	if err := s.txQueryRow(tx, ctx, `SELECT claim_id FROM mcp_submissions WHERE submission_id=?`, submissionID).Scan(&claimID); err != nil {
 		return err
 	}
 
@@ -1514,7 +1655,7 @@ func (s *SQLiteStore) UpdateSubmissionStatus(ctx context.Context, submissionID, 
 	if plan.RejectedAt != nil {
 		rejectedAt = plan.RejectedAt.Format(time.RFC3339)
 	}
-	if _, err := tx.ExecContext(ctx, `
+	if _, err := s.txExec(tx, ctx, `
 UPDATE mcp_submissions SET status=?, rejection_reason=?, rejection_type=?, rejected_at=? WHERE submission_id=?
 `, plan.Status, plan.RejectionReason, plan.RejectionType, rejectedAt, submissionID); err != nil {
 		return err
@@ -1523,22 +1664,22 @@ UPDATE mcp_submissions SET status=?, rejection_reason=?, rejection_type=?, rejec
 	switch plan.Cascade {
 	case SubmissionCascadeApprove:
 		var taskID string
-		if err := tx.QueryRowContext(ctx, `SELECT task_id FROM mcp_claims WHERE claim_id=?`, claimID).Scan(&taskID); err == nil {
-			_, _ = tx.ExecContext(ctx, `UPDATE mcp_tasks SET status=? WHERE task_id=?`, plan.TaskStatus, taskID)
-			_, _ = tx.ExecContext(ctx, `UPDATE mcp_claims SET status=? WHERE claim_id=?`, plan.ClaimStatus, claimID)
+		if err := s.txQueryRow(tx, ctx, `SELECT task_id FROM mcp_claims WHERE claim_id=?`, claimID).Scan(&taskID); err == nil {
+			_, _ = s.txExec(tx, ctx, `UPDATE mcp_tasks SET status=? WHERE task_id=?`, plan.TaskStatus, taskID)
+			_, _ = s.txExec(tx, ctx, `UPDATE mcp_claims SET status=? WHERE claim_id=?`, plan.ClaimStatus, claimID)
 		}
 	case SubmissionCascadeReject:
 		var taskID string
-		if err := tx.QueryRowContext(ctx, `SELECT task_id FROM mcp_claims WHERE claim_id=?`, claimID).Scan(&taskID); err == nil {
-			_, _ = tx.ExecContext(ctx, `UPDATE mcp_tasks SET status=?, claimed_by=NULL, claimed_at=NULL, claim_expires_at=NULL WHERE task_id=?`, plan.TaskStatus, taskID)
-			_, _ = tx.ExecContext(ctx, `UPDATE mcp_claims SET status=? WHERE claim_id=?`, plan.ClaimStatus, claimID)
+		if err := s.txQueryRow(tx, ctx, `SELECT task_id FROM mcp_claims WHERE claim_id=?`, claimID).Scan(&taskID); err == nil {
+			_, _ = s.txExec(tx, ctx, `UPDATE mcp_tasks SET status=?, claimed_by=NULL, claimed_at=NULL, claim_expires_at=NULL WHERE task_id=?`, plan.TaskStatus, taskID)
+			_, _ = s.txExec(tx, ctx, `UPDATE mcp_claims SET status=? WHERE claim_id=?`, plan.ClaimStatus, claimID)
 		}
 	}
 
 	return tx.Commit()
 }
 
-func (s *SQLiteStore) UpdateSubmission(ctx context.Context, sub smart_contract.Submission) error {
+func (s *SQLStore) UpdateSubmission(ctx context.Context, sub smart_contract.Submission) error {
 	if sub.Deliverables != nil {
 		delete(sub.Deliverables, "status")
 	}
@@ -1548,33 +1689,33 @@ func (s *SQLiteStore) UpdateSubmission(ctx context.Context, sub smart_contract.S
 
 	delivJSON, _ := json.Marshal(sub.Deliverables)
 	proofJSON, _ := json.Marshal(sub.CompletionProof)
-	_, err := s.db.ExecContext(ctx, `
+	_, err := s.execContext(ctx, `
 UPDATE mcp_submissions SET status=?, deliverables=?, completion_proof=? WHERE submission_id=?
 `, sub.Status, string(delivJSON), string(proofJSON), sub.SubmissionID)
 	return err
 }
 
-func (s *SQLiteStore) DeleteWish(ctx context.Context, visiblePixelHash string) error {
+func (s *SQLStore) DeleteWish(ctx context.Context, visiblePixelHash string) error {
 	plan, err := BuildDeleteWishPlan(visiblePixelHash)
 	if err != nil {
 		return err
 	}
 
-	_, err = s.db.ExecContext(ctx, `DELETE FROM mcp_proposals WHERE id=? OR visible_pixel_hash=?`, plan.WishID, plan.VisiblePixelHash)
+	_, err = s.execContext(ctx, `DELETE FROM mcp_proposals WHERE id=? OR visible_pixel_hash=?`, plan.WishID, plan.VisiblePixelHash)
 	if err != nil {
 		return err
 	}
 
-	_, err = s.db.ExecContext(ctx, `DELETE FROM mcp_tasks WHERE contract_id=?`, plan.WishID)
+	_, err = s.execContext(ctx, `DELETE FROM mcp_tasks WHERE contract_id=?`, plan.WishID)
 	if err != nil {
 		return err
 	}
 
-	_, err = s.db.ExecContext(ctx, `DELETE FROM mcp_contracts WHERE contract_id=?`, plan.WishID)
+	_, err = s.execContext(ctx, `DELETE FROM mcp_contracts WHERE contract_id=?`, plan.WishID)
 	return err
 }
 
-func (s *SQLiteStore) CreateContractReworkRequest(ctx context.Context, contractID, requester, notes string) (smart_contract.ContractReworkRequest, error) {
+func (s *SQLStore) CreateContractReworkRequest(ctx context.Context, contractID, requester, notes string) (smart_contract.ContractReworkRequest, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return smart_contract.ContractReworkRequest{}, err
@@ -1582,7 +1723,7 @@ func (s *SQLiteStore) CreateContractReworkRequest(ctx context.Context, contractI
 	defer tx.Rollback()
 
 	var metadataBytes []byte
-	if err := tx.QueryRowContext(ctx, `SELECT metadata FROM mcp_contracts WHERE contract_id=?`, contractID).Scan(&metadataBytes); err != nil {
+	if err := s.txQueryRow(tx, ctx, `SELECT metadata FROM mcp_contracts WHERE contract_id=?`, contractID).Scan(&metadataBytes); err != nil {
 		if err == sql.ErrNoRows {
 			return smart_contract.ContractReworkRequest{}, fmt.Errorf("contract %s not found", contractID)
 		}
@@ -1605,10 +1746,10 @@ func (s *SQLiteStore) CreateContractReworkRequest(ctx context.Context, contractI
 		return smart_contract.ContractReworkRequest{}, err
 	}
 
-	if _, err := tx.ExecContext(ctx, `UPDATE mcp_contracts SET metadata=? WHERE contract_id=?`, string(updatedMetadata), contractID); err != nil {
+	if _, err := s.txExec(tx, ctx, `UPDATE mcp_contracts SET metadata=? WHERE contract_id=?`, string(updatedMetadata), contractID); err != nil {
 		return smart_contract.ContractReworkRequest{}, err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE mcp_tasks SET status=? WHERE contract_id=?`, ReworkTaskStatusOnCreate(), contractID); err != nil {
+	if _, err := s.txExec(tx, ctx, `UPDATE mcp_tasks SET status=? WHERE contract_id=?`, ReworkTaskStatusOnCreate(), contractID); err != nil {
 		return smart_contract.ContractReworkRequest{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -1617,9 +1758,9 @@ func (s *SQLiteStore) CreateContractReworkRequest(ctx context.Context, contractI
 	return reworkReq, nil
 }
 
-func (s *SQLiteStore) GetContractReworkRequests(ctx context.Context, contractID string) ([]smart_contract.ContractReworkRequest, error) {
+func (s *SQLStore) GetContractReworkRequests(ctx context.Context, contractID string) ([]smart_contract.ContractReworkRequest, error) {
 	var metadataBytes []byte
-	if err := s.db.QueryRowContext(ctx, `SELECT metadata FROM mcp_contracts WHERE contract_id=?`, contractID).Scan(&metadataBytes); err != nil {
+	if err := s.queryRowContext(ctx, `SELECT metadata FROM mcp_contracts WHERE contract_id=?`, contractID).Scan(&metadataBytes); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("contract %s not found", contractID)
 		}
@@ -1635,7 +1776,7 @@ func (s *SQLiteStore) GetContractReworkRequests(ctx context.Context, contractID 
 	return reqs, nil
 }
 
-func (s *SQLiteStore) ResolveContractReworkRequest(ctx context.Context, contractID, requestID string) error {
+func (s *SQLStore) ResolveContractReworkRequest(ctx context.Context, contractID, requestID string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -1643,7 +1784,7 @@ func (s *SQLiteStore) ResolveContractReworkRequest(ctx context.Context, contract
 	defer tx.Rollback()
 
 	var metadataBytes []byte
-	if err := tx.QueryRowContext(ctx, `SELECT metadata FROM mcp_contracts WHERE contract_id=?`, contractID).Scan(&metadataBytes); err != nil {
+	if err := s.txQueryRow(tx, ctx, `SELECT metadata FROM mcp_contracts WHERE contract_id=?`, contractID).Scan(&metadataBytes); err != nil {
 		if err == sql.ErrNoRows {
 			return fmt.Errorf("contract %s not found", contractID)
 		}
@@ -1662,7 +1803,7 @@ func (s *SQLiteStore) ResolveContractReworkRequest(ctx context.Context, contract
 	if err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE mcp_contracts SET metadata=? WHERE contract_id=?`, string(updatedMetadata), contractID); err != nil {
+	if _, err := s.txExec(tx, ctx, `UPDATE mcp_contracts SET metadata=? WHERE contract_id=?`, string(updatedMetadata), contractID); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -1670,7 +1811,7 @@ func (s *SQLiteStore) ResolveContractReworkRequest(ctx context.Context, contract
 
 // hydrateProposalTasks enriches proposal tasks with live statuses from the DB.
 // Mirrors PGStore.hydrateProposalTasks.
-func (s *SQLiteStore) hydrateProposalTasks(ctx context.Context, p *smart_contract.Proposal) {
+func (s *SQLStore) hydrateProposalTasks(ctx context.Context, p *smart_contract.Proposal) {
 	if p == nil {
 		return
 	}
@@ -1699,7 +1840,7 @@ func (s *SQLiteStore) hydrateProposalTasks(ctx context.Context, p *smart_contrac
 		args[i] = id
 	}
 
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.queryContext(ctx, `
 SELECT task_id, contract_id, goal_id, title, description, budget_sats, skills, status,
        claimed_by, claimed_at, claim_expires_at, difficulty, estimated_hours, requirements, merkle_proof
 FROM mcp_tasks WHERE contract_id IN (`+strings.Join(placeholders, ",")+`)
