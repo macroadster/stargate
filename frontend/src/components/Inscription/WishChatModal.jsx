@@ -299,14 +299,9 @@ const WishChatModal = ({ onClose, onSuccess }) => {
             <span className="wish-chat-avatar wish-chat-avatar-bot" aria-hidden="true">
               <Sparkles className="w-4 h-4" />
             </span>
-            <div className="min-w-0">
-              <h2 id={titleId} className="text-lg font-bold create-contract-title wish-chat-title">
-                WishBot
-              </h2>
-              <p className="text-xs wish-chat-subtitle truncate">
-                Nanobot · create a wish · drag images welcome
-              </p>
-            </div>
+            <h2 id={titleId} className="text-lg font-bold create-contract-title wish-chat-title">
+              WishBot
+            </h2>
           </div>
           <button
             type="button"
@@ -359,7 +354,7 @@ const WishChatModal = ({ onClose, onSuccess }) => {
                   value={draft.price}
                   disabled={phase === 'submitting' || phase === 'done'}
                   onChange={(e) => patchDraftField({ price: e.target.value })}
-                  placeholder={draft.priceUnit === 'sats' ? '10000' : '0.0001'}
+                  placeholder={draft.priceUnit === 'sats' ? '1000' : '0.00001'}
                 />
               </label>
               <label className="wish-chat-field wish-chat-unit">
@@ -390,38 +385,37 @@ const WishChatModal = ({ onClose, onSuccess }) => {
             </label>
             <div className="wish-chat-field">
               <span>Image</span>
-              <div className="wish-chat-image-row">
-                {draft.imagePreviewUrl ? (
-                  <img src={draft.imagePreviewUrl} alt="Wish cover" className="wish-chat-thumb" />
-                ) : (
-                  <div className="wish-chat-thumb wish-chat-thumb-empty" aria-hidden="true">
-                    <ImageIcon className="w-4 h-4" />
-                  </div>
-                )}
-                <div className="wish-chat-image-actions">
+              <div className="wish-chat-image-picker">
+                <button
+                  type="button"
+                  className={`wish-chat-image-tile${draft.imagePreviewUrl ? ' has-image' : ''}`}
+                  disabled={phase === 'submitting' || phase === 'done'}
+                  onClick={() => fileInputRef.current?.click()}
+                  aria-label={draft.imageFile ? 'Replace cover image' : 'Add cover image'}
+                  title={draft.imageFile ? draft.imageFile.name : 'Add cover image'}
+                >
+                  {draft.imagePreviewUrl ? (
+                    <img src={draft.imagePreviewUrl} alt="" className="wish-chat-image-tile-img" />
+                  ) : (
+                    <>
+                      <ImageIcon className="w-4 h-4" aria-hidden="true" />
+                      <span>Add</span>
+                    </>
+                  )}
+                </button>
+                {draft.imageFile && phase !== 'done' && (
                   <button
                     type="button"
-                    className="wish-chat-chip"
-                    disabled={phase === 'submitting' || phase === 'done'}
-                    onClick={() => fileInputRef.current?.click()}
+                    className="wish-chat-image-clear"
+                    aria-label="Remove image"
+                    title="Remove image"
+                    onClick={() =>
+                      patchDraftField({ imageFile: null, imagePreviewUrl: null }, 'Image removed.')
+                    }
                   >
-                    {draft.imageFile ? 'Replace' : 'Add image'}
+                    <X className="w-3 h-3" />
                   </button>
-                  {draft.imageFile && phase !== 'done' && (
-                    <button
-                      type="button"
-                      className="wish-chat-chip wish-chat-chip-muted"
-                      onClick={() =>
-                        patchDraftField({ imageFile: null, imagePreviewUrl: null }, 'Image removed.')
-                      }
-                    >
-                      Remove
-                    </button>
-                  )}
-                  <span className="wish-chat-hint truncate">
-                    {draft.imageFile ? draft.imageFile.name : 'Optional'}
-                  </span>
-                </div>
+                )}
               </div>
             </div>
             <div className="wish-chat-field">

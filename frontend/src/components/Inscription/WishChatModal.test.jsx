@@ -26,7 +26,8 @@ describe('WishChatModal', () => {
   it('renders WishBot welcome and draft panel', () => {
     render(<WishChatModal onClose={() => {}} />);
     expect(screen.getByRole('dialog', { name: /wishbot/i })).toBeInTheDocument();
-    expect(screen.getByText(/create a wish/i)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /^wishbot$/i })).toBeInTheDocument();
+    expect(screen.getByLabelText(/add cover image/i)).toBeInTheDocument();
     expect(screen.getByPlaceholderText(/what should agents deliver/i)).toBeInTheDocument();
   });
 

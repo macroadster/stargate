@@ -204,7 +204,7 @@ export function draftSummaryLines(draft) {
       draft.fundingMode === FUNDING_RAISE ? 'Raise fund from investors' : 'Payout to contractors'
     }`,
   );
-  lines.push(`**Image:** ${draft.imageFile ? draft.imageFile.name : '_(optional — placeholder if omitted)_'}`);
+  lines.push(`**Image:** ${draft.imageFile ? draft.imageFile.name : '_(none)_'}`);
   lines.push(`**Wallet:** ${draft.address?.trim() || '_(sign in required)_'}`);
   return lines;
 }
@@ -233,10 +233,10 @@ export function respondToUser({ userText, draft, hasImageThisTurn = false }) {
         "I'm **WishBot** — I'll gather what we need to inscribe your wish.",
         '',
         'You can write naturally, for example:',
-        '> Build a pixel art cat game, price 50000 sats',
+        '> Build a pixel art cat game, price 1000 sats',
         '',
         '**Commands**',
-        '- `/price 1000 sats` or `/price 0.001 btc`',
+        '- `/price 1000 sats` or `/price 0.00001 btc`',
         '- `/mode payout` or `/mode raise_fund`',
         '- `status` — show the draft',
         '- `reset` — clear and start over',
@@ -336,7 +336,7 @@ export function respondToUser({ userText, draft, hasImageThisTurn = false }) {
   } else if (userText?.trim()) {
     messages.push({
       role: 'bot',
-      content: "I heard you — could you rephrase? Include a wish description and a price (e.g. `50000 sats`). Type **help** for tips.",
+      content: "I heard you — could you rephrase? Include a wish description and a price (e.g. `1000 sats`). Type **help** for tips.",
     });
   }
 
@@ -382,12 +382,12 @@ export function welcomeMessages(address) {
       role: 'bot',
       id: 'welcome',
       content: [
-        "Hi — I'm **WishBot**, your inscription nanobot.",
+        "Hi — I'm **WishBot**.",
         '',
         'Tell me the wish you want agents to fulfill. You can:',
         '• Describe the wish in plain language',
-        '• Include a **price** (e.g. `25000 sats` or `0.001 btc`)',
-        '• **Drag & drop** a cover image (optional)',
+        '• Include a **price** (e.g. `1000 sats`)',
+        '• **Drag & drop** a cover image',
         '• Set funding with `raise fund` or `payout`',
         '',
         signedIn
@@ -409,7 +409,7 @@ function hintForMissing(missing) {
     return 'Describe what you want built or delivered.';
   }
   if (missing.includes('price')) {
-    return 'Try e.g. `price 10000 sats`.';
+    return 'Try e.g. `price 1000 sats`.';
   }
   if (missing.includes('wallet address (sign in)')) {
     return 'Open the account menu and sign in, then come back.';
@@ -422,7 +422,7 @@ function nextPrompt(missing, draft) {
     return 'What is the wish? Describe the outcome you want on-chain.';
   }
   if (missing.includes('price')) {
-    return `Nice${draft.message ? ` — "${truncate(draft.message, 60)}"` : ''}. What **price** should we set? (e.g. \`50000 sats\` or \`0.0005 btc\`)`;
+    return `Nice${draft.message ? ` — "${truncate(draft.message, 60)}"` : ''}. What **price** should we set? (e.g. \`1000 sats\`)`;
   }
   if (missing.includes('wallet address (sign in)')) {
     return 'Wish and price are set, but I need you to **sign in** so we know the wallet address.';
