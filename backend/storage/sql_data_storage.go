@@ -18,7 +18,8 @@ import (
 // BlockScanRow is the GORM model for block_scans (SQLite text payload + Postgres JSON/text).
 // Payload is the marshaled BlockDataCache JSON used by the UI and search APIs.
 type BlockScanRow struct {
-	BlockHeight   int64     `gorm:"column:block_height;primaryKey"`
+	// autoIncrement:false — block height is an explicit chain height, not a rowid sequence.
+	BlockHeight   int64     `gorm:"column:block_height;primaryKey;autoIncrement:false"`
 	BlockHash     string    `gorm:"column:block_hash;not null;index:idx_block_scans_hash"`
 	ScannedAt     time.Time `gorm:"column:scanned_at;index:idx_block_scans_scanned"`
 	Payload       []byte    `gorm:"column:payload;type:text;not null"`

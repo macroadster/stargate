@@ -103,3 +103,35 @@ func TestSQLDataStorageMemory(t *testing.T) {
 		t.Fatalf("max=%d err=%v", maxH, err)
 	}
 }
+
+// TestSQLDataStorageSurvivesReopen ensures AutoMigrate + block data survive process restart
+// (same root cause as stargate-6wu API key invalidation).
+func TestSQLDataStorageSurvivesReopen(t *testing.T) {
+	path := t.TempDir() + "/blocks.db"
+	store1, err := NewSQLiteDataStorage(path)
+	if err != nil {
+		t.Fatalf("open1: %v", err)
+	}
+	resp := &bitcoin.BlockInscriptionsResponse{BlockHeight: 42, BlockHash: "persist", Success: true}
+	if err := store1.StoreBlockData(resp, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := store1.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store2, err := NewSQLiteDataStorage(path)
+	if err != nil {
+		t.Fatalf("open2 (AutoMigrate must succeed): %v", err)
+	}
+	defer store2.Close()
+
+	raw, err := store2.GetBlockData(42)
+	if err != nil {
+		t.Fatalf("GetBlockData after reopen: %v", err)
+	}
+	entry, ok := raw.(*BlockDataCache)
+	if !ok || entry.BlockHash != "persist" {
+		t.Fatalf("unexpected after reopen: %#v", raw)
+	}
+}

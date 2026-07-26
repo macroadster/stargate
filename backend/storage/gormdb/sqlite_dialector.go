@@ -10,7 +10,6 @@ import (
 	"gorm.io/gorm/callbacks"
 	"gorm.io/gorm/clause"
 	"gorm.io/gorm/logger"
-	"gorm.io/gorm/migrator"
 	"gorm.io/gorm/schema"
 
 	// Pure-Go SQLite driver already used by MCP / ingestion stores.
@@ -116,13 +115,8 @@ func (d moderncSQLiteDialector) DefaultValueOf(field *schema.Field) clause.Expre
 	return clause.Expr{SQL: "DEFAULT"}
 }
 
-func (d moderncSQLiteDialector) Migrator(db *gorm.DB) gorm.Migrator {
-	return migrator.Migrator{Config: migrator.Config{
-		DB:                          db,
-		Dialector:                   d,
-		CreateIndexAfterCreateTable: true,
-	}}
-}
+// Migrator is implemented on moderncSQLiteDialector in sqlite_migrator.go
+// (sqlite_master-aware HasTable/HasIndex so AutoMigrate survives process restart).
 
 func (d moderncSQLiteDialector) BindVarTo(writer clause.Writer, stmt *gorm.Statement, v interface{}) {
 	writer.WriteByte('?')
