@@ -1714,13 +1714,19 @@ html[data-theme="light"] .contract-success-btn-done {
     max-width: 52rem;
     height: min(36rem, 90vh);
     max-height: 90vh;
-    padding: 0;
+    padding: 0 !important; /* beat .create-contract-modal padding */
     display: flex;
     flex-direction: column;
     overflow: hidden;
     position: relative;
+    box-sizing: border-box;
+    margin: 0;
 }
 
+/*
+ * Quantum sets `header { text-align: center; margin-bottom: 30px }` which
+ * blows open a gap under the WishBot title bar and can shift brand text.
+ */
 .wish-chat-header {
     display: flex;
     align-items: center;
@@ -1729,19 +1735,26 @@ html[data-theme="light"] .contract-success-btn-done {
     padding: 0.875rem 1rem;
     border-bottom: 1px solid rgba(255, 255, 255, 0.1);
     flex-shrink: 0;
+    margin: 0 !important;
+    text-align: left !important;
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 3.25rem;
 }
 
 .wish-chat-title {
     margin: 0;
     line-height: 1.2;
+    text-align: left;
 }
 
 .wish-chat-body {
-    flex: 1;
+    flex: 1 1 auto;
     min-height: 0;
     display: grid;
     grid-template-columns: 1fr minmax(14rem, 17rem);
     gap: 0;
+    overflow: hidden;
 }
 
 .wish-chat-messages {
@@ -1850,13 +1863,17 @@ html[data-theme="light"] .contract-success-btn-done {
 
 .wish-chat-draft {
     border-left: 1px solid rgba(255, 255, 255, 0.1);
-    padding: 0.75rem;
+    padding: 0.75rem 1rem;
+    overflow-x: hidden;
     overflow-y: auto;
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
     background: rgba(0, 0, 0, 0.15);
     min-height: 0;
+    min-width: 0;
+    box-sizing: border-box;
+    -webkit-overflow-scrolling: touch;
 }
 
 .wish-chat-draft-title {
@@ -1923,17 +1940,22 @@ html[data-theme="light"] .contract-success-btn-done {
     line-height: 1.4;
 }
 
-/* Kill native select chrome so OS dropdowns match inputs */
+/* Kill native select chrome so OS dropdowns match inputs.
+   background-repeat MUST stay no-repeat — otherwise the chevron tiles. */
 .wish-chat-field select {
-    -webkit-appearance: none;
-    appearance: none;
+    -webkit-appearance: none !important;
+    -moz-appearance: none !important;
+    appearance: none !important;
     cursor: pointer;
     padding-right: 1.75rem;
     background-color: var(--wish-ctrl-bg);
     background-image: var(--wish-ctrl-chevron);
-    background-repeat: no-repeat;
-    background-position: right 0.5rem center;
-    background-size: 0.875rem;
+    background-repeat: no-repeat !important;
+    background-position: right 0.5rem center !important;
+    background-size: 0.875rem 0.875rem !important;
+    /* Prevent flex stretch from turning the chevron into a stripe */
+    align-self: flex-end;
+    flex: 0 0 auto;
 }
 
 .wish-chat-field input:focus,
@@ -2197,6 +2219,9 @@ html[data-theme="light"] .contract-success-btn-done {
     border-top: 1px solid rgba(255, 255, 255, 0.1);
     flex-shrink: 0;
     background: rgba(0, 0, 0, 0.12);
+    margin: 0 !important; /* beat quantum footer/header margins if any */
+    box-sizing: border-box;
+    width: 100%;
 }
 
 .wish-chat-input {
@@ -2279,24 +2304,142 @@ html[data-theme="light"] .contract-success-btn-done {
     pointer-events: none;
 }
 
+/*
+ * Mobile WishBot — full-viewport stacked layout.
+ *
+ * Previous `grid-template-rows: 1fr auto` + `max-height: 42%` on the draft
+ * sized the draft *row* to full content height while the draft *element*
+ * was capped, leaving a large empty gap above the composer and clipping
+ * Funding / Image / Wallet / Inscribe. Flex column is more predictable.
+ */
 @media (max-width: 720px) {
     .wish-chat-modal {
         width: 100vw;
+        width: 100dvw;
         height: 100vh;
+        height: 100dvh;
+        max-width: 100vw;
         max-height: 100vh;
+        max-height: 100dvh;
         border-radius: 0;
+        /* iOS safe areas */
+        padding-top: env(safe-area-inset-top, 0) !important;
+        padding-bottom: env(safe-area-inset-bottom, 0) !important;
+        padding-left: env(safe-area-inset-left, 0) !important;
+        padding-right: env(safe-area-inset-right, 0) !important;
+    }
+
+    .wish-chat-header {
+        margin: 0 !important;
+        text-align: left !important;
+        /* Keep title + close on one row, vertically centered */
+        min-height: 3.5rem;
+        padding: 0.75rem 1rem;
     }
 
     .wish-chat-body {
-        grid-template-columns: 1fr;
-        grid-template-rows: 1fr auto;
+        display: flex;
+        flex-direction: column;
+        flex: 1 1 auto;
+        min-height: 0;
+        grid-template-columns: none;
+        grid-template-rows: none;
+        overflow: hidden;
+    }
+
+    .wish-chat-messages {
+        flex: 1 1 42%;
+        min-height: 7rem;
+        max-height: none;
+        overflow-x: hidden;
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+        padding: 0.875rem 1rem;
     }
 
     .wish-chat-draft {
+        flex: 1 1 48%;
+        min-height: 11rem;
+        max-height: none; /* fill remaining space; scroll inside */
         border-left: none;
         border-top: 1px solid rgba(255, 255, 255, 0.1);
-        max-height: 42%;
+        overflow-x: hidden;
+        overflow-y: auto;
+        padding: 0.75rem 1rem 1rem;
+        /* Avoid labels/fields painting under sibling chat on some WebKits */
+        position: relative;
+        z-index: 1;
+        background-clip: padding-box;
     }
+
+    .wish-chat-field,
+    .wish-chat-field-row,
+    .wish-chat-draft-title,
+    .wish-chat-draft-status {
+        min-width: 0;
+        max-width: 100%;
+    }
+
+    .wish-chat-field > span {
+        display: block;
+        overflow: visible;
+        text-overflow: clip;
+        white-space: normal;
+    }
+
+    .wish-chat-field input,
+    .wish-chat-field textarea,
+    .wish-chat-field select,
+    .wish-chat-wallet {
+        max-width: 100%;
+    }
+
+    .wish-chat-composer {
+        flex: 0 0 auto;
+        position: relative;
+        z-index: 2;
+        /* Slightly tighter on small phones */
+        padding: 0.625rem 0.75rem calc(0.625rem + env(safe-area-inset-bottom, 0));
+    }
+
+    .wish-chat-bubble {
+        max-width: min(28rem, 92%);
+    }
+
+    /* Unit select must stay a compact fixed-width control */
+    .wish-chat-unit {
+        width: 4.75rem;
+        flex: 0 0 4.75rem;
+        max-width: 4.75rem;
+    }
+
+    .wish-chat-unit select {
+        width: 100%;
+        height: var(--wish-ctrl-h) !important;
+        min-height: var(--wish-ctrl-h) !important;
+        max-height: var(--wish-ctrl-h) !important;
+    }
+}
+
+/* Close button: don't inherit create-contract gray chrome that mis-sizes icons */
+.wish-chat-modal .create-contract-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.25rem;
+    height: 2.25rem;
+    padding: 0;
+    margin: 0;
+    border: none;
+    background: transparent;
+    border-radius: 0.5rem;
+    flex-shrink: 0;
+    cursor: pointer;
+    line-height: 1;
+}
+
+.wish-chat-modal .create-contract-close:hover {
+    background: rgba(255, 255, 255, 0.08);
 }
 
 html[data-theme="light"] .wish-chat-bubble-bot {
@@ -2308,6 +2451,7 @@ html[data-theme="light"] .wish-chat-bubble-bot {
 html[data-theme="light"] .wish-chat-draft {
     background: rgba(0, 0, 0, 0.03);
     border-left-color: rgba(0, 0, 0, 0.08);
+    border-top-color: rgba(0, 0, 0, 0.08);
 }
 
 html[data-theme="light"] .wish-chat-modal {
@@ -2329,6 +2473,13 @@ html[data-theme="light"] .wish-chat-input {
 html[data-theme="light"] .wish-chat-field select {
     background-color: var(--wish-ctrl-bg);
     background-image: var(--wish-ctrl-chevron);
+    background-repeat: no-repeat !important;
+    background-position: right 0.5rem center !important;
+    background-size: 0.875rem 0.875rem !important;
+}
+
+html[data-theme="light"] .wish-chat-modal .create-contract-close:hover {
+    background: rgba(0, 0, 0, 0.05);
 }
 
 html[data-theme="light"] .wish-chat-wallet {
