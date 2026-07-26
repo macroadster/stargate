@@ -299,266 +299,380 @@ html[data-theme="light"] .form-select {
     border-color: #d1d5db;
 }
 
-/* Auth page button styles */
-.auth-btn-primary {
-    background-color: #059669;
-    color: #ffffff;
-    border-radius: 0.5rem;
-    padding: 0.5rem 1rem;
-    font-weight: 600;
-    width: 100%;
+/* ================================================================
+   Auth page — QuantumCSS login theme (auth-shell / starlight-card)
+   Page-local decoration only; form primitives live in quantum.min.css.
+   ================================================================ */
+
+.auth-page {
+    --auth-control-h: 3rem;
+    --auth-control-radius: var(--q-radius-md, 0.5rem);
+    --auth-control-border: color-mix(in srgb, #fff 14%, transparent);
+    --auth-control-bg: color-mix(in srgb, #fff 6%, transparent);
+    --q-color-starlight-blue: #5ce1ff;
+    --q-color-starlight-peach: #ffb38a;
+    --q-color-starlight-orange: #ff7e5f;
+    /* Match Quantum deep bg so no seam against body / starfield */
+    min-height: 100dvh;
+    position: relative;
+    overflow: hidden;
+    background: var(--q-bg-primary, #08081a);
+    color: var(--q-text-primary, #f1f5f9);
 }
 
-.auth-btn-primary:hover {
-    background-color: #047857;
+html[data-theme="light"] .auth-page {
+    --auth-control-border: rgba(0, 0, 0, 0.12);
+    --auth-control-bg: color-mix(in srgb, #fff 92%, transparent);
+    background: var(--q-bg-primary, #faf8f5);
+    color: var(--q-text-primary, #1c1917);
 }
 
-.auth-btn-secondary {
-    background-color: #4f46e5;
-    color: #ffffff;
-    border-radius: 0.5rem;
-    padding: 0.5rem 1rem;
-    font-weight: 600;
-    flex: 1;
+/* Starfield: static, transparent — never animate this full-viewport layer */
+.auth-page .starlight-stars {
+    background: transparent !important;
+    animation: none !important;
+    transform: none !important;
+    opacity: 1;
 }
 
-.auth-btn-secondary:hover {
-    background-color: #4338ca;
+html[data-theme="light"] .auth-page .starlight-stars {
+    opacity: 0.35;
 }
 
-.auth-btn-clear {
-    color: #9ca3af;
-    padding: 0.5rem 0.75rem;
-    font-size: 0.75rem;
+/* Floating orbit accents — animate the *dot* only, not a large box */
+.login-orbit {
+    position: absolute;
+    width: 14rem;
+    height: 14rem;
+    border-radius: 50%;
+    pointer-events: none;
+    z-index: 0;
+    /* invisible ring path */
+    background: transparent;
+    border: none;
 }
 
-.auth-btn-clear:hover {
-    color: #d1d5db;
+.login-orbit--a {
+    top: 10%;
+    left: 6%;
 }
 
-@media (prefers-color-scheme: light) {
-    .auth-btn-clear {
-        color: #6b7280;
-    }
-    .auth-btn-clear:hover {
-        color: #374151;
-    }
+.login-orbit--b {
+    bottom: 12%;
+    right: 8%;
+    width: 9rem;
+    height: 9rem;
 }
 
-html[data-theme="light"] .auth-btn-clear {
-    color: #6b7280;
-}
-html[data-theme="light"] .auth-btn-clear:hover {
-    color: #374151;
-}
-
-/* Auth page container */
-.auth-page-container {
-    min-height: 100vh;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 1rem;
-    background: #0f172a;
-    color: #e5e7eb;
+.login-orbit-dot {
+    position: absolute;
+    top: 0;
+    left: 50%;
+    width: 0.55rem;
+    height: 0.55rem;
+    margin-left: -0.275rem;
+    border-radius: 50%;
+    background: var(--q-color-starlight-blue);
+    box-shadow: 0 0 16px var(--q-color-starlight-blue);
 }
 
-@media (prefers-color-scheme: light) {
-    .auth-page-container {
-        background: #f8fafc;
-        color: #1e293b;
-    }
+.login-orbit-dot--peach {
+    background: var(--q-color-starlight-peach);
+    box-shadow: 0 0 16px var(--q-color-starlight-peach);
 }
 
-html[data-theme="light"] .auth-page-container {
-    background: #f8fafc;
-    color: #1e293b;
+/* Soft ambient glow behind card (static radial, no pulsing box-shadow) */
+.login-glow {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: min(36rem, 90vw);
+    height: 22rem;
+    margin: 0;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    background:
+        radial-gradient(circle at 30% 40%, color-mix(in srgb, var(--q-color-starlight-blue) 28%, transparent), transparent 60%),
+        radial-gradient(circle at 70% 60%, color-mix(in srgb, var(--q-color-starlight-peach) 22%, transparent), transparent 55%);
+    filter: blur(40px);
+    pointer-events: none;
+    z-index: 0;
+    opacity: 0.75;
 }
 
-/* Auth card */
-.auth-card {
-    padding: 1.5rem;
-    border-radius: 1rem;
-    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
-    background: rgba(30, 41, 59, 0.8);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    min-height: 24rem;
+html[data-theme="light"] .login-glow {
+    opacity: 0.4;
 }
 
-@media (prefers-color-scheme: light) {
-    .auth-card {
-        background: #ffffff;
-        border-color: #e2e8f0;
-    }
-}
-
-html[data-theme="light"] .auth-card {
-    background: #ffffff;
-    border-color: #e2e8f0;
-}
-
-.auth-card-title {
-    font-size: 1.25rem;
-    font-weight: 600;
-    margin-bottom: 0.5rem;
-    color: #ffffff;
-}
-
-@media (prefers-color-scheme: light) {
-    .auth-card-title {
-        color: #1e293b;
-    }
-}
-
-html[data-theme="light"] .auth-card-title {
-    color: #1e293b;
-}
-
-.auth-card-text {
-    font-size: 0.875rem;
-    margin-bottom: 1rem;
-    color: #9ca3af;
-}
-
-@media (prefers-color-scheme: light) {
-    .auth-card-text {
-        color: #6b7280;
-    }
-}
-
-html[data-theme="light"] .auth-card-text {
-    color: #6b7280;
-}
-
-.auth-card-label {
-    font-size: 0.875rem;
+/* Brand icon: gradient fill on the mask glyph */
+.login-brand-icon {
     display: block;
-    margin-bottom: 0.5rem;
-    color: #9ca3af;
+    margin-inline: auto;
+    width: 3rem !important;
+    height: 3rem !important;
+    position: static !important;
+    transform: none !important;
+    left: auto !important;
+    top: auto !important;
+    background-color: transparent !important;
+    background-image: linear-gradient(
+        135deg,
+        var(--q-color-starlight-peach),
+        var(--q-color-starlight-orange),
+        var(--q-color-starlight-blue)
+    ) !important;
+    filter: drop-shadow(
+        0 0 18px color-mix(in srgb, var(--q-color-starlight-blue) 45%, transparent)
+    );
 }
 
-@media (prefers-color-scheme: light) {
-    .auth-card-label {
-        color: #4b5563;
-    }
+/* Inline icons (badges, buttons) — not field glyphs */
+.login-demo .badge [class^="icon-"],
+.login-demo .badge [class*=" icon-"],
+.login-demo button [class^="icon-"],
+.login-demo button [class*=" icon-"],
+.login-demo .login-toast [class^="icon-"],
+.login-demo .login-toast [class*=" icon-"] {
+    position: static;
+    transform: none;
+    left: auto;
+    top: auto;
 }
 
-html[data-theme="light"] .auth-card-label {
-    color: #4b5563;
+/* Field icons: single-line controls = vertical center */
+.auth-shell .field-icon {
+    position: absolute !important;
+    left: 0.95rem !important;
+    top: 50% !important;
+    width: 1.15rem !important;
+    height: 1.15rem !important;
+    margin: 0 !important;
+    transform: translateY(-50%) !important;
+    display: block !important;
+    opacity: 0.55;
+    pointer-events: none;
+    z-index: 2;
+    background-color: currentColor;
 }
 
-.auth-card-input {
-    width: 100%;
-    padding: 0.5rem 0.75rem;
-    margin-bottom: 0.75rem;
-    border-radius: 0.5rem;
-    background: rgba(0, 0, 0, 0.2);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    color: #e5e7eb;
+/* Textarea: pin icon to first-line baseline (not mid-field) */
+.auth-shell .field.has-icon:has(textarea) .field-icon {
+    top: 0.95rem !important;
+    transform: none !important;
 }
 
-@media (prefers-color-scheme: light) {
-    .auth-card-input {
-        background: #f1f5f9;
-        border-color: #e2e8f0;
-        color: #334155;
-    }
+.auth-shell .field:focus-within .field-icon {
+    opacity: 1;
+    background-color: var(--q-color-starlight-blue) !important;
 }
 
-html[data-theme="light"] .auth-card-input {
-    background: #f1f5f9;
-    border-color: #e2e8f0;
-    color: #334155;
-}
-
-.auth-card-highlight {
-    margin-top: 1rem;
-    font-size: 0.75rem;
-    word-break: break-all;
-    padding: 0.75rem;
-    border-radius: 0.5rem;
-    background: rgba(0, 0, 0, 0.2);
-    border: 1px dashed rgba(255, 255, 255, 0.2);
-}
-
-@media (prefers-color-scheme: light) {
-    .auth-card-highlight {
-        background: #f1f5f9;
-        border-color: #cbd5e1;
-    }
-}
-
-html[data-theme="light"] .auth-card-highlight {
-    background: #f1f5f9;
-    border-color: #cbd5e1;
-}
-
-.auth-card-qr-bg {
-    background: #f8fafc;
-}
-
-@media (prefers-color-scheme: light) {
-    .auth-card-qr-bg {
-        background: #f1f5f9;
-    }
-}
-
-html[data-theme="light"] .auth-card-qr-bg {
-    background: #f1f5f9;
-}
-
-/* Auth tabs */
-.auth-tab {
-    padding: 0.25rem 0.75rem;
-    border-radius: 9999px;
-    border: 1px solid;
-    font-size: 0.875rem;
-    cursor: pointer;
-}
-
-.auth-tab-active {
-    background: #059669;
-    color: #ffffff;
-    border-color: #059669;
-}
-
-.auth-tab-active-wallet {
-    background: #d97706;
-    color: #ffffff;
-    border-color: #d97706;
-}
-
-.auth-tab-inactive {
-    border-color: #475569;
-    color: #94a3b8;
-}
-
-@media (prefers-color-scheme: light) {
-    .auth-tab-inactive {
-        border-color: #cbd5e1;
-        color: #64748b;
-    }
-}
-
-html[data-theme="light"] .auth-tab-inactive {
-    border-color: #cbd5e1;
-    color: #64748b;
-}
-
-/* Auth status toast */
-.auth-status-toast {
+.login-toast {
     position: fixed;
-    bottom: 1rem;
+    bottom: 1.5rem;
     left: 50%;
     transform: translateX(-50%);
-    background: #1e293b;
-    color: #ffffff;
-    padding: 0.5rem 1rem;
-    border-radius: 9999px;
-    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
-    font-size: 0.875rem;
+    z-index: 40;
+    min-width: min(22rem, calc(100vw - 2rem));
+    max-width: calc(100vw - 2rem);
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.35);
 }
 
+/* Auth tab strip — full-width equal tabs */
+.auth-tabs {
+    width: 100%;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+}
+
+.auth-tabs .tab-button {
+    width: 100%;
+    text-align: center;
+    min-height: 2.75rem;
+}
+
+/* ----------------------------------------------------------------
+   Shared control height: select / text / buttons all 3rem
+   ---------------------------------------------------------------- */
+.auth-shell .input,
+.auth-shell select.input,
+.auth-shell textarea.input {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    margin: 0;
+    border: 1px solid var(--auth-control-border);
+    border-radius: var(--auth-control-radius);
+    background: var(--auth-control-bg);
+    color: inherit;
+    font-size: 0.9375rem;
+    font-family: inherit;
+    line-height: 1.25;
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+
+/* Single-line controls share button height */
+.auth-shell input.input,
+.auth-shell select.input {
+    height: var(--auth-control-h);
+    min-height: var(--auth-control-h);
+    padding: 0 0.9rem;
+}
+
+.auth-shell .field.has-icon input.input,
+.auth-shell .field.has-icon select.input {
+    padding-left: 2.75rem;
+}
+
+/* Native select: remove OS chrome so height/radius match inputs */
+.auth-shell select.input {
+    -webkit-appearance: none;
+    appearance: none;
+    cursor: pointer;
+    /* room for chevron */
+    padding-right: 2.4rem;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.85rem center;
+    background-size: 1rem;
+    /* keep glass fill under the chevron */
+    background-color: var(--auth-control-bg);
+}
+
+html[data-theme="light"] .auth-shell select.input {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+}
+
+.auth-shell textarea.input {
+    height: auto;
+    min-height: 5.5rem;
+    padding: 0.85rem 0.9rem;
+    resize: vertical;
+    line-height: 1.45;
+}
+
+.auth-shell .field.has-icon textarea.input {
+    padding-left: 2.75rem;
+    /* keep first line clear of the top-pinned icon */
+    padding-top: 0.85rem;
+}
+
+.auth-shell .input:focus,
+.auth-shell select.input:focus,
+.auth-shell textarea.input:focus {
+    outline: none;
+    border-color: color-mix(in srgb, var(--q-color-starlight-blue) 55%, transparent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--q-color-starlight-blue) 22%, transparent);
+}
+
+/* Buttons match control height */
+.auth-shell .btn-primary,
+.auth-shell .btn-starlight,
+.auth-shell .btn-outline,
+.auth-shell .btn-ghost,
+.auth-shell .btn-secondary {
+    box-sizing: border-box;
+    height: var(--auth-control-h);
+    min-height: var(--auth-control-h);
+    padding-block: 0;
+    padding-inline: 1.25rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    border-radius: var(--auth-control-radius);
+    font-size: 0.9375rem;
+    line-height: 1;
+}
+
+.auth-shell .btn-starlight,
+.auth-shell .btn-primary {
+    width: 100%;
+}
+
+.auth-actions .btn-primary {
+    flex: 1 1 auto;
+    width: auto;
+}
+
+.auth-actions .btn-outline {
+    flex: 0 0 auto;
+    min-width: 5.5rem;
+}
+
+/* Saved-wallet row: select + delete share height */
+.auth-shell .field.has-icon.flex-1 {
+    min-width: 0;
+}
+
+.auth-shell .flex.gap-2.items-center > .btn-ghost {
+    height: var(--auth-control-h);
+    width: var(--auth-control-h);
+    min-width: var(--auth-control-h);
+    padding: 0;
+    flex-shrink: 0;
+}
+
+.auth-steps {
+    margin: 0;
+    padding-left: 1.15rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+}
+
+.auth-challenge {
+    padding: 0.85rem 1rem;
+    border-radius: var(--q-radius-lg, 0.5rem);
+    border: 1px dashed color-mix(in srgb, var(--q-color-starlight-blue) 35%, transparent);
+    background: color-mix(in srgb, var(--q-color-starlight-blue) 8%, transparent);
+}
+
+.auth-challenge-nonce {
+    display: block;
+    word-break: break-all;
+    color: var(--q-text-primary, #f1f5f9);
+}
+
+html[data-theme="light"] .auth-challenge-nonce {
+    color: var(--q-text-primary, #1c1917);
+}
+
+.auth-qr {
+    background: #fff;
+    border-radius: 0.5rem;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+}
+
+.auth-key-preview {
+    padding: 0.75rem;
+    border-radius: var(--q-radius-md, 0.375rem);
+    border: 1px dashed color-mix(in srgb, #fff 18%, transparent);
+    background: color-mix(in srgb, #000 20%, transparent);
+    word-break: break-all;
+}
+
+html[data-theme="light"] .auth-key-preview {
+    background: #f1f5f9;
+    border-color: #cbd5e1;
+}
+
+.auth-inline-link {
+    background: none;
+    border: none;
+    padding: 0;
+    color: var(--q-color-starlight-blue, #5ce1ff);
+    cursor: pointer;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+.auth-inline-link:hover {
+    color: var(--q-color-starlight-peach, #ffb38a);
+}
+
+/* form-input / form-select legacy (used outside auth) */
 /* Quantum CSS Design Token Mapping */
 /* This file maps Tailwind utility classes to Quantum CSS design tokens */
 
@@ -5752,44 +5866,6 @@ html[data-theme="dark"] .form-select {
     border-color: rgba(255, 255, 255, 0.1) !important;
 }
 
-html[data-theme="dark"] .auth-btn-clear {
-    color: #9ca3af !important;
-}
-html[data-theme="dark"] .auth-btn-clear:hover {
-    color: #d1d5db !important;
-}
-
-html[data-theme="dark"] .auth-page-container {
-    background: rgba(15, 23, 42, 0.8) !important;
-}
-html[data-theme="dark"] .auth-card {
-    background: rgba(30, 41, 59, 0.95) !important;
-    border-color: rgba(255, 255, 255, 0.1) !important;
-}
-html[data-theme="dark"] .auth-card-title {
-    color: #f1f5f9 !important;
-}
-html[data-theme="dark"] .auth-card-text {
-    color: #9ca3af !important;
-}
-html[data-theme="dark"] .auth-card-label {
-    color: #9ca3af !important;
-}
-html[data-theme="dark"] .auth-card-input {
-    color: #f1f5f9 !important;
-    background-color: rgba(0, 0, 0, 0.3) !important;
-    border-color: rgba(255, 255, 255, 0.1) !important;
-}
-html[data-theme="dark"] .auth-card-highlight {
-    color: #fbbf24 !important;
-}
-html[data-theme="dark"] .auth-card-qr-bg {
-    background: #ffffff !important;
-}
-html[data-theme="dark"] .auth-tab-inactive {
-    color: #9ca3af !important;
-}
-
 html[data-theme="dark"] .contract-card {
     background: #0d1117 !important;
     border-color: rgba(255, 255, 255, 0.1) !important;
@@ -6127,7 +6203,7 @@ html[data-theme="dark"] .dark\:border-gray-600 { border-color: #475569 !importan
 }
 
 /* Constrain badges inside narrow block cards (w-40 = 160px, content = 128px).
-   Quantum 1.13.0 badges use uppercase + letter-spacing + 0.75rem padding
+   Quantum badges use uppercase + letter-spacing + 0.75rem padding
    which makes text like "NO INSCRIPTIONS" wider than the content area. */
 .w-40 .card .badge {
     letter-spacing: normal;
@@ -6135,7 +6211,7 @@ html[data-theme="dark"] .dark\:border-gray-600 { border-color: #475569 !importan
 }
 
 /* ================================================================
-   Missing utility classes in quantumcss 1.13.0
+   Missing utility classes in older quantumcss (kept for app-wide JSX)
    ================================================================ */
 
 /* Spacing: space-y-1, space-y-3, space-y-4, space-y-6, py-6, py-8 missing */
@@ -6152,6 +6228,12 @@ html[data-theme="dark"] .dark\:border-gray-600 { border-color: #475569 !importan
 /* Layout: whitespace-nowrap, shrink-0 missing */
 .whitespace-nowrap { white-space: nowrap; }
 .shrink-0 { flex-shrink: 0; }
+
+/* Typography helpers used on auth + elsewhere */
+.font-mono {
+    font-family: var(--q-font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
+}
+.break-all { word-break: break-all; }
 
 /* Opacity: opacity-75 missing */
 .opacity-75 { opacity: 0.75; }
