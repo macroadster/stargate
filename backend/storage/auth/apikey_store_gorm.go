@@ -14,12 +14,14 @@ import (
 
 // APIKeyRow is the GORM model for the api_keys table (SQLite + Postgres).
 // Plaintext keys are never stored — only SHA-256 hex digests (key_hash).
+// CreatedAt uses gormdb.SQLTime so legacy SQLite TEXT timestamps scan correctly
+// (production DBs predate GORM AutoMigrate DATETIME columns).
 type APIKeyRow struct {
-	KeyHash       string    `gorm:"column:key_hash;primaryKey;size:64"`
-	Email         string    `gorm:"column:email"`
-	WalletAddress string    `gorm:"column:wallet_address;index:idx_api_keys_wallet"`
-	Source        string    `gorm:"column:source"`
-	CreatedAt     time.Time `gorm:"column:created_at"`
+	KeyHash       string         `gorm:"column:key_hash;primaryKey;size:64"`
+	Email         string         `gorm:"column:email"`
+	WalletAddress string         `gorm:"column:wallet_address;index:idx_api_keys_wallet"`
+	Source        string         `gorm:"column:source"`
+	CreatedAt     gormdb.SQLTime `gorm:"column:created_at"`
 }
 
 // TableName pins the historical table name.
@@ -116,7 +118,7 @@ func (s *GORMAPIKeyStore) Get(key string) (APIKey, bool) {
 		Email:     row.Email,
 		Wallet:    row.WalletAddress,
 		Source:    row.Source,
-		CreatedAt: row.CreatedAt,
+		CreatedAt: row.CreatedAt.ToTime(),
 	}, true
 }
 
@@ -138,7 +140,7 @@ func (s *GORMAPIKeyStore) Issue(email, wallet, source string) (APIKey, error) {
 		Email:         rec.Email,
 		WalletAddress: rec.Wallet,
 		Source:        rec.Source,
-		CreatedAt:     rec.CreatedAt,
+		CreatedAt:     gormdb.NewSQLTime(rec.CreatedAt),
 	}
 	if err := s.db.Create(&row).Error; err != nil {
 		return APIKey{}, err
@@ -147,6 +149,9 @@ func (s *GORMAPIKeyStore) Issue(email, wallet, source string) (APIKey, error) {
 }
 
 // UpdateWallet binds a wallet address to an existing API key.
+// Setting the same wallet already stored is a no-op success: drivers (notably
+// SQLite via GORM) report RowsAffected=0 when the value is unchanged, and the
+// login path always re-sends the bound wallet after wallet-verify issuance.
 func (s *GORMAPIKeyStore) UpdateWallet(key, wallet string) (APIKey, error) {
 	normalizedKey := strings.TrimSpace(key)
 	normalizedWallet := strings.TrimSpace(wallet)
@@ -163,18 +168,20 @@ func (s *GORMAPIKeyStore) UpdateWallet(key, wallet string) (APIKey, error) {
 	if res.Error != nil {
 		return APIKey{}, res.Error
 	}
-	if res.RowsAffected == 0 {
-		return APIKey{}, fmt.Errorf("api key not found")
-	}
 	var row APIKeyRow
 	if err := s.db.Where("key_hash = ?", keyHash).First(&row).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return APIKey{}, fmt.Errorf("api key not found")
+		}
 		return APIKey{}, err
 	}
+	// RowsAffected can be 0 when the wallet was already set to the same value.
+	// Only treat that as failure when the row is missing (handled above).
 	return APIKey{
 		Email:     row.Email,
 		Wallet:    row.WalletAddress,
 		Source:    row.Source,
-		CreatedAt: row.CreatedAt,
+		CreatedAt: row.CreatedAt.ToTime(),
 	}, nil
 }
 
@@ -198,7 +205,7 @@ func (s *GORMAPIKeyStore) Seed(key, email, source string) {
 		KeyHash:   hashAPIKey(key),
 		Email:     email,
 		Source:    source,
-		CreatedAt: time.Now().UTC(),
+		CreatedAt: gormdb.NewSQLTime(time.Now().UTC()),
 	}
 	_ = s.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&row).Error
 }
@@ -211,7 +218,7 @@ func (s *GORMAPIKeyStore) SeedEnvironmentVariables() {
 			KeyHash:       hashAPIKey(plan.BindKey),
 			WalletAddress: plan.BindWallet,
 			Source:        "seed",
-			CreatedAt:     time.Now().UTC(),
+			CreatedAt:     gormdb.NewSQLTime(time.Now().UTC()),
 		}
 		_ = s.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&row).Error
 		return

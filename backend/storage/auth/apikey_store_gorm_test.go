@@ -33,12 +33,26 @@ func TestGORMAPIKeyStoreSQLiteRoundTrip(t *testing.T) {
 		t.Fatalf("Get mismatch: %+v", got)
 	}
 
+	// Same wallet again must succeed (login re-sends already-bound wallet).
+	// SQLite/GORM reports RowsAffected=0 for no-op UPDATE; must not error.
+	same, err := store.UpdateWallet(rec.Key, "bc1qtest")
+	if err != nil {
+		t.Fatalf("UpdateWallet same wallet (login path): %v", err)
+	}
+	if same.Wallet != "bc1qtest" {
+		t.Fatalf("wallet changed on no-op update: %s", same.Wallet)
+	}
+
 	updated, err := store.UpdateWallet(rec.Key, "bc1qnew")
 	if err != nil {
 		t.Fatalf("UpdateWallet: %v", err)
 	}
 	if updated.Wallet != "bc1qnew" {
 		t.Fatalf("wallet not updated: %s", updated.Wallet)
+	}
+
+	if _, err := store.UpdateWallet("not-a-real-key", "bc1qx"); err == nil {
+		t.Fatal("UpdateWallet missing key should error")
 	}
 
 	store.Seed("seedkey1234567890", "seed@x", "seed")

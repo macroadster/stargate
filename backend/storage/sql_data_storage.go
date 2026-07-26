@@ -19,12 +19,12 @@ import (
 // Payload is the marshaled BlockDataCache JSON used by the UI and search APIs.
 type BlockScanRow struct {
 	// autoIncrement:false — block height is an explicit chain height, not a rowid sequence.
-	BlockHeight   int64     `gorm:"column:block_height;primaryKey;autoIncrement:false"`
-	BlockHash     string    `gorm:"column:block_hash;not null;index:idx_block_scans_hash"`
-	ScannedAt     time.Time `gorm:"column:scanned_at;index:idx_block_scans_scanned"`
-	Payload       []byte    `gorm:"column:payload;type:text;not null"`
-	StegoDetected int       `gorm:"column:stego_detected;not null;default:0"`
-	ImagesScanned int       `gorm:"column:images_scanned;not null;default:0"`
+	BlockHeight   int64          `gorm:"column:block_height;primaryKey;autoIncrement:false"`
+	BlockHash     string         `gorm:"column:block_hash;not null;index:idx_block_scans_hash"`
+	ScannedAt     gormdb.SQLTime `gorm:"column:scanned_at;index:idx_block_scans_scanned"`
+	Payload       []byte         `gorm:"column:payload;type:text;not null"`
+	StegoDetected int            `gorm:"column:stego_detected;not null;default:0"`
+	ImagesScanned int            `gorm:"column:images_scanned;not null;default:0"`
 }
 
 // TableName pins the historical table name used by both dialects.
@@ -140,7 +140,7 @@ func (s *SQLDataStorage) StoreBlockData(blockResponse *bitcoin.BlockInscriptions
 	row := BlockScanRow{
 		BlockHeight:   blockResponse.BlockHeight,
 		BlockHash:     blockResponse.BlockHash,
-		ScannedAt:     time.Now().UTC(),
+		ScannedAt:     gormdb.NewSQLTime(time.Now().UTC()),
 		Payload:       payload,
 		StegoDetected: stegoDetected,
 		ImagesScanned: len(blockResponse.Images),
