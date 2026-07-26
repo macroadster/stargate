@@ -62,10 +62,12 @@ func (s *SQLStore) rebind(q string) string {
 }
 
 func (s *SQLStore) execContext(ctx context.Context, q string, args ...interface{}) (sql.Result, error) {
+	q = s.normalizeInsert(q)
 	return s.db.ExecContext(ctx, s.rebind(q), args...)
 }
 
 func (s *SQLStore) exec(q string, args ...interface{}) (sql.Result, error) {
+	q = s.normalizeInsert(q)
 	return s.db.Exec(s.rebind(q), args...)
 }
 
@@ -244,6 +246,7 @@ func (s *SQLStore) Close() {
 
 // Transaction helpers rebind placeholders for the store dialect.
 func (s *SQLStore) txExec(tx *sql.Tx, ctx context.Context, q string, args ...interface{}) (sql.Result, error) {
+	q = s.normalizeInsert(q)
 	return tx.ExecContext(ctx, s.rebind(q), args...)
 }
 func (s *SQLStore) txQuery(tx *sql.Tx, ctx context.Context, q string, args ...interface{}) (*sql.Rows, error) {
@@ -268,7 +271,7 @@ func (s *SQLStore) ListContracts(filter smart_contract.ContractFilter) ([]smart_
 	baseSelect := `
 SELECT c.contract_id, COALESCE(c.title, ''), COALESCE(c.total_budget_sats, 0), COALESCE(c.goals_count, 0),
 	(SELECT COUNT(*) FROM mcp_tasks t WHERE t.contract_id = c.contract_id AND t.status = 'available') AS available_tasks_count,
-	COALESCE(c.status, 'pending'), c.skills, COALESCE(c.stego_image_url, ''), c.metadata, c.confirmed_block_height, c.confirmed_at, c.created_at
+	COALESCE(c.status, 'pending'), ` + s.skillsExpr("c.skills") + `, COALESCE(c.stego_image_url, ''), c.metadata, c.confirmed_block_height, c.confirmed_at, c.created_at
 FROM mcp_contracts c
 `
 
@@ -367,7 +370,7 @@ FROM mcp_contracts c
 			_ = json.Unmarshal(metadata, &c.Metadata)
 		}
 		if len(skillsStr) > 0 {
-			c.Skills = strings.Split(string(skillsStr), ",")
+			c.Skills = decodeSkillsCSV(string(skillsStr))
 		}
 		if len(filter.Skills) > 0 && !s.containsSkill(c.Skills, filter.Skills) {
 			continue
@@ -382,7 +385,7 @@ FROM mcp_contracts c
 
 func (s *SQLStore) ListTasks(filter smart_contract.TaskFilter) ([]smart_contract.Task, error) {
 	query := `
-SELECT task_id, contract_id, goal_id, title, description, budget_sats, skills, status, claimed_by, claimed_at, claim_expires_at, difficulty, estimated_hours, requirements, merkle_proof
+SELECT ` + s.taskSelectList() + `
 FROM mcp_tasks
 WHERE (? = '' OR status = ?)
 AND (? = '' OR contract_id = ?)
@@ -443,7 +446,7 @@ func scanTaskSQLite(rows *sql.Rows) (smart_contract.Task, error) {
 		}
 	}
 	if len(skillsStr) > 0 {
-		t.Skills = strings.Split(string(skillsStr), ",")
+		t.Skills = decodeSkillsCSV(string(skillsStr))
 	}
 	if len(requirementsStr) > 0 {
 		_ = json.Unmarshal(requirementsStr, &t.Requirements)
@@ -471,8 +474,20 @@ func scanTaskSQLite(rows *sql.Rows) (smart_contract.Task, error) {
 }
 
 func (s *SQLStore) GetTask(id string) (smart_contract.Task, error) {
+	// Prefer GORM when timestamps scan cleanly (Postgres TIMESTAMPTZ); fall back to
+	// raw scan for SQLite TEXT timestamps.
+	if s.isPostgres() {
+		var row gormTaskRow
+		err := s.gdb.Table(TableTasks).
+			Select(s.taskSelectList()).
+			Where("task_id = ?", id).
+			Take(&row).Error
+		if err == nil {
+			return row.toTask(), nil
+		}
+	}
 	row := s.queryRowContext(context.Background(), `
-SELECT task_id, contract_id, goal_id, title, description, budget_sats, skills, status, claimed_by, claimed_at, claim_expires_at, difficulty, estimated_hours, requirements, merkle_proof
+SELECT `+s.taskSelectList()+`
 FROM mcp_tasks WHERE task_id=?
 `, id)
 	var t smart_contract.Task
@@ -497,9 +512,7 @@ FROM mcp_tasks WHERE task_id=?
 			t.ClaimExpires = tm
 		}
 	}
-	if len(skillsStr) > 0 {
-		t.Skills = strings.Split(string(skillsStr), ",")
-	}
+	t.Skills = decodeSkillsCSV(string(skillsStr))
 	if len(requirementsStr) > 0 {
 		_ = json.Unmarshal(requirementsStr, &t.Requirements)
 	}
@@ -512,7 +525,6 @@ FROM mcp_tasks WHERE task_id=?
 			}
 		}
 	}
-	// Legacy sqlite claims wrote claimed_by but not contractor_wallet; fall back so payouts still resolve.
 	if strings.TrimSpace(t.ContractorWallet) == "" && strings.TrimSpace(t.ClaimedBy) != "" {
 		t.ContractorWallet = strings.TrimSpace(t.ClaimedBy)
 		if t.MerkleProof == nil {
@@ -532,7 +544,7 @@ func (s *SQLStore) GetContract(id string) (smart_contract.Contract, error) {
 	err := s.queryRowContext(context.Background(), `
 SELECT contract_id, COALESCE(title, ''), COALESCE(total_budget_sats, 0), COALESCE(goals_count, 0),
        (SELECT COUNT(*) FROM mcp_tasks t WHERE t.contract_id = mcp_contracts.contract_id AND t.status = 'available') AS available_tasks_count,
-       COALESCE(status, 'pending'), skills, COALESCE(stego_image_url, ''), confirmed_block_height, confirmed_at, metadata
+       COALESCE(status, 'pending'), `+s.skillsExpr("skills")+`, COALESCE(stego_image_url, ''), confirmed_block_height, confirmed_at, metadata
 FROM mcp_contracts WHERE contract_id=?
 `, id).Scan(&c.ContractID, &c.Title, &c.TotalBudgetSats, &c.GoalsCount, &c.AvailableTasksCount,
 		&c.Status, &skillsStr, &c.StegoImageURL, &c.ConfirmedBlockHeight, &confirmedAtStr, &metadata)
@@ -584,12 +596,25 @@ FROM mcp_contracts WHERE contract_id=?
 		}
 	}
 	if len(skillsStr) > 0 {
-		c.Skills = strings.Split(string(skillsStr), ",")
+		c.Skills = decodeSkillsCSV(string(skillsStr))
+	} else {
+		// GORM/driver may return skills as plain string via Scan into []byte
+		c.Skills = decodeSkillsCSV(string(skillsStr))
+	}
+	// Prefer shared rework parser when metadata present
+	if c.Metadata != nil && len(c.ReworkRequests) == 0 {
+		c.ReworkRequests = ParseReworkRequestsFromMetadata(c.Metadata)
 	}
 	return c, nil
 }
 
 func (s *SQLStore) GetClaim(id string) (smart_contract.Claim, error) {
+	if s.isPostgres() {
+		var row gormClaimRow
+		if err := s.gdb.Table(TableClaims).Where("claim_id = ?", id).Take(&row).Error; err == nil {
+			return row.toClaim(), nil
+		}
+	}
 	var c smart_contract.Claim
 	var createdAt, expiresAt sql.NullString
 	err := s.queryRowContext(context.Background(), `
@@ -984,7 +1009,7 @@ func (s *SQLStore) UpsertContractWithTasks(ctx context.Context, contract smart_c
 	defer tx.Rollback()
 
 	metadata, _ := json.Marshal(contract.Metadata)
-	skills := strings.Join(contract.Skills, ",")
+	skills := s.encodeSkills(contract.Skills)
 	createdAt := time.Now().Format(time.RFC3339)
 	if !contract.CreatedAt.IsZero() {
 		createdAt = contract.CreatedAt.Format(time.RFC3339)
@@ -993,15 +1018,15 @@ func (s *SQLStore) UpsertContractWithTasks(ctx context.Context, contract smart_c
 	// Protected statuses (confirmed/completed/superseded) keep title, budget,
 	// and status; stego URL / skills / task counts may still refresh.
 	_, err = s.txExec(tx, ctx, `
-INSERT OR IGNORE INTO mcp_contracts (contract_id, title, total_budget_sats, goals_count, available_tasks_count, status, skills, stego_image_url, created_at, metadata)
-VALUES (?,?,?,?,?,?,?,?,?,?)
+INSERT INTO mcp_contracts (contract_id, title, total_budget_sats, goals_count, available_tasks_count, status, skills, stego_image_url, created_at, metadata)
+VALUES (?,?,?,?,?,?,`+s.skillsBind()+`,?,?,`+s.jsonBind()+`)
 ON CONFLICT(contract_id) DO UPDATE SET
   title = CASE WHEN lower(mcp_contracts.status) IN ('confirmed','completed','superseded') THEN mcp_contracts.title ELSE excluded.title END,
   total_budget_sats = CASE WHEN lower(mcp_contracts.status) IN ('confirmed','completed','superseded') THEN mcp_contracts.total_budget_sats ELSE excluded.total_budget_sats END,
   goals_count = CASE WHEN lower(mcp_contracts.status) IN ('confirmed','completed','superseded') THEN mcp_contracts.goals_count ELSE excluded.goals_count END,
   available_tasks_count = excluded.available_tasks_count,
   status = CASE WHEN lower(mcp_contracts.status) IN ('confirmed','completed','superseded') THEN mcp_contracts.status ELSE excluded.status END,
-  skills = CASE WHEN excluded.skills IS NOT NULL AND excluded.skills <> '' THEN excluded.skills ELSE mcp_contracts.skills END,
+  skills = CASE WHEN excluded.skills IS NOT NULL THEN excluded.skills ELSE mcp_contracts.skills END,
   stego_image_url = CASE WHEN excluded.stego_image_url IS NOT NULL AND excluded.stego_image_url <> '' THEN excluded.stego_image_url ELSE mcp_contracts.stego_image_url END
 `, contract.ContractID, contract.Title, contract.TotalBudgetSats, contract.GoalsCount, contract.AvailableTasksCount, contract.Status, skills, contract.StegoImageURL, createdAt, string(metadata))
 	if err != nil {
@@ -1013,13 +1038,13 @@ ON CONFLICT(contract_id) DO UPDATE SET
 		var proofStr *string
 		if t.MerkleProof != nil {
 			proofJSON, _ := json.Marshal(t.MerkleProof)
-			s := string(proofJSON)
-			proofStr = &s
+			ps := string(proofJSON)
+			proofStr = &ps
 		}
-		taskSkills := strings.Join(t.Skills, ",")
+		taskSkills := s.encodeSkills(t.Skills)
 		_, err := s.txExec(tx, ctx, `
-INSERT OR IGNORE INTO mcp_tasks (task_id, contract_id, goal_id, title, description, budget_sats, skills, status, claimed_by, claimed_at, claim_expires_at, difficulty, estimated_hours, requirements, merkle_proof)
-VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+INSERT INTO mcp_tasks (task_id, contract_id, goal_id, title, description, budget_sats, skills, status, claimed_by, claimed_at, claim_expires_at, difficulty, estimated_hours, requirements, merkle_proof)
+VALUES (?,?,?,?,?,?,`+s.skillsBind()+`,?,?,?,?,?,?,`+s.jsonBind()+`,`+s.jsonBind()+`)
 ON CONFLICT(task_id) DO UPDATE SET
   contract_id = excluded.contract_id,
   goal_id = excluded.goal_id,
@@ -1139,41 +1164,11 @@ WHERE contract_id=?
 			}
 		}
 		if sourceID != "" && sourceID != wishID {
-			// Copy source → canonical wish id, then confirm wish.
-			var title string
-			var budget int64
-			var goals, avail int
-			var skills, srcMeta []byte
-			err := s.queryRowContext(ctx, `
-SELECT COALESCE(title, ''), COALESCE(total_budget_sats, 0), COALESCE(goals_count, 0), COALESCE(available_tasks_count, 0), skills, COALESCE(metadata, '{}')
-FROM mcp_contracts WHERE contract_id=?`, sourceID).Scan(&title, &budget, &goals, &avail, &skills, &srcMeta)
-			if err == nil {
-				metaMap := map[string]interface{}{}
-				if len(srcMeta) > 0 {
-					_ = json.Unmarshal(srcMeta, &metaMap)
-				}
-				if metaMap == nil {
-					metaMap = map[string]interface{}{}
-				}
-				metaMap["confirmed_txid"] = txid
-				metaMap["confirmed_block_height"] = blockHeight
-				mergedMeta, _ := json.Marshal(metaMap)
-				_, _ = s.execContext(ctx, `
-INSERT OR IGNORE INTO mcp_contracts (contract_id, title, total_budget_sats, goals_count, available_tasks_count, status, skills, stego_image_url, confirmed_block_height, confirmed_at, created_at, metadata)
-VALUES (?,?,?,?,?,'confirmed',?,?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,?)
-ON CONFLICT(contract_id) DO UPDATE SET
-  status='confirmed', confirmed_block_height=excluded.confirmed_block_height,
-  confirmed_at=CURRENT_TIMESTAMP,
-  stego_image_url=COALESCE(excluded.stego_image_url, mcp_contracts.stego_image_url),
-  metadata=excluded.metadata
-`, wishID, title, budget, goals, avail, string(skills), stegoImageURL, blockHeight, string(mergedMeta))
-				_, _ = s.execContext(ctx, `
-INSERT OR IGNORE INTO mcp_tasks (task_id, contract_id, goal_id, title, description, budget_sats, skills, status, claimed_by, claimed_at, claim_expires_at, difficulty, estimated_hours, requirements, merkle_proof)
-SELECT replace(task_id, ?, ?) AS task_id, ? AS contract_id, goal_id, title, description, budget_sats, skills, status, claimed_by, claimed_at, claim_expires_at, difficulty, estimated_hours, requirements, merkle_proof
-FROM mcp_tasks WHERE contract_id=?
-`, sourceID, wishID, wishID, sourceID)
-				confirmedID = wishID
+			// Copy source → canonical wish id, then confirm wish (dialect-safe upsert).
+			if err := s.bootstrapConfirmContract(ctx, sourceID, wishID, blockHeight, txid, stegoImageURL); err != nil {
+				return err
 			}
+			confirmedID = wishID
 		} else if sourceID == wishID {
 			// Should have been caught by confirmRow; retry once.
 			if ok, err := confirmRow(wishID); err != nil {
@@ -1201,15 +1196,63 @@ FROM mcp_tasks WHERE contract_id=?
 		_, _ = s.execContext(ctx, `UPDATE mcp_contracts SET status='superseded' WHERE contract_id=? AND `+supersedeEligibleStatusSQL, wishID)
 	}
 
-	// Update matching proposals to confirmed (mirrors PG behavior)
+	// Update matching proposals to confirmed (dialect-safe JSON extraction).
+	cidExpr := s.jsonTextExpr("metadata", "contract_id")
+	ingExpr := s.jsonTextExpr("metadata", "ingestion_id")
+	vphExpr := s.jsonTextExpr("metadata", "visible_pixel_hash")
 	_, err := s.execContext(ctx, `
 UPDATE mcp_proposals SET status='confirmed'
 WHERE status='approved' AND (
-  json_extract(metadata, '$.contract_id') IN (?, ?) OR
-  json_extract(metadata, '$.ingestion_id') IN (?, ?) OR
-  json_extract(metadata, '$.visible_pixel_hash') IN (?, ?) OR
+  `+cidExpr+` IN (?, ?) OR
+  `+ingExpr+` IN (?, ?) OR
+  `+vphExpr+` IN (?, ?) OR
   id IN (?, ?)
 )`, normalized, wishID, normalized, wishID, normalized, wishID, normalized, wishID)
+	return err
+}
+
+// bootstrapConfirmContract copies a bare/source contract row onto the canonical wish id
+// and remaps tasks. Works for SQLite and Postgres (skills + metadata casts).
+func (s *SQLStore) bootstrapConfirmContract(ctx context.Context, sourceID, wishID string, blockHeight int, txid, stegoImageURL string) error {
+	var title string
+	var budget int64
+	var goals, avail int
+	var skillsCSV string
+	var srcMeta []byte
+	err := s.queryRowContext(ctx, `
+SELECT COALESCE(title, ''), COALESCE(total_budget_sats, 0), COALESCE(goals_count, 0), COALESCE(available_tasks_count, 0),
+       `+s.skillsExpr("skills")+`, COALESCE(metadata, '{}')
+FROM mcp_contracts WHERE contract_id=?`, sourceID).Scan(&title, &budget, &goals, &avail, &skillsCSV, &srcMeta)
+	if err != nil {
+		return err
+	}
+	metaMap := map[string]interface{}{}
+	if len(srcMeta) > 0 {
+		_ = json.Unmarshal(srcMeta, &metaMap)
+	}
+	metaMap = MergeConfirmMetadata(metaMap, txid, blockHeight)
+	mergedMeta, _ := json.Marshal(metaMap)
+	skillsEnc := s.encodeSkills(decodeSkillsCSV(skillsCSV))
+
+	_, err = s.execContext(ctx, `
+INSERT INTO mcp_contracts (contract_id, title, total_budget_sats, goals_count, available_tasks_count, status, skills, stego_image_url, confirmed_block_height, confirmed_at, created_at, metadata)
+VALUES (?,?,?,?,?,'confirmed',`+s.skillsBind()+`,?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,`+s.jsonBind()+`)
+ON CONFLICT(contract_id) DO UPDATE SET
+  status='confirmed', confirmed_block_height=excluded.confirmed_block_height,
+  confirmed_at=CURRENT_TIMESTAMP,
+  stego_image_url=COALESCE(excluded.stego_image_url, mcp_contracts.stego_image_url),
+  metadata=excluded.metadata
+`, wishID, title, budget, goals, avail, skillsEnc, stegoImageURL, blockHeight, string(mergedMeta))
+	if err != nil {
+		return err
+	}
+
+	// Remap tasks onto wish contract id (shared SQL; normalizeInsert handles PG ignore).
+	_, err = s.execContext(ctx, `
+INSERT OR IGNORE INTO mcp_tasks (task_id, contract_id, goal_id, title, description, budget_sats, skills, status, claimed_by, claimed_at, claim_expires_at, difficulty, estimated_hours, requirements, merkle_proof)
+SELECT replace(task_id, ?, ?) AS task_id, ? AS contract_id, goal_id, title, description, budget_sats, skills, status, claimed_by, claimed_at, claim_expires_at, difficulty, estimated_hours, requirements, merkle_proof
+FROM mcp_tasks WHERE contract_id=?
+`, sourceID, wishID, wishID, sourceID)
 	return err
 }
 
