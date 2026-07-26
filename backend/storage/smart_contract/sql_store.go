@@ -290,6 +290,20 @@ FROM mcp_contracts c
 		args = append(args, filter.Status)
 	}
 
+	// Exclude bare-hash confirmed rows when a wish-<hash> twin is also confirmed.
+	// Page-local dedupe alone is not enough: collapsing one twin shrinks the page
+	// below LIMIT and incorrectly ends infinite scroll on /contracts.
+	whereConditions = append(whereConditions, `
+NOT (
+  lower(COALESCE(c.status, '')) = 'confirmed'
+  AND c.contract_id NOT LIKE 'wish-%'
+  AND EXISTS (
+    SELECT 1 FROM mcp_contracts w
+    WHERE w.contract_id = 'wish-' || c.contract_id
+      AND lower(COALESCE(w.status, '')) = 'confirmed'
+  )
+)`)
+
 	if filter.CursorHeight != nil && *filter.CursorHeight > 0 {
 		op := "<"
 		if strings.EqualFold(filter.CursorType, "after") {

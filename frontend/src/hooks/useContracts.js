@@ -42,9 +42,25 @@ const mapContractToDisplayFormat = (contract) => {
     block_height: contract.confirmed_block_height || contract.blockHeight || 0,
     contract_type: 'Smart Contract',
     confirmed_at: contract.confirmed_at || contract.timestamp,
+    // Preserve unix seconds so cursor fallback can rebuild next_cursor_date.
+    timestamp: contract.timestamp || 0,
     headline: title,
     visible_pixel_hash: contract.visiblePixelHash
   };
+};
+
+/** Build cursor_date from a mapped item when the API omits next_cursor_date. */
+const cursorFromItem = (item) => {
+  if (!item) return '';
+  if (item.confirmed_at && typeof item.confirmed_at === 'string' && item.confirmed_at.includes('T')) {
+    return item.confirmed_at;
+  }
+  const n = Number(item.timestamp || item.confirmed_at);
+  if (Number.isFinite(n) && n > 0) {
+    const ms = n < 1e12 ? n * 1000 : n;
+    return new Date(ms).toISOString();
+  }
+  return '';
 };
 
 export const useContracts = () => {
@@ -77,7 +93,6 @@ export const useContracts = () => {
       // Handle both wrapped and unwrapped responses
       const payload = data?.data ?? data;
       const contractsData = Array.isArray(payload.contracts) ? payload.contracts : [];
-      const nextCursor = payload.next_cursor_date || '';
       const more = Boolean(payload.has_more) && contractsData.length > 0;
 
       const mappedContracts = contractsData.map(mapContractToDisplayFormat);
@@ -91,13 +106,29 @@ export const useContracts = () => {
         }
       });
 
+      // Prefer API cursor; fall back to last item timestamp so has_more without
+      // next_cursor_date cannot strand infinite scroll on the first page.
+      let nextCursor = payload.next_cursor_date || '';
+      if (!nextCursor && unique.length > 0) {
+        nextCursor = cursorFromItem(unique[unique.length - 1]);
+      }
+      if (!nextCursor && mappedContracts.length > 0) {
+        nextCursor = cursorFromItem(mappedContracts[mappedContracts.length - 1]);
+      }
+
       setContracts((prev) => [...prev, ...unique]);
-      setCursor(nextCursor);
+      if (nextCursor) {
+        setCursor(nextCursor);
+      }
       
       // If we didn't find any new unique contracts but the API says there are more,
       // it might be a pagination issue. Stop to prevent infinite loop "storm".
       if (unique.length === 0 && contractsData.length > 0 && more) {
         console.warn('Pagination returned no new unique items, stopping to prevent storm');
+        setHasMore(false);
+      } else if (more && !nextCursor) {
+        // Cannot page without a cursor; stop rather than re-fetch page 1 forever.
+        console.warn('has_more without cursor; stopping contracts pagination');
         setHasMore(false);
       } else {
         setHasMore(more);
