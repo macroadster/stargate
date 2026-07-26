@@ -352,25 +352,6 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
                   </div>
                 </div>
 
-                {(() => {
-                  const notes = getSubmissionNotes(deliverable.submission || {});
-                  const preview = getNotesPreview(notes, 200);
-                  const wordCount = countWords(notes);
-                  const status = (deliverable.submission?.status || '').toLowerCase();
-                  const statusText = status || 'pending';
-                  return (
-                    <div className="deliverables-notes-box">
-                      <div className="flex items-center justify-between text-xs text-gray-600 dark:text-gray-400 mb-2">
-                        <span>Words: {wordCount}</span>
-                        <span>Status: {statusText}</span>
-                      </div>
-                      <div className="deliverables-notes-preview">
-                        {preview || 'No notes provided.'}
-                      </div>
-                    </div>
-                  );
-                })()}
-
                 {expandedTasks[deliverable.task_id] && (
                     <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700 space-y-4">
                   <div>
