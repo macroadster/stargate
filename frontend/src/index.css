@@ -1671,6 +1671,485 @@ html[data-theme="light"] .contract-success-btn-done {
     color: #ffffff;
 }
 
+/* ── WishChat nanobot (replaces classic Inscribe form) ─────────────── */
+.wish-chat-modal {
+    width: min(52rem, 96vw);
+    max-width: 52rem;
+    height: min(36rem, 90vh);
+    max-height: 90vh;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    position: relative;
+}
+
+.wish-chat-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.875rem 1rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    flex-shrink: 0;
+}
+
+.wish-chat-title {
+    margin: 0;
+    line-height: 1.2;
+}
+
+.wish-chat-subtitle {
+    color: #9ca3af;
+    margin: 0.1rem 0 0;
+}
+
+.wish-chat-body {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: 1fr minmax(14rem, 17rem);
+    gap: 0;
+}
+
+.wish-chat-messages {
+    overflow-y: auto;
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    min-height: 0;
+}
+
+.wish-chat-row {
+    display: flex;
+    align-items: flex-end;
+    gap: 0.5rem;
+    max-width: 100%;
+}
+
+.wish-chat-row-user {
+    justify-content: flex-end;
+}
+
+.wish-chat-row-bot {
+    justify-content: flex-start;
+}
+
+.wish-chat-avatar {
+    width: 1.75rem;
+    height: 1.75rem;
+    border-radius: 9999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.wish-chat-avatar-bot {
+    background: rgba(99, 102, 241, 0.25);
+    color: #a5b4fc;
+    border: 1px solid rgba(129, 140, 248, 0.35);
+}
+
+.wish-chat-avatar-user {
+    background: rgba(16, 185, 129, 0.2);
+    color: #6ee7b7;
+    border: 1px solid rgba(52, 211, 153, 0.35);
+}
+
+.wish-chat-bubble {
+    max-width: min(28rem, 85%);
+    padding: 0.625rem 0.875rem;
+    border-radius: 0.875rem;
+    font-size: 0.875rem;
+    line-height: 1.45;
+    word-break: break-word;
+}
+
+.wish-chat-bubble-bot {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    color: #e5e7eb;
+    border-bottom-left-radius: 0.25rem;
+}
+
+.wish-chat-bubble-user {
+    background: rgba(79, 70, 229, 0.55);
+    border: 1px solid rgba(129, 140, 248, 0.4);
+    color: #fff;
+    border-bottom-right-radius: 0.25rem;
+}
+
+.wish-chat-bubble-error {
+    border-color: rgba(248, 113, 113, 0.45);
+    background: rgba(127, 29, 29, 0.35);
+}
+
+.wish-chat-bubble-success {
+    border-color: rgba(52, 211, 153, 0.4);
+    background: rgba(6, 78, 59, 0.35);
+}
+
+.wish-chat-md.markdown-content {
+    font-size: 0.875rem;
+}
+
+.wish-chat-md .md-p {
+    margin: 0.25rem 0;
+}
+
+.wish-chat-md .md-p:first-child {
+    margin-top: 0;
+}
+
+.wish-chat-md .md-p:last-child {
+    margin-bottom: 0;
+}
+
+.wish-chat-msg-image {
+    display: block;
+    max-width: 12rem;
+    max-height: 9rem;
+    border-radius: 0.5rem;
+    margin-bottom: 0.35rem;
+    object-fit: cover;
+}
+
+.wish-chat-draft {
+    border-left: 1px solid rgba(255, 255, 255, 0.1);
+    padding: 0.75rem;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    background: rgba(0, 0, 0, 0.15);
+    min-height: 0;
+}
+
+.wish-chat-draft-title {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #9ca3af;
+    font-weight: 600;
+}
+
+.wish-chat-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    font-size: 0.75rem;
+    color: #9ca3af;
+}
+
+.wish-chat-field input,
+.wish-chat-field textarea,
+.wish-chat-field select {
+    width: 100%;
+    border-radius: 0.5rem;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(0, 0, 0, 0.25);
+    color: #e5e7eb;
+    padding: 0.4rem 0.55rem;
+    font-size: 0.8125rem;
+    outline: none;
+}
+
+.wish-chat-field input:focus,
+.wish-chat-field textarea:focus,
+.wish-chat-field select:focus {
+    border-color: rgba(129, 140, 248, 0.55);
+    box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.25);
+}
+
+.wish-chat-field input:disabled,
+.wish-chat-field textarea:disabled,
+.wish-chat-field select:disabled {
+    opacity: 0.6;
+}
+
+.wish-chat-field-row {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.wish-chat-unit {
+    width: 5.5rem;
+    flex-shrink: 0;
+}
+
+.wish-chat-hint {
+    font-size: 0.7rem;
+    color: #6b7280;
+}
+
+.wish-chat-image-row {
+    display: flex;
+    gap: 0.5rem;
+    align-items: flex-start;
+}
+
+.wish-chat-thumb {
+    width: 3rem;
+    height: 3rem;
+    border-radius: 0.5rem;
+    object-fit: cover;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    flex-shrink: 0;
+}
+
+.wish-chat-thumb-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.05);
+    color: #6b7280;
+}
+
+.wish-chat-wallet {
+    font-size: 0.7rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    word-break: break-all;
+    padding: 0.4rem 0.55rem;
+    border-radius: 0.5rem;
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    color: #d1d5db;
+}
+
+.wish-chat-wallet-missing {
+    color: #f87171;
+    border-color: rgba(248, 113, 113, 0.35);
+}
+
+.wish-chat-draft-status {
+    font-size: 0.75rem;
+    margin-top: 0.15rem;
+}
+
+.wish-chat-ready {
+    color: #6ee7b7;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+.wish-chat-missing {
+    color: #fbbf24;
+}
+
+.wish-chat-error {
+    font-size: 0.75rem;
+    color: #fca5a5;
+    background: rgba(127, 29, 29, 0.35);
+    border: 1px solid rgba(248, 113, 113, 0.35);
+    border-radius: 0.5rem;
+    padding: 0.4rem 0.55rem;
+}
+
+.wish-chat-chip {
+    appearance: none;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    background: rgba(255, 255, 255, 0.08);
+    color: #e5e7eb;
+    border-radius: 0.4rem;
+    padding: 0.25rem 0.5rem;
+    font-size: 0.75rem;
+    cursor: pointer;
+    text-align: left;
+}
+
+.wish-chat-chip:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.14);
+}
+
+.wish-chat-chip:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.wish-chat-chip-muted {
+    color: #9ca3af;
+}
+
+.wish-chat-inscribe-btn {
+    appearance: none;
+    border: none;
+    background: #4f46e5;
+    color: #fff;
+    border-radius: 0.5rem;
+    padding: 0.55rem 0.75rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    cursor: pointer;
+    margin-top: 0.15rem;
+}
+
+.wish-chat-inscribe-btn:hover:not(:disabled) {
+    background: #4338ca;
+}
+
+.wish-chat-inscribe-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.wish-chat-composer {
+    display: flex;
+    align-items: flex-end;
+    gap: 0.5rem;
+    padding: 0.75rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    flex-shrink: 0;
+    background: rgba(0, 0, 0, 0.12);
+}
+
+.wish-chat-input {
+    flex: 1;
+    resize: none;
+    min-height: 2.5rem;
+    max-height: 6rem;
+    border-radius: 0.75rem;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(0, 0, 0, 0.25);
+    color: #e5e7eb;
+    padding: 0.55rem 0.75rem;
+    font-size: 0.875rem;
+    line-height: 1.35;
+    outline: none;
+}
+
+.wish-chat-input:focus {
+    border-color: rgba(129, 140, 248, 0.55);
+    box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.25);
+}
+
+.wish-chat-input:disabled {
+    opacity: 0.6;
+}
+
+.wish-chat-icon-btn,
+.wish-chat-send-btn {
+    width: 2.5rem;
+    height: 2.5rem;
+    border-radius: 0.75rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    cursor: pointer;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.06);
+    color: #e5e7eb;
+}
+
+.wish-chat-send-btn {
+    background: #4f46e5;
+    border-color: transparent;
+    color: #fff;
+}
+
+.wish-chat-send-btn:hover:not(:disabled) {
+    background: #4338ca;
+}
+
+.wish-chat-icon-btn:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.12);
+}
+
+.wish-chat-icon-btn:disabled,
+.wish-chat-send-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.wish-chat-drop-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 20;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: rgba(49, 46, 129, 0.72);
+    color: #e0e7ff;
+    border-radius: 12px;
+    border: 2px dashed rgba(165, 180, 252, 0.7);
+    pointer-events: none;
+}
+
+@media (max-width: 720px) {
+    .wish-chat-modal {
+        width: 100vw;
+        height: 100vh;
+        max-height: 100vh;
+        border-radius: 0;
+    }
+
+    .wish-chat-body {
+        grid-template-columns: 1fr;
+        grid-template-rows: 1fr auto;
+    }
+
+    .wish-chat-draft {
+        border-left: none;
+        border-top: 1px solid rgba(255, 255, 255, 0.1);
+        max-height: 42%;
+    }
+}
+
+html[data-theme="light"] .wish-chat-subtitle {
+    color: #6b7280;
+}
+
+html[data-theme="light"] .wish-chat-bubble-bot {
+    background: #f3f4f6;
+    border-color: #e5e7eb;
+    color: #111827;
+}
+
+html[data-theme="light"] .wish-chat-draft {
+    background: rgba(0, 0, 0, 0.03);
+    border-left-color: rgba(0, 0, 0, 0.08);
+}
+
+html[data-theme="light"] .wish-chat-field input,
+html[data-theme="light"] .wish-chat-field textarea,
+html[data-theme="light"] .wish-chat-field select,
+html[data-theme="light"] .wish-chat-input {
+    background: #fff;
+    border-color: #d1d5db;
+    color: #111827;
+}
+
+html[data-theme="light"] .wish-chat-wallet {
+    background: #f9fafb;
+    border-color: #e5e7eb;
+    color: #374151;
+}
+
+html[data-theme="light"] .wish-chat-composer {
+    background: #f9fafb;
+    border-top-color: #e5e7eb;
+}
+
+html[data-theme="light"] .wish-chat-header {
+    border-bottom-color: #e5e7eb;
+}
+
+html[data-theme="light"] .wish-chat-chip {
+    background: #fff;
+    border-color: #d1d5db;
+    color: #374151;
+}
+
+html[data-theme="light"] .wish-chat-icon-btn {
+    background: #fff;
+    border-color: #d1d5db;
+    color: #374151;
+}
+
 @media (prefers-color-scheme: light) {
     .modal-header {
         border-bottom-color: rgba(0, 0, 0, 0.1);
