@@ -1673,6 +1673,17 @@ html[data-theme="light"] .contract-success-btn-done {
 
 /* ── WishChat nanobot (replaces classic Inscribe form) ─────────────── */
 .wish-chat-modal {
+    /* Shared draft control metrics — keep input/select/button heights aligned */
+    --wish-ctrl-h: 2.25rem;
+    --wish-ctrl-radius: 0.5rem;
+    --wish-ctrl-pad-x: 0.625rem;
+    --wish-ctrl-font: 0.8125rem;
+    --wish-ctrl-line: 1.25;
+    --wish-ctrl-border: rgba(255, 255, 255, 0.12);
+    --wish-ctrl-bg: rgba(0, 0, 0, 0.25);
+    --wish-ctrl-fg: #e5e7eb;
+    --wish-ctrl-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+
     width: min(52rem, 96vw);
     max-width: 52rem;
     height: min(36rem, 90vh);
@@ -1841,19 +1852,67 @@ html[data-theme="light"] .contract-success-btn-done {
     gap: 0.25rem;
     font-size: 0.75rem;
     color: #9ca3af;
+    min-width: 0;
+}
+
+.wish-chat-field > span {
+    line-height: 1.2;
+}
+
+/* Base shared chrome for all draft controls */
+.wish-chat-field input,
+.wish-chat-field textarea,
+.wish-chat-field select,
+.wish-chat-wallet,
+.wish-chat-chip,
+.wish-chat-inscribe-btn {
+    box-sizing: border-box;
+    margin: 0;
+    font-family: inherit;
+    border-radius: var(--wish-ctrl-radius);
+    border: 1px solid var(--wish-ctrl-border);
+    font-size: var(--wish-ctrl-font);
+    line-height: var(--wish-ctrl-line);
+    outline: none;
 }
 
 .wish-chat-field input,
 .wish-chat-field textarea,
 .wish-chat-field select {
     width: 100%;
-    border-radius: 0.5rem;
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    background: rgba(0, 0, 0, 0.25);
-    color: #e5e7eb;
-    padding: 0.4rem 0.55rem;
-    font-size: 0.8125rem;
-    outline: none;
+    background: var(--wish-ctrl-bg);
+    color: var(--wish-ctrl-fg);
+    padding: 0 var(--wish-ctrl-pad-x);
+}
+
+/* Single-line controls: identical height */
+.wish-chat-field input,
+.wish-chat-field select {
+    height: var(--wish-ctrl-h);
+    min-height: var(--wish-ctrl-h);
+    max-height: var(--wish-ctrl-h);
+}
+
+/* Textarea: same chrome, multi-line height only */
+.wish-chat-field textarea {
+    height: auto;
+    min-height: calc(var(--wish-ctrl-h) * 2 + 0.25rem);
+    padding: 0.45rem var(--wish-ctrl-pad-x);
+    resize: vertical;
+    line-height: 1.4;
+}
+
+/* Kill native select chrome so OS dropdowns match inputs */
+.wish-chat-field select {
+    -webkit-appearance: none;
+    appearance: none;
+    cursor: pointer;
+    padding-right: 1.75rem;
+    background-color: var(--wish-ctrl-bg);
+    background-image: var(--wish-ctrl-chevron);
+    background-repeat: no-repeat;
+    background-position: right 0.5rem center;
+    background-size: 0.875rem;
 }
 
 .wish-chat-field input:focus,
@@ -1867,35 +1926,48 @@ html[data-theme="light"] .contract-success-btn-done {
 .wish-chat-field textarea:disabled,
 .wish-chat-field select:disabled {
     opacity: 0.6;
+    cursor: not-allowed;
 }
 
 .wish-chat-field-row {
     display: flex;
+    align-items: flex-end;
     gap: 0.5rem;
 }
 
+/* Unit select: fixed compact width, same height as price input */
 .wish-chat-unit {
-    width: 5.5rem;
-    flex-shrink: 0;
+    width: 4.75rem;
+    flex: 0 0 4.75rem;
+}
+
+.wish-chat-unit select {
+    text-align: left;
+}
+
+/* Funding select stays full width of draft column at same height */
+.wish-chat-field select {
+    text-overflow: ellipsis;
 }
 
 .wish-chat-hint {
     font-size: 0.7rem;
     color: #6b7280;
+    line-height: 1.3;
 }
 
 .wish-chat-image-row {
     display: flex;
     gap: 0.5rem;
-    align-items: flex-start;
+    align-items: center;
 }
 
 .wish-chat-thumb {
-    width: 3rem;
-    height: 3rem;
-    border-radius: 0.5rem;
+    width: var(--wish-ctrl-h);
+    height: var(--wish-ctrl-h);
+    border-radius: var(--wish-ctrl-radius);
     object-fit: cover;
-    border: 1px solid rgba(255, 255, 255, 0.12);
+    border: 1px solid var(--wish-ctrl-border);
     flex-shrink: 0;
 }
 
@@ -1907,15 +1979,27 @@ html[data-theme="light"] .contract-success-btn-done {
     color: #6b7280;
 }
 
+.wish-chat-image-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.35rem;
+    min-width: 0;
+    flex: 1;
+}
+
 .wish-chat-wallet {
+    min-height: var(--wish-ctrl-h);
+    display: flex;
+    align-items: center;
     font-size: 0.7rem;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     word-break: break-all;
-    padding: 0.4rem 0.55rem;
-    border-radius: 0.5rem;
-    background: rgba(0, 0, 0, 0.25);
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    padding: 0.35rem var(--wish-ctrl-pad-x);
+    background: var(--wish-ctrl-bg);
+    border-color: rgba(255, 255, 255, 0.08);
     color: #d1d5db;
+    line-height: 1.3;
 }
 
 .wish-chat-wallet-missing {
@@ -1944,55 +2028,93 @@ html[data-theme="light"] .contract-success-btn-done {
     color: #fca5a5;
     background: rgba(127, 29, 29, 0.35);
     border: 1px solid rgba(248, 113, 113, 0.35);
-    border-radius: 0.5rem;
-    padding: 0.4rem 0.55rem;
+    border-radius: var(--wish-ctrl-radius);
+    padding: 0.4rem var(--wish-ctrl-pad-x);
 }
 
-.wish-chat-chip {
+/* Chips match single-line control height.
+   Higher specificity beats .create-contract-modal button[type="button"]. */
+.wish-chat-modal button.wish-chat-chip {
     appearance: none;
-    border: 1px solid rgba(255, 255, 255, 0.15);
+    -webkit-appearance: none;
+    box-sizing: border-box;
+    height: var(--wish-ctrl-h);
+    min-height: var(--wish-ctrl-h);
+    max-height: var(--wish-ctrl-h);
+    padding: 0 0.65rem;
+    border-radius: var(--wish-ctrl-radius);
+    border: 1px solid var(--wish-ctrl-border);
     background: rgba(255, 255, 255, 0.08);
     color: #e5e7eb;
-    border-radius: 0.4rem;
-    padding: 0.25rem 0.5rem;
-    font-size: 0.75rem;
+    font-size: var(--wish-ctrl-font);
+    font-family: inherit;
+    line-height: 1;
     cursor: pointer;
-    text-align: left;
+    text-align: center;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    white-space: nowrap;
 }
 
-.wish-chat-chip:hover:not(:disabled) {
+.wish-chat-modal button.wish-chat-chip:hover:not(:disabled) {
     background: rgba(255, 255, 255, 0.14);
 }
 
-.wish-chat-chip:disabled {
+.wish-chat-modal button.wish-chat-chip:disabled {
     opacity: 0.5;
     cursor: not-allowed;
 }
 
-.wish-chat-chip-muted {
+.wish-chat-modal button.wish-chat-chip-muted {
     color: #9ca3af;
 }
 
-.wish-chat-inscribe-btn {
+/* Primary action: same height family as controls */
+.wish-chat-modal button.wish-chat-inscribe-btn {
     appearance: none;
+    -webkit-appearance: none;
+    box-sizing: border-box;
+    height: var(--wish-ctrl-h);
+    min-height: var(--wish-ctrl-h);
+    max-height: var(--wish-ctrl-h);
+    width: 100%;
+    padding: 0 0.75rem;
+    border-radius: var(--wish-ctrl-radius);
     border: none;
     background: #4f46e5;
     color: #fff;
-    border-radius: 0.5rem;
-    padding: 0.55rem 0.75rem;
-    font-size: 0.875rem;
+    font-size: var(--wish-ctrl-font);
+    font-family: inherit;
     font-weight: 600;
+    line-height: 1;
     cursor: pointer;
     margin-top: 0.15rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
 }
 
-.wish-chat-inscribe-btn:hover:not(:disabled) {
+.wish-chat-modal button.wish-chat-inscribe-btn:hover:not(:disabled) {
     background: #4338ca;
 }
 
-.wish-chat-inscribe-btn:disabled {
+.wish-chat-modal button.wish-chat-inscribe-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+}
+
+/* Done row: both actions share equal width + same height */
+.wish-chat-modal .wish-chat-done-actions {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.wish-chat-modal .wish-chat-done-actions .wish-chat-chip,
+.wish-chat-modal .wish-chat-done-actions .wish-chat-inscribe-btn {
+    flex: 1 1 0;
+    width: auto;
+    margin-top: 0;
 }
 
 .wish-chat-composer {
@@ -2008,15 +2130,18 @@ html[data-theme="light"] .contract-success-btn-done {
 .wish-chat-input {
     flex: 1;
     resize: none;
-    min-height: 2.5rem;
+    box-sizing: border-box;
+    min-height: var(--wish-ctrl-h);
+    height: var(--wish-ctrl-h);
     max-height: 6rem;
-    border-radius: 0.75rem;
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    background: rgba(0, 0, 0, 0.25);
-    color: #e5e7eb;
-    padding: 0.55rem 0.75rem;
+    border-radius: 0.65rem;
+    border: 1px solid var(--wish-ctrl-border);
+    background: var(--wish-ctrl-bg);
+    color: var(--wish-ctrl-fg);
+    padding: 0.45rem 0.75rem;
     font-size: 0.875rem;
     line-height: 1.35;
+    font-family: inherit;
     outline: none;
 }
 
@@ -2031,17 +2156,20 @@ html[data-theme="light"] .contract-success-btn-done {
 
 .wish-chat-icon-btn,
 .wish-chat-send-btn {
-    width: 2.5rem;
-    height: 2.5rem;
-    border-radius: 0.75rem;
+    width: var(--wish-ctrl-h);
+    height: var(--wish-ctrl-h);
+    min-width: var(--wish-ctrl-h);
+    min-height: var(--wish-ctrl-h);
+    border-radius: 0.65rem;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
     cursor: pointer;
-    border: 1px solid rgba(255, 255, 255, 0.12);
+    border: 1px solid var(--wish-ctrl-border);
     background: rgba(255, 255, 255, 0.06);
     color: #e5e7eb;
+    padding: 0;
 }
 
 .wish-chat-send-btn {
@@ -2114,13 +2242,25 @@ html[data-theme="light"] .wish-chat-draft {
     border-left-color: rgba(0, 0, 0, 0.08);
 }
 
+html[data-theme="light"] .wish-chat-modal {
+    --wish-ctrl-border: #d1d5db;
+    --wish-ctrl-bg: #fff;
+    --wish-ctrl-fg: #111827;
+    --wish-ctrl-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+}
+
 html[data-theme="light"] .wish-chat-field input,
 html[data-theme="light"] .wish-chat-field textarea,
 html[data-theme="light"] .wish-chat-field select,
 html[data-theme="light"] .wish-chat-input {
-    background: #fff;
-    border-color: #d1d5db;
-    color: #111827;
+    background: var(--wish-ctrl-bg);
+    border-color: var(--wish-ctrl-border);
+    color: var(--wish-ctrl-fg);
+}
+
+html[data-theme="light"] .wish-chat-field select {
+    background-color: var(--wish-ctrl-bg);
+    background-image: var(--wish-ctrl-chevron);
 }
 
 html[data-theme="light"] .wish-chat-wallet {
@@ -2138,7 +2278,7 @@ html[data-theme="light"] .wish-chat-header {
     border-bottom-color: #e5e7eb;
 }
 
-html[data-theme="light"] .wish-chat-chip {
+html[data-theme="light"] .wish-chat-modal button.wish-chat-chip {
     background: #fff;
     border-color: #d1d5db;
     color: #374151;

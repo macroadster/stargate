@@ -394,18 +394,18 @@ const WishChatModal = ({ onClose, onSuccess }) => {
                 {draft.imagePreviewUrl ? (
                   <img src={draft.imagePreviewUrl} alt="Wish cover" className="wish-chat-thumb" />
                 ) : (
-                  <div className="wish-chat-thumb wish-chat-thumb-empty">
+                  <div className="wish-chat-thumb wish-chat-thumb-empty" aria-hidden="true">
                     <ImageIcon className="w-4 h-4" />
                   </div>
                 )}
-                <div className="flex flex-col gap-1 min-w-0">
+                <div className="wish-chat-image-actions">
                   <button
                     type="button"
                     className="wish-chat-chip"
                     disabled={phase === 'submitting' || phase === 'done'}
                     onClick={() => fileInputRef.current?.click()}
                   >
-                    {draft.imageFile ? 'Replace image' : 'Add image'}
+                    {draft.imageFile ? 'Replace' : 'Add image'}
                   </button>
                   {draft.imageFile && phase !== 'done' && (
                     <button
@@ -467,11 +467,11 @@ const WishChatModal = ({ onClose, onSuccess }) => {
               </button>
             )}
             {phase === 'done' && (
-              <div className="flex gap-2">
-                <button type="button" className="wish-chat-chip flex-1" onClick={startAnother}>
+              <div className="wish-chat-done-actions">
+                <button type="button" className="wish-chat-chip" onClick={startAnother}>
                   Create another
                 </button>
-                <button type="button" className="wish-chat-inscribe-btn flex-1" onClick={onClose}>
+                <button type="button" className="wish-chat-inscribe-btn" onClick={onClose}>
                   Done
                 </button>
               </div>
