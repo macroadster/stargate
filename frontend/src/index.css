@@ -6038,6 +6038,45 @@ html[data-theme="dark"] .mcp-docs-content pre,
     display: block;
 }
 
+/*
+ * App header shell
+ * ----------------
+ * Quantum .nav-glass is sticky, but AppHeader previously used utility
+ * `fixed`, which pulled the bar out of flow. That made Blocks / Discover
+ * content start under the menubar on first paint.
+ *
+ * .app-header-shell is the single layout child pages mount: it reserves
+ * --app-header-height and sticks on scroll so content only passes under
+ * the glass bar after the user scrolls.
+ */
+:root {
+    --app-header-height: 4rem; /* matches h-16 nav row */
+}
+
+.app-header-shell {
+    position: sticky;
+    top: 0;
+    z-index: 1000; /* quantum nav-glass default; modals use 1100 */
+    width: 100%;
+    max-width: 100vw;
+    /* In-flow height so grid/pages push content below the bar */
+    height: var(--app-header-height);
+    flex-shrink: 0;
+}
+
+.app-header-shell > header.app-header-bar,
+.app-header-shell > header.nav-glass {
+    position: relative !important; /* override utility `fixed` / sticky on bar itself */
+    top: auto !important;
+    left: auto !important;
+    right: auto !important;
+    width: 100%;
+    height: var(--app-header-height);
+    max-width: 100vw;
+    overflow-x: clip;
+    z-index: auto;
+}
+
 /* Keep fixed header within the viewport when page content would overflow */
 header.nav-glass {
     max-width: 100vw;

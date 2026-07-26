@@ -685,7 +685,7 @@ function MainContent() {
         onToggleText={() => setHideText(!hideText)}
       />
 
-      <div className="pt-0" style={{ minHeight: 0, overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ minHeight: 0, overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
         <div
           id="block-scroll"
           ref={scrollRef}

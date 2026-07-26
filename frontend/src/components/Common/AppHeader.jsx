@@ -84,13 +84,15 @@ const AppHeader = ({
   }, [isDropdownOpen]);
 
   return (
-    <>
-      {/*
-        Bar only inside .nav-glass. Mobile drawer is a fixed sibling so its
-        backdrop-filter is not trapped by the header's own blur stacking context
-        (a common browser limitation for nested frosted panels).
-      */}
-      <header className="nav-glass fixed top-0 left-0 right-0 z-50">
+    /*
+      Sticky shell reserves header height in normal layout so page content
+      (Blocks rail, Discover banner, etc.) is not covered on initial load.
+      When the page scrolls, the shell sticks and content can pass under the
+      frosted bar. Mobile drawer stays a fixed sibling of the bar so its
+      backdrop-filter is not trapped by the header blur stacking context.
+    */
+    <div className="app-header-shell">
+      <header className="nav-glass app-header-bar">
         <nav className="starlight-nav bg-transparent border-none w-full">
           <div className="container mx-auto px-6 h-16 flex flex-row items-center justify-between">
             {/* Left Side: Logo & Links */}
@@ -263,7 +265,7 @@ const AppHeader = ({
         </nav>
       </header>
 
-      {/* Fixed sibling — blur lives on inner panel (no opacity/overflow on that node) */}
+      {/* Fixed sibling of bar — blur lives on inner panel (no opacity/overflow on that node) */}
       <div
         className={`nav-menu-mobile ${isMenuOpen ? "active" : ""}`}
         aria-hidden={!isMenuOpen}
@@ -418,7 +420,7 @@ const AppHeader = ({
           </div>
         </div>
       </div>
-    </>
+    </div>
   );
 };
 
