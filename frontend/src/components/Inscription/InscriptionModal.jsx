@@ -2,6 +2,7 @@ import React from 'react';
 import { X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import CopyButton from '../Common/CopyButton';
+import MarkdownContent from '../Common/MarkdownContent';
 import SafeQrCodeCanvas from '../Common/SafeQrCodeCanvas';
 import DeliverablesReview from '../Review/DeliverablesReview';
 import { apiFetch } from '../../utils/api';
@@ -219,9 +220,13 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
                             </span>
                           </div>
                           <div className="modal-proposal-id">ID: {p.id}</div>
-                          <div className="modal-proposal-desc">
-                            {prettyDesc}
-                          </div>
+                          {prettyDesc && (
+                            <div className="modal-proposal-desc">
+                              <MarkdownContent compact>
+                                {prettyDesc}
+                              </MarkdownContent>
+                            </div>
+                          )}
                           <div className="modal-proposal-meta">
                             <div>Budget: {p.budget_sats || totalTaskBudget || 0} sats</div>
                             <div>Tasks: {tasks.length}</div>
@@ -248,6 +253,13 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
                                       <span className={`modal-task-status ${statusClass}`}>
                                         {status}
                                       </span>
+                                      {t.description && (
+                                        <div className="mt-1">
+                                          <MarkdownContent compact>
+                                            {t.description}
+                                          </MarkdownContent>
+                                        </div>
+                                      )}
                                       {t.contractor_wallet && (
                                         <span className="modal-task-wallet" title={t.contractor_wallet}>
                                           • payout: {t.contractor_wallet}
@@ -955,8 +967,10 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
                               <div className="modal-stego-label">Proposal</div>
                               <div className="modal-stego-value text-lg font-semibold">{stegoProposal.title || 'Untitled'}</div>
                               {stegoProposal.description_md && (
-                                <div className="modal-stego-value mt-2 whitespace-pre-wrap">
-                                  {stegoProposal.description_md}
+                                <div className="modal-stego-value mt-2">
+                                  <MarkdownContent compact>
+                                    {stegoProposal.description_md}
+                                  </MarkdownContent>
                                 </div>
                               )}
                               <div className="modal-stego-label mt-3 flex flex-col sm:flex-row sm:flex-wrap gap-2 sm:gap-4 min-w-0">
@@ -981,7 +995,11 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
                                         </span>
                                       </div>
                                       {task.description && (
-                                        <div className="modal-stego-label text-xs whitespace-pre-wrap">{task.description}</div>
+                                        <div className="modal-stego-label text-xs">
+                                          <MarkdownContent compact>
+                                            {task.description}
+                                          </MarkdownContent>
+                                        </div>
                                       )}
                                       <div className="modal-stego-label text-xs flex flex-wrap gap-3">
                                         {task.task_id && <span>ID: {task.task_id}</span>}

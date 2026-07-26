@@ -1,9 +1,9 @@
 import React, { useLayoutEffect, useRef, useState } from 'react';
-import ReactMarkdown from 'react-markdown';
 import { CheckCircle, XCircle, Clock, Eye, FileText, Code } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { apiFetch } from '../../utils/api';
 import { useAuth } from '../../context/AuthContext';
+import MarkdownContent from '../Common/MarkdownContent';
 import {
   filterByKeys,
   normalizeSubmissions,
@@ -322,9 +322,7 @@ export function useDeliverablesReview({ proposalItems, submissions, submissionsL
 
   const renderMarkdown = (content) => {
     const safeContent = content || '';
-    const hasMarkdown = /(^|\n)(#{1,6}\s|[-*]\s|\d+\.\s|```)/.test(safeContent);
-
-    if (!hasMarkdown) {
+    if (!safeContent.trim()) {
       return (
         <div className="text-sm text-gray-800 dark:text-gray-100 whitespace-pre-wrap break-words">
           {safeContent}
@@ -333,29 +331,9 @@ export function useDeliverablesReview({ proposalItems, submissions, submissionsL
     }
 
     return (
-      <div className="text-sm text-gray-800 dark:text-gray-100 space-y-3 min-w-0 overflow-x-auto max-w-full">
-        <ReactMarkdown
-          components={{
-            h1: ({ ...props }) => <h1 className="text-xl font-semibold" {...props} />,
-            h2: ({ ...props }) => <h2 className="text-lg font-semibold" {...props} />,
-            h3: ({ ...props }) => <h3 className="text-base font-semibold" {...props} />,
-            p: ({ ...props }) => <p className="leading-relaxed break-words" {...props} />,
-            ul: ({ ...props }) => <ul className="list-disc pl-5 space-y-1 break-words" {...props} />,
-            ol: ({ ...props }) => <ol className="list-decimal pl-5 space-y-1 break-words" {...props} />,
-            code: ({ inline, ...props }) => (
-              inline
-                ? <code className="px-1 py-0.5 rounded bg-gray-200/70 dark:bg-gray-700/70 font-mono text-xs break-words" {...props} />
-                : <code className="block font-mono text-xs whitespace-pre" {...props} />
-            ),
-            pre: ({ ...props }) => (
-              <pre className="bg-gray-900 text-gray-100 rounded p-3 overflow-x-auto text-xs max-w-full" {...props} />
-            ),
-            a: ({ ...props }) => <a className="text-blue-600 dark:text-blue-300 underline break-all" {...props} />,
-          }}
-        >
-          {safeContent}
-        </ReactMarkdown>
-      </div>
+      <MarkdownContent className="text-sm text-gray-800 dark:text-gray-100 deliverables-markdown">
+        {safeContent}
+      </MarkdownContent>
     );
   };
 

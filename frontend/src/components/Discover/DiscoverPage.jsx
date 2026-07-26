@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { API_BASE } from '../../apiBase';
 import { apiFetch } from '../../utils/api';
 import AppHeader from '../Common/AppHeader';
+import MarkdownContent from '../Common/MarkdownContent';
 import { useAuth } from '../../context/AuthContext';
 
 const formatDate = (ts) => (ts ? new Date(ts).toLocaleString() : '—');
@@ -312,7 +313,11 @@ export default function DiscoverPage() {
                         {claimedCount > 0 && <span className="text-xs text-blue-600 dark:text-blue-300">{claimedCount} claimed</span>}
                       </div>
                       <h3 className="text-lg font-semibold mt-2">{p.title}</h3>
-                      <p className="text-sm text-gray-600 dark:text-gray-400">{p.description_md}</p>
+                      {p.description_md && (
+                        <MarkdownContent className="mt-1 text-sm text-gray-600 dark:text-gray-400" compact>
+                          {p.description_md}
+                        </MarkdownContent>
+                      )}
                     </div>
                   </div>
 
@@ -324,6 +329,11 @@ export default function DiscoverPage() {
                       <div key={t.task_id} className="card-premium p-3">
                         <div className="flex-1">
                           <div className="font-semibold text-sm">{t.title}</div>
+                          {t.description && (
+                            <MarkdownContent className="mt-1 text-xs text-gray-500" compact>
+                              {t.description}
+                            </MarkdownContent>
+                          )}
                           <div className="text-xs text-gray-500">Task budget {t.budget_sats} sats • Goal {t.goal_id || 'n/a'}</div>
                           <div className="text-xs text-gray-500 flex items-center gap-2 mt-1">
                             <span className={`badge ${statusBadgeClass}`}>{taskStatus}</span>
