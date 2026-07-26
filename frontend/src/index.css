@@ -230,6 +230,17 @@ html[data-theme="dark"] .dropdown-menu {
     letter-spacing: 0.1em;
 }
 
+/*
+ * Content under AppHeader on Contracts / Discover / Docs.
+ * Top padding is intentionally larger than the gap between title and subtitle
+ * (and larger than the following section gap) so the page header is not
+ * cramped against the sticky menubar.
+ */
+.page-main {
+    padding-top: 3.5rem;   /* ~pt-14 — more air under menubar */
+    padding-bottom: 2.5rem; /* ~pb-10 */
+}
+
 /* Modal backdrop — must sit above .nav-glass (z-index: 1000 in quantumcss) */
 .modal-backdrop-overlay {
     position: fixed;
@@ -431,8 +442,8 @@ html[data-theme="light"] .login-glow {
 .login-demo .badge [class*=" icon-"],
 .login-demo button [class^="icon-"],
 .login-demo button [class*=" icon-"],
-.login-demo .login-toast [class^="icon-"],
-.login-demo .login-toast [class*=" icon-"] {
+.login-demo .login-status [class^="icon-"],
+.login-demo .login-status [class*=" icon-"] {
     position: static;
     transform: none;
     left: auto;
@@ -466,15 +477,34 @@ html[data-theme="light"] .login-glow {
     background-color: var(--q-color-starlight-blue) !important;
 }
 
-.login-toast {
-    position: fixed;
-    bottom: 1.5rem;
-    left: 50%;
-    transform: translateX(-50%);
-    z-index: 40;
-    min-width: min(22rem, calc(100vw - 2rem));
-    max-width: calc(100vw - 2rem);
-    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.35);
+/*
+ * Auth status banner lives inside the starlight-card (document flow).
+ * Avoid fixed toast overlays that stack a second glass panel over the form.
+ */
+.login-status {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.6rem;
+    width: 100%;
+    margin: 0 0 1rem;
+    box-sizing: border-box;
+    /* Slightly more opaque than default alert so it reads as one banner, not nested glass */
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+}
+
+.login-status span {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    line-height: 1.4;
+}
+
+.login-status [class^="icon-"],
+.login-status [class*=" icon-"] {
+    flex-shrink: 0;
+    margin-top: 0.1rem;
 }
 
 /* Auth tab strip — full-width equal tabs */
@@ -5893,11 +5923,13 @@ html[data-theme="light"] .deliverables-proof-content-box {
     }
 }
 
-/* Horizontal doc section chips on small screens */
+/* Horizontal doc section tab strip (all breakpoints) */
+.docs-tab-nav,
 .docs-mobile-nav {
     scrollbar-width: none;
     -ms-overflow-style: none;
 }
+.docs-tab-nav::-webkit-scrollbar,
 .docs-mobile-nav::-webkit-scrollbar {
     display: none;
 }
@@ -5978,17 +6010,16 @@ html[data-theme="dark"] .mcp-docs-content pre,
 }
 
 .block-hash-row {
-    display: flex;
-    align-items: flex-start;
-    gap: 0.5rem;
+    /* Inline flow keeps the copy control immediately after the hash text
+       (including when the hash wraps) instead of flex-growing it to the
+       far right of the contracts grid header. */
+    display: block;
     max-width: 100%;
     min-width: 0;
 }
 
 .block-hash-text {
-    flex: 1 1 0%;
-    min-width: 0;
-    max-width: 100%;
+    display: inline;
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
     overflow-wrap: anywhere;
     word-break: break-all;
@@ -5996,8 +6027,10 @@ html[data-theme="dark"] .mcp-docs-content pre,
 }
 
 .block-hash-copy {
+    display: inline-block;
+    vertical-align: text-top;
+    margin-left: 0.4rem;
     flex-shrink: 0;
-    margin-top: 0.15rem;
 }
 
 /* Modal: long wallet / payout addresses */

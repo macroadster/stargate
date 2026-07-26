@@ -104,6 +104,10 @@ describe('DeliverablesReview', () => {
       expect(screen.getByText('Implement feature')).toBeInTheDocument();
     });
 
+    // Collapsed header should surface task ID (not proposal ID) as high-level detail
+    expect(screen.getByText(/Task:\s*task-1/)).toBeInTheDocument();
+    expect(screen.queryByText(/Proposal:\s*prop-1/)).not.toBeInTheDocument();
+
     // Collapsed: no notes preview box / submission notes section
     expect(screen.queryByText('Submission Notes')).not.toBeInTheDocument();
     expect(document.querySelector('.deliverables-notes-preview')).toBeNull();

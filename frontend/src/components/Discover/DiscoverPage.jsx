@@ -210,7 +210,7 @@ export default function DiscoverPage() {
   return (
     <div className="min-h-screen bg-app-main text-gray-900 dark:text-gray-100 page-discover">
       <AppHeader onInscribe={() => navigate('/')} />
-      <div className="container mx-auto px-6 py-10 flex flex-col gap-8">
+      <div className="w-full max-w-full mx-auto px-4 sm:px-6 page-main flex flex-col gap-6 sm:gap-8 overflow-x-hidden">
         <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-6">
           <div className="flex-1">
             <h1 className="text-4xl font-black page-title uppercase tracking-tight leading-none mb-2">Discover</h1>

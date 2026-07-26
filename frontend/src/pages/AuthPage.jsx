@@ -356,7 +356,10 @@ export default function AuthPage() {
               role="tab"
               aria-selected={view === 'login'}
               className={`tab-button${view === 'login' ? ' active' : ''}`}
-              onClick={() => setView('login')}
+              onClick={() => {
+                setView('login');
+                showStatus('');
+              }}
             >
               Sign in
             </button>
@@ -365,7 +368,10 @@ export default function AuthPage() {
               role="tab"
               aria-selected={view === 'wallet'}
               className={`tab-button${view === 'wallet' ? ' active' : ''}`}
-              onClick={() => setView('wallet')}
+              onClick={() => {
+                setView('wallet');
+                showStatus('');
+              }}
             >
               Wallet verification
             </button>
@@ -378,6 +384,16 @@ export default function AuthPage() {
             <h2 id="auth-panel-title" className="hidden">
               {view === 'login' ? 'Sign in' : 'Wallet verification'}
             </h2>
+            {/* In-flow status (not a fixed toast) so it does not stack a second glass panel over the card */}
+            {status && (
+              <div className={`${alertClass} login-status`} role="status">
+                {statusTone === 'success' && (
+                  <i className="icon-check-circle-fill" aria-hidden="true" />
+                )}
+                {statusTone === 'error' && <i className="icon-close" aria-hidden="true" />}
+                <span>{status}</span>
+              </div>
+            )}
             {view === 'login' ? renderLogin() : renderWallet()}
           </section>
 
@@ -388,7 +404,10 @@ export default function AuthPage() {
                 <button
                   type="button"
                   className="font-semibold auth-inline-link"
-                  onClick={() => setView('wallet')}
+                  onClick={() => {
+                    setView('wallet');
+                    showStatus('');
+                  }}
                 >
                   Verify a wallet
                 </button>
@@ -399,7 +418,10 @@ export default function AuthPage() {
                 <button
                   type="button"
                   className="font-semibold auth-inline-link"
-                  onClick={() => setView('login')}
+                  onClick={() => {
+                    setView('login');
+                    showStatus('');
+                  }}
                 >
                   Sign in
                 </button>
@@ -423,16 +445,6 @@ export default function AuthPage() {
           </div>
         </div>
       </main>
-
-      {status && (
-        <div className={`${alertClass} login-toast`} role="status">
-          {statusTone === 'success' && (
-            <i className="icon-check-circle-fill" aria-hidden="true" />
-          )}
-          {statusTone === 'error' && <i className="icon-close" aria-hidden="true" />}
-          <span>{status}</span>
-        </div>
-      )}
     </div>
   );
 }

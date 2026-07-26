@@ -293,8 +293,8 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
                       <span className={`text-xs px-2 py-0.5 rounded border ${getStatusColor(deliverable.submission?.status)}`}>
                         {deliverable.submission?.status || 'pending'}
                       </span>
-                      <span className="deliverables-task-label">
-                        Proposal: {deliverable.proposalId}
+                      <span className="deliverables-task-label" title={deliverable.task_id}>
+                        Task: {deliverable.task_id}
                       </span>
                     </div>
                     
