@@ -1159,14 +1159,14 @@ function MainContent() {
 
 {/* Intelligent Footer: only shows when reached end of content */}
         {!hasMoreImages && blocks.length > 0 && (
-          <footer className="nav-glass border-t border-white/5 shrink-0" style={{ height: '4rem', display: 'flex', alignItems: 'center' }}>
+          <footer className="nav-glass border-t border-white/5 shrink-0 app-footer-bar">
             <div className="container mx-auto px-6 flex items-center justify-between w-full h-full">
-              <div className="flex items-center gap-2">
+              <div className="flex flex-row items-center gap-2">
                 <i className="icon-starlight header-logo-icon" style={{ width: '1.25rem', height: '1.25rem' }} />
-                <span className="text-lg font-bold text-gradient-starlight">Starlight</span>
+                <span className="text-lg font-bold text-gradient-starlight leading-none">Starlight</span>
               </div>
 
-              <div className="flex items-center gap-4">
+              <div className="flex flex-row items-center gap-4">
                 <a
                   href="https://github.com/macroadster"
                   target="_blank"
