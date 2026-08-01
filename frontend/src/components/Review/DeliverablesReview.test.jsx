@@ -65,7 +65,7 @@ describe('DeliverablesReview', () => {
     });
   });
 
-  test('expanding a deliverable renders notes via renderMarkdown without crash', async () => {
+  test('collapsed task hides notes; expand shows full submission notes', async () => {
     const submission = {
       submission_id: 'sub-1',
       task_id: 'task-1',
@@ -104,6 +104,15 @@ describe('DeliverablesReview', () => {
       expect(screen.getByText('Implement feature')).toBeInTheDocument();
     });
 
+    // Collapsed header should surface task ID (not proposal ID) as high-level detail
+    expect(screen.getByText(/Task:\s*task-1/)).toBeInTheDocument();
+    expect(screen.queryByText(/Proposal:\s*prop-1/)).not.toBeInTheDocument();
+
+    // Collapsed: no notes preview box / submission notes section
+    expect(screen.queryByText('Submission Notes')).not.toBeInTheDocument();
+    expect(document.querySelector('.deliverables-notes-preview')).toBeNull();
+    expect(screen.queryByText(/Work complete/)).not.toBeInTheDocument();
+
     const expandBtn = document.querySelector('.deliverables-expand-btn');
     expect(expandBtn).toBeTruthy();
     fireEvent.click(expandBtn);
@@ -111,7 +120,6 @@ describe('DeliverablesReview', () => {
     await waitFor(() => {
       expect(screen.getByText('Submission Notes')).toBeInTheDocument();
       expect(screen.getByText('Submission Document')).toBeInTheDocument();
-      // Notes appear in collapsed preview and expanded markdown section
       expect(screen.getAllByText(/Work complete/).length).toBeGreaterThan(0);
       expect(screen.getAllByText(/Details here/).length).toBeGreaterThan(0);
     });

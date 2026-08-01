@@ -230,6 +230,17 @@ html[data-theme="dark"] .dropdown-menu {
     letter-spacing: 0.1em;
 }
 
+/*
+ * Content under AppHeader on Contracts / Discover / Docs.
+ * Top padding is intentionally larger than the gap between title and subtitle
+ * (and larger than the following section gap) so the page header is not
+ * cramped against the sticky menubar.
+ */
+.page-main {
+    padding-top: 3.5rem;   /* ~pt-14 — more air under menubar */
+    padding-bottom: 2.5rem; /* ~pb-10 */
+}
+
 /* Modal backdrop — must sit above .nav-glass (z-index: 1000 in quantumcss) */
 .modal-backdrop-overlay {
     position: fixed;
@@ -299,266 +310,399 @@ html[data-theme="light"] .form-select {
     border-color: #d1d5db;
 }
 
-/* Auth page button styles */
-.auth-btn-primary {
-    background-color: #059669;
-    color: #ffffff;
-    border-radius: 0.5rem;
-    padding: 0.5rem 1rem;
-    font-weight: 600;
-    width: 100%;
+/* ================================================================
+   Auth page — QuantumCSS login theme (auth-shell / starlight-card)
+   Page-local decoration only; form primitives live in quantum.min.css.
+   ================================================================ */
+
+.auth-page {
+    --auth-control-h: 3rem;
+    --auth-control-radius: var(--q-radius-md, 0.5rem);
+    --auth-control-border: color-mix(in srgb, #fff 14%, transparent);
+    --auth-control-bg: color-mix(in srgb, #fff 6%, transparent);
+    --q-color-starlight-blue: #5ce1ff;
+    --q-color-starlight-peach: #ffb38a;
+    --q-color-starlight-orange: #ff7e5f;
+    /* Match Quantum deep bg so no seam against body / starfield */
+    min-height: 100dvh;
+    position: relative;
+    overflow: hidden;
+    background: var(--q-bg-primary, #08081a);
+    color: var(--q-text-primary, #f1f5f9);
 }
 
-.auth-btn-primary:hover {
-    background-color: #047857;
+html[data-theme="light"] .auth-page {
+    --auth-control-border: rgba(0, 0, 0, 0.12);
+    --auth-control-bg: color-mix(in srgb, #fff 92%, transparent);
+    background: var(--q-bg-primary, #faf8f5);
+    color: var(--q-text-primary, #1c1917);
 }
 
-.auth-btn-secondary {
-    background-color: #4f46e5;
-    color: #ffffff;
-    border-radius: 0.5rem;
-    padding: 0.5rem 1rem;
-    font-weight: 600;
-    flex: 1;
+/* Starfield: static, transparent — never animate this full-viewport layer */
+.auth-page .starlight-stars {
+    background: transparent !important;
+    animation: none !important;
+    transform: none !important;
+    opacity: 1;
 }
 
-.auth-btn-secondary:hover {
-    background-color: #4338ca;
+html[data-theme="light"] .auth-page .starlight-stars {
+    opacity: 0.35;
 }
 
-.auth-btn-clear {
-    color: #9ca3af;
-    padding: 0.5rem 0.75rem;
-    font-size: 0.75rem;
+/* Floating orbit accents — animate the *dot* only, not a large box */
+.login-orbit {
+    position: absolute;
+    width: 14rem;
+    height: 14rem;
+    border-radius: 50%;
+    pointer-events: none;
+    z-index: 0;
+    /* invisible ring path */
+    background: transparent;
+    border: none;
 }
 
-.auth-btn-clear:hover {
-    color: #d1d5db;
+.login-orbit--a {
+    top: 10%;
+    left: 6%;
 }
 
-@media (prefers-color-scheme: light) {
-    .auth-btn-clear {
-        color: #6b7280;
-    }
-    .auth-btn-clear:hover {
-        color: #374151;
-    }
+.login-orbit--b {
+    bottom: 12%;
+    right: 8%;
+    width: 9rem;
+    height: 9rem;
 }
 
-html[data-theme="light"] .auth-btn-clear {
-    color: #6b7280;
-}
-html[data-theme="light"] .auth-btn-clear:hover {
-    color: #374151;
+.login-orbit-dot {
+    position: absolute;
+    top: 0;
+    left: 50%;
+    width: 0.55rem;
+    height: 0.55rem;
+    margin-left: -0.275rem;
+    border-radius: 50%;
+    background: var(--q-color-starlight-blue);
+    box-shadow: 0 0 16px var(--q-color-starlight-blue);
 }
 
-/* Auth page container */
-.auth-page-container {
-    min-height: 100vh;
+.login-orbit-dot--peach {
+    background: var(--q-color-starlight-peach);
+    box-shadow: 0 0 16px var(--q-color-starlight-peach);
+}
+
+/* Soft ambient glow behind card (static radial, no pulsing box-shadow) */
+.login-glow {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: min(36rem, 90vw);
+    height: 22rem;
+    margin: 0;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    background:
+        radial-gradient(circle at 30% 40%, color-mix(in srgb, var(--q-color-starlight-blue) 28%, transparent), transparent 60%),
+        radial-gradient(circle at 70% 60%, color-mix(in srgb, var(--q-color-starlight-peach) 22%, transparent), transparent 55%);
+    filter: blur(40px);
+    pointer-events: none;
+    z-index: 0;
+    opacity: 0.75;
+}
+
+html[data-theme="light"] .login-glow {
+    opacity: 0.4;
+}
+
+/* Brand icon: gradient fill on the mask glyph */
+.login-brand-icon {
+    display: block;
+    margin-inline: auto;
+    width: 3rem !important;
+    height: 3rem !important;
+    position: static !important;
+    transform: none !important;
+    left: auto !important;
+    top: auto !important;
+    background-color: transparent !important;
+    background-image: linear-gradient(
+        135deg,
+        var(--q-color-starlight-peach),
+        var(--q-color-starlight-orange),
+        var(--q-color-starlight-blue)
+    ) !important;
+    filter: drop-shadow(
+        0 0 18px color-mix(in srgb, var(--q-color-starlight-blue) 45%, transparent)
+    );
+}
+
+/* Inline icons (badges, buttons) — not field glyphs */
+.login-demo .badge [class^="icon-"],
+.login-demo .badge [class*=" icon-"],
+.login-demo button [class^="icon-"],
+.login-demo button [class*=" icon-"],
+.login-demo .login-status [class^="icon-"],
+.login-demo .login-status [class*=" icon-"] {
+    position: static;
+    transform: none;
+    left: auto;
+    top: auto;
+}
+
+/* Field icons: single-line controls = vertical center */
+.auth-shell .field-icon {
+    position: absolute !important;
+    left: 0.95rem !important;
+    top: 50% !important;
+    width: 1.15rem !important;
+    height: 1.15rem !important;
+    margin: 0 !important;
+    transform: translateY(-50%) !important;
+    display: block !important;
+    opacity: 0.55;
+    pointer-events: none;
+    z-index: 2;
+    background-color: currentColor;
+}
+
+/* Textarea: pin icon to first-line baseline (not mid-field) */
+.auth-shell .field.has-icon:has(textarea) .field-icon {
+    top: 0.95rem !important;
+    transform: none !important;
+}
+
+.auth-shell .field:focus-within .field-icon {
+    opacity: 1;
+    background-color: var(--q-color-starlight-blue) !important;
+}
+
+/*
+ * Auth status banner lives inside the starlight-card (document flow).
+ * Avoid fixed toast overlays that stack a second glass panel over the form.
+ */
+.login-status {
     display: flex;
+    align-items: flex-start;
+    gap: 0.6rem;
+    width: 100%;
+    margin: 0 0 1rem;
+    box-sizing: border-box;
+    /* Slightly more opaque than default alert so it reads as one banner, not nested glass */
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+}
+
+.login-status span {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    line-height: 1.4;
+}
+
+.login-status [class^="icon-"],
+.login-status [class*=" icon-"] {
+    flex-shrink: 0;
+    margin-top: 0.1rem;
+}
+
+/* Auth tab strip — full-width equal tabs */
+.auth-tabs {
+    width: 100%;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+}
+
+.auth-tabs .tab-button {
+    width: 100%;
+    text-align: center;
+    min-height: 2.75rem;
+}
+
+/* ----------------------------------------------------------------
+   Shared control height: select / text / buttons all 3rem
+   ---------------------------------------------------------------- */
+.auth-shell .input,
+.auth-shell select.input,
+.auth-shell textarea.input {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    margin: 0;
+    border: 1px solid var(--auth-control-border);
+    border-radius: var(--auth-control-radius);
+    background: var(--auth-control-bg);
+    color: inherit;
+    font-size: 0.9375rem;
+    font-family: inherit;
+    line-height: 1.25;
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+
+/* Single-line controls share button height */
+.auth-shell input.input,
+.auth-shell select.input {
+    height: var(--auth-control-h);
+    min-height: var(--auth-control-h);
+    padding: 0 0.9rem;
+}
+
+.auth-shell .field.has-icon input.input,
+.auth-shell .field.has-icon select.input {
+    padding-left: 2.75rem;
+}
+
+/* Native select: remove OS chrome so height/radius match inputs */
+.auth-shell select.input {
+    -webkit-appearance: none;
+    appearance: none;
+    cursor: pointer;
+    /* room for chevron */
+    padding-right: 2.4rem;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.85rem center;
+    background-size: 1rem;
+    /* keep glass fill under the chevron */
+    background-color: var(--auth-control-bg);
+}
+
+html[data-theme="light"] .auth-shell select.input {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+}
+
+.auth-shell textarea.input {
+    height: auto;
+    min-height: 5.5rem;
+    padding: 0.85rem 0.9rem;
+    resize: vertical;
+    line-height: 1.45;
+}
+
+.auth-shell .field.has-icon textarea.input {
+    padding-left: 2.75rem;
+    /* keep first line clear of the top-pinned icon */
+    padding-top: 0.85rem;
+}
+
+.auth-shell .input:focus,
+.auth-shell select.input:focus,
+.auth-shell textarea.input:focus {
+    outline: none;
+    border-color: color-mix(in srgb, var(--q-color-starlight-blue) 55%, transparent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--q-color-starlight-blue) 22%, transparent);
+}
+
+/* Buttons match control height */
+.auth-shell .btn-primary,
+.auth-shell .btn-starlight,
+.auth-shell .btn-outline,
+.auth-shell .btn-ghost,
+.auth-shell .btn-secondary {
+    box-sizing: border-box;
+    height: var(--auth-control-h);
+    min-height: var(--auth-control-h);
+    padding-block: 0;
+    padding-inline: 1.25rem;
+    display: inline-flex;
     align-items: center;
     justify-content: center;
-    padding: 1rem;
-    background: #0f172a;
-    color: #e5e7eb;
+    gap: 0.4rem;
+    border-radius: var(--auth-control-radius);
+    font-size: 0.9375rem;
+    line-height: 1;
 }
 
-@media (prefers-color-scheme: light) {
-    .auth-page-container {
-        background: #f8fafc;
-        color: #1e293b;
-    }
-}
-
-html[data-theme="light"] .auth-page-container {
-    background: #f8fafc;
-    color: #1e293b;
-}
-
-/* Auth card */
-.auth-card {
-    padding: 1.5rem;
-    border-radius: 1rem;
-    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
-    background: rgba(30, 41, 59, 0.8);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    min-height: 24rem;
-}
-
-@media (prefers-color-scheme: light) {
-    .auth-card {
-        background: #ffffff;
-        border-color: #e2e8f0;
-    }
-}
-
-html[data-theme="light"] .auth-card {
-    background: #ffffff;
-    border-color: #e2e8f0;
-}
-
-.auth-card-title {
-    font-size: 1.25rem;
-    font-weight: 600;
-    margin-bottom: 0.5rem;
-    color: #ffffff;
-}
-
-@media (prefers-color-scheme: light) {
-    .auth-card-title {
-        color: #1e293b;
-    }
-}
-
-html[data-theme="light"] .auth-card-title {
-    color: #1e293b;
-}
-
-.auth-card-text {
-    font-size: 0.875rem;
-    margin-bottom: 1rem;
-    color: #9ca3af;
-}
-
-@media (prefers-color-scheme: light) {
-    .auth-card-text {
-        color: #6b7280;
-    }
-}
-
-html[data-theme="light"] .auth-card-text {
-    color: #6b7280;
-}
-
-.auth-card-label {
-    font-size: 0.875rem;
-    display: block;
-    margin-bottom: 0.5rem;
-    color: #9ca3af;
-}
-
-@media (prefers-color-scheme: light) {
-    .auth-card-label {
-        color: #4b5563;
-    }
-}
-
-html[data-theme="light"] .auth-card-label {
-    color: #4b5563;
-}
-
-.auth-card-input {
+.auth-shell .btn-starlight,
+.auth-shell .btn-primary {
     width: 100%;
-    padding: 0.5rem 0.75rem;
-    margin-bottom: 0.75rem;
-    border-radius: 0.5rem;
-    background: rgba(0, 0, 0, 0.2);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    color: #e5e7eb;
 }
 
-@media (prefers-color-scheme: light) {
-    .auth-card-input {
-        background: #f1f5f9;
-        border-color: #e2e8f0;
-        color: #334155;
-    }
+.auth-actions .btn-primary {
+    flex: 1 1 auto;
+    width: auto;
 }
 
-html[data-theme="light"] .auth-card-input {
-    background: #f1f5f9;
-    border-color: #e2e8f0;
-    color: #334155;
+.auth-actions .btn-outline {
+    flex: 0 0 auto;
+    min-width: 5.5rem;
 }
 
-.auth-card-highlight {
-    margin-top: 1rem;
-    font-size: 0.75rem;
+/* Saved-wallet row: select + delete share height */
+.auth-shell .field.has-icon.flex-1 {
+    min-width: 0;
+}
+
+.auth-shell .flex.gap-2.items-center > .btn-ghost {
+    height: var(--auth-control-h);
+    width: var(--auth-control-h);
+    min-width: var(--auth-control-h);
+    padding: 0;
+    flex-shrink: 0;
+}
+
+.auth-steps {
+    margin: 0;
+    padding-left: 1.15rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+}
+
+.auth-challenge {
+    padding: 0.85rem 1rem;
+    border-radius: var(--q-radius-lg, 0.5rem);
+    border: 1px dashed color-mix(in srgb, var(--q-color-starlight-blue) 35%, transparent);
+    background: color-mix(in srgb, var(--q-color-starlight-blue) 8%, transparent);
+}
+
+.auth-challenge-nonce {
+    display: block;
     word-break: break-all;
-    padding: 0.75rem;
+    color: var(--q-text-primary, #f1f5f9);
+}
+
+html[data-theme="light"] .auth-challenge-nonce {
+    color: var(--q-text-primary, #1c1917);
+}
+
+.auth-qr {
+    background: #fff;
     border-radius: 0.5rem;
-    background: rgba(0, 0, 0, 0.2);
-    border: 1px dashed rgba(255, 255, 255, 0.2);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
 }
 
-@media (prefers-color-scheme: light) {
-    .auth-card-highlight {
-        background: #f1f5f9;
-        border-color: #cbd5e1;
-    }
+.auth-key-preview {
+    padding: 0.75rem;
+    border-radius: var(--q-radius-md, 0.375rem);
+    border: 1px dashed color-mix(in srgb, #fff 18%, transparent);
+    background: color-mix(in srgb, #000 20%, transparent);
+    word-break: break-all;
 }
 
-html[data-theme="light"] .auth-card-highlight {
+html[data-theme="light"] .auth-key-preview {
     background: #f1f5f9;
     border-color: #cbd5e1;
 }
 
-.auth-card-qr-bg {
-    background: #f8fafc;
-}
-
-@media (prefers-color-scheme: light) {
-    .auth-card-qr-bg {
-        background: #f1f5f9;
-    }
-}
-
-html[data-theme="light"] .auth-card-qr-bg {
-    background: #f1f5f9;
-}
-
-/* Auth tabs */
-.auth-tab {
-    padding: 0.25rem 0.75rem;
-    border-radius: 9999px;
-    border: 1px solid;
-    font-size: 0.875rem;
+.auth-inline-link {
+    background: none;
+    border: none;
+    padding: 0;
+    color: var(--q-color-starlight-blue, #5ce1ff);
     cursor: pointer;
+    text-decoration: underline;
+    text-underline-offset: 2px;
 }
 
-.auth-tab-active {
-    background: #059669;
-    color: #ffffff;
-    border-color: #059669;
+.auth-inline-link:hover {
+    color: var(--q-color-starlight-peach, #ffb38a);
 }
 
-.auth-tab-active-wallet {
-    background: #d97706;
-    color: #ffffff;
-    border-color: #d97706;
-}
-
-.auth-tab-inactive {
-    border-color: #475569;
-    color: #94a3b8;
-}
-
-@media (prefers-color-scheme: light) {
-    .auth-tab-inactive {
-        border-color: #cbd5e1;
-        color: #64748b;
-    }
-}
-
-html[data-theme="light"] .auth-tab-inactive {
-    border-color: #cbd5e1;
-    color: #64748b;
-}
-
-/* Auth status toast */
-.auth-status-toast {
-    position: fixed;
-    bottom: 1rem;
-    left: 50%;
-    transform: translateX(-50%);
-    background: #1e293b;
-    color: #ffffff;
-    padding: 0.5rem 1rem;
-    border-radius: 9999px;
-    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
-    font-size: 0.875rem;
-}
-
+/* form-input / form-select legacy (used outside auth) */
 /* Quantum CSS Design Token Mapping */
 /* This file maps Tailwind utility classes to Quantum CSS design tokens */
 
@@ -643,6 +787,20 @@ html[data-theme="light"] .auth-tab-inactive {
    Header nav polish — thinner font, icon logo, animated underline
    ================================================================ */
 
+/*
+ * Quantum ≤640px shrinks the spacing scale (e.g. --q-space-10 2.5rem→1.75rem,
+ * --q-space-16 4rem→3rem). That is fine for padding/gap density, but h-10 / h-16
+ * and search-input heights ride the same tokens — controls clip and the header
+ * shell (fixed 4rem) no longer matches the inner nav row. Pin control heights.
+ */
+@media (max-width: 640px) {
+    :root {
+        --q-space-10: 2.5rem; /* h-10 / w-10 control size */
+        --q-space-11: 2.75rem; /* search-input default height */
+        --q-space-16: 4rem; /* h-16 header / footer row */
+    }
+}
+
 /* Thinner menu font (quantum default is 600) */
 .starlight-nav .nav-link {
     font-weight: 400;
@@ -655,6 +813,9 @@ html[data-theme="light"] .auth-tab-inactive {
     height: 1.75rem;
     background: linear-gradient(135deg, #ffb38a 40%, #00d4ff 100%);
     transition: transform 0.2s ease;
+    flex-shrink: 0;
+    display: inline-block;
+    vertical-align: middle;
 }
 .group:hover .header-logo-icon {
     transform: scale(1.08);
@@ -694,13 +855,22 @@ html[data-theme="light"] .auth-tab-inactive {
     border: 0 !important;
 }
 
+/*
+ * Gradient brand wordmark — keep vertically centered next to the icon.
+ * Older padding-bottom / margin-bottom "descender clip" hacks offset the
+ * baseline and misaligned the logo + footer text on mobile.
+ */
 .text-gradient-starlight {
     background: linear-gradient(135deg, #ffb38a 40%, #00d4ff 100%) !important;
     -webkit-background-clip: text !important;
     -webkit-text-fill-color: transparent !important;
     background-clip: text !important;
-    padding-bottom: 4px;
-    margin-bottom: -2px;
+    /* Extra line-box room so gradient glyphs don't clip; no baseline shift */
+    line-height: 1.15;
+    padding: 0;
+    margin: 0;
+    display: inline-block;
+    vertical-align: middle;
 }
 
 /* ================================================================
@@ -1525,6 +1695,836 @@ html[data-theme="light"] .contract-success-btn {
 html[data-theme="light"] .contract-success-btn-done {
     background: #059669;
     color: #ffffff;
+}
+
+/* ── WishChat nanobot (replaces classic Inscribe form) ─────────────── */
+.wish-chat-modal {
+    /* Shared draft control metrics — keep input/select/button heights aligned */
+    --wish-ctrl-h: 2.25rem;
+    --wish-ctrl-radius: 0.5rem;
+    --wish-ctrl-pad-x: 0.625rem;
+    --wish-ctrl-font: 0.8125rem;
+    --wish-ctrl-line: 1.25;
+    --wish-ctrl-border: rgba(255, 255, 255, 0.12);
+    --wish-ctrl-bg: rgba(0, 0, 0, 0.25);
+    --wish-ctrl-fg: #e5e7eb;
+    --wish-ctrl-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+
+    width: min(52rem, 96vw);
+    max-width: 52rem;
+    height: min(36rem, 90vh);
+    max-height: 90vh;
+    padding: 0 !important; /* beat .create-contract-modal padding */
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    position: relative;
+    box-sizing: border-box;
+    margin: 0;
+}
+
+/*
+ * Quantum sets `header { text-align: center; margin-bottom: 30px }` which
+ * blows open a gap under the WishBot title bar and can shift brand text.
+ */
+.wish-chat-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.875rem 1rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    flex-shrink: 0;
+    margin: 0 !important;
+    text-align: left !important;
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 3.25rem;
+}
+
+.wish-chat-title {
+    margin: 0;
+    line-height: 1.2;
+    text-align: left;
+}
+
+.wish-chat-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: 1fr minmax(14rem, 17rem);
+    gap: 0;
+    overflow: hidden;
+}
+
+.wish-chat-messages {
+    overflow-y: auto;
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    min-height: 0;
+}
+
+.wish-chat-row {
+    display: flex;
+    align-items: flex-end;
+    gap: 0.5rem;
+    max-width: 100%;
+}
+
+.wish-chat-row-user {
+    justify-content: flex-end;
+}
+
+.wish-chat-row-bot {
+    justify-content: flex-start;
+}
+
+.wish-chat-avatar {
+    width: 1.75rem;
+    height: 1.75rem;
+    border-radius: 9999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.wish-chat-avatar-bot {
+    background: rgba(99, 102, 241, 0.25);
+    color: #a5b4fc;
+    border: 1px solid rgba(129, 140, 248, 0.35);
+}
+
+.wish-chat-avatar-user {
+    background: rgba(16, 185, 129, 0.2);
+    color: #6ee7b7;
+    border: 1px solid rgba(52, 211, 153, 0.35);
+}
+
+.wish-chat-bubble {
+    max-width: min(28rem, 85%);
+    padding: 0.625rem 0.875rem;
+    border-radius: 0.875rem;
+    font-size: 0.875rem;
+    line-height: 1.45;
+    word-break: break-word;
+}
+
+.wish-chat-bubble-bot {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    color: #e5e7eb;
+    border-bottom-left-radius: 0.25rem;
+}
+
+.wish-chat-bubble-user {
+    background: rgba(79, 70, 229, 0.55);
+    border: 1px solid rgba(129, 140, 248, 0.4);
+    color: #fff;
+    border-bottom-right-radius: 0.25rem;
+}
+
+.wish-chat-bubble-error {
+    border-color: rgba(248, 113, 113, 0.45);
+    background: rgba(127, 29, 29, 0.35);
+}
+
+.wish-chat-bubble-success {
+    border-color: rgba(52, 211, 153, 0.4);
+    background: rgba(6, 78, 59, 0.35);
+}
+
+.wish-chat-md.markdown-content {
+    font-size: 0.875rem;
+}
+
+.wish-chat-md .md-p {
+    margin: 0.25rem 0;
+}
+
+.wish-chat-md .md-p:first-child {
+    margin-top: 0;
+}
+
+.wish-chat-md .md-p:last-child {
+    margin-bottom: 0;
+}
+
+.wish-chat-msg-image {
+    display: block;
+    max-width: 12rem;
+    max-height: 9rem;
+    border-radius: 0.5rem;
+    margin-bottom: 0.35rem;
+    object-fit: cover;
+}
+
+.wish-chat-draft {
+    border-left: 1px solid rgba(255, 255, 255, 0.1);
+    padding: 0.75rem 1rem;
+    overflow-x: hidden;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    background: rgba(0, 0, 0, 0.15);
+    min-height: 0;
+    min-width: 0;
+    box-sizing: border-box;
+    -webkit-overflow-scrolling: touch;
+}
+
+.wish-chat-draft-title {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #9ca3af;
+    font-weight: 600;
+}
+
+.wish-chat-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    font-size: 0.75rem;
+    color: #9ca3af;
+    min-width: 0;
+}
+
+.wish-chat-field > span {
+    line-height: 1.2;
+}
+
+/* Base shared chrome for all draft controls */
+.wish-chat-field input,
+.wish-chat-field textarea,
+.wish-chat-field select,
+.wish-chat-wallet,
+.wish-chat-chip,
+.wish-chat-inscribe-btn {
+    box-sizing: border-box;
+    margin: 0;
+    font-family: inherit;
+    border-radius: var(--wish-ctrl-radius);
+    border: 1px solid var(--wish-ctrl-border);
+    font-size: var(--wish-ctrl-font);
+    line-height: var(--wish-ctrl-line);
+    outline: none;
+}
+
+.wish-chat-field input,
+.wish-chat-field textarea,
+.wish-chat-field select {
+    width: 100%;
+    background: var(--wish-ctrl-bg);
+    color: var(--wish-ctrl-fg);
+    padding: 0 var(--wish-ctrl-pad-x);
+}
+
+/* Single-line controls: identical height */
+.wish-chat-field input,
+.wish-chat-field select {
+    height: var(--wish-ctrl-h);
+    min-height: var(--wish-ctrl-h);
+    max-height: var(--wish-ctrl-h);
+}
+
+/* Textarea: same chrome, multi-line height only */
+.wish-chat-field textarea {
+    height: auto;
+    min-height: calc(var(--wish-ctrl-h) * 2 + 0.25rem);
+    padding: 0.45rem var(--wish-ctrl-pad-x);
+    resize: vertical;
+    line-height: 1.4;
+}
+
+/* Kill native select chrome so OS dropdowns match inputs.
+   background-repeat MUST stay no-repeat — otherwise the chevron tiles. */
+.wish-chat-field select {
+    -webkit-appearance: none !important;
+    -moz-appearance: none !important;
+    appearance: none !important;
+    cursor: pointer;
+    padding-right: 1.75rem;
+    background-color: var(--wish-ctrl-bg);
+    background-image: var(--wish-ctrl-chevron);
+    background-repeat: no-repeat !important;
+    background-position: right 0.5rem center !important;
+    background-size: 0.875rem 0.875rem !important;
+    /* Prevent flex stretch from turning the chevron into a stripe */
+    align-self: flex-end;
+    flex: 0 0 auto;
+}
+
+.wish-chat-field input:focus,
+.wish-chat-field textarea:focus,
+.wish-chat-field select:focus {
+    border-color: rgba(129, 140, 248, 0.55);
+    box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.25);
+}
+
+.wish-chat-field input:disabled,
+.wish-chat-field textarea:disabled,
+.wish-chat-field select:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.wish-chat-field-row {
+    display: flex;
+    align-items: flex-end;
+    gap: 0.5rem;
+}
+
+/* Unit select: fixed compact width, same height as price input */
+.wish-chat-unit {
+    width: 4.75rem;
+    flex: 0 0 4.75rem;
+}
+
+.wish-chat-unit select {
+    text-align: left;
+}
+
+/* Funding select stays full width of draft column at same height */
+.wish-chat-field select {
+    text-overflow: ellipsis;
+}
+
+.wish-chat-hint {
+    font-size: 0.7rem;
+    color: #6b7280;
+    line-height: 1.3;
+}
+
+/* Single elegant image control: tile is preview + add/replace */
+.wish-chat-image-picker {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    width: fit-content;
+}
+
+.wish-chat-modal button.wish-chat-image-tile {
+    appearance: none;
+    -webkit-appearance: none;
+    box-sizing: border-box;
+    width: 4.5rem;
+    height: 4.5rem;
+    margin: 0;
+    padding: 0;
+    border-radius: var(--wish-ctrl-radius);
+    border: 1px dashed var(--wish-ctrl-border);
+    background: rgba(255, 255, 255, 0.04);
+    color: #9ca3af;
+    cursor: pointer;
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.2rem;
+    font-size: 0.7rem;
+    font-family: inherit;
+    line-height: 1;
+    overflow: hidden;
+    transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+
+.wish-chat-modal button.wish-chat-image-tile:hover:not(:disabled) {
+    border-color: rgba(129, 140, 248, 0.55);
+    background: rgba(99, 102, 241, 0.1);
+    color: #c7d2fe;
+}
+
+.wish-chat-modal button.wish-chat-image-tile:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+.wish-chat-modal button.wish-chat-image-tile.has-image {
+    border-style: solid;
+    padding: 0;
+}
+
+.wish-chat-image-tile-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.wish-chat-modal button.wish-chat-image-clear {
+    appearance: none;
+    -webkit-appearance: none;
+    position: absolute;
+    top: -0.35rem;
+    right: -0.35rem;
+    width: 1.25rem;
+    height: 1.25rem;
+    margin: 0;
+    padding: 0;
+    border-radius: 9999px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: rgba(15, 23, 42, 0.9);
+    color: #e5e7eb;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+
+.wish-chat-modal button.wish-chat-image-clear:hover {
+    background: rgba(127, 29, 29, 0.95);
+    border-color: rgba(248, 113, 113, 0.5);
+    color: #fecaca;
+}
+
+.wish-chat-wallet {
+    min-height: var(--wish-ctrl-h);
+    display: flex;
+    align-items: center;
+    font-size: 0.7rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    word-break: break-all;
+    padding: 0.35rem var(--wish-ctrl-pad-x);
+    background: var(--wish-ctrl-bg);
+    border-color: rgba(255, 255, 255, 0.08);
+    color: #d1d5db;
+    line-height: 1.3;
+}
+
+.wish-chat-wallet-missing {
+    color: #f87171;
+    border-color: rgba(248, 113, 113, 0.35);
+}
+
+.wish-chat-draft-status {
+    font-size: 0.75rem;
+    margin-top: 0.15rem;
+}
+
+.wish-chat-ready {
+    color: #6ee7b7;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+.wish-chat-missing {
+    color: #fbbf24;
+}
+
+.wish-chat-error {
+    font-size: 0.75rem;
+    color: #fca5a5;
+    background: rgba(127, 29, 29, 0.35);
+    border: 1px solid rgba(248, 113, 113, 0.35);
+    border-radius: var(--wish-ctrl-radius);
+    padding: 0.4rem var(--wish-ctrl-pad-x);
+}
+
+/* Chips match single-line control height.
+   Higher specificity beats .create-contract-modal button[type="button"]. */
+.wish-chat-modal button.wish-chat-chip {
+    appearance: none;
+    -webkit-appearance: none;
+    box-sizing: border-box;
+    height: var(--wish-ctrl-h);
+    min-height: var(--wish-ctrl-h);
+    max-height: var(--wish-ctrl-h);
+    padding: 0 0.65rem;
+    border-radius: var(--wish-ctrl-radius);
+    border: 1px solid var(--wish-ctrl-border);
+    background: rgba(255, 255, 255, 0.08);
+    color: #e5e7eb;
+    font-size: var(--wish-ctrl-font);
+    font-family: inherit;
+    line-height: 1;
+    cursor: pointer;
+    text-align: center;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    white-space: nowrap;
+}
+
+.wish-chat-modal button.wish-chat-chip:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.14);
+}
+
+.wish-chat-modal button.wish-chat-chip:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.wish-chat-modal button.wish-chat-chip-muted {
+    color: #9ca3af;
+}
+
+/* Primary action: same height family as controls */
+.wish-chat-modal button.wish-chat-inscribe-btn {
+    appearance: none;
+    -webkit-appearance: none;
+    box-sizing: border-box;
+    height: var(--wish-ctrl-h);
+    min-height: var(--wish-ctrl-h);
+    max-height: var(--wish-ctrl-h);
+    width: 100%;
+    padding: 0 0.75rem;
+    border-radius: var(--wish-ctrl-radius);
+    border: none;
+    background: #4f46e5;
+    color: #fff;
+    font-size: var(--wish-ctrl-font);
+    font-family: inherit;
+    font-weight: 600;
+    line-height: 1;
+    cursor: pointer;
+    margin-top: 0.15rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.wish-chat-modal button.wish-chat-inscribe-btn:hover:not(:disabled) {
+    background: #4338ca;
+}
+
+.wish-chat-modal button.wish-chat-inscribe-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Done row: both actions share equal width + same height */
+.wish-chat-modal .wish-chat-done-actions {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.wish-chat-modal .wish-chat-done-actions .wish-chat-chip,
+.wish-chat-modal .wish-chat-done-actions .wish-chat-inscribe-btn {
+    flex: 1 1 0;
+    width: auto;
+    margin-top: 0;
+}
+
+.wish-chat-composer {
+    display: flex;
+    align-items: flex-end;
+    gap: 0.5rem;
+    padding: 0.75rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    flex-shrink: 0;
+    background: rgba(0, 0, 0, 0.12);
+    margin: 0 !important; /* beat quantum footer/header margins if any */
+    box-sizing: border-box;
+    width: 100%;
+}
+
+.wish-chat-input {
+    flex: 1;
+    resize: none;
+    box-sizing: border-box;
+    min-height: var(--wish-ctrl-h);
+    height: var(--wish-ctrl-h);
+    max-height: 6rem;
+    border-radius: 0.65rem;
+    border: 1px solid var(--wish-ctrl-border);
+    background: var(--wish-ctrl-bg);
+    color: var(--wish-ctrl-fg);
+    padding: 0.45rem 0.75rem;
+    font-size: 0.875rem;
+    line-height: 1.35;
+    font-family: inherit;
+    outline: none;
+}
+
+.wish-chat-input:focus {
+    border-color: rgba(129, 140, 248, 0.55);
+    box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.25);
+}
+
+.wish-chat-input:disabled {
+    opacity: 0.6;
+}
+
+.wish-chat-icon-btn,
+.wish-chat-send-btn {
+    width: var(--wish-ctrl-h);
+    height: var(--wish-ctrl-h);
+    min-width: var(--wish-ctrl-h);
+    min-height: var(--wish-ctrl-h);
+    border-radius: 0.65rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    cursor: pointer;
+    border: 1px solid var(--wish-ctrl-border);
+    background: rgba(255, 255, 255, 0.06);
+    color: #e5e7eb;
+    padding: 0;
+}
+
+.wish-chat-send-btn {
+    background: #4f46e5;
+    border-color: transparent;
+    color: #fff;
+}
+
+.wish-chat-send-btn:hover:not(:disabled) {
+    background: #4338ca;
+}
+
+.wish-chat-icon-btn:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.12);
+}
+
+.wish-chat-icon-btn:disabled,
+.wish-chat-send-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.wish-chat-drop-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 20;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: rgba(49, 46, 129, 0.72);
+    color: #e0e7ff;
+    border-radius: 12px;
+    border: 2px dashed rgba(165, 180, 252, 0.7);
+    pointer-events: none;
+}
+
+/*
+ * Mobile WishBot — full-viewport stacked layout.
+ *
+ * Previous `grid-template-rows: 1fr auto` + `max-height: 42%` on the draft
+ * sized the draft *row* to full content height while the draft *element*
+ * was capped, leaving a large empty gap above the composer and clipping
+ * Funding / Image / Wallet / Inscribe. Flex column is more predictable.
+ */
+@media (max-width: 720px) {
+    .wish-chat-modal {
+        width: 100vw;
+        width: 100dvw;
+        height: 100vh;
+        height: 100dvh;
+        max-width: 100vw;
+        max-height: 100vh;
+        max-height: 100dvh;
+        border-radius: 0;
+        /* iOS safe areas */
+        padding-top: env(safe-area-inset-top, 0) !important;
+        padding-bottom: env(safe-area-inset-bottom, 0) !important;
+        padding-left: env(safe-area-inset-left, 0) !important;
+        padding-right: env(safe-area-inset-right, 0) !important;
+    }
+
+    .wish-chat-header {
+        margin: 0 !important;
+        text-align: left !important;
+        /* Keep title + close on one row, vertically centered */
+        min-height: 3.5rem;
+        padding: 0.75rem 1rem;
+    }
+
+    .wish-chat-body {
+        display: flex;
+        flex-direction: column;
+        flex: 1 1 auto;
+        min-height: 0;
+        grid-template-columns: none;
+        grid-template-rows: none;
+        overflow: hidden;
+    }
+
+    .wish-chat-messages {
+        flex: 1 1 42%;
+        min-height: 7rem;
+        max-height: none;
+        overflow-x: hidden;
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+        padding: 0.875rem 1rem;
+    }
+
+    .wish-chat-draft {
+        flex: 1 1 48%;
+        min-height: 11rem;
+        max-height: none; /* fill remaining space; scroll inside */
+        border-left: none;
+        border-top: 1px solid rgba(255, 255, 255, 0.1);
+        overflow-x: hidden;
+        overflow-y: auto;
+        padding: 0.75rem 1rem 1rem;
+        /* Avoid labels/fields painting under sibling chat on some WebKits */
+        position: relative;
+        z-index: 1;
+        background-clip: padding-box;
+    }
+
+    .wish-chat-field,
+    .wish-chat-field-row,
+    .wish-chat-draft-title,
+    .wish-chat-draft-status {
+        min-width: 0;
+        max-width: 100%;
+    }
+
+    .wish-chat-field > span {
+        display: block;
+        overflow: visible;
+        text-overflow: clip;
+        white-space: normal;
+    }
+
+    .wish-chat-field input,
+    .wish-chat-field textarea,
+    .wish-chat-field select,
+    .wish-chat-wallet {
+        max-width: 100%;
+    }
+
+    .wish-chat-composer {
+        flex: 0 0 auto;
+        position: relative;
+        z-index: 2;
+        /* Slightly tighter on small phones */
+        padding: 0.625rem 0.75rem calc(0.625rem + env(safe-area-inset-bottom, 0));
+    }
+
+    .wish-chat-bubble {
+        max-width: min(28rem, 92%);
+    }
+
+    /* Unit select must stay a compact fixed-width control */
+    .wish-chat-unit {
+        width: 4.75rem;
+        flex: 0 0 4.75rem;
+        max-width: 4.75rem;
+    }
+
+    .wish-chat-unit select {
+        width: 100%;
+        height: var(--wish-ctrl-h) !important;
+        min-height: var(--wish-ctrl-h) !important;
+        max-height: var(--wish-ctrl-h) !important;
+    }
+}
+
+/* Close button: don't inherit create-contract gray chrome that mis-sizes icons */
+.wish-chat-modal .create-contract-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.25rem;
+    height: 2.25rem;
+    padding: 0;
+    margin: 0;
+    border: none;
+    background: transparent;
+    border-radius: 0.5rem;
+    flex-shrink: 0;
+    cursor: pointer;
+    line-height: 1;
+}
+
+.wish-chat-modal .create-contract-close:hover {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+html[data-theme="light"] .wish-chat-bubble-bot {
+    background: #f3f4f6;
+    border-color: #e5e7eb;
+    color: #111827;
+}
+
+html[data-theme="light"] .wish-chat-draft {
+    background: rgba(0, 0, 0, 0.03);
+    border-left-color: rgba(0, 0, 0, 0.08);
+    border-top-color: rgba(0, 0, 0, 0.08);
+}
+
+html[data-theme="light"] .wish-chat-modal {
+    --wish-ctrl-border: #d1d5db;
+    --wish-ctrl-bg: #fff;
+    --wish-ctrl-fg: #111827;
+    --wish-ctrl-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+}
+
+html[data-theme="light"] .wish-chat-field input,
+html[data-theme="light"] .wish-chat-field textarea,
+html[data-theme="light"] .wish-chat-field select,
+html[data-theme="light"] .wish-chat-input {
+    background: var(--wish-ctrl-bg);
+    border-color: var(--wish-ctrl-border);
+    color: var(--wish-ctrl-fg);
+}
+
+html[data-theme="light"] .wish-chat-field select {
+    background-color: var(--wish-ctrl-bg);
+    background-image: var(--wish-ctrl-chevron);
+    background-repeat: no-repeat !important;
+    background-position: right 0.5rem center !important;
+    background-size: 0.875rem 0.875rem !important;
+}
+
+html[data-theme="light"] .wish-chat-modal .create-contract-close:hover {
+    background: rgba(0, 0, 0, 0.05);
+}
+
+html[data-theme="light"] .wish-chat-wallet {
+    background: #f9fafb;
+    border-color: #e5e7eb;
+    color: #374151;
+}
+
+html[data-theme="light"] .wish-chat-composer {
+    background: #f9fafb;
+    border-top-color: #e5e7eb;
+}
+
+html[data-theme="light"] .wish-chat-header {
+    border-bottom-color: #e5e7eb;
+}
+
+html[data-theme="light"] .wish-chat-modal button.wish-chat-chip {
+    background: #fff;
+    border-color: #d1d5db;
+    color: #374151;
+}
+
+html[data-theme="light"] .wish-chat-modal button.wish-chat-image-tile {
+    background: #f9fafb;
+    border-color: #d1d5db;
+    color: #6b7280;
+}
+
+html[data-theme="light"] .wish-chat-modal button.wish-chat-image-tile:hover:not(:disabled) {
+    background: #eef2ff;
+    border-color: #a5b4fc;
+    color: #4338ca;
+}
+
+html[data-theme="light"] .wish-chat-modal button.wish-chat-image-clear {
+    background: #fff;
+    border-color: #d1d5db;
+    color: #374151;
+}
+
+html[data-theme="light"] .wish-chat-icon-btn {
+    background: #fff;
+    border-color: #d1d5db;
+    color: #374151;
 }
 
 @media (prefers-color-scheme: light) {
@@ -5428,6 +6428,209 @@ html[data-theme="light"] .deliverables-markdown a {
     color: #2563eb;
 }
 
+/* Shared GFM markdown (Discover, inscription modal, deliverables, submissions) */
+.markdown-content {
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: auto;
+    line-height: 1.6;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+}
+
+.markdown-content > *:first-child {
+    margin-top: 0;
+}
+
+.markdown-content > *:last-child {
+    margin-bottom: 0;
+}
+
+.markdown-content .md-h1,
+.markdown-content .md-h2,
+.markdown-content .md-h3,
+.markdown-content .md-h4 {
+    font-weight: 700;
+    line-height: 1.3;
+    margin: 0.9em 0 0.4em;
+    color: inherit;
+}
+
+.markdown-content .md-h1 { font-size: 1.35rem; }
+.markdown-content .md-h2 { font-size: 1.15rem; }
+.markdown-content .md-h3 { font-size: 1.05rem; }
+.markdown-content .md-h4 { font-size: 1rem; }
+
+.markdown-content--compact .md-h1 { font-size: 1.1rem; }
+.markdown-content--compact .md-h2 { font-size: 1rem; }
+.markdown-content--compact .md-h3,
+.markdown-content--compact .md-h4 { font-size: 0.95rem; }
+
+.markdown-content .md-p {
+    margin: 0.5em 0;
+}
+
+.markdown-content .md-ul,
+.markdown-content .md-ol {
+    margin: 0.5em 0;
+    padding-left: 1.35rem;
+}
+
+.markdown-content .md-ul { list-style-type: disc; }
+.markdown-content .md-ol { list-style-type: decimal; }
+
+.markdown-content .md-li {
+    margin: 0.2em 0;
+}
+
+.markdown-content .md-a {
+    color: #60a5fa;
+    text-decoration: underline;
+    word-break: break-all;
+}
+
+html[data-theme="light"] .markdown-content .md-a {
+    color: #2563eb;
+}
+
+@media (prefers-color-scheme: light) {
+    html:not([data-theme="dark"]) .markdown-content .md-a {
+        color: #2563eb;
+    }
+}
+
+.markdown-content .md-code-inline {
+    padding: 0.1em 0.35em;
+    border-radius: 0.25rem;
+    background: rgba(107, 114, 128, 0.28);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 0.875em;
+}
+
+.markdown-content .md-pre {
+    background: #111827;
+    color: #f3f4f6;
+    border-radius: 0.5rem;
+    padding: 0.75rem 1rem;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    margin: 0.65em 0;
+    max-width: 100%;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    font-size: 0.8rem;
+    line-height: 1.5;
+}
+
+.markdown-content .md-pre .md-code-block,
+.markdown-content .md-pre code {
+    background: transparent;
+    padding: 0;
+    border-radius: 0;
+    font-size: inherit;
+    color: inherit;
+    white-space: pre;
+    word-break: normal;
+    overflow-wrap: normal;
+}
+
+html[data-theme="light"] .markdown-content .md-pre {
+    background: #1f2937;
+    color: #e5e7eb;
+}
+
+@media (prefers-color-scheme: light) {
+    html:not([data-theme="dark"]) .markdown-content .md-pre {
+        background: #1f2937;
+        color: #e5e7eb;
+    }
+}
+
+.markdown-content .md-table-wrap {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    margin: 0.65em 0;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 0.5rem;
+}
+
+html[data-theme="light"] .markdown-content .md-table-wrap {
+    border-color: rgba(0, 0, 0, 0.1);
+}
+
+@media (prefers-color-scheme: light) {
+    html:not([data-theme="dark"]) .markdown-content .md-table-wrap {
+        border-color: rgba(0, 0, 0, 0.1);
+    }
+}
+
+.markdown-content .md-table {
+    width: 100%;
+    min-width: 18rem;
+    border-collapse: collapse;
+    font-size: 0.875em;
+}
+
+.markdown-content .md-th,
+.markdown-content .md-td {
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    padding: 0.45rem 0.65rem;
+    text-align: left;
+    vertical-align: top;
+}
+
+html[data-theme="light"] .markdown-content .md-th,
+html[data-theme="light"] .markdown-content .md-td {
+    border-color: rgba(0, 0, 0, 0.1);
+}
+
+@media (prefers-color-scheme: light) {
+    html:not([data-theme="dark"]) .markdown-content .md-th,
+    html:not([data-theme="dark"]) .markdown-content .md-td {
+        border-color: rgba(0, 0, 0, 0.1);
+    }
+}
+
+.markdown-content .md-th {
+    font-weight: 700;
+    background: rgba(255, 255, 255, 0.06);
+}
+
+html[data-theme="light"] .markdown-content .md-th {
+    background: rgba(0, 0, 0, 0.04);
+}
+
+@media (prefers-color-scheme: light) {
+    html:not([data-theme="dark"]) .markdown-content .md-th {
+        background: rgba(0, 0, 0, 0.04);
+    }
+}
+
+.markdown-content .md-blockquote {
+    margin: 0.65em 0;
+    padding: 0.35em 0 0.35em 0.9em;
+    border-left: 3px solid rgba(96, 165, 250, 0.6);
+    color: inherit;
+    opacity: 0.9;
+}
+
+.markdown-content .md-hr {
+    margin: 1em 0;
+    border: 0;
+    border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+html[data-theme="light"] .markdown-content .md-hr {
+    border-top-color: rgba(0, 0, 0, 0.12);
+}
+
+.markdown-content .md-img {
+    max-width: 100%;
+    height: auto;
+    border-radius: 0.35rem;
+}
+
 /* Proof content styles */
 .deliverables-proof-btn {
     font-size: 0.875rem;
@@ -5576,11 +6779,13 @@ html[data-theme="light"] .deliverables-proof-content-box {
     }
 }
 
-/* Horizontal doc section chips on small screens */
+/* Horizontal doc section tab strip (all breakpoints) */
+.docs-tab-nav,
 .docs-mobile-nav {
     scrollbar-width: none;
     -ms-overflow-style: none;
 }
+.docs-tab-nav::-webkit-scrollbar,
 .docs-mobile-nav::-webkit-scrollbar {
     display: none;
 }
@@ -5661,17 +6866,16 @@ html[data-theme="dark"] .mcp-docs-content pre,
 }
 
 .block-hash-row {
-    display: flex;
-    align-items: flex-start;
-    gap: 0.5rem;
+    /* Inline flow keeps the copy control immediately after the hash text
+       (including when the hash wraps) instead of flex-growing it to the
+       far right of the contracts grid header. */
+    display: block;
     max-width: 100%;
     min-width: 0;
 }
 
 .block-hash-text {
-    flex: 1 1 0%;
-    min-width: 0;
-    max-width: 100%;
+    display: inline;
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
     overflow-wrap: anywhere;
     word-break: break-all;
@@ -5679,8 +6883,10 @@ html[data-theme="dark"] .mcp-docs-content pre,
 }
 
 .block-hash-copy {
+    display: inline-block;
+    vertical-align: text-top;
+    margin-left: 0.4rem;
     flex-shrink: 0;
-    margin-top: 0.15rem;
 }
 
 /* Modal: long wallet / payout addresses */
@@ -5721,6 +6927,68 @@ html[data-theme="dark"] .mcp-docs-content pre,
     display: block;
 }
 
+/*
+ * App header shell
+ * ----------------
+ * Quantum .nav-glass is sticky, but AppHeader previously used utility
+ * `fixed`, which pulled the bar out of flow. That made Blocks / Discover
+ * content start under the menubar on first paint.
+ *
+ * .app-header-shell is the single layout child pages mount: it reserves
+ * --app-header-height and sticks on scroll so content only passes under
+ * the glass bar after the user scrolls.
+ */
+:root {
+    --app-header-height: 4rem; /* matches h-16 nav row */
+}
+
+.app-header-shell {
+    position: sticky;
+    top: 0;
+    z-index: 1000; /* quantum nav-glass default; modals use 1100 */
+    width: 100%;
+    max-width: 100vw;
+    /* In-flow height so grid/pages push content below the bar */
+    height: var(--app-header-height);
+    flex-shrink: 0;
+}
+
+.app-header-shell > header.app-header-bar,
+.app-header-shell > header.nav-glass {
+    position: relative !important; /* override utility `fixed` / sticky on bar itself */
+    top: auto !important;
+    left: auto !important;
+    right: auto !important;
+    width: 100%;
+    height: var(--app-header-height);
+    max-width: 100vw;
+    overflow-x: clip;
+    z-index: auto;
+    /* nav-glass is flex-column; stretch children so the row can center */
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: center !important;
+    margin: 0 !important;
+}
+
+/* Fill the shell height and vertically center logo / hamburger */
+.app-header-shell .starlight-nav {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    height: 100%;
+    min-height: var(--app-header-height);
+}
+
+.app-header-shell .starlight-nav > .container,
+.app-header-shell .starlight-nav > .container.h-16 {
+    height: 100% !important;
+    min-height: var(--app-header-height);
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+}
+
 /* Keep fixed header within the viewport when page content would overflow */
 header.nav-glass {
     max-width: 100vw;
@@ -5750,44 +7018,6 @@ html[data-theme="dark"] .form-select {
     color: #e5e7eb !important;
     background-color: rgba(0, 0, 0, 0.2) !important;
     border-color: rgba(255, 255, 255, 0.1) !important;
-}
-
-html[data-theme="dark"] .auth-btn-clear {
-    color: #9ca3af !important;
-}
-html[data-theme="dark"] .auth-btn-clear:hover {
-    color: #d1d5db !important;
-}
-
-html[data-theme="dark"] .auth-page-container {
-    background: rgba(15, 23, 42, 0.8) !important;
-}
-html[data-theme="dark"] .auth-card {
-    background: rgba(30, 41, 59, 0.95) !important;
-    border-color: rgba(255, 255, 255, 0.1) !important;
-}
-html[data-theme="dark"] .auth-card-title {
-    color: #f1f5f9 !important;
-}
-html[data-theme="dark"] .auth-card-text {
-    color: #9ca3af !important;
-}
-html[data-theme="dark"] .auth-card-label {
-    color: #9ca3af !important;
-}
-html[data-theme="dark"] .auth-card-input {
-    color: #f1f5f9 !important;
-    background-color: rgba(0, 0, 0, 0.3) !important;
-    border-color: rgba(255, 255, 255, 0.1) !important;
-}
-html[data-theme="dark"] .auth-card-highlight {
-    color: #fbbf24 !important;
-}
-html[data-theme="dark"] .auth-card-qr-bg {
-    background: #ffffff !important;
-}
-html[data-theme="dark"] .auth-tab-inactive {
-    color: #9ca3af !important;
 }
 
 html[data-theme="dark"] .contract-card {
@@ -6127,7 +7357,7 @@ html[data-theme="dark"] .dark\:border-gray-600 { border-color: #475569 !importan
 }
 
 /* Constrain badges inside narrow block cards (w-40 = 160px, content = 128px).
-   Quantum 1.13.0 badges use uppercase + letter-spacing + 0.75rem padding
+   Quantum badges use uppercase + letter-spacing + 0.75rem padding
    which makes text like "NO INSCRIPTIONS" wider than the content area. */
 .w-40 .card .badge {
     letter-spacing: normal;
@@ -6135,7 +7365,7 @@ html[data-theme="dark"] .dark\:border-gray-600 { border-color: #475569 !importan
 }
 
 /* ================================================================
-   Missing utility classes in quantumcss 1.13.0
+   Missing utility classes in older quantumcss (kept for app-wide JSX)
    ================================================================ */
 
 /* Spacing: space-y-1, space-y-3, space-y-4, space-y-6, py-6, py-8 missing */
@@ -6152,6 +7382,12 @@ html[data-theme="dark"] .dark\:border-gray-600 { border-color: #475569 !importan
 /* Layout: whitespace-nowrap, shrink-0 missing */
 .whitespace-nowrap { white-space: nowrap; }
 .shrink-0 { flex-shrink: 0; }
+
+/* Typography helpers used on auth + elsewhere */
+.font-mono {
+    font-family: var(--q-font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
+}
+.break-all { word-break: break-all; }
 
 /* Opacity: opacity-75 missing */
 .opacity-75 { opacity: 0.75; }
@@ -6200,8 +7436,35 @@ footer.nav-glass {
     z-index: 0 !important;
     position: relative !important;
     flex-direction: row !important;
+    align-items: center !important;
+    justify-content: center !important;
     border-bottom: none !important;
     overflow: hidden;
+    min-height: 4rem;
+    height: 4rem;
+    box-sizing: border-box;
+    margin: 0 !important;
+}
+footer.nav-glass > .container {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+}
+footer.nav-glass .text-gradient-starlight,
+footer.nav-glass .header-logo-icon {
+    vertical-align: middle;
+}
+footer.nav-glass .nav-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+    padding-top: 0;
+    padding-bottom: 0;
 }
 /* Prevent hover from changing footer background (quantum nav-glass:hover
    sets background-color to --q-color-border-strong which looks wrong) */
@@ -6222,6 +7485,16 @@ html[data-theme="light"] footer.nav-glass:hover {
    ================================================================ */
 
 /* Position search icon inside .search-container (quantum only styles .search) */
+.search-container {
+    position: relative;
+    display: flex;
+    align-items: center;
+    width: 100%;
+    min-height: 2.5rem;
+    height: 2.5rem;
+    box-sizing: border-box;
+}
+
 .search-container .search-icon {
     position: absolute;
     left: 0.75rem;
@@ -6230,6 +7503,28 @@ html[data-theme="light"] footer.nav-glass:hover {
     color: var(--q-text-muted, #64748b);
     pointer-events: none;
     z-index: 1;
+}
+
+/* Inputs / selects fill the control height without padding clipping text.
+   Quantum .search-input sets height: var(--q-space-11) + padding 0.75rem,
+   which overflows when height is also forced to h-10 on mobile. */
+.search-container .search-input,
+.search-container select.search-input,
+.search-container input.search-input {
+    box-sizing: border-box !important;
+    width: 100%;
+    height: 100% !important;
+    min-height: 2.5rem;
+    max-height: 100%;
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+    padding-left: 0.75rem;
+    padding-right: 0.75rem;
+    line-height: 1.25;
+    display: flex;
+    align-items: center;
+    color: var(--q-text-primary, inherit);
+    font-size: 0.75rem;
 }
 
 /* Add left padding to input when sibling of search-icon */
@@ -6248,5 +7543,154 @@ html[data-theme="light"] footer.nav-glass:hover {
     background-position: right 0.5rem center;
     background-repeat: no-repeat;
     background-size: 1.25rem;
-    padding-right: 2rem;
+    padding-right: 2rem !important;
+    /* select can't use display:flex; vertical center via line-height */
+    display: block;
+    line-height: 2.5rem;
+}
+
+/* Discover primary actions — solid control chrome, theme-aware labels */
+.page-discover .discover-refresh-btn,
+.page-discover .discover-apply-btn {
+    box-sizing: border-box;
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    height: 2.5rem !important;
+    min-height: 2.5rem;
+    padding: 0 1.25rem !important;
+    font-size: 0.625rem !important; /* 10px */
+    font-weight: 900;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    line-height: 1;
+    white-space: nowrap;
+    border-radius: 0.75rem;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease, filter 0.15s ease, transform 0.15s ease;
+}
+
+.page-discover .discover-refresh-btn {
+    background: rgba(15, 23, 42, 0.06);
+    border: 1px solid rgba(15, 23, 42, 0.12);
+    color: var(--q-text-primary, #1e293b);
+    box-shadow: none;
+}
+
+.page-discover .discover-refresh-btn:hover:not(:disabled) {
+    background: rgba(15, 23, 42, 0.1);
+    border-color: var(--q-color-starlight-blue, #00d4ff);
+}
+
+.page-discover .discover-refresh-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+html[data-theme="dark"] .page-discover .discover-refresh-btn,
+.dark .page-discover .discover-refresh-btn {
+    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.12);
+    color: #f8fafc;
+}
+
+html[data-theme="dark"] .page-discover .discover-refresh-btn:hover:not(:disabled),
+.dark .page-discover .discover-refresh-btn:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.12);
+    border-color: var(--q-color-starlight-blue, #00d4ff);
+}
+
+@media (prefers-color-scheme: dark) {
+    html:not([data-theme="light"]) .page-discover .discover-refresh-btn {
+        background: rgba(255, 255, 255, 0.06);
+        border-color: rgba(255, 255, 255, 0.12);
+        color: #f8fafc;
+    }
+    html:not([data-theme="light"]) .page-discover .discover-refresh-btn:hover:not(:disabled) {
+        background: rgba(255, 255, 255, 0.12);
+        border-color: var(--q-color-starlight-blue, #00d4ff);
+    }
+}
+
+.page-discover .discover-apply-btn {
+    width: 100%;
+    background: linear-gradient(
+        135deg,
+        var(--q-color-starlight-peach, #ffb38a) 0%,
+        var(--q-color-starlight-blue, #00d4ff) 100%
+    );
+    border: none;
+    color: #0f172a;
+    box-shadow: 0 0 16px color-mix(in srgb, var(--q-color-starlight-blue, #00d4ff), transparent 70%);
+}
+
+.page-discover .discover-apply-btn:hover {
+    filter: brightness(1.06);
+}
+
+.page-discover .discover-apply-btn:active {
+    transform: scale(0.97);
+}
+
+@media (min-width: 768px) {
+    .page-discover .discover-apply-btn {
+        width: auto;
+    }
+}
+
+/* Sync chip: stack on very narrow phones so Refresh isn't crushed */
+.page-discover .discover-sync-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.75rem;
+    min-width: 0;
+}
+
+.page-discover .discover-sync-meta {
+    font-size: 0.625rem;
+    font-family: var(--q-font-mono, ui-monospace, monospace);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--q-text-muted, #64748b);
+    white-space: nowrap;
+}
+
+/* btn-primary lacks flex centering (unlike .btn / .btn-outline) — text
+   sits off-center when height is constrained (h-10 + padding). */
+.btn-primary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+    box-sizing: border-box;
+}
+
+/* Missing utilities used by Discover + elsewhere */
+.text-\[10px\] { font-size: 0.625rem; line-height: 1rem; }
+.tracking-\[0\.2em\] { letter-spacing: 0.2em; }
+.bg-black\/20 { background-color: rgba(0, 0, 0, 0.2); }
+.border-starlight { border-color: var(--q-color-starlight-blue, #00d4ff); }
+.hover\:border-starlight:hover { border-color: var(--q-color-starlight-blue, #00d4ff); }
+.shadow-inner { box-shadow: inset 0 2px 4px 0 rgb(0 0 0 / 0.06); }
+.invisible { visibility: hidden; }
+.min-w-\[120px\] { min-width: 120px; }
+.min-w-\[140px\] { min-width: 140px; }
+.\!pl-3 { padding-left: 0.75rem !important; }
+.appearance-none {
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    appearance: none;
+}
+.active\:scale-95:active { transform: scale(0.95); }
+.disabled\:opacity-40:disabled { opacity: 0.4; }
+
+@media (min-width: 768px) {
+    .md\:w-auto { width: auto; }
+    .md\:justify-between { justify-content: space-between; }
+    .md\:p-5 { padding: 1.25rem; }
+    .md\:visible { visibility: visible; }
+    .md\:inline { display: inline; }
 }

@@ -69,20 +69,23 @@ func (h *APIKeyHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 
 	wallet := strings.TrimSpace(body.Wallet)
 	if wallet != "" {
-		if getter, ok := h.validator.(interface {
-			Get(string) (auth.APIKey, bool)
-		}); ok {
-			if rec, ok := getter.Get(apiKey); ok {
-				if strings.TrimSpace(rec.Wallet) != "" && rec.Wallet != wallet {
-					h.sendError(w, http.StatusForbidden, "wallet already bound; rebind requires verification")
+		rec, found := h.validator.Get(apiKey)
+		bound := ""
+		if found {
+			bound = strings.TrimSpace(rec.Wallet)
+		}
+		if bound != "" && bound != wallet {
+			h.sendError(w, http.StatusForbidden, "wallet already bound; rebind requires verification")
+			return
+		}
+		// Bind only when not already set to this wallet. Re-binding the same
+		// address is a common login path after wallet-verify issuance.
+		if bound != wallet {
+			if updater, ok := h.validator.(auth.APIKeyWalletUpdater); ok {
+				if _, err := updater.UpdateWallet(apiKey, wallet); err != nil {
+					h.sendError(w, http.StatusInternalServerError, "failed to bind wallet to api key")
 					return
 				}
-			}
-		}
-		if updater, ok := h.validator.(auth.APIKeyWalletUpdater); ok {
-			if _, err := updater.UpdateWallet(apiKey, wallet); err != nil {
-				h.sendError(w, http.StatusInternalServerError, "failed to bind wallet to api key")
-				return
 			}
 		}
 	}

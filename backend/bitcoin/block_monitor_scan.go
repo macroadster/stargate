@@ -23,6 +23,7 @@ import (
 	"github.com/btcsuite/btcd/txscript"
 
 	"stargate-backend/core"
+	"stargate-backend/core/identity"
 	"stargate-backend/security"
 	"stargate-backend/services"
 	"stargate-backend/storage/datadir"
@@ -1030,9 +1031,16 @@ func (bm *BlockMonitor) markIngestionConfirmed(rec *services.IngestionRecord, tx
 	}
 
 	if bm.sweepStore != nil {
-		// Use ingestion ID directly to match contract creation logic in reconcileOracleIngestions
+		// Canonical wish-<hash> for pixel-hash ingestions so ConfirmContract does not
+		// mint a bare-hash twin next to an already-confirmed wish- row.
 		contractID := strings.TrimSpace(rec.ID)
+		if vph := strings.TrimSpace(stringFromAny(rec.Metadata["visible_pixel_hash"])); vph != "" {
+			contractID = vph
+		}
 		if contractID != "" {
+			if identity.IsPixelHash(identity.Normalize(contractID)) {
+				contractID = identity.ToWishID(contractID)
+			}
 			if err := bm.sweepStore.ConfirmContract(context.Background(), contractID, int(height), txid); err != nil {
 				log.Printf("oracle reconcile: failed to confirm contract %s: %v", contractID, err)
 			} else {

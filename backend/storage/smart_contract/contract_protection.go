@@ -3,8 +3,105 @@ package smart_contract
 import (
 	"strings"
 
+	"stargate-backend/core/identity"
 	coresc "stargate-backend/core/smart_contract"
 )
+
+// ConfirmContractIDPlan describes how ConfirmContract should resolve a caller's
+// contract_id into a single confirmed row (and which aliases to collapse).
+//
+// Historical bug: ConfirmContract bootstrapped a bare-hash confirmed row from
+// wish-<hash> and then tried to supersede the wish. After integrity hardening,
+// confirmed wishes cannot be demoted via supersedeEligibleStatusSQL — so both
+// rows stayed status=confirmed and /contracts listed the wish twice.
+//
+// For 64-hex pixel hashes the canonical id is wish-<hash> (identity.ToWishID).
+// Confirm prefers that row; bare-hash aliases are force-superseded after confirm.
+type ConfirmContractIDPlan struct {
+	// Normalized bare hash (or non-pixel id with prefixes stripped once).
+	Normalized string
+	// Preferred row to confirm for pixel-hash wishes.
+	Canonical string
+	// Other ids that may exist historically (bare hash) and must not stay confirmed.
+	Aliases []string
+	// True when Normalized is a 64-char hex pixel/stego hash.
+	IsPixelHash bool
+}
+
+// PlanConfirmContractIDs returns the canonical confirm target and aliases.
+func PlanConfirmContractIDs(contractID string) ConfirmContractIDPlan {
+	contractID = strings.TrimSpace(contractID)
+	normalized := identity.Normalize(contractID)
+	if normalized == "" {
+		return ConfirmContractIDPlan{}
+	}
+	if identity.IsPixelHash(normalized) {
+		canonical := identity.ToWishID(normalized)
+		aliases := []string{}
+		if normalized != canonical {
+			aliases = append(aliases, normalized)
+		}
+		// If caller passed a non-canonical form we still try it before bootstrap.
+		return ConfirmContractIDPlan{
+			Normalized:  normalized,
+			Canonical:   canonical,
+			Aliases:     aliases,
+			IsPixelHash: true,
+		}
+	}
+	return ConfirmContractIDPlan{
+		Normalized:  normalized,
+		Canonical:   contractID,
+		Aliases:     nil,
+		IsPixelHash: false,
+	}
+}
+
+// BlockImageFileKey returns the on-disk /uploads and block-image filename key
+// for a contract id. Filenames are always the bare visible pixel hash (or other
+// bare id) — never the "wish-" contract-id prefix.
+func BlockImageFileKey(contractID string) string {
+	id := strings.TrimSpace(contractID)
+	if id == "" {
+		return ""
+	}
+	// Prefer identity normalize so wish-/proposal-/task- prefixes drop once.
+	if n := identity.Normalize(id); n != "" {
+		// For pure pixel hashes keep lowercase hex for path stability.
+		if identity.IsPixelHash(n) {
+			return strings.ToLower(n)
+		}
+		return n
+	}
+	return strings.TrimPrefix(id, "wish-")
+}
+
+// ConfirmTryOrder is the preference order of existing rows to UPDATE.
+// Pixel hashes: canonical wish- first, then caller id, then bare hash.
+func (p ConfirmContractIDPlan) ConfirmTryOrder(callerID string) []string {
+	callerID = strings.TrimSpace(callerID)
+	seen := map[string]struct{}{}
+	var out []string
+	add := func(id string) {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			return
+		}
+		if _, ok := seen[id]; ok {
+			return
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	if p.IsPixelHash {
+		add(p.Canonical)
+		add(callerID)
+		add(p.Normalized)
+		return out
+	}
+	add(callerID)
+	return out
+}
 
 // Contract statuses that must never be demoted or field-overwritten by
 // untrusted replication paths (stego/IPFS reconcile, naive upserts).

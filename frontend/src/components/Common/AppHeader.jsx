@@ -84,23 +84,26 @@ const AppHeader = ({
   }, [isDropdownOpen]);
 
   return (
-    <>
-      {/*
-        Bar only inside .nav-glass. Mobile drawer is a fixed sibling so its
-        backdrop-filter is not trapped by the header's own blur stacking context
-        (a common browser limitation for nested frosted panels).
-      */}
-      <header className="nav-glass fixed top-0 left-0 right-0 z-50">
+    /*
+      Sticky shell reserves header height in normal layout so page content
+      (Blocks rail, Discover banner, etc.) is not covered on initial load.
+      When the page scrolls, the shell sticks and content can pass under the
+      frosted bar. Mobile drawer stays a fixed sibling of the bar so its
+      backdrop-filter is not trapped by the header blur stacking context.
+    */
+    <div className="app-header-shell">
+      <header className="nav-glass app-header-bar">
         <nav className="starlight-nav bg-transparent border-none w-full">
           <div className="container mx-auto px-6 h-16 flex flex-row items-center justify-between">
             {/* Left Side: Logo & Links */}
-            <div className="flex flex-row items-center gap-8">
+            <div className="flex flex-row items-center gap-8 h-full">
               <button
+                type="button"
                 onClick={() => navigate("/")}
-                className="flex flex-row items-center gap-2 p-0 bg-transparent border-none cursor-pointer group"
+                className="flex flex-row items-center gap-2 p-0 bg-transparent border-none cursor-pointer group leading-none"
               >
                 <i className="icon-starlight header-logo-icon" />
-                <span className="text-2xl font-bold text-gradient-starlight">
+                <span className="text-2xl font-bold text-gradient-starlight leading-none">
                   Starlight
                 </span>
               </button>
@@ -146,8 +149,8 @@ const AppHeader = ({
             </div>
 
             {/* Right Side: Search & Actions */}
-            <div className="flex flex-row items-center gap-4">
-              <div className="nav-desktop">
+            <div className="flex flex-row items-center gap-4 h-full">
+              <div className="nav-desktop h-full">
                 <div className="nav-actions flex flex-row items-center gap-2 h-full">
                   {showSearch && (
                     <div className="search has-icon mr-2">
@@ -263,7 +266,7 @@ const AppHeader = ({
         </nav>
       </header>
 
-      {/* Fixed sibling — blur lives on inner panel (no opacity/overflow on that node) */}
+      {/* Fixed sibling of bar — blur lives on inner panel (no opacity/overflow on that node) */}
       <div
         className={`nav-menu-mobile ${isMenuOpen ? "active" : ""}`}
         aria-hidden={!isMenuOpen}
@@ -418,7 +421,7 @@ const AppHeader = ({
           </div>
         </div>
       </div>
-    </>
+    </div>
   );
 };
 

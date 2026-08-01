@@ -1,6 +1,6 @@
 import React, { Suspense, lazy, useState, useEffect, useRef } from 'react';
 import { Check, Copy, Github, Linkedin } from 'lucide-react';
-import { Routes, Route, useParams, useNavigate } from 'react-router-dom';
+import { Routes, Route, useParams, useNavigate, useLocation } from 'react-router-dom';
 
 import BlockCard from './components/Block/BlockCard';
 import InscriptionCard from './components/Inscription/InscriptionCard';
@@ -50,6 +50,7 @@ const formatTimeAgo = (timestamp) => {
 function MainContent() {
   const { height, wishId, contractId, proposalId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const { auth } = useAuth();
   const [showInscribeModal, setShowInscribeModal] = useState(false);
   const [selectedInscription, setSelectedInscription] = useState(null);
@@ -91,7 +92,13 @@ function MainContent() {
   const handleBlockSelect = (block) => {
     if (isDragging) return; // Prevent click if a drag occurred
     originalHandleBlockSelect(block);
-    navigate(`/block/${block.height}`);
+    // Future/pending tip must stay on /pending so the selection can follow the
+    // next tip height when a new block arrives (see pending-route effect below).
+    if (block.isFuture) {
+      navigate('/pending');
+    } else {
+      navigate(`/block/${block.height}`);
+    }
   };
 
   const {
@@ -405,10 +412,36 @@ function MainContent() {
     // Only do this once when nothing is selected yet
     const pendingBlock = blocks.find((b) => b.isFuture);
     if (pendingBlock && !selectedBlock) {
-      setSelectedBlock(pendingBlock);
-      setIsUserNavigating(true);
+      // Use handleBlockSelect path so manualSelectedHeight pins the tip and
+      // selection can be refreshed when the tip height advances.
+      originalHandleBlockSelect(pendingBlock);
     }
-  }, [blocks, selectedBlock, setSelectedBlock, setIsUserNavigating, wishId, contractId, proposalId]);
+  }, [blocks, selectedBlock, originalHandleBlockSelect, wishId, contractId, proposalId]);
+
+  // While on /pending, always follow the current future tip as new blocks arrive.
+  // Without this, pinning a concrete height makes the old "pending" height stick
+  // once that height is mined.
+  useEffect(() => {
+    if (wishId || contractId || proposalId) return;
+    if (location.pathname !== '/pending') return;
+    const pendingBlock = blocks.find((b) => b.isFuture);
+    if (!pendingBlock) return;
+    if (
+      selectedBlock?.height !== pendingBlock.height ||
+      !selectedBlock?.isFuture
+    ) {
+      originalHandleBlockSelect(pendingBlock);
+    }
+  }, [
+    blocks,
+    location.pathname,
+    selectedBlock?.height,
+    selectedBlock?.isFuture,
+    originalHandleBlockSelect,
+    wishId,
+    contractId,
+    proposalId,
+  ]);
 
   // Redirect / to /pending if no block is selected
   useEffect(() => {
@@ -418,20 +451,31 @@ function MainContent() {
   }, [selectedBlock, height, blocks.length, navigate]);
 
   // If selection and route diverge (race between click and router), force the route to the selected block.
-  // But strictly AVOID this if we are on a deep-link route or just did URL-driven navigation.
+  // Future/pending selection always uses /pending — never /block/{tipHeight} — so a newly
+  // mined block does not steal focus via a stale height in the URL.
+  // Strictly AVOID this if we are on a deep-link route or just did URL-driven navigation.
   useEffect(() => {
     if (wishId || contractId || proposalId) return;
     // Skip if we just did URL-driven navigation (within last 500ms)
     if (Date.now() - lastUrlNavTimeRef.current < 500) return;
 
     if (!selectedBlock) return;
+
+    if (selectedBlock.isFuture) {
+      if (location.pathname !== '/pending') {
+        navigate('/pending', { replace: true });
+        setIsUserNavigating(false);
+      }
+      return;
+    }
+
     const currentHeight = height !== undefined ? parseInt(height, 10) : null;
     if (currentHeight !== selectedBlock.height) {
       navigate(`/block/${selectedBlock.height}`, { replace: true });
       // Clear the user navigation flag once the route is synced
       setIsUserNavigating(false);
     }
-  }, [selectedBlock, height, navigate, setIsUserNavigating, wishId, contractId, proposalId]);
+  }, [selectedBlock, height, navigate, setIsUserNavigating, wishId, contractId, proposalId, location.pathname]);
 
   useEffect(() => {
     if (!hasMoreImages || !sentinelRef.current) return;
@@ -685,7 +729,7 @@ function MainContent() {
         onToggleText={() => setHideText(!hideText)}
       />
 
-      <div className="pt-0" style={{ minHeight: 0, overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ minHeight: 0, overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
         <div
           id="block-scroll"
           ref={scrollRef}
@@ -1045,11 +1089,12 @@ function MainContent() {
                     {selectedBlock.hash}
                   </span>
                   {copiedText === selectedBlock.hash ? (
-                    <Check className="w-4 h-4 text-success block-hash-copy" />
+                    <Check className="w-4 h-4 text-success block-hash-copy" aria-label="Copied block hash" />
                   ) : (
                     <Copy
                       className="w-4 h-4 text-secondary hover:text-primary cursor-pointer block-hash-copy"
                       onClick={() => copyToClipboard(selectedBlock.hash)}
+                      aria-label="Copy block hash"
                     />
                   )}
                 </div>
@@ -1114,14 +1159,14 @@ function MainContent() {
 
 {/* Intelligent Footer: only shows when reached end of content */}
         {!hasMoreImages && blocks.length > 0 && (
-          <footer className="nav-glass border-t border-white/5 shrink-0" style={{ height: '4rem', display: 'flex', alignItems: 'center' }}>
+          <footer className="nav-glass border-t border-white/5 shrink-0 app-footer-bar">
             <div className="container mx-auto px-6 flex items-center justify-between w-full h-full">
-              <div className="flex items-center gap-2">
+              <div className="flex flex-row items-center gap-2">
                 <i className="icon-starlight header-logo-icon" style={{ width: '1.25rem', height: '1.25rem' }} />
-                <span className="text-lg font-bold text-gradient-starlight">Starlight</span>
+                <span className="text-lg font-bold text-gradient-starlight leading-none">Starlight</span>
               </div>
 
-              <div className="flex items-center gap-4">
+              <div className="flex flex-row items-center gap-4">
                 <a
                   href="https://github.com/macroadster"
                   target="_blank"

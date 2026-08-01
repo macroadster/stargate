@@ -371,64 +371,52 @@ func (s *MemoryStore) ClaimTask(taskID, walletAddress string, estimatedCompletio
 	if !ok {
 		return smart_contract.Claim{}, ErrTaskNotFound
 	}
-	normalizedWallet := strings.TrimSpace(walletAddress)
-	if normalizedWallet == "" {
-		return smart_contract.Claim{}, fmt.Errorf("wallet address required")
-	}
 
-	// Existing claim by this user? (IDEMPOTENCY)
+	existing := make([]smart_contract.Claim, 0)
 	for _, c := range s.claims {
 		if c.TaskID == taskID {
-			if strings.EqualFold(c.AiIdentifier, normalizedWallet) && c.Status == "active" && time.Now().Before(c.ExpiresAt) {
-				if task.ContractorWallet == "" {
-					task.ContractorWallet = normalizedWallet
-					if task.MerkleProof == nil {
-						task.MerkleProof = &smart_contract.MerkleProof{}
-					}
-					task.MerkleProof.ContractorWallet = normalizedWallet
-					s.tasks[taskID] = task
-				}
-				return c, nil
-			}
-			if c.Status == "active" && time.Now().Before(c.ExpiresAt) {
-				return smart_contract.Claim{}, ErrTaskTaken
-			}
+			existing = append(existing, c)
 		}
 	}
-
-	// New claim checks
-	if strings.EqualFold(task.Status, "approved") || strings.EqualFold(task.Status, "completed") || strings.EqualFold(task.Status, "published") || strings.EqualFold(task.Status, "submitted") || strings.EqualFold(task.Status, "claimed") {
-		return smart_contract.Claim{}, ErrTaskUnavailable
+	now := time.Now()
+	plan, err := DecideClaim(ClaimInput{
+		TaskID:            taskID,
+		TaskStatus:        task.Status,
+		Wallet:            walletAddress,
+		ExistingClaims:    existing,
+		CurrentProof:      task.MerkleProof,
+		CurrentContractor: task.ContractorWallet,
+		ClaimTTL:          s.claimTTL,
+		Now:               now,
+		NewClaimID:        fmt.Sprintf("CLAIM-%d", now.UnixNano()),
+	})
+	if err != nil {
+		return smart_contract.Claim{}, err
 	}
 
-	claimID := fmt.Sprintf("CLAIM-%d", time.Now().UnixNano())
-	expires := time.Now().Add(s.claimTTL)
-	claim := smart_contract.Claim{
-		ClaimID:      claimID,
-		TaskID:       taskID,
-		AiIdentifier: walletAddress,
-		Status:       "active",
-		ExpiresAt:    expires,
-		CreatedAt:    time.Now(),
+	task.Status = plan.TaskStatus
+	task.ClaimedBy = plan.ClaimedBy
+	if plan.ClaimedAt != nil {
+		task.ClaimedAt = plan.ClaimedAt
 	}
-	task.Status = "claimed"
-	task.ClaimedBy = walletAddress
-	task.ClaimedAt = &claim.CreatedAt
-	task.ClaimExpires = &expires
-	task.ActiveClaimID = claimID
-	if task.ContractorWallet == "" {
-		task.ContractorWallet = normalizedWallet
-		if task.MerkleProof == nil {
-			task.MerkleProof = &smart_contract.MerkleProof{}
-		}
-		task.MerkleProof.ContractorWallet = normalizedWallet
+	if plan.ClaimExpires != nil {
+		task.ClaimExpires = plan.ClaimExpires
+	}
+	task.ActiveClaimID = plan.Claim.ClaimID
+	if plan.UpdateProof {
+		task.MerkleProof = plan.Proof
+		task.ContractorWallet = plan.ContractorWallet
+	} else if plan.ContractorWallet != "" && task.ContractorWallet == "" {
+		task.ContractorWallet = plan.ContractorWallet
 	}
 	s.tasks[taskID] = task
 
-	s.claims[claimID] = claim
+	if plan.Action == ClaimActionCreate {
+		s.claims[plan.Claim.ClaimID] = plan.Claim
+	}
 
 	_ = estimatedCompletion // placeholder until persisted in model
-	return claim, nil
+	return plan.Claim, nil
 }
 
 // SubmitWork records a submission for a claim.
@@ -440,52 +428,32 @@ func (s *MemoryStore) SubmitWork(claimID string, deliverables map[string]interfa
 	if !ok {
 		return smart_contract.Submission{}, ErrClaimNotFound
 	}
-	// Allow submissions on active claims OR submitted claims with existing rejected/reviewed submissions
-	if claim.Status != "active" && claim.Status != "submitted" {
-		return smart_contract.Submission{}, fmt.Errorf("claim %s not active or submitted", claimID)
-	}
 
-	// For submitted claims, check if there's an existing submission that allows resubmission
-	if claim.Status == "submitted" {
-		for _, sub := range s.submissions {
-			if sub.ClaimID == claimID && (sub.Status == "rejected" || sub.Status == "reviewed") {
-				// Allow resubmission - reactivate the claim for new submission
-				claim.Status = "active"
-				s.claims[claimID] = claim
-				goto SubmitWork
-			}
+	var statuses []string
+	for _, sub := range s.submissions {
+		if sub.ClaimID == claimID {
+			statuses = append(statuses, sub.Status)
 		}
-		// If submitted claim has no rejected/reviewed submissions, don't allow new submission
-		return smart_contract.Submission{}, fmt.Errorf("claim %s already submitted with no eligible resubmission", claimID)
 	}
-
-SubmitWork:
-	if time.Now().After(claim.ExpiresAt) {
+	now := time.Now()
+	plan, err := DecideSubmit(SubmitInput{
+		Claim:                      claim,
+		ExistingSubmissionStatuses: statuses,
+		Deliverables:               deliverables,
+		Proof:                      proof,
+		Now:                        now,
+		NewSubmissionID:            fmt.Sprintf("SUB-%d", now.UnixNano()),
+	})
+	if plan.MarkClaimExpired {
 		claim.Status = "expired"
 		s.claims[claimID] = claim
-		return smart_contract.Submission{}, fmt.Errorf("claim %s expired", claimID)
+	}
+	if err != nil {
+		return smart_contract.Submission{}, err
 	}
 
-	// Safeguard: Ensure internal fields cannot be overridden by external tool calls
-	delete(deliverables, "status")
-	if proof != nil {
-		delete(proof, "status")
-	}
+	s.submissions[plan.Submission.SubmissionID] = plan.Submission
 
-	subID := fmt.Sprintf("SUB-%d", time.Now().UnixNano())
-
-	sub := smart_contract.Submission{
-		SubmissionID:    subID,
-		ClaimID:         claimID,
-		TaskID:          claim.TaskID,
-		Status:          "pending_review",
-		Deliverables:    deliverables,
-		CompletionProof: proof,
-		CreatedAt:       time.Now(),
-	}
-	s.submissions[subID] = sub
-
-	// Update task/claim state to submitted.
 	task := s.tasks[claim.TaskID]
 	task.Status = "submitted"
 	task.ActiveClaimID = claimID
@@ -494,7 +462,7 @@ SubmitWork:
 	claim.Status = "submitted"
 	s.claims[claimID] = claim
 
-	return sub, nil
+	return plan.Submission, nil
 }
 
 // ListSubmissions returns submissions for the provided task IDs.
@@ -676,46 +644,52 @@ func (s *MemoryStore) ConfirmContract(ctx context.Context, contractID string, bl
 		return nil
 	}
 
-	normalized := NormalizeContractID(contractID)
-	wishID := "wish-" + normalized
-	imageFile := contractID
-	stegoImageURL := fmt.Sprintf("/api/block-image/%d/%s", blockHeight, imageFile)
+	apply := BuildConfirmApply(contractID, blockHeight, "")
+	plan := apply.Plan
+	normalized := apply.Normalized
+	wishID := apply.WishID
 
-	contract, ok := s.contracts[contractID]
-	if !ok {
-		// If the confirmed contract doesn't exist, bootstrap from the wish contract
-		if wishContract, wok := s.contracts[wishID]; wok {
-			contract = wishContract
-			contract.ContractID = normalized
-		} else {
-			return fmt.Errorf("contract %s not found", contractID)
+	var contract smart_contract.Contract
+	var foundID string
+	for _, id := range plan.ConfirmTryOrder(contractID) {
+		if c, ok := s.contracts[id]; ok {
+			contract = c
+			foundID = id
+			break
 		}
 	}
-	contract.Status = "confirmed"
-	contract.ConfirmedBlockHeight = &blockHeight
-	confirmedAt := time.Now()
-	contract.ConfirmedAt = &confirmedAt
-
-	// Set confirmed_txid in metadata
-	if contract.Metadata == nil {
-		contract.Metadata = make(map[string]interface{})
+	if foundID == "" {
+		return fmt.Errorf("contract %s not found", contractID)
 	}
-	contract.Metadata["confirmed_txid"] = txid
-
-	contract.StegoImageURL = stegoImageURL
-	s.contracts[contractID] = contract
-
-	// Supersede the wish contract
-	if wishContract, wok := s.contracts[wishID]; wok && wishContract.Status != "superseded" {
-		wishContract.Status = "superseded"
-		s.contracts[wishID] = wishContract
+	targetID := foundID
+	if plan.IsPixelHash {
+		targetID = wishID
 	}
 
-	for id, proposal := range s.proposals {
-		proposalCID := NormalizeContractID(contractIDFromMeta(proposal.Metadata, proposal.ID))
-		if proposalCID == normalized && strings.EqualFold(proposal.Status, "approved") {
+	ApplyConfirmToContract(&contract, targetID, blockHeight, txid, apply.StegoImageURL, time.Now())
+	s.contracts[targetID] = contract
+
+	if plan.IsPixelHash {
+		for _, alias := range apply.AliasesToForceSupersede {
+			if alias == targetID {
+				continue
+			}
+			if c, ok := s.contracts[alias]; ok && !strings.EqualFold(c.Status, "superseded") {
+				c.Status = "superseded"
+				s.contracts[alias] = c
+			}
+		}
+	} else if apply.SupersedeWishIfNonPixel {
+		if wishContract, wok := s.contracts[wishID]; wok && ContractStatusMaySupersede(wishContract.Status) {
+			wishContract.Status = "superseded"
+			s.contracts[wishID] = wishContract
+		}
+	}
+
+	for pid, proposal := range s.proposals {
+		if ProposalShouldConfirmOnChain(proposal.Status, proposal.ID, proposal.VisiblePixelHash, proposal.Metadata, normalized, wishID) {
 			proposal.Status = "confirmed"
-			s.proposals[id] = proposal
+			s.proposals[pid] = proposal
 		}
 	}
 	return nil
@@ -1043,87 +1017,63 @@ func (s *MemoryStore) ApproveProposal(ctx context.Context, id string) error {
 		return fmt.Errorf("proposal %s not found", id)
 	}
 
-	// Derive tasks from markdown if not already populated
 	populateProposalTasks(&p)
-
-	// Validate proposal for approval without modifying status
-	if err := ValidateProposalForApproval(&p); err != nil {
-		return fmt.Errorf("proposal validation failed: %v", err)
-	}
-
-	// Check if proposal is already in final state
-	if strings.EqualFold(p.Status, "approved") || strings.EqualFold(p.Status, "published") {
-		return fmt.Errorf("proposal %s is already %s", id, p.Status)
-	}
-
-	if !strings.EqualFold(p.Status, "pending") {
-		return fmt.Errorf("proposal %s must be pending to approve, current status: %s", id, p.Status)
-	}
-
-	contractID := contractIDFromMeta(p.Metadata, id)
-	normalizedContractID := NormalizeContractID(contractID)
-	hasTasks := len(p.Tasks) > 0
-	if !hasTasks {
-		for _, task := range s.tasks {
-			if task.ContractID == contractID {
-				hasTasks = true
-				break
-			}
+	contractTaskCount := 0
+	// provisional keys for task count before BuildApprovePlan
+	preKeys := ResolveApproveKeys(p.Metadata, id)
+	for _, task := range s.tasks {
+		if task.ContractID == preKeys.ContractID {
+			contractTaskCount++
 		}
 	}
-	if !hasTasks {
-		return fmt.Errorf("approved proposals must contain at least one task")
+	plan, err := BuildApprovePlan(id, p.Status, &p, contractTaskCount)
+	if err != nil {
+		return err
 	}
+	keys := plan.Keys
 
-	// Reject if another proposal is already approved/published for the same contract.
 	for pid, other := range s.proposals {
 		if pid == id {
 			continue
 		}
-		otherCID := NormalizeContractID(contractIDFromMeta(other.Metadata, other.ID))
-		if otherCID == normalizedContractID && (strings.EqualFold(other.Status, "approved") || strings.EqualFold(other.Status, "published")) {
-			return fmt.Errorf("another proposal is already approved/published for contract %s", normalizedContractID)
+		if !ProposalMatchesApproveConflict(other.ID, other.VisiblePixelHash, other.Metadata, keys) {
+			continue
+		}
+		if strings.EqualFold(other.Status, "approved") || strings.EqualFold(other.Status, "published") {
+			return ErrApproveConflict(keys.NormalizedContractID)
 		}
 	}
-
-	// Auto-reject other pending proposals for this contract.
 	for pid, other := range s.proposals {
 		if pid == id {
 			continue
 		}
-		otherCID := NormalizeContractID(contractIDFromMeta(other.Metadata, other.ID))
-		if otherCID == normalizedContractID && strings.EqualFold(other.Status, "pending") {
+		if !ProposalMatchesApproveConflict(other.ID, other.VisiblePixelHash, other.Metadata, keys) {
+			continue
+		}
+		if strings.EqualFold(other.Status, "pending") {
 			other.Status = "rejected"
 			s.proposals[pid] = other
 		}
 	}
 
-	// Update proposal status atomically
-	p.Status = "approved"
+	p.Status = plan.NewProposalStatus
 	s.proposals[id] = p
 
-	visible := strings.TrimSpace(p.VisiblePixelHash)
-	if visible == "" {
-		if v, ok := p.Metadata["visible_pixel_hash"].(string); ok {
-			visible = strings.TrimSpace(v)
-		}
-	}
-	if visible != "" {
-		wishID := identity.ToWishID(visible)
-		if contract, ok := s.contracts[wishID]; ok {
+	if plan.WishToSupersede != "" {
+		if contract, ok := s.contracts[plan.WishToSupersede]; ok && ContractStatusMaySupersede(contract.Status) {
 			contract.Status = "superseded"
-			s.contracts[wishID] = contract
+			s.contracts[plan.WishToSupersede] = contract
 		}
 	}
 
-	// Update related tasks
-	for i, t := range s.tasks {
-		if t.ContractID == contractID {
-			t.Status = "approved"
-			s.tasks[i] = t
+	if plan.SetRelatedTasksApproved {
+		for i, t := range s.tasks {
+			if t.ContractID == keys.ContractID {
+				t.Status = "approved"
+				s.tasks[i] = t
+			}
 		}
 	}
-
 	return nil
 }
 
@@ -1135,30 +1085,27 @@ func (s *MemoryStore) PublishProposal(ctx context.Context, id string) error {
 	if !ok {
 		return fmt.Errorf("proposal %s not found", id)
 	}
-	if !strings.EqualFold(p.Status, "approved") && !strings.EqualFold(p.Status, "published") {
-		return fmt.Errorf("proposal %s must be approved before publish", id)
+	plan, err := BuildPublishPlan(id, p.Status, p.Metadata)
+	if err != nil {
+		return err
 	}
-	contractID := contractIDFromMeta(p.Metadata, id)
 	for i, t := range s.tasks {
-		if t.ContractID == contractID {
-			switch strings.ToLower(t.Status) {
-			case "submitted", "pending_review", "claimed", "approved":
-				t.Status = "published"
-				s.tasks[i] = t
-			}
+		if t.ContractID == plan.ContractID && TaskStatusShouldPublishOnPublish(t.Status) {
+			t.Status = "published"
+			s.tasks[i] = t
 		}
 	}
-	for id, c := range s.claims {
+	for cid, c := range s.claims {
 		task, ok := s.tasks[c.TaskID]
-		if !ok || task.ContractID != contractID {
+		if !ok || task.ContractID != plan.ContractID {
 			continue
 		}
-		if strings.EqualFold(c.Status, "submitted") || strings.EqualFold(c.Status, "pending_review") || strings.EqualFold(c.Status, "active") || strings.EqualFold(c.Status, "approved") {
+		if ClaimStatusShouldCompleteOnPublish(c.Status) {
 			c.Status = "complete"
-			s.claims[id] = c
+			s.claims[cid] = c
 		}
 	}
-	p.Status = "published"
+	p.Status = plan.NewProposalStatus
 	s.proposals[id] = p
 	return nil
 }
@@ -1257,51 +1204,44 @@ func (s *MemoryStore) UpdateSubmissionStatus(ctx context.Context, submissionID, 
 		return ErrClaimNotFound // close enough
 	}
 
-	sub.Status = status
-	if status == "rejected" {
-		note := strings.TrimSpace(reviewerNotes)
-		rejType := strings.TrimSpace(rejectionType)
-		sub.RejectionReason = note
-		sub.RejectionType = rejType
-		now := time.Now()
-		sub.RejectedAt = &now
-	} else {
-		sub.RejectionReason = ""
-		sub.RejectionType = ""
-		sub.RejectedAt = nil
-	}
+	plan := DecideSubmissionStatusUpdate(status, reviewerNotes, rejectionType, time.Now())
+	sub.Status = plan.Status
+	sub.RejectionReason = plan.RejectionReason
+	sub.RejectionType = plan.RejectionType
+	sub.RejectedAt = plan.RejectedAt
 	s.submissions[submissionID] = sub
 
-	switch status {
-	case "accepted", "approved":
+	switch plan.Cascade {
+	case SubmissionCascadeApprove:
 		claim, ok := s.claims[sub.ClaimID]
 		if !ok {
-			return nil // should not happen
+			return nil
 		}
-		claim.Status = "complete"
+		claim.Status = plan.ClaimStatus
 		s.claims[sub.ClaimID] = claim
-
 		task, ok := s.tasks[claim.TaskID]
 		if !ok {
-			return nil // should not happen
+			return nil
 		}
-		task.Status = "approved"
+		task.Status = plan.TaskStatus
 		s.tasks[claim.TaskID] = task
-	case "rejected":
+	case SubmissionCascadeReject:
 		claim, ok := s.claims[sub.ClaimID]
+		if !ok {
+			return nil
+		}
+		claim.Status = plan.ClaimStatus
+		s.claims[sub.ClaimID] = claim
+		task, ok := s.tasks[claim.TaskID]
 		if ok {
-			claim.Status = "rejected"
-			s.claims[sub.ClaimID] = claim
-
-			task, ok := s.tasks[claim.TaskID]
-			if ok {
-				task.Status = "available"
+			task.Status = plan.TaskStatus
+			if plan.ClearClaimOnTask {
 				task.ClaimedBy = ""
 				task.ClaimedAt = nil
 				task.ClaimExpires = nil
 				task.ActiveClaimID = ""
-				s.tasks[claim.TaskID] = task
 			}
+			s.tasks[claim.TaskID] = task
 		}
 	}
 
@@ -1334,29 +1274,28 @@ func (s *MemoryStore) DeleteWish(ctx context.Context, visiblePixelHash string) e
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// 1. Delete associated proposals
+	plan, err := BuildDeleteWishPlan(visiblePixelHash)
+	if err != nil {
+		return err
+	}
+
 	for id, p := range s.proposals {
-		if p.VisiblePixelHash == visiblePixelHash {
+		if p.VisiblePixelHash == plan.VisiblePixelHash {
 			delete(s.proposals, id)
 		}
 	}
 
-	wishID := identity.ToWishID(visiblePixelHash)
-
-	// 2. Collect task IDs for this wish to cascade delete claims and submissions
 	taskIDs := make(map[string]bool)
 	for id, t := range s.tasks {
-		if t.ContractID == wishID {
+		if t.ContractID == plan.WishID {
 			taskIDs[id] = true
 			delete(s.tasks, id)
 		}
 	}
 
-	// 3. Delete claims and submissions for those tasks
 	for id, c := range s.claims {
 		if taskIDs[c.TaskID] {
 			delete(s.claims, id)
-			// Delete submissions linked to this claim
 			for sid, sub := range s.submissions {
 				if sub.ClaimID == id {
 					delete(s.submissions, sid)
@@ -1365,9 +1304,7 @@ func (s *MemoryStore) DeleteWish(ctx context.Context, visiblePixelHash string) e
 		}
 	}
 
-	// 4. Delete the contract itself
-	delete(s.contracts, wishID)
-
+	delete(s.contracts, plan.WishID)
 	return nil
 }
 
@@ -1381,23 +1318,17 @@ func (s *MemoryStore) CreateContractReworkRequest(ctx context.Context, contractI
 		return smart_contract.ContractReworkRequest{}, fmt.Errorf("contract %s not found", contractID)
 	}
 
-	requestID := fmt.Sprintf("rework-%s-%d", contractID, time.Now().UnixNano())
 	now := time.Now()
-
-	reworkReq := smart_contract.ContractReworkRequest{
-		RequestID:  requestID,
-		ContractID: contractID,
-		Requester:  requester,
-		Notes:      notes,
-		Status:     "open",
-		CreatedAt:  now,
+	reworkReq, err := BuildReworkRequest(contractID, requester, notes, now, "")
+	if err != nil {
+		return smart_contract.ContractReworkRequest{}, err
 	}
 
 	c.ReworkRequests = append(c.ReworkRequests, reworkReq)
-	// Mark all pending tasks for this contract as rejected
+	taskStatus := ReworkTaskStatusOnCreate()
 	for tID, t := range s.tasks {
 		if t.ContractID == contractID {
-			t.Status = "rejected"
+			t.Status = taskStatus
 			s.tasks[tID] = t
 		}
 	}
@@ -1433,7 +1364,7 @@ func (s *MemoryStore) ResolveContractReworkRequest(ctx context.Context, contract
 	now := time.Now()
 	for i, req := range c.ReworkRequests {
 		if req.RequestID == requestID {
-			c.ReworkRequests[i].Status = "resolved"
+			c.ReworkRequests[i].Status = smart_contract.ReworkStatusResolved
 			c.ReworkRequests[i].ResolvedAt = &now
 			found = true
 			break

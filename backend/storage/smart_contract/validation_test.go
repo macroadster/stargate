@@ -409,15 +409,18 @@ func TestStatusFieldPreventsClaimingTasks(t *testing.T) {
 	store := NewMemoryStore(time.Hour)
 
 	// Test claiming tasks with various statuses
+	// Unified policy (DecideClaim): terminal statuses blocked; "claimed" without an
+	// active claim is allowed (stale row after expiry) so dialects agree.
 	claimTests := []struct {
 		name        string
 		taskStatus  string
 		expectError bool
 	}{
 		{"Claim available task", "available", false},
-		{"Claim claimed task", "claimed", true},
+		{"Claim claimed task stale", "claimed", false},
 		{"Claim submitted task", "submitted", true},
 		{"Claim published task", "published", true},
+		{"Claim approved task", "approved", true},
 	}
 
 	for _, tt := range claimTests {

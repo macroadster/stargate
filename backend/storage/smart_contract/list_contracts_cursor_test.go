@@ -147,6 +147,58 @@ func TestSQLiteListContractsCursorCreatedAtOpen(t *testing.T) {
 	}
 }
 
+func TestSQLiteListContractsExcludesBareTwinWhenWishConfirmed(t *testing.T) {
+	// Bare + wish both confirmed must not both appear (breaks /contracts page size).
+	store := newTestSQLiteStore(t)
+	ctx := context.Background()
+
+	hash := "a72d3bcda257ff166b14393b96651a8a49bdc20d8ab7e8a8d239be662db21f59"
+	wishID := "wish-" + hash
+	for _, id := range []string{wishID, hash, "other-confirmed"} {
+		c := core.Contract{
+			ContractID: id,
+			Title:      id,
+			Status:     "active",
+			CreatedAt:  time.Now().UTC(),
+		}
+		if err := store.UpsertContractWithTasks(ctx, c, nil); err != nil {
+			t.Fatalf("upsert %s: %v", id, err)
+		}
+		if err := store.ConfirmContract(ctx, id, 100, "tx-"+id); err != nil {
+			t.Fatalf("confirm %s: %v", id, err)
+		}
+	}
+	// Force bare twin back to confirmed (simulates pre-fix dual rows).
+	if _, err := store.db.Exec(`UPDATE mcp_contracts SET status='confirmed' WHERE contract_id=?`, hash); err != nil {
+		t.Fatalf("re-confirm bare: %v", err)
+	}
+
+	list, err := store.ListContracts(core.ContractFilter{Status: "confirmed", Limit: 50})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	var sawWish, sawBare, sawOther bool
+	for _, c := range list {
+		switch c.ContractID {
+		case wishID:
+			sawWish = true
+		case hash:
+			sawBare = true
+		case "other-confirmed":
+			sawOther = true
+		}
+	}
+	if !sawWish {
+		t.Fatal("expected wish- canonical row")
+	}
+	if sawBare {
+		t.Fatal("bare twin must be excluded from ListContracts when wish is confirmed")
+	}
+	if !sawOther {
+		t.Fatal("expected unrelated confirmed contract")
+	}
+}
+
 func TestSQLiteListContractsCursorDateRFC3339Mix(t *testing.T) {
 	// Ensure RFC3339 stored values still compare correctly against cursor.
 	store := newTestSQLiteStore(t)

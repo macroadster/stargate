@@ -140,12 +140,12 @@ func (s *Server) handleClaimTask(w http.ResponseWriter, r *http.Request, taskID 
 		return
 	}
 
-	claim, err := s.store.ClaimTask(taskID, walletAddress, body.EstimatedCompletion)
+	claim, err := s.claimSvc.ClaimTask(taskID, walletAddress, body.EstimatedCompletion)
 	if err != nil {
 		if err == ErrTaskNotFound {
 			// Attempt to publish tasks lazily from proposals that reference this task id, then retry.
 			if s.tryPublishTasksForTaskID(r.Context(), taskID) == nil {
-				if retry, retryErr := s.store.ClaimTask(taskID, walletAddress, body.EstimatedCompletion); retryErr == nil {
+				if retry, retryErr := s.claimSvc.ClaimTask(taskID, walletAddress, body.EstimatedCompletion); retryErr == nil {
 					claim = retry
 					err = nil
 				} else {

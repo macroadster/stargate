@@ -52,7 +52,7 @@ export default function ContractsPage() {
   return (
     <div className="min-h-screen bg-app-main text-gray-900 dark:text-gray-100">
       <AppHeader onInscribe={() => navigate('/')} />
-      <div className="w-full mx-auto px-6 py-10 space-y-8">
+      <div className="w-full mx-auto px-6 page-main space-y-8">
         <div>
           <h1 className="text-4xl font-black page-title">Contracts</h1>
           <p className="text-xs page-subtitle uppercase tracking-widest opacity-70">

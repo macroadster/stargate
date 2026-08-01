@@ -56,7 +56,7 @@ func NewAllStores(cfg StorageConfig) (*AllStores, error) {
 				log.Printf("Postgres data storage failed, falling back to filesystem: %v", err)
 				all.DataStorage = NewDataStorage(cfg.DataDir)
 			} else {
-				log.Printf("Using Postgres data storage backend")
+				log.Printf("Using SQLDataStorage (postgres/GORM) for block/inscription metadata")
 				all.DataStorage = pg
 			}
 		} else {
@@ -72,7 +72,7 @@ func NewAllStores(cfg StorageConfig) (*AllStores, error) {
 			log.Printf("failed to init SQLiteDataStorage (%v), falling back to filesystem", err)
 			all.DataStorage = NewDataStorage(cfg.DataDir)
 		} else {
-			log.Printf("Using SQLiteDataStorage for block/inscription metadata at %s", sqliteBlocksPath)
+			log.Printf("Using SQLDataStorage (sqlite/GORM) for block/inscription metadata at %s", sqliteBlocksPath)
 			all.DataStorage = ds
 		}
 	default:

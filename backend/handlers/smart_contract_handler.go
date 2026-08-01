@@ -29,8 +29,12 @@ const enrichedCacheTTL = 30 * time.Second
 
 // enrichedCacheEntry holds a cached open-contracts response page.
 type enrichedCacheEntry struct {
-	items    []models.InscriptionRequest
-	cachedAt time.Time
+	items []models.InscriptionRequest
+	// fetchedCount is the store list length before twin-dedupe. has_more must
+	// use this (not len(items)) so collapsing bare/wish twins cannot hide the
+	// rest of the catalog behind a short first page.
+	fetchedCount int
+	cachedAt     time.Time
 }
 
 // SmartContractHandler handles smart contract requests
@@ -64,6 +68,66 @@ func hasCursorParams(r *http.Request) bool {
 // openStatuses returns the statuses considered "open" (non-terminal) for server-side filtering.
 func openStatuses() []string {
 	return []string{"pending", "created", "funded", "active"}
+}
+
+// dedupeConfirmedWishTwins collapses bare-hash + wish-<hash> pairs that both
+// appear as confirmed (legacy ConfirmContract bootstrap race). Prefer the
+// canonical wish- id so /contracts does not list the same wish twice.
+func dedupeConfirmedWishTwins(contracts []sc.Contract) []sc.Contract {
+	if len(contracts) < 2 {
+		return contracts
+	}
+	type pick struct {
+		idx        int
+		preferWish bool
+	}
+	best := make(map[string]pick) // normalized hash → chosen index
+	drop := make(map[int]struct{})
+	for i, c := range contracts {
+		if !strings.EqualFold(strings.TrimSpace(c.Status), "confirmed") {
+			continue
+		}
+		id := strings.TrimSpace(c.ContractID)
+		bare := strings.TrimPrefix(id, "wish-")
+		if len(bare) != 64 {
+			continue
+		}
+		// Only collapse true 64-hex pixel hashes.
+		okHex := true
+		for _, r := range bare {
+			if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+				okHex = false
+				break
+			}
+		}
+		if !okHex {
+			continue
+		}
+		key := strings.ToLower(bare)
+		isWish := strings.HasPrefix(id, "wish-")
+		if prev, exists := best[key]; exists {
+			// Prefer wish- form; drop the other.
+			if isWish && !prev.preferWish {
+				drop[prev.idx] = struct{}{}
+				best[key] = pick{idx: i, preferWish: true}
+			} else {
+				drop[i] = struct{}{}
+			}
+			continue
+		}
+		best[key] = pick{idx: i, preferWish: isWish}
+	}
+	if len(drop) == 0 {
+		return contracts
+	}
+	out := make([]sc.Contract, 0, len(contracts)-len(drop))
+	for i, c := range contracts {
+		if _, skip := drop[i]; skip {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
 }
 
 func proofConfirmed(proof *sc.MerkleProof) bool {
@@ -148,13 +212,14 @@ func (h *SmartContractHandler) InvalidateContractCache() {
 }
 
 // getEnrichedCache returns a copy of a non-expired enriched page, if present.
-func (h *SmartContractHandler) getEnrichedCache(key string) ([]models.InscriptionRequest, bool) {
+// The second int is the pre-dedupe fetch count used for has_more (0 if unknown).
+func (h *SmartContractHandler) getEnrichedCache(key string) ([]models.InscriptionRequest, int, bool) {
 	h.enrichedMu.RLock()
 	entry, ok := h.enrichedCache[key]
 	ttl := h.enrichedTTL
 	h.enrichedMu.RUnlock()
 	if !ok || len(entry.items) == 0 {
-		return nil, false
+		return nil, 0, false
 	}
 	if ttl > 0 && time.Since(entry.cachedAt) > ttl {
 		h.enrichedMu.Lock()
@@ -163,20 +228,38 @@ func (h *SmartContractHandler) getEnrichedCache(key string) ([]models.Inscriptio
 			delete(h.enrichedCache, key)
 		}
 		h.enrichedMu.Unlock()
-		return nil, false
+		return nil, 0, false
 	}
 	out := make([]models.InscriptionRequest, len(entry.items))
 	copy(out, entry.items)
-	return out, true
+	return out, entry.fetchedCount, true
 }
 
 // setEnrichedCache stores a copy of the enriched page under key.
-func (h *SmartContractHandler) setEnrichedCache(key string, items []models.InscriptionRequest) {
+func (h *SmartContractHandler) setEnrichedCache(key string, items []models.InscriptionRequest, fetchedCount int) {
 	copied := make([]models.InscriptionRequest, len(items))
 	copy(copied, items)
 	h.enrichedMu.Lock()
-	h.enrichedCache[key] = enrichedCacheEntry{items: copied, cachedAt: time.Now()}
+	h.enrichedCache[key] = enrichedCacheEntry{
+		items:        copied,
+		fetchedCount: fetchedCount,
+		cachedAt:     time.Now(),
+	}
 	h.enrichedMu.Unlock()
+}
+
+// contractsPageHasMore reports whether another page may exist.
+// fetchedCount is the store result length before twin-dedupe; pageLen is what
+// the client will receive. A full pre-dedupe page means more rows may remain
+// even when dedupe shrinks the response below limit.
+func contractsPageHasMore(fetchedCount, pageLen, limit int) bool {
+	if limit <= 0 {
+		return false
+	}
+	if fetchedCount >= limit {
+		return true
+	}
+	return pageLen >= limit
 }
 
 // HandleGetContracts handles getting smart contracts with support for filtering and pagination
@@ -249,9 +332,11 @@ func (h *SmartContractHandler) HandleGetContracts(w http.ResponseWriter, r *http
 	// Fast path: enriched cache (final processed list) for non-cursor queries
 	var inscriptions []models.InscriptionRequest
 	cachedEnriched := false
+	fetchedCount := 0 // pre-dedupe list size (drives has_more)
 	if !hasCursorParams(r) {
-		if cached, ok := h.getEnrichedCache(cacheKey); ok {
+		if cached, n, ok := h.getEnrichedCache(cacheKey); ok {
 			inscriptions = cached
+			fetchedCount = n
 			cachedEnriched = true
 		}
 	}
@@ -289,6 +374,14 @@ func (h *SmartContractHandler) HandleGetContracts(w http.ResponseWriter, r *http
 			}
 		} else {
 			listDur = time.Since(t1)
+		}
+
+		// Pre-dedupe length: twin collapse must not flip has_more to false.
+		fetchedCount = len(contracts)
+
+		// Safety net for pre-fix DBs: bare-hash + wish- twins both confirmed.
+		if status == "confirmed" || strings.EqualFold(status, "confirmed") {
+			contracts = dedupeConfirmedWishTwins(contracts)
 		}
 
 		// === Enrichment (ListByIDs + conversion) ===
@@ -340,7 +433,7 @@ func (h *SmartContractHandler) HandleGetContracts(w http.ResponseWriter, r *http
 
 		// Cache the *enriched* final list for this key (big win for repeated calls)
 		if !hasCursorParams(r) {
-			h.setEnrichedCache(cacheKey, inscriptions)
+			h.setEnrichedCache(cacheKey, inscriptions, fetchedCount)
 		}
 	}
 
@@ -350,9 +443,8 @@ func (h *SmartContractHandler) HandleGetContracts(w http.ResponseWriter, r *http
 	// Open (unconfirmed): cursor on created_at. Confirmed lists: cursor on confirmed_at.
 	nextCursor := ""
 	nextCursorDate := ""
-	fullPage := len(inscriptions) >= limit && limit > 0
-	hasMore := fullPage
-	if fullPage {
+	hasMore := contractsPageHasMore(fetchedCount, len(inscriptions), limit)
+	if hasMore {
 		if len(contracts) > 0 {
 			lastContract := contracts[len(contracts)-1]
 			if lastContract.ConfirmedBlockHeight != nil && *lastContract.ConfirmedBlockHeight > 0 {
@@ -366,7 +458,7 @@ func (h *SmartContractHandler) HandleGetContracts(w http.ResponseWriter, r *http
 				nextCursorDate = lastContract.ConfirmedAt.UTC().Format(time.RFC3339)
 			}
 		}
-		if nextCursor == "" || nextCursorDate == "" {
+		if (nextCursor == "" || nextCursorDate == "") && len(inscriptions) > 0 {
 			last := inscriptions[len(inscriptions)-1]
 			if nextCursor == "" && last.BlockHeight > 0 {
 				nextCursor = fmt.Sprintf("%d", last.BlockHeight)

@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { API_BASE } from '../../apiBase';
 import { apiFetch } from '../../utils/api';
 import AppHeader from '../Common/AppHeader';
+import MarkdownContent from '../Common/MarkdownContent';
 import { useAuth } from '../../context/AuthContext';
 
 const formatDate = (ts) => (ts ? new Date(ts).toLocaleString() : '—');
@@ -209,7 +210,7 @@ export default function DiscoverPage() {
   return (
     <div className="min-h-screen bg-app-main text-gray-900 dark:text-gray-100 page-discover">
       <AppHeader onInscribe={() => navigate('/')} />
-      <div className="container mx-auto px-6 py-10 flex flex-col gap-8">
+      <div className="w-full max-w-full mx-auto px-4 sm:px-6 page-main flex flex-col gap-6 sm:gap-8 overflow-x-hidden">
         <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-6">
           <div className="flex-1">
             <h1 className="text-4xl font-black page-title uppercase tracking-tight leading-none mb-2">Discover</h1>
@@ -217,15 +218,16 @@ export default function DiscoverPage() {
               Browse proposals and tasks by status, skills, budget, or contract.
             </p>
           </div>
-          <div className="flex items-center gap-4 justify-end shrink-0 bg-black/20 p-2 rounded-2xl border border-white/5 shadow-inner">
-            <div className="text-[10px] font-mono text-slate-500 uppercase tracking-widest px-2">Last Sync: {lastUpdated || '—'}</div>
+          <div className="discover-sync-bar shrink-0 bg-black/20 p-2 rounded-2xl border border-white/5 shadow-inner">
+            <div className="discover-sync-meta px-2">Last Sync: {lastUpdated || '—'}</div>
             <button
+              type="button"
               onClick={() => {
                 setPagination(prev => ({ ...prev, offset: 0 }));
                 loadProposals(true);
               }}
               disabled={loading}
-              className="h-10 px-6 rounded-xl bg-white/5 border border-white/10 text-[10px] font-black uppercase tracking-widest hover:bg-white/10 hover:border-starlight text-white transition-all disabled:opacity-40 flex items-center gap-2 shadow-lg"
+              className="discover-refresh-btn"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
               {loading ? 'Syncing…' : 'Refresh Ledger'}
@@ -267,13 +269,14 @@ export default function DiscoverPage() {
               </div>
             </div>
             <div className="flex flex-col gap-1.5 flex-shrink-0 justify-end">
-              <label className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500 ml-1 invisible md:visible">Filter</label>
+              <label className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500 ml-1 invisible md:visible" aria-hidden="true">Filter</label>
               <button
+                type="button"
                 onClick={() => {
                   setPagination(prev => ({ ...prev, offset: 0 }));
                   loadProposals(true);
                 }}
-                className="btn-primary w-full md:w-auto h-10 px-6 text-[10px] font-black uppercase tracking-[0.2em] rounded-lg shadow-lg active:scale-95 whitespace-nowrap"
+                className="discover-apply-btn"
               >
                 Apply Filters
               </button>
@@ -312,7 +315,11 @@ export default function DiscoverPage() {
                         {claimedCount > 0 && <span className="text-xs text-blue-600 dark:text-blue-300">{claimedCount} claimed</span>}
                       </div>
                       <h3 className="text-lg font-semibold mt-2">{p.title}</h3>
-                      <p className="text-sm text-gray-600 dark:text-gray-400">{p.description_md}</p>
+                      {p.description_md && (
+                        <MarkdownContent className="mt-1 text-sm text-gray-600 dark:text-gray-400" compact>
+                          {p.description_md}
+                        </MarkdownContent>
+                      )}
                     </div>
                   </div>
 
@@ -324,6 +331,11 @@ export default function DiscoverPage() {
                       <div key={t.task_id} className="card-premium p-3">
                         <div className="flex-1">
                           <div className="font-semibold text-sm">{t.title}</div>
+                          {t.description && (
+                            <MarkdownContent className="mt-1 text-xs text-gray-500" compact>
+                              {t.description}
+                            </MarkdownContent>
+                          )}
                           <div className="text-xs text-gray-500">Task budget {t.budget_sats} sats • Goal {t.goal_id || 'n/a'}</div>
                           <div className="text-xs text-gray-500 flex items-center gap-2 mt-1">
                             <span className={`badge ${statusBadgeClass}`}>{taskStatus}</span>

@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import ReactMarkdown from 'react-markdown';
 import { CheckCircle, XCircle, Clock, FileText, ExternalLink } from 'lucide-react';
 import { API_BASE } from '../../apiBase';
 import { apiFetch } from '../../utils/api';
+import MarkdownContent from '../Common/MarkdownContent';
 
 const SubmissionReview = ({ submissionId, onApprove, onReject, onClose }) => {
   const [submission, setSubmission] = useState(null);
@@ -97,9 +97,9 @@ const SubmissionReview = ({ submissionId, onApprove, onReject, onClose }) => {
                 <FileText className="w-5 h-5" />
                 Work Document
               </h3>
-              <div className="prose prose-sm max-w-none dark:prose-invert">
-                <ReactMarkdown>{submission.deliverables.document}</ReactMarkdown>
-              </div>
+              <MarkdownContent className="prose prose-sm max-w-none dark:prose-invert">
+                {submission.deliverables.document}
+              </MarkdownContent>
             </section>
           )}
 
