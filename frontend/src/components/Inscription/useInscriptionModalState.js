@@ -419,6 +419,8 @@ export function useInscriptionModalState(inscription, initialTab = 'content') {
         else if (blob.type === 'image/gif') extension = 'gif';
         else if (blob.type === 'image/webp') extension = 'webp';
         else if (blob.type === 'image/bmp') extension = 'bmp';
+        else if (blob.type === 'image/avif') extension = 'avif';
+        else if (blob.type === 'image/svg+xml') extension = 'svg';
         
         const form = new FormData();
         form.append('image', blob, `stego.${extension}`);

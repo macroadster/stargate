@@ -10,10 +10,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"image"
-	_ "image/gif"
-	_ "image/jpeg"
-	_ "image/png"
 	"io"
 	"log"
 	"mime/multipart"
@@ -424,7 +420,7 @@ func extractStegoManifest(ctx context.Context, imageData []byte, cfg stegoReconc
 
 // extractStegoNative uses the built-in Go alpha-channel extractor.
 func extractStegoNative(imageData []byte) ([]byte, error) {
-	img, _, err := image.Decode(bytes.NewReader(imageData))
+	img, _, err := stego.DecodeImage(imageData)
 	if err != nil {
 		return nil, err
 	}

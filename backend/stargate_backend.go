@@ -203,11 +203,32 @@ func customUploadsHandler(uploadsDir string) http.HandlerFunc {
 
 		// Set headers
 		w.Header().Set("Content-Type", mimeType)
+		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Cache-Control", "public, max-age=31536000")
 		w.Header().Set("Content-Length", strconv.FormatInt(fileInfo.Size(), 10))
+		// Untrusted inscription/upload content: prevent active content (SVG/HTML/script)
+		// from executing in the stargate origin if a user navigates to the URL.
+		if isActiveUntrustedContent(mimeType) {
+			w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
+			w.Header().Set("Content-Disposition", "attachment")
+		}
 
 		// Stream file directly to response
 		_, _ = io.Copy(w, file)
+	}
+}
+
+// isActiveUntrustedContent reports MIME types that browsers may execute as documents.
+func isActiveUntrustedContent(mimeType string) bool {
+	m := strings.ToLower(strings.TrimSpace(mimeType))
+	if i := strings.IndexByte(m, ';'); i >= 0 {
+		m = strings.TrimSpace(m[:i])
+	}
+	switch m {
+	case "image/svg+xml", "text/html", "application/xhtml+xml", "text/javascript", "application/javascript":
+		return true
+	default:
+		return false
 	}
 }
 

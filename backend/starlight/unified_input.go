@@ -5,13 +5,9 @@ import (
 	"fmt"
 	"image"
 	"image/color"
-	_ "image/gif"
-	_ "image/jpeg"
-	_ "image/png"
 	"math"
 
-	_ "golang.org/x/image/bmp"
-	_ "golang.org/x/image/webp"
+	"stargate-backend/stego"
 )
 
 const (
@@ -52,9 +48,10 @@ func LoadUnifiedInput(imageData []byte) (*UnifiedInput, error) {
 		return nil, fmt.Errorf("empty image data")
 	}
 
-	img, format, err := image.Decode(bytes.NewReader(imageData))
+	img, format, err := stego.DecodeImage(imageData)
 	if err != nil {
-		return nil, fmt.Errorf("decode image: %w", err)
+		// Preserve soft-failure sentinels (unsupported / oversize) for callers.
+		return nil, err
 	}
 	formatLower := normalizeFormat(format)
 

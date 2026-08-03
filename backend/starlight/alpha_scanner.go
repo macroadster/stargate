@@ -1,16 +1,9 @@
 package starlight
 
 import (
-	"bytes"
 	"fmt"
-	"image"
-	_ "image/gif"
-	_ "image/jpeg"
-	_ "image/png"
 	"log"
 
-	_ "golang.org/x/image/bmp"
-	_ "golang.org/x/image/webp"
 	"stargate-backend/core"
 	"stargate-backend/stego"
 )
@@ -40,18 +33,29 @@ func (s *AlphaScanner) ScanImage(imageData []byte, options core.ScanOptions) (*c
 		return nil, fmt.Errorf("AlphaScanner not initialized")
 	}
 
-	img, _, err := image.Decode(bytes.NewReader(imageData))
+	img, _, err := stego.DecodeImage(imageData)
 	if err != nil {
+		// Unsupported / oversize / corrupt formats are non-stego, not hard failures.
+		// Avoid tripping the circuit breaker on common on-chain formats like AVIF.
+		if stego.IsSoftDecodeFailure(err) {
+			return &core.ScanResult{
+				IsStego:          false,
+				StegoProbability: 0,
+				Confidence:       0,
+				Prediction:       "unsupported_format",
+				ExtractionError:  err.Error(),
+			}, nil
+		}
 		return nil, fmt.Errorf("failed to decode image: %v", err)
 	}
 
 	payload, err := stego.ExtractAlpha(img)
 	if err != nil {
 		return &core.ScanResult{
-			IsStego:    false,
-			Confidence: 0,
-			Prediction: "error",
-			ExtractionError: err.Error(),
+			IsStego:          false,
+			Confidence:       0,
+			Prediction:       "error",
+			ExtractionError:  err.Error(),
 		}, nil
 	}
 
@@ -102,14 +106,30 @@ func (s *AlphaScanner) ExtractMessage(imageData []byte, method string) (*core.Ex
 		}, nil
 	}
 
-	img, _, err := image.Decode(bytes.NewReader(imageData))
+	img, _, err := stego.DecodeImage(imageData)
 	if err != nil {
+		if stego.IsSoftDecodeFailure(err) {
+			return &core.ExtractionResult{
+				MessageFound: false,
+				ExtractionDetails: map[string]interface{}{
+					"status": "unsupported_format",
+					"error":  err.Error(),
+				},
+			}, nil
+		}
 		return nil, fmt.Errorf("failed to decode image: %v", err)
 	}
 
 	payload, err := stego.ExtractAlpha(img)
 	if err != nil {
-		return nil, err
+		// Alpha extract rarely hard-errors; treat as not-found for resilience.
+		return &core.ExtractionResult{
+			MessageFound: false,
+			ExtractionDetails: map[string]interface{}{
+				"status": "extract_error",
+				"error":  err.Error(),
+			},
+		}, nil
 	}
 
 	if payload != nil {

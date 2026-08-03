@@ -8,11 +8,7 @@ import (
 	"fmt"
 	"image"
 	"image/draw"
-	_ "image/gif"
-	_ "image/jpeg"
 	"image/png"
-	_ "golang.org/x/image/bmp"
-	_ "golang.org/x/image/webp"
 )
 
 const (
@@ -41,7 +37,7 @@ func Inscribe(cover []byte, message string, method string) (*InscribeResult, err
 		return nil, fmt.Errorf("only alpha method is supported for inscription (detection supports: alpha, palette, lsb.rgb, exif, raw)")
 	}
 
-	img, _, err := image.Decode(bytes.NewReader(cover))
+	img, _, err := DecodeImage(cover)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode image: %w", err)
 	}
