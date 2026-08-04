@@ -15,7 +15,8 @@ RUN npm run build
 # CGO disabled; we use modernc.org/sqlite (pure Go) so no C compiler or libc
 # dependencies are needed in the builder. This keeps the image small and
 # portable.
-FROM golang:1.25-alpine AS backend-builder
+# Pin patch toolchain so stdlib security fixes (1.25.8–1.25.12) are included.
+FROM golang:1.25.12-alpine AS backend-builder
 WORKDIR /app/backend
 # Install build dependencies (no CGO needed for modernc.org/sqlite)
 RUN apk add --no-cache git ca-certificates tzdata

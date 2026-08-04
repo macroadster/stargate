@@ -1,6 +1,7 @@
 # CGO disabled; using modernc.org/sqlite (pure Go implementation).
 # No gcc or libc-dev needed in the builder.
-FROM golang:1.25-alpine AS builder
+# Pin patch toolchain so stdlib security fixes (1.25.8–1.25.12) are included.
+FROM golang:1.25.12-alpine AS builder
 WORKDIR /app
 
 # Install build dependencies (pure-Go SQLite, no CGO)
