@@ -36,20 +36,6 @@ func FundingAddressFromMeta(meta map[string]interface{}) string {
 }
 
 // budgetFromMeta extracts budget from metadata.
-func budgetFromMeta(meta map[string]interface{}) int64 {
-	if budget, ok := meta["budget_sats"].(int64); ok && budget > 0 {
-		return budget
-	}
-	if budget, ok := meta["budget_sats"].(float64); ok && budget > 0 {
-		return int64(budget)
-	}
-	if budgetStr, ok := meta["budget_sats"].(string); ok {
-		if budget, err := strconv.ParseInt(budgetStr, 10, 64); err == nil && budget > 0 {
-			return budget
-		}
-	}
-	return DefaultBudgetSats()
-}
 
 func NormalizeContractID(id string) string {
 	return identity.Normalize(id)
@@ -61,6 +47,3 @@ func ToWishID(hash string) string {
 }
 
 // IsValidHash checks if a string looks like a valid hash (64 hex chars)
-func IsValidHash(hash string) bool {
-	return identity.IsPixelHash(identity.Normalize(hash))
-}

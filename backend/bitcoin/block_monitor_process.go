@@ -550,21 +550,3 @@ func (bm *BlockMonitor) fetchTxStatus(txid string) (map[string]any, int64, bool,
 // parseTxOutputsFromJSON builds a minimal Transaction from the Esplora JSON,
 // containing only TxID and Outputs (ScriptPubKey + Value).  This is sufficient
 // for updateTaskFundingProofsFromTx and confirmContractTasks.
-func (bm *BlockMonitor) parseTxOutputsFromJSON(txid string, txJSON map[string]any) Transaction {
-	tx := Transaction{TxID: txid}
-	vouts, _ := txJSON["vout"].([]any)
-	for _, v := range vouts {
-		vout, _ := v.(map[string]any)
-		if vout == nil {
-			continue
-		}
-		scriptHex, _ := vout["scriptpubkey"].(string)
-		scriptBytes, _ := hex.DecodeString(scriptHex)
-		value, _ := vout["value"].(float64)
-		tx.Outputs = append(tx.Outputs, TxOutput{
-			ScriptPubKey: scriptBytes,
-			Value:        int64(value),
-		})
-	}
-	return tx
-}

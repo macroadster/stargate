@@ -17,16 +17,16 @@ import (
 	"sync"
 	"time"
 
+	scmiddleware "stargate-backend/app/smart_contract"
+	scservices "stargate-backend/app/smart_contract/services"
 	"stargate-backend/bitcoin"
 	"stargate-backend/core"
 	"stargate-backend/core/smart_contract"
 	"stargate-backend/handlers"
-	scmiddleware "stargate-backend/app/smart_contract"
-	scservices "stargate-backend/app/smart_contract/services"
 	"stargate-backend/services"
 	"stargate-backend/starlight"
-	auth "stargate-backend/storage/auth"
 	"stargate-backend/storage"
+	auth "stargate-backend/storage/auth"
 	"stargate-backend/storage/datadir"
 	scstore "stargate-backend/storage/smart_contract"
 
@@ -566,48 +566,25 @@ func (h *HTTPMCPServer) writeStructuredErrorJSONRPC(w http.ResponseWriter, err e
 	json.NewEncoder(w).Encode(resp)
 }
 
-func (h *HTTPMCPServer) statusFromError(err error) int {
-	if err == nil {
-		return http.StatusInternalServerError
-	}
-	lower := strings.ToLower(err.Error())
-	switch {
-	case strings.Contains(lower, "not found"):
-		return http.StatusNotFound
-	case strings.Contains(lower, "already claimed"),
-		strings.Contains(lower, "already taken"),
-		strings.Contains(lower, "conflict"),
-		strings.Contains(lower, "taken"):
-		return http.StatusConflict
-	case strings.Contains(lower, "missing"),
-		strings.Contains(lower, "required"),
-		strings.Contains(lower, "invalid"),
-		strings.Contains(lower, "expected"):
-		return http.StatusBadRequest
-	default:
-		return http.StatusInternalServerError
-	}
-}
-
 func (h *HTTPMCPServer) toolRequiresAuth(toolName string) bool {
 	if h.guidance != nil {
 		return h.guidance.ToolRequiresAuth(toolName)
 	}
 	authenticatedTools := map[string]bool{
-		"create_proposal":       true,
-		"create_wish":           true,
-		"create_task":           true,
-		"claim_task":            true,
-		"submit_work":           true,
-		"approve_proposal":      true,
-		"reject_submission":     true,
-		"approve_submission":    true,
-		"get_auth_challenge":    false, // No auth required - discovery tool
-		"verify_auth_challenge": false, // No auth required - solves chicken-egg problem
-		"validate_address":      false, // No auth required - AI debugging tool
-		"get_task":              false, // No auth required - discovery tool
-		"list_submissions":      false, // No auth required - discovery tool
-		"build_psbt":                    true,  // Auth required - payer address derived from API key
+		"create_proposal":                true,
+		"create_wish":                    true,
+		"create_task":                    true,
+		"claim_task":                     true,
+		"submit_work":                    true,
+		"approve_proposal":               true,
+		"reject_submission":              true,
+		"approve_submission":             true,
+		"get_auth_challenge":             false, // No auth required - discovery tool
+		"verify_auth_challenge":          false, // No auth required - solves chicken-egg problem
+		"validate_address":               false, // No auth required - AI debugging tool
+		"get_task":                       false, // No auth required - discovery tool
+		"list_submissions":               false, // No auth required - discovery tool
+		"build_psbt":                     true,  // Auth required - payer address derived from API key
 		"create_contract_rework_request": true,
 	}
 	return authenticatedTools[toolName]
@@ -2046,10 +2023,10 @@ func (h *HTTPMCPServer) handleSubmitWork(ctx context.Context, args map[string]in
 			// Get uploads directory
 			uploadsDir := os.Getenv("UPLOADS_DIR")
 
-                       // Create results directory: UPLOADS_DIR/results/ab/cd/ef/[contract_id]
+			// Create results directory: UPLOADS_DIR/results/ab/cd/ef/[contract_id]
 			// Look up the contract/task relationship to get contract_id for file organization
-                       resultsDir, err := datadir.PartMkdirAll(filepath.Join(uploadsDir, "results"), subDir, 0755)
-                       if err != nil {
+			resultsDir, err := datadir.PartMkdirAll(filepath.Join(uploadsDir, "results"), subDir, 0755)
+			if err != nil {
 				return nil, NewInternalError("submit_work", fmt.Sprintf("Failed to create results directory: %v", err))
 			}
 
@@ -2429,9 +2406,6 @@ func (h *HTTPMCPServer) handleValidateAddress(ctx context.Context, args map[stri
 
 // verifyBTCSignature verifies a Bitcoin signature against a message
 // Uses the exported verification functions from the handlers package
-func (h *HTTPMCPServer) verifyBTCSignature(address, signature, message string) (bool, error) {
-	return handlers.VerifyBTCSignature(address, signature, message)
-}
 
 func (h *HTTPMCPServer) handleCreateTask(ctx context.Context, args map[string]interface{}, apiKey string) (interface{}, error) {
 	validation := NewValidationError("create_task", "Invalid request parameters")

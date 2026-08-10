@@ -65,6 +65,3 @@ func (s *NotifyingStore) UpsertContractWithTasks(ctx context.Context, contract c
 }
 
 // Unwrap returns the underlying store (for type assertions / tests).
-func (s *NotifyingStore) Unwrap() Store {
-	return s.Store
-}

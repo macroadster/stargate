@@ -1,5 +1,3 @@
-import React, { useState } from 'react';
-
 const BlockCard = ({ block, onClick, isSelected }) => {
   const stegoCount = block.steganography_summary?.stego_count || 0;
   const smartContractCount = block.smart_contract_count ?? stegoCount;

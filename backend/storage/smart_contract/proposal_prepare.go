@@ -111,10 +111,3 @@ func VisibleHashFromProposalMeta(visiblePixelHash string, meta map[string]interf
 }
 
 // WishIDToSupersedeOnApproval returns wish-<hash> when approval should archive the wish contract.
-func WishIDToSupersedeOnApproval(visiblePixelHash string, meta map[string]interface{}) string {
-	visible := VisibleHashFromProposalMeta(visiblePixelHash, meta)
-	if visible == "" {
-		return ""
-	}
-	return identity.ToWishID(visible)
-}

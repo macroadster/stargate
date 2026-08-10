@@ -37,7 +37,6 @@ func NewSubmissionService(store scstore.Store, record EventRecorder) *Submission
 }
 
 // SetRecorder updates the event sink.
-func (s *SubmissionService) SetRecorder(record EventRecorder) { s.record = record }
 
 func (s *SubmissionService) emit(evt smart_contract.Event) {
 	if s.record != nil {

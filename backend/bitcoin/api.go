@@ -26,13 +26,6 @@ type BitcoinAPI struct {
 	healthCacheMutex sync.RWMutex
 }
 
-// NewBitcoinAPI creates a new Bitcoin API instance
-func NewBitcoinAPI() *BitcoinAPI {
-	network := GetCurrentNetwork()
-	config := GetNetworkConfig(network)
-	return NewBitcoinAPIWithClient(NewBitcoinNodeClient(config.BaseURL))
-}
-
 // NewBitcoinAPIWithClient creates a new Bitcoin API instance with custom client
 func NewBitcoinAPIWithClient(client *BitcoinNodeClient) *BitcoinAPI {
 	bitcoinClient := client
@@ -745,9 +738,6 @@ func (api *BitcoinAPI) HandleGetTransaction(w http.ResponseWriter, r *http.Reque
 }
 
 // GetBitcoinClient returns the underlying Bitcoin client
-func (api *BitcoinAPI) GetBitcoinClient() *BitcoinNodeClient {
-	return api.bitcoinClient
-}
 
 // EnableCORS enables CORS headers
 func EnableCORS(w http.ResponseWriter, r *http.Request) {

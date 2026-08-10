@@ -9,25 +9,8 @@ import (
 	"strings"
 
 	"stargate-backend/core/smart_contract"
-	auth "stargate-backend/storage/auth"
 	"stargate-backend/storage/ipfs"
 )
-
-func applyCreatorWallet(meta map[string]interface{}, apiKey string, apiKeys auth.APIKeyValidator) {
-	if meta == nil {
-		return
-	}
-	if _, ok := meta["creator_wallet"].(string); ok {
-		return
-	}
-	if apiKeys != nil {
-		if rec, ok := apiKeys.Get(apiKey); ok {
-			if wallet := strings.TrimSpace(rec.Wallet); wallet != "" {
-				meta["creator_wallet"] = wallet
-			}
-		}
-	}
-}
 
 func (s *Server) enforceCreatorApproval(r *http.Request, proposal smart_contract.Proposal) error {
 	apiKey := r.Header.Get("X-API-Key")
@@ -242,16 +225,6 @@ func (s *Server) handleContracts(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleGetContractReworkRequests returns all rework requests for a contract.
-func (s *Server) handleGetContractReworkRequests(w http.ResponseWriter, r *http.Request, contractID string) {
-	reworkReqs, err := s.store.GetContractReworkRequests(r.Context(), contractID)
-	if err != nil {
-		Error(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	JSON(w, http.StatusOK, map[string]interface{}{
-		"rework_requests": reworkReqs,
-	})
-}
 
 // handleContractRework creates a new rework request for a contract.
 func (s *Server) handleContractRework(w http.ResponseWriter, r *http.Request, contractID string) {

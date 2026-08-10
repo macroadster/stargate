@@ -74,25 +74,8 @@ func (c *ContractCache) Set(key string, contracts []smart_contract.Contract) {
 }
 
 // Invalidate removes a specific cache entry
-func (c *ContractCache) Invalidate(key string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	delete(c.cache, key)
-}
 
 // InvalidateByContract removes cache entries containing specific contract
-func (c *ContractCache) InvalidateByContract(contractID string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	// Invalidate all entries that might contain this contract
-	for key := range c.cache {
-		if c.containsContract(key, contractID) {
-			delete(c.cache, key)
-		}
-	}
-}
 
 // InvalidateAll clears all cache entries
 func (c *ContractCache) InvalidateAll() {

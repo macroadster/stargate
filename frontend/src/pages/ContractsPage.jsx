@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import InscriptionModal from '../components/Inscription/InscriptionModal';
 import AppHeader from '../components/Common/AppHeader';

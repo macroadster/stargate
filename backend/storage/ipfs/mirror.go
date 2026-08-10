@@ -69,9 +69,6 @@ type Mirror struct {
 // OnFileDownloaded registers a callback invoked every time the mirror
 // downloads a new file.  Use this to trigger ingestion without a separate
 // IPFS pubsub subscription.
-func (m *Mirror) OnFileDownloaded(fn func(ctx context.Context, ev FileDownloadedEvent)) {
-	m.onFileDownloaded = fn
-}
 
 type fileState struct {
 	Size    int64

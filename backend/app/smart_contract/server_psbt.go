@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
+	scservices "stargate-backend/app/smart_contract/services"
 	"stargate-backend/bitcoin"
 	"stargate-backend/core/smart_contract"
-	scservices "stargate-backend/app/smart_contract/services"
 	"stargate-backend/services"
 	"stargate-backend/storage/ipfs"
 	scstore "stargate-backend/storage/smart_contract"
@@ -589,8 +589,6 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 	})
 }
 
-
-
 func normalizePixelBytes(b []byte) []byte {
 	if l := len(b); l == 20 || l == 32 {
 		return b
@@ -640,17 +638,17 @@ func (s *Server) resolvePSBTPixel(contractID, pixelHash string, usePixelHash boo
 
 // raiseFundContext holds precomputed raise_fund PSBT inputs.
 type raiseFundContext struct {
-	FundraiserAddr  btcutil.Address
-	Payouts         []bitcoin.PayoutOutput
-	Payers          []bitcoin.PayerTarget
-	PayerAddrs      []btcutil.Address
-	PayoutsByPayer  map[string][]bitcoin.PayoutOutput
-	PayersByWallet  map[string]bitcoin.PayerTarget
-	PayerOrder      []string
-	PayerTotals     map[string]int64
-	TaskIDs         []string
-	TasksByWallet   map[string][]string
-	TargetSats      int64
+	FundraiserAddr btcutil.Address
+	Payouts        []bitcoin.PayoutOutput
+	Payers         []bitcoin.PayerTarget
+	PayerAddrs     []btcutil.Address
+	PayoutsByPayer map[string][]bitcoin.PayoutOutput
+	PayersByWallet map[string]bitcoin.PayerTarget
+	PayerOrder     []string
+	PayerTotals    map[string]int64
+	TaskIDs        []string
+	TasksByWallet  map[string][]string
+	TargetSats     int64
 }
 
 func (s *Server) prepareRaiseFundContext(ctx context.Context, contractID, fundingAddress string, params *chaincfg.Params) (*raiseFundContext, error) {
@@ -930,13 +928,6 @@ func (s *Server) updateProposalMetadataBestEffort(ctx context.Context, proposalI
 	}
 }
 
-func (s *Server) ingestionFromProposalMeta(meta map[string]interface{}, visiblePixelHash string) *services.IngestionRecord {
-	if s.psbtSvc == nil {
-		return nil
-	}
-	return s.psbtSvc.IngestionFromProposalMeta(meta, visiblePixelHash)
-}
-
 func isRaiseFund(mode string) bool {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
 	case "raise_fund", "fundraiser", "fundraise":
@@ -944,27 +935,6 @@ func isRaiseFund(mode string) bool {
 	default:
 		return false
 	}
-}
-
-func looksLikeRaiseFund(value string) bool {
-	normalized := strings.ToLower(strings.TrimSpace(value))
-	return strings.Contains(normalized, "fund raising") ||
-		strings.Contains(normalized, "fundraising") ||
-		strings.Contains(normalized, "raise fund") ||
-		strings.Contains(normalized, "fundraise")
-}
-
-func fundingAddressFromMeta(meta map[string]interface{}) string {
-	if meta == nil {
-		return ""
-	}
-	if v := strings.TrimSpace(toString(meta["funding_address"])); v != "" {
-		return v
-	}
-	if v := strings.TrimSpace(toString(meta["address"])); v != "" {
-		return v
-	}
-	return ""
 }
 
 func toString(value interface{}) string {
@@ -1006,40 +976,6 @@ func firstString(values []string) string {
 		}
 	}
 	return ""
-}
-
-func (s *Server) resolveContractorPayers(ctx context.Context, contractID string, params *chaincfg.Params) ([]btcutil.Address, error) {
-	if s.store == nil {
-		return nil, fmt.Errorf("task store unavailable")
-	}
-	tasks, err := s.store.ListTasks(smart_contract.TaskFilter{ContractID: contractID})
-	if err != nil {
-		return nil, fmt.Errorf("load contractor wallets: %w", err)
-	}
-	seen := make(map[string]struct{})
-	var addrs []btcutil.Address
-	for _, task := range tasks {
-		candidate := strings.TrimSpace(task.ContractorWallet)
-		if candidate == "" && task.MerkleProof != nil {
-			candidate = strings.TrimSpace(task.MerkleProof.ContractorWallet)
-		}
-		if candidate == "" {
-			continue
-		}
-		if _, ok := seen[candidate]; ok {
-			continue
-		}
-		addr, err := btcutil.DecodeAddress(candidate, params)
-		if err != nil {
-			return nil, fmt.Errorf("invalid contractor wallet: %v", err)
-		}
-		seen[candidate] = struct{}{}
-		addrs = append(addrs, addr)
-	}
-	if len(addrs) == 0 {
-		return nil, fmt.Errorf("no contractor wallets available for funding inputs")
-	}
-	return addrs, nil
 }
 
 func resolvePixelHashFromIngestion(rec *services.IngestionRecord, normalize func([]byte) []byte) []byte {
@@ -1332,21 +1268,6 @@ func (s *Server) resolveCommitmentTask(contractID, taskID string) (smart_contrac
 		}
 	}
 	return smart_contract.Task{}, fmt.Errorf("no task with commitment metadata")
-}
-
-func contractIDFromMeta(meta map[string]interface{}, fallback string) string {
-	if meta != nil {
-		if v, ok := meta["visible_pixel_hash"].(string); ok && strings.TrimSpace(v) != "" {
-			return strings.TrimSpace(v)
-		}
-		if v, ok := meta["contract_id"].(string); ok && strings.TrimSpace(v) != "" {
-			return strings.TrimSpace(v)
-		}
-		if v, ok := meta["ingestion_id"].(string); ok && strings.TrimSpace(v) != "" {
-			return strings.TrimSpace(v)
-		}
-	}
-	return fallback
 }
 
 func networkParamsFromEnv() *chaincfg.Params {

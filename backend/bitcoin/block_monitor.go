@@ -56,9 +56,6 @@ type BlockMonitor struct {
 // rescan.  With OP_RETURN-based matching, the block monitor discovers contracts
 // during normal forward processing.  This loop is a low-frequency fallback for
 // edge cases (node restart mid-block, reorgs).
-const reconcileSweepInterval = 60 * time.Minute
-
-const reconcileSweepBlocks = 3
 
 // BlockData represents comprehensive block data stored to disk
 type BlockData struct {
@@ -245,38 +242,6 @@ func NewBlockMonitor(client *BitcoinNodeClient) *BlockMonitor {
 	}
 }
 
-// NewBlockMonitorWithStorage creates a new block monitor with data storage
-func NewBlockMonitorWithStorage(client *BitcoinNodeClient, dataStorage DataStorageInterface) *BlockMonitor {
-	m := &BlockMonitor{
-		bitcoinClient: client,
-		rawClient:     NewRawBlockClient(client.GetNetwork()),
-		dataStorage:   dataStorage,
-		checkInterval: monitorCheckInterval(),
-		blocksDir:     blocksDirFromEnv(),
-		maxRetries:    3,
-		retryDelay:    10 * time.Second,
-		lastChecked:   time.Now(),
-		ipfsClient:    ipfs.NewClientFromEnv(),
-	}
-	m.bootstrapCurrentHeightFromStorage()
-	return m
-}
-
-// NewBlockMonitorWithAPI creates a new block monitor with Bitcoin API
-func NewBlockMonitorWithAPI(client *BitcoinNodeClient, bitcoinAPI *BitcoinAPI) *BlockMonitor {
-	return &BlockMonitor{
-		bitcoinClient: client,
-		rawClient:     NewRawBlockClient(client.GetNetwork()),
-		bitcoinAPI:    bitcoinAPI,
-		checkInterval: monitorCheckInterval(),
-		blocksDir:     blocksDirFromEnv(),
-		maxRetries:    3,
-		retryDelay:    10 * time.Second,
-		lastChecked:   time.Now(),
-		ipfsClient:    ipfs.NewClientFromEnv(),
-	}
-}
-
 // NewBlockMonitorWithStorageAndAPI creates a new block monitor with data storage and Bitcoin API
 func NewBlockMonitorWithStorageAndAPI(client *BitcoinNodeClient, dataStorage DataStorageInterface, bitcoinAPI *BitcoinAPI) *BlockMonitor {
 	log.Printf("Creating block monitor with bitcoinAPI set: %v", bitcoinAPI != nil)
@@ -360,27 +325,8 @@ func (bm *BlockMonitor) Start() error {
 }
 
 // Stop stops the block monitoring process
-func (bm *BlockMonitor) Stop() error {
-	bm.mu.Lock()
-	defer bm.mu.Unlock()
-
-	if !bm.isRunning {
-		return fmt.Errorf("block monitor is not running")
-	}
-
-	log.Println("Stopping block monitor")
-	bm.isRunning = false
-	close(bm.stopChan)
-
-	return nil
-}
 
 // IsRunning returns whether the monitor is currently running
-func (bm *BlockMonitor) IsRunning() bool {
-	bm.mu.RLock()
-	defer bm.mu.RUnlock()
-	return bm.isRunning
-}
 
 // GetStatistics returns current monitoring statistics
 func (bm *BlockMonitor) GetStatistics() map[string]any {
@@ -457,9 +403,6 @@ func (bm *BlockMonitor) SetChainBackend(chain ChainBackend) {
 }
 
 // ChainBackend returns the configured chain backend (may be nil in tests).
-func (bm *BlockMonitor) ChainBackend() ChainBackend {
-	return bm.chain
-}
 
 // contractUpserter is an optional interface satisfied by MCP stores that can
 // upsert contracts.  Used by persistDiscoveryContract to save on-chain

@@ -90,7 +90,6 @@ func (s *GORMAPIKeyStore) Close() error {
 }
 
 // DB exposes the underlying GORM handle (tests / advanced use).
-func (s *GORMAPIKeyStore) DB() *gorm.DB { return s.db }
 
 // Validate implements APIKeyValidator.
 func (s *GORMAPIKeyStore) Validate(key string) bool {
@@ -233,8 +232,8 @@ func (s *GORMAPIKeyStore) SeedEnvironmentVariables() {
 
 // Compile-time interface checks.
 var (
-	_ APIKeyValidator     = (*GORMAPIKeyStore)(nil)
-	_ APIKeyIssuer        = (*GORMAPIKeyStore)(nil)
-	_ APIKeyWalletUpdater = (*GORMAPIKeyStore)(nil)
+	_ APIKeyValidator      = (*GORMAPIKeyStore)(nil)
+	_ APIKeyIssuer         = (*GORMAPIKeyStore)(nil)
+	_ APIKeyWalletUpdater  = (*GORMAPIKeyStore)(nil)
 	_ APIKeyWalletReissuer = (*GORMAPIKeyStore)(nil)
 )

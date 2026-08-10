@@ -77,13 +77,6 @@ func (s *SQLStore) taskSelectList() string {
 }
 
 // contractSkillsSelect is skills expression for contract rows.
-func (s *SQLStore) contractSkillsSelect(alias string) string {
-	col := "skills"
-	if alias != "" {
-		col = alias + ".skills"
-	}
-	return s.skillsExpr(col) + " AS skills"
-}
 
 // jsonTextExpr returns dialect SQL for extracting a text field from a JSON column.
 // path is a bare key (e.g. "contract_id"), not a JSONPath.
@@ -103,9 +96,3 @@ func formatTime(t time.Time) string {
 }
 
 // formatTimePtr formats a pointer or returns nil for SQL NULL.
-func formatTimePtr(t *time.Time) interface{} {
-	if t == nil || t.IsZero() {
-		return nil
-	}
-	return formatTime(*t)
-}

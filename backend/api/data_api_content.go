@@ -581,24 +581,6 @@ func intFromAny(value any) (int, bool) {
 	return 0, false
 }
 
-func isAVIF(b []byte) bool {
-	if len(b) < 12 {
-		return false
-	}
-	// ISO BMFF: size(4) 'ftyp' then brand.
-	if b[4] == 'f' && b[5] == 't' && b[6] == 'y' && b[7] == 'p' {
-		brand := string(b[8:12])
-		if brand == "avif" || brand == "avis" {
-			return true
-		}
-	}
-	// Search for ftypavif within the first 64 bytes.
-	if idx := bytes.Index(b, []byte("ftypavif")); idx >= 0 && idx < 64 {
-		return true
-	}
-	return false
-}
-
 // extractPushPayload rebuilds a script blob by concatenating its pushdatas in order.
 // Non-push opcodes are discarded; if parsing fails, the original buffer is returned.
 func extractPushPayload(script []byte) ([]byte, bool) {

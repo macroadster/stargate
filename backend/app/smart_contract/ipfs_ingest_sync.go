@@ -18,8 +18,8 @@ import (
 	"stargate-backend/core/smart_contract"
 	"stargate-backend/services"
 	"stargate-backend/stego"
-       "stargate-backend/storage/datadir"
-       "stargate-backend/storage/ipfs"
+	"stargate-backend/storage/datadir"
+	"stargate-backend/storage/ipfs"
 )
 
 type ipfsIngestSyncConfig struct {
@@ -84,11 +84,11 @@ type pendingIngestAnnouncement struct {
 	FundingMode      string `json:"funding_mode,omitempty"`
 	Timestamp        int64  `json:"timestamp"`
 	// Proposal/task data for peer replication (so peers don't depend on IPFS payload fetch)
-	ProposalTitle string              `json:"proposal_title,omitempty"`
-	ProposalDesc  string              `json:"proposal_desc,omitempty"`
-	BudgetSats    int64               `json:"budget_sats,omitempty"`
-	PayloadCID    string              `json:"payload_cid,omitempty"`
-	Tasks         []announcementTask  `json:"tasks,omitempty"`
+	ProposalTitle string             `json:"proposal_title,omitempty"`
+	ProposalDesc  string             `json:"proposal_desc,omitempty"`
+	BudgetSats    int64              `json:"budget_sats,omitempty"`
+	PayloadCID    string             `json:"payload_cid,omitempty"`
+	Tasks         []announcementTask `json:"tasks,omitempty"`
 }
 
 type announcementTask struct {
@@ -379,22 +379,6 @@ func ipfsIngestProcessManifest(ctx context.Context, ingest *services.IngestionSe
 		log.Printf("ipfs stage: manifest=%s staged=%d files (no SQL)", manifestCID, staged)
 	}
 	return nil
-}
-
-func fetchStegoPayload(ctx context.Context, client *ipfs.Client, payloadCID string) (stego.Payload, error) {
-	payloadCID = strings.TrimSpace(payloadCID)
-	if payloadCID == "" {
-		return stego.Payload{}, fmt.Errorf("payload_cid missing")
-	}
-	data, err := client.Cat(ctx, payloadCID)
-	if err != nil {
-		return stego.Payload{}, err
-	}
-	var payload stego.Payload
-	if err := json.Unmarshal(data, &payload); err != nil {
-		return stego.Payload{}, fmt.Errorf("payload decode failed: %w", err)
-	}
-	return payload, nil
 }
 
 func ensureProposalFromStegoPayload(ctx context.Context, store Store, stegoCID string, manifest stego.Manifest, payload stego.Payload) error {
@@ -822,37 +806,6 @@ func maybeTriggerReconcile(ctx context.Context, reconcileFn IngestReconcileFunc,
 	}
 }
 
-func resolveProposalIDsForIngestUpdate(ann *ingestUpdateAnnouncement, rec *services.IngestionRecord) []string {
-	out := make([]string, 0, 3)
-	add := func(value string) {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			return
-		}
-		for _, existing := range out {
-			if existing == value {
-				return
-			}
-		}
-		out = append(out, value)
-	}
-	if ann != nil {
-		add(ann.ProposalID)
-		if ann.VisiblePixelHash != "" {
-			add("proposal-" + ann.VisiblePixelHash)
-		}
-	}
-	if rec != nil && rec.Metadata != nil {
-		if v, ok := rec.Metadata["stego_manifest_proposal_id"].(string); ok {
-			add(v)
-		}
-		if v, ok := rec.Metadata["origin_proposal_id"].(string); ok {
-			add(v)
-		}
-	}
-	return out
-}
-
 func extractManifestCID(encoded string) (string, error) {
 	if encoded == "" {
 		return "", nil
@@ -966,10 +919,6 @@ func parseIngestUpdateAnnouncement(encoded string) (*ingestUpdateAnnouncement, e
 	return nil, nil
 }
 
-func multibaseEncodeString(value string) string {
-	return multibaseEncodeBytes([]byte(value))
-}
-
 func multibaseEncodeBytes(value []byte) string {
 	encoded := base64.RawURLEncoding.EncodeToString(value)
 	return "u" + encoded
@@ -1013,49 +962,6 @@ func ingestIDFromPath(filePath string) string {
 
 // ingestPlainStegoWish creates a pending ingestion for mirrored wish images whose
 // alpha-channel payload is plain text rather than a stego YAML manifest.
-func ingestPlainStegoWish(ctx context.Context, ingest *services.IngestionService, filePath, cid string, rawBytes, blob []byte) bool {
-	if ingest == nil || len(rawBytes) == 0 || len(blob) == 0 {
-		return false
-	}
-	message := strings.TrimSpace(string(rawBytes))
-	if message == "" || looksLikeStegoManifestTextIngest(message) {
-		return false
-	}
-	id := ingestIDFromPath(filePath)
-	if id == "" || strings.HasPrefix(id, ".") {
-		return false
-	}
-	if existing, err := ingest.Get(id); err == nil && existing != nil {
-		return false
-	}
-	meta := map[string]interface{}{
-		"embedded_message":   message,
-		"message":            message,
-		"ipfs_image_cid":     cid,
-		"visible_pixel_hash": id,
-		"ingestion_id":       id,
-	}
-	if strings.TrimSpace(cid) != "" {
-		meta["stego_image_cid"] = cid
-	}
-	rec := services.IngestionRecord{
-		ID:            id,
-		Filename:      filepath.Base(filePath),
-		Method:        getStegoMethodForFilename(filePath),
-		MessageLength: len(rawBytes),
-		ImageBase64:   base64.StdEncoding.EncodeToString(blob),
-		Metadata:      meta,
-		Status:        "pending",
-	}
-	if rec.Filename == "" {
-		rec.Filename = "inscription.png"
-	}
-	if err := ingest.Create(rec); err != nil {
-		log.Printf("mirror ingest: pending wish create %s: %v", id, err)
-		return false
-	}
-	return true
-}
 
 // backfillMirroredUploadsIngestion ensures content-addressed copies exist under
 // UPLOADS_DIR. It does not create SQL ingestion/proposal/contract rows — IPFS

@@ -4,8 +4,8 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"stargate-backend/handlers"
 	scmiddleware "stargate-backend/app/smart_contract"
+	"stargate-backend/handlers"
 	"stargate-backend/services"
 	"stargate-backend/storage"
 	"stargate-backend/storage/auth"
@@ -182,11 +182,3 @@ func initIngestionService(pgDSN string) *services.IngestionService {
 
 // Close stops background goroutines owned by services in the container
 // (e.g. peer cleanup, contract cache TTL cleaner). Safe to call multiple times.
-func (c *Container) Close() {
-	if c.PeerService != nil {
-		c.PeerService.Stop()
-	}
-	if c.ContractCache != nil {
-		c.ContractCache.Stop()
-	}
-}

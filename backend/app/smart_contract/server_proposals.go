@@ -8,9 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"stargate-backend/core/smart_contract"
 	scservices "stargate-backend/app/smart_contract/services"
-	"stargate-backend/services"
+	"stargate-backend/core/smart_contract"
 )
 
 func proposalVisibleHash(p smart_contract.Proposal) string {
@@ -205,13 +204,6 @@ func getStegoMethodFromFilename(filename string) string {
 }
 
 // BuildProposalFromIngestion derives a proposal from a pending ingestion record.
-func BuildProposalFromIngestion(body ProposalCreateBody, rec *services.IngestionRecord) (smart_contract.Proposal, error) {
-	return scservices.BuildProposalFromIngestion(scservices.ProposalCreateInput{
-		ID: body.ID, IngestionID: body.IngestionID, ContractID: body.ContractID,
-		Title: body.Title, DescriptionMD: body.DescriptionMD, VisiblePixelHash: body.VisiblePixelHash,
-		BudgetSats: body.BudgetSats, Status: body.Status, Metadata: body.Metadata, Tasks: body.Tasks,
-	}, rec)
-}
 
 // handleSubmissions manages submission endpoints for review and rework.
 func (s *Server) handleSubmissions(w http.ResponseWriter, r *http.Request) {

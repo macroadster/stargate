@@ -181,30 +181,6 @@ func (btc *BitcoinNodeClient) getCurrentHeightWithRetry(maxRetries int) (int64, 
 }
 
 // waitForRateLimit waits for rate limit to reset with exponential backoff
-func (btc *BitcoinNodeClient) waitForRateLimit(attempt int) error {
-	if attempt == 0 {
-		if !btc.rateLimiter.AllowRequest() {
-			return fmt.Errorf("rate limit exceeded")
-		}
-		return nil
-	}
-
-	// Exponential backoff with jitter
-	waitTime := time.Duration(attempt*attempt) * time.Second
-	if waitTime > 30*time.Second {
-		waitTime = 30 * time.Second
-	}
-
-	// Add some jitter to avoid thundering herd
-	jitter := time.Duration(float64(waitTime) * 0.1 * (0.5 + 0.5*float64(time.Now().UnixNano()%1000)/1000))
-	time.Sleep(waitTime + jitter)
-
-	if !btc.rateLimiter.AllowRequest() {
-		return fmt.Errorf("rate limit exceeded after backoff")
-	}
-
-	return nil
-}
 
 // GetBlockData gets comprehensive block data
 func (btc *BitcoinNodeClient) GetBlockData(height int64) (any, error) {
@@ -238,39 +214,6 @@ func (btc *BitcoinNodeClient) GetBlockData(height int64) (any, error) {
 }
 
 // GetTransaction gets transaction data
-func (btc *BitcoinNodeClient) GetTransaction(txID string) (any, error) {
-	if !btc.rateLimiter.AllowRequest() {
-		return nil, fmt.Errorf("rate limit exceeded")
-	}
-
-	url := fmt.Sprintf("%s/tx/%s", btc.baseURL, txID)
-
-	resp, err := btc.httpClient.Get(url)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch transaction: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, fmt.Errorf("transaction not found")
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("bitcoin node returned status %d", resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
-	}
-
-	var txData any
-	if err := json.Unmarshal(body, &txData); err != nil {
-		return nil, fmt.Errorf("failed to decode transaction data: %w", err)
-	}
-
-	return txData, nil
-}
 
 // GetTransactionInfo gets detailed transaction information
 func (btc *BitcoinNodeClient) GetTransactionInfo(txID string, includeImages bool, imageFormat string) (*core.TransactionInfo, error) {

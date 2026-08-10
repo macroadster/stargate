@@ -404,34 +404,11 @@ func (tm *TransactionMonitor) SetCheckInterval(interval time.Duration) {
 }
 
 // ContractEventHandler creates an event handler for contract-specific events
-func ContractEventHandler(tm *TransactionMonitor, _ any) EventHandler {
-	return func(ctx context.Context, event *TransactionEvent) error {
-		log.Printf("Contract event handler: %s for contract %s", event.Type, event.ContractID)
-
-		// In a real implementation, this would:
-		// 1. Update contract state in database
-		// 2. Trigger appropriate contract actions
-		// 3. Notify other services
-		// 4. Update Merkle proofs if needed
-
-		switch event.Type {
-		case "tx_fully_confirmed":
-			return tm.handleFullyConfirmedTransaction(ctx, event, nil)
-		case "tx_status_changed":
-			return tm.handleStatusChange(ctx, event, nil)
-		default:
-			log.Printf("Unhandled contract event type: %s", event.Type)
-		}
-
-		return nil
-	}
-}
 
 // handleFullyConfirmedTransaction handles fully confirmed transactions
 func (tm *TransactionMonitor) handleFullyConfirmedTransaction(_ context.Context, event *TransactionEvent, _ any) error {
 	log.Printf("Handling fully confirmed transaction %s for contract %s", event.TxID, event.ContractID)
 
-	// In a real implementation, this would:
 	// 1. Update contract status based on transaction type
 	// 2. Process payouts if this is a funding transaction
 	// 3. Release escrow if conditions are met
@@ -447,7 +424,6 @@ func (tm *TransactionMonitor) handleStatusChange(_ context.Context, event *Trans
 		event.Data["old_status"],
 		event.Data["new_status"])
 
-	// In a real implementation, this would:
 	// 1. Update transaction status in database
 	// 2. Notify interested parties
 	// 3. Trigger next steps in contract lifecycle

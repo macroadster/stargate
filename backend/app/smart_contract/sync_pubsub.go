@@ -202,10 +202,6 @@ func syncPubsubSubscribe(ctx context.Context, server *Server, cfg syncPubsubConf
 	}
 }
 
-func decodePubsubPayload(data []byte) []byte {
-	return data
-}
-
 // PublishSyncAnnouncement broadcasts a sync message to the cluster.
 func (s *Server) PublishSyncAnnouncement(ctx context.Context, ann *syncAnnouncement) error {
 	cfg := loadSyncPubsubConfig()

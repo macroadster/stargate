@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -37,17 +36,17 @@ type EmbeddedBtcd struct {
 
 // NodeConfig configures the managed btcd process and RPC connection.
 type NodeConfig struct {
-	Mode       string // managed | external | off
-	Bin        string
-	DataDir    string
-	Network    string
-	RPCHost    string // host:port for RPC (listen and dial)
-	P2PListen  string // e.g. 0.0.0.0:48333
-	RPCUser    string
-	RPCPass    string
-	TxIndex    bool
-	AddrIndex  bool
-	ExtraArgs  []string
+	Mode         string // managed | external | off
+	Bin          string
+	DataDir      string
+	Network      string
+	RPCHost      string // host:port for RPC (listen and dial)
+	P2PListen    string // e.g. 0.0.0.0:48333
+	RPCUser      string
+	RPCPass      string
+	TxIndex      bool
+	AddrIndex    bool
+	ExtraArgs    []string
 	AllowMainnet bool
 }
 
@@ -584,11 +583,3 @@ func (r *ChainRuntime) Close() error {
 }
 
 // ParseRPCPort extracts port for diagnostics.
-func ParseRPCPort(host string) int {
-	_, port, ok := strings.Cut(host, ":")
-	if !ok {
-		return 0
-	}
-	p, _ := strconv.Atoi(port)
-	return p
-}

@@ -6,13 +6,6 @@ import "time"
 // Use these instead of magic strings everywhere (core, stores, MCP tools, handlers)
 // to prevent the enum drift described in Cat 5.1.
 const (
-	// Contract statuses
-	ContractStatusCreated   = "created"
-	ContractStatusActive    = "active"
-	ContractStatusFunded    = "funded"
-	ContractStatusConfirmed = "confirmed"
-	ContractStatusExpired   = "expired"
-
 	// Task statuses
 	TaskStatusAvailable = "available"
 	TaskStatusClaimed   = "claimed"
@@ -22,33 +15,27 @@ const (
 	TaskStatusCompleted = "completed" // used in some MCP lists / legacy
 
 	// Proposal statuses
-	ProposalStatusPending   = "pending"
-	ProposalStatusApproved  = "approved"
-	ProposalStatusRejected  = "rejected"
+	ProposalStatusPending  = "pending"
+	ProposalStatusApproved = "approved"
+
 	ProposalStatusPublished = "published"
 
 	// Claim statuses
 	ClaimStatusActive    = "active"
 	ClaimStatusSubmitted = "submitted"
 	ClaimStatusComplete  = "complete"
-	ClaimStatusExpired   = "expired"
-	ClaimStatusRejected  = "rejected"
+
+	ClaimStatusRejected = "rejected"
 
 	// Submission statuses
 	SubmissionStatusPendingReview = "pending_review"
 	SubmissionStatusReviewed      = "reviewed"
-	SubmissionStatusApproved      = "approved"
-	SubmissionStatusRejected      = "rejected"
+
+	SubmissionStatusRejected = "rejected"
 
 	// ContractReworkRequest statuses
 	ReworkStatusOpen     = "open"
 	ReworkStatusResolved = "resolved"
-
-	// Additional legacy / MCP list values for compatibility in schemas
-	StatusPending   = "pending"
-	StatusActive    = "active"
-	StatusCompleted = "completed"
-	StatusAll       = "all"
 )
 
 // Contract captures a goal contract summary.
@@ -58,7 +45,7 @@ type Contract struct {
 	TotalBudgetSats      int64                   `json:"total_budget_sats"`
 	GoalsCount           int                     `json:"goals_count"`
 	AvailableTasksCount  int                     `json:"available_tasks_count"`
-	Status string `json:"status"` // ContractStatusCreated | Active | Funded | Confirmed | Expired (use the consts)
+	Status               string                  `json:"status"` // ContractStatusCreated | Active | Funded | Confirmed | Expired (use the consts)
 	Skills               []string                `json:"skills,omitempty"`
 	StegoImageURL        string                  `json:"stego_image_url,omitempty"`
 	Metadata             map[string]interface{}  `json:"metadata,omitempty"`
@@ -88,7 +75,7 @@ type Task struct {
 	Description      string            `json:"description"`
 	BudgetSats       int64             `json:"budget_sats"`
 	Skills           []string          `json:"skills_required"`
-	Status string `json:"status"` // TaskStatusAvailable | Claimed | Submitted | Approved | Published (use the consts)
+	Status           string            `json:"status"` // TaskStatusAvailable | Claimed | Submitted | Approved | Published (use the consts)
 	ClaimedBy        string            `json:"claimed_by,omitempty"`
 	ContractorWallet string            `json:"contractor_wallet,omitempty"`
 	ClaimedAt        *time.Time        `json:"claimed_at,omitempty"`
@@ -169,7 +156,7 @@ type Submission struct {
 // ContractFilter captures list filters for contracts.
 type ContractFilter struct {
 	Status             string
-	Statuses           []string   // Match any of these statuses (OR); takes precedence over Status when non-empty
+	Statuses           []string // Match any of these statuses (OR); takes precedence over Status when non-empty
 	Skills             []string
 	Creator            string
 	AiIdentifier       string

@@ -291,7 +291,6 @@ func (em *EscrowManager) handleFundingConfirmation(_ context.Context, contract *
 func (em *EscrowManager) ClaimEscrow(ctx context.Context, contract *EscrowContract, claimantPubKey string, signatures []string) (*EscrowTransaction, error) {
 	log.Printf("Claiming escrow contract %s for participant %s", contract.ContractID, claimantPubKey)
 
-	// Validate contract state
 	if contract.Status != "funded" && contract.Status != "active" {
 		return nil, fmt.Errorf("contract not available for claiming: %s", contract.Status)
 	}
@@ -397,46 +396,10 @@ func (em *EscrowManager) handleClaimConfirmation(_ context.Context, contract *Es
 }
 
 // PayoutEscrow processes payout from escrow to recipients
-func (em *EscrowManager) PayoutEscrow(ctx context.Context, contract *EscrowContract, payouts []Payout) ([]*EscrowTransaction, error) {
-	log.Printf("Processing payout for escrow contract %s with %d recipients", contract.ContractID, len(payouts))
 
-	// Validate contract state
-	if contract.Status != "active" {
-		return nil, fmt.Errorf("contract not active for payout: %s", contract.Status)
-	}
+// Would be the spending script
 
-	// Validate payouts
-	if err := em.validatePayouts(contract, payouts); err != nil {
-		return nil, fmt.Errorf("invalid payouts: %v", err)
-	}
-
-	var transactions []*EscrowTransaction
-	for _, payout := range payouts {
-		// Create payout transaction
-		tx := &EscrowTransaction{
-			TxID:        em.generateTxID(""),
-			Type:        "payout",
-			AmountSats:  payout.AmountSats,
-			FromAddress: contract.Address,
-			ToAddress:   payout.Address,
-			ScriptHex:   "", // Would be the spending script
-			Signatures:  payout.Signatures,
-			Status:      "pending",
-			CreatedAt:   time.Now(),
-		}
-
-		transactions = append(transactions, tx)
-
-		// Simulate payout processing
-		go func(payoutTx *EscrowTransaction) {
-			time.Sleep(15 * time.Second) // Simulate processing time
-			em.handlePayoutConfirmation(ctx, contract, payoutTx, payout)
-		}(tx)
-	}
-
-	log.Printf("Created %d payout transactions for contract %s", len(transactions), contract.ContractID)
-	return transactions, nil
-}
+// Simulate processing time
 
 // Payout represents a single payout from escrow
 type Payout struct {
@@ -496,37 +459,12 @@ func (em *EscrowManager) handlePayoutConfirmation(_ context.Context, contract *E
 }
 
 // RefundEscrow processes refund of escrow back to original funder
-func (em *EscrowManager) RefundEscrow(ctx context.Context, contract *EscrowContract, reason string) (*EscrowTransaction, error) {
-	log.Printf("Processing refund for escrow contract %s: %s", contract.ContractID, reason)
 
-	// Validate refund conditions
-	if err := em.validateRefundConditions(contract, reason); err != nil {
-		return nil, fmt.Errorf("refund not allowed: %v", err)
-	}
+// Refund to creator
+// Would be the refund script
+// Would require creator's signature
 
-	// Create refund transaction
-	tx := &EscrowTransaction{
-		TxID:        em.generateTxID(""),
-		Type:        "refund",
-		AmountSats:  contract.TotalBudgetSats,
-		FromAddress: contract.Address,
-		ToAddress:   contract.Participants[0].PublicKey, // Refund to creator
-		ScriptHex:   "",                                 // Would be the refund script
-		Signatures:  []string{},                         // Would require creator's signature
-		Status:      "pending",
-		CreatedAt:   time.Now(),
-	}
-
-	log.Printf("Refund transaction created for contract %s: %s", contract.ContractID, tx.TxID)
-
-	// Simulate refund processing
-	go func() {
-		time.Sleep(20 * time.Second) // Simulate processing time
-		em.handleRefundConfirmation(ctx, contract, tx, reason)
-	}()
-
-	return tx, nil
-}
+// Simulate processing time
 
 // validateRefundConditions validates if refund is allowed
 func (em *EscrowManager) validateRefundConditions(contract *EscrowContract, reason string) error {
@@ -603,20 +541,3 @@ func (em *EscrowManager) generateTaprootAddress(pubKey string) string {
 }
 
 // GetEscrowStatus returns the current status of an escrow contract
-func (em *EscrowManager) GetEscrowStatus(_ context.Context, contractID string) (map[string]any, error) {
-	status := map[string]any{
-		"contract_id": contractID,
-		"service":     "bitcoin_escrow_manager",
-		"timestamp":   time.Now().Format(time.RFC3339),
-		"version":     "1.0.0",
-	}
-
-	// In a real implementation, this would fetch the actual contract status
-	// For now, return a mock status
-	status["status"] = "active"
-	status["balance_sats"] = 50000000
-	status["participants"] = 3
-	status["required_signatures"] = 2
-
-	return status, nil
-}

@@ -1,5 +1,4 @@
-import React from 'react';
-import { CheckCircle, XCircle, Clock, ExternalLink, Filter, ChevronDown, ChevronUp, Eye, FileText, Code, Columns, List } from 'lucide-react';
+import { CheckCircle, XCircle, ExternalLink, Filter, ChevronDown, ChevronUp, Eye, Columns, List } from 'lucide-react';
 import CopyButton from '../Common/CopyButton';
 import {
   countWords,

@@ -65,24 +65,23 @@ const (
 	ErrCodeValidationFailed = "VALIDATION_FAILED"
 
 	// Business logic error codes
-	ErrCodeNotFound      = "RESOURCE_NOT_FOUND"
-	ErrCodeAlreadyExists = "RESOURCE_ALREADY_EXISTS"
-	ErrCodeConflict      = "CONFLICT"
-	ErrCodeUnauthorized  = "UNAUTHORIZED"
-	ErrCodeForbidden     = "FORBIDDEN"
-	ErrCodeRateLimited   = "RATE_LIMITED"
+	ErrCodeNotFound = "RESOURCE_NOT_FOUND"
+
+	ErrCodeConflict     = "CONFLICT"
+	ErrCodeUnauthorized = "UNAUTHORIZED"
+
+	ErrCodeRateLimited = "RATE_LIMITED"
 
 	// Infrastructure error codes
 	ErrCodeServiceUnavailable = "SERVICE_UNAVAILABLE"
 	ErrCodeInternalError      = "INTERNAL_ERROR"
-	ErrCodeBadGateway         = "BAD_GATEWAY"
 
 	// Tool-specific prefixes
-	ToolPrefixClaimTask       = "CLAIM_TASK"
-	ToolPrefixCreateProposal  = "CREATE_PROPOSAL"
-	ToolPrefixSubmitWork      = "SUBMIT_WORK"
-	ToolPrefixApproveProposal = "APPROVE_PROPOSAL"
-	ToolPrefixCreateWish      = "CREATE_WISH"
+	ToolPrefixClaimTask      = "CLAIM_TASK"
+	ToolPrefixCreateProposal = "CREATE_PROPOSAL"
+	ToolPrefixSubmitWork     = "SUBMIT_WORK"
+
+	ToolPrefixCreateWish = "CREATE_WISH"
 )
 
 // Helper functions to create common error types
@@ -121,64 +120,6 @@ func (e *ValidationError) HasErrors() bool {
 	return len(e.Fields) > 0
 }
 
-// ToToolError converts ValidationError to ToolError (for single field errors)
-func (e *ValidationError) ToToolError() *ToolError {
-	if len(e.Fields) == 0 {
-		return &ToolError{
-			Code:       ErrCodeValidationFailed,
-			Message:    e.Message,
-			Tool:       e.Tool,
-			HttpStatus: e.HttpStatus,
-		}
-	}
-
-	// For multiple field errors, return the first one as primary error
-	var firstField string
-	var firstError *FieldError
-	for field, err := range e.Fields {
-		firstField = field
-		firstError = err
-		break
-	}
-
-	code := ErrCodeValidationFailed
-	if firstError.Required {
-		code = ErrCodeMissingRequired
-	} else if firstError.FieldType == "type" {
-		code = ErrCodeInvalidType
-	} else {
-		code = ErrCodeInvalidValue
-	}
-
-	return &ToolError{
-		Code:       code,
-		Message:    firstError.Message,
-		Tool:       e.Tool,
-		Field:      firstField,
-		FieldValue: firstError.Value,
-		Hint:       e.Hint,
-		DocsURL:    e.DocsURL,
-		HttpStatus: e.HttpStatus,
-		Details: map[string]interface{}{
-			"all_errors": e.Fields,
-		},
-	}
-}
-
-// Tool-specific error creators
-
-// NewMissingFieldError creates an error for missing required field
-func NewMissingFieldError(tool, field string) *ToolError {
-	return &ToolError{
-		Code:       ErrCodeMissingRequired,
-		Message:    fmt.Sprintf("Field '%s' is required", field),
-		Tool:       tool,
-		Field:      field,
-		HttpStatus: 400,
-		Hint:       fmt.Sprintf("Add '%s' to your request parameters", field),
-	}
-}
-
 // NewNotFoundError creates a resource not found error
 func NewNotFoundError(tool, resourceType, resourceID string) *ToolError {
 	return &ToolError{
@@ -201,16 +142,6 @@ func NewUnauthorizedError(tool, message string) *ToolError {
 		Tool:       tool,
 		HttpStatus: 401,
 		Hint:       "Provide a valid API key in X-API-Key header or Authorization: Bearer <key>",
-	}
-}
-
-// NewConflictError creates a conflict error
-func NewConflictError(tool, message string) *ToolError {
-	return &ToolError{
-		Code:       ErrCodeConflict,
-		Message:    message,
-		Tool:       tool,
-		HttpStatus: 409,
 	}
 }
 
@@ -299,15 +230,4 @@ func IsValidationError(err error) (*ValidationError, bool) {
 		return validationErr, true
 	}
 	return nil, false
-}
-
-// GetHTTPStatusFromError extracts HTTP status from error types
-func GetHTTPStatusFromError(err error) int {
-	if toolErr, ok := IsToolError(err); ok {
-		return toolErr.HttpStatus
-	}
-	if validationErr, ok := IsValidationError(err); ok {
-		return validationErr.HttpStatus
-	}
-	return 500 // default for unknown errors
 }

@@ -32,14 +32,6 @@ func NewChallengeStore(ttl time.Duration) *ChallengeStore {
 	}
 }
 
-// NewAIChallengeStore builds a challenge store optimized for AI agents with higher limits.
-func NewAIChallengeStore(ttl time.Duration) *ChallengeStore {
-	return &ChallengeStore{
-		ttl:        ttl,
-		challenges: make(map[string]Challenge),
-	}
-}
-
 // Issue creates or refreshes a challenge for a wallet.
 func (s *ChallengeStore) Issue(wallet string) (Challenge, error) {
 	return s.IssueWithOptions(wallet, 5)
@@ -143,19 +135,8 @@ type VerificationResult struct {
 }
 
 // Get returns a copy of the current challenge for a wallet.
-func (s *ChallengeStore) Get(wallet string) (Challenge, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	ch, ok := s.challenges[wallet]
-	return ch, ok
-}
 
 // Delete removes a challenge (used on success or cleanup).
-func (s *ChallengeStore) Delete(wallet string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.challenges, wallet)
-}
 
 func randomNonce() (string, error) {
 	b := make([]byte, 16) // 128-bit nonce

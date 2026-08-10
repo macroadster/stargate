@@ -1,18 +1,14 @@
 package bitcoin
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"log"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/txscript"
 
-	"stargate-backend/core/smart_contract"
 	"stargate-backend/services"
 )
 
@@ -71,60 +67,6 @@ func outputAddresses(script []byte, params *chaincfg.Params) []string {
 // OP_RETURN data to the MCP store and ingestion database.  This enables a
 // fresh instance to rebuild its database from block scans before IPFS sync
 // delivers the original wish image.
-func (bm *BlockMonitor) persistDiscoveryContract(contractID, wishHash, txID string, blockHeight int64, productHash string) {
-	ctx := context.Background()
-
-	// Persist to MCP store so the contract is visible in /api/contracts.
-	if upserter, ok := bm.sweepStore.(contractUpserter); ok {
-		bh := int(blockHeight)
-		now := time.Now()
-		c := smart_contract.Contract{
-			ContractID:           contractID,
-			Title:                "Wish " + wishHash[:8] + "...",
-			Status:               "confirmed",
-			ConfirmedBlockHeight: &bh,
-			ConfirmedAt:          &now,
-			Metadata: map[string]interface{}{
-				"visible_pixel_hash": wishHash,
-				"confirmed_txid":     txID,
-				"confirmed_height":   blockHeight,
-				"match_type":         "op_return_discovery",
-				"product_hash":       productHash,
-			},
-			CreatedAt: now,
-		}
-		if err := upserter.UpsertContractWithTasks(ctx, c, nil); err != nil {
-			log.Printf("oracle reconcile: failed to persist discovery contract %s: %v", contractID, err)
-		} else {
-			log.Printf("oracle reconcile: persisted discovery contract %s to MCP store", contractID)
-		}
-		// Also call ConfirmContract to set confirmed metadata consistently.
-		if err := bm.sweepStore.ConfirmContract(ctx, contractID, bh, txID); err != nil {
-			log.Printf("oracle reconcile: ConfirmContract for %s: %v", contractID, err)
-		}
-	}
-
-	// Create ingestion record so re-scans match via the candidate path and
-	// IPFS sync can later enrich with the actual wish image.
-	if bm.ingestion != nil {
-		rec := services.IngestionRecord{
-			ID:     wishHash,
-			Method: "on_chain_discovery",
-			Status: "confirmed",
-			Metadata: map[string]interface{}{
-				"visible_pixel_hash": wishHash,
-				"confirmed_txid":     txID,
-				"confirmed_height":   blockHeight,
-				"match_type":         "op_return_discovery",
-			},
-		}
-		if err := bm.ingestion.Create(rec); err != nil {
-			log.Printf("oracle reconcile: failed to create discovery ingestion for %s: %v", wishHash, err)
-		} else {
-			log.Printf("oracle reconcile: created discovery ingestion record %s", wishHash)
-		}
-	}
-}
 
 func hashPrefixFromFilename(filename string) string {
 	if strings.TrimSpace(filename) == "" {

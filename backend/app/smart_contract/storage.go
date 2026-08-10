@@ -12,9 +12,6 @@ import scstore "stargate-backend/storage/smart_contract"
 // Store is the MCP persistence interface (single source of truth in storage/).
 type Store = scstore.Store
 
-// Err is the error type used by store implementations.
-type Err = scstore.Err
-
 // Re-exported sentinel errors for callers that do errors.Is(...) against them.
 var (
 	ErrTaskNotFound    = scstore.ErrTaskNotFound

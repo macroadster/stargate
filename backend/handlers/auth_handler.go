@@ -35,14 +35,6 @@ func NewAPIKeyHandler(issuer auth.APIKeyIssuer, validator auth.APIKeyValidator, 
 	return &APIKeyHandler{BaseHandler: NewBaseHandler(), issuer: issuer, validator: validator, challenges: challenges}
 }
 
-// HandleRegister is DISABLED for security reasons.
-// Email-based registration without validation is a security vulnerability.
-// Use wallet challenge verification instead.
-func (h *APIKeyHandler) HandleRegister(w http.ResponseWriter, r *http.Request) {
-	h.sendError(w, http.StatusForbidden, "Email-based registration is disabled for security reasons. Use wallet challenge verification instead: POST /api/auth/challenge followed by POST /api/auth/verify")
-	return
-}
-
 // HandleLogin verifies an existing API key.
 // Request: {"api_key":"..."}
 // Response: { "valid": true }

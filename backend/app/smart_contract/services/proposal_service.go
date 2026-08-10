@@ -95,17 +95,10 @@ func NewProposalService(
 }
 
 // SetRecorder updates the event sink.
-func (s *ProposalService) SetRecorder(record EventRecorder) { s.record = record }
 
 // SetPublishTasks wires task publishing (typically EventService.PublishProposalTasks).
-func (s *ProposalService) SetPublishTasks(fn func(ctx context.Context, proposalID string) error) {
-	s.publishTasks = fn
-}
 
 // SetArchiveWish wires wish archival after approval.
-func (s *ProposalService) SetArchiveWish(fn func(ctx context.Context, visibleHash string)) {
-	s.archiveWish = fn
-}
 
 func (s *ProposalService) emit(evt smart_contract.Event) {
 	if s.record != nil {

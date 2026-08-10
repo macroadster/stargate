@@ -202,10 +202,6 @@ func (rbc *RawBlockClient) ParseBlock(hexData string) (*ParsedBlock, error) {
 type BitcoinParser struct{}
 
 // Block represents a Bitcoin block
-type Block struct {
-	Header       BlockHeader
-	Transactions []Transaction
-}
 
 // BlockHeader represents Bitcoin block header
 type BlockHeader struct {

@@ -123,19 +123,3 @@ func (h *DiscoveryHandler) HandleListPeers(w http.ResponseWriter, r *http.Reques
 	peers := h.peerService.GetPeers()
 	h.sendSuccess(w, peers)
 }
-
-// HandleGetBlocks handles getting blocks
-func (h *BlockHandler) HandleGetBlocks(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		h.sendError(w, http.StatusMethodNotAllowed, "Method not allowed")
-		return
-	}
-
-	blocks, err := h.blockService.GetBlocks()
-	if err != nil {
-		h.sendError(w, http.StatusInternalServerError, "Failed to fetch blocks")
-		return
-	}
-
-	h.sendSuccess(w, blocks)
-}

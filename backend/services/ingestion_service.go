@@ -17,7 +17,6 @@ import ingestion "stargate-backend/storage/ingestion"
 type (
 	IngestionService = ingestion.IngestionService
 	IngestionRecord  = ingestion.IngestionRecord
-	IngestUpdateRow  = ingestion.IngestUpdateRow
 )
 
 // NewIngestionService forwards to the canonical storage implementation.

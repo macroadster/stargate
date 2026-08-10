@@ -246,81 +246,8 @@ func (tw *timeoutTrackingWriter) Flush() {
 }
 
 // ContentType middleware
-func ContentType(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == "POST" || r.Method == "PUT" {
-			contentType := r.Header.Get("Content-Type")
-			if contentType == "" {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusBadRequest)
-
-				errorResp := map[string]interface{}{
-					"success": false,
-					"error": map[string]interface{}{
-						"error":   "missing_content_type",
-						"message": "Content-Type header is required",
-						"code":    http.StatusBadRequest,
-					},
-				}
-
-				json.NewEncoder(w).Encode(errorResp)
-				return
-			}
-		}
-
-		next.ServeHTTP(w, r)
-	})
-}
 
 // Rate limiting middleware (simple implementation)
-func RateLimit(requests int, window time.Duration) func(http.Handler) http.Handler {
-	type client struct {
-		requests int
-		window   time.Time
-	}
-
-	clients := make(map[string]*client)
-
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			clientIP := r.RemoteAddr
-			now := time.Now()
-
-			if c, exists := clients[clientIP]; exists {
-				if now.Sub(c.window) > window {
-					// Reset window
-					c.requests = 1
-					c.window = now
-				} else {
-					c.requests++
-					if c.requests > requests {
-						w.Header().Set("Content-Type", "application/json")
-						w.WriteHeader(http.StatusTooManyRequests)
-
-						errorResp := map[string]interface{}{
-							"success": false,
-							"error": map[string]interface{}{
-								"error":   "rate_limit_exceeded",
-								"message": "Too many requests",
-								"code":    http.StatusTooManyRequests,
-							},
-						}
-
-						json.NewEncoder(w).Encode(errorResp)
-						return
-					}
-				}
-			} else {
-				clients[clientIP] = &client{
-					requests: 1,
-					window:   now,
-				}
-			}
-
-			next.ServeHTTP(w, r)
-		})
-	}
-}
 
 // responseWriter wraps http.ResponseWriter to capture status code
 type responseWriter struct {

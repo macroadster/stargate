@@ -1,7 +1,6 @@
-import React, { useCallback, useEffect, useMemo, useState, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import { RefreshCw, Search, Loader2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { API_BASE } from '../../apiBase';
 import { apiFetch } from '../../utils/api';
 import AppHeader from '../Common/AppHeader';
 import MarkdownContent from '../Common/MarkdownContent';

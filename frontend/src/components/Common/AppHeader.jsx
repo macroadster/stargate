@@ -1,11 +1,10 @@
-import React, { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   Search,
   X,
   Moon,
   Sun,
   Monitor,
-  Menu,
   MoreVertical,
   Check,
   LogOut,

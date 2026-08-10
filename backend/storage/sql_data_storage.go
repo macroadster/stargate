@@ -91,14 +91,6 @@ func NewPostgresStorage(dsn string) (*SQLDataStorage, error) {
 	return s, nil
 }
 
-// Legacy type aliases — external code may still name the old types.
-type (
-	// PostgresStorage is an alias for the unified SQL store (Postgres dialector).
-	PostgresStorage = SQLDataStorage
-	// SQLiteDataStorage is an alias for the unified SQL store (SQLite dialector).
-	SQLiteDataStorage = SQLDataStorage
-)
-
 func (s *SQLDataStorage) ensureSchema() error {
 	// AutoMigrate keeps columns aligned; indexes match historical names where possible.
 	if err := s.db.AutoMigrate(&BlockScanRow{}); err != nil {

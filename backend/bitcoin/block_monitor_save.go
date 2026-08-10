@@ -361,74 +361,22 @@ func (bm *BlockMonitor) createInscriptionsFromImages(images []ExtractedImageData
 }
 
 // saveBlockSummary saves a comprehensive block summary for frontend API
-func (bm *BlockMonitor) saveBlockSummary(blockDir string, parsedBlock *ParsedBlock, inscriptions []InscriptionData, blockHeight int64) error {
-	cleanedImages := make([]ExtractedImageData, len(parsedBlock.Images))
-	for i, img := range parsedBlock.Images {
-		cleanedImages[i] = sanitizeExtractedImage(img)
-	}
-	cleanedInscriptions := sanitizeInscriptionsForDisk(inscriptions)
-
-	summary := BlockInscriptionsResponse{
-		BlockHeight:       blockHeight,
-		BlockHash:         parsedBlock.Header.Hash,
-		Timestamp:         int64(parsedBlock.Header.Timestamp),
-		TotalTransactions: len(parsedBlock.Transactions),
-		Inscriptions:      cleanedInscriptions,
-		Images:            cleanedImages,
-		SmartContracts:    []SmartContractData{},
-		ProcessingTime:    time.Now().Unix(),
-		Success:           true,
-	}
-
-	summaryJSON, err := json.MarshalIndent(summary, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal summary: %w", err)
-	}
-
-	summaryFile := filepath.Join(blockDir, "inscriptions.json")
-	if err := os.WriteFile(summaryFile, summaryJSON, 0644); err != nil {
-		return fmt.Errorf("failed to write summary file: %w", err)
-	}
-
-	return nil
-}
 
 // calculateTransactionSize calculates the size of a transaction in bytes
-func (bm *BlockMonitor) calculateTransactionSize(tx Transaction) int {
-	size := 4 // Version (4 bytes)
 
-	// Input count (varint)
-	size += encodeVarIntSize(len(tx.Inputs))
+// Version (4 bytes)
 
-	// Inputs
-	for _, input := range tx.Inputs {
-		size += 32 // Previous txid
-		size += 4  // Previous index
-		size += encodeVarIntSize(len(input.ScriptSig)) + len(input.ScriptSig)
-		size += 4 // Sequence
-	}
+// Previous txid
+// Previous index
 
-	// Output count (varint)
-	size += encodeVarIntSize(len(tx.Outputs))
+// Sequence
 
-	// Outputs
-	for _, output := range tx.Outputs {
-		size += 8 // Value
-		size += encodeVarIntSize(len(output.ScriptPubKey)) + len(output.ScriptPubKey)
-	}
+// Value
 
-	// Witness data (if present)
-	if tx.HasWitness {
-		size += 1 // Marker
-		size += 1 // Flag
-		for _, witness := range tx.Witness {
-			size += encodeVarIntSize(len(witness)) + len(witness)
-		}
-	}
+// Marker
+// Flag
 
-	size += 4 // Locktime (4 bytes)
-	return size
-}
+// Locktime (4 bytes)
 
 // encodeVarIntSize returns the size of a varint encoding for the given value
 func encodeVarIntSize(value int) int {

@@ -9,9 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"gorm.io/gorm"
 	"stargate-backend/core/smart_contract"
 	"stargate-backend/storage/gormdb"
+
+	"gorm.io/gorm"
 )
 
 // SQLStore is the unified durable MCP store (SQLite + Postgres) opened via gormdb.
@@ -81,10 +82,6 @@ func (s *SQLStore) query(q string, args ...interface{}) (*sql.Rows, error) {
 
 func (s *SQLStore) queryRowContext(ctx context.Context, q string, args ...interface{}) *sql.Row {
 	return s.db.QueryRowContext(ctx, s.rebind(q), args...)
-}
-
-func (s *SQLStore) queryRow(q string, args ...interface{}) *sql.Row {
-	return s.db.QueryRow(s.rebind(q), args...)
 }
 
 func (s *SQLStore) isPostgres() bool { return s.dialect == gormdb.DialectPostgres }
@@ -242,7 +239,6 @@ func (s *SQLStore) Close() {
 		s.db = nil
 	}
 }
-
 
 // Transaction helpers rebind placeholders for the store dialect.
 func (s *SQLStore) txExec(tx *sql.Tx, ctx context.Context, q string, args ...interface{}) (sql.Result, error) {

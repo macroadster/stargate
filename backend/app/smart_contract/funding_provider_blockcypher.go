@@ -37,10 +37,6 @@ type blockcypherTxResponse struct {
 	BlockHeight   int64  `json:"block_height"`
 }
 
-type blockcypherMerkleRoot struct {
-	MerkleRoot string `json:"merkle_root"`
-}
-
 func (p *blockcypherProvider) FetchProof(ctx context.Context, task smart_contract.Task) (*smart_contract.MerkleProof, error) {
 	if task.MerkleProof == nil || task.MerkleProof.TxID == "" {
 		return nil, fmt.Errorf("no tx_id on task")

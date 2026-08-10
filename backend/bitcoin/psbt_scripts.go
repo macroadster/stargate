@@ -163,26 +163,6 @@ func buildHashlockRedeemScript(pixelHash []byte) ([]byte, error) {
 	return builder.Script()
 }
 
-func buildHashlockP2PKHRedeemScript(pixelHash []byte, addr btcutil.Address) ([]byte, error) {
-	if addr == nil {
-		return nil, fmt.Errorf("commitment address required")
-	}
-	pubKeyHash := addr.ScriptAddress()
-	if len(pubKeyHash) != 20 {
-		return nil, fmt.Errorf("commitment address must be P2PKH/P2WPKH")
-	}
-	builder := txscript.NewScriptBuilder()
-	builder.AddOp(txscript.OP_SHA256)
-	builder.AddData(pixelHash[:])
-	builder.AddOp(txscript.OP_EQUALVERIFY)
-	builder.AddOp(txscript.OP_DUP)
-	builder.AddOp(txscript.OP_HASH160)
-	builder.AddData(pubKeyHash)
-	builder.AddOp(txscript.OP_EQUALVERIFY)
-	builder.AddOp(txscript.OP_CHECKSIG)
-	return builder.Script()
-}
-
 func estimateFee(inputVBytes, outputs int64, feeRate int64) int64 {
 	// Basic vsize estimate: overhead ~10 vbytes + inputVBytes + outputs*34.
 	vsize := int64(10) + inputVBytes + outputs*34
@@ -206,14 +186,6 @@ func firstScript(scripts [][]byte) []byte {
 		return nil
 	}
 	return scripts[0]
-}
-
-func sumFeeShares(selections []payerSelection) int64 {
-	var total int64
-	for _, sel := range selections {
-		total += sel.feeShare
-	}
-	return total
 }
 
 func estimateInputVBytes(addr btcutil.Address) int64 {
