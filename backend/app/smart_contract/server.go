@@ -141,12 +141,9 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 
 func (s *Server) authWrap(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if s.apiKeys != nil {
-			key := r.Header.Get("X-API-Key")
-			if key == "" || !s.apiKeys.Validate(key) {
-				Error(w, http.StatusForbidden, "invalid api key")
-				return
-			}
+		r, ok := s.authenticate(w, r, true)
+		if !ok {
+			return
 		}
 		next(w, r)
 	}
@@ -156,21 +153,36 @@ func (s *Server) authWrap(next http.HandlerFunc) http.HandlerFunc {
 func (s *Server) authWrapReadOnly(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
-			// Allow GET requests without authentication
 			next(w, r)
 			return
 		}
-
-		// Require authentication for non-GET methods
-		if s.apiKeys != nil {
-			key := r.Header.Get("X-API-Key")
-			if key == "" || !s.apiKeys.Validate(key) {
-				Error(w, http.StatusForbidden, "invalid api key")
-				return
-			}
+		r, ok := s.authenticate(w, r, true)
+		if !ok {
+			return
 		}
 		next(w, r)
 	}
+}
+
+// authenticate applies the same bearer path as middleware.APIAuth and MCP.
+// required=false is unused today but keeps the gate in one place.
+func (s *Server) authenticate(w http.ResponseWriter, r *http.Request, required bool) (*http.Request, bool) {
+	if s.apiKeys == nil {
+		return r, true
+	}
+	key := auth.APIKeyFromRequest(r)
+	if key == "" {
+		if !required {
+			return r, true
+		}
+		Error(w, http.StatusUnauthorized, "API key required")
+		return r, false
+	}
+	if !s.apiKeys.Validate(key) {
+		Error(w, http.StatusForbidden, "invalid api key")
+		return r, false
+	}
+	return r.WithContext(auth.WithAPIKey(r.Context(), key)), true
 }
 
 // submissionReviewBody captures POST payload for reviewing submissions.

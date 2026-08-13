@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"stargate-backend/middleware"
+	auth "stargate-backend/storage/auth"
 )
 
 func (h *HTTPMCPServer) handleListTools(w http.ResponseWriter, r *http.Request) {
@@ -164,7 +165,7 @@ func (h *HTTPMCPServer) handleDiscover(w http.ResponseWriter, r *http.Request) {
 		"total":        len(tools),
 		"authentication": map[string]string{
 			"type":        "api_key",
-			"header_name": "X-API-Key",
+			"header_name": "Authorization: Bearer or X-API-Key",
 			"required":    fmt.Sprintf("%t", h.apiKeyStore != nil),
 		},
 		"rate_limits": h.actionLimiter.Discover(),
@@ -430,12 +431,9 @@ func (h *HTTPMCPServer) handleToolCall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	apiKey := strings.TrimSpace(r.Header.Get("X-API-Key"))
-	if apiKey == "" {
-		auth := r.Header.Get("Authorization")
-		if strings.HasPrefix(auth, "Bearer ") {
-			apiKey = strings.TrimPrefix(auth, "Bearer ")
-		}
+	apiKey := h.requestAPIKey(r)
+	if apiKey != "" {
+		r = r.WithContext(auth.WithAPIKey(r.Context(), apiKey))
 	}
 
 	if h.toolRequiresAuth(req.Tool) {

@@ -564,13 +564,7 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 	}
 
 	// Record the wish creator
-	creatorKey := strings.TrimSpace(r.Header.Get("X-API-Key"))
-	if creatorKey == "" {
-		auth := r.Header.Get("Authorization")
-		if strings.HasPrefix(auth, "Bearer ") {
-			creatorKey = strings.TrimPrefix(auth, "Bearer ")
-		}
-	}
+	creatorKey := auth.RequestAPIKey(r)
 	var creatorWallet string
 	if creatorKey != "" && h.apiKeyValidator != nil {
 		if apiKeyRec, ok := h.apiKeyValidator.Get(creatorKey); ok {
@@ -716,13 +710,7 @@ func (h *InscriptionHandler) HandleDeleteInscription(w http.ResponseWriter, r *h
 
 	// Get requester wallet from API key (provided by wrapWithAuth)
 	var requesterWallet string
-	apiKey := strings.TrimSpace(r.Header.Get("X-API-Key"))
-	if apiKey == "" {
-		auth := r.Header.Get("Authorization")
-		if strings.HasPrefix(auth, "Bearer ") {
-			apiKey = strings.TrimPrefix(auth, "Bearer ")
-		}
-	}
+	apiKey := auth.RequestAPIKey(r)
 	if apiKey != "" && h.apiKeyValidator != nil {
 		if apiKeyRec, ok := h.apiKeyValidator.Get(apiKey); ok {
 			requesterWallet = strings.TrimSpace(apiKeyRec.Wallet)

@@ -89,3 +89,53 @@ CREATE TABLE api_keys (
 		t.Fatal("Issue+Get must work on legacy TEXT schema")
 	}
 }
+
+// Unparseable created_at used to make Get/First fail after Validate (COUNT) passed,
+// and login then 500'd on UpdateWallet. Must stay a successful metadata read.
+func TestGORMTimeScanGarbageCreatedAt(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "garbage.db")
+
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = raw.Exec(`
+CREATE TABLE api_keys (
+  key_hash TEXT PRIMARY KEY,
+  email TEXT,
+  wallet_address TEXT,
+  source TEXT,
+  created_at TEXT NOT NULL
+);
+`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = raw.Exec(
+		`INSERT INTO api_keys (key_hash, email, wallet_address, source, created_at) VALUES (?, '', 'tb1qgarbage', 'seed', ?)`,
+		hashAPIKey("garbage-key"), "not-a-real-timestamp",
+	); err != nil {
+		t.Fatal(err)
+	}
+	raw.Close()
+
+	store, err := NewSQLiteAPIKeyStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	if !store.Validate("garbage-key") {
+		t.Fatal("Validate should pass")
+	}
+	got, found := store.Get("garbage-key")
+	if !found {
+		t.Fatal("Get must succeed when created_at is garbage")
+	}
+	if got.Wallet != "tb1qgarbage" {
+		t.Fatalf("wallet=%q", got.Wallet)
+	}
+	if _, err := store.UpdateWallet("garbage-key", "tb1qgarbage"); err != nil {
+		t.Fatalf("UpdateWallet login path: %v", err)
+	}
+}

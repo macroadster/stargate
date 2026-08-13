@@ -4,12 +4,16 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
 	"sync"
 	"time"
 )
+
+// ErrAPIKeyNotFound is returned when UpdateWallet / Get cannot locate a key.
+var ErrAPIKeyNotFound = errors.New("api key not found")
 
 // APIKey represents an issued API key and optional user metadata.
 type APIKey struct {
@@ -83,6 +87,10 @@ func (s *APIKeyStore) SeedEnvironmentVariables() {
 
 // Validate returns true if the key exists.
 func (s *APIKeyStore) Validate(key string) bool {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return false
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	_, ok := s.keys[key]
@@ -91,6 +99,10 @@ func (s *APIKeyStore) Validate(key string) bool {
 
 // Get returns the stored record for a key, if present.
 func (s *APIKeyStore) Get(key string) (APIKey, bool) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return APIKey{}, false
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	rec, ok := s.keys[key]
@@ -140,7 +152,7 @@ func (s *APIKeyStore) UpdateWallet(key, wallet string) (APIKey, error) {
 	defer s.mu.Unlock()
 	rec, ok := s.keys[normalizedKey]
 	if !ok {
-		return APIKey{}, fmt.Errorf("api key not found")
+		return APIKey{}, ErrAPIKeyNotFound
 	}
 	rec.Wallet = normalizedWallet
 	s.keys[normalizedKey] = rec

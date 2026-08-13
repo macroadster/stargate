@@ -285,25 +285,12 @@ func (rw *responseWriter) Write(b []byte) (int, error) {
 	return rw.ResponseWriter.Write(b)
 }
 
-// APIAuth validates API keys against the validator
+// APIAuth validates API keys against the validator.
+// Same extractor as REST authWrap and MCP: X-API-Key, Bearer, or cookie.
 func APIAuth(validator auth.APIKeyValidator) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			apiKey := r.Header.Get("X-API-Key")
-			if apiKey == "" {
-				authHeader := r.Header.Get("Authorization")
-				if strings.HasPrefix(authHeader, "Bearer ") {
-					apiKey = strings.TrimPrefix(authHeader, "Bearer ")
-				}
-			}
-
-			// Check cookie if header is missing
-			if apiKey == "" {
-				if cookie, err := r.Cookie("X-API-Key"); err == nil {
-					apiKey = cookie.Value
-				}
-			}
-
+			apiKey := auth.APIKeyFromRequest(r)
 			if apiKey == "" {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusUnauthorized)
@@ -332,7 +319,7 @@ func APIAuth(validator auth.APIKeyValidator) func(http.Handler) http.Handler {
 				return
 			}
 
-			next.ServeHTTP(w, r)
+			next.ServeHTTP(w, r.WithContext(auth.WithAPIKey(r.Context(), apiKey)))
 		})
 	}
 }

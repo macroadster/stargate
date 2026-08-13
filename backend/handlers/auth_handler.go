@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
@@ -35,12 +36,49 @@ func NewAPIKeyHandler(issuer auth.APIKeyIssuer, validator auth.APIKeyValidator, 
 	return &APIKeyHandler{BaseHandler: NewBaseHandler(), issuer: issuer, validator: validator, challenges: challenges}
 }
 
+// HandleRegister issues an API key into the same store used by login, middleware,
+// MCP sessions, and STARGATE_API_KEY seed (api_keys — no second table).
+// Wallet challenge verification remains the preferred human path.
+func (h *APIKeyHandler) HandleRegister(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		h.sendError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	if h.issuer == nil {
+		h.sendError(w, http.StatusServiceUnavailable, "api key store unavailable")
+		return
+	}
+	var body struct {
+		Email  string `json:"email"`
+		Wallet string `json:"wallet_address"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		h.sendError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	rec, err := h.issuer.Issue(strings.TrimSpace(body.Email), strings.TrimSpace(body.Wallet), "registration")
+	if err != nil {
+		h.sendError(w, http.StatusInternalServerError, "failed to issue api key")
+		return
+	}
+	h.setAPIKeyCookie(w, r, rec.Key)
+	h.sendSuccess(w, map[string]interface{}{
+		"api_key": rec.Key,
+		"wallet":  rec.Wallet,
+		"email":   rec.Email,
+	})
+}
+
 // HandleLogin verifies an existing API key.
 // Request: {"api_key":"..."}
 // Response: { "valid": true }
 func (h *APIKeyHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		h.sendError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	if h.validator == nil {
+		h.sendError(w, http.StatusServiceUnavailable, "api key store unavailable")
 		return
 	}
 
@@ -54,6 +92,10 @@ func (h *APIKeyHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	apiKey := strings.TrimSpace(body.APIKey)
+	if apiKey == "" {
+		h.sendError(w, http.StatusBadRequest, "api_key required")
+		return
+	}
 	if !h.validator.Validate(apiKey) {
 		h.sendError(w, http.StatusForbidden, "invalid api key")
 		return
@@ -72,9 +114,15 @@ func (h *APIKeyHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		}
 		// Bind only when not already set to this wallet. Re-binding the same
 		// address is a common login path after wallet-verify issuance.
+		// Get may fail on timestamp scan edges even after Validate; UpdateWallet
+		// must not turn that into a 500.
 		if bound != wallet {
 			if updater, ok := h.validator.(auth.APIKeyWalletUpdater); ok {
 				if _, err := updater.UpdateWallet(apiKey, wallet); err != nil {
+					if errors.Is(err, auth.ErrAPIKeyNotFound) {
+						h.sendError(w, http.StatusForbidden, "invalid api key")
+						return
+					}
 					h.sendError(w, http.StatusInternalServerError, "failed to bind wallet to api key")
 					return
 				}
@@ -82,7 +130,16 @@ func (h *APIKeyHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Set httpOnly cookie for security
+	h.setAPIKeyCookie(w, r, apiKey)
+
+	h.sendSuccess(w, map[string]interface{}{
+		"valid":   true,
+		"api_key": apiKey,
+		"wallet":  wallet,
+	})
+}
+
+func (h *APIKeyHandler) setAPIKeyCookie(w http.ResponseWriter, r *http.Request, apiKey string) {
 	secure := r.TLS != nil || os.Getenv("NODE_ENV") == "production"
 	http.SetCookie(w, &http.Cookie{
 		Name:     "X-API-Key",
@@ -92,12 +149,6 @@ func (h *APIKeyHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		Secure:   secure,
 		SameSite: http.SameSiteStrictMode,
 		MaxAge:   86400 * 30, // 30 days
-	})
-
-	h.sendSuccess(w, map[string]interface{}{
-		"valid":   true,
-		"api_key": apiKey,
-		"wallet":  wallet,
 	})
 }
 
@@ -196,17 +247,7 @@ func (h *APIKeyHandler) HandleVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Set httpOnly cookie for security
-	secure := r.TLS != nil || os.Getenv("NODE_ENV") == "production"
-	http.SetCookie(w, &http.Cookie{
-		Name:     "X-API-Key",
-		Value:    rec.Key,
-		Path:     "/",
-		HttpOnly: true,
-		Secure:   secure,
-		SameSite: http.SameSiteStrictMode,
-		MaxAge:   86400 * 30, // 30 days
-	})
+	h.setAPIKeyCookie(w, r, rec.Key)
 
 	h.sendSuccess(w, map[string]interface{}{
 		"api_key":  rec.Key,

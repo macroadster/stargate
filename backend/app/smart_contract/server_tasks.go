@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"stargate-backend/core/smart_contract"
+	auth "stargate-backend/storage/auth"
 )
 
 func (s *Server) handleTasks(w http.ResponseWriter, r *http.Request) {
@@ -149,7 +150,7 @@ func (s *Server) handleClaimTask(w http.ResponseWriter, r *http.Request, taskID 
 
 	walletAddress := ""
 	if s.apiKeys != nil {
-		key := r.Header.Get("X-API-Key")
+		key := auth.RequestAPIKey(r)
 		if rec, ok := s.apiKeys.Get(key); ok {
 			walletAddress = strings.TrimSpace(rec.Wallet)
 		}
@@ -333,7 +334,7 @@ func (s *Server) handleDiscover(w http.ResponseWriter, r *http.Request) {
 		},
 		"authentication": map[string]string{
 			"type":        "api_key",
-			"header_name": "X-API-Key",
+			"header_name": "Authorization: Bearer or X-API-Key",
 			"required":    fmt.Sprintf("%t", s.apiKeys != nil),
 		},
 		"rate_limits": s.actionLimiter.Discover(),

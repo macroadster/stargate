@@ -17,6 +17,7 @@ import (
 	"stargate-backend/bitcoin"
 	"stargate-backend/core/smart_contract"
 	"stargate-backend/services"
+	auth "stargate-backend/storage/auth"
 	"stargate-backend/storage/ipfs"
 	scstore "stargate-backend/storage/smart_contract"
 
@@ -35,7 +36,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		Error(w, http.StatusServiceUnavailable, "psbt builder unavailable")
 		return
 	}
-	payerKey := r.Header.Get("X-API-Key")
+	payerKey := auth.RequestAPIKey(r)
 	payerRec, ok := s.apiKeys.Get(payerKey)
 	if !ok {
 		Error(w, http.StatusForbidden, "invalid api key")
@@ -1158,7 +1159,7 @@ func (s *Server) handlePaymentDetails(w http.ResponseWriter, r *http.Request, co
 		Error(w, http.StatusServiceUnavailable, "api key validation unavailable")
 		return
 	}
-	payerKey := r.Header.Get("X-API-Key")
+	payerKey := auth.RequestAPIKey(r)
 	payerRec, ok := s.apiKeys.Get(payerKey)
 	if !ok {
 		Error(w, http.StatusForbidden, "invalid api key")

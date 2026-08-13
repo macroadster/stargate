@@ -669,9 +669,9 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 		}
 	})
 
-	// Auth endpoints
+	// Auth endpoints — same issuer/validator (api_keys) as middleware, MCP, and STARGATE_API_KEY seed.
 	keyHandler := handlers.NewAPIKeyHandler(apiKeyIssuer, apiKeyValidator, challengeStore)
-	// mux.HandleFunc("/api/auth/register", keyHandler.HandleRegister) // DISABLED for security
+	mux.HandleFunc("/api/auth/register", keyHandler.HandleRegister)
 	mux.HandleFunc("/api/auth/login", keyHandler.HandleLogin)
 	mux.HandleFunc("/api/auth/logout", keyHandler.HandleLogout)
 	mux.HandleFunc("/api/auth/challenge", keyHandler.HandleChallenge)

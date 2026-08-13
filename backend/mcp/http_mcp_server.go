@@ -194,6 +194,7 @@ func (ch *ChatHub) GetRecentMessages(roomID string, limit int) []*ChatMessage {
 
 type MCPSession struct {
 	ID        string
+	APIKey    string // bound bearer from initialize / first authenticated call
 	CreatedAt time.Time
 	ExpiresAt time.Time
 }
@@ -296,6 +297,42 @@ func (h *HTTPMCPServer) createSession() string {
 	return sessionID
 }
 
+func (h *HTTPMCPServer) bindSessionKey(sessionID, key string) {
+	sessionID = strings.TrimSpace(sessionID)
+	key = strings.TrimSpace(key)
+	if sessionID == "" || key == "" {
+		return
+	}
+	h.sessionMu.Lock()
+	defer h.sessionMu.Unlock()
+	if s := h.sessions[sessionID]; s != nil {
+		s.APIKey = key
+		return
+	}
+	h.sessions[sessionID] = &MCPSession{
+		ID:        sessionID,
+		APIKey:    key,
+		CreatedAt: time.Now(),
+		ExpiresAt: time.Now().Add(24 * time.Hour),
+	}
+}
+
+func (h *HTTPMCPServer) sessionAPIKey(sessionID string) string {
+	s := h.getSession(strings.TrimSpace(sessionID))
+	if s == nil {
+		return ""
+	}
+	return strings.TrimSpace(s.APIKey)
+}
+
+// requestAPIKey is the single MCP bearer path: header/cookie, then session-bound key.
+func (h *HTTPMCPServer) requestAPIKey(r *http.Request) string {
+	if k := auth.APIKeyFromRequest(r); k != "" {
+		return k
+	}
+	return h.sessionAPIKey(h.extractSessionID(r))
+}
+
 func (h *HTTPMCPServer) getSession(sessionID string) *MCPSession {
 	h.sessionMu.RLock()
 	defer h.sessionMu.RUnlock()
@@ -316,15 +353,28 @@ func (h *HTTPMCPServer) extractSessionID(r *http.Request) string {
 }
 
 // ensureSession returns an existing valid session from the request or creates a new one.
+// A valid request bearer/cookie is bound onto the session so later MCP-Session-Id
+// calls share the same api_keys validator as /api (including STARGATE_API_KEY seed).
 func (h *HTTPMCPServer) ensureSession(r *http.Request) string {
-	if sid := h.extractSessionID(r); sid != "" {
-		if s := h.getSession(sid); s != nil {
-			return sid
+	sid := h.extractSessionID(r)
+	if sid == "" {
+		sid = h.createSession()
+	} else if h.getSession(sid) == nil {
+		// Honor client-provided id even if not yet in our map (reconnect).
+		h.sessionMu.Lock()
+		if _, ok := h.sessions[sid]; !ok {
+			h.sessions[sid] = &MCPSession{
+				ID:        sid,
+				CreatedAt: time.Now(),
+				ExpiresAt: time.Now().Add(24 * time.Hour),
+			}
 		}
-		// still honor client-provided id even if not yet in our map (client may have it from previous)
-		return sid
+		h.sessionMu.Unlock()
 	}
-	return h.createSession()
+	if key := auth.APIKeyFromRequest(r); key != "" && auth.ValidateKey(h.apiKeyStore, key) {
+		h.bindSessionKey(sid, key)
+	}
+	return sid
 }
 
 func (h *HTTPMCPServer) externalBaseURL(r *http.Request) string {

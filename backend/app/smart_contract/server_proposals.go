@@ -10,6 +10,7 @@ import (
 
 	scservices "stargate-backend/app/smart_contract/services"
 	"stargate-backend/core/smart_contract"
+	auth "stargate-backend/storage/auth"
 )
 
 func proposalVisibleHash(p smart_contract.Proposal) string {
@@ -96,7 +97,7 @@ func (s *Server) handleProposalApprove(w http.ResponseWriter, r *http.Request, i
 		Error(w, http.StatusForbidden, err.Error())
 		return
 	}
-	resp, err := s.proposalSvc.Approve(r.Context(), id, r.Header.Get("X-API-Key"), true)
+	resp, err := s.proposalSvc.Approve(r.Context(), id, auth.RequestAPIKey(r), true)
 	if err != nil {
 		s.writeServiceErr(w, err)
 		return
@@ -128,7 +129,7 @@ func (s *Server) handleProposalCreate(w http.ResponseWriter, r *http.Request) {
 		ID: body.ID, IngestionID: body.IngestionID, ContractID: body.ContractID,
 		Title: body.Title, DescriptionMD: body.DescriptionMD, VisiblePixelHash: body.VisiblePixelHash,
 		BudgetSats: body.BudgetSats, Status: body.Status, Metadata: body.Metadata, Tasks: body.Tasks,
-		APIKey: r.Header.Get("X-API-Key"),
+		APIKey: auth.RequestAPIKey(r),
 	})
 	if err != nil {
 		s.writeServiceErr(w, err)

@@ -207,26 +207,14 @@ func ClientKey(apiKey, wallet, tool string) string {
 	return "anon"
 }
 
-// APIKeyFromRequest reads X-API-Key, Bearer, or the X-API-Key cookie.
+// APIKeyFromRequest is the shared /api + /mcp extractor (delegates to auth).
 func APIKeyFromRequest(r *http.Request) string {
-	if r == nil {
-		return ""
-	}
-	if k := strings.TrimSpace(r.Header.Get("X-API-Key")); k != "" {
-		return k
-	}
-	if authz := r.Header.Get("Authorization"); strings.HasPrefix(authz, "Bearer ") {
-		return strings.TrimSpace(strings.TrimPrefix(authz, "Bearer "))
-	}
-	if c, err := r.Cookie("X-API-Key"); err == nil {
-		return strings.TrimSpace(c.Value)
-	}
-	return ""
+	return auth.APIKeyFromRequest(r)
 }
 
 // IdentityKey is the shared REST/MCP bucket identity for a request.
 func IdentityKey(r *http.Request, keys auth.APIKeyValidator, tool string) string {
-	apiKey := APIKeyFromRequest(r)
+	apiKey := auth.RequestAPIKey(r)
 	wallet := ""
 	if keys != nil && apiKey != "" {
 		if rec, ok := keys.Get(apiKey); ok {

@@ -2,11 +2,18 @@ package handlers
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	auth "stargate-backend/storage/auth"
+	"path/filepath"
 	"testing"
+
+	auth "stargate-backend/storage/auth"
+
+	_ "modernc.org/sqlite"
 )
 
 func TestHandleLoginSetsCookie(t *testing.T) {
@@ -83,8 +90,8 @@ func TestHandleLoginWithAlreadyBoundWallet(t *testing.T) {
 
 	handler := NewAPIKeyHandler(store, store, nil)
 	body, _ := json.Marshal(map[string]string{
-		"api_key":         rec.Key,
-		"wallet_address":  "tb1qtestwallet",
+		"api_key":        rec.Key,
+		"wallet_address": "tb1qtestwallet",
 	})
 	req := httptest.NewRequest("POST", "/api/auth/login", bytes.NewBuffer(body))
 	w := httptest.NewRecorder()
@@ -146,5 +153,102 @@ func TestHandleLoginGORMSameWallet(t *testing.T) {
 	if w.Result().StatusCode != http.StatusOK {
 		t.Fatalf("expected 200 on GORM login with bound wallet, got %d body=%s",
 			w.Code, w.Body.String())
+	}
+}
+
+func TestHandleRegisterIssuesSharedStoreKey(t *testing.T) {
+	store := auth.NewAPIKeyStore()
+	handler := NewAPIKeyHandler(store, store, nil)
+	body, _ := json.Marshal(map[string]string{
+		"email":          "reg@example.com",
+		"wallet_address": "tb1qregister",
+	})
+	req := httptest.NewRequest("POST", "/api/auth/register", bytes.NewBuffer(body))
+	w := httptest.NewRecorder()
+	handler.HandleRegister(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("register: %d %s", w.Code, w.Body.String())
+	}
+	var wrap struct {
+		Data struct {
+			APIKey string `json:"api_key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &wrap); err != nil {
+		t.Fatal(err)
+	}
+	if wrap.Data.APIKey == "" || !store.Validate(wrap.Data.APIKey) {
+		t.Fatalf("register must issue into the same store: %+v", wrap)
+	}
+
+	loginBody, _ := json.Marshal(map[string]string{"api_key": wrap.Data.APIKey})
+	lw := httptest.NewRecorder()
+	handler.HandleLogin(lw, httptest.NewRequest("POST", "/api/auth/login", bytes.NewBuffer(loginBody)))
+	if lw.Code != http.StatusOK {
+		t.Fatalf("login after register: %d %s", lw.Code, lw.Body.String())
+	}
+}
+
+func TestHandleLoginEmptyAndMissingStore(t *testing.T) {
+	handler := NewAPIKeyHandler(nil, nil, nil)
+	w := httptest.NewRecorder()
+	handler.HandleLogin(w, httptest.NewRequest("POST", "/api/auth/login", bytes.NewBufferString(`{"api_key":"x"}`)))
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("nil validator: %d", w.Code)
+	}
+
+	store := auth.NewAPIKeyStore()
+	handler = NewAPIKeyHandler(store, store, nil)
+	w = httptest.NewRecorder()
+	handler.HandleLogin(w, httptest.NewRequest("POST", "/api/auth/login", bytes.NewBufferString(`{"api_key":""}`)))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("empty key: %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleLoginGarbageCreatedAtDoesNot500(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "login-garbage.db")
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = raw.Exec(`
+CREATE TABLE api_keys (
+  key_hash TEXT PRIMARY KEY,
+  email TEXT,
+  wallet_address TEXT,
+  source TEXT,
+  created_at TEXT NOT NULL
+);
+`); err != nil {
+		t.Fatal(err)
+	}
+	key := "login-garbage-key"
+	sum := sha256.Sum256([]byte(key))
+	hash := hex.EncodeToString(sum[:])
+	if _, err = raw.Exec(
+		`INSERT INTO api_keys (key_hash, email, wallet_address, source, created_at) VALUES (?, '', '', 'seed', ?)`,
+		hash, "???not-a-time???",
+	); err != nil {
+		t.Fatal(err)
+	}
+	raw.Close()
+
+	store, err := auth.NewSQLiteAPIKeyStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	handler := NewAPIKeyHandler(store, store, nil)
+	body, _ := json.Marshal(map[string]string{
+		"api_key":        key,
+		"wallet_address": "tb1qafterlogin",
+	})
+	w := httptest.NewRecorder()
+	handler.HandleLogin(w, httptest.NewRequest("POST", "/api/auth/login", bytes.NewBuffer(body)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("login with garbage created_at: %d %s", w.Code, w.Body.String())
 	}
 }

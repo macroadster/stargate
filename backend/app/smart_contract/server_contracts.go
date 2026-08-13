@@ -9,11 +9,12 @@ import (
 	"strings"
 
 	"stargate-backend/core/smart_contract"
+	auth "stargate-backend/storage/auth"
 	"stargate-backend/storage/ipfs"
 )
 
 func (s *Server) enforceCreatorApproval(r *http.Request, proposal smart_contract.Proposal) error {
-	apiKey := r.Header.Get("X-API-Key")
+	apiKey := auth.RequestAPIKey(r)
 
 	// Get approver's wallet from API key
 	var approverWallet string
@@ -246,7 +247,7 @@ func (s *Server) handleContractRework(w http.ResponseWriter, r *http.Request, co
 		return
 	}
 
-	apiKey := r.Header.Get("X-API-Key")
+	apiKey := auth.RequestAPIKey(r)
 	var requester string
 	if apiKey != "" && s.apiKeys != nil {
 		if rec, ok := s.apiKeys.Get(apiKey); ok {
@@ -270,7 +271,7 @@ func (s *Server) handleContractRework(w http.ResponseWriter, r *http.Request, co
 
 // handleResolveContractRework resolves/closes a rework request.
 func (s *Server) handleResolveContractRework(w http.ResponseWriter, r *http.Request, contractID, requestID string) {
-	apiKey := r.Header.Get("X-API-Key")
+	apiKey := auth.RequestAPIKey(r)
 	var requester string
 	if apiKey != "" && s.apiKeys != nil {
 		if rec, ok := s.apiKeys.Get(apiKey); ok {

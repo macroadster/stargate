@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -93,6 +94,7 @@ func (s *GORMAPIKeyStore) Close() error {
 
 // Validate implements APIKeyValidator.
 func (s *GORMAPIKeyStore) Validate(key string) bool {
+	key = strings.TrimSpace(key)
 	if key == "" {
 		return false
 	}
@@ -105,20 +107,52 @@ func (s *GORMAPIKeyStore) Validate(key string) bool {
 
 // Get returns the API key metadata for the provided plaintext key.
 func (s *GORMAPIKeyStore) Get(key string) (APIKey, bool) {
+	key = strings.TrimSpace(key)
 	if key == "" {
 		return APIKey{}, false
 	}
-	var row APIKeyRow
-	err := s.db.Where("key_hash = ?", hashAPIKey(key)).First(&row).Error
+	row, err := s.lookupRow(hashAPIKey(key))
 	if err != nil {
 		return APIKey{}, false
 	}
+	return rowToAPIKey(row), true
+}
+
+func (s *GORMAPIKeyStore) lookupRow(keyHash string) (APIKeyRow, error) {
+	var row APIKeyRow
+	err := s.db.Where("key_hash = ?", keyHash).First(&row).Error
+	if err == nil {
+		return row, nil
+	}
+	// Timestamp / driver scan edges: COUNT/Validate can pass while First fails.
+	// Select only non-time columns so login can still read wallet metadata.
+	type keyMeta struct {
+		Email         string
+		WalletAddress string
+		Source        string
+	}
+	var meta keyMeta
+	if scanErr := s.db.Model(&APIKeyRow{}).
+		Select("email", "wallet_address", "source").
+		Where("key_hash = ?", keyHash).
+		Take(&meta).Error; scanErr != nil {
+		return APIKeyRow{}, err
+	}
+	return APIKeyRow{
+		KeyHash:       keyHash,
+		Email:         meta.Email,
+		WalletAddress: meta.WalletAddress,
+		Source:        meta.Source,
+	}, nil
+}
+
+func rowToAPIKey(row APIKeyRow) APIKey {
 	return APIKey{
 		Email:     row.Email,
 		Wallet:    row.WalletAddress,
 		Source:    row.Source,
 		CreatedAt: row.CreatedAt.ToTime(),
-	}, true
+	}
 }
 
 // Issue implements APIKeyIssuer.
@@ -167,21 +201,19 @@ func (s *GORMAPIKeyStore) UpdateWallet(key, wallet string) (APIKey, error) {
 	if res.Error != nil {
 		return APIKey{}, res.Error
 	}
-	var row APIKeyRow
-	if err := s.db.Where("key_hash = ?", keyHash).First(&row).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return APIKey{}, fmt.Errorf("api key not found")
+	row, err := s.lookupRow(keyHash)
+	if err != nil {
+		if err == gorm.ErrRecordNotFound || errors.Is(err, gorm.ErrRecordNotFound) {
+			return APIKey{}, ErrAPIKeyNotFound
 		}
-		return APIKey{}, err
+		// Update succeeded; do not 500 login because created_at cannot be scanned.
+		return APIKey{Wallet: normalizedWallet}, nil
 	}
 	// RowsAffected can be 0 when the wallet was already set to the same value.
 	// Only treat that as failure when the row is missing (handled above).
-	return APIKey{
-		Email:     row.Email,
-		Wallet:    row.WalletAddress,
-		Source:    row.Source,
-		CreatedAt: row.CreatedAt.ToTime(),
-	}, nil
+	rec := rowToAPIKey(row)
+	rec.Wallet = normalizedWallet
+	return rec, nil
 }
 
 // InvalidateByWallet removes all API keys associated with a wallet address.
@@ -219,7 +251,11 @@ func (s *GORMAPIKeyStore) SeedEnvironmentVariables() {
 			Source:        "seed",
 			CreatedAt:     gormdb.NewSQLTime(time.Now().UTC()),
 		}
-		_ = s.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&row).Error
+		// Re-seed must attach the donation wallet even if the key row already exists.
+		_ = s.db.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "key_hash"}},
+			DoUpdates: clause.AssignmentColumns([]string{"wallet_address", "source"}),
+		}).Create(&row).Error
 		return
 	}
 	if plan.SeedKeyOnly != "" {

@@ -34,4 +34,16 @@ func TestSQLTimeScanFormats(t *testing.T) {
 	if err != nil || v == nil {
 		t.Fatalf("Value: %v %v", v, err)
 	}
+
+	var garbage SQLTime
+	if err := garbage.Scan("not-a-timestamp"); err != nil {
+		t.Fatalf("unparseable timestamp must not fail scan: %v", err)
+	}
+	if !garbage.IsZero() {
+		t.Fatalf("unparseable timestamp should be zero, got %v", garbage.Time)
+	}
+	var unix SQLTime
+	if err := unix.Scan("1710000000"); err != nil || unix.IsZero() {
+		t.Fatalf("unix seconds: err=%v t=%v", err, unix.Time)
+	}
 }
