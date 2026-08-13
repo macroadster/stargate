@@ -166,6 +166,14 @@ func TestHandleRegisterIssuesSharedStoreKey(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/auth/register", bytes.NewBuffer(body))
 	w := httptest.NewRecorder()
 	handler.HandleRegister(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("register must reject unsigned wallet bind: %d %s", w.Code, w.Body.String())
+	}
+
+	body, _ = json.Marshal(map[string]string{"email": "reg@example.com"})
+	req = httptest.NewRequest("POST", "/api/auth/register", bytes.NewBuffer(body))
+	w = httptest.NewRecorder()
+	handler.HandleRegister(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("register: %d %s", w.Code, w.Body.String())
 	}
@@ -242,13 +250,28 @@ CREATE TABLE api_keys (
 	defer store.Close()
 
 	handler := NewAPIKeyHandler(store, store, nil)
-	body, _ := json.Marshal(map[string]string{
-		"api_key":        key,
-		"wallet_address": "tb1qafterlogin",
-	})
+	body, _ := json.Marshal(map[string]string{"api_key": key})
 	w := httptest.NewRecorder()
 	handler.HandleLogin(w, httptest.NewRequest("POST", "/api/auth/login", bytes.NewBuffer(body)))
 	if w.Code != http.StatusOK {
 		t.Fatalf("login with garbage created_at: %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleLoginRejectsUnsignedWalletBind(t *testing.T) {
+	store := auth.NewAPIKeyStore()
+	rec, err := store.Issue("a@b.c", "", "registration")
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := NewAPIKeyHandler(store, store, nil)
+	body, _ := json.Marshal(map[string]string{
+		"api_key":        rec.Key,
+		"wallet_address": "tb1qstolen",
+	})
+	w := httptest.NewRecorder()
+	handler.HandleLogin(w, httptest.NewRequest("POST", "/api/auth/login", bytes.NewBuffer(body)))
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for unsigned wallet bind, got %d %s", w.Code, w.Body.String())
 	}
 }

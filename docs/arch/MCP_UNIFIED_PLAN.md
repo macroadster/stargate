@@ -63,7 +63,7 @@ Tool names map to the same store used by REST. Where possible they already reuse
 - `/api/health`, `/metrics`, `/api/docs` (Swagger for general backend; MCP-specific OpenAPI planned).
 - `/api/docs/mcp/openapi.json` serves the MCP/Smart Contract surface (stub, keep updated).
 - `/api/smart_contract/discover` and `/mcp/discover` advertise base URLs, endpoints, tools, and auth expectations.
-- `/api/auth/register` and `/api/auth/login` issue/validate API keys in the shared `api_keys` store (sqlite / postgres / memory). Seed key from `STARGATE_API_KEY` (optionally bound to `STARLIGHT_DONATION_ADDRESS`). MCP initialize binds a valid bearer onto `MCP-Session-Id` so later tool calls share that key.
+- `/api/auth/register` issues an unbound key into the shared `api_keys` store (email is an unverified label; wallet is rejected). `/api/auth/login` validates a key. Wallet ownership is only proven by `POST /api/auth/challenge` + `POST /api/auth/verify` (Bitcoin signed nonce). Seed key from `STARGATE_API_KEY` (optionally bound to `STARLIGHT_DONATION_ADDRESS`). MCP initialize binds a valid bearer onto `MCP-Session-Id` so later tool calls share that key.
 
 ## Data Shapes (canonical)
 - **Contract:** `contract_id`, `title`, `total_budget_sats`, `goals_count`, `available_tasks_count`, `status`.

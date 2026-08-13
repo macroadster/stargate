@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"math"
 	"net/http"
@@ -56,7 +55,14 @@ func (h *APIKeyHandler) HandleRegister(w http.ResponseWriter, r *http.Request) {
 		h.sendError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	rec, err := h.issuer.Issue(strings.TrimSpace(body.Email), strings.TrimSpace(body.Wallet), "registration")
+	// Email is an optional unverified label. There is no mailbox proof and no
+	// email↔wallet association. Wallet binding requires a signed challenge
+	// (POST /api/auth/challenge + /api/auth/verify).
+	if strings.TrimSpace(body.Wallet) != "" {
+		h.sendError(w, http.StatusBadRequest, "wallet binding requires POST /api/auth/challenge then POST /api/auth/verify; register does not prove address ownership")
+		return
+	}
+	rec, err := h.issuer.Issue(strings.TrimSpace(body.Email), "", "registration")
 	if err != nil {
 		h.sendError(w, http.StatusInternalServerError, "failed to issue api key")
 		return
@@ -108,25 +114,13 @@ func (h *APIKeyHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		if found {
 			bound = strings.TrimSpace(rec.Wallet)
 		}
-		if bound != "" && bound != wallet {
-			h.sendError(w, http.StatusForbidden, "wallet already bound; rebind requires verification")
+		if bound == "" {
+			h.sendError(w, http.StatusForbidden, "wallet binding requires POST /api/auth/challenge then POST /api/auth/verify")
 			return
 		}
-		// Bind only when not already set to this wallet. Re-binding the same
-		// address is a common login path after wallet-verify issuance.
-		// Get may fail on timestamp scan edges even after Validate; UpdateWallet
-		// must not turn that into a 500.
 		if bound != wallet {
-			if updater, ok := h.validator.(auth.APIKeyWalletUpdater); ok {
-				if _, err := updater.UpdateWallet(apiKey, wallet); err != nil {
-					if errors.Is(err, auth.ErrAPIKeyNotFound) {
-						h.sendError(w, http.StatusForbidden, "invalid api key")
-						return
-					}
-					h.sendError(w, http.StatusInternalServerError, "failed to bind wallet to api key")
-					return
-				}
-			}
+			h.sendError(w, http.StatusForbidden, "wallet already bound; rebind requires verification")
+			return
 		}
 	}
 
