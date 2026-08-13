@@ -16,6 +16,8 @@ import (
 	"stargate-backend/starlight"
 	"stargate-backend/storage/auth"
 	scstore "stargate-backend/storage/smart_contract"
+
+	"github.com/btcsuite/btcd/chaincfg"
 )
 
 type allowAllValidator struct{}
@@ -47,6 +49,32 @@ func (m *multiKeyWalletValidator) Validate(key string) bool {
 func (m *multiKeyWalletValidator) Get(key string) (auth.APIKey, bool) {
 	wallet, ok := m.wallets[key]
 	return auth.APIKey{Key: key, Wallet: wallet}, ok
+}
+
+func TestNewHTTPMCPServerUsesConfiguredNetwork(t *testing.T) {
+	cases := []struct {
+		env  string
+		want string
+		net  string
+	}{
+		{"", "testnet4", chaincfg.TestNet4Params.Name},
+		{"testnet4", "testnet4", chaincfg.TestNet4Params.Name},
+		{"signet", "signet", chaincfg.SigNetParams.Name},
+		{"mainnet", "mainnet", chaincfg.MainNetParams.Name},
+		{"testnet", "testnet", chaincfg.TestNet3Params.Name},
+	}
+	for _, tc := range cases {
+		t.Run(tc.want+"/"+tc.env, func(t *testing.T) {
+			t.Setenv("BITCOIN_NETWORK", tc.env)
+			server := NewHTTPMCPServer(nil, nil, nil, nil, nil, nil, auth.NewChallengeStore(10*time.Minute))
+			if server.network != tc.want {
+				t.Fatalf("network=%q want %q", server.network, tc.want)
+			}
+			if server.chainParams().Name != tc.net {
+				t.Fatalf("params=%q want %q", server.chainParams().Name, tc.net)
+			}
+		})
+	}
 }
 
 func TestHTTPMCPServer(t *testing.T) {

@@ -31,7 +31,6 @@ import (
 	"stargate-backend/storage/datadir"
 	scstore "stargate-backend/storage/smart_contract"
 
-	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
 )
 
@@ -228,10 +227,7 @@ type HTTPMCPServer struct {
 
 // NewHTTPMCPServer creates a new HTTP MCP server
 func NewHTTPMCPServer(store scmiddleware.Store, apiKeyStore auth.APIKeyValidator, apiKeyIssuer auth.APIKeyIssuer, ingestionSvc *services.IngestionService, scannerManager *starlight.ScannerManager, smartContractSvc *services.SmartContractService, challengeStore *auth.ChallengeStore) *HTTPMCPServer {
-	network := "mainnet"
-	if strings.Contains(os.Getenv("BITCOIN_NETWORK"), "testnet") {
-		network = "testnet4"
-	}
+	network := bitcoin.GetCurrentNetwork()
 	config := bitcoin.GetNetworkConfig(network)
 
 	baseURL := os.Getenv("STARGATE_API_URL")
@@ -2528,14 +2524,14 @@ func (h *HTTPMCPServer) handleBuildPSBT(ctx context.Context, args map[string]int
 		mempoolClient = bitcoin.NewMempoolClient()
 	}
 
-	payerAddress, err := btcutil.DecodeAddress(payerAddressStr, params)
+	payerAddress, err := bitcoin.DecodeAddressForNetwork(payerAddressStr, params)
 	if err != nil {
 		return nil, NewValidationError("build_psbt", fmt.Sprintf("invalid payer address: %v", err))
 	}
 
 	changeAddress := payerAddress
 	if changeAddrStr, ok := args["change_address"].(string); ok && strings.TrimSpace(changeAddrStr) != "" {
-		changeAddr, err := btcutil.DecodeAddress(strings.TrimSpace(changeAddrStr), params)
+		changeAddr, err := bitcoin.DecodeAddressForNetwork(strings.TrimSpace(changeAddrStr), params)
 		if err != nil {
 			return nil, NewValidationError("build_psbt", fmt.Sprintf("invalid change address: %v", err))
 		}
@@ -2562,7 +2558,7 @@ func (h *HTTPMCPServer) handleBuildPSBT(ctx context.Context, args map[string]int
 		if wallet == "" {
 			continue
 		}
-		addr, err := btcutil.DecodeAddress(wallet, params)
+		addr, err := bitcoin.DecodeAddressForNetwork(wallet, params)
 		if err != nil {
 			continue
 		}
@@ -2628,22 +2624,13 @@ func (h *HTTPMCPServer) handleBuildPSBT(ctx context.Context, args map[string]int
 		"funding_txid":       result.FundingTxID,
 		"contract_id":        contractID,
 		"payout_count":       len(payouts),
+		"network":            h.network,
+		"network_params":     params.Name,
 	}, nil
 }
 
 func (h *HTTPMCPServer) chainParams() *chaincfg.Params {
-	switch h.network {
-	case "mainnet":
-		return &chaincfg.MainNetParams
-	case "testnet":
-		return &chaincfg.TestNet3Params
-	case "testnet4":
-		return &chaincfg.TestNet4Params
-	case "signet":
-		return &chaincfg.SigNetParams
-	default:
-		return &chaincfg.TestNet4Params
-	}
+	return bitcoin.NetworkParams(h.network)
 }
 
 // RegisterRoutes registers HTTP MCP endpoints

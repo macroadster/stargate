@@ -545,7 +545,7 @@ curl -k -X POST ` + base + `/api/auth/verify \
   "payer_wallet": "tb1qpayer11111111111111111111111111111111",
   "contract_status": "approved",
   "currency": "sats",
-  "network": "testnet"
+  "network": "testnet4"
 }</pre>
 
      <h4>Build a PSBT (Requires Auth)</h4>

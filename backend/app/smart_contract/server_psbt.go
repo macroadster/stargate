@@ -77,9 +77,9 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		return
 	}
 
-	params := &chaincfg.TestNet4Params
+	params := s.chainParams()
 
-	payerAddr, err := btcutil.DecodeAddress(payerRec.Wallet, params)
+	payerAddr, err := bitcoin.DecodeAddressForNetwork(payerRec.Wallet, params)
 	if err != nil {
 		Error(w, http.StatusBadRequest, fmt.Sprintf("invalid payer wallet: %v", err))
 		return
@@ -92,7 +92,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 				Error(w, http.StatusBadRequest, "payer address required")
 				return
 			}
-			decoded, err := btcutil.DecodeAddress(strings.TrimSpace(addr), params)
+			decoded, err := bitcoin.DecodeAddressForNetwork(strings.TrimSpace(addr), params)
 			if err != nil {
 				Error(w, http.StatusBadRequest, fmt.Sprintf("invalid payer address: %v", err))
 				return
@@ -104,7 +104,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 	}
 	var changeAddr btcutil.Address
 	if strings.TrimSpace(body.ChangeAddress) != "" {
-		changeAddr, err = btcutil.DecodeAddress(strings.TrimSpace(body.ChangeAddress), params)
+		changeAddr, err = bitcoin.DecodeAddressForNetwork(strings.TrimSpace(body.ChangeAddress), params)
 		if err != nil {
 			Error(w, http.StatusBadRequest, fmt.Sprintf("invalid change address: %v", err))
 			return
@@ -239,7 +239,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 			Error(w, http.StatusBadRequest, "donation address not configured")
 			return
 		}
-		donationAddr, err = btcutil.DecodeAddress(donation, params)
+		donationAddr, err = bitcoin.DecodeAddressForNetwork(donation, params)
 		if err != nil {
 			Error(w, http.StatusBadRequest, fmt.Sprintf("invalid donation address: %v", err))
 			return
@@ -287,7 +287,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 				Error(w, http.StatusBadRequest, "payout address required")
 				return
 			}
-			addr, err := btcutil.DecodeAddress(strings.TrimSpace(payout.Address), params)
+			addr, err := bitcoin.DecodeAddressForNetwork(strings.TrimSpace(payout.Address), params)
 			if err != nil {
 				Error(w, http.StatusBadRequest, fmt.Sprintf("invalid payout address: %v", err))
 				return
@@ -319,14 +319,14 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 	if payoutTotal == 0 {
 		if strings.TrimSpace(body.ContractorAPIKey) != "" {
 			if rec, ok := s.apiKeys.Get(body.ContractorAPIKey); ok && strings.TrimSpace(rec.Wallet) != "" {
-				contractorAddr, err = btcutil.DecodeAddress(rec.Wallet, params)
+				contractorAddr, err = bitcoin.DecodeAddressForNetwork(rec.Wallet, params)
 			}
 		}
 		if contractorAddr == nil && strings.TrimSpace(fundingAddress) != "" {
-			contractorAddr, err = btcutil.DecodeAddress(strings.TrimSpace(fundingAddress), params)
+			contractorAddr, err = bitcoin.DecodeAddressForNetwork(strings.TrimSpace(fundingAddress), params)
 		}
 		if contractorAddr == nil && strings.TrimSpace(body.ContractorWallet) != "" {
-			contractorAddr, err = btcutil.DecodeAddress(strings.TrimSpace(body.ContractorWallet), params)
+			contractorAddr, err = bitcoin.DecodeAddressForNetwork(strings.TrimSpace(body.ContractorWallet), params)
 		}
 		if err != nil {
 			Error(w, http.StatusBadRequest, fmt.Sprintf("invalid contractor wallet: %v", err))
@@ -415,6 +415,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 				"pixel_source":            defaultPixelSource(pixelSource, pixelBytes),
 				"budget_sats":             target,
 				"contractor":              "",
+				"network":                 s.chainNetwork(),
 				"network_params":          params.Name,
 			})
 		}
@@ -458,6 +459,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 			"contract_id":     contractID,
 			"budget_sats":     target,
 			"payer_addresses": addressSlice(raiseFundPayerAddrs),
+			"network":         s.chainNetwork(),
 			"network_params":  params.Name,
 			"split_psbt":      true,
 			"funding_txids":   fundingTxIDs,
@@ -582,6 +584,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		"contract_id":             contractID,
 		"budget_sats":             target,
 		"contractor":              contractorAddressFor(contractorAddr),
+		"network":                 s.chainNetwork(),
 		"network_params":          params.Name,
 		"op_return_script":        hex.EncodeToString(res.OPReturnScript),
 		"op_return_vout":          res.OPReturnVout,
@@ -666,7 +669,7 @@ func (s *Server) prepareRaiseFundContext(ctx context.Context, contractID, fundin
 	if strings.TrimSpace(fundingAddress) == "" {
 		return nil, fmt.Errorf("missing fundraiser payout address")
 	}
-	fundAddr, err := btcutil.DecodeAddress(strings.TrimSpace(fundingAddress), params)
+	fundAddr, err := bitcoin.DecodeAddressForNetwork(strings.TrimSpace(fundingAddress), params)
 	if err != nil {
 		return nil, fmt.Errorf("invalid fundraiser payout address: %v", err)
 	}
@@ -702,7 +705,7 @@ func (s *Server) prepareRaiseFundContext(ctx context.Context, contractID, fundin
 		out.TasksByWallet[taskWallet] = append(out.TasksByWallet[taskWallet], task.TaskID)
 	}
 	for _, wallet := range payerOrder {
-		addr, err := btcutil.DecodeAddress(wallet, params)
+		addr, err := bitcoin.DecodeAddressForNetwork(wallet, params)
 		if err != nil {
 			return nil, fmt.Errorf("invalid contractor wallet: %v", err)
 		}
@@ -1111,8 +1114,8 @@ func (s *Server) handleCommitmentPSBT(w http.ResponseWriter, r *http.Request, co
 		Error(w, http.StatusBadRequest, "missing destination address")
 		return
 	}
-	params := networkParamsFromEnv()
-	destAddr, err := btcutil.DecodeAddress(destAddress, params)
+	params := s.chainParams()
+	destAddr, err := bitcoin.DecodeAddressForNetwork(destAddress, params)
 	if err != nil {
 		Error(w, http.StatusBadRequest, fmt.Sprintf("invalid destination address: %v", err))
 		return
@@ -1248,8 +1251,23 @@ func (s *Server) handlePaymentDetails(w http.ResponseWriter, r *http.Request, co
 		"contract_status":   contractStatus,
 		"proposal_metadata": proposal.Metadata,
 		"currency":          "sats",
-		"network":           "testnet", // TODO: Get from config
+		"network":           s.chainNetwork(),
+		"network_params":    s.chainParams().Name,
 	})
+}
+
+// chainNetwork is the advertised Bitcoin network for payment JSON and PSBT
+// responses. Prefer the live ChainBackend (btcd) so the string cannot drift
+// from the node that selected UTXOs.
+func (s *Server) chainNetwork() string {
+	if cb, ok := s.mempool.(bitcoin.ChainBackend); ok {
+		return bitcoin.NetworkName(cb)
+	}
+	return bitcoin.GetCurrentNetwork()
+}
+
+func (s *Server) chainParams() *chaincfg.Params {
+	return bitcoin.NetworkParams(s.chainNetwork())
 }
 
 func (s *Server) resolveCommitmentTask(contractID, taskID string) (smart_contract.Task, error) {
@@ -1269,17 +1287,4 @@ func (s *Server) resolveCommitmentTask(contractID, taskID string) (smart_contrac
 		}
 	}
 	return smart_contract.Task{}, fmt.Errorf("no task with commitment metadata")
-}
-
-func networkParamsFromEnv() *chaincfg.Params {
-	switch bitcoin.GetCurrentNetwork() {
-	case "mainnet":
-		return &chaincfg.MainNetParams
-	case "signet":
-		return &chaincfg.SigNetParams
-	case "testnet":
-		return &chaincfg.TestNet3Params
-	default:
-		return &chaincfg.TestNet4Params
-	}
 }

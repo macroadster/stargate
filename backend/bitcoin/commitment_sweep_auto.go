@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/wire"
 
@@ -58,11 +57,13 @@ type SweepTaskStore interface {
 // SweepCommitmentIfReady builds and broadcasts sweep transactions for confirmed commitment outputs.
 //
 // Two-phase sweep when ProductPixelHash is set:
-//   Phase 1 (recommit): wish-hash UTXO → product-hash P2WSH hashlock
-//   Phase 2 (final):    product-hash UTXO → STARLIGHT_DONATION_ADDRESS
+//
+//	Phase 1 (recommit): wish-hash UTXO → product-hash P2WSH hashlock
+//	Phase 2 (final):    product-hash UTXO → STARLIGHT_DONATION_ADDRESS
 //
 // Single-phase sweep when ProductPixelHash is empty (backward compat):
-//   wish-hash UTXO → STARLIGHT_DONATION_ADDRESS
+//
+//	wish-hash UTXO → STARLIGHT_DONATION_ADDRESS
 func SweepCommitmentIfReady(ctx context.Context, store SweepStore, mempool UTXOClient, task smart_contract.Task, proof *smart_contract.MerkleProof) error {
 	if proof == nil {
 		log.Printf("commitment sweep: proof is nil for task %s", task.TaskID)
@@ -210,7 +211,7 @@ func sweepPhase2(ctx context.Context, store SweepStore, mempool UTXOClient, task
 	}
 
 	params := sweepNetworkParamsFromEnv()
-	destAddr, err := btcutil.DecodeAddress(donation, params)
+	destAddr, err := DecodeAddressForNetwork(donation, params)
 	if err != nil {
 		return markSweepStatus(ctx, store, task.TaskID, proof, "failed", "invalid donation address")
 	}
@@ -284,7 +285,7 @@ func sweepDirect(ctx context.Context, store SweepStore, mempool UTXOClient, task
 	}
 
 	params := sweepNetworkParamsFromEnv()
-	destAddr, err := btcutil.DecodeAddress(donation, params)
+	destAddr, err := DecodeAddressForNetwork(donation, params)
 	if err != nil {
 		return markSweepStatus(ctx, store, task.TaskID, proof, "failed", "invalid donation address")
 	}
@@ -333,14 +334,5 @@ func markSweepStatus(ctx context.Context, store SweepStore, taskID string, proof
 }
 
 func sweepNetworkParamsFromEnv() *chaincfg.Params {
-	switch GetCurrentNetwork() {
-	case "mainnet":
-		return &chaincfg.MainNetParams
-	case "signet":
-		return &chaincfg.SigNetParams
-	case "testnet":
-		return &chaincfg.TestNet3Params
-	default:
-		return &chaincfg.TestNet4Params
-	}
+	return CurrentNetworkParams()
 }

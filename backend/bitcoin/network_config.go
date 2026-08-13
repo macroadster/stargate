@@ -3,6 +3,9 @@ package bitcoin
 import (
 	"log"
 	"os"
+	"strings"
+
+	"github.com/btcsuite/btcd/chaincfg"
 )
 
 // NetworkConfig holds configuration for different Bitcoin networks.
@@ -64,6 +67,45 @@ func GetCurrentNetwork() string {
 		network = "testnet4"
 	}
 	return network
+}
+
+// NetworkName prefers a live ChainBackend network (btcd / Esplora) and
+// falls back to BITCOIN_NETWORK. Payment JSON and PSBT builders must use
+// this so a wrong advertised network cannot pair with a correct PSBT.
+func NetworkName(backend ChainBackend) string {
+	if backend != nil {
+		if n := strings.TrimSpace(backend.Network()); n != "" {
+			return n
+		}
+	}
+	return GetCurrentNetwork()
+}
+
+// NetworkParams returns btcd chaincfg params for a Stargate network name.
+// This is the single mapper used by PSBT builders, payment JSON, and
+// ChainBackend / managed btcd. "testnet" is testnet3; it is not testnet4.
+func NetworkParams(network string) *chaincfg.Params {
+	switch strings.ToLower(strings.TrimSpace(network)) {
+	case "mainnet", "main":
+		return &chaincfg.MainNetParams
+	case "testnet", "testnet3":
+		return &chaincfg.TestNet3Params
+	case "testnet4":
+		return &chaincfg.TestNet4Params
+	case "signet":
+		return &chaincfg.SigNetParams
+	case "simnet":
+		return &chaincfg.SimNetParams
+	case "regtest":
+		return &chaincfg.RegressionNetParams
+	default:
+		return &chaincfg.TestNet4Params
+	}
+}
+
+// CurrentNetworkParams returns chaincfg params for GetCurrentNetwork().
+func CurrentNetworkParams() *chaincfg.Params {
+	return NetworkParams(GetCurrentNetwork())
 }
 
 // NewBitcoinNodeClientForNetwork creates a client for the specified network

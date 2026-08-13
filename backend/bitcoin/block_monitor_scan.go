@@ -510,7 +510,7 @@ func (bm *BlockMonitor) matchPayoutScript(tx Transaction, payload scanPayload) (
 
 func (bm *BlockMonitor) scriptForAddress(address string) []byte {
 	params := bm.networkParams()
-	addr, err := btcutil.DecodeAddress(address, params)
+	addr, err := DecodeAddressForNetwork(address, params)
 	if err != nil {
 		return nil
 	}
@@ -522,18 +522,7 @@ func (bm *BlockMonitor) scriptForAddress(address string) []byte {
 }
 
 func (bm *BlockMonitor) networkParams() *chaincfg.Params {
-	switch bm.bitcoinClient.GetNetwork() {
-	case "mainnet":
-		return &chaincfg.MainNetParams
-	case "signet":
-		return &chaincfg.SigNetParams
-	case "testnet":
-		return &chaincfg.TestNet3Params
-	case "testnet4":
-		return &chaincfg.TestNet4Params
-	default:
-		return &chaincfg.TestNet4Params
-	}
+	return NetworkParams(bm.bitcoinClient.GetNetwork())
 }
 
 func (bm *BlockMonitor) moveIngestionImage(blockDir string, rec *services.IngestionRecord) (string, error) {

@@ -11,7 +11,6 @@ import (
 	"sync"
 
 	"github.com/btcsuite/btcd/btcjson"
-	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/rpcclient"
@@ -67,22 +66,7 @@ func NewBtcdBackend(cfg BtcdRPCConfig) (*BtcdBackend, error) {
 }
 
 func chainParamsForNetwork(network string) *chaincfg.Params {
-	switch strings.ToLower(strings.TrimSpace(network)) {
-	case "mainnet", "main":
-		return &chaincfg.MainNetParams
-	case "testnet", "testnet3":
-		return &chaincfg.TestNet3Params
-	case "testnet4":
-		return &chaincfg.TestNet4Params
-	case "signet":
-		return &chaincfg.SigNetParams
-	case "simnet":
-		return &chaincfg.SimNetParams
-	case "regtest":
-		return &chaincfg.RegressionNetParams
-	default:
-		return &chaincfg.TestNet4Params
-	}
+	return NetworkParams(network)
 }
 
 func (b *BtcdBackend) Network() string { return b.network }
@@ -369,7 +353,7 @@ func (b *BtcdBackend) ListConfirmedUTXOs(address string) ([]AddressUTXO, error) 
 	if err != nil {
 		return nil, err
 	}
-	addr, err := btcutil.DecodeAddress(address, b.params)
+	addr, err := DecodeAddressForNetwork(address, b.params)
 	if err != nil {
 		return nil, fmt.Errorf("decode address: %w", err)
 	}
@@ -398,7 +382,7 @@ func (b *BtcdBackend) ListConfirmedUTXOs(address string) ([]AddressUTXO, error) 
 				continue
 			}
 			for _, vout := range tx.Vout {
-				if !voutPaysAddress(vout, address) {
+				if !voutPaysAddress(vout, address, b.params) {
 					continue
 				}
 				key := fmt.Sprintf("%s:%d", tx.Txid, vout.N)
@@ -438,7 +422,7 @@ func (b *BtcdBackend) ListConfirmedUTXOs(address string) ([]AddressUTXO, error) 
 	return utxos, nil
 }
 
-func voutPaysAddress(vout btcjson.Vout, address string) bool {
+func voutPaysAddress(vout btcjson.Vout, address string, params *chaincfg.Params) bool {
 	if vout.ScriptPubKey.Address == address {
 		return true
 	}
@@ -455,7 +439,10 @@ func voutPaysAddress(vout btcjson.Vout, address string) bool {
 	if err != nil {
 		return false
 	}
-	_, addrs, _, err := txscript.ExtractPkScriptAddrs(script, chainParamsForNetwork(GetCurrentNetwork()))
+	if params == nil {
+		params = CurrentNetworkParams()
+	}
+	_, addrs, _, err := txscript.ExtractPkScriptAddrs(script, params)
 	if err != nil {
 		return false
 	}

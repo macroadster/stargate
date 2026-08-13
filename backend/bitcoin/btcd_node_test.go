@@ -73,4 +73,13 @@ func TestChainParamsForNetwork(t *testing.T) {
 	if p.DefaultPort != "48333" {
 		t.Fatalf("testnet4 default port: got %q", p.DefaultPort)
 	}
+	if chainParamsForNetwork("signet").DefaultPort != "38333" {
+		t.Fatalf("signet default port: got %q", chainParamsForNetwork("signet").DefaultPort)
+	}
+	if chainParamsForNetwork("mainnet").DefaultPort != "8333" {
+		t.Fatalf("mainnet default port: got %q", chainParamsForNetwork("mainnet").DefaultPort)
+	}
+	if chainParamsForNetwork("testnet").DefaultPort != "18333" {
+		t.Fatalf("testnet3 default port: got %q", chainParamsForNetwork("testnet").DefaultPort)
+	}
 }

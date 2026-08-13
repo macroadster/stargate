@@ -110,6 +110,7 @@ func TestApproveProposalRequiresWishContract(t *testing.T) {
 }
 
 func TestContractPSBTRejectsInvalidChangeAddress(t *testing.T) {
+	t.Setenv("BITCOIN_NETWORK", "testnet4")
 	store := scstore.NewMemoryStore(72 * 60 * 60)
 	payerWallet := mustTestnetAddress(t, 1)
 	apiKey := "psbt-rest-key"
@@ -147,6 +148,7 @@ func TestContractPSBTRejectsInvalidChangeAddress(t *testing.T) {
 }
 
 func TestContractPSBTResponseIncludesEffectiveChangeAddress(t *testing.T) {
+	t.Setenv("BITCOIN_NETWORK", "testnet4")
 	store := scstore.NewMemoryStore(72 * 60 * 60)
 	payerWallet := mustTestnetAddress(t, 1)
 	contractorWallet := mustTestnetAddress(t, 2)
@@ -204,12 +206,20 @@ func TestContractPSBTResponseIncludesEffectiveChangeAddress(t *testing.T) {
 		}
 		var payload struct {
 			ChangeAddress string `json:"change_address"`
+			Network       string `json:"network"`
+			NetworkParams string `json:"network_params"`
 		}
 		if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
 			t.Fatalf("failed to decode response: %v", err)
 		}
 		if payload.ChangeAddress != payerWallet {
 			t.Fatalf("expected change address %s, got %s", payerWallet, payload.ChangeAddress)
+		}
+		if payload.Network != bitcoin.GetCurrentNetwork() {
+			t.Fatalf("psbt network=%q want %q", payload.Network, bitcoin.GetCurrentNetwork())
+		}
+		if payload.NetworkParams != bitcoin.CurrentNetworkParams().Name {
+			t.Fatalf("psbt network_params=%q want %q", payload.NetworkParams, bitcoin.CurrentNetworkParams().Name)
 		}
 	})
 
@@ -241,6 +251,7 @@ func TestContractPSBTResponseIncludesEffectiveChangeAddress(t *testing.T) {
 // produces a valid PSBT with no commitment output (commitmentSats forced to 0),
 // deferring the commitment to delivery time when the product image is available.
 func TestContractPSBTProductTargetDefersCommitment(t *testing.T) {
+	t.Setenv("BITCOIN_NETWORK", "testnet4")
 	store := scstore.NewMemoryStore(72 * 60 * 60)
 	payerWallet := mustTestnetAddress(t, 1)
 	contractorWallet := mustTestnetAddress(t, 2)
@@ -322,6 +333,7 @@ func TestContractPSBTProductTargetDefersCommitment(t *testing.T) {
 // provided with commitment_target="product", the task's MerkleProof.CommitmentSource
 // is set to "product".
 func TestContractPSBTProductTargetStoresSourceOnTask(t *testing.T) {
+	t.Setenv("BITCOIN_NETWORK", "testnet4")
 	store := scstore.NewMemoryStore(72 * 60 * 60)
 	payerWallet := mustTestnetAddress(t, 1)
 	contractorWallet := mustTestnetAddress(t, 2)
@@ -400,6 +412,156 @@ func TestContractPSBTProductTargetStoresSourceOnTask(t *testing.T) {
 		t.Errorf("CommitmentSource = %q, want \"product\"", task.MerkleProof.CommitmentSource)
 	}
 }
+
+func TestPaymentDetailsAndPSBTUseConfiguredNetwork(t *testing.T) {
+	store := scstore.NewMemoryStore(72 * 60 * 60)
+	payerWallet := mustTestnetAddress(t, 1)
+	contractorWallet := mustTestnetAddress(t, 2)
+	apiKey := "payment-net-key"
+	server := NewServer(store, &mockAPIKeyStore{
+		keys: map[string]auth.APIKey{
+			apiKey: {Key: apiKey, Wallet: payerWallet},
+		},
+	}, nil)
+
+	contractID := "contract-payment-network"
+	if err := store.UpsertContractWithTasks(context.Background(), smart_contract.Contract{
+		ContractID:      contractID,
+		Title:           "Network alignment",
+		Status:          "approved",
+		TotalBudgetSats: 1500,
+	}, []smart_contract.Task{{
+		TaskID:           "task-payment-network",
+		ContractID:       contractID,
+		Title:            "Pay",
+		BudgetSats:       1500,
+		Status:           "approved",
+		ContractorWallet: contractorWallet,
+	}}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	for _, network := range []string{"testnet4", "signet", "mainnet", "testnet"} {
+		t.Run("payment-details/"+network, func(t *testing.T) {
+			t.Setenv("BITCOIN_NETWORK", network)
+			req := httptest.NewRequest(http.MethodGet, "/api/smart_contract/contracts/"+contractID+"/payment-details", nil)
+			req.Header.Set("X-API-Key", apiKey)
+			rec := httptest.NewRecorder()
+			server.handleContracts(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+			}
+			var payload struct {
+				Network       string `json:"network"`
+				NetworkParams string `json:"network_params"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if payload.Network != network {
+				t.Fatalf("payment JSON network=%q want %q (hardcoded testnet is a fund-loss class bug)", payload.Network, network)
+			}
+			wantParams := bitcoin.NetworkParams(network).Name
+			if payload.NetworkParams != wantParams {
+				t.Fatalf("network_params=%q want %q", payload.NetworkParams, wantParams)
+			}
+		})
+	}
+
+	t.Run("default is testnet4 not testnet", func(t *testing.T) {
+		t.Setenv("BITCOIN_NETWORK", "")
+		req := httptest.NewRequest(http.MethodGet, "/api/smart_contract/contracts/"+contractID+"/payment-details", nil)
+		req.Header.Set("X-API-Key", apiKey)
+		rec := httptest.NewRecorder()
+		server.handleContracts(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		var payload struct {
+			Network string `json:"network"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if payload.Network != "testnet4" {
+			t.Fatalf("default network=%q want testnet4", payload.Network)
+		}
+	})
+
+	t.Run("psbt builder rejects testnet wallet on mainnet", func(t *testing.T) {
+		t.Setenv("BITCOIN_NETWORK", "mainnet")
+		body := `{"contractor_wallet":"` + contractorWallet + `","pixel_hash":"` + strings.Repeat("a", 64) + `"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/smart_contract/contracts/"+contractID+"/psbt", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-API-Key", apiKey)
+		rec := httptest.NewRecorder()
+		server.handleContracts(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 on mainnet+testnet wallet, got %d: %s", rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), "invalid payer wallet") {
+			t.Fatalf("expected invalid payer wallet, got: %s", rec.Body.String())
+		}
+	})
+
+	t.Run("chain backend network wins over env", func(t *testing.T) {
+		t.Setenv("BITCOIN_NETWORK", "testnet4")
+		server.mempool = &networkStubChain{network: "signet"}
+		t.Cleanup(func() { server.mempool = &bitcoin.MempoolClient{} })
+		req := httptest.NewRequest(http.MethodGet, "/api/smart_contract/contracts/"+contractID+"/payment-details", nil)
+		req.Header.Set("X-API-Key", apiKey)
+		rec := httptest.NewRecorder()
+		server.handleContracts(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		var payload struct {
+			Network       string `json:"network"`
+			NetworkParams string `json:"network_params"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if payload.Network != "signet" || payload.NetworkParams != chaincfg.SigNetParams.Name {
+			t.Fatalf("backend network not used: %+v", payload)
+		}
+	})
+}
+
+type networkStubChain struct {
+	network string
+}
+
+func (s *networkStubChain) Network() string                      { return s.network }
+func (s *networkStubChain) Ready(context.Context) error          { return nil }
+func (s *networkStubChain) Synced(context.Context) (bool, error) { return true, nil }
+func (s *networkStubChain) GetTipHeight(context.Context) (int64, error) {
+	return 0, nil
+}
+func (s *networkStubChain) GetBlockHash(context.Context, int64) (string, error) {
+	return "", nil
+}
+func (s *networkStubChain) GetRawBlockHex(context.Context, int64) (string, error) {
+	return "", nil
+}
+func (s *networkStubChain) GetRawTx(context.Context, string) (*wire.MsgTx, error) {
+	return nil, nil
+}
+func (s *networkStubChain) GetTxStatus(context.Context, string) (int64, bool, error) {
+	return 0, false, nil
+}
+func (s *networkStubChain) NodeStatus(context.Context) (map[string]any, error) {
+	return map[string]any{"backend": "stub"}, nil
+}
+func (s *networkStubChain) Close() error { return nil }
+func (s *networkStubChain) ListConfirmedUTXOs(string) ([]bitcoin.AddressUTXO, error) {
+	return nil, nil
+}
+func (s *networkStubChain) FetchTx(string) (*wire.MsgTx, error) { return nil, nil }
+func (s *networkStubChain) FetchTxOutput(string, uint32) (*wire.MsgTx, *wire.TxOut, error) {
+	return nil, nil, nil
+}
+func (s *networkStubChain) BroadcastTx(string) (string, error) { return "", nil }
 
 func mustTestnetAddress(t *testing.T, fill byte) string {
 	t.Helper()
