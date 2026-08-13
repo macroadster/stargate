@@ -310,19 +310,16 @@ NOT (
 	}
 
 	// Cursor-based pagination by date (confirmed_at for confirmed lists, created_at for open).
-	// Normalize mixed SQLite timestamp formats ("2026-07-19 05:31:53" vs RFC3339).
+	// Do not mix these columns: open wishes have null confirmed_at; confirmed lists
+	// must not page on created_at or infinite scroll skips/duplicates.
 	if filter.CursorDate != nil {
-		op := "<"
-		if strings.EqualFold(filter.CursorType, "after") {
-			op = ">"
-		}
+		op := dateCursorOp(filter.CursorType)
 		dateCol := "c.confirmed_at"
 		if filter.OrderByCreatedAt {
 			dateCol = "c.created_at"
 		}
-		whereConditions = append(whereConditions,
-			"datetime(replace(replace("+dateCol+",'T',' '),'Z','')) "+op+" datetime(?)")
-		args = append(args, filter.CursorDate.UTC().Format("2006-01-02 15:04:05"))
+		whereConditions = append(whereConditions, s.dateCursorPred(dateCol, op))
+		args = append(args, s.dateCursorArg(*filter.CursorDate))
 	}
 
 	whereClause := ""
@@ -331,8 +328,8 @@ NOT (
 	}
 
 	// Normalize text timestamps so mixed SQLite formats still sort chronologically.
-	const createdAtOrder = "datetime(replace(replace(c.created_at,'T',' '),'Z',''))"
-	const confirmedAtOrder = "datetime(replace(replace(c.confirmed_at,'T',' '),'Z',''))"
+	createdAtOrder := s.dateTimeExpr("c.created_at")
+	confirmedAtOrder := s.dateTimeExpr("c.confirmed_at")
 	orderBy := "ORDER BY c.confirmed_block_height DESC NULLS LAST, " + createdAtOrder + " DESC, c.contract_id DESC"
 	if filter.OrderByCreatedAt {
 		// Open/unconfirmed: newest created first, oldest at the bottom (scroll loads older).
@@ -340,14 +337,7 @@ NOT (
 	} else if filter.OrderByConfirmedAt {
 		orderBy = "ORDER BY " + confirmedAtOrder + " DESC NULLS FIRST, " + createdAtOrder + " DESC, c.contract_id DESC"
 	}
-	if filter.Limit > 0 {
-		orderBy += fmt.Sprintf(" LIMIT %d", filter.Limit)
-		if filter.Offset > 0 {
-			orderBy += fmt.Sprintf(" OFFSET %d", filter.Offset)
-		}
-	} else if filter.Offset > 0 {
-		orderBy += fmt.Sprintf(" OFFSET %d", filter.Offset)
-	}
+	orderBy = s.appendLimitOffset(orderBy, filter.Limit, filter.Offset)
 
 	query := baseSelect + " " + whereClause + " " + orderBy
 
@@ -394,14 +384,34 @@ NOT (
 }
 
 func (s *SQLStore) ListTasks(filter smart_contract.TaskFilter) ([]smart_contract.Task, error) {
-	query := `
-SELECT ` + s.taskSelectList() + `
-FROM mcp_tasks
-WHERE (? = '' OR status = ?)
-AND (? = '' OR contract_id = ?)
-AND (? = '' OR claimed_by = ?)
-`
-	args := []interface{}{filter.Status, filter.Status, filter.ContractID, filter.ContractID, filter.ClaimedBy, filter.ClaimedBy}
+	query := `SELECT ` + s.taskSelectList() + ` FROM mcp_tasks WHERE 1=1`
+	args := []interface{}{}
+	if filter.Status != "" {
+		query += " AND status = ?"
+		args = append(args, filter.Status)
+	}
+	if filter.ContractID != "" {
+		query += " AND contract_id = ?"
+		args = append(args, filter.ContractID)
+	}
+	if filter.ClaimedBy != "" {
+		query += " AND claimed_by = ?"
+		args = append(args, filter.ClaimedBy)
+	}
+	if filter.MinBudgetSats > 0 {
+		query += " AND budget_sats >= ?"
+		args = append(args, filter.MinBudgetSats)
+	}
+	if cursorID := strings.TrimSpace(filter.CursorID); cursorID != "" {
+		query += " AND task_id " + dateCursorOp(filter.CursorType) + " ?"
+		args = append(args, cursorID)
+	}
+	query += " ORDER BY task_id DESC"
+
+	hasGoFilter := len(filter.Skills) > 0 || filter.UpdatedSince != nil || filter.LastActivitySince != nil
+	if filter.Limit > 0 && !hasGoFilter {
+		query = s.appendLimitOffset(query, filter.Limit, filter.Offset)
+	}
 
 	rows, err := s.queryContext(context.Background(), query, args...)
 	if err != nil {
@@ -415,21 +425,41 @@ AND (? = '' OR claimed_by = ?)
 		if err != nil {
 			return nil, err
 		}
-		if filter.MinBudgetSats > 0 && task.BudgetSats < filter.MinBudgetSats {
-			continue
-		}
 		if len(filter.Skills) > 0 && !s.containsSkill(task.Skills, filter.Skills) {
 			continue
 		}
+		if filter.UpdatedSince != nil {
+			if task.MerkleProof == nil {
+				continue
+			}
+			proof := task.MerkleProof
+			hasRecent := proof.SeenAt.After(*filter.UpdatedSince) ||
+				(proof.SweepAttemptedAt != nil && proof.SweepAttemptedAt.After(*filter.UpdatedSince))
+			if !hasRecent {
+				continue
+			}
+		}
+		if filter.LastActivitySince != nil {
+			if task.MerkleProof == nil {
+				continue
+			}
+			proof := task.MerkleProof
+			hasRecent := proof.SeenAt.After(*filter.LastActivitySince) ||
+				(proof.ConfirmedAt != nil && proof.ConfirmedAt.After(*filter.LastActivitySince)) ||
+				(proof.SweepAttemptedAt != nil && proof.SweepAttemptedAt.After(*filter.LastActivitySince))
+			if !hasRecent {
+				continue
+			}
+		}
 		out = append(out, task)
 	}
-	if filter.Offset > 0 && filter.Offset < len(out) {
-		out = out[filter.Offset:]
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
-	if filter.Limit > 0 && filter.Limit < len(out) {
-		out = out[:filter.Limit]
+	if hasGoFilter {
+		out = applyOffsetLimit(out, filter.Offset, filter.Limit)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func scanTaskSQLite(rows *sql.Rows) (smart_contract.Task, error) {
@@ -846,15 +876,19 @@ WHERE 1=1
 		args = append(args, status)
 	}
 
-	query += " ORDER BY s.created_at DESC, s.submission_id DESC"
-	if filter.Limit > 0 {
-		query += fmt.Sprintf(" LIMIT %d", filter.Limit)
-		if filter.Offset > 0 {
-			query += fmt.Sprintf(" OFFSET %d", filter.Offset)
+	if filter.CursorDate != nil || strings.TrimSpace(filter.CursorID) != "" {
+		op := dateCursorOp(filter.CursorType)
+		query += " AND " + s.dateIDCursorPred("s.created_at", "s.submission_id", op)
+		cursorTime := time.Time{}
+		if filter.CursorDate != nil {
+			cursorTime = *filter.CursorDate
 		}
-	} else if filter.Offset > 0 {
-		query += fmt.Sprintf(" OFFSET %d", filter.Offset)
+		arg := s.dateCursorArg(cursorTime)
+		args = append(args, arg, arg, strings.TrimSpace(filter.CursorID))
 	}
+
+	query += " ORDER BY " + s.dateTimeExpr("s.created_at") + " DESC, s.submission_id DESC"
+	query = s.appendLimitOffset(query, filter.Limit, filter.Offset)
 
 	rows, err := s.queryContext(ctx, query, args...)
 	if err != nil {
@@ -1453,15 +1487,26 @@ func (s *SQLStore) ListProposals(ctx context.Context, filter smart_contract.Prop
 		args = append(args, filter.Status)
 	}
 
-	query += " ORDER BY created_at DESC"
+	if filter.CursorDate != nil || strings.TrimSpace(filter.CursorID) != "" {
+		op := dateCursorOp(filter.CursorType)
+		query += " AND " + s.dateIDCursorPred("created_at", "id", op)
+		cursorTime := time.Time{}
+		if filter.CursorDate != nil {
+			cursorTime = *filter.CursorDate
+		}
+		arg := s.dateCursorArg(cursorTime)
+		args = append(args, arg, arg, strings.TrimSpace(filter.CursorID))
+	}
+
+	query += " ORDER BY " + s.dateTimeExpr("created_at") + " DESC, id DESC"
 
 	// Only apply SQL LIMIT when no Go-side filters (ContractID, MinBudget, Skills)
-	// will further reduce rows.  When those filters are active the SQL LIMIT would
-	// silently discard matching rows before Go can see them (PG store already works
-	// this way — no SQL LIMIT, Go applies MaxResults at the end).
+	// will further reduce rows. When those filters are active the SQL LIMIT would
+	// silently discard matching rows before Go can see them.
 	hasGoFilter := filter.ContractID != "" || filter.MinBudget > 0 || len(filter.Skills) > 0
-	if filter.MaxResults > 0 && !hasGoFilter {
-		query += fmt.Sprintf(" LIMIT %d", filter.MaxResults)
+	pageLimit := filter.PageLimit()
+	if pageLimit > 0 && !hasGoFilter {
+		query = s.appendLimitOffset(query, pageLimit, filter.Offset)
 	}
 
 	rows, err := s.queryContext(ctx, query, args...)
@@ -1529,13 +1574,13 @@ func (s *SQLStore) ListProposals(ctx context.Context, filter smart_contract.Prop
 		}
 		out = append(out, p)
 	}
-	if filter.Offset > 0 && filter.Offset < len(out) {
-		out = out[filter.Offset:]
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
-	if filter.MaxResults > 0 && filter.MaxResults < len(out) {
-		out = out[:filter.MaxResults]
+	if hasGoFilter {
+		out = applyOffsetLimit(out, filter.Offset, pageLimit)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func (s *SQLStore) GetProposal(ctx context.Context, id string) (smart_contract.Proposal, error) {

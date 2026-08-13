@@ -63,6 +63,39 @@ func TestJSONTextExpr(t *testing.T) {
 	}
 }
 
+func TestDateTimeExprAndCursorPredBothDialects(t *testing.T) {
+	pg := &SQLStore{dialect: gormdb.DialectPostgres}
+	if pg.dateTimeExpr("c.created_at") != "c.created_at" {
+		t.Fatal(pg.dateTimeExpr("c.created_at"))
+	}
+	if got := pg.dateCursorPred("c.created_at", "<"); got != "c.created_at < ?" {
+		t.Fatalf("pg pred %q", got)
+	}
+	if strings.Contains(pg.dateTimeExpr("c.confirmed_at"), "datetime") {
+		t.Fatal("postgres must not use sqlite datetime()")
+	}
+	if got := pg.dateIDCursorPred("s.created_at", "s.submission_id", "<"); !strings.Contains(got, "s.created_at < ?") || strings.Contains(got, "datetime") {
+		t.Fatalf("pg keyset %q", got)
+	}
+
+	sq := &SQLStore{dialect: gormdb.DialectSQLite}
+	if !strings.Contains(sq.dateTimeExpr("c.created_at"), "datetime(replace") {
+		t.Fatal(sq.dateTimeExpr("c.created_at"))
+	}
+	if !strings.Contains(sq.dateCursorPred("c.confirmed_at", "<"), "datetime(?)") {
+		t.Fatal(sq.dateCursorPred("c.confirmed_at", "<"))
+	}
+	// Open vs confirmed must keep distinct columns.
+	openPred := sq.dateCursorPred("c.created_at", "<")
+	confPred := sq.dateCursorPred("c.confirmed_at", "<")
+	if !strings.Contains(openPred, "c.created_at") || strings.Contains(openPred, "confirmed_at") {
+		t.Fatalf("open cursor column: %s", openPred)
+	}
+	if !strings.Contains(confPred, "c.confirmed_at") || strings.Contains(confPred, "created_at") {
+		t.Fatalf("confirmed cursor column: %s", confPred)
+	}
+}
+
 func TestRebindSkipsCastSuffix(t *testing.T) {
 	s := &SQLStore{dialect: gormdb.DialectPostgres}
 	got := s.rebind(`INSERT INTO t (a,b) VALUES (?::text[], ?::jsonb)`)

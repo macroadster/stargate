@@ -40,14 +40,20 @@ func TestSubmissionServiceListPagination(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
-	if result.Total != 2 || result.Limit != 1 || result.Offset != 0 || !result.HasMore {
+	if result.Total != 1 || result.Limit != 1 || result.Offset != 0 || !result.HasMore {
 		t.Fatalf("unexpected page meta: %+v", result)
+	}
+	if result.NextCursor == "" || result.NextCursorDate == "" {
+		t.Fatalf("expected next cursors: %+v", result.Page)
 	}
 	if len(result.Submissions) != 1 || result.Submissions[0].SubmissionID != "sub-a" {
 		t.Fatalf("page = %+v", result.Submissions)
 	}
 
-	page2, err := svc.List(ctx, core.SubmissionFilter{ContractID: "wish-sublist1", Limit: 1, Offset: 1})
+	cursor := result.Submissions[0].CreatedAt
+	page2, err := svc.List(ctx, core.SubmissionFilter{
+		ContractID: "wish-sublist1", Limit: 1, CursorDate: &cursor, CursorID: result.Submissions[0].SubmissionID, CursorType: "before",
+	})
 	if err != nil {
 		t.Fatalf("list page2: %v", err)
 	}

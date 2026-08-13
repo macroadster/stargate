@@ -315,18 +315,17 @@ func (s *MemoryStore) ListTasks(filter smart_contract.TaskFilter) ([]smart_contr
 			}
 		}
 
+		if !matchIDCursor(t.TaskID, filter.CursorID, filter.CursorType) {
+			continue
+		}
+
 		out = append(out, t)
 	}
 
-	start := filter.Offset
-	if start < 0 {
-		start = 0
-	}
-	end := start + filter.Limit
-	if filter.Limit == 0 || end > len(out) {
-		end = len(out)
-	}
-	return out[start:end], nil
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].TaskID > out[j].TaskID
+	})
+	return applyOffsetLimit(out, filter.Offset, filter.Limit), nil
 }
 
 // GetTask returns a task by ID.
@@ -922,17 +921,21 @@ func (s *MemoryStore) ListProposals(ctx context.Context, filter smart_contract.P
 			continue
 		}
 
+		if !matchDateIDCursor(p.CreatedAt, p.ID, filter.CursorDate, filter.CursorID, filter.CursorType) {
+			continue
+		}
+
 		// Hydrate tasks
 		populateProposalTasks(&p)
 		out = append(out, p)
 	}
-	if filter.Offset > 0 && filter.Offset < len(out) {
-		out = out[filter.Offset:]
-	}
-	if filter.MaxResults > 0 && filter.MaxResults < len(out) {
-		out = out[:filter.MaxResults]
-	}
-	return out, nil
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].CreatedAt.After(out[j].CreatedAt)
+		}
+		return out[i].ID > out[j].ID
+	})
+	return applyOffsetLimit(out, filter.Offset, filter.PageLimit()), nil
 }
 
 func (s *MemoryStore) GetProposal(ctx context.Context, id string) (smart_contract.Proposal, error) {

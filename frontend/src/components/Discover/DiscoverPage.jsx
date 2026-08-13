@@ -35,13 +35,22 @@ export default function DiscoverPage() {
   const [submitProof, setSubmitProof] = useState({});
   const [submitting, setSubmitting] = useState({});
   const [claiming, setClaiming] = useState({});
-  const [pagination, setPagination] = useState({ total: 0, has_more: false, limit: 20, offset: 0 });
+  const [pagination, setPagination] = useState({
+    total: 0,
+    has_more: false,
+    limit: 20,
+    offset: 0,
+    next_cursor: '',
+    next_cursor_date: '',
+  });
   const loadMoreRef = useRef(null);
+  const cursorRef = useRef({ next_cursor: '', next_cursor_date: '' });
 
-  const loadProposals = useCallback(async (reset = true, offset = 0) => {
+  const loadProposals = useCallback(async (reset = true) => {
     if (reset) {
       setLoading(true);
       setError('');
+      cursorRef.current = { next_cursor: '', next_cursor_date: '' };
     } else {
       setLoadingMore(true);
     }
@@ -52,23 +61,37 @@ export default function DiscoverPage() {
       if (minBudget) params.set('min_budget_sats', minBudget);
       if (contractId) params.set('contract_id', contractId);
       params.set('limit', String(pagination.limit));
-      params.set('offset', String(offset));
+      if (!reset && (cursorRef.current.next_cursor_date || cursorRef.current.next_cursor)) {
+        if (cursorRef.current.next_cursor_date) {
+          params.set('cursor_date', cursorRef.current.next_cursor_date);
+        }
+        if (cursorRef.current.next_cursor) {
+          params.set('cursor', cursorRef.current.next_cursor);
+        }
+        params.set('cursor_type', 'before');
+      }
       const res = await apiFetch(`/api/smart_contract/proposals?${params.toString()}`, {
         headers: auth.apiKey ? { 'X-API-Key': auth.apiKey } : undefined,
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
+      const incoming = data.proposals || [];
       if (reset) {
-        setProposals(data.proposals || []);
+        setProposals(incoming);
       } else {
-        setProposals(prev => [...prev, ...(data.proposals || [])]);
+        setProposals((prev) => [...prev, ...incoming]);
       }
       setSubmissions(data.submissions || []);
+      const nextCursor = data.next_cursor || '';
+      const nextCursorDate = data.next_cursor_date || '';
+      cursorRef.current = { next_cursor: nextCursor, next_cursor_date: nextCursorDate };
       setPagination({
-        total: data.total || 0,
-        has_more: data.has_more || false,
+        total: data.total || incoming.length,
+        has_more: Boolean(data.has_more) && incoming.length > 0,
         limit: data.limit || pagination.limit,
         offset: data.offset || 0,
+        next_cursor: nextCursor,
+        next_cursor_date: nextCursorDate,
       });
       setLastUpdated(new Date().toLocaleTimeString());
     } catch (err) {
@@ -81,10 +104,10 @@ export default function DiscoverPage() {
   }, [auth.apiKey, contractId, minBudget, skills, status, pagination.limit]);
 
   const loadMore = useCallback(() => {
-    if (!loadingMore && pagination.has_more) {
-      loadProposals(false, pagination.offset + pagination.limit);
+    if (!loadingMore && pagination.has_more && (cursorRef.current.next_cursor || cursorRef.current.next_cursor_date)) {
+      loadProposals(false);
     }
-  }, [loadingMore, pagination.has_more, loadProposals, pagination.offset, pagination.limit]);
+  }, [loadingMore, pagination.has_more, loadProposals]);
 
   useEffect(() => {
     const observer = new IntersectionObserver(
@@ -222,7 +245,7 @@ export default function DiscoverPage() {
             <button
               type="button"
               onClick={() => {
-                setPagination(prev => ({ ...prev, offset: 0 }));
+                setPagination((prev) => ({ ...prev, offset: 0, next_cursor: '', next_cursor_date: '' }));
                 loadProposals(true);
               }}
               disabled={loading}
@@ -465,12 +488,12 @@ export default function DiscoverPage() {
                 )}
                 {!loadingMore && pagination.has_more && (
                   <p className="text-sm text-gray-500">
-                    Showing {proposals.length} of {pagination.total} proposals
+                    Showing {proposals.length} proposals
                   </p>
                 )}
                 {!loadingMore && !pagination.has_more && proposals.length > 0 && (
                   <p className="text-sm text-gray-500">
-                    Showing all {pagination.total} proposals
+                    Showing all {proposals.length} proposals
                   </p>
                 )}
               </div>

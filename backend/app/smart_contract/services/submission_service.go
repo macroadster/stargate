@@ -46,15 +46,12 @@ func (s *SubmissionService) emit(evt smart_contract.Event) {
 }
 
 // DefaultSubmissionListLimit is the MCP/REST page size when limit is omitted.
-const DefaultSubmissionListLimit = 50
+const DefaultSubmissionListLimit = smart_contract.DefaultPageLimit
 
 // SubmissionListResult is the shared MCP + REST list payload.
 type SubmissionListResult struct {
 	Submissions []smart_contract.Submission `json:"submissions"`
-	Total       int                         `json:"total"`
-	Limit       int                         `json:"limit"`
-	Offset      int                         `json:"offset"`
-	HasMore     bool                        `json:"has_more"`
+	smart_contract.Page
 }
 
 // SubmissionFilterFromArgs maps MCP tool arguments onto the store query.
@@ -88,9 +85,24 @@ func SubmissionFilterFromArgs(args map[string]interface{}) smart_contract.Submis
 	if v, ok := args["status"].(string); ok {
 		filter.Status = strings.TrimSpace(v)
 	}
-	filter.Limit = intArg(args, "limit", 0)
-	filter.Offset = intArg(args, "offset", 0)
+	q := smart_contract.NewPageQuery(
+		intArg(args, "limit", 0),
+		intArg(args, "offset", 0),
+		stringArg(args, "cursor"),
+		stringArg(args, "cursor_date"),
+		stringArg(args, "cursor_type"),
+		DefaultSubmissionListLimit,
+	)
+	q.ApplyToSubmission(&filter)
 	return filter
+}
+
+func stringArg(args map[string]interface{}, key string) string {
+	if args == nil {
+		return ""
+	}
+	v, _ := args[key].(string)
+	return v
 }
 
 func intArg(args map[string]interface{}, key string, def int) int {
@@ -116,23 +128,11 @@ func intArg(args map[string]interface{}, key string, def int) int {
 
 // List returns submissions for the shared MCP/REST query (filters + pagination).
 func (s *SubmissionService) List(ctx context.Context, filter smart_contract.SubmissionFilter) (*SubmissionListResult, error) {
-	if filter.Limit < 0 {
-		filter.Limit = 0
-	}
-	if filter.Offset < 0 {
-		filter.Offset = 0
-	}
-	if filter.Limit == 0 {
-		filter.Limit = DefaultSubmissionListLimit
-	}
+	limit := smart_contract.NormalizeLimit(filter.Limit, DefaultSubmissionListLimit)
+	offset := smart_contract.NormalizeOffset(filter.Offset)
+	filter.Limit = smart_contract.OverFetchLimit(limit)
+	filter.Offset = offset
 
-	countFilter := filter
-	countFilter.Limit = 0
-	countFilter.Offset = 0
-	all, err := s.store.ListSubmissions(ctx, countFilter)
-	if err != nil {
-		return nil, Fail(http.StatusInternalServerError, err.Error())
-	}
 	page, err := s.store.ListSubmissions(ctx, filter)
 	if err != nil {
 		return nil, Fail(http.StatusInternalServerError, err.Error())
@@ -140,12 +140,16 @@ func (s *SubmissionService) List(ctx context.Context, filter smart_contract.Subm
 	if page == nil {
 		page = []smart_contract.Submission{}
 	}
+	fetched := len(page)
+	page = smart_contract.TrimWindow(page, limit)
+	lastID, lastDate := "", time.Time{}
+	if n := len(page); n > 0 {
+		lastID = page[n-1].SubmissionID
+		lastDate = page[n-1].CreatedAt
+	}
 	return &SubmissionListResult{
 		Submissions: page,
-		Total:       len(all),
-		Limit:       filter.Limit,
-		Offset:      filter.Offset,
-		HasMore:     filter.Offset+len(page) < len(all),
+		Page:        smart_contract.BuildPage(limit, offset, fetched, len(page), lastID, lastDate),
 	}, nil
 }
 

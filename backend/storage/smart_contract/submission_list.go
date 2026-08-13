@@ -78,18 +78,3 @@ func contractIDMatches(stored, filter string) bool {
 	}
 	return false
 }
-
-func applySubmissionPage(subs []smart_contract.Submission, filter smart_contract.SubmissionFilter) []smart_contract.Submission {
-	start := filter.Offset
-	if start < 0 {
-		start = 0
-	}
-	if start > len(subs) {
-		return []smart_contract.Submission{}
-	}
-	end := len(subs)
-	if filter.Limit > 0 && start+filter.Limit < end {
-		end = start + filter.Limit
-	}
-	return subs[start:end]
-}

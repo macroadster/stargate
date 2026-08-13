@@ -159,20 +159,22 @@ func (s *Server) handleProposalUpdate(w http.ResponseWriter, r *http.Request, id
 }
 
 func (s *Server) handleProposalList(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
 	result, err := s.proposalSvc.List(r.Context(), scservices.ProposalListQuery{
-		Status: r.URL.Query().Get("status"), Skills: splitCSV(r.URL.Query().Get("skills")),
-		MinBudget: int64FromQuery(r, "min_budget_sats", 0), ContractID: r.URL.Query().Get("contract_id"),
-		Limit: intFromQuery(r, "limit", 20), Offset: intFromQuery(r, "offset", 0),
+		Status: q.Get("status"), Skills: splitCSV(q.Get("skills")),
+		MinBudget: int64FromQuery(r, "min_budget_sats", 0), ContractID: q.Get("contract_id"),
+		Limit: intFromQuery(r, "limit", 0), Offset: intFromQuery(r, "offset", 0),
+		Cursor: q.Get("cursor"), CursorDate: q.Get("cursor_date"), CursorType: q.Get("cursor_type"),
 		IncludeConfirmed: includeConfirmed(r),
 	})
 	if err != nil {
 		s.writeServiceErr(w, err)
 		return
 	}
-	JSON(w, http.StatusOK, map[string]interface{}{
-		"proposals": result.Proposals, "total": result.Total, "has_more": result.HasMore,
-		"limit": result.Limit, "offset": result.Offset, "submissions": result.Submissions,
-	})
+	body := result.Page.Fields()
+	body["proposals"] = result.Proposals
+	body["submissions"] = result.Submissions
+	JSON(w, http.StatusOK, body)
 }
 
 func (s *Server) handleProposalGet(w http.ResponseWriter, r *http.Request, id string) {
@@ -237,14 +239,21 @@ func (s *Server) handleSubmissions(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleSubmissionList(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
+	pageQ := smart_contract.NewPageQuery(
+		intFromQuery(r, "limit", 0),
+		intFromQuery(r, "offset", 0),
+		q.Get("cursor"),
+		q.Get("cursor_date"),
+		q.Get("cursor_type"),
+		smart_contract.DefaultPageLimit,
+	)
 	filter := smart_contract.SubmissionFilter{
 		ContractID: strings.TrimSpace(q.Get("contract_id")),
 		TaskID:     strings.TrimSpace(q.Get("task_id")),
 		TaskIDs:    splitCSV(q.Get("task_ids")),
 		Status:     strings.TrimSpace(q.Get("status")),
-		Limit:      intFromQuery(r, "limit", 0),
-		Offset:     intFromQuery(r, "offset", 0),
 	}
+	pageQ.ApplyToSubmission(&filter)
 	result, err := s.submissionSvc.List(r.Context(), filter)
 	if err != nil {
 		s.writeServiceErr(w, err)

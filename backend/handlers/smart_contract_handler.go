@@ -232,17 +232,9 @@ func (h *SmartContractHandler) setEnrichedCache(key string, items []models.Inscr
 }
 
 // contractsPageHasMore reports whether another page may exist.
-// fetchedCount is the store result length before twin-dedupe; pageLen is what
-// the client will receive. A full pre-dedupe page means more rows may remain
-// even when dedupe shrinks the response below limit.
+// Twin-dedupe must use the pre-collapse fetch count (see Page.HasMoreFromFetch).
 func contractsPageHasMore(fetchedCount, pageLen, limit int) bool {
-	if limit <= 0 {
-		return false
-	}
-	if fetchedCount >= limit {
-		return true
-	}
-	return pageLen >= limit
+	return sc.HasMoreFromFetch(fetchedCount, pageLen, limit)
 }
 
 // HandleGetContracts handles getting smart contracts with support for filtering and pagination

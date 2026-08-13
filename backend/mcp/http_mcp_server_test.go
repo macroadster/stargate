@@ -154,8 +154,11 @@ func TestListSubmissionsFiltersAndPagination(t *testing.T) {
 	}
 
 	page := call(map[string]interface{}{"contract_id": "sublist1", "limit": 1, "offset": 0})
-	if page["total"] != float64(2) || page["has_more"] != true || page["limit"] != float64(1) {
+	if page["total"] != float64(1) || page["has_more"] != true || page["limit"] != float64(1) {
 		t.Fatalf("unexpected page meta: %#v", page)
+	}
+	if page["next_cursor"] == "" || page["next_cursor_date"] == "" {
+		t.Fatalf("expected next cursors: %#v", page)
 	}
 	subs, _ := page["submissions"].([]interface{})
 	if len(subs) != 1 {

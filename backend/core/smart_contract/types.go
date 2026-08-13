@@ -172,12 +172,16 @@ type ContractFilter struct {
 }
 
 // TaskFilter captures simple query params for listing tasks.
+// Tasks have no created_at column; cursor paging uses task_id (CursorID).
 type TaskFilter struct {
 	Skills            []string
 	MaxDifficulty     string
 	MinBudgetSats     int64
 	Limit             int
 	Offset            int
+	CursorID          string     // task_id keyset cursor
+	CursorDate        *time.Time // accepted for shared PageQuery; unused by task SQL
+	CursorType        string     // before (default) or after
 	Status            string
 	ContractID        string
 	ClaimedBy         string
@@ -188,6 +192,7 @@ type TaskFilter struct {
 // SubmissionFilter captures list filters for submissions (MCP + REST).
 // Empty TaskID/TaskIDs/ContractID means no constraint on that field.
 // Limit 0 means no page cap (return all matches after Offset).
+// Cursor paging uses created_at + submission_id.
 type SubmissionFilter struct {
 	ContractID string
 	TaskID     string
@@ -195,6 +200,9 @@ type SubmissionFilter struct {
 	Status     string
 	Limit      int
 	Offset     int
+	CursorID   string     // submission_id tie-break
+	CursorDate *time.Time // created_at keyset cursor
+	CursorType string     // before (default) or after
 }
 
 // Proposal represents a human/markdown wish that must be approved before tasks are published.
@@ -211,14 +219,28 @@ type Proposal struct {
 }
 
 // ProposalFilter captures list filters for proposals.
+// Limit is preferred; MaxResults is kept as an alias for existing callers.
+// Cursor paging uses created_at + proposal id.
 type ProposalFilter struct {
 	ProposalID string
 	Status     string
 	Skills     []string
 	MinBudget  int64
 	ContractID string
+	Limit      int
 	MaxResults int
 	Offset     int
+	CursorID   string
+	CursorDate *time.Time
+	CursorType string
+}
+
+// PageLimit returns Limit, falling back to MaxResults.
+func (f ProposalFilter) PageLimit() int {
+	if f.Limit > 0 {
+		return f.Limit
+	}
+	return f.MaxResults
 }
 
 // Event is a lightweight activity entry for MCP actions.

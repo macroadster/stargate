@@ -49,6 +49,31 @@ func generateRandomString(length int) string {
 	return base64.URLEncoding.EncodeToString(b)[:length]
 }
 
+func pageQueryFromArgs(args map[string]interface{}) smart_contract.PageQuery {
+	limit, offset := 0, 0
+	if args != nil {
+		switch v := args["limit"].(type) {
+		case int:
+			limit = v
+		case float64:
+			limit = int(v)
+		}
+		switch v := args["offset"].(type) {
+		case int:
+			offset = v
+		case float64:
+			offset = int(v)
+		}
+	}
+	cursor, cursorDate, cursorType := "", "", ""
+	if args != nil {
+		cursor, _ = args["cursor"].(string)
+		cursorDate, _ = args["cursor_date"].(string)
+		cursorType, _ = args["cursor_type"].(string)
+	}
+	return smart_contract.NewPageQuery(limit, offset, cursor, cursorDate, cursorType, smart_contract.DefaultPageLimit)
+}
+
 type ChatHub struct {
 	mu       sync.RWMutex
 	rooms    map[string]map[string]map[string]chan string // roomID -> agentID -> connID -> chan
@@ -735,47 +760,29 @@ func (h *HTTPMCPServer) handleListProposals(ctx context.Context, args map[string
 		filter.ProposalID = proposalID
 	}
 
-	// Handle pagination parameters
-	if limit, ok := args["limit"].(int); ok && limit > 0 {
-		filter.MaxResults = limit
-	} else if limitFloat, ok := args["limit"].(float64); ok && limitFloat > 0 {
-		filter.MaxResults = int(limitFloat)
-	} else {
-		filter.MaxResults = 50 // Default limit
-	}
-
-	if offset, ok := args["offset"].(int); ok && offset >= 0 {
-		filter.Offset = offset
-	} else if offsetFloat, ok := args["offset"].(float64); ok && offsetFloat >= 0 {
-		filter.Offset = int(offsetFloat)
-	} else {
-		filter.Offset = 0 // Default offset
-	}
+	pageQ := pageQueryFromArgs(args)
+	pageQ.ApplyToProposal(&filter)
+	filter.Limit = smart_contract.OverFetchLimit(pageQ.Limit)
+	filter.MaxResults = filter.Limit
 
 	proposals, err := h.store.ListProposals(ctx, filter)
 	if err != nil {
 		return nil, err
 	}
-
-	// Check if there are more results by requesting one more item
-	hasMore := false
-	if len(proposals) == filter.MaxResults {
-		checkFilter := filter
-		checkFilter.Offset = filter.Offset + filter.MaxResults
-		checkFilter.MaxResults = 1
-		moreResults, err := h.store.ListProposals(ctx, checkFilter)
-		if err == nil && len(moreResults) > 0 {
-			hasMore = true
-		}
+	if proposals == nil {
+		proposals = []smart_contract.Proposal{}
 	}
-
-	return map[string]interface{}{
-		"proposals": proposals,
-		"total":     len(proposals),
-		"limit":     filter.MaxResults,
-		"offset":    filter.Offset,
-		"has_more":  hasMore,
-	}, nil
+	fetched := len(proposals)
+	proposals = smart_contract.TrimWindow(proposals, pageQ.Limit)
+	lastID, lastDate := "", time.Time{}
+	if n := len(proposals); n > 0 {
+		lastID = proposals[n-1].ID
+		lastDate = proposals[n-1].CreatedAt
+	}
+	page := smart_contract.BuildPage(pageQ.Limit, pageQ.Offset, fetched, len(proposals), lastID, lastDate)
+	body := page.Fields()
+	body["proposals"] = proposals
+	return body, nil
 }
 
 func (h *HTTPMCPServer) handleGetProposal(ctx context.Context, args map[string]interface{}) (interface{}, error) {
@@ -1356,47 +1363,27 @@ func (h *HTTPMCPServer) handleListTasks(ctx context.Context, args map[string]int
 		}
 	}
 
-	// Handle pagination parameters
-	if limit, ok := args["limit"].(int); ok && limit > 0 {
-		filter.Limit = limit
-	} else if limitFloat, ok := args["limit"].(float64); ok && limitFloat > 0 {
-		filter.Limit = int(limitFloat)
-	} else {
-		filter.Limit = 50 // Default limit
-	}
-
-	if offset, ok := args["offset"].(int); ok && offset >= 0 {
-		filter.Offset = offset
-	} else if offsetFloat, ok := args["offset"].(float64); ok && offsetFloat >= 0 {
-		filter.Offset = int(offsetFloat)
-	} else {
-		filter.Offset = 0 // Default offset
-	}
+	pageQ := pageQueryFromArgs(args)
+	pageQ.ApplyToTask(&filter)
+	filter.Limit = smart_contract.OverFetchLimit(pageQ.Limit)
 
 	tasks, err := h.store.ListTasks(filter)
 	if err != nil {
 		return nil, err
 	}
-
-	// Check if there are more results by requesting one more item
-	hasMore := false
-	if len(tasks) == filter.Limit {
-		checkFilter := filter
-		checkFilter.Offset = filter.Offset + filter.Limit
-		checkFilter.Limit = 1
-		moreResults, err := h.store.ListTasks(checkFilter)
-		if err == nil && len(moreResults) > 0 {
-			hasMore = true
-		}
+	if tasks == nil {
+		tasks = []smart_contract.Task{}
 	}
-
-	return map[string]interface{}{
-		"tasks":    tasks,
-		"total":    len(tasks),
-		"limit":    filter.Limit,
-		"offset":   filter.Offset,
-		"has_more": hasMore,
-	}, nil
+	fetched := len(tasks)
+	tasks = smart_contract.TrimWindow(tasks, pageQ.Limit)
+	lastID := ""
+	if n := len(tasks); n > 0 {
+		lastID = tasks[n-1].TaskID
+	}
+	page := smart_contract.BuildPage(pageQ.Limit, pageQ.Offset, fetched, len(tasks), lastID, time.Time{})
+	body := page.Fields()
+	body["tasks"] = tasks
+	return body, nil
 }
 
 func (h *HTTPMCPServer) handleListSubmissions(ctx context.Context, args map[string]interface{}) (interface{}, error) {

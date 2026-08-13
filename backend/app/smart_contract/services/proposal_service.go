@@ -52,17 +52,17 @@ type ProposalListQuery struct {
 	ContractID       string
 	Limit            int
 	Offset           int
+	Cursor           string
+	CursorDate       string
+	CursorType       string
 	IncludeConfirmed bool
 }
 
 // ProposalListResult is a paginated proposal list with submissions.
 type ProposalListResult struct {
 	Proposals   []smart_contract.Proposal
-	Total       int
-	HasMore     bool
-	Limit       int
-	Offset      int
 	Submissions []smart_contract.Submission
+	smart_contract.Page
 }
 
 // ProposalService encapsulates proposal domain operations.
@@ -416,27 +416,26 @@ func (s *ProposalService) Update(ctx context.Context, id string, body ProposalUp
 
 // List returns paginated proposals with optional filtering.
 func (s *ProposalService) List(ctx context.Context, q ProposalListQuery) (*ProposalListResult, error) {
-	countFilter := smart_contract.ProposalFilter{
-		Status: q.Status, Skills: q.Skills, MinBudget: q.MinBudget, ContractID: q.ContractID,
-	}
-	allProposals, err := s.store.ListProposals(ctx, countFilter)
-	if err != nil {
-		return nil, Fail(http.StatusInternalServerError, err.Error())
-	}
-	if !q.IncludeConfirmed {
-		allProposals = filterListedProposals(allProposals)
-	}
-	total := len(allProposals)
+	pageQ := smart_contract.NewPageQuery(q.Limit, q.Offset, q.Cursor, q.CursorDate, q.CursorType, smart_contract.DefaultPageLimit)
 	filter := smart_contract.ProposalFilter{
 		Status: q.Status, Skills: q.Skills, MinBudget: q.MinBudget, ContractID: q.ContractID,
-		MaxResults: q.Limit, Offset: q.Offset,
 	}
+	pageQ.ApplyToProposal(&filter)
+	filter.Limit = smart_contract.OverFetchLimit(pageQ.Limit)
+	filter.MaxResults = filter.Limit
 	proposals, err := s.store.ListProposals(ctx, filter)
 	if err != nil {
 		return nil, Fail(http.StatusInternalServerError, err.Error())
 	}
+	fetched := len(proposals)
 	if !q.IncludeConfirmed {
 		proposals = filterListedProposals(proposals)
+	}
+	proposals = smart_contract.TrimWindow(proposals, pageQ.Limit)
+	lastID, lastDate := "", time.Time{}
+	if n := len(proposals); n > 0 {
+		lastID = proposals[n-1].ID
+		lastDate = proposals[n-1].CreatedAt
 	}
 	taskByID := map[string]smart_contract.Task{}
 	if tasks, err := s.store.ListTasks(smart_contract.TaskFilter{}); err == nil {
@@ -459,8 +458,9 @@ func (s *ProposalService) List(ctx context.Context, q ProposalListQuery) (*Propo
 		subs, _ = s.store.ListSubmissions(ctx, smart_contract.SubmissionFilter{TaskIDs: taskIDs})
 	}
 	return &ProposalListResult{
-		Proposals: proposals, Total: total, HasMore: q.Offset+len(proposals) < total,
-		Limit: q.Limit, Offset: q.Offset, Submissions: subs,
+		Proposals:   proposals,
+		Submissions: subs,
+		Page:        smart_contract.BuildPage(pageQ.Limit, pageQ.Offset, fetched, len(proposals), lastID, lastDate),
 	}, nil
 }
 

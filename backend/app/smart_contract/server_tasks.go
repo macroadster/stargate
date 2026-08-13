@@ -18,32 +18,51 @@ func (s *Server) handleTasks(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		if path == "" {
+			q := r.URL.Query()
+			pageQ := smart_contract.NewPageQuery(
+				intFromQuery(r, "limit", 0),
+				intFromQuery(r, "offset", 0),
+				q.Get("cursor"),
+				q.Get("cursor_date"),
+				q.Get("cursor_type"),
+				smart_contract.DefaultPageLimit,
+			)
 			filter := smart_contract.TaskFilter{
-				Skills:        splitCSV(r.URL.Query().Get("skills")),
-				MaxDifficulty: r.URL.Query().Get("max_difficulty"),
-				Status:        r.URL.Query().Get("status"),
-				Limit:         intFromQuery(r, "limit", 50),
-				Offset:        intFromQuery(r, "offset", 0),
+				Skills:        splitCSV(q.Get("skills")),
+				MaxDifficulty: q.Get("max_difficulty"),
+				Status:        q.Get("status"),
 				MinBudgetSats: int64FromQuery(r, "min_budget_sats", 0),
-				ContractID:    r.URL.Query().Get("contract_id"),
-				ClaimedBy:     r.URL.Query().Get("claimed_by"),
+				ContractID:    q.Get("contract_id"),
+				ClaimedBy:     q.Get("claimed_by"),
 			}
+			pageQ.ApplyToTask(&filter)
+			filter.Limit = smart_contract.OverFetchLimit(pageQ.Limit)
 			tasks, err := s.store.ListTasks(filter)
 			if err != nil {
 				Error(w, http.StatusInternalServerError, err.Error())
 				return
 			}
+			if tasks == nil {
+				tasks = []smart_contract.Task{}
+			}
+			fetched := len(tasks)
+			tasks = smart_contract.TrimWindow(tasks, pageQ.Limit)
+			lastID := ""
+			if n := len(tasks); n > 0 {
+				lastID = tasks[n-1].TaskID
+			}
+			page := smart_contract.BuildPage(pageQ.Limit, pageQ.Offset, fetched, len(tasks), lastID, time.Time{})
 			// hydrate submissions for these tasks
 			var taskIDs []string
 			for _, t := range tasks {
 				taskIDs = append(taskIDs, t.TaskID)
 			}
 			subs, _ := s.store.ListSubmissions(r.Context(), smart_contract.SubmissionFilter{TaskIDs: taskIDs})
-			JSON(w, http.StatusOK, map[string]interface{}{
-				"tasks":         tasks,
-				"total_matches": len(tasks),
-				"submissions":   subs,
-			})
+			body := page.Fields()
+			body["tasks"] = tasks
+			body["total_matches"] = page.Total
+			body["submissions"] = subs
+			JSON(w, http.StatusOK, body)
 			return
 		}
 

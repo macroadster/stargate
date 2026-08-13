@@ -142,14 +142,14 @@ func (m *GuidanceManifest) GetAIGuidance(baseURL string) AIGuidance {
 			},
 		},
 		Links: map[string]string{
-			"skill_md":  skillURL,
-			"sdk":       sdkURL,
-			"search":    mcpBase + "/search",
-			"tools":     mcpBase + "/tools",
-			"discover":  mcpBase + "/discover",
-			"docs":      mcpBase + "/docs",
-			"openapi":   mcpBase + "/openapi.json",
-			"chat":      mcpBase + "/chat",
+			"skill_md": skillURL,
+			"sdk":      sdkURL,
+			"search":   mcpBase + "/search",
+			"tools":    mcpBase + "/tools",
+			"discover": mcpBase + "/discover",
+			"docs":     mcpBase + "/docs",
+			"openapi":  mcpBase + "/openapi.json",
+			"chat":     mcpBase + "/chat",
 		},
 	}
 }
@@ -394,8 +394,16 @@ func NewGuidanceManifest(baseURL string) *GuidanceManifest {
 					},
 					"offset": {
 						Type:        "integer",
-						Description: "Number of tasks to skip for pagination (default: 0)",
+						Description: "Number of tasks to skip (default: 0). Prefer cursor.",
 						Default:     0,
+					},
+					"cursor": {
+						Type:        "string",
+						Description: "Keyset cursor (task_id from next_cursor)",
+					},
+					"cursor_type": {
+						Type:        "string",
+						Description: "before (default) or after",
 					},
 				},
 				Examples: []ToolExample{
@@ -430,8 +438,20 @@ func NewGuidanceManifest(baseURL string) *GuidanceManifest {
 					},
 					"offset": {
 						Type:        "integer",
-						Description: "Number of submissions to skip for pagination (default: 0)",
+						Description: "Number of submissions to skip (default: 0). Prefer cursor_date.",
 						Default:     0,
+					},
+					"cursor": {
+						Type:        "string",
+						Description: "Keyset cursor (submission_id from next_cursor)",
+					},
+					"cursor_date": {
+						Type:        "string",
+						Description: "RFC3339 created_at cursor from next_cursor_date",
+					},
+					"cursor_type": {
+						Type:        "string",
+						Description: "before (default) or after",
 					},
 				},
 				Examples: []ToolExample{
@@ -524,8 +544,20 @@ func NewGuidanceManifest(baseURL string) *GuidanceManifest {
 					},
 					"offset": {
 						Type:        "integer",
-						Description: "Number of proposals to skip for pagination (default: 0)",
+						Description: "Number of proposals to skip (default: 0). Prefer cursor_date.",
 						Default:     0,
+					},
+					"cursor": {
+						Type:        "string",
+						Description: "Keyset cursor (proposal id from next_cursor)",
+					},
+					"cursor_date": {
+						Type:        "string",
+						Description: "RFC3339 created_at cursor from next_cursor_date",
+					},
+					"cursor_type": {
+						Type:        "string",
+						Description: "before (default) or after",
 					},
 				},
 				Examples: []ToolExample{

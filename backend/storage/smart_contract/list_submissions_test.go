@@ -106,6 +106,17 @@ func runListSubmissionsFilterAndPage(t *testing.T, store Store) {
 	if len(page2) != 1 || page2[0].SubmissionID != "sub-b" {
 		t.Fatalf("page2 = %v", submissionIDs(page2))
 	}
+
+	cursor := page1[0].CreatedAt
+	viaCursor, err := store.ListSubmissions(ctx, core.SubmissionFilter{
+		Limit: 1, CursorDate: &cursor, CursorID: page1[0].SubmissionID, CursorType: "before",
+	})
+	if err != nil {
+		t.Fatalf("cursor page: %v", err)
+	}
+	if len(viaCursor) != 1 || viaCursor[0].SubmissionID != "sub-b" {
+		t.Fatalf("cursor page = %v", submissionIDs(viaCursor))
+	}
 }
 
 func TestSubmissionContractIDs(t *testing.T) {
