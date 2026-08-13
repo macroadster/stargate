@@ -236,12 +236,21 @@ func (s *Server) handleSubmissions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSubmissionList(w http.ResponseWriter, r *http.Request) {
-	m, total, err := s.submissionSvc.List(r.Context(), r.URL.Query().Get("contract_id"), splitCSV(r.URL.Query().Get("task_ids")), r.URL.Query().Get("status"))
+	q := r.URL.Query()
+	filter := smart_contract.SubmissionFilter{
+		ContractID: strings.TrimSpace(q.Get("contract_id")),
+		TaskID:     strings.TrimSpace(q.Get("task_id")),
+		TaskIDs:    splitCSV(q.Get("task_ids")),
+		Status:     strings.TrimSpace(q.Get("status")),
+		Limit:      intFromQuery(r, "limit", 0),
+		Offset:     intFromQuery(r, "offset", 0),
+	}
+	result, err := s.submissionSvc.List(r.Context(), filter)
 	if err != nil {
 		s.writeServiceErr(w, err)
 		return
 	}
-	JSON(w, http.StatusOK, map[string]interface{}{"submissions": m, "total": total})
+	JSON(w, http.StatusOK, result)
 }
 
 func (s *Server) handleSubmissionGet(w http.ResponseWriter, r *http.Request, id string) {

@@ -185,6 +185,18 @@ type TaskFilter struct {
 	LastActivitySince *time.Time // Only include tasks with activity since this time
 }
 
+// SubmissionFilter captures list filters for submissions (MCP + REST).
+// Empty TaskID/TaskIDs/ContractID means no constraint on that field.
+// Limit 0 means no page cap (return all matches after Offset).
+type SubmissionFilter struct {
+	ContractID string
+	TaskID     string
+	TaskIDs    []string
+	Status     string
+	Limit      int
+	Offset     int
+}
+
 // Proposal represents a human/markdown wish that must be approved before tasks are published.
 type Proposal struct {
 	ID               string         `json:"id"`

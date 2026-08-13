@@ -371,7 +371,10 @@ func (w *Watcher) processSubmissions(ctx context.Context) {
 		}
 	}
 
-	subs, err := w.store.ListSubmissions(ctx, allTaskIDs)
+	if len(allTaskIDs) == 0 {
+		return
+	}
+	subs, err := w.store.ListSubmissions(ctx, smart_contract.SubmissionFilter{TaskIDs: allTaskIDs})
 	if err != nil {
 		return
 	}

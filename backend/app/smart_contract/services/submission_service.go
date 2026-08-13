@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -44,50 +45,108 @@ func (s *SubmissionService) emit(evt smart_contract.Event) {
 	}
 }
 
-// List returns submissions filtered by task IDs, contract, and optional status.
-func (s *SubmissionService) List(ctx context.Context, contractID string, taskIDs []string, status string) (map[string]smart_contract.Submission, int, error) {
-	var submissions []smart_contract.Submission
-	var err error
-	if len(taskIDs) > 0 {
-		submissions, err = s.store.ListSubmissions(ctx, taskIDs)
-	} else if contractID != "" {
-		tasks, terr := s.store.ListTasks(smart_contract.TaskFilter{ContractID: contractID})
-		if terr != nil {
-			return nil, 0, Fail(http.StatusInternalServerError, terr.Error())
-		}
-		taskIDs = make([]string, len(tasks))
-		for i, task := range tasks {
-			taskIDs[i] = task.TaskID
-		}
-		submissions, err = s.store.ListSubmissions(ctx, taskIDs)
-	} else {
-		tasks, terr := s.store.ListTasks(smart_contract.TaskFilter{})
-		if terr != nil {
-			return nil, 0, Fail(http.StatusInternalServerError, terr.Error())
-		}
-		taskIDs = make([]string, len(tasks))
-		for i, task := range tasks {
-			taskIDs[i] = task.TaskID
-		}
-		submissions, err = s.store.ListSubmissions(ctx, taskIDs)
+// DefaultSubmissionListLimit is the MCP/REST page size when limit is omitted.
+const DefaultSubmissionListLimit = 50
+
+// SubmissionListResult is the shared MCP + REST list payload.
+type SubmissionListResult struct {
+	Submissions []smart_contract.Submission `json:"submissions"`
+	Total       int                         `json:"total"`
+	Limit       int                         `json:"limit"`
+	Offset      int                         `json:"offset"`
+	HasMore     bool                        `json:"has_more"`
+}
+
+// SubmissionFilterFromArgs maps MCP tool arguments onto the store query.
+func SubmissionFilterFromArgs(args map[string]interface{}) smart_contract.SubmissionFilter {
+	filter := smart_contract.SubmissionFilter{}
+	if args == nil {
+		return filter
 	}
-	if err != nil {
-		return nil, 0, Fail(http.StatusInternalServerError, err.Error())
+	if v, ok := args["contract_id"].(string); ok {
+		filter.ContractID = strings.TrimSpace(v)
 	}
-	if status != "" {
-		filtered := make([]smart_contract.Submission, 0)
-		for _, sub := range submissions {
-			if strings.EqualFold(sub.Status, status) {
-				filtered = append(filtered, sub)
+	if v, ok := args["task_id"].(string); ok {
+		filter.TaskID = strings.TrimSpace(v)
+	}
+	switch raw := args["task_ids"].(type) {
+	case []string:
+		filter.TaskIDs = append(filter.TaskIDs, raw...)
+	case []interface{}:
+		for _, item := range raw {
+			if s, ok := item.(string); ok && strings.TrimSpace(s) != "" {
+				filter.TaskIDs = append(filter.TaskIDs, strings.TrimSpace(s))
 			}
 		}
-		submissions = filtered
+	case string:
+		for _, part := range strings.Split(raw, ",") {
+			if s := strings.TrimSpace(part); s != "" {
+				filter.TaskIDs = append(filter.TaskIDs, s)
+			}
+		}
 	}
-	submissionMap := make(map[string]smart_contract.Submission)
-	for _, sub := range submissions {
-		submissionMap[sub.SubmissionID] = sub
+	if v, ok := args["status"].(string); ok {
+		filter.Status = strings.TrimSpace(v)
 	}
-	return submissionMap, len(submissions), nil
+	filter.Limit = intArg(args, "limit", 0)
+	filter.Offset = intArg(args, "offset", 0)
+	return filter
+}
+
+func intArg(args map[string]interface{}, key string, def int) int {
+	switch v := args[key].(type) {
+	case int:
+		return v
+	case int32:
+		return int(v)
+	case int64:
+		return int(v)
+	case float64:
+		return int(v)
+	case float32:
+		return int(v)
+	case json.Number:
+		n, err := v.Int64()
+		if err == nil {
+			return int(n)
+		}
+	}
+	return def
+}
+
+// List returns submissions for the shared MCP/REST query (filters + pagination).
+func (s *SubmissionService) List(ctx context.Context, filter smart_contract.SubmissionFilter) (*SubmissionListResult, error) {
+	if filter.Limit < 0 {
+		filter.Limit = 0
+	}
+	if filter.Offset < 0 {
+		filter.Offset = 0
+	}
+	if filter.Limit == 0 {
+		filter.Limit = DefaultSubmissionListLimit
+	}
+
+	countFilter := filter
+	countFilter.Limit = 0
+	countFilter.Offset = 0
+	all, err := s.store.ListSubmissions(ctx, countFilter)
+	if err != nil {
+		return nil, Fail(http.StatusInternalServerError, err.Error())
+	}
+	page, err := s.store.ListSubmissions(ctx, filter)
+	if err != nil {
+		return nil, Fail(http.StatusInternalServerError, err.Error())
+	}
+	if page == nil {
+		page = []smart_contract.Submission{}
+	}
+	return &SubmissionListResult{
+		Submissions: page,
+		Total:       len(all),
+		Limit:       filter.Limit,
+		Offset:      filter.Offset,
+		HasMore:     filter.Offset+len(page) < len(all),
+	}, nil
 }
 
 // Get returns a submission by ID.

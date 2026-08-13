@@ -454,7 +454,10 @@ func (s *ProposalService) List(ctx context.Context, q ProposalListQuery) (*Propo
 			}
 		}
 	}
-	subs, _ := s.store.ListSubmissions(ctx, taskIDs)
+	var subs []smart_contract.Submission
+	if len(taskIDs) > 0 {
+		subs, _ = s.store.ListSubmissions(ctx, smart_contract.SubmissionFilter{TaskIDs: taskIDs})
+	}
 	return &ProposalListResult{
 		Proposals: proposals, Total: total, HasMore: q.Offset+len(proposals) < total,
 		Limit: q.Limit, Offset: q.Offset, Submissions: subs,

@@ -176,6 +176,7 @@ type MCPSession struct {
 type HTTPMCPServer struct {
 	store            scmiddleware.Store
 	claimSvc         *scservices.ClaimService
+	submissionSvc    *scservices.SubmissionService
 	apiKeyStore      auth.APIKeyValidator
 	apiKeyIssuer     auth.APIKeyIssuer
 	ingestionSvc     *services.IngestionService
@@ -214,6 +215,7 @@ func NewHTTPMCPServer(store scmiddleware.Store, apiKeyStore auth.APIKeyValidator
 	return &HTTPMCPServer{
 		store:            store,
 		claimSvc:         scservices.NewClaimService(store),
+		submissionSvc:    scservices.NewSubmissionService(store, nil),
 		apiKeyStore:      apiKeyStore,
 		apiKeyIssuer:     apiKeyIssuer,
 		ingestionSvc:     ingestionSvc,
@@ -1398,114 +1400,10 @@ func (h *HTTPMCPServer) handleListTasks(ctx context.Context, args map[string]int
 }
 
 func (h *HTTPMCPServer) handleListSubmissions(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	var taskIDs []string
-
-	// If task_id is provided, use it directly
-	if taskID, ok := args["task_id"].(string); ok && taskID != "" {
-		taskIDs = []string{taskID}
-	} else if contractID, ok := args["contract_id"].(string); ok && contractID != "" {
-		// Normalize contract ID - try multiple variations like other handlers
-		normalized := strings.TrimSpace(contractID)
-		prefixes := []string{"wish-", "proposal-", "contract-"}
-		for _, prefix := range prefixes {
-			if strings.HasPrefix(normalized, prefix) {
-				normalized = strings.TrimPrefix(normalized, prefix)
-				break
-			}
-		}
-
-		// Try different contract ID variations
-		contractIDsToTry := []string{contractID, normalized}
-		if !strings.HasPrefix(contractID, "wish-") && !strings.HasPrefix(contractID, "proposal-") && !strings.HasPrefix(contractID, "contract-") {
-			contractIDsToTry = append(contractIDsToTry, "wish-"+normalized, "contract-"+normalized)
-		}
-
-		// Try each contract ID variation until we find tasks
-		for _, cid := range contractIDsToTry {
-			tasks, err := h.store.ListTasks(smart_contract.TaskFilter{
-				ContractID: cid,
-				Limit:      1000,
-			})
-			if err != nil {
-				return nil, fmt.Errorf("failed to get tasks for contract: %v", err)
-			}
-			for _, task := range tasks {
-				taskIDs = append(taskIDs, task.TaskID)
-			}
-			if len(taskIDs) > 0 {
-				break // Found tasks, stop trying
-			}
-		}
-	} else {
-		// No filter provided - return empty with a hint
-		return map[string]interface{}{
-			"submissions": []smart_contract.Submission{},
-			"total":       0,
-			"limit":       50,
-			"offset":      0,
-			"has_more":    false,
-			"hint":        "Provide contract_id or task_id to filter submissions",
-		}, nil
+	if h.submissionSvc == nil {
+		return nil, fmt.Errorf("submission service unavailable")
 	}
-
-	// Handle pagination parameters
-	limit := 50
-	offset := 0
-	if lim, ok := args["limit"].(int); ok && lim > 0 {
-		limit = lim
-	} else if lim, ok := args["limit"].(float64); ok && lim > 0 {
-		limit = int(lim)
-	}
-
-	if off, ok := args["offset"].(int); ok && off >= 0 {
-		offset = off
-	} else if off, ok := args["offset"].(float64); ok && off >= 0 {
-		offset = int(off)
-	}
-
-	// Get submissions
-	submissions, err := h.store.ListSubmissions(ctx, taskIDs)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list submissions: %v", err)
-	}
-
-	// Filter by status if provided
-	statusFilter := ""
-	if status, ok := args["status"].(string); ok && status != "" {
-		statusFilter = strings.ToLower(status)
-	}
-
-	var filtered []smart_contract.Submission
-	for _, sub := range submissions {
-		if statusFilter != "" && strings.ToLower(sub.Status) != statusFilter {
-			continue
-		}
-		filtered = append(filtered, sub)
-	}
-
-	// Apply pagination
-	hasMore := false
-	var paged []smart_contract.Submission
-	if offset < len(filtered) {
-		end := offset + limit
-		if end > len(filtered) {
-			end = len(filtered)
-		}
-		paged = filtered[offset:end]
-		if offset+limit < len(filtered) {
-			hasMore = true
-		}
-	} else {
-		paged = []smart_contract.Submission{}
-	}
-
-	return map[string]interface{}{
-		"submissions": paged,
-		"total":       len(filtered),
-		"limit":       limit,
-		"offset":      offset,
-		"has_more":    hasMore,
-	}, nil
+	return h.submissionSvc.List(ctx, scservices.SubmissionFilterFromArgs(args))
 }
 
 func (h *HTTPMCPServer) handleGetContract(ctx context.Context, args map[string]interface{}) (interface{}, error) {

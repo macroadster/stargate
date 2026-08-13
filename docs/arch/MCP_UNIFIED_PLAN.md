@@ -39,7 +39,7 @@
   - `POST /proposals/{id}/approve` → approve + publish tasks to store
   - `POST /proposals/{id}/publish` → mark published (requires approved tasks)
 - **Submissions**
-  - `GET /submissions?contract_id=&task_ids=&status=` → map of submissions
+  - `GET /submissions?contract_id=&task_id=&task_ids=&status=&limit=&offset=` → submissions array + `total`/`limit`/`offset`/`has_more`
   - `GET /submissions/{id}` → submission detail
   - `POST /submissions/{id}/review` `{action: review|approve|reject, notes?}` → status transition + event
   - `POST /submissions/{id}/rework` `{deliverables?, notes?}` → reset to `pending_review` + event
@@ -53,7 +53,7 @@ Tool names map to the same store used by REST. Where possible they already reuse
 - **Tasks:** `list_tasks`, `get_task`, `claim_task`, `submit_work`, `get_task_proof`, `get_task_status`.
 - **Skills:** `list_skills`.
 - **Proposals:** `list_proposals`, `get_proposal`, `create_proposal`, `approve_proposal`, `publish_proposal`.
-- **Submissions:** `get_submission`, `review_submission`, `rework_submission` (note: `list_submissions` currently placeholder, see backlog).
+- **Submissions:** `list_submissions`, `get_submission`, `review_submission`, `rework_submission`.
 - **Events:** `list_events` (in-memory buffer).
 - **Scanning:** `scan_image`, `scan_block`, `extract_message`, `get_scanner_info` (routes into steganography scanners).
 
@@ -92,7 +92,7 @@ Tool names map to the same store used by REST. Where possible they already reuse
 | list_skills | `GET /api/smart_contract/skills` | DONE |
 | list_proposals / get_proposal / approve_proposal / publish_proposal / create_proposal | `/api/smart_contract/proposals*` | DONE |
 | get_submission / review_submission / rework_submission | `/api/smart_contract/submissions*` | DONE |
-| list_submissions | `/api/smart_contract/submissions` | **PARTIAL** (placeholder response) |
+| list_submissions | `/api/smart_contract/submissions` | DONE (shared SubmissionFilter query) |
 | list_events | `/api/smart_contract/events` | DONE |
 | scan_image / scan_block / extract_message / get_scanner_info | Stego scanner services | DONE |
 
@@ -115,7 +115,7 @@ Machine-readable catalog: **`GET /api/surfaces`** (`backend/api/surfaces.go`).
 
 ## Backlog (next steps, ordered)
 1) ~~**Collapse dual API surfaces**~~ — done via `/api/surfaces`, alias deprecation headers, tool→REST map (3bk.2). MCP still calls the store in-process (same data as REST); optional HTTP round-trip proxy deferred.  
-2) **Complete `list_submissions` tool:** Wire to `/api/smart_contract/submissions` with filters and pagination.  
+2) ~~**Complete `list_submissions` tool**~~ — MCP `list_submissions` and `GET /api/smart_contract/submissions` share `SubmissionFilter` (contract_id, task_id/task_ids, status, limit/offset).  
 3) **OpenAPI & discovery:** (In progress) MCP OpenAPI available at `/api/docs/mcp/openapi.json`; add `/api/smart_contract/discover` plus `/mcp/discover` for capability advertisement.  
 4) **Pagination + sorting consistency:** Ensure list endpoints honor `limit/offset/sort` across contracts/tasks/proposals/submissions; surface defaults in responses.  
 5) **Auth alignment:** Allow the same API key / bearer token flow across `/api` and `/mcp`; document required headers in one place.  

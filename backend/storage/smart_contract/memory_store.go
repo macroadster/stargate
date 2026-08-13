@@ -465,27 +465,53 @@ func (s *MemoryStore) SubmitWork(claimID string, deliverables map[string]interfa
 	return plan.Submission, nil
 }
 
-// ListSubmissions returns submissions for the provided task IDs.
-func (s *MemoryStore) ListSubmissions(ctx context.Context, taskIDs []string) ([]smart_contract.Submission, error) {
+// ListSubmissions returns submissions matching the filter (contract, task, status, page).
+func (s *MemoryStore) ListSubmissions(ctx context.Context, filter smart_contract.SubmissionFilter) ([]smart_contract.Submission, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if len(taskIDs) == 0 {
-		return nil, nil
-	}
-	taskSet := make(map[string]struct{}, len(taskIDs))
-	for _, id := range taskIDs {
-		taskSet[id] = struct{}{}
-	}
-	out := make([]smart_contract.Submission, 0)
-	for _, sub := range s.submissions {
-		if claim, ok := s.claims[sub.ClaimID]; ok {
-			if _, hit := taskSet[claim.TaskID]; hit {
-				sub.TaskID = claim.TaskID
-				out = append(out, sub)
-			}
+
+	taskIDs := submissionTaskIDs(filter)
+	var taskSet map[string]struct{}
+	if len(taskIDs) > 0 {
+		taskSet = make(map[string]struct{}, len(taskIDs))
+		for _, id := range taskIDs {
+			taskSet[id] = struct{}{}
 		}
 	}
-	return out, nil
+	statusFilter := strings.ToLower(strings.TrimSpace(filter.Status))
+
+	out := make([]smart_contract.Submission, 0)
+	for _, sub := range s.submissions {
+		taskID := strings.TrimSpace(sub.TaskID)
+		if taskID == "" {
+			if claim, ok := s.claims[sub.ClaimID]; ok {
+				taskID = claim.TaskID
+			}
+		}
+		sub.TaskID = taskID
+		if taskSet != nil {
+			if _, hit := taskSet[taskID]; !hit {
+				continue
+			}
+		}
+		if statusFilter != "" && strings.ToLower(sub.Status) != statusFilter {
+			continue
+		}
+		if filter.ContractID != "" {
+			task, ok := s.tasks[taskID]
+			if !ok || !contractIDMatches(task.ContractID, filter.ContractID) {
+				continue
+			}
+		}
+		out = append(out, sub)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].CreatedAt.After(out[j].CreatedAt)
+		}
+		return out[i].SubmissionID > out[j].SubmissionID
+	})
+	return applySubmissionPage(out, filter), nil
 }
 
 // TaskStatus returns task status, including claim info if present.

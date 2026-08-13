@@ -656,7 +656,7 @@ func (w *Worker) fetchSubmissionHistory(taskID, contractID string) []map[string]
 	if len(taskIDs) == 0 {
 		return nil
 	}
-	subs, err := w.store.ListSubmissions(context.Background(), taskIDs)
+	subs, err := w.store.ListSubmissions(context.Background(), smart_contract.SubmissionFilter{TaskIDs: taskIDs})
 	if err != nil || len(subs) == 0 {
 		return nil
 	}

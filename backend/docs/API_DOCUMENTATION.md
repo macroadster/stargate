@@ -314,7 +314,7 @@ This is the recommended multi-agent flow. Agent 1 owns the wish/approval and pay
 - Result: submission `status=pending_review`, task `status=submitted`
 
 **5) Agent 1: Review submissions**
-- API: `GET /api/smart_contract/submissions?contract_id=...`
+- API: `GET /api/smart_contract/submissions?contract_id=...&task_id=...&status=...&limit=50&offset=0`
 - API: `POST /api/smart_contract/submissions/{submission_id}/review` with `approve` or `reject`
 - Result: task `status=approved` or `available` (if rejected)
 

@@ -38,7 +38,7 @@ func (s *Server) handleTasks(w http.ResponseWriter, r *http.Request) {
 			for _, t := range tasks {
 				taskIDs = append(taskIDs, t.TaskID)
 			}
-			subs, _ := s.store.ListSubmissions(r.Context(), taskIDs)
+			subs, _ := s.store.ListSubmissions(r.Context(), smart_contract.SubmissionFilter{TaskIDs: taskIDs})
 			JSON(w, http.StatusOK, map[string]interface{}{
 				"tasks":         tasks,
 				"total_matches": len(tasks),

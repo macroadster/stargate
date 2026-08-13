@@ -811,23 +811,49 @@ VALUES (?,?,?,?,?,?,?)
 	return plan.Submission, nil
 }
 
-func (s *SQLStore) ListSubmissions(ctx context.Context, taskIDs []string) ([]smart_contract.Submission, error) {
-	if len(taskIDs) == 0 {
-		return nil, nil
-	}
-	placeholders := strings.Repeat("?,", len(taskIDs))
-	placeholders = placeholders[:len(placeholders)-1]
-	query := fmt.Sprintf(`
-SELECT s.submission_id, s.claim_id, c.task_id, s.status, s.deliverables, s.completion_proof, s.rejection_reason, s.rejection_type, s.rejected_at, s.created_at
+func (s *SQLStore) ListSubmissions(ctx context.Context, filter smart_contract.SubmissionFilter) ([]smart_contract.Submission, error) {
+	query := `
+SELECT s.submission_id, s.claim_id, COALESCE(NULLIF(s.task_id, ''), c.task_id) AS task_id,
+       s.status, s.deliverables, s.completion_proof, s.rejection_reason, s.rejection_type, s.rejected_at, s.created_at
 FROM mcp_submissions s
-JOIN mcp_claims c ON c.claim_id = s.claim_id
-WHERE c.task_id IN (%s)
-ORDER BY s.created_at DESC
-`, placeholders)
+LEFT JOIN mcp_claims c ON c.claim_id = s.claim_id
+LEFT JOIN mcp_tasks t ON t.task_id = COALESCE(NULLIF(s.task_id, ''), c.task_id)
+WHERE 1=1
+`
+	args := make([]interface{}, 0, 8)
 
-	args := make([]interface{}, len(taskIDs))
-	for i, id := range taskIDs {
-		args[i] = id
+	if filter.ContractID != "" {
+		variants := submissionContractIDs(filter.ContractID)
+		placeholders := make([]string, len(variants))
+		for i, v := range variants {
+			placeholders[i] = "?"
+			args = append(args, strings.ToLower(v))
+		}
+		query += " AND LOWER(t.contract_id) IN (" + strings.Join(placeholders, ",") + ")"
+	}
+
+	if taskIDs := submissionTaskIDs(filter); len(taskIDs) > 0 {
+		placeholders := make([]string, len(taskIDs))
+		for i, id := range taskIDs {
+			placeholders[i] = "?"
+			args = append(args, id)
+		}
+		query += " AND COALESCE(NULLIF(s.task_id, ''), c.task_id) IN (" + strings.Join(placeholders, ",") + ")"
+	}
+
+	if status := strings.TrimSpace(filter.Status); status != "" {
+		query += " AND LOWER(s.status) = LOWER(?)"
+		args = append(args, status)
+	}
+
+	query += " ORDER BY s.created_at DESC, s.submission_id DESC"
+	if filter.Limit > 0 {
+		query += fmt.Sprintf(" LIMIT %d", filter.Limit)
+		if filter.Offset > 0 {
+			query += fmt.Sprintf(" OFFSET %d", filter.Offset)
+		}
+	} else if filter.Offset > 0 {
+		query += fmt.Sprintf(" OFFSET %d", filter.Offset)
 	}
 
 	rows, err := s.queryContext(ctx, query, args...)
@@ -835,33 +861,41 @@ ORDER BY s.created_at DESC
 		return nil, err
 	}
 	defer rows.Close()
-	var out []smart_contract.Submission
+	out := make([]smart_contract.Submission, 0)
 	for rows.Next() {
-		var sub smart_contract.Submission
-		var delivJSON, proofJSON, rejectionReason, rejectionType []byte
-		var rejectedAtStr, createdAtStr sql.NullString
-		if err := rows.Scan(&sub.SubmissionID, &sub.ClaimID, &sub.TaskID, &sub.Status, &delivJSON, &proofJSON, &rejectionReason, &rejectionType, &rejectedAtStr, &createdAtStr); err != nil {
+		sub, err := scanListedSubmission(rows)
+		if err != nil {
 			return nil, err
-		}
-		if rejectedAtStr.Valid {
-			if t, err := parseSQLiteTime(rejectedAtStr.String); err == nil {
-				sub.RejectedAt = t
-			}
-		}
-		if createdAtStr.Valid {
-			if t, err := parseSQLiteTime(createdAtStr.String); err == nil && t != nil {
-				sub.CreatedAt = *t
-			}
-		}
-		if len(delivJSON) > 0 {
-			_ = json.Unmarshal(delivJSON, &sub.Deliverables)
-		}
-		if len(proofJSON) > 0 {
-			_ = json.Unmarshal(proofJSON, &sub.CompletionProof)
 		}
 		out = append(out, sub)
 	}
 	return out, rows.Err()
+}
+
+func scanListedSubmission(rows *sql.Rows) (smart_contract.Submission, error) {
+	var sub smart_contract.Submission
+	var delivJSON, proofJSON []byte
+	var rejectedAtStr, createdAtStr sql.NullString
+	if err := rows.Scan(&sub.SubmissionID, &sub.ClaimID, &sub.TaskID, &sub.Status, &delivJSON, &proofJSON, &sub.RejectionReason, &sub.RejectionType, &rejectedAtStr, &createdAtStr); err != nil {
+		return smart_contract.Submission{}, err
+	}
+	if rejectedAtStr.Valid {
+		if t, err := parseSQLiteTime(rejectedAtStr.String); err == nil {
+			sub.RejectedAt = t
+		}
+	}
+	if createdAtStr.Valid {
+		if t, err := parseSQLiteTime(createdAtStr.String); err == nil && t != nil {
+			sub.CreatedAt = *t
+		}
+	}
+	if len(delivJSON) > 0 {
+		_ = json.Unmarshal(delivJSON, &sub.Deliverables)
+	}
+	if len(proofJSON) > 0 {
+		_ = json.Unmarshal(proofJSON, &sub.CompletionProof)
+	}
+	return sub, nil
 }
 
 func (s *SQLStore) GetSubmission(ctx context.Context, id string) (smart_contract.Submission, error) {

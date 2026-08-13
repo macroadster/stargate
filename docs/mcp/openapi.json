@@ -139,8 +139,11 @@
         "summary": "List submissions",
         "parameters": [
           {"name": "contract_id", "in": "query", "schema": {"type": "string"}},
+          {"name": "task_id", "in": "query", "schema": {"type": "string"}},
           {"name": "task_ids", "in": "query", "schema": {"type": "string"}, "description": "comma-separated"},
-          {"name": "status", "in": "query", "schema": {"type": "string"}}
+          {"name": "status", "in": "query", "schema": {"type": "string"}, "description": "pending_review | reviewed | approved | rejected"},
+          {"name": "limit", "in": "query", "schema": {"type": "integer", "default": 50}},
+          {"name": "offset", "in": "query", "schema": {"type": "integer", "default": 0}}
         ],
         "responses": {"200": {"description": "OK", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SubmissionList"}}}}}
       }
@@ -357,8 +360,11 @@
       "SubmissionList": {
         "type": "object",
         "properties": {
-          "submissions": {"type": "object"},
-          "total": {"type": "integer"}
+          "submissions": {"type": "array", "items": {"$ref": "#/components/schemas/Submission"}},
+          "total": {"type": "integer"},
+          "limit": {"type": "integer"},
+          "offset": {"type": "integer"},
+          "has_more": {"type": "boolean"}
         }
       },
       "ClaimRequest": {
