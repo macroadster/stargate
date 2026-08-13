@@ -336,12 +336,7 @@ func (s *Server) handleDiscover(w http.ResponseWriter, r *http.Request) {
 			"header_name": "X-API-Key",
 			"required":    fmt.Sprintf("%t", s.apiKeys != nil),
 		},
-		"rate_limits": map[string]interface{}{
-			"enabled":       false,
-			"notes":         "rate limiting planned; not enforced by default",
-			"recommended":   "10 rps claim, 5 rps submit (see roadmap)",
-			"burst_example": 100,
-		},
+		"rate_limits": s.actionLimiter.Discover(),
 	}
 	JSON(w, http.StatusOK, resp)
 }

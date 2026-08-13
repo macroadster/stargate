@@ -119,7 +119,7 @@ Machine-readable catalog: **`GET /api/surfaces`** (`backend/api/surfaces.go`).
 3) **OpenAPI & discovery:** (In progress) MCP OpenAPI available at `/api/docs/mcp/openapi.json`; add `/api/smart_contract/discover` plus `/mcp/discover` for capability advertisement.  
 4) **Pagination + sorting consistency:** Ensure list endpoints honor `limit/offset/sort` across contracts/tasks/proposals/submissions; surface defaults in responses.  
 5) **Auth alignment:** Allow the same API key / bearer token flow across `/api` and `/mcp`; document required headers in one place.  
-6) **Rate limiting & abuse controls:** Apply middleware to claim/submit/review endpoints (shared between REST and MCP tools).  
+6) ~~**Rate limiting & abuse controls:**~~ Shared claim/submit/review limiter (`middleware.ActionLimiter`) on `/api/smart_contract/*` and `/mcp/call` (and JSON-RPC `tools/call`). Same key (API key, then wallet, then tool). Count once at the HTTP edge so in-process MCP → store calls do not double-count. Defaults: 10 rps claim (burst 100), 5 rps submit/review (burst 50). Disable with `STARGATE_ACTION_RATE_LIMIT=off`.  
 7) **Indexer fidelity:** Replace mock funding provider defaults with production provider configs (per env), and persist block header + Merkle path provenance on every proof update.  
 8) **Event delivery:** Expose SSE on `/mcp/events` as alias to `/api/smart_contract/events`; add minimal retry guidance in responses.  
 9) **Reputation/agent profile (optional, later):** If/when needed, reintroduce agent metadata endpoints building on submission history; not required for parity.

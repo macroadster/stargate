@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"stargate-backend/middleware"
 )
 
 func (h *HTTPMCPServer) handleListTools(w http.ResponseWriter, r *http.Request) {
@@ -98,12 +100,12 @@ func (h *HTTPMCPServer) handleIndex(w http.ResponseWriter, r *http.Request) {
 			"name":    "starlight",
 			"version": "2026.06",
 		},
-		"instructions":        ai.Instructions,
-		"skill_md_url":        ai.SkillMDURL,
-		"sdk_url":             ai.SDKURL,
+		"instructions":         ai.Instructions,
+		"skill_md_url":         ai.SkillMDURL,
+		"sdk_url":              ai.SDKURL,
 		"recommended_workflow": ai.RecommendedWorkflow,
-		"ai_guidance":         ai.AIGuidance,
-		"links":               ai.Links,
+		"ai_guidance":          ai.AIGuidance,
+		"links":                ai.Links,
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -131,13 +133,13 @@ func (h *HTTPMCPServer) handleDiscover(w http.ResponseWriter, r *http.Request) {
 	ai := h.guidance.GetAIGuidance(base)
 
 	resp := map[string]interface{}{
-		"version":        "2026.06",
-		"instructions":   ai.Instructions,
-		"skill_md_url":   ai.SkillMDURL,
-		"sdk_url":        ai.SDKURL,
-		"ai_guidance":    ai.AIGuidance,
+		"version":              "2026.06",
+		"instructions":         ai.Instructions,
+		"skill_md_url":         ai.SkillMDURL,
+		"sdk_url":              ai.SDKURL,
+		"ai_guidance":          ai.AIGuidance,
 		"recommended_workflow": ai.RecommendedWorkflow,
-		"links":          ai.Links,
+		"links":                ai.Links,
 		"base_urls": map[string]string{
 			"api": base + "/api/smart_contract",
 			"mcp": base + "/mcp",
@@ -157,20 +159,15 @@ func (h *HTTPMCPServer) handleDiscover(w http.ResponseWriter, r *http.Request) {
 			"/bitcoin/v1/info",
 		},
 		"surface_note": "GET /api/surfaces for primary vs legacy API ownership (REST primary, MCP tool shim, /api/data for blocks).",
-		"tools":      tools,
-		"tool_names": toolNames,
-		"total":      len(tools),
+		"tools":        tools,
+		"tool_names":   toolNames,
+		"total":        len(tools),
 		"authentication": map[string]string{
 			"type":        "api_key",
 			"header_name": "X-API-Key",
 			"required":    fmt.Sprintf("%t", h.apiKeyStore != nil),
 		},
-		"rate_limits": map[string]interface{}{
-			"enabled":       false,
-			"notes":         "rate limiting planned; not enforced by default",
-			"recommended":   "10 rps claim, 5 rps submit (see roadmap)",
-			"burst_example": 100,
-		},
+		"rate_limits": h.actionLimiter.Discover(),
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
@@ -206,10 +203,10 @@ func (h *HTTPMCPServer) handleGetAIGuidanceTool(ctx context.Context, args map[st
 
 	// Also surface a short pointer to the full content
 	return map[string]interface{}{
-		"guidance":            ai,
-		"full_skill_md_url":   ai.SkillMDURL,
-		"full_sdk_url":        ai.SDKURL,
-		"note":                "Fetch the complete canonical workflow from the skill_md_url. This tool exists so agents can explicitly request guidance via the normal tool discovery path.",
+		"guidance":          ai,
+		"full_skill_md_url": ai.SkillMDURL,
+		"full_sdk_url":      ai.SDKURL,
+		"note":              "Fetch the complete canonical workflow from the skill_md_url. This tool exists so agents can explicitly request guidance via the normal tool discovery path.",
 		"recommended_next": []string{
 			"GET " + ai.SkillMDURL,
 			"Download " + ai.SDKURL + " for file operations",
@@ -466,17 +463,33 @@ func (h *HTTPMCPServer) handleToolCall(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
-		if h.apiKeyStore != nil && !h.checkRateLimit(apiKey) {
-			errResp := &ToolError{Code: ErrCodeRateLimited, Message: "Rate limit exceeded. Retry after a short delay.", Tool: req.Tool, HttpStatus: 429}
-			if isStream {
-				data, _ := json.Marshal(map[string]interface{}{"success": false, "error": errResp})
-				w.Header().Set("Content-Type", "text/event-stream")
-				fmt.Fprintf(w, "event: message\ndata: %s\n\n", data)
-			} else {
-				h.writeStructuredErrorJSONRPC(w, errResp)
+		if _, actionLimited := middleware.ActionForTool(req.Tool); !actionLimited {
+			if h.apiKeyStore != nil && !h.checkRateLimit(apiKey) {
+				errResp := &ToolError{Code: ErrCodeRateLimited, Message: "Rate limit exceeded. Retry after a short delay.", Tool: req.Tool, HttpStatus: 429}
+				if isStream {
+					data, _ := json.Marshal(map[string]interface{}{"success": false, "error": errResp})
+					w.Header().Set("Content-Type", "text/event-stream")
+					fmt.Fprintf(w, "event: message\ndata: %s\n\n", data)
+				} else {
+					h.writeStructuredErrorJSONRPC(w, errResp)
+				}
+				return
 			}
+		}
+	}
+
+	var allowed bool
+	r, allowed = h.applyActionLimit(w, r, req.Tool)
+	if !allowed {
+		errResp := actionLimitError(req.Tool)
+		if strings.Contains(r.Header.Get("Accept"), "text/event-stream") {
+			data, _ := json.Marshal(map[string]interface{}{"success": false, "error": errResp})
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprintf(w, "event: message\ndata: %s\n\n", data)
 			return
 		}
+		h.writeHTTPStructuredError(w, http.StatusTooManyRequests, errResp)
+		return
 	}
 
 	result, err := h.callToolDirect(r.Context(), req.Tool, req.Arguments, apiKey, r)
@@ -538,10 +551,10 @@ func (h *HTTPMCPServer) handleToolSearch(w http.ResponseWriter, r *http.Request)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"guidance": map[string]interface{}{
-			"message":       "Starlight MCP AI Guidance: Read " + ai.SkillMDURL + " before using tools. For local files/artifacts, strongly prefer the starlight_sdk.sh wrapper over raw tool calls. See the 'ai_guidance' section at the root /mcp or /mcp/discover endpoint.",
+			"message":         "Starlight MCP AI Guidance: Read " + ai.SkillMDURL + " before using tools. For local files/artifacts, strongly prefer the starlight_sdk.sh wrapper over raw tool calls. See the 'ai_guidance' section at the root /mcp or /mcp/discover endpoint.",
 			"sdk_recommended": true,
-			"sdk_download":  ai.SDKURL,
-			"skill_md":      ai.SkillMDURL,
+			"sdk_download":    ai.SDKURL,
+			"skill_md":        ai.SkillMDURL,
 		},
 		"query":    query,
 		"category": category,

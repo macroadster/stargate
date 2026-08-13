@@ -23,6 +23,7 @@ import (
 	"stargate-backend/core"
 	"stargate-backend/core/smart_contract"
 	"stargate-backend/handlers"
+	"stargate-backend/middleware"
 	"stargate-backend/services"
 	"stargate-backend/starlight"
 	"stargate-backend/storage"
@@ -215,6 +216,7 @@ type HTTPMCPServer struct {
 	proxyBase        string
 	rateLimiterMu    sync.Mutex
 	rateLimiter      map[string][]time.Time
+	actionLimiter    *middleware.ActionLimiter
 	challengeStore   *auth.ChallengeStore
 	network          string
 	guidance         *GuidanceManifest
@@ -275,6 +277,11 @@ func (h *HTTPMCPServer) SetChainBackend(chain bitcoin.ChainBackend) {
 // SetServer sets the smart_contract server reference
 func (h *HTTPMCPServer) SetServer(server *scmiddleware.Server) {
 	h.server = server
+}
+
+// SetActionLimiter installs the shared claim/submit/review limiter (same instance as REST).
+func (h *HTTPMCPServer) SetActionLimiter(limiter *middleware.ActionLimiter) {
+	h.actionLimiter = limiter
 }
 
 func (h *HTTPMCPServer) createSession() string {

@@ -525,6 +525,8 @@ func runHTTPServer(store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, api
 	scannerManager := starlight.GetScannerManager()
 	httpMCPServer := mcp.NewHTTPMCPServer(store, apiKeyValidator, apiKeyIssuer, ingestionSvc, scannerManager, container.SmartContractService, challengeStore)
 	httpMCPServer.SetChainBackend(chainRuntime.Backend)
+	actionLimiter := middleware.NewActionLimiterFromEnv()
+	httpMCPServer.SetActionLimiter(actionLimiter)
 
 	// Set the smart contract handler with the store
 	container.SetSmartContractHandler(store)
@@ -580,6 +582,7 @@ func runHTTPServer(store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, api
 	// Wire chain backend into REST smart-contract server (PSBT / UTXO).
 	if mcpRestServer != nil {
 		mcpRestServer.SetUTXOClient(chainRuntime.Backend)
+		mcpRestServer.SetActionLimiter(actionLimiter)
 	}
 
 	handler := middleware.Recovery(

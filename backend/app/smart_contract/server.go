@@ -4,9 +4,10 @@ import (
 	"net/http"
 	"sync"
 
+	scservices "stargate-backend/app/smart_contract/services"
 	"stargate-backend/bitcoin"
 	"stargate-backend/core/smart_contract"
-	scservices "stargate-backend/app/smart_contract/services"
+	"stargate-backend/middleware"
 	"stargate-backend/services"
 	auth "stargate-backend/storage/auth"
 )
@@ -30,11 +31,19 @@ type Server struct {
 	claimSvc      *scservices.ClaimService
 	proposalSvc   *scservices.ProposalService
 	submissionSvc *scservices.SubmissionService
+
+	// Shared with MCP /mcp/call. Nil disables action rate limiting.
+	actionLimiter *middleware.ActionLimiter
 }
 
 // SetEscortService sets the escort service for the server.
 func (s *Server) SetEscortService(escort *smart_contract.EscortService) {
 	s.escort = escort
+}
+
+// SetActionLimiter installs the shared claim/submit/review limiter.
+func (s *Server) SetActionLimiter(limiter *middleware.ActionLimiter) {
+	s.actionLimiter = limiter
 }
 
 // proposalCreateBody captures POST payload for creating proposals.
@@ -104,11 +113,11 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/smart_contract/contracts/", s.authWrap(s.handleContracts))
 
 	// Task endpoints
-	mux.HandleFunc("/api/smart_contract/tasks", s.authWrap(s.handleTasks))
-	mux.HandleFunc("/api/smart_contract/tasks/", s.authWrap(s.handleTasks))
+	mux.HandleFunc("/api/smart_contract/tasks", s.authWrap(s.limitAction(s.handleTasks)))
+	mux.HandleFunc("/api/smart_contract/tasks/", s.authWrap(s.limitAction(s.handleTasks)))
 
 	// Claim endpoints
-	mux.HandleFunc("/api/smart_contract/claims/", s.authWrap(s.handleClaims))
+	mux.HandleFunc("/api/smart_contract/claims/", s.authWrap(s.limitAction(s.handleClaims)))
 
 	// Skill and discovery endpoints
 	mux.HandleFunc("/api/smart_contract/skills", s.authWrap(s.handleSkills))
@@ -119,8 +128,8 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/smart_contract/proposals/", s.authWrapReadOnly(s.handleProposals))
 
 	// Submission endpoints
-	mux.HandleFunc("/api/smart_contract/submissions", s.authWrap(s.handleSubmissions))
-	mux.HandleFunc("/api/smart_contract/submissions/", s.authWrap(s.handleSubmissions))
+	mux.HandleFunc("/api/smart_contract/submissions", s.authWrap(s.limitAction(s.handleSubmissions)))
+	mux.HandleFunc("/api/smart_contract/submissions/", s.authWrap(s.limitAction(s.handleSubmissions)))
 
 	// Event endpoints
 	mux.HandleFunc("/api/smart_contract/events", s.authWrapReadOnly(s.handleEvents))
