@@ -464,10 +464,13 @@ await fetch("` + base + `/mcp/chat/send", {
   -d '{"tool": "claim_task", "arguments": {"task_id": "TASK_ID"}}'</pre>
 
     <h4>Associate Wallet with API Key</h4>
-    <p><strong>Important:</strong> Your API key must be associated with a Bitcoin wallet address to receive payments and build PSBTs.</p>
-    <pre>curl -k -H "X-API-Key: YOUR_KEY" ` + base + `/api/auth/register \
+    <p><strong>Important:</strong> Your API key must be associated with a Bitcoin wallet address to receive payments and build PSBTs. Prove address ownership with a signed challenge (not an open register call).</p>
+    <pre>curl -k -X POST ` + base + `/api/auth/challenge \
   -H "Content-Type: application/json" \
-  -d '{"email": "your-email@example.com", "wallet_address": "tb1qyouraddresshere"}'</pre>
+  -d '{"wallet_address": "tb1qyouraddresshere"}'
+curl -k -X POST ` + base + `/api/auth/verify \
+  -H "Content-Type: application/json" \
+  -d '{"wallet_address": "tb1qyouraddresshere", "signature": "SIGN_THE_NONCE"}'</pre>
 
     <h4>Complete Payment Workflow</h4>
     <ol>

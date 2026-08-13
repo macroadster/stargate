@@ -156,47 +156,6 @@ func TestHandleLoginGORMSameWallet(t *testing.T) {
 	}
 }
 
-func TestHandleRegisterIssuesSharedStoreKey(t *testing.T) {
-	store := auth.NewAPIKeyStore()
-	handler := NewAPIKeyHandler(store, store, nil)
-	body, _ := json.Marshal(map[string]string{
-		"email":          "reg@example.com",
-		"wallet_address": "tb1qregister",
-	})
-	req := httptest.NewRequest("POST", "/api/auth/register", bytes.NewBuffer(body))
-	w := httptest.NewRecorder()
-	handler.HandleRegister(w, req)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("register must reject unsigned wallet bind: %d %s", w.Code, w.Body.String())
-	}
-
-	body, _ = json.Marshal(map[string]string{"email": "reg@example.com"})
-	req = httptest.NewRequest("POST", "/api/auth/register", bytes.NewBuffer(body))
-	w = httptest.NewRecorder()
-	handler.HandleRegister(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("register: %d %s", w.Code, w.Body.String())
-	}
-	var wrap struct {
-		Data struct {
-			APIKey string `json:"api_key"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &wrap); err != nil {
-		t.Fatal(err)
-	}
-	if wrap.Data.APIKey == "" || !store.Validate(wrap.Data.APIKey) {
-		t.Fatalf("register must issue into the same store: %+v", wrap)
-	}
-
-	loginBody, _ := json.Marshal(map[string]string{"api_key": wrap.Data.APIKey})
-	lw := httptest.NewRecorder()
-	handler.HandleLogin(lw, httptest.NewRequest("POST", "/api/auth/login", bytes.NewBuffer(loginBody)))
-	if lw.Code != http.StatusOK {
-		t.Fatalf("login after register: %d %s", lw.Code, lw.Body.String())
-	}
-}
-
 func TestHandleLoginEmptyAndMissingStore(t *testing.T) {
 	handler := NewAPIKeyHandler(nil, nil, nil)
 	w := httptest.NewRecorder()

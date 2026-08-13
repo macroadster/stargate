@@ -35,46 +35,6 @@ func NewAPIKeyHandler(issuer auth.APIKeyIssuer, validator auth.APIKeyValidator, 
 	return &APIKeyHandler{BaseHandler: NewBaseHandler(), issuer: issuer, validator: validator, challenges: challenges}
 }
 
-// HandleRegister issues an API key into the same store used by login, middleware,
-// MCP sessions, and STARGATE_API_KEY seed (api_keys — no second table).
-// Wallet challenge verification remains the preferred human path.
-func (h *APIKeyHandler) HandleRegister(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		h.sendError(w, http.StatusMethodNotAllowed, "Method not allowed")
-		return
-	}
-	if h.issuer == nil {
-		h.sendError(w, http.StatusServiceUnavailable, "api key store unavailable")
-		return
-	}
-	var body struct {
-		Email  string `json:"email"`
-		Wallet string `json:"wallet_address"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		h.sendError(w, http.StatusBadRequest, "invalid json")
-		return
-	}
-	// Email is an optional unverified label. There is no mailbox proof and no
-	// email↔wallet association. Wallet binding requires a signed challenge
-	// (POST /api/auth/challenge + /api/auth/verify).
-	if strings.TrimSpace(body.Wallet) != "" {
-		h.sendError(w, http.StatusBadRequest, "wallet binding requires POST /api/auth/challenge then POST /api/auth/verify; register does not prove address ownership")
-		return
-	}
-	rec, err := h.issuer.Issue(strings.TrimSpace(body.Email), "", "registration")
-	if err != nil {
-		h.sendError(w, http.StatusInternalServerError, "failed to issue api key")
-		return
-	}
-	h.setAPIKeyCookie(w, r, rec.Key)
-	h.sendSuccess(w, map[string]interface{}{
-		"api_key": rec.Key,
-		"wallet":  rec.Wallet,
-		"email":   rec.Email,
-	})
-}
-
 // HandleLogin verifies an existing API key.
 // Request: {"api_key":"..."}
 // Response: { "valid": true }
