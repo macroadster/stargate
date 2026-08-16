@@ -15,8 +15,8 @@ import (
 
 	"stargate-backend/core/identity"
 	"stargate-backend/core/smart_contract"
-	"stargate-backend/storage/ipfs"
 	"stargate-backend/services"
+	"stargate-backend/storage/ipfs"
 	scstore "stargate-backend/storage/smart_contract"
 )
 
@@ -170,6 +170,10 @@ func processRecord(ctx context.Context, rec services.IngestionRecord, ingest *se
 	}
 
 	hasPSBT := hasIngestionPSBT(meta)
+	if hasPSBT {
+		ipfs.UntrackWish(rec.ID)
+		ipfs.UntrackWish(visible)
+	}
 
 	// Check for structured proposal/task data from peer replication (IPFS announcement).
 	// This is the most reliable path: the source node includes parsed task data.

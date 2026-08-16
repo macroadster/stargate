@@ -730,10 +730,9 @@ func contractorAddressFor(addr btcutil.Address) string {
 }
 
 func (s *Server) publishIngestUpdate(ctx context.Context, proposalID, ingestionID, visiblePixelHash string, fundingTxIDs []string, res *bitcoin.PSBTResult, commitmentLockAddr btcutil.Address, commitmentTarget string, payoutScripts [][]byte, payoutScriptHashes, payoutScriptHash160s []string) {
-	topic := strings.TrimSpace(os.Getenv("IPFS_MIRROR_TOPIC"))
-	if topic == "" {
-		return
-	}
+	topic := ipfs.MirrorTopic()
+	ipfs.UntrackWish(ingestionID)
+	ipfs.UntrackWish(visiblePixelHash)
 	ingestionID = strings.TrimSpace(ingestionID)
 	visiblePixelHash = strings.TrimSpace(visiblePixelHash)
 	if ingestionID == "" && visiblePixelHash == "" {
@@ -786,10 +785,9 @@ func (s *Server) publishIngestUpdate(ctx context.Context, proposalID, ingestionI
 }
 
 func (s *Server) publishPendingStegoIngest(ctx context.Context, proposalID, visiblePixelHash string) {
-	topic := strings.TrimSpace(os.Getenv("IPFS_MIRROR_TOPIC"))
-	if topic == "" {
-		topic = "stargate-uploads"
-	}
+	topic := ipfs.MirrorTopic()
+	ipfs.UntrackWish(visiblePixelHash)
+	ipfs.UntrackWish(proposalID)
 	if s.store == nil {
 		return
 	}

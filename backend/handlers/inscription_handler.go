@@ -630,6 +630,17 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 		// Publish announcement
 		log.Printf("DEBUG: Publishing pending ingest announcement for %s", ingestionID)
 		publishPendingIngestAnnouncement(ingestionID, ingestionID, imageFilename, "alpha", embeddedMessage, price, priceUnit, address, fundingMode, stegoImgBytes)
+		if rec, err := h.ingestionService.Get(ingestionID); err == nil && rec != nil {
+			if rec.Metadata == nil {
+				rec.Metadata = map[string]interface{}{}
+			}
+			if tracked, ok := ipfs.LookupWish(ingestionID); ok && tracked.CID != "" {
+				_ = h.ingestionService.UpdateMetadata(ingestionID, map[string]interface{}{
+					"ipfs_image_cid": tracked.CID,
+					"ipfs_topic":     ipfs.WishTopic(),
+				})
+			}
+		}
 	}
 
 	if h.store != nil {
@@ -747,7 +758,11 @@ func (h *InscriptionHandler) HandleDeleteInscription(w http.ResponseWriter, r *h
 		if err := h.ingestionService.Delete(r.Context(), visibleHash); err != nil {
 			log.Printf("Failed to delete ingestion record %s: %v", visibleHash, err)
 		}
+		if tracked, ok := ipfs.LookupWish(visibleHash); ok && tracked.CID != "" {
+			_ = ipfs.NewClientFromEnv().Unpin(r.Context(), tracked.CID)
+		}
 	}
+	ipfs.UntrackWish(visibleHash)
 
 	// 2. Delete from MCP store (cascading delete)
 	if h.store != nil {
@@ -992,10 +1007,7 @@ func publishPendingIngestAnnouncement(ingestionID, visibleHash, filename, method
 	if strings.TrimSpace(ingestionID) == "" || len(imgBytes) == 0 {
 		return
 	}
-	topic := strings.TrimSpace(os.Getenv("IPFS_MIRROR_TOPIC"))
-	if topic == "" {
-		topic = "stargate-uploads"
-	}
+	topic := ipfs.WishTopic()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -1009,6 +1021,10 @@ func publishPendingIngestAnnouncement(ingestionID, visibleHash, filename, method
 	if err != nil {
 		log.Printf("pending ingest announce: ipfs add failed for %s: %v", ingestionID, err)
 		return
+	}
+	ipfs.TrackWish(visibleHash, imageCID, time.Now())
+	if strings.TrimSpace(ingestionID) != "" && ingestionID != visibleHash {
+		ipfs.TrackWish(ingestionID, imageCID, time.Now())
 	}
 	ann := pendingIngestAnnouncement{
 		Type:             "pending_ingest",

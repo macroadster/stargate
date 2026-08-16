@@ -853,6 +853,9 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 	}); err != nil {
 		log.Printf("ipfs ingestion sync disabled: %v", err)
 	}
+	scmiddleware.StartWishGC(context.Background(), ingestionSvc, store, func(ctx context.Context, path string) error {
+		return mirror.UnpinPath(ctx, path)
+	})
 
 	// Pre-cache historical blocks (with rate limiting)
 	go func() {

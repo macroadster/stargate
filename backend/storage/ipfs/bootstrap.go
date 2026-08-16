@@ -21,8 +21,8 @@ import (
 const defaultSwarmPort = 4001
 
 // defaultHTTPStatusPath is appended to a Stargate HTTP base URL to discover
-// the live embedded IPFS peer ID (stable for the process, not across restarts
-// until identity is persisted).
+// the live embedded IPFS peer ID (stable across restarts when identity is
+// persisted under STARGATE_DATA_DIR).
 const defaultHTTPStatusPath = "/api/ipfs-mirror/status"
 
 // expandBootstrapPeers resolves incomplete bootstrap entries (hostname, HTTP

@@ -260,6 +260,29 @@ func (s *IngestionService) Create(rec IngestionRecord) error {
 	}
 	metadataParam := string(metadataJSON)
 	var query string
+	if !rec.CreatedAt.IsZero() {
+		if s.dialect == "sqlite" {
+			query = fmt.Sprintf(`
+INSERT OR IGNORE INTO %s (id, filename, method, message_length, image_base64, metadata, status, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+`, s.tableName)
+		} else {
+			query = fmt.Sprintf(`
+INSERT INTO %s (id, filename, method, message_length, image_base64, metadata, status, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+ON CONFLICT (id) DO NOTHING;
+`, s.tableName)
+		}
+		createdAt := rec.CreatedAt.UTC()
+		createdParam := interface{}(createdAt)
+		if s.dialect == "sqlite" {
+			createdParam = createdAt.Format("2006-01-02 15:04:05")
+		}
+		return s.execWrite(func() error {
+			_, err := s.db.Exec(query, rec.ID, rec.Filename, rec.Method, rec.MessageLength, rec.ImageBase64, metadataParam, rec.Status, createdParam)
+			return err
+		})
+	}
 	if s.dialect == "sqlite" {
 		query = fmt.Sprintf(`
 INSERT OR IGNORE INTO %s (id, filename, method, message_length, image_base64, metadata, status)

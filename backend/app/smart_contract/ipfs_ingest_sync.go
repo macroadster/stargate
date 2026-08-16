@@ -28,6 +28,7 @@ type ipfsIngestSyncConfig struct {
 	MaxEntries            int
 	APIURL                string
 	Topic                 string
+	WishTopic             string
 	HTTPTimeout           time.Duration
 	ReconcileRecentBlocks int
 	ReconcileMinInterval  time.Duration
@@ -184,18 +185,38 @@ func StartIPFSIngestionSync(ctx context.Context, ingest *services.IngestionServi
 	client := ipfs.NewClientFromEnv()
 	go backfillMirroredUploadsIngestion(ctx, ingest, store)
 	go ipfsIngestProcessUpdateQueue(ctx, ingest, store, reconcileFn, cfg, state)
-	go func() {
-		for {
-			if err := ipfsIngestSubscribe(ctx, ingest, store, reconcileFn, cfg, state, client); err != nil {
-				if ctx.Err() != nil {
-					return
+	for _, topic := range uniqueTopics(cfg.Topic, cfg.WishTopic) {
+		topic := topic
+		go func() {
+			for {
+				if err := ipfsIngestSubscribe(ctx, ingest, store, reconcileFn, cfg, state, client, topic); err != nil {
+					if ctx.Err() != nil {
+						return
+					}
+					log.Printf("ipfs ingestion sync error (topic=%s): %v", topic, err)
+					time.Sleep(cfg.Interval)
 				}
-				log.Printf("ipfs ingestion sync error: %v", err)
-				time.Sleep(cfg.Interval)
 			}
-		}
-	}()
+		}()
+	}
 	return nil
+}
+
+func uniqueTopics(topics ...string) []string {
+	seen := make(map[string]struct{}, len(topics))
+	out := make([]string, 0, len(topics))
+	for _, t := range topics {
+		t = strings.TrimSpace(t)
+		if t == "" {
+			continue
+		}
+		if _, ok := seen[t]; ok {
+			continue
+		}
+		seen[t] = struct{}{}
+		out = append(out, t)
+	}
+	return out
 }
 
 func loadIPFSIngestSyncConfig() ipfsIngestSyncConfig {
@@ -222,10 +243,8 @@ func loadIPFSIngestSyncConfig() ipfsIngestSyncConfig {
 	if apiURL == "" {
 		apiURL = "http://127.0.0.1:5001"
 	}
-	topic := strings.TrimSpace(os.Getenv("IPFS_MIRROR_TOPIC"))
-	if topic == "" {
-		topic = "stargate-uploads"
-	}
+	topic := ipfs.MirrorTopic()
+	wishTopic := ipfs.WishTopic()
 	httpTimeout := 30 * time.Second
 	if raw := strings.TrimSpace(os.Getenv("IPFS_HTTP_TIMEOUT_SEC")); raw != "" {
 		if v, err := strconv.Atoi(raw); err == nil && v > 0 {
@@ -256,15 +275,19 @@ func loadIPFSIngestSyncConfig() ipfsIngestSyncConfig {
 		MaxEntries:            maxEntries,
 		APIURL:                apiURL,
 		Topic:                 topic,
+		WishTopic:             wishTopic,
 		HTTPTimeout:           httpTimeout,
 		ReconcileRecentBlocks: reconcileRecentBlocks,
 		ReconcileMinInterval:  reconcileMinInterval,
 	}
 }
 
-func ipfsIngestSubscribe(ctx context.Context, ingest *services.IngestionService, store Store, reconcileFn IngestReconcileFunc, cfg ipfsIngestSyncConfig, state *ipfsIngestSyncState, client *ipfs.Client) error {
+func ipfsIngestSubscribe(ctx context.Context, ingest *services.IngestionService, store Store, reconcileFn IngestReconcileFunc, cfg ipfsIngestSyncConfig, state *ipfsIngestSyncState, client *ipfs.Client, topic string) error {
+	if topic == "" {
+		topic = cfg.Topic
+	}
 	// Use the IPFS client's PubsubSubscribe (routes through embedded node when available)
-	ch, err := client.PubsubSubscribe(ctx, cfg.Topic)
+	ch, err := client.PubsubSubscribe(ctx, topic)
 	if err != nil {
 		return err
 	}
@@ -625,6 +648,14 @@ func ipfsIngestProcessPending(ctx context.Context, ingest *services.IngestionSer
 		}
 	}
 	_ = meta // retained for future signed/authenticated channels only
+	createdAt := time.Unix(seenAt, 0)
+	if seenAt <= 0 {
+		createdAt = time.Now()
+	}
+	ipfs.TrackWish(contentHash, ann.ImageCID, createdAt)
+	if id != contentHash {
+		ipfs.TrackWish(id, ann.ImageCID, createdAt)
+	}
 	state.lastSeen[ann.ImageCID] = seenAt
 	log.Printf("ipfs stage: pending announce staged cid=%s id=%s (SQL deferred until on-chain confirm)", ann.ImageCID, id)
 	return nil

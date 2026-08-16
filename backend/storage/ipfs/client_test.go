@@ -25,6 +25,7 @@ func TestClientEmbeddedNode(t *testing.T) {
 	os.Setenv("IPFS_ENABLED", "true")
 	os.Setenv("IPFS_EMBEDDED_ENABLED", "true")
 	os.Setenv("IPFS_EMBEDDED_REPO", tmpRepo)
+	os.Setenv("IPFS_IDENTITY_FILE", filepath.Join(tmpRepo, "ipfs_identity.key"))
 	os.Setenv("IPFS_EMBEDDED_LISTEN", "/ip4/127.0.0.1/tcp/0") // Random port
 	os.Setenv("IPFS_API_URL", "http://127.0.0.1:9999")        // Avoid local node
 	// Private mesh: never dial Starlight or public IPFS during unit tests.

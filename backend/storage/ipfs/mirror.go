@@ -248,7 +248,7 @@ func LoadMirrorConfig() MirrorConfig {
 		UploadEnabled:     envBool("IPFS_MIRROR_UPLOAD_ENABLED", true),
 		DownloadEnabled:   envBool("IPFS_MIRROR_DOWNLOAD_ENABLED", true),
 		APIURL:            envString("IPFS_API_URL", "http://127.0.0.1:5001"),
-		Topic:             envString("IPFS_MIRROR_TOPIC", "stargate-uploads"),
+		Topic:             MirrorTopic(),
 		UploadsDir:        uploadsDir,
 		PollInterval:      envDurationSeconds("IPFS_MIRROR_POLL_INTERVAL_SEC", 10),
 		PublishInterval:   envDurationSeconds("IPFS_MIRROR_PUBLISH_INTERVAL_SEC", 30),
@@ -423,6 +423,17 @@ func (m *Mirror) scanAndAdd(ctx context.Context) (bool, error) {
 		// on-disk partition prefix. Peers still advertise path="<hash>" so
 		// public URLs remain /uploads/<hash> and older nodes stay compatible.
 		logical := logicalMirrorPath(rel)
+
+		// Inscribed wishes without PSBT live on the wish topic only.
+		if IsTrackedWish(logical) {
+			m.mu.Lock()
+			if _, ok := m.knownFiles[logical]; ok {
+				delete(m.knownFiles, logical)
+				changed = true
+			}
+			m.mu.Unlock()
+			return nil
+		}
 
 		info, err := entry.Info()
 		if err != nil {
