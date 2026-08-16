@@ -119,6 +119,49 @@ func runListSubmissionsFilterAndPage(t *testing.T, store Store) {
 	}
 }
 
+func TestListSubmissionsPendingReviewNullRejectionFields(t *testing.T) {
+	store := newTestSQLiteStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	c1 := core.Contract{ContractID: "wish-null-reject", Title: "C1", Status: "active", CreatedAt: now}
+	t1 := core.Task{TaskID: "task-null-reject", ContractID: c1.ContractID, Title: "T1", Status: "submitted"}
+	if err := store.UpsertContractWithTasks(ctx, c1, []core.Task{t1}); err != nil {
+		t.Fatalf("seed contract: %v", err)
+	}
+	if err := store.SyncClaim(ctx, core.Claim{ClaimID: "claim-null-reject", TaskID: t1.TaskID, Status: "submitted", CreatedAt: now}); err != nil {
+		t.Fatalf("sync claim: %v", err)
+	}
+
+	// Production pending_review rows leave rejection_reason/type NULL. SyncSubmission
+	// writes empty strings, so insert the live shape directly.
+	if _, err := store.db.ExecContext(ctx, `
+INSERT INTO mcp_submissions (submission_id, claim_id, task_id, status, deliverables, completion_proof, rejection_reason, rejection_type, rejected_at, created_at)
+VALUES (?, ?, ?, 'pending_review', '{}', '{}', NULL, NULL, NULL, ?)
+`, "sub-null-reject", "claim-null-reject", t1.TaskID, now.Format(time.RFC3339)); err != nil {
+		t.Fatalf("insert pending_review with NULL rejection fields: %v", err)
+	}
+
+	got, err := store.ListSubmissions(ctx, core.SubmissionFilter{Status: "pending_review"})
+	if err != nil {
+		t.Fatalf("list pending_review: %v", err)
+	}
+	if len(got) != 1 || got[0].SubmissionID != "sub-null-reject" {
+		t.Fatalf("pending_review rows = %+v", got)
+	}
+	if got[0].RejectionReason != "" || got[0].RejectionType != "" {
+		t.Fatalf("expected empty rejection fields, got reason=%q type=%q", got[0].RejectionReason, got[0].RejectionType)
+	}
+
+	one, err := store.GetSubmission(ctx, "sub-null-reject")
+	if err != nil {
+		t.Fatalf("get submission: %v", err)
+	}
+	if one.SubmissionID != "sub-null-reject" || one.Status != "pending_review" {
+		t.Fatalf("get = %+v", one)
+	}
+}
+
 func TestSubmissionContractIDs(t *testing.T) {
 	got := submissionContractIDs("wish-abc")
 	if !containsFold(got, "wish-abc") || !containsFold(got, "abc") {

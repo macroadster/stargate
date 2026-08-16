@@ -907,12 +907,20 @@ WHERE 1=1
 }
 
 func scanListedSubmission(rows *sql.Rows) (smart_contract.Submission, error) {
+	return scanSubmissionRow(rows)
+}
+
+func scanSubmissionRow(sc interface {
+	Scan(dest ...any) error
+}) (smart_contract.Submission, error) {
 	var sub smart_contract.Submission
 	var delivJSON, proofJSON []byte
-	var rejectedAtStr, createdAtStr sql.NullString
-	if err := rows.Scan(&sub.SubmissionID, &sub.ClaimID, &sub.TaskID, &sub.Status, &delivJSON, &proofJSON, &sub.RejectionReason, &sub.RejectionType, &rejectedAtStr, &createdAtStr); err != nil {
+	var rejectionReason, rejectionType, rejectedAtStr, createdAtStr sql.NullString
+	if err := sc.Scan(&sub.SubmissionID, &sub.ClaimID, &sub.TaskID, &sub.Status, &delivJSON, &proofJSON, &rejectionReason, &rejectionType, &rejectedAtStr, &createdAtStr); err != nil {
 		return smart_contract.Submission{}, err
 	}
+	sub.RejectionReason = rejectionReason.String
+	sub.RejectionType = rejectionType.String
 	if rejectedAtStr.Valid {
 		if t, err := parseSQLiteTime(rejectedAtStr.String); err == nil {
 			sub.RejectedAt = t
@@ -934,9 +942,10 @@ func scanListedSubmission(rows *sql.Rows) (smart_contract.Submission, error) {
 
 func (s *SQLStore) GetSubmission(ctx context.Context, id string) (smart_contract.Submission, error) {
 	rows, err := s.queryContext(ctx, `
-SELECT s.submission_id, s.claim_id, c.task_id, s.status, s.deliverables, s.completion_proof, s.rejection_reason, s.rejection_type, s.rejected_at, s.created_at
+SELECT s.submission_id, s.claim_id, COALESCE(NULLIF(s.task_id, ''), c.task_id) AS task_id,
+       s.status, s.deliverables, s.completion_proof, s.rejection_reason, s.rejection_type, s.rejected_at, s.created_at
 FROM mcp_submissions s
-JOIN mcp_claims c ON c.claim_id = s.claim_id
+LEFT JOIN mcp_claims c ON c.claim_id = s.claim_id
 WHERE s.submission_id = ?
 `, id)
 	if err != nil {
@@ -944,29 +953,7 @@ WHERE s.submission_id = ?
 	}
 	defer rows.Close()
 	if rows.Next() {
-		var sub smart_contract.Submission
-		var delivJSON, proofJSON []byte
-		var rejectedAtStr, createdAtStr sql.NullString
-		if err := rows.Scan(&sub.SubmissionID, &sub.ClaimID, &sub.TaskID, &sub.Status, &delivJSON, &proofJSON, &sub.RejectionReason, &sub.RejectionType, &rejectedAtStr, &createdAtStr); err != nil {
-			return smart_contract.Submission{}, err
-		}
-		if rejectedAtStr.Valid {
-			if t, err := parseSQLiteTime(rejectedAtStr.String); err == nil {
-				sub.RejectedAt = t
-			}
-		}
-		if createdAtStr.Valid {
-			if t, err := parseSQLiteTime(createdAtStr.String); err == nil && t != nil {
-				sub.CreatedAt = *t
-			}
-		}
-		if len(delivJSON) > 0 {
-			_ = json.Unmarshal(delivJSON, &sub.Deliverables)
-		}
-		if len(proofJSON) > 0 {
-			_ = json.Unmarshal(proofJSON, &sub.CompletionProof)
-		}
-		return sub, nil
+		return scanSubmissionRow(rows)
 	}
 	return smart_contract.Submission{}, fmt.Errorf("submission %s not found", id)
 }

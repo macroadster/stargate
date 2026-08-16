@@ -197,6 +197,11 @@ func TestListSubmissionsFiltersAndPagination(t *testing.T) {
 	if approved["total"] != float64(1) {
 		t.Fatalf("approved filter: %#v", approved)
 	}
+
+	pending := call(map[string]interface{}{"status": "pending_review"})
+	if pending["total"] != float64(1) {
+		t.Fatalf("pending_review filter: %#v", pending)
+	}
 }
 
 func TestClaimTaskUsesAPIKeyWallet(t *testing.T) {
