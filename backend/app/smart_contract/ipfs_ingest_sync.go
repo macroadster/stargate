@@ -333,7 +333,7 @@ func ipfsIngestSubscribe(ctx context.Context, ingest *services.IngestionService,
 		if manifestCID == "" || manifestCID == state.lastManifest {
 			continue
 		}
-		if err := ipfsIngestProcessManifest(ctx, ingest, store, cfg, state, client, manifestCID); err != nil {
+		if err := ipfsIngestProcessManifest(ctx, ingest, store, cfg, state, client, topic, manifestCID); err != nil {
 			log.Printf("ipfs ingestion sync failed: %v", err)
 			continue
 		}
@@ -344,7 +344,7 @@ func ipfsIngestSubscribe(ctx context.Context, ingest *services.IngestionService,
 
 // ipfsIngestProcessManifest stages image blobs from a peer manifest onto disk.
 // No SQL writes — confirmation is the only gate into SQLite/Postgres.
-func ipfsIngestProcessManifest(ctx context.Context, ingest *services.IngestionService, store Store, cfg ipfsIngestSyncConfig, state *ipfsIngestSyncState, client *ipfs.Client, manifestCID string) error {
+func ipfsIngestProcessManifest(ctx context.Context, ingest *services.IngestionService, store Store, cfg ipfsIngestSyncConfig, state *ipfsIngestSyncState, client *ipfs.Client, topic, manifestCID string) error {
 	_ = ingest
 	_ = store
 	data, err := client.Cat(ctx, manifestCID)
@@ -394,6 +394,16 @@ func ipfsIngestProcessManifest(ctx context.Context, ingest *services.IngestionSe
 						staged++
 					}
 				}
+			}
+		}
+		if strings.TrimSpace(topic) == ipfs.WishTopic() {
+			created := time.Now()
+			if entry.ModTime > 0 {
+				created = time.Unix(entry.ModTime, 0)
+			}
+			ipfs.TrackWish(stegoHash, entry.CID, created)
+			if logical := strings.TrimSpace(entry.Path); logical != "" && logical != stegoHash {
+				ipfs.TrackWish(logical, entry.CID, created)
 			}
 		}
 		state.lastSeen[entry.CID] = entry.ModTime

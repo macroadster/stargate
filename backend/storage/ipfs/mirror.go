@@ -37,6 +37,10 @@ type MirrorConfig struct {
 	ManifestVersion   int
 	ManifestFileName  string
 	AnnouncementLabel string
+	// WishOnly publishes only tracked inscribed wishes (stargate-wishes).
+	// The durable uploads mirror leaves those files off its manifest so
+	// NAT/relay peers still get a periodic inventory on the wish topic.
+	WishOnly bool
 	// OnFileDownloaded is copied to the Mirror before goroutines start,
 	// so there is no race between the subscribe loop and callback setup.
 	OnFileDownloaded func(ctx context.Context, ev FileDownloadedEvent)
@@ -108,6 +112,13 @@ type MirrorStatus struct {
 	LastPublishAt     int64    `json:"last_publish_at,omitempty"`
 	LastSeenRemoteCID string   `json:"last_seen_remote_cid,omitempty"`
 	KnownFiles        int      `json:"known_files,omitempty"`
+	// Wish* fields are filled by the combined /api/ipfs-mirror/status
+	// handler when the wish file-mirror is running.
+	WishEnabled           bool   `json:"wish_enabled,omitempty"`
+	WishLastPublishedCID  string `json:"wish_last_published_cid,omitempty"`
+	WishLastPublishAt     int64  `json:"wish_last_publish_at,omitempty"`
+	WishLastSeenRemoteCID string `json:"wish_last_seen_remote_cid,omitempty"`
+	WishKnownFiles        int    `json:"wish_known_files,omitempty"`
 }
 
 type pubsubMessage struct {
@@ -123,18 +134,75 @@ func (m *Mirror) Status() MirrorStatus {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	return MirrorStatus{
+	st := MirrorStatus{
 		Enabled:           m.cfg.Enabled,
 		PeerID:            m.peerID,
-		Topic:             m.cfg.Topic,
-		WishTopic:         WishTopic(),
-		Topics:            AllowedPubsubTopics(),
 		UploadsDir:        m.cfg.UploadsDir,
+		Topics:            AllowedPubsubTopics(),
 		LastPublishedCID:  m.lastPublished,
 		LastPublishAt:     m.lastPublishAt.Unix(),
 		LastSeenRemoteCID: m.lastSeenRemote,
 		KnownFiles:        len(m.knownFiles),
 	}
+	if m.cfg.WishOnly {
+		st.WishTopic = m.cfg.Topic
+		if st.WishTopic == "" {
+			st.WishTopic = WishTopic()
+		}
+		st.Topic = MirrorTopic()
+		st.WishEnabled = m.cfg.Enabled
+		st.WishLastPublishedCID = m.lastPublished
+		st.WishLastPublishAt = m.lastPublishAt.Unix()
+		st.WishLastSeenRemoteCID = m.lastSeenRemote
+		st.WishKnownFiles = len(m.knownFiles)
+		// Per-mirror callers should not treat wish inventory as uploads.
+		st.LastPublishedCID = ""
+		st.LastPublishAt = 0
+		st.LastSeenRemoteCID = ""
+		st.KnownFiles = 0
+	} else {
+		st.Topic = m.cfg.Topic
+		st.WishTopic = WishTopic()
+	}
+	return st
+}
+
+// MergeMirrorStatus combines the durable uploads mirror and the wish
+// file-mirror into the single /api/ipfs-mirror/status payload.
+func MergeMirrorStatus(uploads, wishes *Mirror) MirrorStatus {
+	if uploads == nil && wishes == nil {
+		return MirrorStatus{Enabled: false, Topics: AllowedPubsubTopics(), Topic: MirrorTopic(), WishTopic: WishTopic()}
+	}
+	st := MirrorStatus{Topic: MirrorTopic(), WishTopic: WishTopic(), Topics: AllowedPubsubTopics()}
+	if uploads != nil {
+		st = uploads.Status()
+	}
+	if wishes == nil {
+		return st
+	}
+	ws := wishes.Status()
+	if !st.Enabled {
+		st.Enabled = ws.Enabled
+		if st.PeerID == "" {
+			st.PeerID = ws.PeerID
+		}
+		if st.UploadsDir == "" {
+			st.UploadsDir = ws.UploadsDir
+		}
+	}
+	st.WishTopic = ws.WishTopic
+	if st.WishTopic == "" {
+		st.WishTopic = WishTopic()
+	}
+	st.WishEnabled = ws.WishEnabled || ws.Enabled
+	st.WishLastPublishedCID = ws.WishLastPublishedCID
+	st.WishLastPublishAt = ws.WishLastPublishAt
+	st.WishLastSeenRemoteCID = ws.WishLastSeenRemoteCID
+	st.WishKnownFiles = ws.WishKnownFiles
+	if len(st.Topics) == 0 {
+		st.Topics = AllowedPubsubTopics()
+	}
+	return st
 }
 
 func (m *Mirror) UnpinPath(ctx context.Context, path string) error {
@@ -183,7 +251,14 @@ func (m *Mirror) deletedFilePath() string {
 	if m == nil || m.cfg.UploadsDir == "" {
 		return ""
 	}
-	return filepath.Join(m.cfg.UploadsDir, ".ipfs-mirror-deleted.json")
+	name := ".ipfs-mirror-deleted.json"
+	if m.cfg.WishOnly {
+		// Separate tombstone file so expiring a wish does not prevent
+		// the durable uploads mirror from adopting it after promotion,
+		// and so upload deletes do not hide live wishes.
+		name = ".ipfs-wish-mirror-deleted.json"
+	}
+	return filepath.Join(m.cfg.UploadsDir, name)
 }
 
 func (m *Mirror) loadDeleted() {
@@ -264,6 +339,19 @@ func LoadMirrorConfig() MirrorConfig {
 	}
 }
 
+// LoadWishMirrorConfig is the ephemeral inscribed-wish file mirror. Same
+// enable/timing flags as the uploads mirror; different topic, manifest,
+// and file filter (tracked wishes only). NAT/relay peers need this
+// periodic inventory — a one-shot CID announce is not enough.
+func LoadWishMirrorConfig() MirrorConfig {
+	cfg := LoadMirrorConfig()
+	cfg.Topic = WishTopic()
+	cfg.WishOnly = true
+	cfg.ManifestFileName = "stargate-wishes-manifest.json"
+	cfg.AnnouncementLabel = "stargate-wishes"
+	return cfg
+}
+
 func StartMirror(ctx context.Context, cfg MirrorConfig) (*Mirror, error) {
 	if !cfg.Enabled {
 		return nil, nil
@@ -308,7 +396,11 @@ func StartMirror(ctx context.Context, cfg MirrorConfig) (*Mirror, error) {
 		m.cfg.DownloadEnabled = false
 	}
 
-	log.Printf("IPFS mirror enabled (peer=%s topic=%s uploads=%s)", m.peerID, m.cfg.Topic, m.cfg.UploadsDir)
+	kind := "uploads"
+	if m.cfg.WishOnly {
+		kind = "wishes"
+	}
+	log.Printf("IPFS mirror enabled (kind=%s peer=%s topic=%s uploads=%s)", kind, m.peerID, m.cfg.Topic, m.cfg.UploadsDir)
 
 	if cfg.UploadEnabled {
 		go m.publishLoop(ctx)
@@ -428,8 +520,9 @@ func (m *Mirror) scanAndAdd(ctx context.Context) (bool, error) {
 		// public URLs remain /uploads/<hash> and older nodes stay compatible.
 		logical := logicalMirrorPath(rel)
 
-		// Inscribed wishes without PSBT live on the wish topic only.
-		if IsTrackedWish(logical) {
+		// Uploads mirror: skip tracked wishes (they live on the wish
+		// file-mirror). Wish mirror: skip everything else.
+		if !m.includeLogical(logical) {
 			m.mu.Lock()
 			if _, ok := m.knownFiles[logical]; ok {
 				delete(m.knownFiles, logical)
@@ -468,6 +561,9 @@ func (m *Mirror) scanAndAdd(ctx context.Context) (bool, error) {
 		m.mu.Lock()
 		m.knownFiles[logical] = state
 		m.mu.Unlock()
+		if m.cfg.WishOnly {
+			TrackWish(logical, cid, time.Unix(state.ModTime, 0))
+		}
 
 		changed = true
 		count++
@@ -479,6 +575,17 @@ func (m *Mirror) scanAndAdd(ctx context.Context) (bool, error) {
 	}
 
 	return changed, nil
+}
+
+func (m *Mirror) includeLogical(logical string) bool {
+	if m == nil {
+		return false
+	}
+	isWish := IsTrackedWish(logical)
+	if m.cfg.WishOnly {
+		return isWish
+	}
+	return !isWish
 }
 
 // isPartitionDirRel reports whether rel (slash-separated, relative to
@@ -755,6 +862,13 @@ func (m *Mirror) downloadEntry(ctx context.Context, entry manifestEntry) (bool, 
 				CID:     entry.CID,
 			}
 			m.mu.Unlock()
+			if m.cfg.WishOnly {
+				created := time.Now()
+				if entry.ModTime > 0 {
+					created = time.Unix(entry.ModTime, 0)
+				}
+				TrackWish(logical, entry.CID, created)
+			}
 			return false, nil
 		}
 	}
@@ -802,6 +916,13 @@ func (m *Mirror) downloadEntry(ctx context.Context, entry manifestEntry) (bool, 
 	}
 	fn := m.onFileDownloaded
 	m.mu.Unlock()
+	if m.cfg.WishOnly {
+		created := time.Now()
+		if entry.ModTime > 0 {
+			created = time.Unix(entry.ModTime, 0)
+		}
+		TrackWish(logical, entry.CID, created)
+	}
 
 	if fn != nil {
 		fn(ctx, FileDownloadedEvent{

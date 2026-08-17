@@ -290,6 +290,152 @@ func TestMirrorStatusIncludesWishTopic(t *testing.T) {
 	}
 }
 
+func TestLoadWishMirrorConfig(t *testing.T) {
+	t.Setenv("IPFS_MIRROR_TOPIC", DefaultMirrorTopic)
+	t.Setenv("IPFS_WISH_TOPIC", DefaultWishTopic)
+	t.Setenv("UPLOADS_DIR", t.TempDir())
+
+	uploads := LoadMirrorConfig()
+	if uploads.WishOnly || uploads.Topic != DefaultMirrorTopic {
+		t.Fatalf("uploads cfg: WishOnly=%v topic=%q", uploads.WishOnly, uploads.Topic)
+	}
+	if uploads.ManifestFileName != "stargate-uploads-manifest.json" {
+		t.Fatalf("uploads manifest=%q", uploads.ManifestFileName)
+	}
+
+	wishes := LoadWishMirrorConfig()
+	if !wishes.WishOnly || wishes.Topic != DefaultWishTopic {
+		t.Fatalf("wish cfg: WishOnly=%v topic=%q", wishes.WishOnly, wishes.Topic)
+	}
+	if wishes.ManifestFileName != "stargate-wishes-manifest.json" {
+		t.Fatalf("wish manifest=%q", wishes.ManifestFileName)
+	}
+	if wishes.UploadsDir != uploads.UploadsDir {
+		t.Fatalf("wish uploads dir %q != uploads %q", wishes.UploadsDir, uploads.UploadsDir)
+	}
+}
+
+func TestScanAndAdd_WishOnlyIncludesTrackedWishes(t *testing.T) {
+	uploads := t.TempDir()
+	storage := t.TempDir()
+	idx := filepath.Join(t.TempDir(), "wishes.json")
+	ResetWishIndexForTest(idx)
+	t.Cleanup(func() { ResetWishIndexForTest("") })
+
+	wishHash := testHash
+	durableHash := "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+
+	for _, hash := range []string{wishHash, durableHash} {
+		p := datadir.PartPath(uploads, hash)
+		if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("img-"+hash[:8]), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	TrackWish(wishHash, "", time.Unix(1_700_000_000, 0))
+
+	newMirror := func(wishOnly bool) *Mirror {
+		return &Mirror{
+			cfg: MirrorConfig{
+				UploadsDir: uploads,
+				MaxFiles:   100,
+				WishOnly:   wishOnly,
+			},
+			client:       &http.Client{Timeout: 2 * time.Second},
+			knownFiles:   make(map[string]fileState),
+			deletedFiles: make(map[string]bool),
+			ipfsClient: &Client{
+				apiURL:     "http://127.0.0.1:9",
+				client:     &http.Client{Timeout: 200 * time.Millisecond},
+				storageDir: storage,
+			},
+		}
+	}
+
+	wishMirror := newMirror(true)
+	if _, err := wishMirror.scanAndAdd(context.Background()); err != nil {
+		t.Fatalf("wish scanAndAdd: %v", err)
+	}
+	if _, ok := wishMirror.knownFiles[wishHash]; !ok {
+		t.Fatalf("wish mirror missing tracked wish; known=%v", keysOf(wishMirror.knownFiles))
+	}
+	if _, ok := wishMirror.knownFiles[durableHash]; ok {
+		t.Fatalf("wish mirror must not include durable file; known=%v", keysOf(wishMirror.knownFiles))
+	}
+
+	uploadsMirror := newMirror(false)
+	if _, err := uploadsMirror.scanAndAdd(context.Background()); err != nil {
+		t.Fatalf("uploads scanAndAdd: %v", err)
+	}
+	if _, ok := uploadsMirror.knownFiles[durableHash]; !ok {
+		t.Fatalf("uploads mirror missing durable file; known=%v", keysOf(uploadsMirror.knownFiles))
+	}
+	if _, ok := uploadsMirror.knownFiles[wishHash]; ok {
+		t.Fatalf("uploads mirror must skip tracked wish; known=%v", keysOf(uploadsMirror.knownFiles))
+	}
+
+	// After promotion, the wish leaves the wish inventory and joins uploads.
+	UntrackWish(wishHash)
+	if _, err := wishMirror.scanAndAdd(context.Background()); err != nil {
+		t.Fatalf("wish rescan: %v", err)
+	}
+	if _, ok := wishMirror.knownFiles[wishHash]; ok {
+		t.Fatalf("promoted wish still on wish mirror; known=%v", keysOf(wishMirror.knownFiles))
+	}
+	if _, err := uploadsMirror.scanAndAdd(context.Background()); err != nil {
+		t.Fatalf("uploads rescan: %v", err)
+	}
+	if _, ok := uploadsMirror.knownFiles[wishHash]; !ok {
+		t.Fatalf("promoted wish missing from uploads mirror; known=%v", keysOf(uploadsMirror.knownFiles))
+	}
+}
+
+func TestMergeMirrorStatus(t *testing.T) {
+	t.Setenv("IPFS_MIRROR_TOPIC", DefaultMirrorTopic)
+	t.Setenv("IPFS_WISH_TOPIC", DefaultWishTopic)
+
+	uploads := &Mirror{
+		cfg: MirrorConfig{
+			Enabled:    true,
+			Topic:      DefaultMirrorTopic,
+			UploadsDir: "/data/uploads",
+		},
+		peerID:        "12D3KooWuploads",
+		lastPublished: "bafyuploads",
+		knownFiles:    map[string]fileState{"aaa": {}},
+	}
+	wishes := &Mirror{
+		cfg: MirrorConfig{
+			Enabled:    true,
+			WishOnly:   true,
+			Topic:      DefaultWishTopic,
+			UploadsDir: "/data/uploads",
+		},
+		peerID:        "12D3KooWwishes",
+		lastPublished: "bafywishes",
+		knownFiles:    map[string]fileState{"bbb": {}, "ccc": {}},
+	}
+
+	st := MergeMirrorStatus(uploads, wishes)
+	if !st.Enabled || !st.WishEnabled {
+		t.Fatalf("enabled=%v wish_enabled=%v", st.Enabled, st.WishEnabled)
+	}
+	if st.Topic != DefaultMirrorTopic || st.WishTopic != DefaultWishTopic {
+		t.Fatalf("topics topic=%q wish_topic=%q", st.Topic, st.WishTopic)
+	}
+	if st.LastPublishedCID != "bafyuploads" || st.WishLastPublishedCID != "bafywishes" {
+		t.Fatalf("cids uploads=%q wishes=%q", st.LastPublishedCID, st.WishLastPublishedCID)
+	}
+	if st.KnownFiles != 1 || st.WishKnownFiles != 2 {
+		t.Fatalf("counts uploads=%d wishes=%d", st.KnownFiles, st.WishKnownFiles)
+	}
+	if st.PeerID != "12D3KooWuploads" {
+		t.Fatalf("peer_id=%q", st.PeerID)
+	}
+}
+
 func keysOf(m map[string]fileState) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {

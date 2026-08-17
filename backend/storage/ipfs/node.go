@@ -334,8 +334,9 @@ func NewEmbeddedNode(ctx context.Context, cfg NodeConfig) (*EmbeddedNode, error)
 		log.Printf("Warning: mDNS discovery failed to start: %v", err)
 	}
 
-	// Join allowlisted topics at start so peers see stargate-uploads and
-	// stargate-wishes without waiting for the first publish or subscribe.
+	// Join allowlisted file-mirror topics at start so peers see
+	// stargate-uploads and stargate-wishes without waiting for the first
+	// publish or subscribe.
 	for _, name := range AllowedPubsubTopics() {
 		if _, err := node.getTopic(name); err != nil {
 			log.Printf("Embedded IPFS: failed to join topic %q: %v", name, err)

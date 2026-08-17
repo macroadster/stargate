@@ -103,8 +103,9 @@ func (idx *wishIndex) persistLocked() {
 	_ = os.Rename(tmp, idx.path)
 }
 
-// TrackWish records an inscribed wish so the uploads mirror skips it and the
-// 7-day GC can expire it if nothing engages.
+// TrackWish records an inscribed wish so the uploads mirror skips it, the
+// wish file-mirror includes it, and the 7-day GC can expire it if nothing
+// engages.
 func TrackWish(hash, cid string, createdAt time.Time) {
 	hash = normalizeWishHash(hash)
 	if hash == "" {

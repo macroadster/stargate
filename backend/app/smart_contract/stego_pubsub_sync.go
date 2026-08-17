@@ -89,13 +89,13 @@ func loadStegoPubsubConfig() stegoPubsubConfig {
 		}
 	}
 
-	// When the embedded IPFS node is active, only the stargate-uploads
-	// mirror topic is supported. The stego pubsub on stargate-stego is
-	// an unproven add-on path. Disable it automatically under the cap
+	// When the embedded IPFS node is active, only the uploads and wish
+	// file-mirror topics are supported. The stego pubsub on stargate-stego
+	// is an unproven add-on path. Disable it automatically under the cap
 	// so we do not waste resources on unproven / abuse-prone mechanisms.
 	embeddedEnabled := strings.ToLower(os.Getenv("IPFS_EMBEDDED_ENABLED")) != "false"
 	if enabled && embeddedEnabled {
-		log.Printf("stego pubsub sync disabled: embedded IPFS node only supports the stargate-uploads mirror. Non-mirror pubsub features are turned off to prevent unnecessary electricity use on unproven paths.")
+		log.Printf("stego pubsub sync disabled: embedded IPFS node only supports the uploads and wish file mirrors. Non-mirror pubsub features are turned off to prevent unnecessary electricity use on unproven paths.")
 		enabled = false
 	}
 

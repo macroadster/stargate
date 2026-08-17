@@ -5,9 +5,9 @@ import (
 	"strings"
 )
 
-// Default pubsub topics. Inscribed wishes (no PSBT yet) stay on the wish
-// topic so they can expire independently of durable, PSBT-built artifacts
-// that live on the uploads mirror topic.
+// Default pubsub topics. Both are file-mirror inventories: durable
+// PSBT-built artifacts on the uploads topic, inscribed wishes (no PSBT
+// yet) on the wish topic so they can expire independently.
 const (
 	DefaultMirrorTopic = "stargate-uploads"
 	DefaultWishTopic   = "stargate-wishes"
@@ -21,7 +21,7 @@ func MirrorTopic() string {
 	return DefaultMirrorTopic
 }
 
-// WishTopic is the ephemeral inscribed-wish topic (no PSBT / no engagement).
+// WishTopic is the ephemeral inscribed-wish file-mirror topic (no PSBT / no engagement).
 func WishTopic() string {
 	if t := strings.TrimSpace(os.Getenv("IPFS_WISH_TOPIC")); t != "" {
 		return t

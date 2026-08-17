@@ -75,7 +75,7 @@ func loadSyncPubsubConfig() syncPubsubConfig {
 	// MCP sync pubsub (stargate-stego) is not part of that allowlist.
 	embeddedEnabled := strings.ToLower(os.Getenv("IPFS_EMBEDDED_ENABLED")) != "false"
 	if enabled && embeddedEnabled {
-		log.Printf("mcp sync pubsub disabled: embedded IPFS node is capped to the uploads mirror and inscribed-wish topics. Non-allowlisted pubsub features are disabled to avoid unproven paths and unnecessary resource usage.")
+		log.Printf("mcp sync pubsub disabled: embedded IPFS node is capped to the uploads and wish file-mirror topics. Non-allowlisted pubsub features are disabled to avoid unproven paths and unnecessary resource usage.")
 		enabled = false
 	}
 

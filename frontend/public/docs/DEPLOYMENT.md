@@ -54,12 +54,14 @@ STARGATE_AGENT_WORKER_ENABLED=true
 # IPFS_EMBEDDED_BOOTSTRAP=public                      # Protocol Labs DHT (CPU-heavy)
 # IPFS_EMBEDDED_BOOTSTRAP=/dns4/host/tcp/4001/p2p/12D3KooW…  # fixed multiaddr
 #
-# Inscribed wishes (no PSBT yet) are announced on IPFS_WISH_TOPIC
+# Inscribed wishes (no PSBT yet) are file-mirrored on IPFS_WISH_TOPIC
 # (default stargate-wishes), separate from the durable uploads mirror
-# (IPFS_MIRROR_TOPIC, default stargate-uploads). Unengaged wishes are
+# (IPFS_MIRROR_TOPIC, default stargate-uploads). Both publish a periodic
+# manifest so NAT/relay peers can pull files. Unengaged wishes are
 # unpinned and deleted after IPFS_WISH_TTL (default 168h / 7 days).
-# GET /api/ipfs-mirror/status reports topic (uploads), wish_topic, and
-# topics (both). Peers use that JSON to discover this node's Peer ID.
+# GET /api/ipfs-mirror/status reports topic (uploads), wish_topic,
+# topics (both), and wish-mirror inventory. Peers use that JSON to
+# discover this node's Peer ID.
 # IPFS_WISH_TOPIC=stargate-wishes
 # IPFS_WISH_TTL=168h
 # IPFS_WISH_GC_INTERVAL_SEC=3600

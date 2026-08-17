@@ -672,7 +672,7 @@ UPLOADS_DIR=/data/uploads
 STARGATE_PG_DSN=postgresql://user:pass@localhost/db  # Main app database
 STARGATE_SEED_FIXTURES=true                   # Enable automatic proposal creation during inscription
 
-# IPFS Mirroring (uploads sync)
+# IPFS Mirroring (uploads + wishes file sync)
 IPFS_MIRROR_ENABLED=true
 IPFS_MIRROR_UPLOAD_ENABLED=true
 IPFS_MIRROR_DOWNLOAD_ENABLED=true

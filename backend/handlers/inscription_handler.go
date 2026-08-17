@@ -612,6 +612,9 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 		return
 	}
 	log.Printf("DEBUG: Successfully stored stego image to %s", imagePath)
+	// Register before the uploads scan can run so the file lands on the
+	// wish file-mirror (stargate-wishes), not the durable uploads topic.
+	ipfs.TrackWish(ingestionID, "", time.Now())
 
 	if h.ingestionService != nil {
 		log.Printf("DEBUG: Creating ingestion record for %s", ingestionID)
