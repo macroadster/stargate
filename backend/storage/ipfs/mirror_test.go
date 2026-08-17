@@ -263,6 +263,33 @@ func TestDownloadEntry_SkipsExistingFlat(t *testing.T) {
 	}
 }
 
+func TestMirrorStatusIncludesWishTopic(t *testing.T) {
+	t.Setenv("IPFS_MIRROR_TOPIC", DefaultMirrorTopic)
+	t.Setenv("IPFS_WISH_TOPIC", DefaultWishTopic)
+
+	m := &Mirror{
+		cfg: MirrorConfig{
+			Enabled:    true,
+			Topic:      DefaultMirrorTopic,
+			UploadsDir: t.TempDir(),
+		},
+		peerID: "12D3KooWtestpeer",
+	}
+	st := m.Status()
+	if st.Topic != DefaultMirrorTopic {
+		t.Fatalf("topic=%q want %q", st.Topic, DefaultMirrorTopic)
+	}
+	if st.WishTopic != DefaultWishTopic {
+		t.Fatalf("wish_topic=%q want %q", st.WishTopic, DefaultWishTopic)
+	}
+	if len(st.Topics) != 2 {
+		t.Fatalf("topics=%v want both allowlisted names", st.Topics)
+	}
+	if st.Topics[0] != DefaultMirrorTopic || st.Topics[1] != DefaultWishTopic {
+		t.Fatalf("topics=%v want [%q %q]", st.Topics, DefaultMirrorTopic, DefaultWishTopic)
+	}
+}
+
 func keysOf(m map[string]fileState) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {

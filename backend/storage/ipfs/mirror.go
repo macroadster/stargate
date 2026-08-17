@@ -98,14 +98,16 @@ type announcement struct {
 }
 
 type MirrorStatus struct {
-	Enabled           bool   `json:"enabled"`
-	PeerID            string `json:"peer_id,omitempty"`
-	Topic             string `json:"topic,omitempty"`
-	UploadsDir        string `json:"uploads_dir,omitempty"`
-	LastPublishedCID  string `json:"last_published_cid,omitempty"`
-	LastPublishAt     int64  `json:"last_publish_at,omitempty"`
-	LastSeenRemoteCID string `json:"last_seen_remote_cid,omitempty"`
-	KnownFiles        int    `json:"known_files,omitempty"`
+	Enabled           bool     `json:"enabled"`
+	PeerID            string   `json:"peer_id,omitempty"`
+	Topic             string   `json:"topic,omitempty"`
+	WishTopic         string   `json:"wish_topic,omitempty"`
+	Topics            []string `json:"topics,omitempty"`
+	UploadsDir        string   `json:"uploads_dir,omitempty"`
+	LastPublishedCID  string   `json:"last_published_cid,omitempty"`
+	LastPublishAt     int64    `json:"last_publish_at,omitempty"`
+	LastSeenRemoteCID string   `json:"last_seen_remote_cid,omitempty"`
+	KnownFiles        int      `json:"known_files,omitempty"`
 }
 
 type pubsubMessage struct {
@@ -125,6 +127,8 @@ func (m *Mirror) Status() MirrorStatus {
 		Enabled:           m.cfg.Enabled,
 		PeerID:            m.peerID,
 		Topic:             m.cfg.Topic,
+		WishTopic:         WishTopic(),
+		Topics:            AllowedPubsubTopics(),
 		UploadsDir:        m.cfg.UploadsDir,
 		LastPublishedCID:  m.lastPublished,
 		LastPublishAt:     m.lastPublishAt.Unix(),

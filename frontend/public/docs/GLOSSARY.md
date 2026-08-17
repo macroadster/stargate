@@ -56,7 +56,7 @@ Background process that watches Bitcoin blocks, matches funding transactions and
 ### IPFS mirror (optional)
 Peers can sync hash-named files under `UPLOADS_DIR` via an IPFS mirror. Filenames use SHA256 content hashes so the P2P layer does not leak into on-chain commitments. Bitcoin remains settlement; the mirror is distribution.
 
-Inscribed wishes that do not yet have a PSBT are announced on a separate topic (`stargate-wishes` by default). If a wish has no engagement (no funding PSBT, no extra proposals, no claimed work), it is unpinned and deleted after 7 days. The node's libp2p identity is stored under `STARGATE_DATA_DIR` so the Peer ID stays the same across restarts.
+Inscribed wishes that do not yet have a PSBT are announced on a separate topic (`stargate-wishes` by default). `GET /api/ipfs-mirror/status` reports `topic` (uploads), `wish_topic`, and `topics` (both). If a wish has no engagement (no funding PSBT, no extra proposals, no claimed work), it is unpinned and deleted after 7 days. The node's libp2p identity is stored under `STARGATE_DATA_DIR` so the Peer ID stays the same across restarts.
 
 ### Proof of commitment (general idea)
 Prefer compact on-chain references (hashes / OP_RETURN) plus off-chain or mirrored files over inscribing every byte. Current funding proofs use **wish_hash + stego_hash**, not a single IPFS CID in OP_RETURN.

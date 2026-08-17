@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -333,8 +334,16 @@ func NewEmbeddedNode(ctx context.Context, cfg NodeConfig) (*EmbeddedNode, error)
 		log.Printf("Warning: mDNS discovery failed to start: %v", err)
 	}
 
-	log.Printf("Embedded IPFS node started. PeerID: %s, Addrs: %v, dht=%s, bootstrap=%d, peer_exchange=%v, routing_discovery=%v, connmgr=%d/%d",
-		h.ID(), h.Addrs(), dhtModeLabel(dhtMode), len(bootstrapPeers), cfg.PeerExchange, cfg.RoutingDiscovery, low, high)
+	// Join allowlisted topics at start so peers see stargate-uploads and
+	// stargate-wishes without waiting for the first publish or subscribe.
+	for _, name := range AllowedPubsubTopics() {
+		if _, err := node.getTopic(name); err != nil {
+			log.Printf("Embedded IPFS: failed to join topic %q: %v", name, err)
+		}
+	}
+
+	log.Printf("Embedded IPFS node started. PeerID: %s, Addrs: %v, dht=%s, bootstrap=%d, peer_exchange=%v, routing_discovery=%v, connmgr=%d/%d, topics=%v",
+		h.ID(), h.Addrs(), dhtModeLabel(dhtMode), len(bootstrapPeers), cfg.PeerExchange, cfg.RoutingDiscovery, low, high, node.JoinedTopics())
 	return node, nil
 }
 
@@ -516,6 +525,21 @@ func (n *EmbeddedNode) getTopic(name string) (*pubsub.Topic, error) {
 	}
 	n.topics[name] = t
 	return t, nil
+}
+
+// JoinedTopics returns allowlisted pubsub topics this node has Joined.
+func (n *EmbeddedNode) JoinedTopics() []string {
+	if n == nil {
+		return nil
+	}
+	n.topicsMu.RLock()
+	defer n.topicsMu.RUnlock()
+	out := make([]string, 0, len(n.topics))
+	for name := range n.topics {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // Close shuts down the embedded node

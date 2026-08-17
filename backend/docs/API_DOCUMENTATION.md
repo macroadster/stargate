@@ -689,7 +689,8 @@ IPFS_HTTP_TIMEOUT_SEC=30
 # Embedded IPFS bootstrap (default when unset: starlight-ai.freemyip.com).
 # This node's PeerID is persisted under STARGATE_DATA_DIR (ipfs_identity.key).
 # Full multiaddrs with /p2p/<PeerID> work as-is. Hostnames and HTTP URLs
-# resolve the live peer ID from GET {base}/api/ipfs-mirror/status:
+# resolve the live peer ID from GET {base}/api/ipfs-mirror/status
+# (also reports topic, wish_topic, and topics):
 #   IPFS_EMBEDDED_BOOTSTRAP=               # default → starlight-ai.freemyip.com
 #   IPFS_EMBEDDED_BOOTSTRAP=none           # private mesh only (mDNS)
 #   IPFS_EMBEDDED_BOOTSTRAP=public         # Protocol Labs DHT (CPU-heavy; avoid)

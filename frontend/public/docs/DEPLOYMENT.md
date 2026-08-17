@@ -58,6 +58,8 @@ STARGATE_AGENT_WORKER_ENABLED=true
 # (default stargate-wishes), separate from the durable uploads mirror
 # (IPFS_MIRROR_TOPIC, default stargate-uploads). Unengaged wishes are
 # unpinned and deleted after IPFS_WISH_TTL (default 168h / 7 days).
+# GET /api/ipfs-mirror/status reports topic (uploads), wish_topic, and
+# topics (both). Peers use that JSON to discover this node's Peer ID.
 # IPFS_WISH_TOPIC=stargate-wishes
 # IPFS_WISH_TTL=168h
 # IPFS_WISH_GC_INTERVAL_SEC=3600

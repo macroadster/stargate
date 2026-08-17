@@ -96,6 +96,11 @@ func TestGetTopicAllowsWishAndMirror(t *testing.T) {
 	}
 	defer node.Close()
 
+	joined := node.JoinedTopics()
+	if len(joined) != 2 || joined[0] != DefaultMirrorTopic || joined[1] != DefaultWishTopic {
+		t.Fatalf("pre-joined topics=%v want [%q %q]", joined, DefaultMirrorTopic, DefaultWishTopic)
+	}
+
 	if _, err := node.getTopic(DefaultWishTopic); err != nil {
 		t.Fatalf("wish topic should be allowed: %v", err)
 	}
