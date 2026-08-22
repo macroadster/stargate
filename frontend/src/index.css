@@ -2941,69 +2941,73 @@ html[data-theme="light"] .modal-placeholder {
 
 /* Steganographic Analysis section */
 .modal-stego-box {
-    background: #713f12;
-    border: 1px solid #a16207;
+    background: rgba(31, 41, 55, 0.5);
+    border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 8px;
     padding: 1rem;
 }
 
 @media (prefers-color-scheme: light) {
     .modal-stego-box {
-        background: #fef3c7;
-        border-color: #fcd34d;
+        background: #f3f4f6;
+        border-color: rgba(0, 0, 0, 0.1);
     }
 }
 
 html[data-theme="light"] .modal-stego-box {
-    background: #fef3c7;
-    border-color: #fcd34d;
+    background: #f3f4f6;
+    border-color: rgba(0, 0, 0, 0.1);
 }
 
 .modal-stego-card {
     border-radius: 8px;
     padding: 0.75rem;
+    background: rgba(15, 23, 42, 0.35);
+    border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 @media (prefers-color-scheme: light) {
     .modal-stego-card {
         background: #ffffff;
+        border-color: rgba(0, 0, 0, 0.06);
     }
 }
 
 html[data-theme="light"] .modal-stego-card {
     background: #ffffff;
+    border-color: rgba(0, 0, 0, 0.06);
 }
 
 .modal-stego-label {
-    color: #fbbf24;
+    color: #9ca3af;
     font-size: 0.75rem;
     margin-bottom: 0.25rem;
 }
 
 @media (prefers-color-scheme: light) {
     .modal-stego-label {
-        color: #b45309;
+        color: #6b7280;
     }
 }
 
 html[data-theme="light"] .modal-stego-label {
-    color: #b45309;
+    color: #6b7280;
 }
 
 .modal-stego-value {
-    color: #fef08a;
+    color: #e5e7eb;
     font-weight: 600;
     font-size: 0.875rem;
 }
 
 @media (prefers-color-scheme: light) {
     .modal-stego-value {
-        color: #78350f;
+        color: #111827;
     }
 }
 
 html[data-theme="light"] .modal-stego-value {
-    color: #78350f;
+    color: #111827;
 }
 
 /* Modal Content tab styles */
@@ -3162,37 +3166,37 @@ html[data-theme="light"] .modal-stats {
 .modal-stats-value {
     font-size: 1.5rem;
     font-weight: 700;
-    color: #60a5fa;
+    color: #e5e7eb;
 }
 
 @media (prefers-color-scheme: light) {
     .modal-stats-value {
-        color: #2563eb;
+        color: #111827;
     }
 }
 
 html[data-theme="light"] .modal-stats-value {
-    color: #2563eb;
+    color: #111827;
 }
 
 .modal-stats-label {
     font-size: 0.875rem;
-    color: #93c5fd;
+    color: #9ca3af;
 }
 
 @media (prefers-color-scheme: light) {
     .modal-stats-label {
-        color: #1d4ed8;
+        color: #6b7280;
     }
 }
 
 html[data-theme="light"] .modal-stats-label {
-    color: #1d4ed8;
+    color: #6b7280;
 }
 
 .modal-hidden-box {
-    background: #064e3b;
-    border: 1px solid #10b981;
+    background: rgba(31, 41, 55, 0.5);
+    border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 8px;
     padding: 1rem;
     display: flex;
@@ -3202,45 +3206,45 @@ html[data-theme="light"] .modal-stats-label {
 
 @media (prefers-color-scheme: light) {
     .modal-hidden-box {
-        background: #d1fae5;
-        border-color: #6ee7b7;
+        background: #f3f4f6;
+        border-color: rgba(0, 0, 0, 0.1);
     }
 }
 
 html[data-theme="light"] .modal-hidden-box {
-    background: #d1fae5;
-    border-color: #6ee7b7;
+    background: #f3f4f6;
+    border-color: rgba(0, 0, 0, 0.1);
 }
 
 .modal-hidden-label {
-    color: #34d399;
+    color: #9ca3af;
     font-size: 0.875rem;
     font-weight: 500;
 }
 
 @media (prefers-color-scheme: light) {
     .modal-hidden-label {
-        color: #047857;
+        color: #6b7280;
     }
 }
 
 html[data-theme="light"] .modal-hidden-label {
-    color: #047857;
+    color: #6b7280;
 }
 
 .modal-hidden-value {
-    color: #a7f3d0;
+    color: #e5e7eb;
     font-size: 0.875rem;
 }
 
 @media (prefers-color-scheme: light) {
     .modal-hidden-value {
-        color: #064e3b;
+        color: #111827;
     }
 }
 
 html[data-theme="light"] .modal-hidden-value {
-    color: #064e3b;
+    color: #111827;
 }
 
 .modal-warning-text {
@@ -6995,6 +6999,11 @@ html[data-theme="dark"] .contract-success-btn-done {
 
 html[data-theme="dark"] .modal-header {
     border-color: rgba(255, 255, 255, 0.1) !important;
+    color: #f1f5f9 !important;
+}
+
+html[data-theme="dark"] .modal-header h2 {
+    color: #f1f5f9 !important;
 }
 
 html[data-theme="dark"] .deliverables-textarea {
@@ -7059,8 +7068,29 @@ html[data-theme="dark"] .modal-placeholder {
 }
 
 html[data-theme="dark"] .modal-stego-box {
-    background: #713f12 !important;
-    border-color: #a16207 !important;
+    background: rgba(31, 41, 55, 0.5) !important;
+    border-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+html[data-theme="dark"] .modal-stego-label {
+    color: #9ca3af !important;
+}
+
+html[data-theme="dark"] .modal-stego-value {
+    color: #e5e7eb !important;
+}
+
+html[data-theme="dark"] .modal-hidden-box {
+    background: rgba(31, 41, 55, 0.5) !important;
+    border-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+html[data-theme="dark"] .modal-hidden-label {
+    color: #9ca3af !important;
+}
+
+html[data-theme="dark"] .modal-hidden-value {
+    color: #e5e7eb !important;
 }
 
 html[data-theme="dark"] .modal-text-box {
