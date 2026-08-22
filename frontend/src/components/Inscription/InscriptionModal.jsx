@@ -102,18 +102,18 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
               <div className="mb-6">
                 <div className="modal-tabs">
                   {[
-                    { id: 'content', label: 'Details', icon: '📋' },
-                    { id: 'proposals', label: 'Proposals', icon: '🗂️' },
-                    { id: 'deliverables', label: 'Deliverables', icon: '✅' },
-                    { id: 'rework', label: 'Rework', icon: '🔧' },
-                    { id: 'blockchain', label: 'Blockchain', icon: '⛓️' }
+                    { id: 'content', label: 'Details', icon: 'icon-content' },
+                    { id: 'proposals', label: 'Proposals', icon: 'icon-edit' },
+                    { id: 'deliverables', label: 'Deliverables', icon: 'icon-check-circle-fill' },
+                    { id: 'rework', label: 'Rework', icon: 'icon-refresh' },
+                    { id: 'blockchain', label: 'Blockchain', icon: 'icon-security' },
                   ].map((tab) => (
                     <button
                       key={tab.id}
                       onClick={() => setActiveTab(tab.id)}
                       className={`modal-tab ${activeTab === tab.id ? 'active' : ''}`}
                     >
-                      <span>{tab.icon}</span>
+                      <i className={tab.icon} aria-hidden="true" />
                       {tab.label}
                     </button>
                   ))}
