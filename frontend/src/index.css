@@ -2836,24 +2836,12 @@ html[data-theme="light"] .modal-section-title {
     border-radius: 50%;
 }
 
-.modal-section-dot.purple {
-    background: #a855f7;
-}
-
-.modal-section-dot.blue {
-    background: #3b82f6;
-}
-
-.modal-section-dot.green {
-    background: #10b981;
-}
-
-.modal-section-dot.gold {
-    background: #f59e0b;
-}
-
+.modal-section-dot.purple,
+.modal-section-dot.blue,
+.modal-section-dot.green,
+.modal-section-dot.gold,
 .modal-section-dot.indigo {
-    background: #818cf8;
+    background: #9ca3af;
 }
 
 /* Modal additional components */
@@ -3020,22 +3008,22 @@ html[data-theme="light"] .modal-stego-value {
 
 /* Modal Content tab styles */
 .modal-sandbox-box {
-    border: 1px solid rgba(99, 102, 241, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 8px;
     overflow: hidden;
-    background: #1f2937;
+    background: rgba(31, 41, 55, 0.5);
 }
 
 @media (prefers-color-scheme: light) {
     .modal-sandbox-box {
         background: #f3f4f6;
-        border-color: #c7d2fe;
+        border-color: rgba(0, 0, 0, 0.1);
     }
 }
 
 html[data-theme="light"] .modal-sandbox-box {
     background: #f3f4f6;
-    border-color: #c7d2fe;
+    border-color: rgba(0, 0, 0, 0.1);
 }
 
 .modal-sandbox-iframe {
@@ -3047,8 +3035,8 @@ html[data-theme="light"] .modal-sandbox-box {
 }
 
 .modal-text-box {
-    background: #1e3a5f;
-    border: 1px solid #3b82f6;
+    background: rgba(31, 41, 55, 0.5);
+    border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 8px;
     padding: 1rem;
     color: #e5e7eb;
@@ -3056,15 +3044,15 @@ html[data-theme="light"] .modal-sandbox-box {
 
 @media (prefers-color-scheme: light) {
     .modal-text-box {
-        background: #dbeafe;
-        border-color: #93c5fd;
+        background: #f3f4f6;
+        border-color: rgba(0, 0, 0, 0.1);
         color: #1f2937;
     }
 }
 
 html[data-theme="light"] .modal-text-box {
-    background: #dbeafe;
-    border-color: #93c5fd;
+    background: #f3f4f6;
+    border-color: rgba(0, 0, 0, 0.1);
     color: #1f2937;
 }
 
@@ -3073,34 +3061,34 @@ html[data-theme="dark"] .modal-text-box {
 }
 
 .modal-text-label {
-    color: #60a5fa;
+    color: #9ca3af;
     font-size: 0.875rem;
     font-weight: 500;
 }
 
 @media (prefers-color-scheme: light) {
     .modal-text-label {
-        color: #1d4ed8;
+        color: #6b7280;
     }
 }
 
 html[data-theme="light"] .modal-text-label {
-    color: #1d4ed8;
+    color: #6b7280;
 }
 
 .modal-text-value {
-    color: #bfdbfe;
+    color: #e5e7eb;
     font-size: 0.875rem;
 }
 
 @media (prefers-color-scheme: light) {
     .modal-text-value {
-        color: #1e3a8a;
+        color: #111827;
     }
 }
 
 html[data-theme="light"] .modal-text-value {
-    color: #1e3a8a;
+    color: #111827;
 }
 
 .modal-text-content {
@@ -3124,7 +3112,7 @@ html[data-theme="light"] .modal-text-content {
 }
 
 .modal-text-content pre {
-    color: #93c5fd;
+    color: #e5e7eb;
     font-size: 0.875rem;
     line-height: 1.625;
     white-space: pre-wrap;
@@ -3137,27 +3125,27 @@ html[data-theme="light"] .modal-text-content {
 
 @media (prefers-color-scheme: light) {
     .modal-text-content pre {
-        color: #1e3a8a;
+        color: #111827;
     }
 }
 
 html[data-theme="light"] .modal-text-content pre {
-    color: #1e3a8a;
+    color: #111827;
 }
 
 .modal-stats {
     padding-top: 1rem;
-    border-top: 1px solid rgba(59, 130, 246, 0.3);
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 @media (prefers-color-scheme: light) {
     .modal-stats {
-        border-top-color: #93c5fd;
+        border-top-color: rgba(0, 0, 0, 0.1);
     }
 }
 
 html[data-theme="light"] .modal-stats {
-    border-top-color: #93c5fd;
+    border-top-color: rgba(0, 0, 0, 0.1);
 }
 
 .modal-stats-grid {
@@ -3704,7 +3692,7 @@ html[data-theme="light"] .modal-form-card {
 }
 
 .modal-section-dot.orange {
-    background: #f97316;
+    background: #9ca3af;
 }
 
 .modal-approved-label {
@@ -4497,49 +4485,27 @@ html[data-theme="light"] .modal-dashboard-table-cell {
     padding: 1rem;
 }
 
-.modal-blockchain-card.purple {
-    background: rgba(147, 51, 234, 0.15);
-    border: 1px solid rgba(147, 51, 234, 0.3);
-}
-
-.modal-blockchain-card.blue {
-    background: rgba(59, 130, 246, 0.15);
-    border: 1px solid rgba(59, 130, 246, 0.3);
-}
-
+.modal-blockchain-card.purple,
+.modal-blockchain-card.blue,
 .modal-blockchain-card.green {
-    background: rgba(16, 185, 129, 0.15);
-    border: 1px solid rgba(16, 185, 129, 0.3);
+    background: rgba(31, 41, 55, 0.5);
+    border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 @media (prefers-color-scheme: light) {
-    .modal-blockchain-card.purple {
-        background: #f3e8ff;
-        border-color: #d8b4fe;
-    }
-    .modal-blockchain-card.blue {
-        background: #dbeafe;
-        border-color: #93c5fd;
-    }
+    .modal-blockchain-card.purple,
+    .modal-blockchain-card.blue,
     .modal-blockchain-card.green {
-        background: #d1fae5;
-        border-color: #6ee7b7;
+        background: #f3f4f6;
+        border-color: rgba(0, 0, 0, 0.1);
     }
 }
 
-html[data-theme="light"] .modal-blockchain-card.purple {
-    background: #f3e8ff;
-    border-color: #d8b4fe;
-}
-
-html[data-theme="light"] .modal-blockchain-card.blue {
-    background: #dbeafe;
-    border-color: #93c5fd;
-}
-
+html[data-theme="light"] .modal-blockchain-card.purple,
+html[data-theme="light"] .modal-blockchain-card.blue,
 html[data-theme="light"] .modal-blockchain-card.green {
-    background: #d1fae5;
-    border-color: #6ee7b7;
+    background: #f3f4f6;
+    border-color: rgba(0, 0, 0, 0.1);
 }
 
 .modal-blockchain-row {
@@ -4558,48 +4524,40 @@ html[data-theme="light"] .modal-blockchain-card.green {
 }
 
 .modal-blockchain-card.purple .modal-blockchain-label,
-.modal-blockchain-card.purple .modal-blockchain-value {
-    color: #c084fc;
-}
-
 .modal-blockchain-card.blue .modal-blockchain-label,
-.modal-blockchain-card.blue .modal-blockchain-value {
-    color: #60a5fa;
+.modal-blockchain-card.green .modal-blockchain-label {
+    color: #9ca3af;
 }
 
-.modal-blockchain-card.green .modal-blockchain-label,
+.modal-blockchain-card.purple .modal-blockchain-value,
+.modal-blockchain-card.blue .modal-blockchain-value,
 .modal-blockchain-card.green .modal-blockchain-value {
-    color: #34d399;
+    color: #e5e7eb;
 }
 
 @media (prefers-color-scheme: light) {
     .modal-blockchain-card.purple .modal-blockchain-label,
-    .modal-blockchain-card.purple .modal-blockchain-value {
-        color: #7c3aed;
-    }
     .modal-blockchain-card.blue .modal-blockchain-label,
-    .modal-blockchain-card.blue .modal-blockchain-value {
-        color: #2563eb;
+    .modal-blockchain-card.green .modal-blockchain-label {
+        color: #6b7280;
     }
-    .modal-blockchain-card.green .modal-blockchain-label,
+    .modal-blockchain-card.purple .modal-blockchain-value,
+    .modal-blockchain-card.blue .modal-blockchain-value,
     .modal-blockchain-card.green .modal-blockchain-value {
-        color: #059669;
+        color: #111827;
     }
 }
 
 html[data-theme="light"] .modal-blockchain-card.purple .modal-blockchain-label,
-html[data-theme="light"] .modal-blockchain-card.purple .modal-blockchain-value {
-    color: #7c3aed;
-}
-
 html[data-theme="light"] .modal-blockchain-card.blue .modal-blockchain-label,
-html[data-theme="light"] .modal-blockchain-card.blue .modal-blockchain-value {
-    color: #2563eb;
+html[data-theme="light"] .modal-blockchain-card.green .modal-blockchain-label {
+    color: #6b7280;
 }
 
-html[data-theme="light"] .modal-blockchain-card.green .modal-blockchain-label,
+html[data-theme="light"] .modal-blockchain-card.purple .modal-blockchain-value,
+html[data-theme="light"] .modal-blockchain-card.blue .modal-blockchain-value,
 html[data-theme="light"] .modal-blockchain-card.green .modal-blockchain-value {
-    color: #059669;
+    color: #111827;
 }
 
 .modal-blockchain-mono {
@@ -4651,85 +4609,41 @@ html[data-theme="dark"] .modal-blockchain-grid-item {
     word-break: break-all;
 }
 
-.modal-blockchain-card.purple .modal-blockchain-grid-label {
-    color: #d8b4fe;
-}
-
-.modal-blockchain-card.purple .modal-blockchain-grid-value {
-    color: #e9d5ff;
-}
-
-.modal-blockchain-card.blue .modal-blockchain-grid-label {
-    color: #93c5fd;
-}
-
-.modal-blockchain-card.blue .modal-blockchain-grid-value {
-    color: #dbeafe;
-}
-
+.modal-blockchain-card.purple .modal-blockchain-grid-label,
+.modal-blockchain-card.blue .modal-blockchain-grid-label,
 .modal-blockchain-card.green .modal-blockchain-grid-label {
-    color: #6ee7b7;
+    color: #9ca3af;
 }
 
+.modal-blockchain-card.purple .modal-blockchain-grid-value,
+.modal-blockchain-card.blue .modal-blockchain-grid-value,
 .modal-blockchain-card.green .modal-blockchain-grid-value {
-    color: #d1fae5;
+    color: #e5e7eb;
 }
 
 @media (prefers-color-scheme: light) {
-    .modal-blockchain-card.purple .modal-blockchain-grid-label {
-        color: #7c3aed;
-    }
-    .modal-blockchain-card.purple .modal-blockchain-grid-value {
-        color: #5b21b6;
-    }
-    .modal-blockchain-card.blue .modal-blockchain-grid-label {
-        color: #2563eb;
-    }
-    .modal-blockchain-card.blue .modal-blockchain-grid-value {
-        color: #1e3a8a;
-    }
+    .modal-blockchain-card.purple .modal-blockchain-grid-label,
+    .modal-blockchain-card.blue .modal-blockchain-grid-label,
     .modal-blockchain-card.green .modal-blockchain-grid-label {
-        color: #059669;
+        color: #6b7280;
     }
+    .modal-blockchain-card.purple .modal-blockchain-grid-value,
+    .modal-blockchain-card.blue .modal-blockchain-grid-value,
     .modal-blockchain-card.green .modal-blockchain-grid-value {
-        color: #064e3b;
+        color: #111827;
     }
 }
 
-html[data-theme="light"]
-    .modal-blockchain-card.purple
-    .modal-blockchain-grid-label {
-    color: #7c3aed;
+html[data-theme="light"] .modal-blockchain-card.purple .modal-blockchain-grid-label,
+html[data-theme="light"] .modal-blockchain-card.blue .modal-blockchain-grid-label,
+html[data-theme="light"] .modal-blockchain-card.green .modal-blockchain-grid-label {
+    color: #6b7280;
 }
 
-html[data-theme="light"]
-    .modal-blockchain-card.purple
-    .modal-blockchain-grid-value {
-    color: #5b21b6;
-}
-
-html[data-theme="light"]
-    .modal-blockchain-card.blue
-    .modal-blockchain-grid-label {
-    color: #2563eb;
-}
-
-html[data-theme="light"]
-    .modal-blockchain-card.blue
-    .modal-blockchain-grid-value {
-    color: #1e3a8a;
-}
-
-html[data-theme="light"]
-    .modal-blockchain-card.green
-    .modal-blockchain-grid-label {
-    color: #059669;
-}
-
-html[data-theme="light"]
-    .modal-blockchain-card.green
-    .modal-blockchain-grid-value {
-    color: #064e3b;
+html[data-theme="light"] .modal-blockchain-card.purple .modal-blockchain-grid-value,
+html[data-theme="light"] .modal-blockchain-card.blue .modal-blockchain-grid-value,
+html[data-theme="light"] .modal-blockchain-card.green .modal-blockchain-grid-value {
+    color: #111827;
 }
 
 /* DeliverablesReview styles */
@@ -7150,23 +7064,23 @@ html[data-theme="dark"] .modal-stego-box {
 }
 
 html[data-theme="dark"] .modal-text-box {
-    background: #1e3a5f !important;
-    border-color: #3b82f6 !important;
+    background: rgba(31, 41, 55, 0.5) !important;
+    border-color: rgba(255, 255, 255, 0.1) !important;
 }
 html[data-theme="dark"] .modal-text-label {
-    color: #60a5fa !important;
+    color: #9ca3af !important;
 }
 html[data-theme="dark"] .modal-text-value {
-    color: #bfdbfe !important;
+    color: #e5e7eb !important;
 }
 html[data-theme="dark"] .modal-text-content {
     background: #0f172a !important;
 }
 html[data-theme="dark"] .modal-text-content pre {
-    color: #93c5fd !important;
+    color: #e5e7eb !important;
 }
 html[data-theme="dark"] .modal-stats {
-    border-top-color: rgba(59, 130, 246, 0.3) !important;
+    border-top-color: rgba(255, 255, 255, 0.1) !important;
 }
 
 html[data-theme="dark"] .deliverables-proof-label {
