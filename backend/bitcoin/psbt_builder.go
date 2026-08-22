@@ -202,18 +202,21 @@ func BuildFundingPSBT(client UTXOClient, params *chaincfg.Params, req PSBTReques
 }
 
 // BuildRaiseFundPSBT builds a multi-payer PSBT with per-payer change outputs.
-func BuildRaiseFundPSBT(client UTXOClient, params *chaincfg.Params, payers []PayerTarget, payouts []PayoutOutput, pixelHash []byte, commitmentSats int64, commitmentAddress btcutil.Address, feeRate int64) (*PSBTResult, error) {
-	if feeRate < 0 {
-		feeRate = 0
+// When DonationAddress, PixelHash, and CommitmentSats are set it emits the same
+// donation P2WPKH + OP_RETURN (wish_hash || stego_hash) proof as BuildFundingPSBT
+// so block-monitor reconciliation works for combined raise-fund transactions.
+func BuildRaiseFundPSBT(client UTXOClient, params *chaincfg.Params, payers []PayerTarget, req PSBTRequest) (*PSBTResult, error) {
+	if req.FeeRateSatPerVB < 0 {
+		req.FeeRateSatPerVB = 0
 	}
 	if len(payers) == 0 {
 		return nil, fmt.Errorf("payer targets required")
 	}
-	if len(payouts) == 0 && len(pixelHash) == 0 {
+	if len(req.Payouts) == 0 && len(req.PixelHash) == 0 {
 		return nil, fmt.Errorf("no payout or commitment outputs requested")
 	}
 
-	payoutScripts, payoutAmounts, err := buildPayoutScripts(PSBTRequest{Payouts: payouts})
+	payoutScripts, payoutAmounts, err := buildPayoutScripts(req)
 	if err != nil {
 		return nil, err
 	}
@@ -223,28 +226,18 @@ func BuildRaiseFundPSBT(client UTXOClient, params *chaincfg.Params, payers []Pay
 		return nil, err
 	}
 
-	var commitmentScript []byte
-	var redeemScript []byte
-	var redeemScriptHash []byte
-	var commitmentAddr string
-	var donation *donationOutputs
-	// Note: BuildRaiseFundPSBT doesn't yet receive DonationAddress/ProductPixelHash
-	// so it always falls through to the legacy path.  When the caller is updated,
-	// it will use the donation path automatically.
-	if len(pixelHash) > 0 {
-		commitmentScript, redeemScript, redeemScriptHash, commitmentAddr, err = buildCommitmentScript(params, pixelHash, commitmentAddress)
-		if err != nil {
-			return nil, err
-		}
-		if commitmentSats <= 0 {
-			commitmentSats = 1000
-		}
-		if commitmentSats < 546 {
-			commitmentSats = 546
-		}
+	commitmentScript, commitmentSats, redeemScript, redeemScriptHash, commitmentAddr, donation, err := resolveFundingCommitment(params, req)
+	if err != nil {
+		return nil, err
 	}
-	_ = donation // will be used when BuildRaiseFundPSBT is updated to accept DonationAddress
-
+	// Commitment / donation sats are extra outputs on top of per-payer payout
+	// targets. Charge them to the last payer so coin selection actually funds
+	// the proof output instead of stealing from the fee.
+	if commitmentSats > 0 {
+		selections[len(selections)-1].target += commitmentSats
+	}
+	extraOuts := extraProofOutputCount(donation, commitmentScript)
+	feeRate := req.FeeRateSatPerVB
 
 	for i := range selections {
 		for selections[i].selected < selections[i].target {
@@ -265,11 +258,7 @@ func BuildRaiseFundPSBT(client UTXOClient, params *chaincfg.Params, payers []Pay
 		}
 
 		for {
-			outputCount := int64(len(payoutScripts))
-			if commitmentScript != nil {
-				outputCount++
-			}
-			outputCount += int64(len(selections))
+			outputCount := int64(len(payoutScripts)) + extraOuts + int64(len(selections))
 			fee := estimateFee(estimatedInputVBytes, outputCount, feeRate)
 			var allocated int64
 			for i := range selections {
@@ -316,11 +305,7 @@ func BuildRaiseFundPSBT(client UTXOClient, params *chaincfg.Params, payers []Pay
 		changeableCount := len(selections)
 		needsMore := false
 		for {
-			outputCount := int64(len(payoutScripts))
-			if commitmentScript != nil {
-				outputCount++
-			}
-			outputCount += int64(changeableCount)
+			outputCount := int64(len(payoutScripts)) + extraOuts + int64(changeableCount)
 			fee := estimateFee(actualInputVBytes, outputCount, feeRate)
 			var allocated int64
 			for i := range selections {
@@ -368,7 +353,7 @@ func BuildRaiseFundPSBT(client UTXOClient, params *chaincfg.Params, payers []Pay
 	}
 
 	tx := wire.NewMsgTx(2)
-	var commitmentVout uint32
+	var commitmentVout, donationVout, opReturnVout uint32
 	for _, sel := range selections {
 		for _, u := range sel.utxos {
 			hash, err := chainhashFromStr(u.TxID)
@@ -383,7 +368,15 @@ func BuildRaiseFundPSBT(client UTXOClient, params *chaincfg.Params, payers []Pay
 	for i, script := range payoutScripts {
 		tx.AddTxOut(&wire.TxOut{Value: payoutAmounts[i], PkScript: script})
 	}
-	if commitmentScript != nil {
+	if donation != nil && commitmentSats > 0 {
+		donationVout = uint32(len(tx.TxOut))
+		commitmentVout = donationVout
+		tx.AddTxOut(&wire.TxOut{Value: commitmentSats, PkScript: donation.donationScript})
+		opReturnVout = uint32(len(tx.TxOut))
+		tx.AddTxOut(&wire.TxOut{Value: 0, PkScript: donation.opReturnScript})
+		commitmentScript = donation.donationScript
+		commitmentAddr = donation.donationAddr
+	} else if commitmentScript != nil && commitmentSats > 0 {
 		commitmentVout = uint32(len(tx.TxOut))
 		tx.AddTxOut(&wire.TxOut{Value: commitmentSats, PkScript: commitmentScript})
 	}
@@ -419,7 +412,7 @@ func BuildRaiseFundPSBT(client UTXOClient, params *chaincfg.Params, payers []Pay
 		actualFee = 0
 	}
 
-	return &PSBTResult{
+	result := &PSBTResult{
 		EncodedBase64:    base64.StdEncoding.EncodeToString(psbtBytes),
 		EncodedHex:       hex.EncodeToString(psbtBytes),
 		FeeSats:          actualFee,
@@ -437,7 +430,14 @@ func BuildRaiseFundPSBT(client UTXOClient, params *chaincfg.Params, payers []Pay
 		RedeemScriptHash: redeemScriptHash,
 		CommitmentAddr:   commitmentAddr,
 		FundingTxID:      fundingTxID,
-	}, nil
+	}
+	if donation != nil {
+		result.DonationVout = donationVout
+		result.DonationAddr = donation.donationAddr
+		result.OPReturnScript = donation.opReturnScript
+		result.OPReturnVout = opReturnVout
+	}
+	return result, nil
 }
 
 // donationOutputs holds the two outputs replacing the old P2WSH hashlock:

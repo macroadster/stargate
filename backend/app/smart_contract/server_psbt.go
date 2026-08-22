@@ -472,11 +472,15 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 			s.mempool,
 			params,
 			raiseFundPayers,
-			payouts,
-			pixelBytes,
-			commitmentSats,
-			commitmentLockAddr,
-			body.FeeRate,
+			bitcoin.PSBTRequest{
+				Payouts:           payouts,
+				PixelHash:         pixelBytes,
+				ProductPixelHash:  productPixelBytes,
+				CommitmentSats:    commitmentSats,
+				DonationAddress:   donationAddr,
+				CommitmentAddress: commitmentLockAddr,
+				FeeRateSatPerVB:   body.FeeRate,
+			},
 		)
 	} else {
 		effectiveChangeAddr := changeAddr

@@ -57,6 +57,18 @@ func seedOneUTXOPerPayer(payerAddrs []btcutil.Address, candidates []payerUTXO) (
 	return append(seeded, rest...), nil
 }
 
+// extraProofOutputCount returns how many extra outputs the proof path adds
+// (donation P2WPKH + OP_RETURN, or a single legacy hashlock).
+func extraProofOutputCount(donation *donationOutputs, commitmentScript []byte) int64 {
+	if donation != nil {
+		return 2
+	}
+	if commitmentScript != nil {
+		return 1
+	}
+	return 0
+}
+
 // resolveFundingCommitment builds donation or legacy hashlock commitment outputs.
 func resolveFundingCommitment(params *chaincfg.Params, req PSBTRequest) (
 	commitmentScript []byte,
