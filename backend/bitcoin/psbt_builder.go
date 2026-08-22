@@ -397,14 +397,9 @@ func BuildRaiseFundPSBT(client UTXOClient, params *chaincfg.Params, payers []Pay
 		return nil, fmt.Errorf("serialize psbt: %w", err)
 	}
 
-	// Check if all inputs are SegWit to determine if we can pre-calculate TxID
-	allSegWit := allPayerSelectionsAreSegWit(selections, client, params)
-
-	var fundingTxID string
-	if allSegWit {
-		// All inputs are SegWit, so TxID is non-malleable and can be pre-calculated
-		fundingTxID = tx.TxHash().String()
-	}
+	// Precompute txid only when every selected input is SegWit. Mixed
+	// P2PKH/P2SH inputs can mutate scriptSig, so a precomputed id is a lie.
+	fundingTxID := fundingTxIDIfAllSegWit(client, params, raiseFundSelected(selections), tx)
 
 	outputTotal := sumAmounts(payoutAmounts) + commitmentSats + totalChange
 	actualFee := totalSelected - outputTotal

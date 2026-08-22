@@ -1,14 +1,20 @@
 package bitcoin
 
 import (
+	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/btcsuite/btcd/txscript"
+
 	"stargate-backend/core/smart_contract"
+	"stargate-backend/services"
 )
 
 func TestSanitizeInscriptionsForDisk_SVG(t *testing.T) {
@@ -156,4 +162,133 @@ func TestConfirmContractTasks_NoSweepDeps(t *testing.T) {
 	bm := NewBlockMonitor(client)
 	// Should not panic or error.
 	bm.confirmContractTasks("c", "tx", 0)
+}
+
+// TestReconcileCombinedRaiseOPReturnWithoutFundingTxID is the raise-fund
+// fallback: when mixed-input FundingTxID was left empty, the monitor still
+// confirms via parseOPReturnHashes on wish_hash||stego_hash.
+func TestReconcileCombinedRaiseOPReturnWithoutFundingTxID(t *testing.T) {
+	wishHash := bytes.Repeat([]byte{0xab}, 32)
+	stegoHash := bytes.Repeat([]byte{0xcd}, 32)
+	wishHex := hex.EncodeToString(wishHash)
+	stegoHex := hex.EncodeToString(stegoHash)
+	payload := append(append([]byte{}, wishHash...), stegoHash...)
+	opReturn, err := txscript.NewScriptBuilder().AddOp(txscript.OP_RETURN).AddData(payload).Script()
+	if err != nil {
+		t.Fatalf("op_return: %v", err)
+	}
+	gotWish, gotStego, ok := parseOPReturnHashes(opReturn)
+	if !ok || gotWish != wishHex || gotStego != stegoHex {
+		t.Fatalf("parseOPReturnHashes: ok=%v wish=%s stego=%s", ok, gotWish, gotStego)
+	}
+
+	ingest, err := services.NewIngestionService(filepath.Join(t.TempDir(), "raise-monitor.db"))
+	if err != nil {
+		t.Fatalf("ingestion: %v", err)
+	}
+	// No funding_txid — the combined-raise builder left it empty (mixed inputs).
+	if err := ingest.Create(services.IngestionRecord{
+		ID:          "wish-" + wishHex,
+		Filename:    wishHex + ".png",
+		Method:      "alpha",
+		ImageBase64: "ZmFrZQ==",
+		Metadata:    map[string]interface{}{"visible_pixel_hash": wishHex},
+		Status:      "pending",
+	}); err != nil {
+		t.Fatalf("create ingestion: %v", err)
+	}
+
+	store := &fullMockSweepStore{
+		proofs: make(map[string]*smart_contract.MerkleProof),
+		tasks: []smart_contract.Task{{
+			TaskID:     "raise-task",
+			ContractID: "wish-" + wishHex,
+			MerkleProof: &smart_contract.MerkleProof{
+				ConfirmationStatus: "provisional",
+			},
+		}},
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+	bm := NewBlockMonitor(NewBitcoinNodeClient(srv.URL))
+	bm.SetIngestionService(ingest)
+	bm.SetSweepDependencies(store, NewMempoolClient())
+
+	parsed := &ParsedBlock{
+		Transactions: []Transaction{{
+			TxID: strings.Repeat("ee", 32),
+			Outputs: []TxOutput{{
+				Value:        0,
+				ScriptPubKey: opReturn,
+			}},
+		}},
+	}
+	got := bm.reconcileOracleIngestions(t.TempDir(), parsed, nil, 4242)
+	var matched *SmartContractData
+	for i := range got {
+		if got[i].Metadata["match_type"] == "op_return" {
+			matched = &got[i]
+			break
+		}
+	}
+	if matched == nil {
+		t.Fatalf("expected OP_RETURN match with empty FundingTxID, contracts=%+v", got)
+	}
+	if matched.Metadata["wish_hash"] != wishHex || matched.Metadata["stego_hash"] != stegoHex {
+		t.Fatalf("match hashes: %+v", matched.Metadata)
+	}
+	proof := store.proofs["raise-task"]
+	if proof == nil || proof.ConfirmationStatus != "confirmed" {
+		t.Fatalf("expected confirmContractTasks via OP_RETURN, proof=%+v", proof)
+	}
+}
+
+func TestReconcileFundingTxIDPathStillWorks(t *testing.T) {
+	fundingTxID := strings.Repeat("aa", 32)
+	ingest, err := services.NewIngestionService(filepath.Join(t.TempDir(), "txid-monitor.db"))
+	if err != nil {
+		t.Fatalf("ingestion: %v", err)
+	}
+	if err := ingest.Create(services.IngestionRecord{
+		ID:          "ing-funded",
+		Filename:    "funded.png",
+		Method:      "alpha",
+		ImageBase64: "ZmFrZQ==",
+		Metadata: map[string]interface{}{
+			"funding_txid":  fundingTxID,
+			"funding_txids": []string{fundingTxID},
+		},
+		Status: "pending",
+	}); err != nil {
+		t.Fatalf("create ingestion: %v", err)
+	}
+	store := &fullMockSweepStore{
+		proofs: make(map[string]*smart_contract.MerkleProof),
+		tasks: []smart_contract.Task{{
+			TaskID:      "funded-task",
+			ContractID:  "ing-funded",
+			MerkleProof: &smart_contract.MerkleProof{ConfirmationStatus: "provisional"},
+		}},
+	}
+	srv := httptest.NewServer(http.NotFoundHandler())
+	defer srv.Close()
+	bm := NewBlockMonitor(NewBitcoinNodeClient(srv.URL))
+	bm.SetIngestionService(ingest)
+	bm.SetSweepDependencies(store, NewMempoolClient())
+
+	got := bm.reconcileOracleIngestions(t.TempDir(), &ParsedBlock{
+		Transactions: []Transaction{{TxID: fundingTxID}},
+	}, nil, 99)
+	var matched *SmartContractData
+	for i := range got {
+		if got[i].Metadata["match_type"] == "funding_txid" {
+			matched = &got[i]
+			break
+		}
+	}
+	if matched == nil {
+		t.Fatalf("expected funding_txid match, contracts=%+v", got)
+	}
 }

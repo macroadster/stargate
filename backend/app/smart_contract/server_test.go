@@ -16,8 +16,11 @@ import (
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
 
+	"path/filepath"
+
 	"stargate-backend/bitcoin"
 	"stargate-backend/core/smart_contract"
+	"stargate-backend/services"
 	auth "stargate-backend/storage/auth"
 	scstore "stargate-backend/storage/smart_contract"
 )
@@ -411,6 +414,150 @@ func TestContractPSBTProductTargetStoresSourceOnTask(t *testing.T) {
 	if task.MerkleProof.CommitmentSource != "product" {
 		t.Errorf("CommitmentSource = %q, want \"product\"", task.MerkleProof.CommitmentSource)
 	}
+}
+
+// TestContractPSBTRaiseFundPassesDonationAndProductHash verifies handleContractPSBT
+// in raise_fund mode forwards DonationAddress + ProductPixelHash into the
+// combined builder (64-byte OP_RETURN) and persists funding_txid when SegWit.
+func TestContractPSBTRaiseFundPassesDonationAndProductHash(t *testing.T) {
+	t.Setenv("BITCOIN_NETWORK", "testnet4")
+	store := scstore.NewMemoryStore(72 * 60 * 60)
+	apiKey := "psbt-raise-key"
+	payerWallet := mustTestnetAddress(t, 1)
+	fundraiser := mustTestnetAddress(t, 2)
+	contractorA := mustTestnetAddress(t, 3)
+	contractorB := mustTestnetAddress(t, 4)
+	wishHash := strings.Repeat("ab", 32)
+	stegoHash := strings.Repeat("cd", 32)
+
+	rawA, txA := mustFundingTx(t, contractorA, 80_000)
+	rawB, txB := mustFundingTx(t, contractorB, 90_000)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/address/"+contractorA+"/utxo", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]map[string]interface{}{
+			{"txid": txA, "vout": 0, "value": 80_000, "status": map[string]interface{}{"confirmed": true}},
+		})
+	})
+	mux.HandleFunc("/address/"+contractorB+"/utxo", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]map[string]interface{}{
+			{"txid": txB, "vout": 0, "value": 90_000, "status": map[string]interface{}{"confirmed": true}},
+		})
+	})
+	mux.HandleFunc("/tx/"+txA+"/raw", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(rawA)) })
+	mux.HandleFunc("/tx/"+txB+"/raw", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(rawB)) })
+	mempoolServer := httptest.NewServer(mux)
+	defer mempoolServer.Close()
+	t.Setenv("MEMPOOL_API_BASE", mempoolServer.URL)
+
+	ingest, err := services.NewIngestionService(filepath.Join(t.TempDir(), "raise-psbt.db"))
+	if err != nil {
+		t.Fatalf("ingestion: %v", err)
+	}
+	contractID := "contract-raise-opreturn"
+	if err := ingest.Create(services.IngestionRecord{
+		ID:          contractID,
+		Filename:    wishHash + ".png",
+		Method:      "alpha",
+		ImageBase64: "ZmFrZQ==",
+		Metadata:    map[string]interface{}{"visible_pixel_hash": wishHash},
+		Status:      "pending",
+	}); err != nil {
+		t.Fatalf("seed ingestion: %v", err)
+	}
+
+	server := NewServer(store, &mockAPIKeyStore{
+		keys: map[string]auth.APIKey{apiKey: {Key: apiKey, Wallet: payerWallet}},
+	}, ingest)
+
+	if err := store.UpsertContractWithTasks(context.Background(), smart_contract.Contract{
+		ContractID:      contractID,
+		Title:           "raise fund for community art",
+		Status:          "open",
+		TotalBudgetSats: 30_000,
+	}, []smart_contract.Task{
+		{TaskID: "rf-a", ContractID: contractID, Title: "A", BudgetSats: 10_000, Status: "available", ContractorWallet: contractorA},
+		{TaskID: "rf-b", ContractID: contractID, Title: "B", BudgetSats: 20_000, Status: "available", ContractorWallet: contractorB},
+	}); err != nil {
+		t.Fatalf("seed contract: %v", err)
+	}
+	if err := store.CreateProposal(context.Background(), smart_contract.Proposal{
+		ID:               contractID,
+		Title:            "Please raise fund",
+		DescriptionMD:    "raise fund",
+		VisiblePixelHash: wishHash,
+		BudgetSats:       30_000,
+		Status:           "approved",
+		Metadata: map[string]interface{}{
+			"funding_mode":       "raise_fund",
+			"funding_address":    fundraiser,
+			"visible_pixel_hash": wishHash,
+		},
+	}); err != nil {
+		t.Fatalf("seed proposal: %v", err)
+	}
+
+	body := `{
+		"pixel_hash":"` + wishHash + `",
+		"product_pixel_hash":"` + stegoHash + `",
+		"commitment_target":"funding",
+		"fee_rate_sats_vb":1
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/api/smart_contract/contracts/"+contractID+"/psbt", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-API-Key", apiKey)
+	rec := httptest.NewRecorder()
+	server.handleContracts(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var payload struct {
+		FundingMode    string `json:"funding_mode"`
+		SplitPSBT      bool   `json:"split_psbt"`
+		OPReturnScript string `json:"op_return_script"`
+		DonationAddr   string `json:"donation_address"`
+		FundingTxID    string `json:"funding_txid"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if payload.FundingMode != "raise_fund" {
+		t.Fatalf("funding_mode=%q", payload.FundingMode)
+	}
+	if payload.SplitPSBT {
+		t.Fatal("combined raise must not take the split path")
+	}
+	script, err := hex.DecodeString(payload.OPReturnScript)
+	if err != nil || len(script) == 0 {
+		t.Fatalf("missing op_return_script: %v %q", err, payload.OPReturnScript)
+	}
+	if script[0] != txscript.OP_RETURN {
+		t.Fatalf("expected OP_RETURN, got 0x%02x", script[0])
+	}
+	if !bytes.Contains(script, mustDecodeHex(t, wishHash)) || !bytes.Contains(script, mustDecodeHex(t, stegoHash)) {
+		t.Fatal("handler did not pass wish+stego hashes into the raise-fund builder")
+	}
+	if payload.DonationAddr != fundraiser {
+		t.Fatalf("donation_address=%q want fundraiser %s", payload.DonationAddr, fundraiser)
+	}
+	if payload.FundingTxID == "" {
+		t.Fatal("all-SegWit raise-fund should persist a precomputed funding_txid")
+	}
+	stored, err := ingest.Get(contractID)
+	if err != nil {
+		t.Fatalf("get ingestion: %v", err)
+	}
+	if stored.Metadata["funding_txid"] != payload.FundingTxID {
+		t.Fatalf("ingestion funding_txid=%v want %s", stored.Metadata["funding_txid"], payload.FundingTxID)
+	}
+}
+
+func mustDecodeHex(t *testing.T, s string) []byte {
+	t.Helper()
+	b, err := hex.DecodeString(s)
+	if err != nil {
+		t.Fatalf("hex: %v", err)
+	}
+	return b
 }
 
 func TestPaymentDetailsAndPSBTUseConfiguredNetwork(t *testing.T) {

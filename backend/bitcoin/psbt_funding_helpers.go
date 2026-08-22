@@ -57,6 +57,18 @@ func seedOneUTXOPerPayer(payerAddrs []btcutil.Address, candidates []payerUTXO) (
 	return append(seeded, rest...), nil
 }
 
+// raiseFundSelected flattens per-payer UTXO picks so raise-fund can reuse
+// fundingTxIDIfAllSegWit (txid is only safe to precompute when every input is SegWit).
+func raiseFundSelected(selections []payerSelection) []payerUTXO {
+	var selected []payerUTXO
+	for _, sel := range selections {
+		for _, u := range sel.utxos {
+			selected = append(selected, payerUTXO{address: sel.address, utxo: u})
+		}
+	}
+	return selected
+}
+
 // extraProofOutputCount returns how many extra outputs the proof path adds
 // (donation P2WPKH + OP_RETURN, or a single legacy hashlock).
 func extraProofOutputCount(donation *donationOutputs, commitmentScript []byte) int64 {
