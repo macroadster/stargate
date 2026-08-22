@@ -45,6 +45,8 @@ describe('inscriptionUtils', () => {
 
   it('detects confirmed contracts', () => {
     expect(isConfirmedContract({ metadata: { confirmation_status: 'confirmed' } })).toBe(true);
+    expect(isConfirmedContract({ status: 'confirmed' })).toBe(true);
+    expect(isConfirmedContract({ metadata: { confirmed_txid: 'abc' } })).toBe(true);
     expect(isConfirmedContract({ metadata: {} })).toBe(false);
   });
 

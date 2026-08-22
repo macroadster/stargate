@@ -805,6 +805,10 @@ export function useInscriptionModalState(inscription, initialTab = 'content') {
 
   const approveProposal = async (proposalId, isPublish = false) => {
     if (!proposalId) return;
+    if (isContractLocked) {
+      toast.error('Confirmed contracts cannot be approved');
+      return;
+    }
     setApprovingId(proposalId);
     setProposalError('');
     try {

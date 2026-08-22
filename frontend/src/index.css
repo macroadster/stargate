@@ -3621,12 +3621,13 @@ html[data-theme="light"] .modal-task-status.pending {
     transition: background 0.2s;
 }
 
-.modal-btn-approve:hover {
+.modal-btn-approve:hover:not(:disabled) {
     background: #10b981;
 }
 
 .modal-btn-approve:disabled {
     opacity: 0.6;
+    cursor: not-allowed;
 }
 
 .modal-btn-reject {
@@ -3640,8 +3641,13 @@ html[data-theme="light"] .modal-task-status.pending {
     transition: background 0.2s;
 }
 
-.modal-btn-reject:hover {
+.modal-btn-reject:hover:not(:disabled) {
     background: #ef4444;
+}
+
+.modal-btn-reject:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
 }
 
 .modal-btn-cancel {

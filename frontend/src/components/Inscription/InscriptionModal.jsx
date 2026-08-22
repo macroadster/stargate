@@ -294,7 +294,8 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
                               return (
                                 <button
                                   onClick={() => approveProposal(p.id, false)}
-                                  disabled={approvingId === p.id}
+                                  disabled={approvingId === p.id || isContractLocked}
+                                  title={isContractLocked ? 'Confirmed contracts cannot be approved' : undefined}
                                   className="modal-btn-approve"
                                 >
                                   {approvingId === p.id ? 'Processing…' : 'Approve'}
@@ -1119,6 +1120,8 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
                     {auth.apiKey && (
                       <button
                         onClick={() => setShowReworkForm(true)}
+                        disabled={isContractLocked}
+                        title={isContractLocked ? 'Confirmed contracts cannot request rework' : undefined}
                         className="modal-btn-reject"
                       >
                         + Request Rework
@@ -1178,7 +1181,7 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
                                 setIsSubmittingRework(false);
                               }
                             }}
-                            disabled={isSubmittingRework}
+                            disabled={isSubmittingRework || isContractLocked}
                             className="modal-btn-approve"
                           >
                             {isSubmittingRework ? 'Submitting...' : 'Submit'}
