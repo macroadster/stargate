@@ -67,8 +67,19 @@ type Mirror struct {
 	mu               sync.Mutex
 	knownFiles       map[string]fileState
 	deletedFiles     map[string]bool
+	ingestByCID      map[string]*remoteIngest
 	onFileDownloaded func(ctx context.Context, ev FileDownloadedEvent)
 }
+
+// remoteIngest tracks one peer catalog. A heartbeat of the same CID must
+// retry missing files; "seen" is not "complete".
+type remoteIngest struct {
+	complete bool
+	missing  []manifestEntry
+	files    []manifestEntry
+}
+
+const maxRemoteIngest = 64
 
 // OnFileDownloaded registers a callback invoked every time the mirror
 // downloads a new file.  Use this to trigger ingestion without a separate
@@ -377,6 +388,7 @@ func StartMirror(ctx context.Context, cfg MirrorConfig) (*Mirror, error) {
 		ipfsClient:       ipfsClient,
 		knownFiles:       make(map[string]fileState),
 		deletedFiles:     make(map[string]bool),
+		ingestByCID:      make(map[string]*remoteIngest),
 		onFileDownloaded: cfg.OnFileDownloaded,
 	}
 	m.loadDeleted()
@@ -775,14 +787,7 @@ func (m *Mirror) subscribeOnce(ctx context.Context) error {
 				log.Printf("IPFS mirror message decode failed: %v", err)
 				continue
 			}
-			if manifestCID == "" || manifestCID == m.lastSeenRemote {
-				continue
-			}
-			if err := m.processManifest(ctx, manifestCID); err != nil {
-				log.Printf("IPFS mirror sync failed: %v", err)
-			} else {
-				m.lastSeenRemote = manifestCID
-			}
+			m.ingestRemoteManifest(ctx, manifestCID)
 		}
 		return nil
 	}
@@ -826,41 +831,51 @@ func (m *Mirror) subscribeOnce(ctx context.Context) error {
 			log.Printf("IPFS mirror message decode failed: %v", err)
 			continue
 		}
-		if manifestCID == "" {
-			continue
-		}
-		if manifestCID == "" || manifestCID == m.lastSeenRemote {
-			continue
-		}
-		if err := m.processManifest(ctx, manifestCID); err != nil {
-			log.Printf("IPFS mirror sync failed: %v", err)
-		} else {
-			m.lastSeenRemote = manifestCID
-		}
+		m.ingestRemoteManifest(ctx, manifestCID)
 	}
 }
 
+// ingestRemoteManifest pulls a peer catalog. Same-CID heartbeats retry
+// only when the previous pass left missing files.
+func (m *Mirror) ingestRemoteManifest(ctx context.Context, manifestCID string) {
+	if m == nil || manifestCID == "" {
+		return
+	}
+	m.lastSeenRemote = manifestCID
+	if m.remoteIngestComplete(manifestCID) {
+		return
+	}
+	if err := m.processManifest(ctx, manifestCID); err != nil {
+		log.Printf("IPFS mirror sync failed: %v", err)
+	}
+}
+
+func (m *Mirror) remoteIngestComplete(manifestCID string) bool {
+	if m == nil || manifestCID == "" {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	st, ok := m.ingestByCID[manifestCID]
+	return ok && st.complete
+}
+
 func (m *Mirror) processManifest(ctx context.Context, manifestCID string) error {
-	data, err := m.cat(ctx, manifestCID)
+	all, todo, err := m.remoteManifestWork(ctx, manifestCID)
 	if err != nil {
 		return err
 	}
 
-	var incoming manifest
-	if err := json.Unmarshal(data, &incoming); err != nil {
-		return fmt.Errorf("invalid manifest: %w", err)
-	}
-
 	downloaded := 0
 	skipped := 0
-	failed := 0
-	for _, entry := range incoming.Files {
+	var missing []manifestEntry
+	for _, entry := range todo {
 		if entry.Path == "" || entry.CID == "" {
 			continue
 		}
 		applied, err := m.downloadEntry(ctx, entry)
 		if err != nil {
-			failed++
+			missing = append(missing, entry)
 			log.Printf("IPFS mirror download failed for %s: %v", entry.Path, err)
 			continue
 		}
@@ -871,8 +886,73 @@ func (m *Mirror) processManifest(ctx context.Context, manifestCID string) error 
 		}
 	}
 
+	failed := len(missing)
+	m.rememberIngest(manifestCID, all, missing)
 	log.Printf("IPFS mirror synced manifest: %s (downloaded=%d skipped=%d failed=%d)", manifestCID, downloaded, skipped, failed)
+	if failed > 0 {
+		return fmt.Errorf("incomplete ingest %s: failed=%d", manifestCID, failed)
+	}
 	return nil
+}
+
+func (m *Mirror) remoteManifestWork(ctx context.Context, manifestCID string) (all, todo []manifestEntry, err error) {
+	m.mu.Lock()
+	if st, ok := m.ingestByCID[manifestCID]; ok && len(st.files) > 0 {
+		all = append([]manifestEntry(nil), st.files...)
+		if len(st.missing) > 0 {
+			todo = append([]manifestEntry(nil), st.missing...)
+		} else {
+			todo = append([]manifestEntry(nil), st.files...)
+		}
+		m.mu.Unlock()
+		return all, todo, nil
+	}
+	m.mu.Unlock()
+
+	data, err := m.cat(ctx, manifestCID)
+	if err != nil {
+		return nil, nil, err
+	}
+	var incoming manifest
+	if err := json.Unmarshal(data, &incoming); err != nil {
+		return nil, nil, fmt.Errorf("invalid manifest: %w", err)
+	}
+	return incoming.Files, incoming.Files, nil
+}
+
+func (m *Mirror) rememberIngest(manifestCID string, files, missing []manifestEntry) {
+	if m == nil || manifestCID == "" {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.ingestByCID == nil {
+		m.ingestByCID = make(map[string]*remoteIngest)
+	}
+	m.ingestByCID[manifestCID] = &remoteIngest{
+		complete: len(missing) == 0,
+		missing:  append([]manifestEntry(nil), missing...),
+		files:    append([]manifestEntry(nil), files...),
+	}
+	if len(m.ingestByCID) <= maxRemoteIngest {
+		return
+	}
+	for cid, st := range m.ingestByCID {
+		if st.complete && cid != manifestCID {
+			delete(m.ingestByCID, cid)
+			if len(m.ingestByCID) <= maxRemoteIngest {
+				return
+			}
+		}
+	}
+	for cid := range m.ingestByCID {
+		if cid != manifestCID {
+			delete(m.ingestByCID, cid)
+			if len(m.ingestByCID) <= maxRemoteIngest {
+				return
+			}
+		}
+	}
 }
 
 func (m *Mirror) downloadEntry(ctx context.Context, entry manifestEntry) (bool, error) {

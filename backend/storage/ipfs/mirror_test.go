@@ -482,6 +482,161 @@ func TestManifestSnapshotStableAcrossWallClock(t *testing.T) {
 	}
 }
 
+func TestProcessManifestRetriesMissingAfterIncomplete(t *testing.T) {
+	uploads := t.TempDir()
+	storage := t.TempDir()
+	client := &Client{
+		apiURL:     "http://127.0.0.1:9",
+		client:     &http.Client{Timeout: 200 * time.Millisecond},
+		storageDir: storage,
+	}
+	ctx := context.Background()
+	payload := []byte("nat-wish-bytes")
+	fileCID, err := client.AddBytes(ctx, "blob", payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	man := manifest{
+		Version:   1,
+		Origin:    "12D3nat",
+		CreatedAt: 100,
+		Files: []manifestEntry{{
+			Path:    testHash,
+			CID:     fileCID,
+			Size:    int64(len(payload)),
+			ModTime: 100,
+		}},
+	}
+	manBytes, err := json.Marshal(man)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manCID, err := client.AddBytes(ctx, "man", manBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m := &Mirror{
+		cfg:          MirrorConfig{UploadsDir: uploads},
+		client:       &http.Client{Timeout: 2 * time.Second},
+		knownFiles:   make(map[string]fileState),
+		deletedFiles: make(map[string]bool),
+		ingestByCID:  make(map[string]*remoteIngest),
+		ipfsClient:   client,
+	}
+
+	filePath := filepath.Join(storage, fileCID)
+	hidden := filePath + ".hidden"
+	if err := os.Rename(filePath, hidden); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := m.processManifest(ctx, manCID); err == nil {
+		t.Fatal("first pass must be incomplete when the file Cat fails")
+	}
+	if m.remoteIngestComplete(manCID) {
+		t.Fatal("failed download must not mark the CID complete")
+	}
+	m.mu.Lock()
+	st := m.ingestByCID[manCID]
+	m.mu.Unlock()
+	if st == nil || len(st.missing) != 1 || st.missing[0].CID != fileCID {
+		t.Fatalf("missing=%+v", st)
+	}
+
+	if err := m.processManifest(ctx, manCID); err == nil {
+		t.Fatal("retry without the object must stay incomplete")
+	}
+
+	if err := os.Rename(hidden, filePath); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.processManifest(ctx, manCID); err != nil {
+		t.Fatalf("second heartbeat: %v", err)
+	}
+	if !m.remoteIngestComplete(manCID) {
+		t.Fatal("successful retry must mark the CID complete")
+	}
+	target, ok := resolveMirrorWriteTarget(uploads, testHash)
+	if !ok {
+		t.Fatal("write target")
+	}
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(payload) {
+		t.Fatalf("downloaded %q", got)
+	}
+}
+
+func TestIngestRemoteManifestSkipsCompleteCID(t *testing.T) {
+	uploads := t.TempDir()
+	storage := t.TempDir()
+	client := &Client{
+		apiURL:     "http://127.0.0.1:9",
+		client:     &http.Client{Timeout: 200 * time.Millisecond},
+		storageDir: storage,
+	}
+	ctx := context.Background()
+	payload := []byte("already-have")
+	fileCID, err := client.AddBytes(ctx, "blob", payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	man := manifest{
+		Version:   1,
+		Origin:    "12D3nat",
+		CreatedAt: 100,
+		Files: []manifestEntry{{
+			Path:    testHash,
+			CID:     fileCID,
+			Size:    int64(len(payload)),
+			ModTime: 100,
+		}},
+	}
+	manBytes, err := json.Marshal(man)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manCID, err := client.AddBytes(ctx, "man", manBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m := &Mirror{
+		cfg:          MirrorConfig{UploadsDir: uploads},
+		client:       &http.Client{Timeout: 2 * time.Second},
+		knownFiles:   make(map[string]fileState),
+		deletedFiles: make(map[string]bool),
+		ingestByCID:  make(map[string]*remoteIngest),
+		ipfsClient:   client,
+	}
+	m.ingestRemoteManifest(ctx, manCID)
+	if !m.remoteIngestComplete(manCID) {
+		t.Fatal("first successful ingest must complete")
+	}
+	if m.lastSeenRemote != manCID {
+		t.Fatalf("lastSeenRemote=%q", m.lastSeenRemote)
+	}
+
+	target, ok := resolveMirrorWriteTarget(uploads, testHash)
+	if !ok {
+		t.Fatal("write target")
+	}
+	if err := os.Remove(target); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(storage, fileCID)); err != nil {
+		t.Fatal(err)
+	}
+
+	m.ingestRemoteManifest(ctx, manCID)
+	if _, err := os.Stat(target); err == nil {
+		t.Fatal("complete CID must not be fetched again")
+	}
+}
+
 func TestManifestSnapshotChangesWithInventory(t *testing.T) {
 	m := &Mirror{
 		cfg:    MirrorConfig{ManifestVersion: 1},
