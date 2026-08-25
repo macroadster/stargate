@@ -2,6 +2,7 @@ package ipfs
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -442,4 +443,71 @@ func keysOf(m map[string]fileState) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+func TestManifestSnapshotStableAcrossWallClock(t *testing.T) {
+	m := &Mirror{
+		cfg:    MirrorConfig{ManifestVersion: 1},
+		peerID: "12D3KooWtest",
+		knownFiles: map[string]fileState{
+			"bbb": {CID: "bafybbb", Size: 20, ModTime: 200},
+			"aaa": {CID: "bafyaaa", Size: 10, ModTime: 100},
+		},
+	}
+
+	first := m.manifestSnapshot()
+	time.Sleep(15 * time.Millisecond)
+	second := m.manifestSnapshot()
+
+	if first.CreatedAt != 200 {
+		t.Fatalf("CreatedAt=%d want newest file mtime 200", first.CreatedAt)
+	}
+	if first.CreatedAt != second.CreatedAt {
+		t.Fatalf("CreatedAt rotated %d -> %d", first.CreatedAt, second.CreatedAt)
+	}
+	if len(first.Files) != 2 || first.Files[0].Path != "aaa" || first.Files[1].Path != "bbb" {
+		t.Fatalf("files not sorted by path: %+v", first.Files)
+	}
+
+	a, err := json.Marshal(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := json.Marshal(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(a) != string(b) {
+		t.Fatalf("snapshot not content-addressed:\n%s\n%s", a, b)
+	}
+}
+
+func TestManifestSnapshotChangesWithInventory(t *testing.T) {
+	m := &Mirror{
+		cfg:    MirrorConfig{ManifestVersion: 1},
+		peerID: "12D3KooWtest",
+		knownFiles: map[string]fileState{
+			"aaa": {CID: "bafyaaa", Size: 10, ModTime: 100},
+		},
+	}
+	before, err := json.Marshal(m.manifestSnapshot())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m.mu.Lock()
+	m.knownFiles["aaa"] = fileState{CID: "bafyaaa-new", Size: 11, ModTime: 150}
+	m.mu.Unlock()
+
+	after, err := json.Marshal(m.manifestSnapshot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) == string(after) {
+		t.Fatal("snapshot ignored inventory change")
+	}
+	got := m.manifestSnapshot()
+	if got.CreatedAt != 150 {
+		t.Fatalf("CreatedAt=%d want 150 after mtime bump", got.CreatedAt)
+	}
 }

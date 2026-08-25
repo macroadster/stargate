@@ -454,6 +454,19 @@ func (m *Mirror) publishLoop(ctx context.Context) {
 				continue
 			}
 
+			// Unchanged inventory: re-announce the existing CID so NAT/relay
+			// peers can catch up. Do not remint — CreatedAt used to be
+			// time.Now(), which minted a unique object every 30s.
+			if !changed && m.lastPublished != "" {
+				if err := m.announceManifest(ctx, m.lastPublished); err != nil {
+					log.Printf("IPFS mirror announce failed: %v", err)
+					continue
+				}
+				m.lastPublishAt = time.Now()
+				log.Printf("IPFS mirror announced manifest: %s (changed=false files=%d)", m.lastPublished, m.knownFileCount())
+				continue
+			}
+
 			manifestCID, err := m.publishManifest(ctx)
 			if err != nil {
 				log.Printf("IPFS mirror publish failed: %v", err)
@@ -671,31 +684,48 @@ func (m *Mirror) publishManifest(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if manifestCID == "" || manifestCID == m.lastPublished {
-		return manifestCID, nil
+	if manifestCID == "" {
+		return "", nil
 	}
+	if err := m.announceManifest(ctx, manifestCID); err != nil {
+		return "", err
+	}
+	return manifestCID, nil
+}
 
-	msg := announcement{
+// announceManifest publishes a small pubsub pointer at ManifestCID.
+// Timestamp lives here (not in the IPFS object) so heartbeats stay cheap.
+func (m *Mirror) announceManifest(ctx context.Context, manifestCID string) error {
+	if manifestCID == "" {
+		return nil
+	}
+	payload, err := json.Marshal(announcement{
 		Type:        m.cfg.AnnouncementLabel,
 		ManifestCID: manifestCID,
 		Origin:      m.peerID,
 		Timestamp:   time.Now().Unix(),
-	}
-	payload, err := json.Marshal(msg)
+	})
 	if err != nil {
-		return "", err
+		return err
 	}
-
-	if err := m.pubsubPublish(ctx, payload); err != nil {
-		return "", err
-	}
-
-	return manifestCID, nil
+	return m.pubsubPublish(ctx, payload)
 }
 
 func (m *Mirror) createManifest(ctx context.Context) (string, error) {
+	payload, err := json.Marshal(m.manifestSnapshot())
+	if err != nil {
+		return "", err
+	}
+	return m.addBytes(ctx, m.cfg.ManifestFileName, payload)
+}
+
+// manifestSnapshot is content-addressed: same inventory ⇒ same bytes ⇒ same CID.
+// CreatedAt is the newest file mtime, not wall-clock, so periodic heartbeats
+// do not mint a new object.
+func (m *Mirror) manifestSnapshot() manifest {
 	m.mu.Lock()
 	entries := make([]manifestEntry, 0, len(m.knownFiles))
+	var createdAt int64
 	for path, state := range m.knownFiles {
 		entries = append(entries, manifestEntry{
 			Path:    path,
@@ -703,24 +733,24 @@ func (m *Mirror) createManifest(ctx context.Context) (string, error) {
 			Size:    state.Size,
 			ModTime: state.ModTime,
 		})
+		if state.ModTime > createdAt {
+			createdAt = state.ModTime
+		}
 	}
+	peerID := m.peerID
+	version := m.cfg.ManifestVersion
 	m.mu.Unlock()
 
 	sort.Slice(entries, func(i, j int) bool {
 		return entries[i].Path < entries[j].Path
 	})
 
-	payload, err := json.Marshal(manifest{
-		Version:   m.cfg.ManifestVersion,
-		Origin:    m.peerID,
-		CreatedAt: time.Now().Unix(),
+	return manifest{
+		Version:   version,
+		Origin:    peerID,
+		CreatedAt: createdAt,
 		Files:     entries,
-	})
-	if err != nil {
-		return "", err
 	}
-
-	return m.addBytes(ctx, m.cfg.ManifestFileName, payload)
 }
 
 func (m *Mirror) subscribeOnce(ctx context.Context) error {
