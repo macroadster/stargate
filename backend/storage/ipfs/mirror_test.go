@@ -437,6 +437,39 @@ func TestMergeMirrorStatus(t *testing.T) {
 	}
 }
 
+func TestLogInboundRecordsWishStatus(t *testing.T) {
+	m := &Mirror{
+		cfg: MirrorConfig{
+			Enabled:  true,
+			WishOnly: true,
+			Topic:    DefaultWishTopic,
+		},
+	}
+	raw := `{"type":"stargate-wishes","manifest_cid":"bafkreihgiixc474642ixklagve7xmua6ipsy5hqsrjppgjkxi6xlgegpbi","origin":"12D3KooWBMrUnrLhcy6BLqAKv6aEvgVrP8qXvofVV4roQsDbrwyp","timestamp":1787782841}`
+	m.logInbound(PubsubInbound{
+		Data:         []byte(raw),
+		ReceivedFrom: "12D3KooWneighbor",
+		Publisher:    "12D3KooWBMrUnrLhcy6BLqAKv6aEvgVrP8qXvofVV4roQsDbrwyp",
+	}, raw, "bafkreihgiixc474642ixklagve7xmua6ipsy5hqsrjppgjkxi6xlgegpbi")
+
+	st := m.Status()
+	if st.WishLastInboundFrom != "12D3KooWneighbor" {
+		t.Fatalf("from=%q", st.WishLastInboundFrom)
+	}
+	if st.WishLastInboundPub != "12D3KooWBMrUnrLhcy6BLqAKv6aEvgVrP8qXvofVV4roQsDbrwyp" {
+		t.Fatalf("publisher=%q", st.WishLastInboundPub)
+	}
+	if st.WishLastInboundCID != "bafkreihgiixc474642ixklagve7xmua6ipsy5hqsrjppgjkxi6xlgegpbi" {
+		t.Fatalf("cid=%q", st.WishLastInboundCID)
+	}
+	if st.WishLastInboundOrigin != "12D3KooWBMrUnrLhcy6BLqAKv6aEvgVrP8qXvofVV4roQsDbrwyp" {
+		t.Fatalf("origin=%q", st.WishLastInboundOrigin)
+	}
+	if st.WishLastInboundAt == 0 {
+		t.Fatal("expected inbound timestamp")
+	}
+}
+
 func keysOf(m map[string]fileState) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {

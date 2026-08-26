@@ -471,8 +471,31 @@ func (n *EmbeddedNode) PubsubPublish(ctx context.Context, topicName string, data
 	return t.Publish(ctx, data)
 }
 
+// PubsubInbound is one gossipsub message plus the mesh neighbor and publisher.
+type PubsubInbound struct {
+	Data         []byte
+	ReceivedFrom string
+	Publisher    string
+}
+
 // PubsubSubscribe subscribes to a topic and returns a channel of messages
 func (n *EmbeddedNode) PubsubSubscribe(ctx context.Context, topicName string) (<-chan []byte, error) {
+	ch, err := n.PubsubSubscribeDetailed(ctx, topicName)
+	if err != nil {
+		return nil, err
+	}
+	out := make(chan []byte, 100)
+	go func() {
+		defer close(out)
+		for msg := range ch {
+			out <- msg.Data
+		}
+	}()
+	return out, nil
+}
+
+// PubsubSubscribeDetailed is PubsubSubscribe plus received_from / publisher.
+func (n *EmbeddedNode) PubsubSubscribeDetailed(ctx context.Context, topicName string) (<-chan PubsubInbound, error) {
 	t, err := n.getTopic(topicName)
 	if err != nil {
 		return nil, err
@@ -483,7 +506,7 @@ func (n *EmbeddedNode) PubsubSubscribe(ctx context.Context, topicName string) (<
 		return nil, err
 	}
 
-	out := make(chan []byte, 100)
+	out := make(chan PubsubInbound, 100)
 	go func() {
 		defer sub.Cancel()
 		for {
@@ -499,11 +522,55 @@ func (n *EmbeddedNode) PubsubSubscribe(ctx context.Context, topicName string) (<
 			if msg.ReceivedFrom == n.host.ID() {
 				continue
 			}
-			out <- msg.Data
+			in := PubsubInbound{
+				Data:         msg.Data,
+				ReceivedFrom: msg.ReceivedFrom.String(),
+				Publisher:    msg.GetFrom().String(),
+			}
+			select {
+			case out <- in:
+			case <-n.ctx.Done():
+				close(out)
+				return
+			}
 		}
 	}()
 
 	return out, nil
+}
+
+// TopicPeers returns gossipsub mesh peers for an already-joined topic.
+func (n *EmbeddedNode) TopicPeers(topicName string) []string {
+	if n == nil {
+		return nil
+	}
+	n.topicsMu.RLock()
+	t := n.topics[strings.TrimSpace(topicName)]
+	n.topicsMu.RUnlock()
+	if t == nil {
+		return nil
+	}
+	ids := t.ListPeers()
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, id.String())
+	}
+	sort.Strings(out)
+	return out
+}
+
+// SwarmPeers returns currently connected libp2p peers.
+func (n *EmbeddedNode) SwarmPeers() []string {
+	if n == nil || n.host == nil {
+		return nil
+	}
+	ids := n.host.Network().Peers()
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, id.String())
+	}
+	sort.Strings(out)
+	return out
 }
 
 func (n *EmbeddedNode) getTopic(name string) (*pubsub.Topic, error) {

@@ -420,6 +420,44 @@ func (c *Client) PubsubPublish(ctx context.Context, topic string, message []byte
 	return nil
 }
 
+// TopicPeers returns gossipsub mesh peers for topic (embedded node only).
+func (c *Client) TopicPeers(topic string) []string {
+	if c == nil || c.embedded == nil {
+		return nil
+	}
+	return c.embedded.TopicPeers(topic)
+}
+
+// SwarmPeers returns connected libp2p peers (embedded node only).
+func (c *Client) SwarmPeers() []string {
+	if c == nil || c.embedded == nil {
+		return nil
+	}
+	return c.embedded.SwarmPeers()
+}
+
+// PubsubSubscribeDetailed returns inbound messages with received_from / publisher.
+func (c *Client) PubsubSubscribeDetailed(ctx context.Context, topic string) (<-chan PubsubInbound, error) {
+	if c == nil {
+		return nil, fmt.Errorf("IPFS client is disabled")
+	}
+	if c.embedded != nil {
+		return c.embedded.PubsubSubscribeDetailed(ctx, topic)
+	}
+	plain, err := c.PubsubSubscribe(ctx, topic)
+	if err != nil {
+		return nil, err
+	}
+	out := make(chan PubsubInbound, 100)
+	go func() {
+		defer close(out)
+		for data := range plain {
+			out <- PubsubInbound{Data: data}
+		}
+	}()
+	return out, nil
+}
+
 // PubsubSubscribe subscribes to a topic and returns a channel of message data.
 // It handles both embedded node and external HTTP API streaming.
 func (c *Client) PubsubSubscribe(ctx context.Context, topic string) (<-chan []byte, error) {
