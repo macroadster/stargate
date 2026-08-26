@@ -124,15 +124,12 @@ type ingestUpdateAnnouncement struct {
 
 // IngestDownloadedFile is called by the IPFS mirror's OnFileDownloaded callback.
 //
-// IPFS is public and untrusted. This path MUST NOT write SQLite/Postgres rows
-// (ingestions, proposals, contracts, tasks). The mirror already places the file
-// under UPLOADS_DIR; we only ensure content-addressed layout and log stage.
-// SQL apply happens exclusively after on-chain confirmation (block monitor →
-// ReconcileStego → UpsertContractFromStegoPayload).
+// Always stages a content-addressed copy under UPLOADS_DIR. Untrusted IPFS
+// metadata never sets funding/approved/confirmed. Pending human wishes
+// (starlight-wish-v1 or tracked plain text in the image alpha) are applied
+// as status=pending + replicated_wish=true from the image payload only.
+// Product v2 / YAML manifests stay on disk until the block monitor confirms.
 func IngestDownloadedFile(ctx context.Context, filePath string, cid string, ingest *services.IngestionService, store Store) {
-	_ = ctx
-	_ = ingest
-	_ = store
 	if !isImageFile(filePath) {
 		return
 	}
@@ -159,12 +156,13 @@ func IngestDownloadedFile(ctx context.Context, filePath string, cid string, inge
 			return
 		}
 	}
-	log.Printf("mirror stage: IPFS file ready on disk hash=%s cid=%s path=%s (no SQL until on-chain confirm)", stegoHash, cid, dest)
+	log.Printf("mirror stage: IPFS file ready on disk hash=%s cid=%s path=%s", stegoHash, cid, dest)
+	ingestPendingWishFromImage(ctx, blob, cid, ingest, store)
 }
 
-// StartIPFSIngestionSync subscribes to IPFS announcements for availability only.
-// SQL state is not applied from IPFS; peers stage images on disk and wait for
-// the block monitor to confirm funding / OP_RETURN before ReconcileStego.
+// StartIPFSIngestionSync subscribes to IPFS announcements, stages files, and
+// applies pending human wishes from image payloads. Funding / approved /
+// confirmed still come only from the block monitor after OP_RETURN.
 func StartIPFSIngestionSync(ctx context.Context, ingest *services.IngestionService, store Store, reconcileFn IngestReconcileFunc) error {
 	if ingest == nil {
 		return fmt.Errorf("ipfs ingestion sync requires ingestion service")
@@ -1004,9 +1002,8 @@ func ingestIDFromPath(filePath string) string {
 // ingestPlainStegoWish creates a pending ingestion for mirrored wish images whose
 // alpha-channel payload is plain text rather than a stego YAML manifest.
 
-// backfillMirroredUploadsIngestion ensures content-addressed copies exist under
-// UPLOADS_DIR. It does not create SQL ingestion/proposal/contract rows — IPFS
-// and local disk blobs stay staged until on-chain confirmation.
+// backfillMirroredUploadsIngestion restages content-addressed copies and
+// applies pending human wishes from already-mirrored images.
 func backfillMirroredUploadsIngestion(ctx context.Context, ingest *services.IngestionService, store Store) {
 	uploadsDir := strings.TrimSpace(os.Getenv("UPLOADS_DIR"))
 	if uploadsDir == "" {
@@ -1046,7 +1043,7 @@ func backfillMirroredUploadsIngestion(ctx context.Context, ingest *services.Inge
 		return nil
 	})
 	if staged > 0 {
-		log.Printf("ipfs stage backfill: ensured %d upload files content-addressed under %s (no SQL)", staged, uploadsDir)
+		log.Printf("ipfs stage backfill: processed %d upload files under %s", staged, uploadsDir)
 	}
 }
 
