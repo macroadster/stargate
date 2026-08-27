@@ -1,9 +1,12 @@
 package bitcoin
 
 import (
+	"bytes"
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -125,6 +128,210 @@ func TestMergeTipLagIntoStatus_MarksUnsynced(t *testing.T) {
 	}
 	if out["external_tip"] != int64(20) {
 		t.Fatalf("external_tip=%v", out["external_tip"])
+	}
+}
+
+func TestShouldAdoptExplorerTip(t *testing.T) {
+	ok := TipLagStatus{
+		HashMismatch:    true,
+		CompareHeight:   149952,
+		LocalTipHash:    "0000000000ed4f344ba8335a5e390fe2ae58e8165c7829ba9456e1a983084198",
+		ExternalTipHash: "0000000000baebbdeab043d4b98615caf906c0fba8948e0ff1bf20136ba50de8",
+	}
+	if !shouldAdoptExplorerTip(ok) {
+		t.Fatal("expected adopt on same-height hash mismatch")
+	}
+	same := ok
+	same.LocalTipHash = same.ExternalTipHash
+	same.HashMismatch = false
+	if shouldAdoptExplorerTip(same) {
+		t.Fatal("matching hashes must not adopt")
+	}
+	short := ok
+	short.ExternalTipHash = "deadbeef"
+	if shouldAdoptExplorerTip(short) {
+		t.Fatal("short hash must not adopt")
+	}
+}
+
+type mockReorg struct {
+	tips                 map[string]bool
+	active               map[int64]string
+	invalidateN          int
+	reconsiderN          int
+	submitN              int
+	stickyInvalidate     bool
+	explorerOnInvalidate string
+	explorerOnSubmit     string
+	compareHeight        int64
+	network              string
+	hasTipErr            error
+	invalidateErr        error
+	reconsiderErr        error
+	submitErr            error
+}
+
+func (m *mockReorg) Network() string {
+	if m.network != "" {
+		return m.network
+	}
+	return "testnet4"
+}
+func (m *mockReorg) HasChainTip(_ context.Context, hash string) (bool, error) {
+	if m.hasTipErr != nil {
+		return false, m.hasTipErr
+	}
+	return m.tips[strings.ToLower(hash)], nil
+}
+func (m *mockReorg) InvalidateBlock(_ context.Context, _ string) error {
+	m.invalidateN++
+	if m.invalidateErr != nil {
+		return m.invalidateErr
+	}
+	if m.stickyInvalidate {
+		return nil
+	}
+	if m.explorerOnInvalidate != "" && m.compareHeight != 0 && m.active != nil {
+		m.active[m.compareHeight] = m.explorerOnInvalidate
+	}
+	return nil
+}
+func (m *mockReorg) ReconsiderBlock(_ context.Context, _ string) error {
+	m.reconsiderN++
+	return m.reconsiderErr
+}
+func (m *mockReorg) SubmitBlockHex(_ context.Context, _ string) error {
+	m.submitN++
+	if m.submitErr != nil {
+		return m.submitErr
+	}
+	if m.explorerOnSubmit != "" && m.compareHeight != 0 && m.active != nil {
+		m.active[m.compareHeight] = m.explorerOnSubmit
+	}
+	return nil
+}
+func (m *mockReorg) GetBlockHash(_ context.Context, height int64) (string, error) {
+	if m.active == nil {
+		return "", context.Canceled
+	}
+	return m.active[height], nil
+}
+
+func explorerAdoptServer(hashes map[int64]string, rawByHash map[string][]byte) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/block-height/") {
+			h, _ := strconv.ParseInt(strings.TrimPrefix(r.URL.Path, "/block-height/"), 10, 64)
+			if hash, ok := hashes[h]; ok {
+				_, _ = w.Write([]byte(hash))
+				return
+			}
+			http.NotFound(w, r)
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/block/") && strings.HasSuffix(r.URL.Path, "/raw") {
+			h := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/block/"), "/raw")
+			if raw, ok := rawByHash[h]; ok {
+				_, _ = w.Write(raw)
+				return
+			}
+			http.NotFound(w, r)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+}
+
+func TestTryAdoptExplorerTip_InvalidatesWhenSubmitDoesNotSwitch(t *testing.T) {
+	resetTipLagStateForTest()
+	t.Setenv("CHAIN_ADOPT_EXPLORER_COOLDOWN", "1ms")
+	srv := explorerAdoptServer(nil, nil)
+	defer srv.Close()
+	testExplorerBaseURL = srv.URL
+	t.Cleanup(func() { testExplorerBaseURL = "" })
+	local := "0000000000ed4f344ba8335a5e390fe2ae58e8165c7829ba9456e1a983084198"
+	expl := "0000000000baebbdeab043d4b98615caf906c0fba8948e0ff1bf20136ba50de8"
+	m := &mockReorg{
+		active:               map[int64]string{149952: local},
+		explorerOnInvalidate: expl,
+		compareHeight:        149952,
+	}
+	st := TipLagStatus{
+		HashMismatch:    true,
+		CompareHeight:   149952,
+		LocalTipHash:    local,
+		ExternalTipHash: expl,
+	}
+	if !tryAdoptExplorerTip(context.Background(), m, st) {
+		t.Fatal("expected adopt via invalidate")
+	}
+	if m.invalidateN != 1 || m.reconsiderN != 1 {
+		t.Fatalf("invalidateN=%d reconsiderN=%d", m.invalidateN, m.reconsiderN)
+	}
+}
+
+func TestTryAdoptExplorerTip_SubmitSwitchesWithoutInvalidate(t *testing.T) {
+	resetTipLagStateForTest()
+	t.Setenv("CHAIN_ADOPT_EXPLORER_COOLDOWN", "1ms")
+	local := "0000000000435c6477ee9475f38ee8dcd0dfb949c943299af5b4cd8bbb697d09"
+	expl := "000000000019ff1821f8239131e294384cb7b0ffd4f3c391fd96930c14bc7b31"
+	raw := bytes.Repeat([]byte{0xab}, 80)
+	srv := explorerAdoptServer(map[int64]string{149955: expl}, map[string][]byte{expl: raw})
+	defer srv.Close()
+	testExplorerBaseURL = srv.URL
+	t.Cleanup(func() { testExplorerBaseURL = "" })
+
+	m := &mockReorg{
+		active:           map[int64]string{149955: local},
+		explorerOnSubmit: expl,
+		compareHeight:    149955,
+	}
+	st := TipLagStatus{
+		HashMismatch:    true,
+		CompareHeight:   149955,
+		ExternalTip:     149955,
+		LocalTipHash:    local,
+		ExternalTipHash: expl,
+	}
+	if !tryAdoptExplorerTip(context.Background(), m, st) {
+		t.Fatal("expected adopt via submitblock")
+	}
+	if m.submitN != 1 {
+		t.Fatalf("submitN=%d", m.submitN)
+	}
+	if m.invalidateN != 0 {
+		t.Fatalf("invalidate should not run when submit switches, n=%d", m.invalidateN)
+	}
+}
+
+func TestTryAdoptExplorerTip_StickyInvalidateStillSubmits(t *testing.T) {
+	resetTipLagStateForTest()
+	t.Setenv("CHAIN_ADOPT_EXPLORER_COOLDOWN", "1ms")
+	local := "0000000000435c6477ee9475f38ee8dcd0dfb949c943299af5b4cd8bbb697d09"
+	expl := "000000000019ff1821f8239131e294384cb7b0ffd4f3c391fd96930c14bc7b31"
+	raw := bytes.Repeat([]byte{0xcd}, 80)
+	srv := explorerAdoptServer(map[int64]string{149955: expl}, map[string][]byte{expl: raw})
+	defer srv.Close()
+	testExplorerBaseURL = srv.URL
+	t.Cleanup(func() { testExplorerBaseURL = "" })
+
+	m := &mockReorg{
+		active:           map[int64]string{149955: local},
+		stickyInvalidate: true,
+		explorerOnSubmit: expl,
+		compareHeight:    149955,
+	}
+	st := TipLagStatus{
+		HashMismatch:    true,
+		CompareHeight:   149955,
+		ExternalTip:     149955,
+		LocalTipHash:    local,
+		ExternalTipHash: expl,
+	}
+	if !tryAdoptExplorerTip(context.Background(), m, st) {
+		t.Fatal("expected adopt via submit after sticky invalidate")
+	}
+	if m.submitN < 1 {
+		t.Fatalf("submitN=%d", m.submitN)
 	}
 }
 

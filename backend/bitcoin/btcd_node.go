@@ -617,7 +617,13 @@ func logSyncOnce(ctx context.Context, rt *ChainRuntime) {
 	if lag.HashMismatch {
 		log.Printf("btcd sync: TIP HASH MISMATCH at height %d local=%s explorer=%s — settlement blocked (possible eclipse / minority fork)",
 			lag.CompareHeight, lag.LocalTipHash, lag.ExternalTipHash)
-		// Do not restart btcd: a restart does not fix an eclipse.
+		// Restarting btcd does not fix an eclipse. If the explorer hash is
+		// already a known valid-fork, invalidate the local tip so we reorg.
+		// A restart can leave that block KnownInvalid-but-active; adopt
+		// reconsider+invalidates in that case.
+		if reorg, ok := backend.(chainReorganiser); ok {
+			_ = tryAdoptExplorerTip(cctx, reorg, lag)
+		}
 		return
 	}
 	if lag.Lagging {

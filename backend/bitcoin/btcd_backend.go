@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/btcsuite/btcd/btcjson"
+	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/rpcclient"
@@ -511,4 +512,107 @@ func (b *BtcdBackend) BroadcastTx(rawHex string) (string, error) {
 		return "", fmt.Errorf("sendrawtransaction: %w", err)
 	}
 	return hash.String(), nil
+}
+
+// HasChainTip reports whether hash is a known chain tip (active, valid-fork, …).
+func (b *BtcdBackend) HasChainTip(ctx context.Context, hash string) (bool, error) {
+	hash = strings.ToLower(strings.TrimSpace(hash))
+	if hash == "" {
+		return false, nil
+	}
+	c, err := b.rpc()
+	if err != nil {
+		return false, err
+	}
+	type res struct {
+		ok  bool
+		err error
+	}
+	ch := make(chan res, 1)
+	go func() {
+		tips, err := c.GetChainTips()
+		if err != nil {
+			ch <- res{false, err}
+			return
+		}
+		for _, tip := range tips {
+			if tip != nil && strings.EqualFold(tip.Hash, hash) {
+				ch <- res{true, nil}
+				return
+			}
+		}
+		ch <- res{false, nil}
+	}()
+	select {
+	case <-ctx.Done():
+		return false, ctx.Err()
+	case r := <-ch:
+		return r.ok, r.err
+	}
+}
+
+// InvalidateBlock marks hash and its descendants invalid and reorgs if needed.
+func (b *BtcdBackend) InvalidateBlock(ctx context.Context, hash string) error {
+	return b.withBlockHash(ctx, hash, func(c *rpcclient.Client, h *chainhash.Hash) error {
+		return c.InvalidateBlock(h)
+	})
+}
+
+// ReconsiderBlock clears an invalidateblock mark so the next invalidate can run
+// (btcd no-ops invalidate on a node that is already KnownInvalid).
+func (b *BtcdBackend) ReconsiderBlock(ctx context.Context, hash string) error {
+	return b.withBlockHash(ctx, hash, func(c *rpcclient.Client, h *chainhash.Hash) error {
+		return c.ReconsiderBlock(h)
+	})
+}
+
+// SubmitBlockHex feeds a raw block (hex) to btcd. Extending a known side
+// fork this way is how we leave a same-height minority when invalidateblock
+// is a no-op (sticky Valid+Invalid index flags).
+func (b *BtcdBackend) SubmitBlockHex(ctx context.Context, rawHex string) error {
+	raw, err := hex.DecodeString(strings.TrimSpace(rawHex))
+	if err != nil {
+		return fmt.Errorf("decode block hex: %w", err)
+	}
+	block, err := btcutil.NewBlockFromBytes(raw)
+	if err != nil {
+		return fmt.Errorf("parse block: %w", err)
+	}
+	c, err := b.rpc()
+	if err != nil {
+		return err
+	}
+	ch := make(chan error, 1)
+	go func() { ch <- c.SubmitBlock(block, nil) }()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case err := <-ch:
+		if err != nil {
+			msg := strings.ToLower(err.Error())
+			if strings.Contains(msg, "already have block") || strings.Contains(msg, "duplicate") {
+				return nil
+			}
+		}
+		return err
+	}
+}
+
+func (b *BtcdBackend) withBlockHash(ctx context.Context, hash string, fn func(*rpcclient.Client, *chainhash.Hash) error) error {
+	h, err := chainhash.NewHashFromStr(strings.TrimSpace(hash))
+	if err != nil {
+		return fmt.Errorf("block hash: %w", err)
+	}
+	c, err := b.rpc()
+	if err != nil {
+		return err
+	}
+	ch := make(chan error, 1)
+	go func() { ch <- fn(c, h) }()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case err := <-ch:
+		return err
+	}
 }
