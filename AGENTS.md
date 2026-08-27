@@ -262,7 +262,7 @@ Stargate runs a **local btcd full node** by default (ADR 0006) instead of pollin
 | `CHAIN_TIP_LAG_THRESHOLD` | `3` | Blocks behind external tip before lagging |
 | `CHAIN_TIP_LAG_RESTART_AFTER` | `15m` | Sustained **height** lag before restarting managed btcd (`0`/`off` disables). Hash mismatch does not restart. |
 | `CHAIN_TIP_LAG_RESTART_COOLDOWN` | `30m` | Min time between auto-restarts |
-| `CHAIN_ADOPT_EXPLORER_TIP` | `true` | On hash mismatch, submit explorer raw blocks into btcd and `invalidateblock` the local fork root. Restart does not persist btcd's invalidate flag; submit of the next explorer block is what actually reorgs a sticky fork. |
+| `CHAIN_ADOPT_EXPLORER_TIP` | `true` | On hash mismatch **or height lag**, submit explorer raw blocks from the fork / `localTip+1`. Never invalidate an explorer hash. If submit fails with “known to be invalid”, reconsider that parent; if btcd still no-ops (sticky Valid+Invalid index flags), stop btcd, clear those flags in ffldb, and restart. |
 | `CHAIN_ADOPT_EXPLORER_COOLDOWN` | `2m` | Min time between explorer-adopt attempts |
 | `CHAIN_SETTLEMENT_CONFIRMATIONS` | network default | Blocks that must bury a tx before task proofs / `ConfirmContract`. Defaults: mainnet 6, testnet/signet 20, regtest 1 |
 | `BTCD_P2P_LISTEN` | `127.0.0.1:<net port>` | P2P listen address. Default is localhost (no public inbound). Set `0.0.0.0:<port>` only if you want inbound. |
