@@ -46,7 +46,8 @@ btcd’s server is `package main`, so “embedded” means **managed child proce
 - Chainstate disk (testnet4 multi-GB with indexes; mainnet much larger)
 - First IBD latency before tip tracking is useful
 - Must ship `btcd` binary and persist `BTCD_DATADIR` across restarts
-- Local “synced” can still lag the public network (e.g. testnet future-timestamp rejects); mitigated by external tip lag checks (`CHAIN_*` env, see AGENTS.md) and optional managed restart
+- Local “synced” can still lag the public network (e.g. testnet future-timestamp rejects); mitigated by external tip lag **and tip-hash** checks (`CHAIN_*` env, see AGENTS.md) and optional managed restart on height lag only
+- P2P defaults to localhost listen (no public inbound). Pin trusted peers with `BTCD_CONNECT` / `BTCD_ADDPEER`. Settlement waits `CHAIN_SETTLEMENT_CONFIRMATIONS` and is blocked on explorer hash mismatch so a minority fork cannot confirm contracts.
 
 ## Related
 
