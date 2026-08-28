@@ -256,9 +256,9 @@ func (n *EmbeddedBtcd) Start(ctx context.Context) error {
 	// leave Valid+Invalid set together; reconsiderblock is then a no-op and
 	// the node never connects the next block.
 	if n, err := ClearStickyInvalidFlags(cfg.DataDir, cfg.Network); err != nil {
-		log.Printf("btcd: sticky-index repair skipped: %v", err)
-	} else if n > 0 {
-		log.Printf("btcd: cleared %d sticky Valid+Invalid index flag(s) before start", n)
+		log.Printf("btcd: index repair skipped: %v", err)
+	} else {
+		log.Printf("btcd: cleared %d known-invalid index flag(s) before start", n)
 	}
 
 	bin, err := exec.LookPath(cfg.Bin)

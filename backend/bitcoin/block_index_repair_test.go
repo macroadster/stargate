@@ -54,8 +54,8 @@ func TestClearStickyInvalidFlags(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n != 2 {
-		t.Fatalf("cleared=%d want 2", n)
+	if n != 3 {
+		t.Fatalf("cleared=%d want 3", n)
 	}
 
 	db, err = database.Open("ffldb", dbPath, params.Net)
@@ -83,7 +83,7 @@ func TestClearStickyInvalidFlags(t *testing.T) {
 	if got[3] != idxStatusDataStored|idxStatusValid {
 		t.Fatalf("sticky ancestor not cleared: %02x", got[3])
 	}
-	if got[4] != idxStatusDataStored|idxStatusValidateFailed {
-		t.Fatalf("true-invalid should stay: %02x", got[4])
+	if got[4] != idxStatusDataStored {
+		t.Fatalf("invalid-only flags not cleared: %02x", got[4])
 	}
 }

@@ -28,12 +28,12 @@ const (
 )
 
 // ClearStickyInvalidFlags opens the managed btcd ffldb (btcd must be stopped)
-// and clears ValidateFailed / InvalidAncestor on any block that is also
-// marked Valid.
+// and clears ValidateFailed / InvalidAncestor on every block-index entry.
 //
-// btcd's InvalidateBlock can leave Valid+Invalid set together. ReconsiderBlock
-// then no-ops ("is valid, nothing to reconsider") and InvalidateBlock no-ops
-// ("already invalid"), so the explorer chain can never be connected again.
+// InvalidateBlock can leave Valid+Invalid set together, or Invalid alone.
+// ReconsiderBlock then no-ops and peers reject the continuation as
+// "previous block is known to be invalid". A later connect will re-validate
+// genuinely bad blocks and mark them failed again.
 func ClearStickyInvalidFlags(dataDir, network string) (int, error) {
 	dbPath, netMagic, err := btcdBlocksDB(dataDir, network)
 	if err != nil {
@@ -64,9 +64,6 @@ func ClearStickyInvalidFlags(dataDir, network string) (int, error) {
 				return nil
 			}
 			status := v[btcdBlockHeaderSize]
-			if status&idxStatusValid == 0 {
-				return nil
-			}
 			invalid := status & (idxStatusValidateFailed | idxStatusInvalidAncestor)
 			if invalid == 0 {
 				return nil
