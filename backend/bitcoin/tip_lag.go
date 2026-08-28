@@ -2,7 +2,6 @@ package bitcoin
 
 import (
 	"context"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"log"
@@ -43,8 +42,6 @@ var (
 	tipLagFirstSeen time.Time
 	// lastRestartAt prevents thrashing managed btcd restarts.
 	tipLagLastRestart time.Time
-	// lastAdoptAt prevents thrashing invalidateblock on a sticky fork.
-	tipLagLastAdopt time.Time
 )
 
 // GetTipLagStatus returns the latest tip-lag snapshot (may be zero if never checked).
@@ -70,7 +67,6 @@ func resetTipLagStateForTest() {
 	tipLagStatus = TipLagStatus{}
 	tipLagFirstSeen = time.Time{}
 	tipLagLastRestart = time.Time{}
-	tipLagLastAdopt = time.Time{}
 }
 
 // tipLagThreshold is how many blocks behind external tip counts as lagging.
@@ -205,42 +201,6 @@ func FetchExternalBlockHash(ctx context.Context, network string, height int64) (
 		}
 	}
 	return hash, nil
-}
-
-// FetchExternalRawBlockHex downloads a raw block from the explorer (binary
-// Esplora /block/{hash}/raw) and returns hex. Used to submit explorer-chain
-// blocks to local btcd so a heavier side fork can become active.
-func FetchExternalRawBlockHex(ctx context.Context, network, hash string) (string, error) {
-	hash = strings.ToLower(strings.TrimSpace(hash))
-	if len(hash) != 64 {
-		return "", fmt.Errorf("invalid block hash %q", hash)
-	}
-	base := explorerBaseURL(network)
-	if base == "" {
-		return "", fmt.Errorf("no explorer base URL for network %q", network)
-	}
-	url := base + "/block/" + hash + "/raw"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return "", err
-	}
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("external raw block HTTP %d", resp.StatusCode)
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
-	if err != nil {
-		return "", err
-	}
-	if len(body) < 80 {
-		return "", fmt.Errorf("external raw block too short (%d)", len(body))
-	}
-	return hex.EncodeToString(body), nil
 }
 
 // EvaluateTipLag compares local and external tips and updates the shared status.
@@ -466,166 +426,4 @@ func maybeRestartManagedBtcd(ctx context.Context, node *EmbeddedBtcd, st TipLagS
 	// node config we cannot easily WaitRPC without the client — next status
 	// loop will observe recovery or continued lag.
 	return true
-}
-
-// chainReorganiser is the optional RPC surface used to leave a same-height
-// minority fork when the explorer tip is already a known valid-fork.
-type chainReorganiser interface {
-	HasChainTip(ctx context.Context, hash string) (bool, error)
-	InvalidateBlock(ctx context.Context, hash string) error
-	ReconsiderBlock(ctx context.Context, hash string) error
-	SubmitBlockHex(ctx context.Context, rawHex string) error
-	GetBlockHash(ctx context.Context, height int64) (string, error)
-	Network() string
-}
-
-func tipAdoptExplorerEnabled() bool {
-	v := strings.ToLower(strings.TrimSpace(os.Getenv("CHAIN_ADOPT_EXPLORER_TIP")))
-	if v == "" {
-		return true
-	}
-	return v != "0" && v != "false" && v != "off" && v != "no"
-}
-
-func tipAdoptCooldown() time.Duration {
-	v := strings.TrimSpace(os.Getenv("CHAIN_ADOPT_EXPLORER_COOLDOWN"))
-	if v == "" {
-		return 2 * time.Minute
-	}
-	d, err := time.ParseDuration(v)
-	if err != nil || d <= 0 {
-		return 2 * time.Minute
-	}
-	return d
-}
-
-func shouldAdoptExplorerTip(st TipLagStatus) bool {
-	if !st.HashMismatch || st.CompareHeight <= 0 {
-		return false
-	}
-	if len(st.LocalTipHash) != 64 || len(st.ExternalTipHash) != 64 {
-		return false
-	}
-	return st.LocalTipHash != st.ExternalTipHash
-}
-
-// tryAdoptExplorerTip pulls the explorer chain into local btcd. Same-height
-// forks often have sticky invalidate flags (Valid+Invalid) so submitblock of
-// the next explorer block is the reliable reorg; invalidate of the fork root
-// is the fallback when heights still match.
-//
-// Returns true if the local hash at compare height now matches the explorer.
-func tryAdoptExplorerTip(ctx context.Context, reorg chainReorganiser, st TipLagStatus) bool {
-	if reorg == nil || !tipAdoptExplorerEnabled() || !shouldAdoptExplorerTip(st) {
-		return false
-	}
-
-	tipLagMu.Lock()
-	if !tipLagLastAdopt.IsZero() && time.Since(tipLagLastAdopt) < tipAdoptCooldown() {
-		tipLagMu.Unlock()
-		return false
-	}
-	tipLagMu.Unlock()
-
-	tipLagMu.Lock()
-	tipLagLastAdopt = time.Now()
-	tipLagMu.Unlock()
-
-	if n := submitExplorerBlocks(ctx, reorg, st); n > 0 && hashMatchesExplorer(ctx, reorg, st) {
-		log.Printf("chain tip adopt: submitted %d explorer block(s); local hash now matches at height %d", n, st.CompareHeight)
-		return true
-	}
-
-	localHash := st.LocalTipHash
-	if h, ok := firstDivergingLocalHash(ctx, reorg, st); ok {
-		localHash = h
-	}
-	log.Printf("chain tip adopt: submitting did not switch tip — reconsider+invalidate local %s", localHash)
-	if err := reorg.ReconsiderBlock(ctx, localHash); err != nil {
-		log.Printf("chain tip adopt: reconsiderblock: %v", err)
-	}
-	if err := reorg.InvalidateBlock(ctx, localHash); err != nil {
-		log.Printf("chain tip adopt: invalidateblock: %v", err)
-		return false
-	}
-	if hashMatchesExplorer(ctx, reorg, st) {
-		log.Printf("chain tip adopt: local tip now matches explorer at height %d", st.CompareHeight)
-		return true
-	}
-	if n := submitExplorerBlocks(ctx, reorg, st); n > 0 && hashMatchesExplorer(ctx, reorg, st) {
-		log.Printf("chain tip adopt: submitted %d explorer block(s) after invalidate; match at height %d", n, st.CompareHeight)
-		return true
-	}
-	log.Printf("chain tip adopt: still mismatched after submit+invalidate")
-	return false
-}
-
-func submitExplorerBlocks(ctx context.Context, reorg chainReorganiser, st TipLagStatus) int {
-	network := reorg.Network()
-	if network == "" {
-		network = GetCurrentNetwork()
-	}
-	first := st.CompareHeight
-	last := st.ExternalTip
-	if last < first {
-		last = first
-	}
-	// Cap so a huge explorer lead cannot turn one tick into a long download.
-	if last-first > 6 {
-		last = first + 6
-	}
-	submitted := 0
-	for h := first; h <= last; h++ {
-		hash, err := FetchExternalBlockHash(ctx, network, h)
-		if err != nil {
-			log.Printf("chain tip adopt: explorer hash at %d: %v", h, err)
-			break
-		}
-		raw, err := FetchExternalRawBlockHex(ctx, network, hash)
-		if err != nil {
-			log.Printf("chain tip adopt: explorer raw %s: %v", hash, err)
-			break
-		}
-		if err := reorg.SubmitBlockHex(ctx, raw); err != nil {
-			log.Printf("chain tip adopt: submitblock %s: %v", hash, err)
-			break
-		}
-		submitted++
-	}
-	return submitted
-}
-
-func firstDivergingLocalHash(ctx context.Context, reorg chainReorganiser, st TipLagStatus) (string, bool) {
-	network := reorg.Network()
-	if network == "" {
-		network = GetCurrentNetwork()
-	}
-	var found string
-	depth := int64(reorgWatchDepth())
-	for h := st.CompareHeight; h > 0 && h > st.CompareHeight-depth; h-- {
-		local, err := reorg.GetBlockHash(ctx, h)
-		if err != nil {
-			break
-		}
-		expl, err := FetchExternalBlockHash(ctx, network, h)
-		if err != nil {
-			break
-		}
-		if strings.EqualFold(strings.TrimSpace(local), expl) {
-			break
-		}
-		found = strings.ToLower(strings.TrimSpace(local))
-	}
-	if found == "" {
-		return "", false
-	}
-	return found, true
-}
-
-func hashMatchesExplorer(ctx context.Context, reorg chainReorganiser, st TipLagStatus) bool {
-	got, err := reorg.GetBlockHash(ctx, st.CompareHeight)
-	if err != nil {
-		return false
-	}
-	return strings.EqualFold(strings.TrimSpace(got), st.ExternalTipHash)
 }
