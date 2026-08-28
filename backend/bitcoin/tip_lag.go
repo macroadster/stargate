@@ -45,8 +45,6 @@ var (
 	tipLagLastRestart time.Time
 	// lastAdoptAt prevents thrashing invalidateblock on a sticky fork.
 	tipLagLastAdopt time.Time
-	// lastRepairAt prevents thrashing btcd stop/start for index repair.
-	tipLagLastRepair time.Time
 )
 
 // GetTipLagStatus returns the latest tip-lag snapshot (may be zero if never checked).
@@ -73,7 +71,6 @@ func resetTipLagStateForTest() {
 	tipLagFirstSeen = time.Time{}
 	tipLagLastRestart = time.Time{}
 	tipLagLastAdopt = time.Time{}
-	tipLagLastRepair = time.Time{}
 }
 
 // tipLagThreshold is how many blocks behind external tip counts as lagging.
@@ -490,45 +487,6 @@ func tipAdoptExplorerEnabled() bool {
 	return v != "0" && v != "false" && v != "off" && v != "no"
 }
 
-func tipRepairCooldown() time.Duration {
-	v := strings.TrimSpace(os.Getenv("CHAIN_REPAIR_STICKY_COOLDOWN"))
-	if v == "" {
-		return 15 * time.Minute
-	}
-	d, err := time.ParseDuration(v)
-	if err != nil || d <= 0 {
-		return 15 * time.Minute
-	}
-	return d
-}
-
-func maybeRepairStickyInvalid(ctx context.Context, rt *ChainRuntime) bool {
-	if rt == nil || rt.Node == nil || rt.Mode != BtcdModeManaged {
-		return false
-	}
-	tipLagMu.Lock()
-	if !tipLagLastRepair.IsZero() && time.Since(tipLagLastRepair) < tipRepairCooldown() {
-		tipLagMu.Unlock()
-		return false
-	}
-	tipLagLastRepair = time.Now()
-	tipLagMu.Unlock()
-
-	log.Printf("chain tip adopt: explorer parent is sticky Valid+Invalid — repairing btcd block index")
-	n, err := rt.Node.RepairStickyInvalidIndex(ctx)
-	if err != nil {
-		log.Printf("chain tip adopt: block-index repair failed: %v", err)
-		return true
-	}
-	log.Printf("chain tip adopt: cleared %d sticky invalid index flag(s); waiting for RPC", n)
-	if b, ok := rt.Backend.(*BtcdBackend); ok {
-		if err := WaitRPC(ctx, b, 2*time.Minute); err != nil {
-			log.Printf("chain tip adopt: RPC after repair: %v", err)
-		}
-	}
-	return true
-}
-
 func tipAdoptCooldown() time.Duration {
 	v := strings.TrimSpace(os.Getenv("CHAIN_ADOPT_EXPLORER_COOLDOWN"))
 	if v == "" {
@@ -542,260 +500,109 @@ func tipAdoptCooldown() time.Duration {
 }
 
 func shouldAdoptExplorerTip(st TipLagStatus) bool {
-	if !tipAdoptExplorerEnabled() {
+	if !st.HashMismatch || st.CompareHeight <= 0 {
 		return false
 	}
-	if st.HashMismatch && st.CompareHeight > 0 &&
-		len(st.LocalTipHash) == 64 && len(st.ExternalTipHash) == 64 &&
-		st.LocalTipHash != st.ExternalTipHash {
-		return true
+	if len(st.LocalTipHash) != 64 || len(st.ExternalTipHash) != 64 {
+		return false
 	}
-	// Height lag at a matching ancestor: the explorer continuation may be
-	// blocked by a sticky KnownInvalid parent. Submit/reconsider that chain.
-	return st.Lagging && st.LocalTip > 0 && st.ExternalTip > st.LocalTip
+	return st.LocalTipHash != st.ExternalTipHash
 }
 
-type adoptOutcome struct {
-	switched  bool
-	sticky    bool
-	submitted int
-}
-
-// tryAdoptExplorerTip pulls the explorer chain into local btcd.
+// tryAdoptExplorerTip pulls the explorer chain into local btcd. Same-height
+// forks often have sticky invalidate flags (Valid+Invalid) so submitblock of
+// the next explorer block is the reliable reorg; invalidate of the fork root
+// is the fallback when heights still match.
 //
-// Submit from the fork (or localTip+1 when only lagging) is the primary
-// path. Invalidate of a local-only hash is last resort, and only after we
-// have actually submitted the explorer replacement — otherwise we can mark
-// the explorer chain KnownInvalid and get stuck (btcd reconsider is a no-op
-// when Valid+Invalid flags are both set).
-func tryAdoptExplorerTip(ctx context.Context, reorg chainReorganiser, st TipLagStatus) adoptOutcome {
-	var out adoptOutcome
-	if reorg == nil || !shouldAdoptExplorerTip(st) {
-		return out
+// Returns true if the local hash at compare height now matches the explorer.
+func tryAdoptExplorerTip(ctx context.Context, reorg chainReorganiser, st TipLagStatus) bool {
+	if reorg == nil || !tipAdoptExplorerEnabled() || !shouldAdoptExplorerTip(st) {
+		return false
 	}
 
 	tipLagMu.Lock()
 	if !tipLagLastAdopt.IsZero() && time.Since(tipLagLastAdopt) < tipAdoptCooldown() {
 		tipLagMu.Unlock()
-		return out
+		return false
 	}
+	tipLagMu.Unlock()
+
+	tipLagMu.Lock()
 	tipLagLastAdopt = time.Now()
 	tipLagMu.Unlock()
 
-	n, sticky, explorerAtFork := submitExplorerBlocks(ctx, reorg, st)
-	out.submitted = n
-	out.sticky = sticky
-	if n > 0 && adoptHashOK(ctx, reorg, st) {
-		log.Printf("chain tip adopt: submitted %d explorer block(s); local now follows explorer", n)
-		out.switched = true
-		return out
+	if n := submitExplorerBlocks(ctx, reorg, st); n > 0 && hashMatchesExplorer(ctx, reorg, st) {
+		log.Printf("chain tip adopt: submitted %d explorer block(s); local hash now matches at height %d", n, st.CompareHeight)
+		return true
 	}
 
 	localHash := st.LocalTipHash
 	if h, ok := firstDivergingLocalHash(ctx, reorg, st); ok {
 		localHash = h
 	}
-	if localHash == "" || isExplorerHash(localHash, explorerAtFork, st.ExternalTipHash) {
-		if sticky {
-			log.Printf("chain tip adopt: explorer parent is sticky-invalid; need block-index repair")
-		} else {
-			log.Printf("chain tip adopt: submit did not switch tip; refusing to invalidate explorer hash")
-		}
-		return out
-	}
-	if n == 0 {
-		log.Printf("chain tip adopt: no explorer block submitted — not invalidating local %s", localHash)
-		return out
-	}
-
-	log.Printf("chain tip adopt: explorer block is in index but tip did not move — reconsider+invalidate local %s", localHash)
+	log.Printf("chain tip adopt: submitting did not switch tip — reconsider+invalidate local %s", localHash)
 	if err := reorg.ReconsiderBlock(ctx, localHash); err != nil {
 		log.Printf("chain tip adopt: reconsiderblock: %v", err)
 	}
 	if err := reorg.InvalidateBlock(ctx, localHash); err != nil {
 		log.Printf("chain tip adopt: invalidateblock: %v", err)
-		return out
-	}
-	if adoptHashOK(ctx, reorg, st) {
-		log.Printf("chain tip adopt: local tip now matches explorer")
-		out.switched = true
-		return out
-	}
-	n2, sticky2, _ := submitExplorerBlocks(ctx, reorg, st)
-	out.submitted += n2
-	out.sticky = out.sticky || sticky2
-	if n2 > 0 && adoptHashOK(ctx, reorg, st) {
-		log.Printf("chain tip adopt: submitted %d explorer block(s) after invalidate; match", n2)
-		out.switched = true
-		return out
-	}
-	log.Printf("chain tip adopt: still mismatched after submit+invalidate")
-	return out
-}
-
-func adoptHashOK(ctx context.Context, reorg chainReorganiser, st TipLagStatus) bool {
-	if st.HashMismatch && st.CompareHeight > 0 && st.ExternalTipHash != "" {
-		return hashMatchesExplorer(ctx, reorg, st)
-	}
-	// Lag-only: we connected at least the next explorer height.
-	if st.LocalTip <= 0 {
 		return false
 	}
-	h, err := reorg.GetBlockHash(ctx, st.LocalTip+1)
-	return err == nil && strings.TrimSpace(h) != ""
-}
-
-func isExplorerHash(local string, submittedExplorer []string, externalTipHash string) bool {
-	local = strings.ToLower(strings.TrimSpace(local))
-	if local == "" {
+	if hashMatchesExplorer(ctx, reorg, st) {
+		log.Printf("chain tip adopt: local tip now matches explorer at height %d", st.CompareHeight)
 		return true
 	}
-	if strings.EqualFold(local, externalTipHash) {
+	if n := submitExplorerBlocks(ctx, reorg, st); n > 0 && hashMatchesExplorer(ctx, reorg, st) {
+		log.Printf("chain tip adopt: submitted %d explorer block(s) after invalidate; match at height %d", n, st.CompareHeight)
 		return true
 	}
-	for _, h := range submittedExplorer {
-		if strings.EqualFold(local, h) {
-			return true
-		}
-	}
+	log.Printf("chain tip adopt: still mismatched after submit+invalidate")
 	return false
 }
 
-func submitExplorerBlocks(ctx context.Context, reorg chainReorganiser, st TipLagStatus) (int, bool, []string) {
+func submitExplorerBlocks(ctx context.Context, reorg chainReorganiser, st TipLagStatus) int {
 	network := reorg.Network()
 	if network == "" {
 		network = GetCurrentNetwork()
 	}
-	first, last := adoptSubmitRange(st)
-	if first <= 0 {
-		return 0, false, nil
+	first := st.CompareHeight
+	last := st.ExternalTip
+	if last < first {
+		last = first
 	}
-	if st.HashMismatch {
-		if forkH, _, ok := firstDiverging(ctx, reorg, st); ok && forkH > 0 && forkH < first {
-			first = forkH
-			if last < first {
-				last = first
-			}
-			if last-first > 12 {
-				last = first + 12
-			}
-		}
+	// Cap so a huge explorer lead cannot turn one tick into a long download.
+	if last-first > 6 {
+		last = first + 6
 	}
 	submitted := 0
-	sticky := false
-	var hashes []string
 	for h := first; h <= last; h++ {
-		if ctx.Err() != nil {
-			break
-		}
 		hash, err := FetchExternalBlockHash(ctx, network, h)
 		if err != nil {
 			log.Printf("chain tip adopt: explorer hash at %d: %v", h, err)
 			break
 		}
-		hashes = append(hashes, hash)
 		raw, err := FetchExternalRawBlockHex(ctx, network, hash)
 		if err != nil {
 			log.Printf("chain tip adopt: explorer raw %s: %v", hash, err)
 			break
 		}
 		if err := reorg.SubmitBlockHex(ctx, raw); err != nil {
-			parent, isInv := knownInvalidParent(err)
 			log.Printf("chain tip adopt: submitblock %s: %v", hash, err)
-			if isInv {
-				sticky = true
-				target := parent
-				if target == "" {
-					target = hash
-				}
-				log.Printf("chain tip adopt: parent %s known invalid — reconsidering explorer block", target)
-				if rerr := reorg.ReconsiderBlock(ctx, target); rerr != nil {
-					log.Printf("chain tip adopt: reconsider %s: %v", target, rerr)
-				}
-				if err2 := reorg.SubmitBlockHex(ctx, raw); err2 != nil {
-					log.Printf("chain tip adopt: submitblock retry %s: %v", hash, err2)
-					if _, still := knownInvalidParent(err2); still {
-						sticky = true
-					}
-					break
-				}
-				submitted++
-				continue
-			}
 			break
 		}
 		submitted++
 	}
-	return submitted, sticky, hashes
-}
-
-func adoptSubmitRange(st TipLagStatus) (first, last int64) {
-	switch {
-	case st.HashMismatch && st.CompareHeight > 0:
-		// Same-height fork: start at the compared height (walk finds the root).
-		first = st.CompareHeight
-	case st.LocalTip > 0:
-		// Heights match at local tip; fetch the explorer continuation.
-		first = st.LocalTip + 1
-	default:
-		first = st.CompareHeight
-	}
-	last = st.ExternalTip
-	if last < first {
-		last = first
-	}
-	// Cap so a huge explorer lead cannot turn one tick into a long download.
-	if last-first > 12 {
-		last = first + 12
-	}
-	return first, last
-}
-
-func knownInvalidParent(err error) (string, bool) {
-	if err == nil {
-		return "", false
-	}
-	msg := strings.ToLower(err.Error())
-	if !strings.Contains(msg, "known to be invalid") {
-		return "", false
-	}
-	// "previous block <64 hex> is known to be invalid"
-	const needle = "previous block "
-	i := strings.Index(msg, needle)
-	if i < 0 {
-		return "", true
-	}
-	rest := msg[i+len(needle):]
-	if len(rest) < 64 {
-		return "", true
-	}
-	hash := rest[:64]
-	for _, c := range hash {
-		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
-			return "", true
-		}
-	}
-	return hash, true
+	return submitted
 }
 
 func firstDivergingLocalHash(ctx context.Context, reorg chainReorganiser, st TipLagStatus) (string, bool) {
-	_, hash, ok := firstDiverging(ctx, reorg, st)
-	return hash, ok
-}
-
-func firstDiverging(ctx context.Context, reorg chainReorganiser, st TipLagStatus) (int64, string, bool) {
 	network := reorg.Network()
 	if network == "" {
 		network = GetCurrentNetwork()
 	}
 	var found string
-	var foundH int64
-	start := st.CompareHeight
-	if start <= 0 {
-		start = st.LocalTip
-	}
 	depth := int64(reorgWatchDepth())
-	for h := start; h > 0 && h > start-depth; h-- {
+	for h := st.CompareHeight; h > 0 && h > st.CompareHeight-depth; h-- {
 		local, err := reorg.GetBlockHash(ctx, h)
 		if err != nil {
 			break
@@ -808,12 +615,11 @@ func firstDiverging(ctx context.Context, reorg chainReorganiser, st TipLagStatus
 			break
 		}
 		found = strings.ToLower(strings.TrimSpace(local))
-		foundH = h
 	}
 	if found == "" {
-		return 0, "", false
+		return "", false
 	}
-	return foundH, found, true
+	return found, true
 }
 
 func hashMatchesExplorer(ctx context.Context, reorg chainReorganiser, st TipLagStatus) bool {

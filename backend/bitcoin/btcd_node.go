@@ -437,30 +437,6 @@ func (n *EmbeddedBtcd) Stop() error {
 	return nil
 }
 
-// RepairStickyInvalidIndex stops btcd, clears Valid+Invalid block-index
-// flags, and starts it again. btcd must not be running while ffldb is open.
-func (n *EmbeddedBtcd) RepairStickyInvalidIndex(ctx context.Context) (int, error) {
-	if n == nil {
-		return 0, fmt.Errorf("nil EmbeddedBtcd")
-	}
-	n.mu.Lock()
-	dataDir := n.cfg.DataDir
-	network := n.cfg.Network
-	n.mu.Unlock()
-	if err := n.Stop(); err != nil {
-		log.Printf("btcd index repair: stop warning: %v", err)
-	}
-	cleared, err := ClearStickyInvalidFlags(dataDir, network)
-	if err != nil {
-		_ = n.Start(ctx)
-		return cleared, err
-	}
-	if err := n.Start(ctx); err != nil {
-		return cleared, err
-	}
-	return cleared, nil
-}
-
 // Restart stops a managed btcd child (if any) and starts it again.
 // Used by tip-lag recovery when the node is wedged behind the network tip.
 func (n *EmbeddedBtcd) Restart(ctx context.Context) error {
@@ -641,31 +617,18 @@ func logSyncOnce(ctx context.Context, rt *ChainRuntime) {
 	if lag.HashMismatch {
 		log.Printf("btcd sync: TIP HASH MISMATCH at height %d local=%s explorer=%s — settlement blocked (possible eclipse / minority fork)",
 			lag.CompareHeight, lag.LocalTipHash, lag.ExternalTipHash)
-	} else if lag.Lagging {
-		log.Printf("btcd sync: TIP LAG local=%d external=%d lag=%d threshold=%d duration=%s — node may be stuck (future-timestamp rejects or peer stall)",
-			lag.LocalTip, lag.ExternalTip, lag.LagBlocks, lag.Threshold, lag.LagDuration)
-	}
-	if (lag.HashMismatch || lag.Lagging) && tipAdoptExplorerEnabled() {
+		// Restarting btcd does not fix an eclipse. If the explorer hash is
+		// already a known valid-fork, invalidate the local tip so we reorg.
+		// A restart can leave that block KnownInvalid-but-active; adopt
+		// reconsider+invalidates in that case.
 		if reorg, ok := backend.(chainReorganiser); ok {
-			// Adopt downloads raw blocks; do not share the 12s tip-check budget.
-			actx, acancel := context.WithTimeout(ctx, 90*time.Second)
-			out := tryAdoptExplorerTip(actx, reorg, lag)
-			acancel()
-			if out.sticky {
-				if maybeRepairStickyInvalid(ctx, rt) {
-					return
-				}
-			}
-			if out.switched {
-				return
-			}
+			_ = tryAdoptExplorerTip(cctx, reorg, lag)
 		}
-	}
-	if lag.HashMismatch {
-		// Restarting btcd does not fix a sticky invalidate or an eclipse.
 		return
 	}
 	if lag.Lagging {
+		log.Printf("btcd sync: TIP LAG local=%d external=%d lag=%d threshold=%d duration=%s — node may be stuck (future-timestamp rejects or peer stall)",
+			lag.LocalTip, lag.ExternalTip, lag.LagBlocks, lag.Threshold, lag.LagDuration)
 		if rt.Mode == BtcdModeManaged {
 			maybeRestartManagedBtcd(ctx, rt.Node, lag)
 		}

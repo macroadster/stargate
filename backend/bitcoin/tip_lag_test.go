@@ -3,7 +3,6 @@ package bitcoin
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -153,10 +152,6 @@ func TestShouldAdoptExplorerTip(t *testing.T) {
 	if shouldAdoptExplorerTip(short) {
 		t.Fatal("short hash must not adopt")
 	}
-	lag := TipLagStatus{Lagging: true, LocalTip: 149948, ExternalTip: 149989}
-	if !shouldAdoptExplorerTip(lag) {
-		t.Fatal("expected adopt on height lag so sticky-invalid parents can be repaired")
-	}
 }
 
 type mockReorg struct {
@@ -174,7 +169,6 @@ type mockReorg struct {
 	invalidateErr        error
 	reconsiderErr        error
 	submitErr            error
-	lastInvalidated      string
 }
 
 func (m *mockReorg) Network() string {
@@ -189,9 +183,8 @@ func (m *mockReorg) HasChainTip(_ context.Context, hash string) (bool, error) {
 	}
 	return m.tips[strings.ToLower(hash)], nil
 }
-func (m *mockReorg) InvalidateBlock(_ context.Context, hash string) error {
+func (m *mockReorg) InvalidateBlock(_ context.Context, _ string) error {
 	m.invalidateN++
-	m.lastInvalidated = hash
 	if m.invalidateErr != nil {
 		return m.invalidateErr
 	}
@@ -248,7 +241,7 @@ func explorerAdoptServer(hashes map[int64]string, rawByHash map[string][]byte) *
 	}))
 }
 
-func TestTryAdoptExplorerTip_NoInvalidateWithoutExplorerBlocks(t *testing.T) {
+func TestTryAdoptExplorerTip_InvalidatesWhenSubmitDoesNotSwitch(t *testing.T) {
 	resetTipLagStateForTest()
 	t.Setenv("CHAIN_ADOPT_EXPLORER_COOLDOWN", "1ms")
 	srv := explorerAdoptServer(nil, nil)
@@ -268,12 +261,11 @@ func TestTryAdoptExplorerTip_NoInvalidateWithoutExplorerBlocks(t *testing.T) {
 		LocalTipHash:    local,
 		ExternalTipHash: expl,
 	}
-	out := tryAdoptExplorerTip(context.Background(), m, st)
-	if out.switched {
-		t.Fatal("must not claim switch when explorer blocks were not submitted")
+	if !tryAdoptExplorerTip(context.Background(), m, st) {
+		t.Fatal("expected adopt via invalidate")
 	}
-	if m.invalidateN != 0 {
-		t.Fatalf("invalidate without an explorer replacement poisons the chain, n=%d", m.invalidateN)
+	if m.invalidateN != 1 || m.reconsiderN != 1 {
+		t.Fatalf("invalidateN=%d reconsiderN=%d", m.invalidateN, m.reconsiderN)
 	}
 }
 
@@ -300,7 +292,7 @@ func TestTryAdoptExplorerTip_SubmitSwitchesWithoutInvalidate(t *testing.T) {
 		LocalTipHash:    local,
 		ExternalTipHash: expl,
 	}
-	if !tryAdoptExplorerTip(context.Background(), m, st).switched {
+	if !tryAdoptExplorerTip(context.Background(), m, st) {
 		t.Fatal("expected adopt via submitblock")
 	}
 	if m.submitN != 1 {
@@ -335,104 +327,11 @@ func TestTryAdoptExplorerTip_StickyInvalidateStillSubmits(t *testing.T) {
 		LocalTipHash:    local,
 		ExternalTipHash: expl,
 	}
-	if !tryAdoptExplorerTip(context.Background(), m, st).switched {
+	if !tryAdoptExplorerTip(context.Background(), m, st) {
 		t.Fatal("expected adopt via submit after sticky invalidate")
 	}
 	if m.submitN < 1 {
 		t.Fatalf("submitN=%d", m.submitN)
-	}
-}
-
-func TestTryAdoptExplorerTip_InvalidatesLocalOnlyAfterSubmit(t *testing.T) {
-	resetTipLagStateForTest()
-	t.Setenv("CHAIN_ADOPT_EXPLORER_COOLDOWN", "1ms")
-	local := "0000000000ed4f344ba8335a5e390fe2ae58e8165c7829ba9456e1a983084198"
-	expl := "0000000000baebbdeab043d4b98615caf906c0fba8948e0ff1bf20136ba50de8"
-	raw := bytes.Repeat([]byte{0xef}, 80)
-	srv := explorerAdoptServer(map[int64]string{149952: expl}, map[string][]byte{expl: raw})
-	defer srv.Close()
-	testExplorerBaseURL = srv.URL
-	t.Cleanup(func() { testExplorerBaseURL = "" })
-
-	m := &mockReorg{
-		active:               map[int64]string{149952: local},
-		explorerOnInvalidate: expl,
-		compareHeight:        149952,
-	}
-	st := TipLagStatus{
-		HashMismatch:    true,
-		CompareHeight:   149952,
-		ExternalTip:     149952,
-		LocalTip:        149952,
-		LocalTipHash:    local,
-		ExternalTipHash: expl,
-	}
-	out := tryAdoptExplorerTip(context.Background(), m, st)
-	if !out.switched {
-		t.Fatal("expected switch via invalidate after explorer submit")
-	}
-	if m.submitN < 1 {
-		t.Fatalf("submitN=%d", m.submitN)
-	}
-	if m.invalidateN != 1 {
-		t.Fatalf("invalidateN=%d", m.invalidateN)
-	}
-	if !strings.EqualFold(m.lastInvalidated, local) {
-		t.Fatalf("invalidated %s want local %s", m.lastInvalidated, local)
-	}
-}
-
-func TestTryAdoptExplorerTip_RefusesExplorerHash(t *testing.T) {
-	resetTipLagStateForTest()
-	t.Setenv("CHAIN_ADOPT_EXPLORER_COOLDOWN", "1ms")
-	expl := "0000000000435c6477ee9475f38ee8dcd0dfb949c943299af5b4cd8bbb697d09"
-	other := "000000000019ff1821f8239131e294384cb7b0ffd4f3c391fd96930c14bc7b31"
-	raw := bytes.Repeat([]byte{0x11}, 80)
-	srv := explorerAdoptServer(map[int64]string{149955: expl}, map[string][]byte{expl: raw})
-	defer srv.Close()
-	testExplorerBaseURL = srv.URL
-	t.Cleanup(func() { testExplorerBaseURL = "" })
-
-	m := &mockReorg{
-		active:        map[int64]string{149955: expl},
-		compareHeight: 149955,
-		submitErr:     fmt.Errorf("previous block %s is known to be invalid", expl),
-	}
-	st := TipLagStatus{
-		HashMismatch:    true,
-		CompareHeight:   149955,
-		ExternalTip:     149955,
-		LocalTip:        149955,
-		LocalTipHash:    expl,
-		ExternalTipHash: other,
-	}
-	out := tryAdoptExplorerTip(context.Background(), m, st)
-	if m.invalidateN != 0 {
-		t.Fatalf("must not invalidate explorer hash, n=%d hash=%s", m.invalidateN, m.lastInvalidated)
-	}
-	if !out.sticky {
-		t.Fatal("expected sticky-invalid signal so the caller can repair the index")
-	}
-}
-
-func TestKnownInvalidParent(t *testing.T) {
-	parent := "0000000000435c6477ee9475f38ee8dcd0dfb949c943299af5b4cd8bbb697d09"
-	got, ok := knownInvalidParent(fmt.Errorf("rejected: previous block %s is known to be invalid", parent))
-	if !ok || got != parent {
-		t.Fatalf("got %q ok=%v", got, ok)
-	}
-	if _, ok := knownInvalidParent(fmt.Errorf("already have block")); ok {
-		t.Fatal("duplicate is not known-invalid")
-	}
-}
-
-func TestAdoptSubmitRange_LagStartsAfterLocalTip(t *testing.T) {
-	first, last := adoptSubmitRange(TipLagStatus{LocalTip: 149948, ExternalTip: 149989, Lagging: true})
-	if first != 149949 {
-		t.Fatalf("first=%d want 149949", first)
-	}
-	if last != 149948+1+12 {
-		t.Fatalf("last=%d want capped 149961", last)
 	}
 }
 
