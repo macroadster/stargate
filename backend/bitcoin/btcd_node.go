@@ -252,6 +252,15 @@ func (n *EmbeddedBtcd) Start(ctx context.Context) error {
 		return err
 	}
 
+	// Must run while btcd is not holding ffldb. A prior invalidateblock can
+	// leave Valid+Invalid set together; reconsiderblock is then a no-op and
+	// the node never connects the next block.
+	if n, err := ClearStickyInvalidFlags(cfg.DataDir, cfg.Network); err != nil {
+		log.Printf("btcd: sticky-index repair skipped: %v", err)
+	} else if n > 0 {
+		log.Printf("btcd: cleared %d sticky Valid+Invalid index flag(s) before start", n)
+	}
+
 	bin, err := exec.LookPath(cfg.Bin)
 	if err != nil {
 		return fmt.Errorf("btcd binary not found (%s): %w — install btcd or set BTCD_BIN / BTCD_MODE=external", cfg.Bin, err)
