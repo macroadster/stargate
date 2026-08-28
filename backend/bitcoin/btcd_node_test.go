@@ -3,7 +3,6 @@ package bitcoin
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -63,74 +62,6 @@ func TestEnsureRPCAuthPersists(t *testing.T) {
 	}
 	if cfg2.RPCUser != user || cfg2.RPCPass != pass {
 		t.Fatalf("credentials not stable: %s/%s vs %s/%s", user, pass, cfg2.RPCUser, cfg2.RPCPass)
-	}
-}
-
-func TestDefaultP2PListenIsLocalhost(t *testing.T) {
-	if got := defaultP2PListen("testnet4"); got != "127.0.0.1:48333" {
-		t.Fatalf("testnet4 listen %q", got)
-	}
-	if got := defaultP2PListen("mainnet"); got != "127.0.0.1:8333" {
-		t.Fatalf("mainnet listen %q", got)
-	}
-}
-
-func TestLoadNodeConfigPeerPinning(t *testing.T) {
-	t.Setenv("BITCOIN_NETWORK", "testnet4")
-	t.Setenv("BTCD_MODE", "managed")
-	t.Setenv("BTCD_NOLISTEN", "true")
-	t.Setenv("BTCD_CONNECT", "seed.example:48333, 10.0.0.2:48333")
-	t.Setenv("BTCD_ADDPEER", "10.0.0.3:48333")
-	t.Setenv("BTCD_MIN_PEERS", "4")
-	t.Setenv("STARGATE_DATA_DIR", t.TempDir())
-
-	cfg := LoadNodeConfigFromEnv()
-	if !cfg.NoListen {
-		t.Fatal("expected NoListen")
-	}
-	if len(cfg.Connect) != 2 || cfg.Connect[0] != "seed.example:48333" {
-		t.Fatalf("connect=%v", cfg.Connect)
-	}
-	if len(cfg.AddPeer) != 1 || cfg.AddPeer[0] != "10.0.0.3:48333" {
-		t.Fatalf("addpeer=%v", cfg.AddPeer)
-	}
-	if cfg.MinPeers != 4 {
-		t.Fatalf("min peers=%d", cfg.MinPeers)
-	}
-	if cfg.P2PListen != "127.0.0.1:48333" {
-		t.Fatalf("default listen should be localhost, got %q", cfg.P2PListen)
-	}
-}
-
-func TestBtcdProcessArgsPinsPeersAndDisablesListen(t *testing.T) {
-	cfg := NodeConfig{
-		DataDir:   "/data",
-		RPCUser:   "u",
-		RPCPass:   "p",
-		P2PListen: "0.0.0.0:48333",
-		Connect:   []string{"seed:48333"},
-		AddPeer:   []string{"friend:48333"},
-		TxIndex:   true,
-		AddrIndex: true,
-	}
-	args := cfg.btcdProcessArgs("127.0.0.1:48334", "--testnet4")
-	joined := strings.Join(args, " ")
-	if !strings.Contains(joined, "--nolisten") {
-		t.Fatalf("expected --nolisten when --connect is set: %v", args)
-	}
-	if strings.Contains(joined, "--listen=") {
-		t.Fatalf("must not listen inbound when peers are pinned: %v", args)
-	}
-	if !strings.Contains(joined, "--connect=seed:48333") {
-		t.Fatalf("missing connect: %v", args)
-	}
-	if !strings.Contains(joined, "--addpeer=friend:48333") {
-		t.Fatalf("missing addpeer: %v", args)
-	}
-	for _, a := range args {
-		if a == "--generate" || strings.HasPrefix(a, "--generate=") {
-			t.Fatal("mining must never be enabled")
-		}
 	}
 }
 

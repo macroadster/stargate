@@ -345,7 +345,7 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 						}
 					}
 					if bm.sweepStore != nil {
-						bm.maybeConfirmContract(normalizedWish, tx.TxID, blockHeight)
+						_ = bm.sweepStore.ConfirmContract(context.Background(), normalizedWish, int(blockHeight), tx.TxID)
 						bm.updateTaskFundingProofsFromTx(normalizedWish, tx, blockHeight)
 						bm.confirmContractTasks(normalizedWish, tx.TxID, blockHeight)
 						// Now that the contract is confirmed, reconcile again
@@ -467,8 +467,9 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 	return smartContracts
 }
 
-// confirmContractTasks records the funding tx on task proofs. Proofs stay
-// provisional until SettlementReady (N confirmations, no tip-hash mismatch).
+// confirmContractTasks marks task proofs as confirmed for the given contract.
+// This is the new-style path for OP_RETURN transactions where donation is paid
+// directly — no sweeping is needed.
 func (bm *BlockMonitor) confirmContractTasks(contractID, txid string, blockHeight int64) {
 	if bm.sweepStore == nil || strings.TrimSpace(contractID) == "" || strings.TrimSpace(txid) == "" {
 		return
@@ -490,37 +491,18 @@ func (bm *BlockMonitor) confirmContractTasks(contractID, txid string, blockHeigh
 		if proof.TxID == "" {
 			proof.TxID = txid
 		}
-		if proof.BlockHeight == 0 {
-			proof.BlockHeight = blockHeight
-		}
-		now := time.Now()
-		if proof.SeenAt.IsZero() {
-			proof.SeenAt = now
-		}
-		// Mark sweep as not needed — donation was paid directly in the PSBT.
-		if proof.SweepStatus == "" {
-			proof.SweepStatus = "direct"
-		}
-		if proof.ConfirmationStatus == "confirmed" {
-			continue
-		}
-		if bm.settlementReady(proof.BlockHeight) {
+		if proof.ConfirmationStatus != "confirmed" {
+			now := time.Now()
 			proof.ConfirmationStatus = "confirmed"
 			proof.ConfirmedAt = &now
+			proof.BlockHeight = blockHeight
+			// Mark sweep as not needed — donation was paid directly in the PSBT.
+			proof.SweepStatus = "direct"
 			if err := bm.sweepStore.UpdateTaskProof(context.Background(), task.TaskID, proof); err != nil {
 				log.Printf("oracle reconcile: failed to confirm proof for %s: %v", task.TaskID, err)
 			} else {
-				log.Printf("oracle reconcile: confirmed task %s after %d confirmations (direct donation, no sweep needed)",
-					task.TaskID, SettlementConfirmations())
+				log.Printf("oracle reconcile: confirmed task %s via OP_RETURN (direct donation, no sweep needed)", task.TaskID)
 			}
-			continue
-		}
-		proof.ConfirmationStatus = "provisional"
-		if err := bm.sweepStore.UpdateTaskProof(context.Background(), task.TaskID, proof); err != nil {
-			log.Printf("oracle reconcile: failed to record provisional proof for %s: %v", task.TaskID, err)
-		} else {
-			log.Printf("oracle reconcile: task %s provisional at height %d (need %d confirmations)",
-				task.TaskID, proof.BlockHeight, SettlementConfirmations())
 		}
 	}
 }
@@ -588,16 +570,14 @@ func (bm *BlockMonitor) updateTaskFundingProofsFromTx(contractID string, tx Tran
 			proof.BlockHeight = blockHeight
 			proof.FundingAddress = addr
 			proof.FundedAmountSats = output.Value
+			if proof.ConfirmationStatus == "" || proof.ConfirmationStatus == "provisional" {
+				proof.ConfirmationStatus = "confirmed"
+			}
+			if proof.ConfirmedAt == nil {
+				proof.ConfirmedAt = &now
+			}
 			if proof.SeenAt.IsZero() {
 				proof.SeenAt = now
-			}
-			if bm.settlementReady(blockHeight) {
-				proof.ConfirmationStatus = "confirmed"
-				if proof.ConfirmedAt == nil {
-					proof.ConfirmedAt = &now
-				}
-			} else if proof.ConfirmationStatus != "confirmed" {
-				proof.ConfirmationStatus = "provisional"
 			}
 			if proof.ContractorWallet == "" {
 				proof.ContractorWallet = addr
@@ -676,11 +656,9 @@ func (bm *BlockMonitor) ensureMatchedContract(contractID string, match *services
 		}
 	}
 
-	// Confirm only after settlement depth. If the row already exists,
-	// ConfirmContract will update it; otherwise we upsert below.
-	if bm.settlementReady(blockHeight) {
-		_ = bm.sweepStore.ConfirmContract(ctx, normalizedID, int(blockHeight), txID)
-	}
+	// Try to confirm the contract first — if the row already exists,
+	// ConfirmContract will update it and we're done.
+	_ = bm.sweepStore.ConfirmContract(ctx, normalizedID, int(blockHeight), txID)
 
 	// Check if the row actually exists now — ConfirmContract doesn't return
 	// "not found" explicitly, it just updates 0 rows.
@@ -736,21 +714,13 @@ func (bm *BlockMonitor) ensureMatchedContract(contractID string, match *services
 		stegoImageURL = fmt.Sprintf("/api/block-image/%d/%s", blockHeight, cid)
 	}
 
-	status := "funded"
-	var confirmedAt *time.Time
-	var confirmedHeight *int
-	if bm.settlementReady(blockHeight) {
-		status = "confirmed"
-		confirmedAt = &now
-		confirmedHeight = &bh
-	}
 	c := smart_contract.Contract{
 		ContractID:           normalizedID,
 		Title:                title,
-		Status:               status,
+		Status:               "confirmed",
 		StegoImageURL:        stegoImageURL,
-		ConfirmedBlockHeight: confirmedHeight,
-		ConfirmedAt:          confirmedAt,
+		ConfirmedBlockHeight: &bh,
+		ConfirmedAt:          &now,
 		Metadata:             meta,
 		CreatedAt:            now,
 	}
@@ -805,72 +775,6 @@ func (bm *BlockMonitor) proposalCandidates(existing map[string]*services.Ingesti
 		out[hash] = rec
 	}
 	return out
-}
-
-func (bm *BlockMonitor) settlementReady(blockHeight int64) bool {
-	if blockHeight <= 0 {
-		return false
-	}
-	tip, err := bm.getCurrentHeightFromBlockchainInfo()
-	if err != nil || tip <= 0 {
-		return false
-	}
-	return SettlementReady(tip, blockHeight)
-}
-
-func (bm *BlockMonitor) maybeConfirmContract(contractID, txid string, blockHeight int64) {
-	if bm.sweepStore == nil || strings.TrimSpace(contractID) == "" {
-		return
-	}
-	if !bm.settlementReady(blockHeight) {
-		return
-	}
-	if err := bm.sweepStore.ConfirmContract(context.Background(), contractID, int(blockHeight), txid); err != nil {
-		log.Printf("oracle reconcile: ConfirmContract %s: %v", contractID, err)
-	}
-}
-
-// promoteProvisionalProofs upgrades provisional task proofs once they have
-// enough confirmations and the local tip is not on a conflicting fork.
-func (bm *BlockMonitor) promoteProvisionalProofs(tip int64) {
-	if bm.sweepStore == nil || tip <= 0 || SettlementBlocked() {
-		return
-	}
-	need := SettlementConfirmations()
-	since := time.Now().Add(-14 * 24 * time.Hour)
-	tasks, err := bm.sweepStore.ListTasks(smart_contract.TaskFilter{
-		LastActivitySince: &since,
-		Limit:             500,
-	})
-	if err != nil {
-		log.Printf("oracle reconcile: promote provisional: list tasks: %v", err)
-		return
-	}
-	for _, task := range tasks {
-		proof := task.MerkleProof
-		if proof == nil {
-			continue
-		}
-		if !strings.EqualFold(strings.TrimSpace(proof.ConfirmationStatus), "provisional") {
-			continue
-		}
-		if proof.BlockHeight <= 0 || strings.TrimSpace(proof.TxID) == "" {
-			continue
-		}
-		if !SettlementReady(tip, proof.BlockHeight) {
-			continue
-		}
-		now := time.Now()
-		proof.ConfirmationStatus = "confirmed"
-		proof.ConfirmedAt = &now
-		if err := bm.sweepStore.UpdateTaskProof(context.Background(), task.TaskID, proof); err != nil {
-			log.Printf("oracle reconcile: promote provisional %s: %v", task.TaskID, err)
-			continue
-		}
-		bm.maybeConfirmContract(task.ContractID, proof.TxID, proof.BlockHeight)
-		log.Printf("oracle reconcile: promoted task %s to confirmed (height=%d tip=%d need=%d)",
-			task.TaskID, proof.BlockHeight, tip, need)
-	}
 }
 
 // contractCandidates builds synthetic IngestionRecord entries from contracts

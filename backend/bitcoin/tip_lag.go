@@ -16,23 +16,16 @@ import (
 // TipLagStatus is a snapshot of local tip vs external explorer tip.
 // Used for health endpoints and ops logging so a "synced" local node that
 // is actually stuck (e.g. future-timestamp rejects) is visible.
-//
-// HashMismatch is the fork signal: local and explorer disagree on the block
-// hash at min(local_tip, external_tip). Height-only lag cannot see this.
 type TipLagStatus struct {
-	LocalTip        int64      `json:"local_tip"`
-	ExternalTip     int64      `json:"external_tip"`
-	LagBlocks       int64      `json:"lag_blocks"`
-	Lagging         bool       `json:"lagging"`
-	Threshold       int64      `json:"threshold"`
-	ExternalError   string     `json:"external_error,omitempty"`
-	CheckedAt       time.Time  `json:"checked_at"`
-	FirstLagAt      *time.Time `json:"first_lag_at,omitempty"`
-	LagDuration     string     `json:"lag_duration,omitempty"`
-	CompareHeight   int64      `json:"compare_height,omitempty"`
-	LocalTipHash    string     `json:"local_tip_hash,omitempty"`
-	ExternalTipHash string     `json:"external_tip_hash,omitempty"`
-	HashMismatch    bool       `json:"hash_mismatch"`
+	LocalTip      int64      `json:"local_tip"`
+	ExternalTip   int64      `json:"external_tip"`
+	LagBlocks     int64      `json:"lag_blocks"`
+	Lagging       bool       `json:"lagging"`
+	Threshold     int64      `json:"threshold"`
+	ExternalError string     `json:"external_error,omitempty"`
+	CheckedAt     time.Time  `json:"checked_at"`
+	FirstLagAt    *time.Time `json:"first_lag_at,omitempty"`
+	LagDuration   string     `json:"lag_duration,omitempty"`
 }
 
 var (
@@ -118,20 +111,6 @@ func tipLagRestartCooldown() time.Duration {
 	return d
 }
 
-// testExplorerBaseURL overrides NetworkConfig.BaseURL (unit tests only).
-var testExplorerBaseURL string
-
-func explorerBaseURL(network string) string {
-	if u := strings.TrimSpace(testExplorerBaseURL); u != "" {
-		return strings.TrimRight(u, "/")
-	}
-	cfg := GetNetworkConfig(network)
-	if cfg == nil {
-		return ""
-	}
-	return strings.TrimRight(cfg.BaseURL, "/")
-}
-
 // FetchExternalTipHeight queries the public explorer HeightURL for the network.
 // This is a reference tip only — production block data still comes from local btcd.
 func FetchExternalTipHeight(ctx context.Context, network string) (int64, error) {
@@ -161,46 +140,6 @@ func FetchExternalTipHeight(ctx context.Context, network string) (int64, error) 
 		return 0, fmt.Errorf("parse external tip: %w", err)
 	}
 	return h, nil
-}
-
-// FetchExternalBlockHash returns the explorer's canonical block hash at height
-// (Esplora GET /block-height/{n}). Used to detect same-height minority forks.
-func FetchExternalBlockHash(ctx context.Context, network string, height int64) (string, error) {
-	if height < 0 {
-		return "", fmt.Errorf("invalid height %d", height)
-	}
-	base := explorerBaseURL(network)
-	if base == "" {
-		return "", fmt.Errorf("no explorer base URL for network %q", network)
-	}
-	url := base + "/block-height/" + strconv.FormatInt(height, 10)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return "", err
-	}
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("external block hash HTTP %d", resp.StatusCode)
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 128))
-	if err != nil {
-		return "", err
-	}
-	hash := strings.ToLower(strings.TrimSpace(string(body)))
-	if len(hash) != 64 {
-		return "", fmt.Errorf("parse external block hash: %q", hash)
-	}
-	for _, c := range hash {
-		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
-			return "", fmt.Errorf("parse external block hash: %q", hash)
-		}
-	}
-	return hash, nil
 }
 
 // EvaluateTipLag compares local and external tips and updates the shared status.
@@ -257,38 +196,6 @@ func EvaluateTipLag(localTip, externalTip, threshold int64, externalErr error, n
 	return st
 }
 
-// ApplyTipHashCheck records the hash comparison at compareHeight (typically
-// min(local, external) tip). A mismatch means a fork — health is degraded and
-// settlement is blocked even when heights match.
-func ApplyTipHashCheck(st TipLagStatus, compareHeight int64, localHash, externalHash string) TipLagStatus {
-	st.CompareHeight = compareHeight
-	st.LocalTipHash = strings.ToLower(strings.TrimSpace(localHash))
-	st.ExternalTipHash = strings.ToLower(strings.TrimSpace(externalHash))
-	st.HashMismatch = st.LocalTipHash != "" && st.ExternalTipHash != "" &&
-		st.LocalTipHash != st.ExternalTipHash
-	if st.HashMismatch {
-		st.Lagging = true
-	}
-
-	tipLagMu.Lock()
-	defer tipLagMu.Unlock()
-	if st.Lagging {
-		if tipLagFirstSeen.IsZero() {
-			tipLagFirstSeen = st.CheckedAt
-			if tipLagFirstSeen.IsZero() {
-				tipLagFirstSeen = time.Now()
-			}
-		}
-		t := tipLagFirstSeen
-		st.FirstLagAt = &t
-		if !st.CheckedAt.IsZero() {
-			st.LagDuration = st.CheckedAt.Sub(tipLagFirstSeen).Round(time.Second).String()
-		}
-	}
-	tipLagStatus = st
-	return st
-}
-
 // mergeTipLagIntoStatus adds tip-lag fields into a NodeStatus map.
 func mergeTipLagIntoStatus(out map[string]any) {
 	if out == nil {
@@ -302,23 +209,10 @@ func mergeTipLagIntoStatus(out map[string]any) {
 	out["tip_lag_blocks"] = st.LagBlocks
 	out["tip_lagging"] = st.Lagging
 	out["tip_lag_threshold"] = st.Threshold
-	out["tip_hash_mismatch"] = st.HashMismatch
-	if st.CompareHeight > 0 {
-		out["tip_compare_height"] = st.CompareHeight
-	}
-	if st.LocalTipHash != "" {
-		out["local_tip_hash"] = st.LocalTipHash
-	}
-	if st.ExternalTipHash != "" {
-		out["external_tip_hash"] = st.ExternalTipHash
-	}
 	if st.ExternalError != "" {
 		out["external_tip_error"] = st.ExternalError
 	}
-	if st.HashMismatch {
-		out["synced"] = false
-		out["sync_note"] = "local block hash disagrees with explorer at compare height (possible minority fork)"
-	} else if st.Lagging {
+	if st.Lagging {
 		out["tip_lag_duration"] = st.LagDuration
 		// Local IBD-complete "synced" is not enough when we lag the network.
 		out["synced"] = false

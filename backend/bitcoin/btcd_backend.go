@@ -139,12 +139,6 @@ func (b *BtcdBackend) Synced(ctx context.Context) (bool, error) {
 			ch <- res{false, nil}
 			return
 		}
-		if n := minPeerCount(); n > 0 {
-			if peers, perr := c.GetPeerInfo(); perr == nil && len(peers) < n {
-				ch <- res{false, nil}
-				return
-			}
-		}
 		ch <- res{true, nil}
 	}()
 	select {
@@ -344,18 +338,11 @@ func (b *BtcdBackend) NodeStatus(ctx context.Context) (map[string]any, error) {
 	out["size_on_disk"] = info.SizeOnDisk
 	if peers, err := c.GetPeerInfo(); err == nil {
 		out["peers"] = len(peers)
-		out["min_peers"] = minPeerCount()
-		if minPeerCount() > 0 && len(peers) < minPeerCount() {
-			out["synced"] = false
-			out["sync_note"] = "peer count below BTCD_MIN_PEERS (isolation / eclipse risk)"
-		}
 	}
-	if _, ok := out["synced"]; !ok {
-		synced, _ := b.Synced(ctx)
-		out["synced"] = synced
-	}
-	// Overlay external tip lag / hash mismatch so health consumers see
-	// network lag or a minority fork even when local IBD is complete.
+	synced, _ := b.Synced(ctx)
+	out["synced"] = synced
+	// Overlay external tip lag so health consumers see network lag even when
+	// local IBD is complete (see tip_lag.go).
 	mergeTipLagIntoStatus(out)
 	return out, nil
 }

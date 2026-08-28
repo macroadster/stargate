@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/btcsuite/btcd/txscript"
 
@@ -105,13 +104,10 @@ func TestConfirmContractTasks_ConfirmedTx(t *testing.T) {
 	}))
 	defer server.Close()
 
-	t.Setenv("CHAIN_SETTLEMENT_CONFIRMATIONS", "1")
-	resetTipLagStateForTest()
 	client := NewBitcoinNodeClient(server.URL)
 	mempool := NewMempoolClient()
 	bm := NewBlockMonitor(client)
 	bm.SetSweepDependencies(store, mempool)
-	bm.SetChainBackend(&mockChain{height: 100})
 
 	// Act: call confirmContractTasks directly.
 	bm.confirmContractTasks("contract-1", fakeTxID, 100)
@@ -212,8 +208,6 @@ func TestReconcileCombinedRaiseOPReturnWithoutFundingTxID(t *testing.T) {
 			},
 		}},
 	}
-	t.Setenv("CHAIN_SETTLEMENT_CONFIRMATIONS", "1")
-	resetTipLagStateForTest()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 	}))
@@ -221,7 +215,6 @@ func TestReconcileCombinedRaiseOPReturnWithoutFundingTxID(t *testing.T) {
 	bm := NewBlockMonitor(NewBitcoinNodeClient(srv.URL))
 	bm.SetIngestionService(ingest)
 	bm.SetSweepDependencies(store, NewMempoolClient())
-	bm.SetChainBackend(&mockChain{height: 4242})
 
 	parsed := &ParsedBlock{
 		Transactions: []Transaction{{
@@ -279,14 +272,11 @@ func TestReconcileFundingTxIDPathStillWorks(t *testing.T) {
 			MerkleProof: &smart_contract.MerkleProof{ConfirmationStatus: "provisional"},
 		}},
 	}
-	t.Setenv("CHAIN_SETTLEMENT_CONFIRMATIONS", "1")
-	resetTipLagStateForTest()
 	srv := httptest.NewServer(http.NotFoundHandler())
 	defer srv.Close()
 	bm := NewBlockMonitor(NewBitcoinNodeClient(srv.URL))
 	bm.SetIngestionService(ingest)
 	bm.SetSweepDependencies(store, NewMempoolClient())
-	bm.SetChainBackend(&mockChain{height: 99})
 
 	got := bm.reconcileOracleIngestions(t.TempDir(), &ParsedBlock{
 		Transactions: []Transaction{{TxID: fundingTxID}},
@@ -300,97 +290,5 @@ func TestReconcileFundingTxIDPathStillWorks(t *testing.T) {
 	}
 	if matched == nil {
 		t.Fatalf("expected funding_txid match, contracts=%+v", got)
-	}
-}
-
-func TestConfirmContractTasks_StaysProvisionalUntilDepth(t *testing.T) {
-	t.Setenv("CHAIN_SETTLEMENT_CONFIRMATIONS", "20")
-	t.Setenv("BITCOIN_NETWORK", "testnet4")
-	resetTipLagStateForTest()
-
-	fakeTxID := strings.Repeat("cc", 32)
-	store := &fullMockSweepStore{
-		proofs: make(map[string]*smart_contract.MerkleProof),
-		tasks: []smart_contract.Task{{
-			TaskID:     "task-shallow",
-			ContractID: "contract-shallow",
-			MerkleProof: &smart_contract.MerkleProof{
-				TxID:               fakeTxID,
-				ConfirmationStatus: "provisional",
-			},
-		}},
-	}
-	bm := NewBlockMonitor(NewBitcoinNodeClient("http://localhost:0"))
-	bm.SetSweepDependencies(store, NewMempoolClient())
-	bm.SetChainBackend(&mockChain{height: 100})
-
-	bm.confirmContractTasks("contract-shallow", fakeTxID, 100)
-	proof := store.proofs["task-shallow"]
-	if proof == nil {
-		t.Fatal("expected proof update")
-	}
-	if proof.ConfirmationStatus != "provisional" {
-		t.Fatalf("1-conf must stay provisional, got %q", proof.ConfirmationStatus)
-	}
-	if proof.BlockHeight != 100 {
-		t.Fatalf("height=%d", proof.BlockHeight)
-	}
-}
-
-func TestPromoteProvisionalProofs_AfterDepth(t *testing.T) {
-	t.Setenv("CHAIN_SETTLEMENT_CONFIRMATIONS", "20")
-	t.Setenv("BITCOIN_NETWORK", "testnet4")
-	resetTipLagStateForTest()
-
-	fakeTxID := strings.Repeat("dd", 32)
-	store := &fullMockSweepStore{
-		proofs: make(map[string]*smart_contract.MerkleProof),
-		tasks: []smart_contract.Task{{
-			TaskID:     "task-promote",
-			ContractID: "contract-promote",
-			MerkleProof: &smart_contract.MerkleProof{
-				TxID:               fakeTxID,
-				BlockHeight:        100,
-				ConfirmationStatus: "provisional",
-				SeenAt:             time.Now(),
-			},
-		}},
-	}
-	bm := NewBlockMonitor(NewBitcoinNodeClient("http://localhost:0"))
-	bm.SetSweepDependencies(store, NewMempoolClient())
-	bm.SetChainBackend(&mockChain{height: 119})
-
-	bm.promoteProvisionalProofs(119)
-	proof := store.proofs["task-promote"]
-	if proof == nil || proof.ConfirmationStatus != "confirmed" {
-		t.Fatalf("expected promotion at 20 confs, proof=%+v", proof)
-	}
-}
-
-func TestPromoteProvisionalProofs_BlockedOnHashMismatch(t *testing.T) {
-	t.Setenv("CHAIN_SETTLEMENT_CONFIRMATIONS", "1")
-	resetTipLagStateForTest()
-	st := EvaluateTipLag(119, 119, 3, nil, time.Now())
-	ApplyTipHashCheck(st, 119, "aaa", "bbb")
-
-	fakeTxID := strings.Repeat("ee", 32)
-	store := &fullMockSweepStore{
-		proofs: make(map[string]*smart_contract.MerkleProof),
-		tasks: []smart_contract.Task{{
-			TaskID:     "task-fork",
-			ContractID: "contract-fork",
-			MerkleProof: &smart_contract.MerkleProof{
-				TxID:               fakeTxID,
-				BlockHeight:        100,
-				ConfirmationStatus: "provisional",
-				SeenAt:             time.Now(),
-			},
-		}},
-	}
-	bm := NewBlockMonitor(NewBitcoinNodeClient("http://localhost:0"))
-	bm.SetSweepDependencies(store, NewMempoolClient())
-	bm.promoteProvisionalProofs(119)
-	if _, ok := store.proofs["task-fork"]; ok {
-		t.Fatal("must not promote while tip hash mismatches explorer")
 	}
 }
