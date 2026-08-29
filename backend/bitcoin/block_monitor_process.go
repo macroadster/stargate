@@ -221,6 +221,7 @@ func (bm *BlockMonitor) checkForNewBlocks() error {
 
 	bm.lastChecked = time.Now()
 	bm.promoteProvisionalProofs(tip)
+	bm.promoteFundedContracts(tip)
 	if err := bm.updateRecentBlocksSummary(); err != nil {
 		log.Printf("Failed to update recent blocks summary: %v", err)
 	}
@@ -254,6 +255,7 @@ func (bm *BlockMonitor) trackTip(tip int64) error {
 	if first == 0 || last == 0 || first > last {
 		bm.lastChecked = time.Now()
 		bm.promoteProvisionalProofs(tip)
+		bm.promoteFundedContracts(tip)
 		return nil
 	}
 
@@ -284,6 +286,7 @@ func (bm *BlockMonitor) trackTip(tip int64) error {
 
 	bm.lastChecked = time.Now()
 	bm.promoteProvisionalProofs(tip)
+	bm.promoteFundedContracts(tip)
 	if err := bm.updateRecentBlocksSummary(); err != nil {
 		log.Printf("Failed to update recent blocks summary: %v", err)
 	}

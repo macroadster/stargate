@@ -36,6 +36,11 @@ func validateIngestedBlock(height int64, parsed *ParsedBlock, canonicalHash, pre
 			}
 		}
 	}
+	// Incomplete parse (parser stopped after a bad tx) must not fail-close
+	// ingest: merkle of a truncated tx list is not a chain integrity failure.
+	if parsed.ParseIncomplete || (parsed.AdvertisedTxCount > 0 && len(parsed.Transactions) != parsed.AdvertisedTxCount) {
+		return nil
+	}
 	return verifyParsedMerkleRoot(parsed)
 }
 

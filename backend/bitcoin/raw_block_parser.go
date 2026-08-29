@@ -309,11 +309,13 @@ type TxOutput struct {
 
 // ParsedBlock represents parsed block with extracted images
 type ParsedBlock struct {
-	Height       int64
-	Hash         string
-	Header       BlockHeader
-	Transactions []Transaction
-	Images       []ExtractedImageData
+	Height            int64
+	Hash              string
+	Header            BlockHeader
+	Transactions      []Transaction
+	Images            []ExtractedImageData
+	AdvertisedTxCount int  // varint tx count from the block
+	ParseIncomplete   bool // true if a tx failed to parse (remaining txs not read)
 }
 
 // ExtractedImageData represents an image extracted from witness data
@@ -360,13 +362,16 @@ func (p *BitcoinParser) ParseBlock(data []byte) (*ParsedBlock, error) {
 	}
 
 	log.Printf("Block contains %d transactions", txCount)
+	block.AdvertisedTxCount = int(txCount)
 
-	// Parse transactions
+	// Parse transactions. Do not skip a failed tx and continue: the reader
+	// is then desynchronized and later txs (and merkle) are garbage.
 	for i := 0; i < int(txCount); i++ {
 		tx, err := p.parseTransaction(reader)
 		if err != nil {
-			log.Printf("Failed to parse transaction %d: %v", i, err)
-			continue
+			log.Printf("Failed to parse transaction %d/%d: %v (stopping; block marked incomplete)", i, txCount, err)
+			block.ParseIncomplete = true
+			break
 		}
 		block.Transactions = append(block.Transactions, *tx)
 	}

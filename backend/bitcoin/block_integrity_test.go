@@ -72,3 +72,24 @@ func TestComputeMerkleRootEmptyRejected(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+func TestValidateIngestedBlockSkipsMerkleWhenParseIncomplete(t *testing.T) {
+	parsed := &ParsedBlock{
+		Height: 10,
+		Hash:   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		Header: BlockHeader{
+			Hash:       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			PrevBlock:  "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+			MerkleRoot: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+		},
+		Transactions:      []Transaction{{TxID: "1111111111111111111111111111111111111111111111111111111111111111"}},
+		AdvertisedTxCount: 2,
+		ParseIncomplete:   true,
+	}
+	if err := validateIngestedBlock(10, parsed, parsed.Hash, parsed.Header.PrevBlock); err != nil {
+		t.Fatalf("incomplete parse must not fail-close on merkle: %v", err)
+	}
+	if err := validateIngestedBlock(10, parsed, "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", parsed.Header.PrevBlock); err == nil {
+		t.Fatal("header hash mismatch must still reject")
+	}
+}

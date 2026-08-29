@@ -59,11 +59,15 @@ func TestSanitizeInscriptionsForDisk_SVG(t *testing.T) {
 
 // fullMockSweepStore implements SweepTaskStore for testing.
 type fullMockSweepStore struct {
-	tasks  []smart_contract.Task
-	proofs map[string]*smart_contract.MerkleProof
+	tasks     []smart_contract.Task
+	proofs    map[string]*smart_contract.MerkleProof
+	contracts []smart_contract.Contract
 }
 
 func (m *fullMockSweepStore) UpdateTaskProof(_ context.Context, taskID string, proof *smart_contract.MerkleProof) error {
+	if m.proofs == nil {
+		m.proofs = make(map[string]*smart_contract.MerkleProof)
+	}
 	m.proofs[taskID] = proof
 	return nil
 }
@@ -75,11 +79,44 @@ func (m *fullMockSweepStore) ListTasks(filter smart_contract.TaskFilter) ([]smar
 		}
 		out = append(out, t)
 	}
+	if filter.Offset > 0 {
+		if filter.Offset >= len(out) {
+			return nil, nil
+		}
+		out = out[filter.Offset:]
+	}
+	if filter.Limit > 0 && len(out) > filter.Limit {
+		out = out[:filter.Limit]
+	}
 	return out, nil
 }
 func (m *fullMockSweepStore) UpdateContractStatus(_ context.Context, _, _ string) error { return nil }
-func (m *fullMockSweepStore) ConfirmContract(_ context.Context, _ string, _ int, _ string) error {
+func (m *fullMockSweepStore) ConfirmContract(_ context.Context, contractID string, _ int, _ string) error {
+	for i := range m.contracts {
+		if m.contracts[i].ContractID == contractID {
+			m.contracts[i].Status = "confirmed"
+		}
+	}
 	return nil
+}
+func (m *fullMockSweepStore) ListContracts(filter smart_contract.ContractFilter) ([]smart_contract.Contract, error) {
+	var out []smart_contract.Contract
+	for _, c := range m.contracts {
+		if filter.Status != "" && !strings.EqualFold(c.Status, filter.Status) {
+			continue
+		}
+		out = append(out, c)
+	}
+	if filter.Offset > 0 {
+		if filter.Offset >= len(out) {
+			return nil, nil
+		}
+		out = out[filter.Offset:]
+	}
+	if filter.Limit > 0 && len(out) > filter.Limit {
+		out = out[:filter.Limit]
+	}
+	return out, nil
 }
 
 func TestConfirmContractTasks_ConfirmedTx(t *testing.T) {
@@ -392,5 +429,66 @@ func TestPromoteProvisionalProofs_BlockedOnHashMismatch(t *testing.T) {
 	bm.promoteProvisionalProofs(119)
 	if _, ok := store.proofs["task-fork"]; ok {
 		t.Fatal("must not promote while tip hash mismatches explorer")
+	}
+}
+
+func TestPromoteProvisionalProofs_IgnoresOldSeenAt(t *testing.T) {
+	t.Setenv("CHAIN_SETTLEMENT_CONFIRMATIONS", "20")
+	t.Setenv("BITCOIN_NETWORK", "testnet4")
+	resetTipLagStateForTest()
+
+	fakeTxID := strings.Repeat("11", 32)
+	store := &fullMockSweepStore{
+		proofs: make(map[string]*smart_contract.MerkleProof),
+		tasks: []smart_contract.Task{{
+			TaskID:     "task-old",
+			ContractID: "contract-old",
+			MerkleProof: &smart_contract.MerkleProof{
+				TxID:               fakeTxID,
+				BlockHeight:        100,
+				ConfirmationStatus: "provisional",
+				SeenAt:             time.Now().Add(-15 * 24 * time.Hour),
+			},
+		}},
+	}
+	bm := NewBlockMonitor(NewBitcoinNodeClient("http://localhost:0"))
+	bm.SetSweepDependencies(store, NewMempoolClient())
+	bm.SetChainBackend(&mockChain{height: 119})
+	bm.promoteProvisionalProofs(119)
+	proof := store.proofs["task-old"]
+	if proof == nil || proof.ConfirmationStatus != "confirmed" {
+		t.Fatalf("15-day-old SeenAt must still promote, proof=%+v", proof)
+	}
+}
+
+func TestPromoteFundedContracts_AfterNConf(t *testing.T) {
+	t.Setenv("CHAIN_SETTLEMENT_CONFIRMATIONS", "20")
+	t.Setenv("BITCOIN_NETWORK", "testnet4")
+	resetTipLagStateForTest()
+
+	store := &fullMockSweepStore{
+		proofs: make(map[string]*smart_contract.MerkleProof),
+		contracts: []smart_contract.Contract{{
+			ContractID: "wish-notask",
+			Status:     "funded",
+			Metadata: map[string]interface{}{
+				"confirmed_height": int64(100),
+				"confirmed_txid":   strings.Repeat("22", 32),
+				"stego_hash":       strings.Repeat("33", 32),
+			},
+		}},
+	}
+	bm := NewBlockMonitor(NewBitcoinNodeClient("http://localhost:0"))
+	bm.SetSweepDependencies(store, NewMempoolClient())
+	bm.SetChainBackend(&mockChain{height: 100})
+
+	bm.promoteFundedContracts(100)
+	if store.contracts[0].Status != "funded" {
+		t.Fatalf("1-conf must stay funded, got %q", store.contracts[0].Status)
+	}
+
+	bm.promoteFundedContracts(119)
+	if store.contracts[0].Status != "confirmed" {
+		t.Fatalf("N-conf must confirm funded contract, got %q", store.contracts[0].Status)
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -786,44 +787,150 @@ func (bm *BlockMonitor) maybeConfirmContract(contractID, txid string, blockHeigh
 
 // promoteProvisionalProofs upgrades provisional task proofs once they have
 // enough confirmations and the local tip is not on a conflicting fork.
+// Pages all tasks (no 14-day SeenAt cutoff) so recovered proofs still promote.
 func (bm *BlockMonitor) promoteProvisionalProofs(tip int64) {
 	if bm.sweepStore == nil || tip <= 0 || SettlementBlocked() {
 		return
 	}
 	need := SettlementConfirmations()
-	since := time.Now().Add(-14 * 24 * time.Hour)
-	tasks, err := bm.sweepStore.ListTasks(smart_contract.TaskFilter{
-		LastActivitySince: &since,
-		Limit:             500,
-	})
-	if err != nil {
-		log.Printf("oracle reconcile: promote provisional: list tasks: %v", err)
+	const page = 200
+	for offset := 0; ; offset += page {
+		tasks, err := bm.sweepStore.ListTasks(smart_contract.TaskFilter{
+			Limit:  page,
+			Offset: offset,
+		})
+		if err != nil {
+			log.Printf("oracle reconcile: promote provisional: list tasks: %v", err)
+			return
+		}
+		if len(tasks) == 0 {
+			return
+		}
+		for _, task := range tasks {
+			proof := task.MerkleProof
+			if proof == nil {
+				continue
+			}
+			if !strings.EqualFold(strings.TrimSpace(proof.ConfirmationStatus), "provisional") {
+				continue
+			}
+			if proof.BlockHeight <= 0 || strings.TrimSpace(proof.TxID) == "" {
+				continue
+			}
+			if !SettlementReady(tip, proof.BlockHeight) {
+				continue
+			}
+			now := time.Now()
+			proof.ConfirmationStatus = "confirmed"
+			proof.ConfirmedAt = &now
+			if err := bm.sweepStore.UpdateTaskProof(context.Background(), task.TaskID, proof); err != nil {
+				log.Printf("oracle reconcile: promote provisional %s: %v", task.TaskID, err)
+				continue
+			}
+			bm.maybeConfirmContract(task.ContractID, proof.TxID, proof.BlockHeight)
+			log.Printf("oracle reconcile: promoted task %s to confirmed (height=%d tip=%d need=%d)",
+				task.TaskID, proof.BlockHeight, tip, need)
+		}
+		if len(tasks) < page {
+			return
+		}
+	}
+}
+
+func contractFundingHeight(c smart_contract.Contract) int64 {
+	if c.ConfirmedBlockHeight != nil && *c.ConfirmedBlockHeight > 0 {
+		return int64(*c.ConfirmedBlockHeight)
+	}
+	if c.Metadata == nil {
+		return 0
+	}
+	switch v := c.Metadata["confirmed_height"].(type) {
+	case int64:
+		return v
+	case int:
+		return int64(v)
+	case int32:
+		return int64(v)
+	case float64:
+		return int64(v)
+	default:
+		s := strings.TrimSpace(stringFromAny(v))
+		if s == "" {
+			return 0
+		}
+		n, err := strconv.ParseInt(s, 10, 64)
+		if err != nil {
+			return 0
+		}
+		return n
+	}
+}
+
+func contractFundingTxID(c smart_contract.Contract) string {
+	if c.Metadata == nil {
+		return ""
+	}
+	return strings.TrimSpace(stringFromAny(c.Metadata["confirmed_txid"]))
+}
+
+func contractStegoHash(c smart_contract.Contract) string {
+	if c.Metadata == nil {
+		return ""
+	}
+	for _, k := range []string{"stego_contract_id", "stego_hash", "stego_image_cid"} {
+		if s := strings.TrimSpace(stringFromAny(c.Metadata[k])); s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+// promoteFundedContracts confirms funded rows once their funding height has
+// N confirmations, then re-runs stego/sandbox reconcile.
+func (bm *BlockMonitor) promoteFundedContracts(tip int64) {
+	if tip <= 0 || SettlementBlocked() {
 		return
 	}
-	for _, task := range tasks {
-		proof := task.MerkleProof
-		if proof == nil {
-			continue
+	cl, ok := bm.sweepStore.(contractLister)
+	if !ok || cl == nil {
+		return
+	}
+	const page = 200
+	for offset := 0; ; offset += page {
+		contracts, err := cl.ListContracts(smart_contract.ContractFilter{
+			Status: "funded",
+			Limit:  page,
+			Offset: offset,
+		})
+		if err != nil {
+			log.Printf("oracle reconcile: promote funded: list contracts: %v", err)
+			return
 		}
-		if !strings.EqualFold(strings.TrimSpace(proof.ConfirmationStatus), "provisional") {
-			continue
+		if len(contracts) == 0 {
+			return
 		}
-		if proof.BlockHeight <= 0 || strings.TrimSpace(proof.TxID) == "" {
-			continue
+		for _, c := range contracts {
+			if !strings.EqualFold(strings.TrimSpace(c.Status), "funded") {
+				continue
+			}
+			h := contractFundingHeight(c)
+			if h <= 0 || !SettlementReady(tip, h) {
+				continue
+			}
+			txid := contractFundingTxID(c)
+			if err := bm.sweepStore.ConfirmContract(context.Background(), c.ContractID, int(h), txid); err != nil {
+				log.Printf("oracle reconcile: promote funded ConfirmContract %s: %v", c.ContractID, err)
+				continue
+			}
+			if stego := contractStegoHash(c); stego != "" {
+				bm.reconcileOnChainArtifacts(c.ContractID, stego)
+			}
+			log.Printf("oracle reconcile: promoted funded contract %s to confirmed (height=%d tip=%d)",
+				c.ContractID, h, tip)
 		}
-		if !SettlementReady(tip, proof.BlockHeight) {
-			continue
+		if len(contracts) < page {
+			return
 		}
-		now := time.Now()
-		proof.ConfirmationStatus = "confirmed"
-		proof.ConfirmedAt = &now
-		if err := bm.sweepStore.UpdateTaskProof(context.Background(), task.TaskID, proof); err != nil {
-			log.Printf("oracle reconcile: promote provisional %s: %v", task.TaskID, err)
-			continue
-		}
-		bm.maybeConfirmContract(task.ContractID, proof.TxID, proof.BlockHeight)
-		log.Printf("oracle reconcile: promoted task %s to confirmed (height=%d tip=%d need=%d)",
-			task.TaskID, proof.BlockHeight, tip, need)
 	}
 }
 
