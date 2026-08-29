@@ -8,17 +8,33 @@ import (
 )
 
 type mockChain struct {
-	height int64
-	hash   string
-	hex    string
+	height  int64
+	hash    string
+	hex     string
+	hashes  map[int64]string
+	network string
 }
 
-func (m *mockChain) Network() string { return "testnet4" }
-func (m *mockChain) Ready(ctx context.Context) error { return nil }
-func (m *mockChain) Synced(ctx context.Context) (bool, error) { return true, nil }
+func (m *mockChain) Network() string {
+	if m.network != "" {
+		return m.network
+	}
+	return "testnet4"
+}
+func (m *mockChain) Ready(ctx context.Context) error                 { return nil }
+func (m *mockChain) Synced(ctx context.Context) (bool, error)        { return true, nil }
 func (m *mockChain) GetTipHeight(ctx context.Context) (int64, error) { return m.height, nil }
-func (m *mockChain) GetBlockHash(ctx context.Context, height int64) (string, error) { return m.hash, nil }
-func (m *mockChain) GetRawBlockHex(ctx context.Context, height int64) (string, error) { return m.hex, nil }
+func (m *mockChain) GetBlockHash(ctx context.Context, height int64) (string, error) {
+	if m.hashes != nil {
+		if h, ok := m.hashes[height]; ok {
+			return h, nil
+		}
+	}
+	return m.hash, nil
+}
+func (m *mockChain) GetRawBlockHex(ctx context.Context, height int64) (string, error) {
+	return m.hex, nil
+}
 func (m *mockChain) GetRawTx(ctx context.Context, txid string) (*wire.MsgTx, error) {
 	return nil, nil
 }
@@ -28,9 +44,9 @@ func (m *mockChain) GetTxStatus(ctx context.Context, txid string) (int64, bool, 
 func (m *mockChain) NodeStatus(ctx context.Context) (map[string]any, error) {
 	return map[string]any{"backend": "mock"}, nil
 }
-func (m *mockChain) Close() error { return nil }
+func (m *mockChain) Close() error                                             { return nil }
 func (m *mockChain) ListConfirmedUTXOs(address string) ([]AddressUTXO, error) { return nil, nil }
-func (m *mockChain) FetchTx(txid string) (*wire.MsgTx, error) { return nil, nil }
+func (m *mockChain) FetchTx(txid string) (*wire.MsgTx, error)                 { return nil, nil }
 func (m *mockChain) FetchTxOutput(txid string, vout uint32) (*wire.MsgTx, *wire.TxOut, error) {
 	return nil, nil, nil
 }

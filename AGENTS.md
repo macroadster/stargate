@@ -258,10 +258,16 @@ Stargate runs a **local btcd full node** by default (ADR 0006) instead of pollin
 | `BTCD_DATADIR` | `$STARGATE_DATA_DIR/btcd` | Chainstate — **must be on a persistent volume** |
 | `BTCD_RPC_HOST` | network default (e.g. `127.0.0.1:48334`) | RPC host:port |
 | `BTCD_ALLOW_MAINNET` | `false` | Set `true` to allow mainnet (large disk) |
-| `CHAIN_EXTERNAL_TIP_CHECK` | `true` | Compare local tip to explorer; log lag / mark health degraded |
+| `CHAIN_EXTERNAL_TIP_CHECK` | `true` | Compare local tip **height and hash** to explorer; log lag / fork / mark health degraded. Read-only — never submit or invalidate from explorer. |
 | `CHAIN_TIP_LAG_THRESHOLD` | `3` | Blocks behind external tip before lagging |
-| `CHAIN_TIP_LAG_RESTART_AFTER` | `15m` | Sustained lag before restarting managed btcd (`0`/`off` disables) |
+| `CHAIN_TIP_LAG_RESTART_AFTER` | `15m` | Sustained **height** lag before restarting managed btcd (`0`/`off` disables). Hash mismatch does not restart. |
 | `CHAIN_TIP_LAG_RESTART_COOLDOWN` | `30m` | Min time between auto-restarts |
+| `CHAIN_SETTLEMENT_CONFIRMATIONS` | network default | Blocks that must bury a tx before task proofs / `ConfirmContract`. Defaults: mainnet 6, testnet/signet 20, regtest 1 |
+| `BTCD_P2P_LISTEN` | `127.0.0.1:<net port>` | P2P listen address. Default is localhost (no public inbound). Set `0.0.0.0:<port>` only if you want inbound. |
+| `BTCD_NOLISTEN` | `false` | If `true`, pass `--nolisten` (no inbound P2P) |
+| `BTCD_CONNECT` | empty | Comma-separated exclusive peers (`--connect=`). Also disables inbound listen. |
+| `BTCD_ADDPEER` | empty | Comma-separated extra outbound peers (`--addpeer=`) |
+| `BTCD_MIN_PEERS` | `1` | Treat the node as not synced below this peer count (eclipse / isolation) |
 | `BLOCK_MONITOR_CATCHUP_BATCH` | `25` | Max blocks/cycle when sequential catch-up is behind |
 
 - Mining is **never** enabled (`--generate` is not passed).

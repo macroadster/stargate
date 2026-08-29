@@ -128,6 +128,66 @@ func TestMergeTipLagIntoStatus_MarksUnsynced(t *testing.T) {
 	}
 }
 
+func TestApplyTipHashCheck_MismatchMarksLagging(t *testing.T) {
+	resetTipLagStateForTest()
+	st := EvaluateTipLag(50, 50, 3, nil, time.Now())
+	if st.Lagging {
+		t.Fatal("heights match, should not lag yet")
+	}
+	st = ApplyTipHashCheck(st, 50,
+		"0000000000000000000000000000000000000000000000000000000000000001",
+		"0000000000000000000000000000000000000000000000000000000000000002",
+	)
+	if !st.HashMismatch || !st.Lagging {
+		t.Fatalf("fork must mark mismatch+lagging: %+v", st)
+	}
+	out := map[string]any{"synced": true}
+	mergeTipLagIntoStatus(out)
+	if out["synced"] != false {
+		t.Fatalf("health must flip unsynced on hash mismatch, got %v", out["synced"])
+	}
+	if out["tip_hash_mismatch"] != true {
+		t.Fatalf("tip_hash_mismatch=%v", out["tip_hash_mismatch"])
+	}
+}
+
+func TestFetchExternalBlockHash(t *testing.T) {
+	const want = "0f2e1d0c0b0a09080706050403020100ffeeddccbbaa99887766554433221100"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/block-height/144834" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(want + "\n"))
+	}))
+	defer srv.Close()
+
+	testExplorerBaseURL = srv.URL
+	t.Cleanup(func() { testExplorerBaseURL = "" })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	got, err := FetchExternalBlockHash(ctx, "testnet4", 144834)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+}
+
+func TestMaybeRestartManagedBtcdSkipsHashMismatch(t *testing.T) {
+	resetTipLagStateForTest()
+	st := EvaluateTipLag(50, 50, 3, nil, time.Now().Add(-time.Hour))
+	st = ApplyTipHashCheck(st, 50, "aa", "bb")
+	if !st.HashMismatch {
+		t.Fatal("expected mismatch")
+	}
+	if maybeRestartManagedBtcd(context.Background(), &EmbeddedBtcd{}, st) {
+		t.Fatal("hash mismatch must not restart managed btcd")
+	}
+}
+
 func TestFetchExternalTipHeight(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("144834\n"))
