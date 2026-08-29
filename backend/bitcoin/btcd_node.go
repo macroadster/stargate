@@ -590,7 +590,7 @@ func logSyncOnce(ctx context.Context, rt *ChainRuntime) {
 	// External tip lag + hash check (mempool.space / blockstream reference).
 	// Surfaces stuck nodes and same-height minority forks. Read-only:
 	// never submit explorer blocks or invalidateblock from this path.
-	if !tipLagExternalCheckEnabled() {
+	if !tipLagExternalCheckEnabled() || localOnlyChain(backend.Network()) {
 		return
 	}
 	localTip, _ := toInt64(st["blocks"])

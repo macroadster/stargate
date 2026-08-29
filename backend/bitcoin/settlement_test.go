@@ -78,6 +78,20 @@ func TestApplyTipHashCheckSameHash(t *testing.T) {
 	}
 }
 
+func TestSettlementBlocked_RegtestIgnoresForeignExplorerTip(t *testing.T) {
+	resetTipLagStateForTest()
+	t.Setenv("BITCOIN_NETWORK", "regtest")
+	t.Setenv("CHAIN_EXTERNAL_TIP_CHECK", "")
+	// Simulate a leftover/testnet4-sized explorer tip. Must not block.
+	EvaluateTipLag(10, 150232, 3, nil, time.Now())
+	if SettlementBlocked() {
+		t.Fatal("regtest must not SettlementBlocked on a foreign (testnet4-sized) tip")
+	}
+	if SettlementReady(10, 10) != true {
+		t.Fatal("regtest 1-conf settlement must still be ready when not forked")
+	}
+}
+
 func TestMinPeerCountDefault(t *testing.T) {
 	t.Setenv("BTCD_MIN_PEERS", "")
 	if got := minPeerCount(); got != 1 {

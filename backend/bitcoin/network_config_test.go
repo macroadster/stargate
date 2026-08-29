@@ -44,6 +44,21 @@ func TestNetworkParamsMatchesBtcdAndDoesNotConflateTestnets(t *testing.T) {
 	}
 }
 
+func TestGetNetworkConfig_LocalOnlyHasNoExplorer(t *testing.T) {
+	for _, net := range []string{"regtest", "simnet", "REGTEST"} {
+		cfg := GetNetworkConfig(net)
+		if cfg == nil {
+			t.Fatalf("%s: nil config", net)
+		}
+		if cfg.HeightURL != "" || cfg.BaseURL != "" {
+			t.Fatalf("%s must not inherit a public explorer: %+v", net, cfg)
+		}
+	}
+	if cfg := GetNetworkConfig("testnet4"); cfg == nil || cfg.HeightURL == "" {
+		t.Fatal("testnet4 still needs an explorer")
+	}
+}
+
 func TestGetCurrentNetworkAndCurrentParams(t *testing.T) {
 	t.Setenv("BITCOIN_NETWORK", "")
 	if got := GetCurrentNetwork(); got != "testnet4" {

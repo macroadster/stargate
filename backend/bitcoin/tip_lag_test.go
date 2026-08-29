@@ -176,6 +176,60 @@ func TestFetchExternalBlockHash(t *testing.T) {
 	}
 }
 
+func TestEvaluateTipLag_HashMismatchStickyUntilSuccessfulCompare(t *testing.T) {
+	resetTipLagStateForTest()
+	now := time.Now()
+	st := EvaluateTipLag(100, 100, 3, nil, now)
+	st = ApplyTipHashCheck(st, 100, "aa", "bb")
+	if !st.HashMismatch || !SettlementBlocked() {
+		t.Fatalf("setup mismatch: %+v blocked=%v", st, SettlementBlocked())
+	}
+
+	// Height still ok, but no ApplyTipHashCheck (hash fetch failed).
+	st2 := EvaluateTipLag(100, 100, 3, nil, now.Add(time.Minute))
+	if !st2.HashMismatch {
+		t.Fatalf("mismatch must stick across height-only refresh: %+v", st2)
+	}
+	if !SettlementBlocked() {
+		t.Fatal("SettlementBlocked must stay true after hash-fetch skip")
+	}
+
+	// Explorer height error must not clear the fork either.
+	st3 := EvaluateTipLag(100, 0, 3, context.DeadlineExceeded, now.Add(2*time.Minute))
+	if !st3.HashMismatch {
+		t.Fatalf("mismatch must stick across explorer error: %+v", st3)
+	}
+	if !SettlementBlocked() {
+		t.Fatal("SettlementBlocked must stay true after explorer error")
+	}
+
+	st4 := ApplyTipHashCheck(st3, 100, "aa", "aa")
+	if st4.HashMismatch || SettlementBlocked() {
+		t.Fatalf("successful equal compare must clear: %+v blocked=%v", st4, SettlementBlocked())
+	}
+}
+
+func TestTipLagExternalCheckDisabledOnRegtest(t *testing.T) {
+	t.Setenv("CHAIN_EXTERNAL_TIP_CHECK", "")
+	t.Setenv("BITCOIN_NETWORK", "regtest")
+	if tipLagExternalCheckEnabled() {
+		t.Fatal("regtest must not query a public explorer by default")
+	}
+	t.Setenv("BITCOIN_NETWORK", "simnet")
+	if tipLagExternalCheckEnabled() {
+		t.Fatal("simnet must not query a public explorer by default")
+	}
+	t.Setenv("BITCOIN_NETWORK", "testnet4")
+	if !tipLagExternalCheckEnabled() {
+		t.Fatal("testnet4 default is still on")
+	}
+	t.Setenv("BITCOIN_NETWORK", "regtest")
+	t.Setenv("CHAIN_EXTERNAL_TIP_CHECK", "true")
+	if !tipLagExternalCheckEnabled() {
+		t.Fatal("explicit true must still enable the check")
+	}
+}
+
 func TestMaybeRestartManagedBtcdSkipsHashMismatch(t *testing.T) {
 	resetTipLagStateForTest()
 	st := EvaluateTipLag(50, 50, 3, nil, time.Now().Add(-time.Hour))

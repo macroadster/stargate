@@ -19,9 +19,20 @@ type NetworkConfig struct {
 	HeightURL   string
 }
 
+// localOnlyChain is true for networks with no public explorer (do not
+// compare tips against testnet4 mempool.space).
+func localOnlyChain(network string) bool {
+	switch strings.ToLower(strings.TrimSpace(network)) {
+	case "regtest", "simnet", "sim":
+		return true
+	default:
+		return false
+	}
+}
+
 // GetNetworkConfig returns configuration for the specified network
 func GetNetworkConfig(network string) *NetworkConfig {
-	switch network {
+	switch strings.ToLower(strings.TrimSpace(network)) {
 	case "testnet4":
 		return &NetworkConfig{
 			Name:        "Bitcoin Testnet4",
@@ -54,6 +65,14 @@ func GetNetworkConfig(network string) *NetworkConfig {
 			FaucetURL:   "https://signetfaucet.com/",
 			HeightURL:   "https://mempool.space/signet/api/blocks/tip/height",
 		}
+	case "regtest", "simnet", "sim":
+		// No public explorer. Empty HeightURL/BaseURL so tip-lag cannot
+		// silently compare a private chain to testnet4.
+		name := "Bitcoin Regtest"
+		if strings.ToLower(strings.TrimSpace(network)) != "regtest" {
+			name = "Bitcoin Simnet"
+		}
+		return &NetworkConfig{Name: name}
 	default:
 		log.Printf("Unknown network '%s', defaulting to testnet4", network)
 		return GetNetworkConfig("testnet4")

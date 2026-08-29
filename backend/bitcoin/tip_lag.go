@@ -61,6 +61,20 @@ func GetTipLagStatus() TipLagStatus {
 	return out
 }
 
+// copyHashSignal keeps a recorded fork until ApplyTipHashCheck overwrites it.
+func copyHashSignal(dst *TipLagStatus, prev TipLagStatus) {
+	if dst == nil {
+		return
+	}
+	dst.HashMismatch = prev.HashMismatch
+	dst.CompareHeight = prev.CompareHeight
+	dst.LocalTipHash = prev.LocalTipHash
+	dst.ExternalTipHash = prev.ExternalTipHash
+	if dst.HashMismatch {
+		dst.Lagging = true
+	}
+}
+
 // resetTipLagStateForTest clears package tip-lag state (tests only).
 func resetTipLagStateForTest() {
 	tipLagMu.Lock()
@@ -80,13 +94,17 @@ func tipLagThreshold() int64 {
 	return 3
 }
 
-// tipLagExternalCheckEnabled controls explorer tip comparison (default on).
+// tipLagExternalCheckEnabled controls explorer tip comparison.
+// Default on for public networks; off for regtest/simnet (no explorer).
 func tipLagExternalCheckEnabled() bool {
 	v := strings.ToLower(strings.TrimSpace(os.Getenv("CHAIN_EXTERNAL_TIP_CHECK")))
-	if v == "" {
+	if v == "0" || v == "false" || v == "off" || v == "no" {
+		return false
+	}
+	if v == "1" || v == "true" || v == "on" || v == "yes" {
 		return true
 	}
-	return v != "0" && v != "false" && v != "off" && v != "no"
+	return !localOnlyChain(GetCurrentNetwork())
 }
 
 // tipLagRestartAfter is how long sustained lag must last before restarting
@@ -231,6 +249,8 @@ func EvaluateTipLag(localTip, externalTip, threshold int64, externalErr error, n
 			st.FirstLagAt = &t
 			st.LagDuration = now.Sub(tipLagFirstSeen).Round(time.Second).String()
 		}
+		// Keep a known fork until a successful ApplyTipHashCheck replaces it.
+		copyHashSignal(&st, prev)
 		tipLagStatus = st
 		tipLagMu.Unlock()
 		return st
@@ -243,6 +263,7 @@ func EvaluateTipLag(localTip, externalTip, threshold int64, externalErr error, n
 
 	tipLagMu.Lock()
 	defer tipLagMu.Unlock()
+	copyHashSignal(&st, tipLagStatus)
 	if st.Lagging {
 		if tipLagFirstSeen.IsZero() {
 			tipLagFirstSeen = now
@@ -271,6 +292,9 @@ func ApplyTipHashCheck(st TipLagStatus, compareHeight int64, localHash, external
 		st.LocalTipHash != st.ExternalTipHash
 	if st.HashMismatch {
 		st.Lagging = true
+	} else {
+		// Successful compare: drop fork-induced lag; keep height lag only.
+		st.Lagging = st.Threshold > 0 && st.LagBlocks >= st.Threshold
 	}
 
 	tipLagMu.Lock()
@@ -287,6 +311,10 @@ func ApplyTipHashCheck(st TipLagStatus, compareHeight int64, localHash, external
 		if !st.CheckedAt.IsZero() {
 			st.LagDuration = st.CheckedAt.Sub(tipLagFirstSeen).Round(time.Second).String()
 		}
+	} else {
+		tipLagFirstSeen = time.Time{}
+		st.FirstLagAt = nil
+		st.LagDuration = ""
 	}
 	tipLagStatus = st
 	return st

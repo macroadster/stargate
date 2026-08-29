@@ -51,13 +51,20 @@ func SettlementReady(tip, height int64) bool {
 }
 
 // SettlementBlocked is true when health says we must not confirm new contracts:
-// explorer/local hash mismatch (possible eclipse / minority fork) or tip lag.
+// explorer/local hash mismatch (possible eclipse / minority fork) or tip lag
+// against a real explorer. Local-only networks never inherit another chain's tip.
 func SettlementBlocked() bool {
 	st := GetTipLagStatus()
 	if st.CheckedAt.IsZero() {
 		return false
 	}
-	return st.HashMismatch || st.Lagging
+	if st.HashMismatch {
+		return true
+	}
+	if localOnlyChain(GetCurrentNetwork()) {
+		return false
+	}
+	return st.Lagging
 }
 
 // reorgWatchDepth is how many recent heights to re-check for hash changes.
