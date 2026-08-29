@@ -896,7 +896,8 @@ func (bm *BlockMonitor) promoteFundedContracts(tip int64) {
 		return
 	}
 	const page = 200
-	for offset := 0; ; offset += page {
+	offset := 0
+	for {
 		contracts, err := cl.ListContracts(smart_contract.ContractFilter{
 			Status: "funded",
 			Limit:  page,
@@ -909,6 +910,7 @@ func (bm *BlockMonitor) promoteFundedContracts(tip int64) {
 		if len(contracts) == 0 {
 			return
 		}
+		confirmed := 0
 		for _, c := range contracts {
 			if !strings.EqualFold(strings.TrimSpace(c.Status), "funded") {
 				continue
@@ -922,6 +924,7 @@ func (bm *BlockMonitor) promoteFundedContracts(tip int64) {
 				log.Printf("oracle reconcile: promote funded ConfirmContract %s: %v", c.ContractID, err)
 				continue
 			}
+			confirmed++
 			if stego := contractStegoHash(c); stego != "" {
 				bm.reconcileOnChainArtifacts(c.ContractID, stego)
 			}
@@ -930,6 +933,12 @@ func (bm *BlockMonitor) promoteFundedContracts(tip int64) {
 		}
 		if len(contracts) < page {
 			return
+		}
+		// Confirmed rows leave the funded set, so incrementing offset would
+		// skip remaining funded that slid to index 0. Advance only when this
+		// full page confirmed none.
+		if confirmed == 0 {
+			offset += page
 		}
 	}
 }

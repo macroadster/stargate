@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -490,5 +491,49 @@ func TestPromoteFundedContracts_AfterNConf(t *testing.T) {
 	bm.promoteFundedContracts(119)
 	if store.contracts[0].Status != "confirmed" {
 		t.Fatalf("N-conf must confirm funded contract, got %q", store.contracts[0].Status)
+	}
+}
+
+func TestPromoteFundedContracts_DoesNotSkipAfterFullConfirmPage(t *testing.T) {
+	t.Setenv("CHAIN_SETTLEMENT_CONFIRMATIONS", "20")
+	t.Setenv("BITCOIN_NETWORK", "testnet4")
+	resetTipLagStateForTest()
+
+	const n = 201
+	contracts := make([]smart_contract.Contract, n)
+	for i := 0; i < n; i++ {
+		contracts[i] = smart_contract.Contract{
+			ContractID: "wish-page-" + strconv.Itoa(i),
+			Status:     "funded",
+			Metadata: map[string]interface{}{
+				"confirmed_height": int64(100),
+				"confirmed_txid":   strings.Repeat("22", 32),
+			},
+		}
+	}
+	store := &fullMockSweepStore{contracts: contracts}
+	bm := NewBlockMonitor(NewBitcoinNodeClient("http://localhost:0"))
+	bm.SetSweepDependencies(store, NewMempoolClient())
+	bm.SetChainBackend(&mockChain{height: 119})
+
+	done := make(chan struct{})
+	go func() {
+		bm.promoteFundedContracts(119)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("promoteFundedContracts hung (offset must still advance on a full not-ready page)")
+	}
+
+	var leftover int
+	for _, c := range store.contracts {
+		if strings.EqualFold(c.Status, "funded") {
+			leftover++
+		}
+	}
+	if leftover != 0 {
+		t.Fatalf("all %d SettlementReady funded rows must confirm in one pass, leftover=%d", n, leftover)
 	}
 }
