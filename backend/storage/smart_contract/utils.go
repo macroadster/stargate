@@ -15,8 +15,7 @@ func DefaultBudgetSats() int64 {
 			return v
 		}
 	}
-	// default mock budget for simulations
-	return 100_000
+	return 1000
 }
 
 // FundingAddressFromMeta extracts funding address from metadata.
