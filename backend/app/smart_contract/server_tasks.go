@@ -122,10 +122,16 @@ func (s *Server) handleClaimTask(w http.ResponseWriter, r *http.Request, taskID 
 	}
 	var body struct {
 		EstimatedCompletion *time.Time `json:"estimated_completion,omitempty"`
+		AmountSats          *int64     `json:"amount_sats,omitempty"`
+		BudgetSats          *int64     `json:"budget_sats,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		Error(w, http.StatusBadRequest, "invalid json")
 		return
+	}
+	amountSats := body.AmountSats
+	if amountSats == nil {
+		amountSats = body.BudgetSats
 	}
 
 	if task, err := s.store.GetTask(taskID); err == nil {
@@ -160,13 +166,13 @@ func (s *Server) handleClaimTask(w http.ResponseWriter, r *http.Request, taskID 
 		return
 	}
 
-	claim, err := s.claimSvc.ClaimTask(taskID, walletAddress, body.EstimatedCompletion)
+	result, err := s.claimSvc.ClaimTaskWithAmount(r.Context(), taskID, walletAddress, body.EstimatedCompletion, amountSats)
 	if err != nil {
 		if err == ErrTaskNotFound {
 			// Attempt to publish tasks lazily from proposals that reference this task id, then retry.
 			if s.tryPublishTasksForTaskID(r.Context(), taskID) == nil {
-				if retry, retryErr := s.claimSvc.ClaimTask(taskID, walletAddress, body.EstimatedCompletion); retryErr == nil {
-					claim = retry
+				if retry, retryErr := s.claimSvc.ClaimTaskWithAmount(r.Context(), taskID, walletAddress, body.EstimatedCompletion, amountSats); retryErr == nil {
+					result = retry
 					err = nil
 				} else {
 					err = retryErr
@@ -188,12 +194,18 @@ func (s *Server) handleClaimTask(w http.ResponseWriter, r *http.Request, taskID 
 		return
 	}
 claim_success:
+	claim := result.Claim
 
 	JSON(w, http.StatusOK, map[string]interface{}{
-		"success":    true,
-		"claim_id":   claim.ClaimID,
-		"expires_at": claim.ExpiresAt,
-		"message":    "Task reserved. Submit work before expiration.",
+		"success":          true,
+		"claim_id":         claim.ClaimID,
+		"expires_at":       claim.ExpiresAt,
+		"message":          "Task reserved. Submit work before expiration.",
+		"amount_sats":      result.AmountSats,
+		"wish_budget_sats": result.WishBudgetSats,
+		"allocated_sats":   result.AllocatedSats,
+		"remaining_sats":   result.RemainingSats,
+		"claimable_sats":   result.ClaimableSats,
 	})
 
 	s.recordEvent(smart_contract.Event{

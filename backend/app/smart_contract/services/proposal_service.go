@@ -256,7 +256,8 @@ func (s *ProposalService) Create(ctx context.Context, body ProposalCreateInput) 
 	if body.Status == "" {
 		body.Status = "pending"
 	}
-	if body.BudgetSats == 0 {
+	omittedBudget := body.BudgetSats == 0
+	if omittedBudget {
 		body.BudgetSats = scstore.DefaultBudgetSats()
 	}
 	if body.Metadata == nil {
@@ -292,8 +293,16 @@ func (s *ProposalService) Create(ctx context.Context, body ProposalCreateInput) 
 		return nil, 0, Fail(http.StatusBadRequest, "contract_id must match visible_pixel_hash for wish proposals")
 	}
 	wishID := "wish-" + visiblePixelHash
-	if _, err := s.store.GetContract(wishID); err != nil {
+	wish, err := scstore.LookupContract(s.store, wishID)
+	if err != nil {
 		return nil, 0, Fail(http.StatusNotFound, "wish not found for visible_pixel_hash")
+	}
+	if wishBudget := scstore.WishBudgetFromContract(wish); wishBudget > 0 {
+		if omittedBudget {
+			body.BudgetSats = wishBudget
+		} else if body.BudgetSats > wishBudget {
+			return nil, 0, Fail(http.StatusBadRequest, fmt.Sprintf("proposal budget_sats %d exceeds original wish budget %d", body.BudgetSats, wishBudget))
+		}
 	}
 	for i := range body.Tasks {
 		if body.Tasks[i].TaskID == "" {

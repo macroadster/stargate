@@ -100,6 +100,30 @@ func TestProposalTaskValidation(t *testing.T) {
 		}
 	})
 
+	t.Run("Proposal tasks exceeding proposal budget", func(t *testing.T) {
+		proposal := smart_contract.Proposal{
+			ID:            "test-proposal-over-budget",
+			Title:         "Over Budget Proposal",
+			DescriptionMD: "Brief text",
+			BudgetSats:    1000,
+			Status:        "pending",
+			Tasks: []smart_contract.Task{
+				{TaskID: "task-1", Title: "Task One", Description: "A", BudgetSats: 700, Status: "available"},
+				{TaskID: "task-2", Title: "Task Two", Description: "B", BudgetSats: 400, Status: "available"},
+			},
+			Metadata: map[string]any{
+				"visible_pixel_hash": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+			},
+		}
+		err := store.CreateProposal(ctx, proposal)
+		if err == nil {
+			t.Fatal("expected validation error when task budgets exceed proposal budget")
+		}
+		if !containsString(err.Error(), "exceed proposal budget") {
+			t.Errorf("expected exceed proposal budget error, got: %v", err)
+		}
+	})
+
 	t.Run("Pending proposal with no tasks (allowed)", func(t *testing.T) {
 		proposal := smart_contract.Proposal{
 			ID:            "test-proposal-4",

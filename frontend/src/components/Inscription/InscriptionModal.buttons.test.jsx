@@ -62,6 +62,8 @@ const baseState = {
   psbtTasks: [],
   deliverableTasks: [],
   approvedBudgetsTotal: 0,
+  wishBudgetSats: 1000,
+  remainingWishSats: 1000,
   payoutSummaries: [],
   stegoProposal: null,
   stegoTasks: [],

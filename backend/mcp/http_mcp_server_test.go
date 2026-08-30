@@ -262,6 +262,70 @@ func TestClaimTaskUsesAPIKeyWallet(t *testing.T) {
 	}
 }
 
+func TestClaimTaskAmountSatsRespectsWishBudget(t *testing.T) {
+	store := scstore.NewMemoryStore(72 * time.Hour)
+	ingestionSvc := &services.IngestionService{}
+	scannerManager := &starlight.ScannerManager{}
+	apiKey := "test-api-key"
+	wallet := "tb1qwallettest000000000000000000000000000000000"
+	server := NewHTTPMCPServer(store, walletValidator{wallet: wallet}, nil, ingestionSvc, scannerManager, nil, auth.NewChallengeStore(10*time.Minute))
+
+	contract := smart_contract.Contract{
+		ContractID:      "wish-claim-amount",
+		Title:           "Wish",
+		TotalBudgetSats: 1000,
+		Status:          "active",
+	}
+	task := smart_contract.Task{
+		TaskID:     "wish-claim-amount-task-1",
+		ContractID: "wish-claim-amount",
+		Title:      "Do work",
+		BudgetSats: 400,
+		Status:     "available",
+	}
+	if err := store.UpsertContractWithTasks(context.Background(), contract, []smart_contract.Task{task}); err != nil {
+		t.Fatal(err)
+	}
+
+	call := func(amount interface{}) MCPResponse {
+		req := MCPRequest{
+			Tool: "claim_task",
+			Arguments: map[string]interface{}{
+				"task_id":     task.TaskID,
+				"amount_sats": amount,
+			},
+		}
+		body, _ := json.Marshal(req)
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("POST", "/mcp/call", bytes.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("X-API-Key", apiKey)
+		server.handleToolCall(w, r)
+		var resp MCPResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("decode: %v body=%s", err, w.Body.String())
+		}
+		return resp
+	}
+
+	over := call(float64(1001))
+	if over.Success {
+		t.Fatalf("expected over-budget claim to fail: %#v", over)
+	}
+
+	ok := call(float64(600))
+	if !ok.Success {
+		t.Fatalf("expected 600 sat claim to succeed: %#v", ok)
+	}
+	updated, err := store.GetTask(task.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.BudgetSats != 600 {
+		t.Fatalf("budget=%d", updated.BudgetSats)
+	}
+}
+
 func TestProposalCreationRequiresWish(t *testing.T) {
 	// Use a fresh memory store for this test
 	store := scstore.NewMemoryStore(72 * time.Hour)

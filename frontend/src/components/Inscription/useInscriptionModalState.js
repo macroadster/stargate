@@ -138,6 +138,29 @@ export function useInscriptionModalState(inscription, initialTab = 'content') {
     if (list.length === 0) return 0;
     return list.reduce((sum, t) => sum + (Number(t.budget_sats) || 0), 0);
   }, [psbtTasks, allTasks]);
+  const wishBudgetSats = useMemo(() => {
+    const fromInscription = Number(
+      inscription.totalBudgetSats ||
+        inscription.total_budget_sats ||
+        inscription.metadata?.wish_price_sats ||
+        inscription.metadata?.budget_sats ||
+        0,
+    );
+    if (Number.isFinite(fromInscription) && fromInscription > 0) return fromInscription;
+    const fromProposal = Number(approvedProposal?.budget_sats || 0);
+    return Number.isFinite(fromProposal) && fromProposal > 0 ? fromProposal : 0;
+  }, [
+    inscription.totalBudgetSats,
+    inscription.total_budget_sats,
+    inscription.metadata?.wish_price_sats,
+    inscription.metadata?.budget_sats,
+    approvedProposal?.budget_sats,
+  ]);
+  const remainingWishSats = useMemo(() => {
+    if (!wishBudgetSats) return 0;
+    const left = wishBudgetSats - (approvedBudgetsTotal || 0);
+    return left > 0 ? left : 0;
+  }, [wishBudgetSats, approvedBudgetsTotal]);
   const payoutSummaries = useMemo(() => {
     const tasks = deliverableTasks.length > 0 ? deliverableTasks : psbtTasks;
     if (!tasks.length) return [];
@@ -869,6 +892,12 @@ export function useInscriptionModalState(inscription, initialTab = 'content') {
     const targetBudget = isRaiseFund
       ? raiseFundTarget
       : Number(psbtForm.budgetSats || 0) || approvedBudgetsTotal || Number(selectedTask?.budget_sats || 0) || 0;
+    if (wishBudgetSats > 0 && targetBudget > wishBudgetSats) {
+      setPsbtError(
+        `Task totals (${targetBudget} sats) exceed the original wish budget (${wishBudgetSats} sats).`,
+      );
+      return;
+    }
     const payouts = isRaiseFund
       ? []
       : payoutSummaries
@@ -1030,6 +1059,8 @@ export function useInscriptionModalState(inscription, initialTab = 'content') {
     psbtTasks,
     deliverableTasks,
     approvedBudgetsTotal,
+    wishBudgetSats,
+    remainingWishSats,
     payoutSummaries,
     parsedPayload,
     stegoManifest,

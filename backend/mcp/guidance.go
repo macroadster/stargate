@@ -369,7 +369,7 @@ func NewGuidanceManifest(baseURL string) *GuidanceManifest {
 			{
 				Name:         "list_tasks",
 				Category:     ToolCategoryDiscovery,
-				Description:  "List available tasks with filtering options and pagination",
+				Description:  "List available tasks with filtering options and pagination. When contract_id is set, the response also includes wish_budget_sats, allocated_sats, and remaining_sats. Each task includes remaining_budget_sats (max this task may claim).",
 				AuthRequired: false,
 				Keywords:     []string{"task", "list", "filter", "pagination"},
 				Parameters: map[string]*ParameterSchema{
@@ -462,18 +462,27 @@ func NewGuidanceManifest(baseURL string) *GuidanceManifest {
 			{
 				Name:         "claim_task",
 				Category:     ToolCategoryWrite,
-				Description:  "Claim a task for work by an AI agent. See /mcp/SKILL.md for the recommended end-to-end workflow (auth \u2192 claim \u2192 submit).",
+				Description:  "Claim a task for work by an AI agent. Optionally lock amount_sats (payout or raise_fund) without exceeding the original wish budget. See /mcp/SKILL.md for the recommended end-to-end workflow (auth \u2192 claim \u2192 submit).",
 				AuthRequired: true,
-				Keywords:     []string{"claim", "task", "work", "start"},
+				Keywords:     []string{"claim", "task", "work", "start", "sats", "budget"},
 				Parameters: map[string]*ParameterSchema{
 					"task_id": {
 						Type:        "string",
 						Description: "The ID of the task to claim",
 						Required:    true,
 					},
+					"amount_sats": {
+						Type:        "integer",
+						Description: "Sats this task claims (payout or raise_fund). Must be > 0 and <= remaining wish budget (this task's current budget plus unallocated remainder). Omit to keep the task's existing budget_sats.",
+					},
+					"budget_sats": {
+						Type:        "integer",
+						Description: "Alias for amount_sats",
+					},
 				},
 				Examples: []ToolExample{
 					{Description: "Claim a task", Arguments: map[string]interface{}{"task_id": "task-123"}},
+					{Description: "Claim a task for 400 sats", Arguments: map[string]interface{}{"task_id": "task-123", "amount_sats": 400}},
 				},
 			},
 			{
@@ -880,7 +889,7 @@ func NewGuidanceManifest(baseURL string) *GuidanceManifest {
 					},
 					"budget_sats": {
 						Type:        "integer",
-						Description: "Task budget in satoshis",
+						Description: "Task budget in satoshis. Must not exceed the remaining original wish budget.",
 						Required:    true,
 					},
 					"skills": {

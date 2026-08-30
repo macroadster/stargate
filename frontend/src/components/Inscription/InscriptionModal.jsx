@@ -19,7 +19,7 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
     scanMessage, scanLoading, scanError, scrollContainerRef,
     reworkRequests, setReworkRequests, isLoadingRework, showReworkForm, setShowReworkForm, reworkNotes, setReworkNotes,
     isSubmittingRework, setIsSubmittingRework,
-    allTasks, approvedProposal, psbtTasks, deliverableTasks, approvedBudgetsTotal, payoutSummaries,
+    allTasks, approvedProposal, psbtTasks, deliverableTasks, approvedBudgetsTotal, wishBudgetSats, remainingWishSats, payoutSummaries,
     stegoProposal, stegoTasks, stegoProposalStatus, stegoTaskStatusMap, hiddenMessageText,
     inscriptionMessage, inscriptionAddress, isRaiseFund, selectedTask,
     fundDepositAddress, resolvedContractorWallet, resolvedFundraiserWallet, textContent, pixelHash,
@@ -369,6 +369,13 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
                           </label>
                           <div className="modal-deliverables-box" style={{ minHeight: '2.5rem', padding: '0.5rem 0.75rem', fontFamily: 'monospace', fontSize: '0.7rem' }}>
                             {approvedBudgetsTotal || selectedTask?.budget_sats || 'n/a'} sats
+                            {wishBudgetSats > 0 && (
+                              <div style={{ marginTop: '0.25rem', opacity: 0.8 }}>
+                                Wish cap: {wishBudgetSats} sats
+                                {remainingWishSats > 0 ? ` · remaining ${remainingWishSats}` : ''}
+                                {approvedBudgetsTotal > wishBudgetSats ? ' · exceeds wish budget' : ''}
+                              </div>
+                            )}
                           </div>
                         </div>
                         <div className="space-y-1">

@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -871,12 +872,24 @@ func (h *HTTPMCPServer) handleClaimTask(ctx context.Context, args map[string]int
 		return nil, NewUnauthorizedError("claim_task", "wallet address required - please bind wallet to API key using /api/auth/verify")
 	}
 
+	amountSats, hasAmount, amountErr := mcpArgInt64(args, "amount_sats", "budget_sats")
+	if hasAmount && amountErr != nil {
+		validation.AddFieldError("amount_sats", args["amount_sats"], "amount_sats must be a positive number", false)
+	} else if hasAmount && amountSats <= 0 {
+		validation.AddFieldError("amount_sats", amountSats, "amount_sats must be a positive number", false)
+	}
+
 	// Return validation errors if any
 	if validation.HasErrors() {
 		return nil, validation
 	}
 
-	claim, err := h.claimSvc.ClaimTask(taskID, wallet, nil)
+	var amountPtr *int64
+	if hasAmount && amountErr == nil && amountSats > 0 {
+		amountPtr = &amountSats
+	}
+
+	result, err := h.claimSvc.ClaimTaskWithAmount(ctx, taskID, wallet, nil, amountPtr)
 	if err != nil {
 		// Convert common errors to structured errors
 		if strings.Contains(err.Error(), "not found") {
@@ -885,11 +898,19 @@ func (h *HTTPMCPServer) handleClaimTask(ctx context.Context, args map[string]int
 		if strings.Contains(err.Error(), "already claimed") {
 			return nil, NewClaimTaskError("ALREADY_CLAIMED", "Task has already been claimed", "task_id")
 		}
+		if strings.Contains(err.Error(), "exceeds remaining wish budget") {
+			return nil, NewClaimTaskError("BUDGET_EXCEEDED", err.Error(), "amount_sats")
+		}
 		return nil, err
 	}
 
 	return map[string]interface{}{
-		"claim": claim,
+		"claim":            result.Claim,
+		"amount_sats":      result.AmountSats,
+		"wish_budget_sats": result.WishBudgetSats,
+		"allocated_sats":   result.AllocatedSats,
+		"remaining_sats":   result.RemainingSats,
+		"claimable_sats":   result.ClaimableSats,
 	}, nil
 }
 
@@ -913,15 +934,11 @@ func (h *HTTPMCPServer) handleCreateProposal(ctx context.Context, args map[strin
 
 	// Validate budget_sats if provided
 	var budgetSats int64 = 0
-	if budget, ok := args["budget_sats"]; ok {
-		if b, ok := budget.(float64); ok {
-			if b < 0 {
-				validation.AddFieldError("budget_sats", budget, "budget_sats must be a non-negative number", false)
-			} else {
-				budgetSats = int64(b)
-			}
+	if parsed, ok, err := mcpArgInt64(args, "budget_sats"); ok {
+		if err != nil || parsed < 0 {
+			validation.AddFieldError("budget_sats", args["budget_sats"], "budget_sats must be a non-negative number", false)
 		} else {
-			validation.AddTypeError("budget_sats", budget, "number")
+			budgetSats = parsed
 		}
 	}
 
@@ -930,21 +947,19 @@ func (h *HTTPMCPServer) handleCreateProposal(ctx context.Context, args map[strin
 		return nil, validation
 	}
 
-	// Check if wish contract exists
+	// Check if wish contract exists and cap proposal budget to the original wish price
 	wishID := "wish-" + visiblePixelHash
-	contracts, err := h.store.ListContracts(smart_contract.ContractFilter{})
-	if err != nil {
-		return nil, err
-	}
-	wishExists := false
-	for _, contract := range contracts {
-		if contract.ContractID == wishID {
-			wishExists = true
-			break
-		}
-	}
-	if !wishExists {
+	wish, wishErr := scstore.LookupContract(h.store, wishID)
+	if wishErr != nil || strings.TrimSpace(wish.ContractID) == "" {
 		return nil, NewNotFoundError("create_proposal", "wish", visiblePixelHash)
+	}
+	wishBudget := scstore.WishBudgetFromContract(wish)
+	if wishBudget > 0 {
+		if budgetSats == 0 {
+			budgetSats = wishBudget
+		} else if budgetSats > wishBudget {
+			return nil, NewCreateProposalError("BUDGET_EXCEEDED", fmt.Sprintf("proposal budget_sats %d exceeds original wish budget %d", budgetSats, wishBudget), "budget_sats")
+		}
 	}
 
 	// Get creator wallet from API key
@@ -971,7 +986,7 @@ func (h *HTTPMCPServer) handleCreateProposal(ctx context.Context, args map[strin
 	}
 
 	log.Printf("MCP CREATE PROPOSAL DEBUG: ID=%s, metadata=%+v", proposal.ID, proposal.Metadata)
-	err = h.store.CreateProposal(ctx, proposal)
+	err := h.store.CreateProposal(ctx, proposal)
 	if err != nil {
 		errMsg := err.Error()
 		if strings.Contains(errMsg, "maximum of 5 proposals reached") {
@@ -1435,7 +1450,15 @@ func (h *HTTPMCPServer) handleListTasks(ctx context.Context, args map[string]int
 	}
 	page := smart_contract.BuildPage(pageQ.Limit, pageQ.Offset, fetched, len(tasks), lastID, time.Time{})
 	body := page.Fields()
+	tasks = scstore.AnnotateTasksWithBudget(h.store, tasks)
 	body["tasks"] = tasks
+	if cid := strings.TrimSpace(filter.ContractID); cid != "" {
+		if snap, snapErr := scstore.LoadBudgetSnapshotForContract(h.store, cid); snapErr == nil {
+			body["wish_budget_sats"] = snap.WishBudgetSats
+			body["allocated_sats"] = snap.AllocatedSats
+			body["remaining_sats"] = snap.RemainingSats
+		}
+	}
 	return body, nil
 }
 
@@ -1641,6 +1664,10 @@ func (h *HTTPMCPServer) handleGetTask(ctx context.Context, args map[string]inter
 		return nil, NewInternalError("get_task", fmt.Sprintf("Failed to get task: %v", err))
 	}
 
+	annotated := scstore.AnnotateTasksWithBudget(h.store, []smart_contract.Task{task})
+	if len(annotated) > 0 {
+		task = annotated[0]
+	}
 	return task, nil
 }
 
@@ -2432,10 +2459,14 @@ func (h *HTTPMCPServer) handleCreateTask(ctx context.Context, args map[string]in
 		return nil, NewServiceUnavailableError("create_task", "task store")
 	}
 
-	// Verify contract exists
-	_, err := h.store.GetContract(contractID)
-	if err != nil {
+	// Verify contract exists and the new budget fits the original wish price
+	if _, err := h.store.GetContract(contractID); err != nil {
 		return nil, NewValidationError("create_task", fmt.Sprintf("Contract not found: %s", contractID))
+	}
+	if snap, snapErr := scstore.LoadBudgetSnapshotForContract(h.store, contractID); snapErr == nil {
+		if err := snap.ValidateNewTaskBudget(budgetSats); err != nil {
+			return nil, NewValidationError("create_task", err.Error())
+		}
 	}
 
 	// Create the task
@@ -2456,7 +2487,7 @@ func (h *HTTPMCPServer) handleCreateTask(ctx context.Context, args map[string]in
 	}
 
 	// Upsert the task
-	err = h.store.UpsertTask(ctx, task)
+	err := h.store.UpsertTask(ctx, task)
 	if err != nil {
 		return nil, NewInternalError("create_task", fmt.Sprintf("Failed to create task: %v", err))
 	}
@@ -2651,4 +2682,38 @@ func (h *HTTPMCPServer) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/mcp", h.handleIndex)
 	// Register catch-all last
 	mux.HandleFunc("/mcp/", h.handleIndex)
+}
+
+// mcpArgInt64 reads the first present key as an int64. ok is false when none of
+// the keys are set. err is set when a present value is not a number.
+func mcpArgInt64(args map[string]interface{}, keys ...string) (int64, bool, error) {
+	for _, key := range keys {
+		v, exists := args[key]
+		if !exists || v == nil {
+			continue
+		}
+		switch n := v.(type) {
+		case float64:
+			return int64(n), true, nil
+		case float32:
+			return int64(n), true, nil
+		case int:
+			return int64(n), true, nil
+		case int64:
+			return n, true, nil
+		case json.Number:
+			i, err := n.Int64()
+			return i, true, err
+		case string:
+			s := strings.TrimSpace(n)
+			if s == "" {
+				continue
+			}
+			i, err := strconv.ParseInt(s, 10, 64)
+			return i, true, err
+		default:
+			return 0, true, fmt.Errorf("%s must be a number", key)
+		}
+	}
+	return 0, false, nil
 }

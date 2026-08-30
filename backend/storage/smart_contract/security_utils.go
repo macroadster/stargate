@@ -339,16 +339,21 @@ func ValidateProposalInput(proposal *smart_contract.Proposal) error {
 
 	// Validate tasks if present
 	if len(proposal.Tasks) > 0 {
+		var taskBudgetSum int64
 		for i, task := range proposal.Tasks {
 			// Each task must have a budget
 			if task.BudgetSats <= 0 {
 				return fmt.Errorf("task %d (%s) must have a positive budget_sats", i+1, task.Title)
 			}
+			taskBudgetSum += task.BudgetSats
 
 			// Validate task input fields
 			if err := ValidateTaskInput(task); err != nil {
 				return fmt.Errorf("task %d validation failed: %v", i+1, err)
 			}
+		}
+		if proposal.BudgetSats > 0 && taskBudgetSum > proposal.BudgetSats {
+			return fmt.Errorf("task budgets %d exceed proposal budget %d", taskBudgetSum, proposal.BudgetSats)
 		}
 	}
 

@@ -174,6 +174,10 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		primaryPayer = rf.PayerAddrs[0]
 		changeAddr = nil
 	}
+	if wishCap := scstore.WishBudgetFromContract(contract); wishCap > 0 && target > wishCap {
+		Error(w, http.StatusBadRequest, fmt.Sprintf("budget_sats %d exceeds original wish budget %d", target, wishCap))
+		return
+	}
 	if !isRaiseFund(fundingMode) && len(payerAddresses) > 1 && changeAddr == nil {
 		Error(w, http.StatusBadRequest, "change_address required when using multiple payer addresses")
 		return
@@ -310,6 +314,10 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 			}
 			if payoutTotal > target {
 				Error(w, http.StatusBadRequest, "payout total exceeds budget_sats")
+				return
+			}
+			if wishCap := scstore.WishBudgetFromContract(contract); wishCap > 0 && payoutTotal > wishCap {
+				Error(w, http.StatusBadRequest, fmt.Sprintf("payout total %d exceeds original wish budget %d", payoutTotal, wishCap))
 				return
 			}
 		}
@@ -720,6 +728,11 @@ func (s *Server) prepareRaiseFundContext(ctx context.Context, contractID, fundin
 	}
 	if len(out.Payers) == 0 {
 		return nil, fmt.Errorf("no contractor wallets found for raise_fund")
+	}
+	if contract, err := scstore.LookupContract(s.store, contractID); err == nil {
+		if wishCap := scstore.WishBudgetFromContract(contract); wishCap > 0 && payoutTotal > wishCap {
+			return nil, fmt.Errorf("raise_fund total %d exceeds original wish budget %d", payoutTotal, wishCap)
+		}
 	}
 	out.TargetSats = payoutTotal
 	out.PayerOrder = payerOrder
@@ -1215,6 +1228,12 @@ func (s *Server) handlePaymentDetails(w http.ResponseWriter, r *http.Request, co
 	if approvedTasks == 0 {
 		Error(w, http.StatusBadRequest, "no approved tasks with payouts found")
 		return
+	}
+	if contract, err := scstore.LookupContract(s.store, contractID); err == nil {
+		if wishCap := scstore.WishBudgetFromContract(contract); wishCap > 0 && totalPayoutSats > wishCap {
+			Error(w, http.StatusBadRequest, fmt.Sprintf("approved task payouts %d exceed original wish budget %d", totalPayoutSats, wishCap))
+			return
+		}
 	}
 	if missingWallets > 0 {
 		Error(w, http.StatusBadRequest, fmt.Sprintf("approved tasks missing contractor wallet (%d missing)", missingWallets))

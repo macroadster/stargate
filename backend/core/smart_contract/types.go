@@ -85,6 +85,10 @@ type Task struct {
 	EstimatedHours   int               `json:"estimated_hours,omitempty"`
 	Requirements     map[string]string `json:"requirements,omitempty"`
 	MerkleProof      *MerkleProof      `json:"merkle_proof,omitempty"`
+	// Computed (not persisted). Original wish price and how much this task may still take.
+	WishBudgetSats      int64 `json:"wish_budget_sats,omitempty"`
+	AllocatedSats       int64 `json:"allocated_sats,omitempty"`
+	RemainingBudgetSats int64 `json:"remaining_budget_sats,omitempty"`
 }
 
 // MerkleProof represents the payment proof for a funded task.

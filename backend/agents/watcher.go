@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"stargate-backend/core/smart_contract"
 	scmiddleware "stargate-backend/app/smart_contract"
+	"stargate-backend/core/smart_contract"
 	scstore "stargate-backend/storage/smart_contract"
 )
 
@@ -243,8 +243,8 @@ func (w *Watcher) validateBudgetSanity(p smart_contract.Proposal, contractBudget
 	if budget <= 0 {
 		return false, "invalid budget: must be > 0"
 	}
-	if contractBudgetSats > 0 && budget > contractBudgetSats*10 {
-		return false, "budget exceeds wish budget by more than 10x"
+	if contractBudgetSats > 0 && budget > contractBudgetSats {
+		return false, "budget exceeds original wish budget"
 	}
 	if budget > 100_000_000 { // > 1 BTC suspicious
 		return false, "extremely high budget"
@@ -507,4 +507,3 @@ func (w *Watcher) findAvailableTasks(ctx context.Context) []smart_contract.Task 
 func (w *Watcher) checkResources() {
 	// Lightweight: in real impl we could stat disk. For now no-op.
 }
-

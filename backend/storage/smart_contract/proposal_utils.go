@@ -2,6 +2,7 @@ package smart_contract
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -21,25 +22,21 @@ func BuildTasksFromMarkdown(proposalID, markdown string, visibleHash string, bud
 		canonicalContractID = "wish-" + strings.TrimPrefix(visibleHash, "wish-")
 	}
 
-	// Extract structured tasks from proper task sections
-	var tasks []smart_contract.Task
-	var currentTask *smart_contract.Task
-	taskCounter := 1
+	// Extract structured tasks from proper task sections, then allocate
+	// budgets so the sum never exceeds the original wish/proposal budget.
+	type draftTask struct {
+		title string
+		desc  string
+	}
+	var drafts []draftTask
 
 	for i, line := range lines {
 		trim := strings.TrimSpace(line)
 
 		// Look for proper task headers: "### Task X:" or "### Task X "
 		if strings.HasPrefix(trim, "### Task ") {
-			// Save previous task if exists
-			if currentTask != nil {
-				tasks = append(tasks, *currentTask)
-				currentTask = nil
-			}
-
-			// Start new task
 			title := strings.TrimSpace(strings.TrimPrefix(trim, "### Task "))
-			
+
 			// Remove numbering and colon if present
 			if colonIdx := strings.Index(title, ":"); colonIdx > 0 {
 				title = strings.TrimSpace(title[colonIdx+1:])
@@ -60,37 +57,17 @@ func BuildTasksFromMarkdown(proposalID, markdown string, visibleHash string, bud
 
 			// Skip if title looks like metadata/budget/success criteria
 			if isTaskTitle(title) {
-				taskID := fmt.Sprintf("%s-task-%d", proposalID, taskCounter)
-				currentTask = &smart_contract.Task{
-					TaskID:      taskID,
-					ContractID:  canonicalContractID,
-					GoalID:      "wish",
-					Title:       title,
-					Description: extractTaskDescription(md, i),
-					BudgetSats:  calculateTaskBudget(title, budget, len(tasks)+1),
-					Skills:      extractTaskSkills(title),
-					Status:      "available",
-					MerkleProof: &smart_contract.MerkleProof{
-						VisiblePixelHash:   visibleHash,
-						FundedAmountSats:   calculateTaskBudget(title, budget, len(tasks)+1),
-						FundingAddress:     fundingAddress,
-						ConfirmationStatus: "provisional",
-					},
-				}
-				taskCounter++
+				drafts = append(drafts, draftTask{
+					title: title,
+					desc:  extractTaskDescription(md, i),
+				})
 			}
 		}
 	}
 
-	// Add last task if exists
-	if currentTask != nil {
-		tasks = append(tasks, *currentTask)
-	}
-
-	// If no structured tasks found, create a single comprehensive task
-	if len(tasks) == 0 {
+	if len(drafts) == 0 {
 		taskID := fmt.Sprintf("%s-task-1", proposalID)
-		tasks = append(tasks, smart_contract.Task{
+		return []smart_contract.Task{{
 			TaskID:      taskID,
 			ContractID:  canonicalContractID,
 			GoalID:      "wish",
@@ -102,6 +79,35 @@ func BuildTasksFromMarkdown(proposalID, markdown string, visibleHash string, bud
 			MerkleProof: &smart_contract.MerkleProof{
 				VisiblePixelHash:   visibleHash,
 				FundedAmountSats:   budget,
+				FundingAddress:     fundingAddress,
+				ConfirmationStatus: "provisional",
+			},
+		}}
+	}
+
+	titles := make([]string, len(drafts))
+	explicit := make([]int64, len(drafts))
+	for i, d := range drafts {
+		titles[i] = d.title
+		explicit[i] = parseExplicitTaskSats(d.title, d.desc)
+	}
+	amounts := AllocateTaskBudgets(titles, explicit, budget)
+
+	tasks := make([]smart_contract.Task, 0, len(drafts))
+	for i, d := range drafts {
+		amount := amounts[i]
+		tasks = append(tasks, smart_contract.Task{
+			TaskID:      fmt.Sprintf("%s-task-%d", proposalID, i+1),
+			ContractID:  canonicalContractID,
+			GoalID:      "wish",
+			Title:       d.title,
+			Description: d.desc,
+			BudgetSats:  amount,
+			Skills:      extractTaskSkills(d.title),
+			Status:      "available",
+			MerkleProof: &smart_contract.MerkleProof{
+				VisiblePixelHash:   visibleHash,
+				FundedAmountSats:   amount,
 				FundingAddress:     fundingAddress,
 				ConfirmationStatus: "provisional",
 			},
@@ -225,28 +231,77 @@ func extractTaskSkills(title string) []string {
 	return []string{"planning", "development", "testing"}
 }
 
-// calculateTaskBudget assigns budget proportionally based on task complexity
+// calculateTaskBudget assigns a share of totalBudget. Prefer AllocateTaskBudgets
+// when splitting a wish across several tasks so the sum cannot exceed the cap.
 func calculateTaskBudget(title string, totalBudget int64, taskCount int) int64 {
 	if totalBudget <= 0 || taskCount <= 0 {
 		return totalBudget
 	}
+	amounts := AllocateTaskBudgets([]string{title}, nil, totalBudget)
+	if len(amounts) == 0 {
+		return totalBudget / int64(taskCount)
+	}
+	return amounts[0]
+}
 
-	title = strings.ToLower(strings.TrimSpace(title))
+// parseExplicitTaskSats reads a caller-specified sat amount from a task title or body.
+// Accepts "Budget: 500 sats", "budget_sats: 500", or "(500 sats)".
+func parseExplicitTaskSats(title, description string) int64 {
+	for _, text := range []string{title, description} {
+		if n := firstSatsAmount(text); n > 0 {
+			return n
+		}
+	}
+	return 0
+}
 
-	// Budget allocation based on task type
-	if strings.Contains(title, "planning") || strings.Contains(title, "analysis") {
-		return totalBudget * 20 / 100 // 20% for planning
+func firstSatsAmount(text string) int64 {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return 0
 	}
-	if strings.Contains(title, "implement") || strings.Contains(title, "develop") || strings.Contains(title, "build") {
-		return totalBudget * 50 / 100 // 50% for implementation
+	lower := strings.ToLower(text)
+	keys := []string{"budget_sats", "budget", "amount_sats", "amount", "price"}
+	for _, key := range keys {
+		idx := strings.Index(lower, key)
+		if idx < 0 {
+			continue
+		}
+		rest := text[idx+len(key):]
+		rest = strings.TrimLeft(rest, " \t:=-")
+		if n, ok := leadingInt64(rest); ok && n > 0 {
+			return n
+		}
 	}
-	if strings.Contains(title, "test") || strings.Contains(title, "qa") || strings.Contains(title, "validation") {
-		return totalBudget * 20 / 100 // 20% for testing
+	if i := strings.Index(lower, "sats"); i > 0 {
+		start := i - 1
+		for start >= 0 && (unicode.IsSpace(rune(text[start])) || text[start] == '(') {
+			start--
+		}
+		end := start + 1
+		for start >= 0 && unicode.IsDigit(rune(text[start])) {
+			start--
+		}
+		num := strings.TrimSpace(text[start+1 : end])
+		if n, err := strconv.ParseInt(num, 10, 64); err == nil && n > 0 {
+			return n
+		}
 	}
-	if strings.Contains(title, "document") || strings.Contains(title, "guide") {
-		return totalBudget * 10 / 100 // 10% for documentation
-	}
+	return 0
+}
 
-	// Default: equal distribution
-	return totalBudget / int64(taskCount)
+func leadingInt64(s string) (int64, bool) {
+	s = strings.TrimSpace(s)
+	i := 0
+	for i < len(s) && unicode.IsDigit(rune(s[i])) {
+		i++
+	}
+	if i == 0 {
+		return 0, false
+	}
+	n, err := strconv.ParseInt(s[:i], 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return n, true
 }

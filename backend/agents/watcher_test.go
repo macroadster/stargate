@@ -62,7 +62,12 @@ func TestWatcherValidateBudgetSanity(t *testing.T) {
 
 	ok, reason = w.validateBudgetSanity(smart_contract.Proposal{BudgetSats: 101}, 10)
 	if ok || reason == "" {
-		t.Errorf("expected rejection for budget > 10x contract budget, got ok=%v reason=%s", ok, reason)
+		t.Errorf("expected rejection for budget > wish budget, got ok=%v reason=%s", ok, reason)
+	}
+
+	ok, reason = w.validateBudgetSanity(smart_contract.Proposal{BudgetSats: 11}, 10)
+	if ok || reason == "" {
+		t.Errorf("expected rejection for budget just over wish budget, got ok=%v reason=%s", ok, reason)
 	}
 
 	ok, reason = w.validateBudgetSanity(smart_contract.Proposal{BudgetSats: 1_000_000_000}, 1000)
