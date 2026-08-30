@@ -655,6 +655,7 @@ func (h *HTTPMCPServer) toolRequiresAuth(toolName string) bool {
 		"create_proposal":                true,
 		"create_wish":                    true,
 		"create_task":                    true,
+		"rebalance_contract_budget":      true,
 		"claim_task":                     true,
 		"submit_work":                    true,
 		"approve_proposal":               true,
@@ -725,6 +726,8 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 		return h.handleValidateAddress(ctx, args)
 	case "create_task":
 		return h.handleCreateTask(ctx, args, apiKey)
+	case "rebalance_contract_budget":
+		return h.handleRebalanceContractBudget(ctx, args, apiKey)
 	case "build_psbt":
 		return h.handleBuildPSBT(ctx, args, apiKey)
 	case "chat_send":
@@ -2504,6 +2507,87 @@ func (h *HTTPMCPServer) handleCreateTask(ctx context.Context, args map[string]in
 		"estimated_hours": task.EstimatedHours,
 		"requirements":    task.Requirements,
 		"created_at":      time.Now().Format(time.RFC3339),
+	}, nil
+}
+
+func mcpArgBool(args map[string]interface{}, key string) bool {
+	v, ok := args[key]
+	if !ok || v == nil {
+		return false
+	}
+	switch n := v.(type) {
+	case bool:
+		return n
+	case string:
+		s := strings.ToLower(strings.TrimSpace(n))
+		return s == "true" || s == "1" || s == "yes"
+	case float64:
+		return n != 0
+	case int:
+		return n != 0
+	case int64:
+		return n != 0
+	default:
+		return false
+	}
+}
+
+func (h *HTTPMCPServer) handleRebalanceContractBudget(ctx context.Context, args map[string]interface{}, apiKey string) (interface{}, error) {
+	if h.store == nil {
+		return nil, NewServiceUnavailableError("rebalance_contract_budget", "task store")
+	}
+	if apiKey == "" {
+		return nil, NewUnauthorizedError("rebalance_contract_budget", "API key required")
+	}
+
+	dryRun := mcpArgBool(args, "dry_run")
+	allOver := mcpArgBool(args, "all_over_budget")
+	includeSuperseded := mcpArgBool(args, "include_superseded")
+	contractID, _ := args["contract_id"].(string)
+	contractID = strings.TrimSpace(contractID)
+
+	if contractID == "" && !allOver {
+		return nil, NewValidationError("rebalance_contract_budget", "contract_id or all_over_budget is required")
+	}
+
+	if allOver {
+		results, err := scstore.RebalanceOpenOverBudget(ctx, h.store, dryRun, includeSuperseded)
+		if err != nil {
+			return nil, NewInternalError("rebalance_contract_budget", err.Error())
+		}
+		if results == nil {
+			results = []scstore.RebalanceResult{}
+		}
+		changed := 0
+		for _, r := range results {
+			if r.Changed {
+				changed++
+			}
+		}
+		return map[string]interface{}{
+			"dry_run":             dryRun,
+			"include_superseded":  includeSuperseded,
+			"contracts":           results,
+			"over_budget_count":   len(results),
+			"rebalanced_count":    changed,
+		}, nil
+	}
+
+	res, err := scstore.RebalanceTasksToWishBudget(ctx, h.store, contractID, dryRun)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			return nil, NewValidationError("rebalance_contract_budget", fmt.Sprintf("Contract not found: %s", contractID))
+		}
+		return nil, NewInternalError("rebalance_contract_budget", err.Error())
+	}
+	return map[string]interface{}{
+		"dry_run":            dryRun,
+		"contract":           res,
+		"wish_budget_sats":   res.WishBudgetSats,
+		"allocated_before":   res.AllocatedBefore,
+		"allocated_after":    res.AllocatedAfter,
+		"changed":            res.Changed,
+		"changes":            res.Changes,
 	}, nil
 }
 

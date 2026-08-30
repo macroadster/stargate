@@ -667,10 +667,20 @@ type raiseFundContext struct {
 	TargetSats     int64
 }
 
+func (s *Server) ensureWishBudgetFit(ctx context.Context, contractID string) {
+	if s == nil || s.store == nil || strings.TrimSpace(contractID) == "" {
+		return
+	}
+	if _, err := scstore.RebalanceTasksToWishBudget(ctx, s.store, contractID, false); err != nil {
+		log.Printf("wish budget rebalance skipped for %s: %v", contractID, err)
+	}
+}
+
 func (s *Server) prepareRaiseFundContext(ctx context.Context, contractID, fundingAddress string, params *chaincfg.Params) (*raiseFundContext, error) {
 	if s.store == nil {
 		return nil, fmt.Errorf("task store unavailable for raise_fund")
 	}
+	s.ensureWishBudgetFit(ctx, contractID)
 	tasks, err := s.store.ListTasks(smart_contract.TaskFilter{ContractID: contractID})
 	if err != nil {
 		return nil, fmt.Errorf("failed to load tasks: %v", err)
@@ -695,6 +705,9 @@ func (s *Server) prepareRaiseFundContext(ctx context.Context, contractID, fundin
 	var payerOrder []string
 	var payoutTotal int64
 	for _, task := range tasks {
+		if !scstore.TaskCountsTowardBudget(task) {
+			continue
+		}
 		if task.BudgetSats <= 0 {
 			return nil, fmt.Errorf("task budget missing for %s", task.TaskID)
 		}
@@ -1189,6 +1202,7 @@ func (s *Server) handlePaymentDetails(w http.ResponseWriter, r *http.Request, co
 	}
 
 	ctx := r.Context()
+	s.ensureWishBudgetFit(ctx, contractID)
 
 	// Get contract tasks to calculate payment details
 	tasks, err := s.store.ListTasks(smart_contract.TaskFilter{ContractID: contractID})

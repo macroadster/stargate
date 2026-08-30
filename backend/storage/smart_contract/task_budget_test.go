@@ -120,6 +120,122 @@ func TestApplyTaskAmountRespectsWishCap(t *testing.T) {
 	}
 }
 
+func TestSumTaskBudgetsIgnoresRejected(t *testing.T) {
+	tasks := []smart_contract.Task{
+		{TaskID: "a", BudgetSats: 400, Status: "approved"},
+		{TaskID: "b", BudgetSats: 1600, Status: "rejected"},
+		{TaskID: "c", BudgetSats: 1, Status: "cancelled"},
+	}
+	if got := SumTaskBudgets(tasks, ""); got != 400 {
+		t.Fatalf("sum=%d want 400", got)
+	}
+}
+
+func TestRebalanceTasksToWishBudgetScalesOverflow(t *testing.T) {
+	store := NewMemoryStore(time.Hour)
+	ctx := context.Background()
+	contract := smart_contract.Contract{
+		ContractID:      "wish-galaxian",
+		Title:           "Galaxian",
+		TotalBudgetSats: 1000,
+		Status:          "active",
+	}
+	tasks := []smart_contract.Task{
+		{TaskID: "t1", ContractID: "wish-galaxian", Title: "Core", BudgetSats: 1000, Status: "approved"},
+		{TaskID: "t2", ContractID: "wish-galaxian", Title: "Ship", BudgetSats: 500, Status: "approved"},
+		{TaskID: "t3", ContractID: "wish-galaxian", Title: "Audio", BudgetSats: 250, Status: "approved"},
+		{TaskID: "t4", ContractID: "wish-galaxian", Title: "Rejected leftover", BudgetSats: 900, Status: "rejected"},
+	}
+	if err := store.UpsertContractWithTasks(ctx, contract, tasks); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := RebalanceTasksToWishBudget(ctx, store, "wish-galaxian", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan.Changed || plan.AllocatedBefore != 1750 || plan.AllocatedAfter != 1000 {
+		t.Fatalf("dry-run plan=%+v", plan)
+	}
+	got, err := store.GetTask("t1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.BudgetSats != 1000 {
+		t.Fatalf("dry-run must not write, t1=%d", got.BudgetSats)
+	}
+
+	res, err := RebalanceTasksToWishBudget(ctx, store, "wish-galaxian", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Changed || res.AllocatedAfter != 1000 {
+		t.Fatalf("rebalance=%+v", res)
+	}
+	var sum int64
+	for _, id := range []string{"t1", "t2", "t3"} {
+		got, err := store.GetTask(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.BudgetSats <= 0 {
+			t.Fatalf("%s budget=%d", id, got.BudgetSats)
+		}
+		sum += got.BudgetSats
+	}
+	if sum != 1000 {
+		t.Fatalf("payable sum=%d want 1000", sum)
+	}
+	rejected, err := store.GetTask("t4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rejected.BudgetSats != 900 {
+		t.Fatalf("rejected should be left alone, got %d", rejected.BudgetSats)
+	}
+
+	again, err := RebalanceTasksToWishBudget(ctx, store, "wish-galaxian", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Changed {
+		t.Fatalf("second pass should be a no-op: %+v", again)
+	}
+}
+
+func TestRebalanceOpenOverBudgetSkipsSuperseded(t *testing.T) {
+	store := NewMemoryStore(time.Hour)
+	ctx := context.Background()
+	if err := store.UpsertContractWithTasks(ctx, smart_contract.Contract{
+		ContractID: "wish-open", Title: "Open", TotalBudgetSats: 1000, Status: "active",
+	}, []smart_contract.Task{
+		{TaskID: "open-1", ContractID: "wish-open", Title: "A", BudgetSats: 800, Status: "approved"},
+		{TaskID: "open-2", ContractID: "wish-open", Title: "B", BudgetSats: 800, Status: "approved"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertContractWithTasks(ctx, smart_contract.Contract{
+		ContractID: "wish-old", Title: "Old", TotalBudgetSats: 1000, Status: "superseded",
+	}, []smart_contract.Task{
+		{TaskID: "old-1", ContractID: "wish-old", Title: "A", BudgetSats: 2000, Status: "approved"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	results, err := RebalanceOpenOverBudget(ctx, store, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].ContractID != "wish-open" || !results[0].Changed {
+		t.Fatalf("results=%+v", results)
+	}
+	old, err := store.GetTask("old-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if old.BudgetSats != 2000 {
+		t.Fatalf("superseded rewritten: %d", old.BudgetSats)
+	}
+}
+
 func TestValidateNewTaskBudget(t *testing.T) {
 	store := NewMemoryStore(time.Hour)
 	ctx := context.Background()

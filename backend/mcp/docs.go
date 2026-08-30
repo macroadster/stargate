@@ -75,6 +75,7 @@ curl "` + base + `/mcp/search?q=task&limit=5"</pre>
         <li><code>create_wish</code> - Create a wish (request for work)</li>
         <li><code>create_proposal</code> - Create a proposal</li>
         <li><code>create_task</code> - Create a new task for an existing contract</li>
+        <li><code>rebalance_contract_budget</code> - Scale task prices down to the original wish budget so payouts can settle</li>
         <li><code>claim_task</code> - Claim a task</li>
         <li><code>submit_work</code> - Submit completed work</li>
         <li><code>approve_proposal</code> - Approve a proposal</li>

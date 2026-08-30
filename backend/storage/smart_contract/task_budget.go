@@ -40,6 +40,17 @@ func WishBudgetFromContract(c smart_contract.Contract) int64 {
 	return 0
 }
 
+// TaskCountsTowardBudget reports whether a task still consumes the wish cap.
+// Rejected, cancelled, and expired work is not payable and must not block siblings.
+func TaskCountsTowardBudget(t smart_contract.Task) bool {
+	switch strings.ToLower(strings.TrimSpace(t.Status)) {
+	case "rejected", "cancelled", "canceled", "expired":
+		return false
+	default:
+		return true
+	}
+}
+
 // SumTaskBudgets sums BudgetSats, optionally excluding one task.
 func SumTaskBudgets(tasks []smart_contract.Task, excludeTaskID string) int64 {
 	var sum int64
@@ -48,11 +59,187 @@ func SumTaskBudgets(tasks []smart_contract.Task, excludeTaskID string) int64 {
 		if excludeTaskID != "" && t.TaskID == excludeTaskID {
 			continue
 		}
+		if !TaskCountsTowardBudget(t) {
+			continue
+		}
 		if t.BudgetSats > 0 {
 			sum += t.BudgetSats
 		}
 	}
 	return sum
+}
+
+// BudgetChange is one task amount rewritten to fit the original wish price.
+type BudgetChange struct {
+	TaskID        string `json:"task_id"`
+	Title         string `json:"title,omitempty"`
+	Status        string `json:"status,omitempty"`
+	OldBudgetSats int64  `json:"old_budget_sats"`
+	NewBudgetSats int64  `json:"new_budget_sats"`
+}
+
+// RebalanceResult is the before/after snapshot for one contract.
+type RebalanceResult struct {
+	ContractID       string         `json:"contract_id"`
+	Title            string         `json:"title,omitempty"`
+	Status           string         `json:"status,omitempty"`
+	WishBudgetSats   int64          `json:"wish_budget_sats"`
+	AllocatedBefore  int64          `json:"allocated_before"`
+	AllocatedAfter   int64          `json:"allocated_after"`
+	RemainingSats    int64          `json:"remaining_sats"`
+	Changed          bool           `json:"changed"`
+	Changes          []BudgetChange `json:"changes,omitempty"`
+	SkippedReason    string         `json:"skipped_reason,omitempty"`
+}
+
+// IsOpenContractStatus is the operator set we rebalance by default.
+func IsOpenContractStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "active", "pending", "funded", "confirmed":
+		return true
+	default:
+		return false
+	}
+}
+
+func persistTaskBudget(ctx context.Context, store Store, task smart_contract.Task, amount int64) (smart_contract.Task, error) {
+	task.BudgetSats = amount
+	if task.MerkleProof == nil {
+		task.MerkleProof = &smart_contract.MerkleProof{}
+	} else {
+		cp := *task.MerkleProof
+		task.MerkleProof = &cp
+	}
+	task.MerkleProof.FundedAmountSats = amount
+	if err := store.UpsertTask(ctx, task); err != nil {
+		return task, err
+	}
+	return task, nil
+}
+
+func applyBudgetChange(snap *BudgetSnapshot, task smart_contract.Task) {
+	if snap.Task.TaskID == task.TaskID {
+		snap.Task = task
+	}
+	for i, t := range snap.Siblings {
+		if t.TaskID == task.TaskID {
+			snap.Siblings[i] = task
+			return
+		}
+	}
+}
+
+// RebalanceTasksToWishBudget scales payable task budgets so their sum equals the
+// original wish price. dryRun computes the plan without writing.
+func RebalanceTasksToWishBudget(ctx context.Context, store Store, contractID string, dryRun bool) (RebalanceResult, error) {
+	var out RebalanceResult
+	snap, err := LoadBudgetSnapshotForContract(store, contractID)
+	if err != nil {
+		return out, err
+	}
+	out.ContractID = firstNonEmpty(snap.Contract.ContractID, contractID)
+	out.Title = snap.Contract.Title
+	out.Status = snap.Contract.Status
+	out.WishBudgetSats = snap.WishBudgetSats
+	out.AllocatedBefore = snap.AllocatedSats
+	out.AllocatedAfter = snap.AllocatedSats
+	out.RemainingSats = snap.RemainingSats
+	if snap.WishBudgetSats <= 0 {
+		out.SkippedReason = "wish has no positive budget"
+		return out, nil
+	}
+	if snap.AllocatedSats <= snap.WishBudgetSats {
+		out.SkippedReason = "already within wish budget"
+		return out, nil
+	}
+
+	var payable []smart_contract.Task
+	for _, t := range snap.Siblings {
+		if TaskCountsTowardBudget(t) && t.BudgetSats > 0 {
+			payable = append(payable, t)
+		}
+	}
+	if len(payable) == 0 {
+		out.SkippedReason = "no payable tasks"
+		return out, nil
+	}
+	titles := make([]string, len(payable))
+	explicit := make([]int64, len(payable))
+	for i, t := range payable {
+		titles[i] = t.Title
+		explicit[i] = t.BudgetSats
+	}
+	amounts := AllocateTaskBudgets(titles, explicit, snap.WishBudgetSats)
+	for i, t := range payable {
+		if amounts[i] == t.BudgetSats {
+			continue
+		}
+		change := BudgetChange{
+			TaskID:        t.TaskID,
+			Title:         t.Title,
+			Status:        t.Status,
+			OldBudgetSats: t.BudgetSats,
+			NewBudgetSats: amounts[i],
+		}
+		if !dryRun {
+			updated, err := persistTaskBudget(ctx, store, t, amounts[i])
+			if err != nil {
+				return out, err
+			}
+			applyBudgetChange(&snap, updated)
+		}
+		out.Changes = append(out.Changes, change)
+	}
+	if dryRun {
+		var after int64
+		for _, n := range amounts {
+			after += n
+		}
+		out.AllocatedAfter = after
+		if after < snap.WishBudgetSats {
+			out.RemainingSats = snap.WishBudgetSats - after
+		} else {
+			out.RemainingSats = 0
+		}
+	} else {
+		snap.recompute()
+		out.AllocatedAfter = snap.AllocatedSats
+		out.RemainingSats = snap.RemainingSats
+	}
+	out.Changed = len(out.Changes) > 0
+	return out, nil
+}
+
+// RebalanceOpenOverBudget walks contracts and scales any whose payable tasks
+// exceed the wish price. includeSuperseded also rewrites superseded rows.
+func RebalanceOpenOverBudget(ctx context.Context, store Store, dryRun, includeSuperseded bool) ([]RebalanceResult, error) {
+	if store == nil {
+		return nil, fmt.Errorf("store unavailable")
+	}
+	contracts, err := store.ListContracts(smart_contract.ContractFilter{Limit: 10000})
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]struct{}{}
+	var out []RebalanceResult
+	for _, c := range contracts {
+		if !includeSuperseded && !IsOpenContractStatus(c.Status) {
+			continue
+		}
+		res, err := RebalanceTasksToWishBudget(ctx, store, c.ContractID, dryRun)
+		if err != nil {
+			return out, err
+		}
+		canon := firstNonEmpty(res.ContractID, c.ContractID)
+		if _, ok := seen[canon]; ok {
+			continue
+		}
+		seen[canon] = struct{}{}
+		if res.Changed || (res.WishBudgetSats > 0 && res.AllocatedBefore > res.WishBudgetSats) {
+			out = append(out, res)
+		}
+	}
+	return out, nil
 }
 
 // LookupContract resolves a contract id across wish-/bare-hash aliases.
@@ -242,25 +429,11 @@ func ApplyTaskAmount(ctx context.Context, store Store, taskID string, amount int
 	if err := snap.ValidateAmount(amount); err != nil {
 		return snap, err
 	}
-	task := snap.Task
-	task.BudgetSats = amount
-	if task.MerkleProof == nil {
-		task.MerkleProof = &smart_contract.MerkleProof{}
-	} else {
-		cp := *task.MerkleProof
-		task.MerkleProof = &cp
-	}
-	task.MerkleProof.FundedAmountSats = amount
-	if err := store.UpsertTask(ctx, task); err != nil {
+	task, err := persistTaskBudget(ctx, store, snap.Task, amount)
+	if err != nil {
 		return snap, err
 	}
-	snap.Task = task
-	for i, t := range snap.Siblings {
-		if t.TaskID == task.TaskID {
-			snap.Siblings[i] = task
-			break
-		}
-	}
+	applyBudgetChange(&snap, task)
 	snap.recompute()
 	return snap, nil
 }
@@ -343,6 +516,8 @@ func AllocateTaskBudgets(titles []string, explicit []int64, total int64) []int64
 		}
 		if scaled > total {
 			out[lastPositive(out)] -= scaled - total
+		} else if scaled < total {
+			out[lastPositive(out)] += total - scaled
 		}
 		return out
 	}

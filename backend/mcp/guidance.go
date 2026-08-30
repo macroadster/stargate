@@ -917,6 +917,35 @@ func NewGuidanceManifest(baseURL string) *GuidanceManifest {
 				},
 			},
 			{
+				Name:         "rebalance_contract_budget",
+				Category:     ToolCategoryWrite,
+				Description:  "Scale task prices down so their sum equals the original wish budget. Use this when allocated_sats exceeds wish_budget_sats and payouts are blocked. Rejected/cancelled tasks are ignored. Pass all_over_budget to audit or fix every open contract.",
+				AuthRequired: true,
+				Keywords:     []string{"budget", "rebalance", "wish", "payout", "price", "sats"},
+				Parameters: map[string]*ParameterSchema{
+					"contract_id": {
+						Type:        "string",
+						Description: "Contract/wish ID to rebalance. Required unless all_over_budget is true.",
+					},
+					"all_over_budget": {
+						Type:        "boolean",
+						Description: "When true, scan open contracts (active/pending/funded/confirmed) and rebalance any whose payable tasks exceed the wish price.",
+					},
+					"dry_run": {
+						Type:        "boolean",
+						Description: "Compute the scaled prices without writing them.",
+					},
+					"include_superseded": {
+						Type:        "boolean",
+						Description: "With all_over_budget, also rewrite superseded contracts. Default false.",
+					},
+				},
+				Examples: []ToolExample{
+					{Description: "Preview over-budget open contracts", Arguments: map[string]interface{}{"all_over_budget": true, "dry_run": true}},
+					{Description: "Rebalance one wish to its original price", Arguments: map[string]interface{}{"contract_id": "wish-9f335b77c3e3c7014f809b8bc6fd9362aef84230f71d60810bd79da73f2321bd"}},
+				},
+			},
+			{
 				Name:         "build_psbt",
 				Category:     ToolCategoryUtility,
 				Description:  "Build a Partially Signed Bitcoin Transaction (PSBT) for contract payouts.",
