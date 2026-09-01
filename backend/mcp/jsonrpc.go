@@ -7,6 +7,9 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+
+	"stargate-backend/middleware"
+	auth "stargate-backend/storage/auth"
 )
 
 func (h *HTTPMCPServer) handleJSONRPC(w http.ResponseWriter, r *http.Request) {
@@ -93,7 +96,7 @@ func (h *HTTPMCPServer) handleJSONRPCInitialize(w http.ResponseWriter, r *http.R
 			"name":    "starlight",
 			"version": "1.0.0",
 		},
-		"instructions": "Use tools/list to discover available tools and tools/call to invoke them. Provide X-API-Key or Authorization: Bearer <key> if authentication is required.",
+		"instructions": "Use tools/list to discover available tools and tools/call to invoke them. Provide Authorization: Bearer <key> or X-API-Key (same key as /api/auth/login and STARGATE_API_KEY).",
 	}
 	if sessionID != "" {
 		result["sessionId"] = sessionID // helpful for some clients
@@ -134,12 +137,9 @@ func (h *HTTPMCPServer) handleJSONRPCToolsCall(w http.ResponseWriter, r *http.Re
 			return
 		}
 	}
-	apiKey := strings.TrimSpace(r.Header.Get("X-API-Key"))
-	if apiKey == "" {
-		auth := r.Header.Get("Authorization")
-		if strings.HasPrefix(auth, "Bearer ") {
-			apiKey = strings.TrimPrefix(auth, "Bearer ")
-		}
+	apiKey := h.requestAPIKey(r)
+	if apiKey != "" {
+		r = r.WithContext(auth.WithAPIKey(r.Context(), apiKey))
 	}
 
 	if h.toolRequiresAuth(name) {
@@ -161,15 +161,29 @@ func (h *HTTPMCPServer) handleJSONRPCToolsCall(w http.ResponseWriter, r *http.Re
 			})
 			return
 		}
-		if h.apiKeyStore != nil && !h.checkRateLimit(apiKey) {
-			h.writeJSONRPCError(w, r, req.ID, -32003, "Rate limit exceeded", map[string]interface{}{
-				"code":    "RATE_LIMITED",
-				"message": "Rate limit exceeded",
-				"tool":    name,
-				"hint":    "Retry after a short delay.",
-			})
-			return
+		if _, actionLimited := middleware.ActionForTool(name); !actionLimited {
+			if h.apiKeyStore != nil && !h.checkRateLimit(apiKey) {
+				h.writeJSONRPCError(w, r, req.ID, -32003, "Rate limit exceeded", map[string]interface{}{
+					"code":    "RATE_LIMITED",
+					"message": "Rate limit exceeded",
+					"tool":    name,
+					"hint":    "Retry after a short delay.",
+				})
+				return
+			}
 		}
+	}
+
+	var allowed bool
+	r, allowed = h.applyActionLimit(w, r, name)
+	if !allowed {
+		h.writeJSONRPCError(w, r, req.ID, -32003, "Rate limit exceeded", map[string]interface{}{
+			"code":    "RATE_LIMITED",
+			"message": "Rate limit exceeded",
+			"tool":    name,
+			"hint":    "Shared claim/submit/review limit across /api/smart_contract and /mcp/call.",
+		})
+		return
 	}
 
 	result, err := h.callToolDirect(r.Context(), name, args, apiKey, r)

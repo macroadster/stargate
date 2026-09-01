@@ -242,13 +242,6 @@ CREATE INDEX IF NOT EXISTS starlight_ingest_updates_status_idx
 }
 
 // GetIngestionSchema returns the dialect name for the given DSN.
-func GetIngestionSchema(dialect string) string {
-	if dialect == "sqlite" {
-		return "sqlite"
-	}
-	return "postgres"
-}
-
 
 // All the method implementations follow (Create, Get, GetBy*, Update*,
 // List*, Delete, Enqueue*, Claim*, Mark*...)
@@ -267,6 +260,29 @@ func (s *IngestionService) Create(rec IngestionRecord) error {
 	}
 	metadataParam := string(metadataJSON)
 	var query string
+	if !rec.CreatedAt.IsZero() {
+		if s.dialect == "sqlite" {
+			query = fmt.Sprintf(`
+INSERT OR IGNORE INTO %s (id, filename, method, message_length, image_base64, metadata, status, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+`, s.tableName)
+		} else {
+			query = fmt.Sprintf(`
+INSERT INTO %s (id, filename, method, message_length, image_base64, metadata, status, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+ON CONFLICT (id) DO NOTHING;
+`, s.tableName)
+		}
+		createdAt := rec.CreatedAt.UTC()
+		createdParam := interface{}(createdAt)
+		if s.dialect == "sqlite" {
+			createdParam = createdAt.Format("2006-01-02 15:04:05")
+		}
+		return s.execWrite(func() error {
+			_, err := s.db.Exec(query, rec.ID, rec.Filename, rec.Method, rec.MessageLength, rec.ImageBase64, metadataParam, rec.Status, createdParam)
+			return err
+		})
+	}
 	if s.dialect == "sqlite" {
 		query = fmt.Sprintf(`
 INSERT OR IGNORE INTO %s (id, filename, method, message_length, image_base64, metadata, status)
@@ -294,37 +310,6 @@ func (s *IngestionService) Get(id string) (*IngestionRecord, error) {
 	var metadataRaw []byte
 	var createdAtRaw interface{}
 	if err := s.db.QueryRow(query, id).Scan(&rec.ID, &rec.Filename, &rec.Method, &rec.MessageLength, &rec.ImageBase64, &metadataRaw, &rec.Status, &createdAtRaw); err != nil {
-		return nil, err
-	}
-	rec.CreatedAt = scanTime(createdAtRaw)
-	rec.Metadata, _ = fromJSONB(metadataRaw)
-	return &rec, nil
-}
-
-func (s *IngestionService) GetByImageAndMessage(imageBase64, message string) (*IngestionRecord, error) {
-	var query string
-	if s.dialect == "sqlite" {
-		query = fmt.Sprintf(`
-SELECT id, filename, method, message_length, image_base64, metadata, status, created_at
-FROM %s
-WHERE image_base64 = $1
-  AND (json_extract(metadata, '$.embedded_message') = $2 OR json_extract(metadata, '$.message') = $2)
-LIMIT 1
-`, s.tableName)
-	} else {
-		query = fmt.Sprintf(`
-SELECT id, filename, method, message_length, image_base64, metadata, status, created_at
-FROM %s
-WHERE image_base64 = $1
-  AND (metadata->>'embedded_message' = $2 OR metadata->>'message' = $2)
-LIMIT 1
-`, s.tableName)
-	}
-
-	var rec IngestionRecord
-	var metadataRaw []byte
-	var createdAtRaw interface{}
-	if err := s.db.QueryRow(query, imageBase64, message).Scan(&rec.ID, &rec.Filename, &rec.Method, &rec.MessageLength, &rec.ImageBase64, &metadataRaw, &rec.Status, &createdAtRaw); err != nil {
 		return nil, err
 	}
 	rec.CreatedAt = scanTime(createdAtRaw)
@@ -463,41 +448,6 @@ WHERE id = $1
 `, s.tableName)
 		_, err = s.db.Exec(query, id, string(updatesJSON))
 		return err
-	})
-}
-
-func (s *IngestionService) UpdateID(oldID, newID string) error {
-	if oldID == "" || newID == "" {
-		return fmt.Errorf("missing id")
-	}
-	if oldID == newID {
-		return nil
-	}
-	return s.execWrite(func() error {
-		tx, err := s.db.Begin()
-		if err != nil {
-			return err
-		}
-		defer func() {
-			if err != nil {
-				_ = tx.Rollback()
-			}
-		}()
-
-		var exists bool
-		checkQuery := fmt.Sprintf(`SELECT EXISTS(SELECT 1 FROM %s WHERE id=$1)`, s.tableName)
-		if err = tx.QueryRow(checkQuery, newID).Scan(&exists); err != nil {
-			return err
-		}
-		if exists {
-			return fmt.Errorf("ingestion id %s already exists", newID)
-		}
-
-		updateQuery := fmt.Sprintf(`UPDATE %s SET id=$2 WHERE id=$1`, s.tableName)
-		if _, err = tx.Exec(updateQuery, oldID, newID); err != nil {
-			return err
-		}
-		return tx.Commit()
 	})
 }
 

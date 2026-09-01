@@ -25,7 +25,8 @@ func emptySQLiteStore(t *testing.T) *scstore.SQLiteStore {
 	return store
 }
 
-// IPFS paths must not create open contracts. Block-monitor apply path still may.
+// Unparseable / non-wish IPFS blobs stay stage-only. Pending starlight-wish-v1
+// apply is covered by wish_ingest_test.go.
 func TestIngestDownloadedFileDoesNotWriteSQL(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("UPLOADS_DIR", dir)

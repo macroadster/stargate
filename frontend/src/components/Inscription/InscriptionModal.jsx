@@ -1,4 +1,3 @@
-import React from 'react';
 import { X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import CopyButton from '../Common/CopyButton';
@@ -6,7 +5,7 @@ import MarkdownContent from '../Common/MarkdownContent';
 import SafeQrCodeCanvas from '../Common/SafeQrCodeCanvas';
 import DeliverablesReview from '../Review/DeliverablesReview';
 import { apiFetch } from '../../utils/api';
-import { QR_BYTE_LIMIT, shouldShowProposalAction } from './inscriptionUtils';
+import { QR_BYTE_LIMIT } from './inscriptionUtils';
 import { useInscriptionModalState } from './useInscriptionModalState';
 
 const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
@@ -20,7 +19,7 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
     scanMessage, scanLoading, scanError, scrollContainerRef,
     reworkRequests, setReworkRequests, isLoadingRework, showReworkForm, setShowReworkForm, reworkNotes, setReworkNotes,
     isSubmittingRework, setIsSubmittingRework,
-    allTasks, approvedProposal, psbtTasks, deliverableTasks, approvedBudgetsTotal, payoutSummaries,
+    allTasks, approvedProposal, psbtTasks, deliverableTasks, approvedBudgetsTotal, wishBudgetSats, remainingWishSats, payoutSummaries,
     stegoProposal, stegoTasks, stegoProposalStatus, stegoTaskStatusMap, hiddenMessageText,
     inscriptionMessage, inscriptionAddress, isRaiseFund, selectedTask,
     fundDepositAddress, resolvedContractorWallet, resolvedFundraiserWallet, textContent, pixelHash,
@@ -103,18 +102,18 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
               <div className="mb-6">
                 <div className="modal-tabs">
                   {[
-                    { id: 'content', label: 'Details', icon: '📋' },
-                    { id: 'proposals', label: 'Proposals', icon: '🗂️' },
-                    { id: 'deliverables', label: 'Deliverables', icon: '✅' },
-                    { id: 'rework', label: 'Rework', icon: '🔧' },
-                    { id: 'blockchain', label: 'Blockchain', icon: '⛓️' }
+                    { id: 'content', label: 'Details', icon: 'icon-content' },
+                    { id: 'proposals', label: 'Proposals', icon: 'icon-edit' },
+                    { id: 'deliverables', label: 'Deliverables', icon: 'icon-check-circle-fill' },
+                    { id: 'rework', label: 'Rework', icon: 'icon-refresh' },
+                    { id: 'blockchain', label: 'Blockchain', icon: 'icon-security' },
                   ].map((tab) => (
                     <button
                       key={tab.id}
                       onClick={() => setActiveTab(tab.id)}
                       className={`modal-tab ${activeTab === tab.id ? 'active' : ''}`}
                     >
-                      <span>{tab.icon}</span>
+                      <i className={tab.icon} aria-hidden="true" />
                       {tab.label}
                     </button>
                   ))}
@@ -295,7 +294,8 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
                               return (
                                 <button
                                   onClick={() => approveProposal(p.id, false)}
-                                  disabled={approvingId === p.id}
+                                  disabled={approvingId === p.id || isContractLocked}
+                                  title={isContractLocked ? 'Confirmed contracts cannot be approved' : undefined}
                                   className="modal-btn-approve"
                                 >
                                   {approvingId === p.id ? 'Processing…' : 'Approve'}
@@ -369,6 +369,13 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
                           </label>
                           <div className="modal-deliverables-box" style={{ minHeight: '2.5rem', padding: '0.5rem 0.75rem', fontFamily: 'monospace', fontSize: '0.7rem' }}>
                             {approvedBudgetsTotal || selectedTask?.budget_sats || 'n/a'} sats
+                            {wishBudgetSats > 0 && (
+                              <div style={{ marginTop: '0.25rem', opacity: 0.8 }}>
+                                Wish cap: {wishBudgetSats} sats
+                                {remainingWishSats > 0 ? ` · remaining ${remainingWishSats}` : ''}
+                                {approvedBudgetsTotal > wishBudgetSats ? ' · exceeds wish budget' : ''}
+                              </div>
+                            )}
                           </div>
                         </div>
                         <div className="space-y-1">
@@ -1120,6 +1127,8 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
                     {auth.apiKey && (
                       <button
                         onClick={() => setShowReworkForm(true)}
+                        disabled={isContractLocked}
+                        title={isContractLocked ? 'Confirmed contracts cannot request rework' : undefined}
                         className="modal-btn-reject"
                       >
                         + Request Rework
@@ -1179,7 +1188,7 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
                                 setIsSubmittingRework(false);
                               }
                             }}
-                            disabled={isSubmittingRework}
+                            disabled={isSubmittingRework || isContractLocked}
                             className="modal-btn-approve"
                           >
                             {isSubmittingRework ? 'Submitting...' : 'Submit'}

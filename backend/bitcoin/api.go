@@ -26,13 +26,6 @@ type BitcoinAPI struct {
 	healthCacheMutex sync.RWMutex
 }
 
-// NewBitcoinAPI creates a new Bitcoin API instance
-func NewBitcoinAPI() *BitcoinAPI {
-	network := GetCurrentNetwork()
-	config := GetNetworkConfig(network)
-	return NewBitcoinAPIWithClient(NewBitcoinNodeClient(config.BaseURL))
-}
-
 // NewBitcoinAPIWithClient creates a new Bitcoin API instance with custom client
 func NewBitcoinAPIWithClient(client *BitcoinNodeClient) *BitcoinAPI {
 	bitcoinClient := client
@@ -609,13 +602,12 @@ func (api *BitcoinAPI) HandleExtract(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse multipart form
+	// Cap multipart size (32 MiB form budget; stego.DecodeImage enforces 10 MiB image).
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
 		http.Error(w, "Failed to parse form", http.StatusBadRequest)
 		return
 	}
 
-	// Get image file
 	file, header, err := r.FormFile("image")
 	if err != nil {
 		http.Error(w, "Image file required", http.StatusBadRequest)
@@ -623,7 +615,6 @@ func (api *BitcoinAPI) HandleExtract(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	// Read image data
 	imageData, err := io.ReadAll(file)
 	if err != nil {
 		http.Error(w, "Failed to read image", http.StatusInternalServerError)
@@ -636,9 +627,10 @@ func (api *BitcoinAPI) HandleExtract(w http.ResponseWriter, r *http.Request) {
 	startTime := time.Now()
 	requestID := core.GenerateRequestID()
 
-	// Extract message using scanner manager
 	extractionResult, err := api.scannerManager.ExtractMessage(imageData, method)
 	if err != nil {
+		// Hard failures only (scanner down, etc.). Unsupported formats soft-fail above.
+		log.Printf("extract: request_id=%s size=%d method=%q error=%v", requestID, len(imageData), method, err)
 		errorResp := core.NewErrorResponse(
 			"EXTRACTION_FAILED",
 			"Message extraction failed",
@@ -653,10 +645,26 @@ func (api *BitcoinAPI) HandleExtract(w http.ResponseWriter, r *http.Request) {
 
 	processingTime := time.Since(startTime).Milliseconds()
 
+	filename := ""
+	if header != nil {
+		filename = header.Filename
+	}
+	format := ""
+	if i := strings.LastIndex(filename, "."); i >= 0 && i+1 < len(filename) {
+		format = strings.ToLower(filename[i+1:])
+	}
+
+	// Surface soft-fail status in logs for ops (e.g. AVIF on-chain images).
+	if extractionResult != nil && !extractionResult.MessageFound {
+		if status, _ := extractionResult.ExtractionDetails["status"].(string); status == "unsupported_format" {
+			log.Printf("extract: request_id=%s size=%d format=%q status=unsupported_format", requestID, len(imageData), format)
+		}
+	}
+
 	imageInfo := map[string]any{
-		"filename":   header.Filename,
+		"filename":   filename,
 		"size_bytes": len(imageData),
-		"format":     strings.ToLower(strings.TrimPrefix(header.Filename[strings.LastIndex(header.Filename, ".")+1:], "")),
+		"format":     format,
 	}
 
 	response := core.ExtractResponse{
@@ -730,9 +738,6 @@ func (api *BitcoinAPI) HandleGetTransaction(w http.ResponseWriter, r *http.Reque
 }
 
 // GetBitcoinClient returns the underlying Bitcoin client
-func (api *BitcoinAPI) GetBitcoinClient() *BitcoinNodeClient {
-	return api.bitcoinClient
-}
 
 // EnableCORS enables CORS headers
 func EnableCORS(w http.ResponseWriter, r *http.Request) {

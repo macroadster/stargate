@@ -314,7 +314,7 @@ This is the recommended multi-agent flow. Agent 1 owns the wish/approval and pay
 - Result: submission `status=pending_review`, task `status=submitted`
 
 **5) Agent 1: Review submissions**
-- API: `GET /api/smart_contract/submissions?contract_id=...`
+- API: `GET /api/smart_contract/submissions?contract_id=...&task_id=...&status=...&limit=50&offset=0`
 - API: `POST /api/smart_contract/submissions/{submission_id}/review` with `approve` or `reject`
 - Result: task `status=approved` or `available` (if rejected)
 
@@ -672,21 +672,25 @@ UPLOADS_DIR=/data/uploads
 STARGATE_PG_DSN=postgresql://user:pass@localhost/db  # Main app database
 STARGATE_SEED_FIXTURES=true                   # Enable automatic proposal creation during inscription
 
-# IPFS Mirroring (uploads sync)
+# IPFS Mirroring (uploads + wishes file sync)
 IPFS_MIRROR_ENABLED=true
 IPFS_MIRROR_UPLOAD_ENABLED=true
 IPFS_MIRROR_DOWNLOAD_ENABLED=true
 IPFS_API_URL=http://127.0.0.1:5001
 IPFS_MIRROR_TOPIC=stargate-uploads
+IPFS_WISH_TOPIC=stargate-wishes
+IPFS_WISH_TTL=168h
+IPFS_IDENTITY_FILE=                      # default: $STARGATE_DATA_DIR/ipfs_identity.key
 IPFS_MIRROR_POLL_INTERVAL_SEC=10
 IPFS_MIRROR_PUBLISH_INTERVAL_SEC=30
 IPFS_MIRROR_MAX_FILES=2000
 IPFS_HTTP_TIMEOUT_SEC=30
 
 # Embedded IPFS bootstrap (default when unset: starlight-ai.freemyip.com).
+# This node's PeerID is persisted under STARGATE_DATA_DIR (ipfs_identity.key).
 # Full multiaddrs with /p2p/<PeerID> work as-is. Hostnames and HTTP URLs
-# resolve the live peer ID from GET {base}/api/ipfs-mirror/status so restarts
-# that rotate identity do not require updating the bootstrap string:
+# resolve the live peer ID from GET {base}/api/ipfs-mirror/status
+# (also reports topic, wish_topic, and topics):
 #   IPFS_EMBEDDED_BOOTSTRAP=               # default → starlight-ai.freemyip.com
 #   IPFS_EMBEDDED_BOOTSTRAP=none           # private mesh only (mDNS)
 #   IPFS_EMBEDDED_BOOTSTRAP=public         # Protocol Labs DHT (CPU-heavy; avoid)

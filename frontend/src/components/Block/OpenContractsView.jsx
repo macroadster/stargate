@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import InscriptionCard from '../Inscription/InscriptionCard';
 import { API_BASE } from '../../apiBase';
 import { apiFetch } from '../../utils/api';

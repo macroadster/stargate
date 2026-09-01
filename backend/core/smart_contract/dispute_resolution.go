@@ -73,13 +73,9 @@ const (
 type DisputeStatus string
 
 const (
-	DisputeStatusInitiated   DisputeStatus = "initiated"
-	DisputeStatusResponded   DisputeStatus = "responded"
-	DisputeStatusArbitrating DisputeStatus = "arbitrating"
-	DisputeStatusVoting      DisputeStatus = "voting"
-	DisputeStatusCompleted   DisputeStatus = "completed"
-	DisputeStatusExpired     DisputeStatus = "expired"
-	DisputeStatusCanceled    DisputeStatus = "canceled"
+	DisputeStatusInitiated DisputeStatus = "initiated"
+
+	DisputeStatusCompleted DisputeStatus = "completed"
 )
 
 // DisputeEvidence represents evidence submitted in a dispute
@@ -523,43 +519,8 @@ func (dr *DisputeResolution) convertVotesToArray(votes map[string]ArbitrationVot
 }
 
 // AppealDispute handles an appeal of a dispute resolution
-func (dr *DisputeResolution) AppealDispute(ctx context.Context, disputeID string, appealReason string, appealEvidence []DisputeEvidence) error {
-	log.Printf("Appealing dispute %s: %s", disputeID, appealReason)
-
-	// Validate appeal deadline
-	// In a real implementation, this would check the dispute resolution
-	// For now, just log the appeal
-
-	appealJSON, _ := json.Marshal(map[string]any{
-		"dispute_id":      disputeID,
-		"appeal_reason":   appealReason,
-		"appeal_evidence": appealEvidence,
-		"appealed_at":     time.Now(),
-	})
-
-	log.Printf("Appeal submitted: %s", string(appealJSON))
-
-	return nil
-}
 
 // GetDisputeStatus returns the current status of a dispute
-func (dr *DisputeResolution) GetDisputeStatus(_ context.Context, disputeID string) (map[string]any, error) {
-	status := map[string]any{
-		"dispute_id": disputeID,
-		"service":    "dispute_resolution",
-		"timestamp":  time.Now().Format(time.RFC3339),
-		"version":    "1.0.0",
-	}
-
-	// In a real implementation, this would fetch the actual dispute status
-	// For now, return a mock status
-	status["status"] = "arbitrating"
-	status["arbitrators_count"] = 3
-	status["evidence_count"] = 5
-	status["deadline"] = time.Now().Add(48 * time.Hour).Format(time.RFC3339)
-
-	return status, nil
-}
 
 // AddArbitrator adds a new arbitrator to the system
 func (dr *DisputeResolution) AddArbitrator(arbitrator Arbitrator) error {
@@ -585,36 +546,3 @@ func (dr *DisputeResolution) AddArbitrator(arbitrator Arbitrator) error {
 }
 
 // GetArbitrators returns all available arbitrators
-func (dr *DisputeResolution) GetArbitrators() []Arbitrator {
-	// In a real implementation, this would fetch from storage
-	// For now, return mock data
-	return []Arbitrator{
-		{
-			ID:          "arb-001",
-			Name:        "Alice Arbitrator",
-			PublicKey:   "02abc123...",
-			Reputation:  4.5,
-			Specialties: []string{"quality", "delivery"},
-			IsActive:    true,
-			VoteWeight:  1.0,
-		},
-		{
-			ID:          "arb-002",
-			Name:        "Bob Arbitrator",
-			PublicKey:   "02def456...",
-			Reputation:  3.8,
-			Specialties: []string{"payment", "technical"},
-			IsActive:    true,
-			VoteWeight:  1.0,
-		},
-		{
-			ID:          "arb-003",
-			Name:        "Charlie Arbitrator",
-			PublicKey:   "02ghi789...",
-			Reputation:  4.2,
-			Specialties: []string{"behavior", "other"},
-			IsActive:    false,
-			VoteWeight:  0.5,
-		},
-	}
-}

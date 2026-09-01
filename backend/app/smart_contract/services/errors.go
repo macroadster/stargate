@@ -1,7 +1,5 @@
 package services
 
-import "fmt"
-
 // StatusError is a domain error with an HTTP-oriented status code.
 type StatusError struct {
 	Status  int
@@ -21,9 +19,6 @@ func Fail(status int, message string) *StatusError {
 }
 
 // Failf constructs a StatusError with formatting.
-func Failf(status int, format string, args ...interface{}) *StatusError {
-	return &StatusError{Status: status, Message: fmt.Sprintf(format, args...)}
-}
 
 // AsStatus extracts StatusError from err, if present.
 func AsStatus(err error) *StatusError {

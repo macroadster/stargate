@@ -13,24 +13,25 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	scmiddleware "stargate-backend/app/smart_contract"
+	scservices "stargate-backend/app/smart_contract/services"
 	"stargate-backend/bitcoin"
 	"stargate-backend/core"
 	"stargate-backend/core/smart_contract"
 	"stargate-backend/handlers"
-	scmiddleware "stargate-backend/app/smart_contract"
-	scservices "stargate-backend/app/smart_contract/services"
+	"stargate-backend/middleware"
 	"stargate-backend/services"
 	"stargate-backend/starlight"
-	auth "stargate-backend/storage/auth"
 	"stargate-backend/storage"
+	auth "stargate-backend/storage/auth"
 	"stargate-backend/storage/datadir"
 	scstore "stargate-backend/storage/smart_contract"
 
-	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
 )
 
@@ -47,6 +48,31 @@ func generateRandomString(length int) string {
 	b := make([]byte, length)
 	rand.Read(b)
 	return base64.URLEncoding.EncodeToString(b)[:length]
+}
+
+func pageQueryFromArgs(args map[string]interface{}) smart_contract.PageQuery {
+	limit, offset := 0, 0
+	if args != nil {
+		switch v := args["limit"].(type) {
+		case int:
+			limit = v
+		case float64:
+			limit = int(v)
+		}
+		switch v := args["offset"].(type) {
+		case int:
+			offset = v
+		case float64:
+			offset = int(v)
+		}
+	}
+	cursor, cursorDate, cursorType := "", "", ""
+	if args != nil {
+		cursor, _ = args["cursor"].(string)
+		cursorDate, _ = args["cursor_date"].(string)
+		cursorType, _ = args["cursor_type"].(string)
+	}
+	return smart_contract.NewPageQuery(limit, offset, cursor, cursorDate, cursorType, smart_contract.DefaultPageLimit)
 }
 
 type ChatHub struct {
@@ -168,6 +194,7 @@ func (ch *ChatHub) GetRecentMessages(roomID string, limit int) []*ChatMessage {
 
 type MCPSession struct {
 	ID        string
+	APIKey    string // bound bearer from initialize / first authenticated call
 	CreatedAt time.Time
 	ExpiresAt time.Time
 }
@@ -176,6 +203,7 @@ type MCPSession struct {
 type HTTPMCPServer struct {
 	store            scmiddleware.Store
 	claimSvc         *scservices.ClaimService
+	submissionSvc    *scservices.SubmissionService
 	apiKeyStore      auth.APIKeyValidator
 	apiKeyIssuer     auth.APIKeyIssuer
 	ingestionSvc     *services.IngestionService
@@ -189,6 +217,7 @@ type HTTPMCPServer struct {
 	proxyBase        string
 	rateLimiterMu    sync.Mutex
 	rateLimiter      map[string][]time.Time
+	actionLimiter    *middleware.ActionLimiter
 	challengeStore   *auth.ChallengeStore
 	network          string
 	guidance         *GuidanceManifest
@@ -199,10 +228,7 @@ type HTTPMCPServer struct {
 
 // NewHTTPMCPServer creates a new HTTP MCP server
 func NewHTTPMCPServer(store scmiddleware.Store, apiKeyStore auth.APIKeyValidator, apiKeyIssuer auth.APIKeyIssuer, ingestionSvc *services.IngestionService, scannerManager *starlight.ScannerManager, smartContractSvc *services.SmartContractService, challengeStore *auth.ChallengeStore) *HTTPMCPServer {
-	network := "mainnet"
-	if strings.Contains(os.Getenv("BITCOIN_NETWORK"), "testnet") {
-		network = "testnet4"
-	}
+	network := bitcoin.GetCurrentNetwork()
 	config := bitcoin.GetNetworkConfig(network)
 
 	baseURL := os.Getenv("STARGATE_API_URL")
@@ -214,6 +240,7 @@ func NewHTTPMCPServer(store scmiddleware.Store, apiKeyStore auth.APIKeyValidator
 	return &HTTPMCPServer{
 		store:            store,
 		claimSvc:         scservices.NewClaimService(store),
+		submissionSvc:    scservices.NewSubmissionService(store, nil),
 		apiKeyStore:      apiKeyStore,
 		apiKeyIssuer:     apiKeyIssuer,
 		ingestionSvc:     ingestionSvc,
@@ -250,6 +277,11 @@ func (h *HTTPMCPServer) SetServer(server *scmiddleware.Server) {
 	h.server = server
 }
 
+// SetActionLimiter installs the shared claim/submit/review limiter (same instance as REST).
+func (h *HTTPMCPServer) SetActionLimiter(limiter *middleware.ActionLimiter) {
+	h.actionLimiter = limiter
+}
+
 func (h *HTTPMCPServer) createSession() string {
 	sessionID := fmt.Sprintf("session_%d_%s", time.Now().UnixNano(), generateRandomString(16))
 	h.sessionMu.Lock()
@@ -260,6 +292,42 @@ func (h *HTTPMCPServer) createSession() string {
 		ExpiresAt: time.Now().Add(24 * time.Hour),
 	}
 	return sessionID
+}
+
+func (h *HTTPMCPServer) bindSessionKey(sessionID, key string) {
+	sessionID = strings.TrimSpace(sessionID)
+	key = strings.TrimSpace(key)
+	if sessionID == "" || key == "" {
+		return
+	}
+	h.sessionMu.Lock()
+	defer h.sessionMu.Unlock()
+	if s := h.sessions[sessionID]; s != nil {
+		s.APIKey = key
+		return
+	}
+	h.sessions[sessionID] = &MCPSession{
+		ID:        sessionID,
+		APIKey:    key,
+		CreatedAt: time.Now(),
+		ExpiresAt: time.Now().Add(24 * time.Hour),
+	}
+}
+
+func (h *HTTPMCPServer) sessionAPIKey(sessionID string) string {
+	s := h.getSession(strings.TrimSpace(sessionID))
+	if s == nil {
+		return ""
+	}
+	return strings.TrimSpace(s.APIKey)
+}
+
+// requestAPIKey is the single MCP bearer path: header/cookie, then session-bound key.
+func (h *HTTPMCPServer) requestAPIKey(r *http.Request) string {
+	if k := auth.APIKeyFromRequest(r); k != "" {
+		return k
+	}
+	return h.sessionAPIKey(h.extractSessionID(r))
 }
 
 func (h *HTTPMCPServer) getSession(sessionID string) *MCPSession {
@@ -282,15 +350,28 @@ func (h *HTTPMCPServer) extractSessionID(r *http.Request) string {
 }
 
 // ensureSession returns an existing valid session from the request or creates a new one.
+// A valid request bearer/cookie is bound onto the session so later MCP-Session-Id
+// calls share the same api_keys validator as /api (including STARGATE_API_KEY seed).
 func (h *HTTPMCPServer) ensureSession(r *http.Request) string {
-	if sid := h.extractSessionID(r); sid != "" {
-		if s := h.getSession(sid); s != nil {
-			return sid
+	sid := h.extractSessionID(r)
+	if sid == "" {
+		sid = h.createSession()
+	} else if h.getSession(sid) == nil {
+		// Honor client-provided id even if not yet in our map (reconnect).
+		h.sessionMu.Lock()
+		if _, ok := h.sessions[sid]; !ok {
+			h.sessions[sid] = &MCPSession{
+				ID:        sid,
+				CreatedAt: time.Now(),
+				ExpiresAt: time.Now().Add(24 * time.Hour),
+			}
 		}
-		// still honor client-provided id even if not yet in our map (client may have it from previous)
-		return sid
+		h.sessionMu.Unlock()
 	}
-	return h.createSession()
+	if key := auth.APIKeyFromRequest(r); key != "" && auth.ValidateKey(h.apiKeyStore, key) {
+		h.bindSessionKey(sid, key)
+	}
+	return sid
 }
 
 func (h *HTTPMCPServer) externalBaseURL(r *http.Request) string {
@@ -566,48 +647,26 @@ func (h *HTTPMCPServer) writeStructuredErrorJSONRPC(w http.ResponseWriter, err e
 	json.NewEncoder(w).Encode(resp)
 }
 
-func (h *HTTPMCPServer) statusFromError(err error) int {
-	if err == nil {
-		return http.StatusInternalServerError
-	}
-	lower := strings.ToLower(err.Error())
-	switch {
-	case strings.Contains(lower, "not found"):
-		return http.StatusNotFound
-	case strings.Contains(lower, "already claimed"),
-		strings.Contains(lower, "already taken"),
-		strings.Contains(lower, "conflict"),
-		strings.Contains(lower, "taken"):
-		return http.StatusConflict
-	case strings.Contains(lower, "missing"),
-		strings.Contains(lower, "required"),
-		strings.Contains(lower, "invalid"),
-		strings.Contains(lower, "expected"):
-		return http.StatusBadRequest
-	default:
-		return http.StatusInternalServerError
-	}
-}
-
 func (h *HTTPMCPServer) toolRequiresAuth(toolName string) bool {
 	if h.guidance != nil {
 		return h.guidance.ToolRequiresAuth(toolName)
 	}
 	authenticatedTools := map[string]bool{
-		"create_proposal":       true,
-		"create_wish":           true,
-		"create_task":           true,
-		"claim_task":            true,
-		"submit_work":           true,
-		"approve_proposal":      true,
-		"reject_submission":     true,
-		"approve_submission":    true,
-		"get_auth_challenge":    false, // No auth required - discovery tool
-		"verify_auth_challenge": false, // No auth required - solves chicken-egg problem
-		"validate_address":      false, // No auth required - AI debugging tool
-		"get_task":              false, // No auth required - discovery tool
-		"list_submissions":      false, // No auth required - discovery tool
-		"build_psbt":                    true,  // Auth required - payer address derived from API key
+		"create_proposal":                true,
+		"create_wish":                    true,
+		"create_task":                    true,
+		"rebalance_contract_budget":      true,
+		"claim_task":                     true,
+		"submit_work":                    true,
+		"approve_proposal":               true,
+		"reject_submission":              true,
+		"approve_submission":             true,
+		"get_auth_challenge":             false, // No auth required - discovery tool
+		"verify_auth_challenge":          false, // No auth required - solves chicken-egg problem
+		"validate_address":               false, // No auth required - AI debugging tool
+		"get_task":                       false, // No auth required - discovery tool
+		"list_submissions":               false, // No auth required - discovery tool
+		"build_psbt":                     true,  // Auth required - payer address derived from API key
 		"create_contract_rework_request": true,
 	}
 	return authenticatedTools[toolName]
@@ -667,6 +726,8 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 		return h.handleValidateAddress(ctx, args)
 	case "create_task":
 		return h.handleCreateTask(ctx, args, apiKey)
+	case "rebalance_contract_budget":
+		return h.handleRebalanceContractBudget(ctx, args, apiKey)
 	case "build_psbt":
 		return h.handleBuildPSBT(ctx, args, apiKey)
 	case "chat_send":
@@ -756,47 +817,29 @@ func (h *HTTPMCPServer) handleListProposals(ctx context.Context, args map[string
 		filter.ProposalID = proposalID
 	}
 
-	// Handle pagination parameters
-	if limit, ok := args["limit"].(int); ok && limit > 0 {
-		filter.MaxResults = limit
-	} else if limitFloat, ok := args["limit"].(float64); ok && limitFloat > 0 {
-		filter.MaxResults = int(limitFloat)
-	} else {
-		filter.MaxResults = 50 // Default limit
-	}
-
-	if offset, ok := args["offset"].(int); ok && offset >= 0 {
-		filter.Offset = offset
-	} else if offsetFloat, ok := args["offset"].(float64); ok && offsetFloat >= 0 {
-		filter.Offset = int(offsetFloat)
-	} else {
-		filter.Offset = 0 // Default offset
-	}
+	pageQ := pageQueryFromArgs(args)
+	pageQ.ApplyToProposal(&filter)
+	filter.Limit = smart_contract.OverFetchLimit(pageQ.Limit)
+	filter.MaxResults = filter.Limit
 
 	proposals, err := h.store.ListProposals(ctx, filter)
 	if err != nil {
 		return nil, err
 	}
-
-	// Check if there are more results by requesting one more item
-	hasMore := false
-	if len(proposals) == filter.MaxResults {
-		checkFilter := filter
-		checkFilter.Offset = filter.Offset + filter.MaxResults
-		checkFilter.MaxResults = 1
-		moreResults, err := h.store.ListProposals(ctx, checkFilter)
-		if err == nil && len(moreResults) > 0 {
-			hasMore = true
-		}
+	if proposals == nil {
+		proposals = []smart_contract.Proposal{}
 	}
-
-	return map[string]interface{}{
-		"proposals": proposals,
-		"total":     len(proposals),
-		"limit":     filter.MaxResults,
-		"offset":    filter.Offset,
-		"has_more":  hasMore,
-	}, nil
+	fetched := len(proposals)
+	proposals = smart_contract.TrimWindow(proposals, pageQ.Limit)
+	lastID, lastDate := "", time.Time{}
+	if n := len(proposals); n > 0 {
+		lastID = proposals[n-1].ID
+		lastDate = proposals[n-1].CreatedAt
+	}
+	page := smart_contract.BuildPage(pageQ.Limit, pageQ.Offset, fetched, len(proposals), lastID, lastDate)
+	body := page.Fields()
+	body["proposals"] = proposals
+	return body, nil
 }
 
 func (h *HTTPMCPServer) handleGetProposal(ctx context.Context, args map[string]interface{}) (interface{}, error) {
@@ -832,12 +875,24 @@ func (h *HTTPMCPServer) handleClaimTask(ctx context.Context, args map[string]int
 		return nil, NewUnauthorizedError("claim_task", "wallet address required - please bind wallet to API key using /api/auth/verify")
 	}
 
+	amountSats, hasAmount, amountErr := mcpArgInt64(args, "amount_sats", "budget_sats")
+	if hasAmount && amountErr != nil {
+		validation.AddFieldError("amount_sats", args["amount_sats"], "amount_sats must be a positive number", false)
+	} else if hasAmount && amountSats <= 0 {
+		validation.AddFieldError("amount_sats", amountSats, "amount_sats must be a positive number", false)
+	}
+
 	// Return validation errors if any
 	if validation.HasErrors() {
 		return nil, validation
 	}
 
-	claim, err := h.claimSvc.ClaimTask(taskID, wallet, nil)
+	var amountPtr *int64
+	if hasAmount && amountErr == nil && amountSats > 0 {
+		amountPtr = &amountSats
+	}
+
+	result, err := h.claimSvc.ClaimTaskWithAmount(ctx, taskID, wallet, nil, amountPtr)
 	if err != nil {
 		// Convert common errors to structured errors
 		if strings.Contains(err.Error(), "not found") {
@@ -846,11 +901,19 @@ func (h *HTTPMCPServer) handleClaimTask(ctx context.Context, args map[string]int
 		if strings.Contains(err.Error(), "already claimed") {
 			return nil, NewClaimTaskError("ALREADY_CLAIMED", "Task has already been claimed", "task_id")
 		}
+		if strings.Contains(err.Error(), "exceeds remaining wish budget") {
+			return nil, NewClaimTaskError("BUDGET_EXCEEDED", err.Error(), "amount_sats")
+		}
 		return nil, err
 	}
 
 	return map[string]interface{}{
-		"claim": claim,
+		"claim":            result.Claim,
+		"amount_sats":      result.AmountSats,
+		"wish_budget_sats": result.WishBudgetSats,
+		"allocated_sats":   result.AllocatedSats,
+		"remaining_sats":   result.RemainingSats,
+		"claimable_sats":   result.ClaimableSats,
 	}, nil
 }
 
@@ -874,15 +937,11 @@ func (h *HTTPMCPServer) handleCreateProposal(ctx context.Context, args map[strin
 
 	// Validate budget_sats if provided
 	var budgetSats int64 = 0
-	if budget, ok := args["budget_sats"]; ok {
-		if b, ok := budget.(float64); ok {
-			if b < 0 {
-				validation.AddFieldError("budget_sats", budget, "budget_sats must be a non-negative number", false)
-			} else {
-				budgetSats = int64(b)
-			}
+	if parsed, ok, err := mcpArgInt64(args, "budget_sats"); ok {
+		if err != nil || parsed < 0 {
+			validation.AddFieldError("budget_sats", args["budget_sats"], "budget_sats must be a non-negative number", false)
 		} else {
-			validation.AddTypeError("budget_sats", budget, "number")
+			budgetSats = parsed
 		}
 	}
 
@@ -891,21 +950,19 @@ func (h *HTTPMCPServer) handleCreateProposal(ctx context.Context, args map[strin
 		return nil, validation
 	}
 
-	// Check if wish contract exists
+	// Check if wish contract exists and cap proposal budget to the original wish price
 	wishID := "wish-" + visiblePixelHash
-	contracts, err := h.store.ListContracts(smart_contract.ContractFilter{})
-	if err != nil {
-		return nil, err
-	}
-	wishExists := false
-	for _, contract := range contracts {
-		if contract.ContractID == wishID {
-			wishExists = true
-			break
-		}
-	}
-	if !wishExists {
+	wish, wishErr := scstore.LookupContract(h.store, wishID)
+	if wishErr != nil || strings.TrimSpace(wish.ContractID) == "" {
 		return nil, NewNotFoundError("create_proposal", "wish", visiblePixelHash)
+	}
+	wishBudget := scstore.WishBudgetFromContract(wish)
+	if wishBudget > 0 {
+		if budgetSats == 0 {
+			budgetSats = wishBudget
+		} else if budgetSats > wishBudget {
+			return nil, NewCreateProposalError("BUDGET_EXCEEDED", fmt.Sprintf("proposal budget_sats %d exceeds original wish budget %d", budgetSats, wishBudget), "budget_sats")
+		}
 	}
 
 	// Get creator wallet from API key
@@ -932,7 +989,7 @@ func (h *HTTPMCPServer) handleCreateProposal(ctx context.Context, args map[strin
 	}
 
 	log.Printf("MCP CREATE PROPOSAL DEBUG: ID=%s, metadata=%+v", proposal.ID, proposal.Metadata)
-	err = h.store.CreateProposal(ctx, proposal)
+	err := h.store.CreateProposal(ctx, proposal)
 	if err != nil {
 		errMsg := err.Error()
 		if strings.Contains(errMsg, "maximum of 5 proposals reached") {
@@ -1377,158 +1434,42 @@ func (h *HTTPMCPServer) handleListTasks(ctx context.Context, args map[string]int
 		}
 	}
 
-	// Handle pagination parameters
-	if limit, ok := args["limit"].(int); ok && limit > 0 {
-		filter.Limit = limit
-	} else if limitFloat, ok := args["limit"].(float64); ok && limitFloat > 0 {
-		filter.Limit = int(limitFloat)
-	} else {
-		filter.Limit = 50 // Default limit
-	}
-
-	if offset, ok := args["offset"].(int); ok && offset >= 0 {
-		filter.Offset = offset
-	} else if offsetFloat, ok := args["offset"].(float64); ok && offsetFloat >= 0 {
-		filter.Offset = int(offsetFloat)
-	} else {
-		filter.Offset = 0 // Default offset
-	}
+	pageQ := pageQueryFromArgs(args)
+	pageQ.ApplyToTask(&filter)
+	filter.Limit = smart_contract.OverFetchLimit(pageQ.Limit)
 
 	tasks, err := h.store.ListTasks(filter)
 	if err != nil {
 		return nil, err
 	}
-
-	// Check if there are more results by requesting one more item
-	hasMore := false
-	if len(tasks) == filter.Limit {
-		checkFilter := filter
-		checkFilter.Offset = filter.Offset + filter.Limit
-		checkFilter.Limit = 1
-		moreResults, err := h.store.ListTasks(checkFilter)
-		if err == nil && len(moreResults) > 0 {
-			hasMore = true
+	if tasks == nil {
+		tasks = []smart_contract.Task{}
+	}
+	fetched := len(tasks)
+	tasks = smart_contract.TrimWindow(tasks, pageQ.Limit)
+	lastID := ""
+	if n := len(tasks); n > 0 {
+		lastID = tasks[n-1].TaskID
+	}
+	page := smart_contract.BuildPage(pageQ.Limit, pageQ.Offset, fetched, len(tasks), lastID, time.Time{})
+	body := page.Fields()
+	tasks = scstore.AnnotateTasksWithBudget(h.store, tasks)
+	body["tasks"] = tasks
+	if cid := strings.TrimSpace(filter.ContractID); cid != "" {
+		if snap, snapErr := scstore.LoadBudgetSnapshotForContract(h.store, cid); snapErr == nil {
+			body["wish_budget_sats"] = snap.WishBudgetSats
+			body["allocated_sats"] = snap.AllocatedSats
+			body["remaining_sats"] = snap.RemainingSats
 		}
 	}
-
-	return map[string]interface{}{
-		"tasks":    tasks,
-		"total":    len(tasks),
-		"limit":    filter.Limit,
-		"offset":   filter.Offset,
-		"has_more": hasMore,
-	}, nil
+	return body, nil
 }
 
 func (h *HTTPMCPServer) handleListSubmissions(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	var taskIDs []string
-
-	// If task_id is provided, use it directly
-	if taskID, ok := args["task_id"].(string); ok && taskID != "" {
-		taskIDs = []string{taskID}
-	} else if contractID, ok := args["contract_id"].(string); ok && contractID != "" {
-		// Normalize contract ID - try multiple variations like other handlers
-		normalized := strings.TrimSpace(contractID)
-		prefixes := []string{"wish-", "proposal-", "contract-"}
-		for _, prefix := range prefixes {
-			if strings.HasPrefix(normalized, prefix) {
-				normalized = strings.TrimPrefix(normalized, prefix)
-				break
-			}
-		}
-
-		// Try different contract ID variations
-		contractIDsToTry := []string{contractID, normalized}
-		if !strings.HasPrefix(contractID, "wish-") && !strings.HasPrefix(contractID, "proposal-") && !strings.HasPrefix(contractID, "contract-") {
-			contractIDsToTry = append(contractIDsToTry, "wish-"+normalized, "contract-"+normalized)
-		}
-
-		// Try each contract ID variation until we find tasks
-		for _, cid := range contractIDsToTry {
-			tasks, err := h.store.ListTasks(smart_contract.TaskFilter{
-				ContractID: cid,
-				Limit:      1000,
-			})
-			if err != nil {
-				return nil, fmt.Errorf("failed to get tasks for contract: %v", err)
-			}
-			for _, task := range tasks {
-				taskIDs = append(taskIDs, task.TaskID)
-			}
-			if len(taskIDs) > 0 {
-				break // Found tasks, stop trying
-			}
-		}
-	} else {
-		// No filter provided - return empty with a hint
-		return map[string]interface{}{
-			"submissions": []smart_contract.Submission{},
-			"total":       0,
-			"limit":       50,
-			"offset":      0,
-			"has_more":    false,
-			"hint":        "Provide contract_id or task_id to filter submissions",
-		}, nil
+	if h.submissionSvc == nil {
+		return nil, fmt.Errorf("submission service unavailable")
 	}
-
-	// Handle pagination parameters
-	limit := 50
-	offset := 0
-	if lim, ok := args["limit"].(int); ok && lim > 0 {
-		limit = lim
-	} else if lim, ok := args["limit"].(float64); ok && lim > 0 {
-		limit = int(lim)
-	}
-
-	if off, ok := args["offset"].(int); ok && off >= 0 {
-		offset = off
-	} else if off, ok := args["offset"].(float64); ok && off >= 0 {
-		offset = int(off)
-	}
-
-	// Get submissions
-	submissions, err := h.store.ListSubmissions(ctx, taskIDs)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list submissions: %v", err)
-	}
-
-	// Filter by status if provided
-	statusFilter := ""
-	if status, ok := args["status"].(string); ok && status != "" {
-		statusFilter = strings.ToLower(status)
-	}
-
-	var filtered []smart_contract.Submission
-	for _, sub := range submissions {
-		if statusFilter != "" && strings.ToLower(sub.Status) != statusFilter {
-			continue
-		}
-		filtered = append(filtered, sub)
-	}
-
-	// Apply pagination
-	hasMore := false
-	var paged []smart_contract.Submission
-	if offset < len(filtered) {
-		end := offset + limit
-		if end > len(filtered) {
-			end = len(filtered)
-		}
-		paged = filtered[offset:end]
-		if offset+limit < len(filtered) {
-			hasMore = true
-		}
-	} else {
-		paged = []smart_contract.Submission{}
-	}
-
-	return map[string]interface{}{
-		"submissions": paged,
-		"total":       len(filtered),
-		"limit":       limit,
-		"offset":      offset,
-		"has_more":    hasMore,
-	}, nil
+	return h.submissionSvc.List(ctx, scservices.SubmissionFilterFromArgs(args))
 }
 
 func (h *HTTPMCPServer) handleGetContract(ctx context.Context, args map[string]interface{}) (interface{}, error) {
@@ -1726,6 +1667,10 @@ func (h *HTTPMCPServer) handleGetTask(ctx context.Context, args map[string]inter
 		return nil, NewInternalError("get_task", fmt.Sprintf("Failed to get task: %v", err))
 	}
 
+	annotated := scstore.AnnotateTasksWithBudget(h.store, []smart_contract.Task{task})
+	if len(annotated) > 0 {
+		task = annotated[0]
+	}
 	return task, nil
 }
 
@@ -2046,10 +1991,10 @@ func (h *HTTPMCPServer) handleSubmitWork(ctx context.Context, args map[string]in
 			// Get uploads directory
 			uploadsDir := os.Getenv("UPLOADS_DIR")
 
-                       // Create results directory: UPLOADS_DIR/results/ab/cd/ef/[contract_id]
+			// Create results directory: UPLOADS_DIR/results/ab/cd/ef/[contract_id]
 			// Look up the contract/task relationship to get contract_id for file organization
-                       resultsDir, err := datadir.PartMkdirAll(filepath.Join(uploadsDir, "results"), subDir, 0755)
-                       if err != nil {
+			resultsDir, err := datadir.PartMkdirAll(filepath.Join(uploadsDir, "results"), subDir, 0755)
+			if err != nil {
 				return nil, NewInternalError("submit_work", fmt.Sprintf("Failed to create results directory: %v", err))
 			}
 
@@ -2429,9 +2374,6 @@ func (h *HTTPMCPServer) handleValidateAddress(ctx context.Context, args map[stri
 
 // verifyBTCSignature verifies a Bitcoin signature against a message
 // Uses the exported verification functions from the handlers package
-func (h *HTTPMCPServer) verifyBTCSignature(address, signature, message string) (bool, error) {
-	return handlers.VerifyBTCSignature(address, signature, message)
-}
 
 func (h *HTTPMCPServer) handleCreateTask(ctx context.Context, args map[string]interface{}, apiKey string) (interface{}, error) {
 	validation := NewValidationError("create_task", "Invalid request parameters")
@@ -2520,10 +2462,14 @@ func (h *HTTPMCPServer) handleCreateTask(ctx context.Context, args map[string]in
 		return nil, NewServiceUnavailableError("create_task", "task store")
 	}
 
-	// Verify contract exists
-	_, err := h.store.GetContract(contractID)
-	if err != nil {
+	// Verify contract exists and the new budget fits the original wish price
+	if _, err := h.store.GetContract(contractID); err != nil {
 		return nil, NewValidationError("create_task", fmt.Sprintf("Contract not found: %s", contractID))
+	}
+	if snap, snapErr := scstore.LoadBudgetSnapshotForContract(h.store, contractID); snapErr == nil {
+		if err := snap.ValidateNewTaskBudget(budgetSats); err != nil {
+			return nil, NewValidationError("create_task", err.Error())
+		}
 	}
 
 	// Create the task
@@ -2544,7 +2490,7 @@ func (h *HTTPMCPServer) handleCreateTask(ctx context.Context, args map[string]in
 	}
 
 	// Upsert the task
-	err = h.store.UpsertTask(ctx, task)
+	err := h.store.UpsertTask(ctx, task)
 	if err != nil {
 		return nil, NewInternalError("create_task", fmt.Sprintf("Failed to create task: %v", err))
 	}
@@ -2561,6 +2507,87 @@ func (h *HTTPMCPServer) handleCreateTask(ctx context.Context, args map[string]in
 		"estimated_hours": task.EstimatedHours,
 		"requirements":    task.Requirements,
 		"created_at":      time.Now().Format(time.RFC3339),
+	}, nil
+}
+
+func mcpArgBool(args map[string]interface{}, key string) bool {
+	v, ok := args[key]
+	if !ok || v == nil {
+		return false
+	}
+	switch n := v.(type) {
+	case bool:
+		return n
+	case string:
+		s := strings.ToLower(strings.TrimSpace(n))
+		return s == "true" || s == "1" || s == "yes"
+	case float64:
+		return n != 0
+	case int:
+		return n != 0
+	case int64:
+		return n != 0
+	default:
+		return false
+	}
+}
+
+func (h *HTTPMCPServer) handleRebalanceContractBudget(ctx context.Context, args map[string]interface{}, apiKey string) (interface{}, error) {
+	if h.store == nil {
+		return nil, NewServiceUnavailableError("rebalance_contract_budget", "task store")
+	}
+	if apiKey == "" {
+		return nil, NewUnauthorizedError("rebalance_contract_budget", "API key required")
+	}
+
+	dryRun := mcpArgBool(args, "dry_run")
+	allOver := mcpArgBool(args, "all_over_budget")
+	includeSuperseded := mcpArgBool(args, "include_superseded")
+	contractID, _ := args["contract_id"].(string)
+	contractID = strings.TrimSpace(contractID)
+
+	if contractID == "" && !allOver {
+		return nil, NewValidationError("rebalance_contract_budget", "contract_id or all_over_budget is required")
+	}
+
+	if allOver {
+		results, err := scstore.RebalanceOpenOverBudget(ctx, h.store, dryRun, includeSuperseded)
+		if err != nil {
+			return nil, NewInternalError("rebalance_contract_budget", err.Error())
+		}
+		if results == nil {
+			results = []scstore.RebalanceResult{}
+		}
+		changed := 0
+		for _, r := range results {
+			if r.Changed {
+				changed++
+			}
+		}
+		return map[string]interface{}{
+			"dry_run":             dryRun,
+			"include_superseded":  includeSuperseded,
+			"contracts":           results,
+			"over_budget_count":   len(results),
+			"rebalanced_count":    changed,
+		}, nil
+	}
+
+	res, err := scstore.RebalanceTasksToWishBudget(ctx, h.store, contractID, dryRun)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			return nil, NewValidationError("rebalance_contract_budget", fmt.Sprintf("Contract not found: %s", contractID))
+		}
+		return nil, NewInternalError("rebalance_contract_budget", err.Error())
+	}
+	return map[string]interface{}{
+		"dry_run":            dryRun,
+		"contract":           res,
+		"wish_budget_sats":   res.WishBudgetSats,
+		"allocated_before":   res.AllocatedBefore,
+		"allocated_after":    res.AllocatedAfter,
+		"changed":            res.Changed,
+		"changes":            res.Changes,
 	}, nil
 }
 
@@ -2612,14 +2639,14 @@ func (h *HTTPMCPServer) handleBuildPSBT(ctx context.Context, args map[string]int
 		mempoolClient = bitcoin.NewMempoolClient()
 	}
 
-	payerAddress, err := btcutil.DecodeAddress(payerAddressStr, params)
+	payerAddress, err := bitcoin.DecodeAddressForNetwork(payerAddressStr, params)
 	if err != nil {
 		return nil, NewValidationError("build_psbt", fmt.Sprintf("invalid payer address: %v", err))
 	}
 
 	changeAddress := payerAddress
 	if changeAddrStr, ok := args["change_address"].(string); ok && strings.TrimSpace(changeAddrStr) != "" {
-		changeAddr, err := btcutil.DecodeAddress(strings.TrimSpace(changeAddrStr), params)
+		changeAddr, err := bitcoin.DecodeAddressForNetwork(strings.TrimSpace(changeAddrStr), params)
 		if err != nil {
 			return nil, NewValidationError("build_psbt", fmt.Sprintf("invalid change address: %v", err))
 		}
@@ -2646,7 +2673,7 @@ func (h *HTTPMCPServer) handleBuildPSBT(ctx context.Context, args map[string]int
 		if wallet == "" {
 			continue
 		}
-		addr, err := btcutil.DecodeAddress(wallet, params)
+		addr, err := bitcoin.DecodeAddressForNetwork(wallet, params)
 		if err != nil {
 			continue
 		}
@@ -2712,22 +2739,13 @@ func (h *HTTPMCPServer) handleBuildPSBT(ctx context.Context, args map[string]int
 		"funding_txid":       result.FundingTxID,
 		"contract_id":        contractID,
 		"payout_count":       len(payouts),
+		"network":            h.network,
+		"network_params":     params.Name,
 	}, nil
 }
 
 func (h *HTTPMCPServer) chainParams() *chaincfg.Params {
-	switch h.network {
-	case "mainnet":
-		return &chaincfg.MainNetParams
-	case "testnet":
-		return &chaincfg.TestNet3Params
-	case "testnet4":
-		return &chaincfg.TestNet4Params
-	case "signet":
-		return &chaincfg.SigNetParams
-	default:
-		return &chaincfg.TestNet4Params
-	}
+	return bitcoin.NetworkParams(h.network)
 }
 
 // RegisterRoutes registers HTTP MCP endpoints
@@ -2748,4 +2766,38 @@ func (h *HTTPMCPServer) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/mcp", h.handleIndex)
 	// Register catch-all last
 	mux.HandleFunc("/mcp/", h.handleIndex)
+}
+
+// mcpArgInt64 reads the first present key as an int64. ok is false when none of
+// the keys are set. err is set when a present value is not a number.
+func mcpArgInt64(args map[string]interface{}, keys ...string) (int64, bool, error) {
+	for _, key := range keys {
+		v, exists := args[key]
+		if !exists || v == nil {
+			continue
+		}
+		switch n := v.(type) {
+		case float64:
+			return int64(n), true, nil
+		case float32:
+			return int64(n), true, nil
+		case int:
+			return int64(n), true, nil
+		case int64:
+			return n, true, nil
+		case json.Number:
+			i, err := n.Int64()
+			return i, true, err
+		case string:
+			s := strings.TrimSpace(n)
+			if s == "" {
+				continue
+			}
+			i, err := strconv.ParseInt(s, 10, 64)
+			return i, true, err
+		default:
+			return 0, true, fmt.Errorf("%s must be a number", key)
+		}
+	}
+	return 0, false, nil
 }

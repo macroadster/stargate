@@ -246,81 +246,8 @@ func (tw *timeoutTrackingWriter) Flush() {
 }
 
 // ContentType middleware
-func ContentType(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == "POST" || r.Method == "PUT" {
-			contentType := r.Header.Get("Content-Type")
-			if contentType == "" {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusBadRequest)
-
-				errorResp := map[string]interface{}{
-					"success": false,
-					"error": map[string]interface{}{
-						"error":   "missing_content_type",
-						"message": "Content-Type header is required",
-						"code":    http.StatusBadRequest,
-					},
-				}
-
-				json.NewEncoder(w).Encode(errorResp)
-				return
-			}
-		}
-
-		next.ServeHTTP(w, r)
-	})
-}
 
 // Rate limiting middleware (simple implementation)
-func RateLimit(requests int, window time.Duration) func(http.Handler) http.Handler {
-	type client struct {
-		requests int
-		window   time.Time
-	}
-
-	clients := make(map[string]*client)
-
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			clientIP := r.RemoteAddr
-			now := time.Now()
-
-			if c, exists := clients[clientIP]; exists {
-				if now.Sub(c.window) > window {
-					// Reset window
-					c.requests = 1
-					c.window = now
-				} else {
-					c.requests++
-					if c.requests > requests {
-						w.Header().Set("Content-Type", "application/json")
-						w.WriteHeader(http.StatusTooManyRequests)
-
-						errorResp := map[string]interface{}{
-							"success": false,
-							"error": map[string]interface{}{
-								"error":   "rate_limit_exceeded",
-								"message": "Too many requests",
-								"code":    http.StatusTooManyRequests,
-							},
-						}
-
-						json.NewEncoder(w).Encode(errorResp)
-						return
-					}
-				}
-			} else {
-				clients[clientIP] = &client{
-					requests: 1,
-					window:   now,
-				}
-			}
-
-			next.ServeHTTP(w, r)
-		})
-	}
-}
 
 // responseWriter wraps http.ResponseWriter to capture status code
 type responseWriter struct {
@@ -358,25 +285,12 @@ func (rw *responseWriter) Write(b []byte) (int, error) {
 	return rw.ResponseWriter.Write(b)
 }
 
-// APIAuth validates API keys against the validator
+// APIAuth validates API keys against the validator.
+// Same extractor as REST authWrap and MCP: X-API-Key, Bearer, or cookie.
 func APIAuth(validator auth.APIKeyValidator) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			apiKey := r.Header.Get("X-API-Key")
-			if apiKey == "" {
-				authHeader := r.Header.Get("Authorization")
-				if strings.HasPrefix(authHeader, "Bearer ") {
-					apiKey = strings.TrimPrefix(authHeader, "Bearer ")
-				}
-			}
-
-			// Check cookie if header is missing
-			if apiKey == "" {
-				if cookie, err := r.Cookie("X-API-Key"); err == nil {
-					apiKey = cookie.Value
-				}
-			}
-
+			apiKey := auth.APIKeyFromRequest(r)
 			if apiKey == "" {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusUnauthorized)
@@ -405,7 +319,7 @@ func APIAuth(validator auth.APIKeyValidator) func(http.Handler) http.Handler {
 				return
 			}
 
-			next.ServeHTTP(w, r)
+			next.ServeHTTP(w, r.WithContext(auth.WithAPIKey(r.Context(), apiKey)))
 		})
 	}
 }

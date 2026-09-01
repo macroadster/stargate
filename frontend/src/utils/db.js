@@ -93,7 +93,7 @@ export async function initDB() {
   }
 }
 
-export function saveDB() {
+function saveDB() {
   if (!db) return;
   const data = db.export();
   const base64 = uint8ArrayToBase64(data);

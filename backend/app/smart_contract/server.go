@@ -4,9 +4,10 @@ import (
 	"net/http"
 	"sync"
 
+	scservices "stargate-backend/app/smart_contract/services"
 	"stargate-backend/bitcoin"
 	"stargate-backend/core/smart_contract"
-	scservices "stargate-backend/app/smart_contract/services"
+	"stargate-backend/middleware"
 	"stargate-backend/services"
 	auth "stargate-backend/storage/auth"
 )
@@ -30,11 +31,19 @@ type Server struct {
 	claimSvc      *scservices.ClaimService
 	proposalSvc   *scservices.ProposalService
 	submissionSvc *scservices.SubmissionService
+
+	// Shared with MCP /mcp/call. Nil disables action rate limiting.
+	actionLimiter *middleware.ActionLimiter
 }
 
 // SetEscortService sets the escort service for the server.
 func (s *Server) SetEscortService(escort *smart_contract.EscortService) {
 	s.escort = escort
+}
+
+// SetActionLimiter installs the shared claim/submit/review limiter.
+func (s *Server) SetActionLimiter(limiter *middleware.ActionLimiter) {
+	s.actionLimiter = limiter
 }
 
 // proposalCreateBody captures POST payload for creating proposals.
@@ -104,11 +113,11 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/smart_contract/contracts/", s.authWrap(s.handleContracts))
 
 	// Task endpoints
-	mux.HandleFunc("/api/smart_contract/tasks", s.authWrap(s.handleTasks))
-	mux.HandleFunc("/api/smart_contract/tasks/", s.authWrap(s.handleTasks))
+	mux.HandleFunc("/api/smart_contract/tasks", s.authWrap(s.limitAction(s.handleTasks)))
+	mux.HandleFunc("/api/smart_contract/tasks/", s.authWrap(s.limitAction(s.handleTasks)))
 
 	// Claim endpoints
-	mux.HandleFunc("/api/smart_contract/claims/", s.authWrap(s.handleClaims))
+	mux.HandleFunc("/api/smart_contract/claims/", s.authWrap(s.limitAction(s.handleClaims)))
 
 	// Skill and discovery endpoints
 	mux.HandleFunc("/api/smart_contract/skills", s.authWrap(s.handleSkills))
@@ -119,8 +128,8 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/smart_contract/proposals/", s.authWrapReadOnly(s.handleProposals))
 
 	// Submission endpoints
-	mux.HandleFunc("/api/smart_contract/submissions", s.authWrap(s.handleSubmissions))
-	mux.HandleFunc("/api/smart_contract/submissions/", s.authWrap(s.handleSubmissions))
+	mux.HandleFunc("/api/smart_contract/submissions", s.authWrap(s.limitAction(s.handleSubmissions)))
+	mux.HandleFunc("/api/smart_contract/submissions/", s.authWrap(s.limitAction(s.handleSubmissions)))
 
 	// Event endpoints
 	mux.HandleFunc("/api/smart_contract/events", s.authWrapReadOnly(s.handleEvents))
@@ -132,12 +141,9 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 
 func (s *Server) authWrap(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if s.apiKeys != nil {
-			key := r.Header.Get("X-API-Key")
-			if key == "" || !s.apiKeys.Validate(key) {
-				Error(w, http.StatusForbidden, "invalid api key")
-				return
-			}
+		r, ok := s.authenticate(w, r, true)
+		if !ok {
+			return
 		}
 		next(w, r)
 	}
@@ -147,21 +153,36 @@ func (s *Server) authWrap(next http.HandlerFunc) http.HandlerFunc {
 func (s *Server) authWrapReadOnly(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
-			// Allow GET requests without authentication
 			next(w, r)
 			return
 		}
-
-		// Require authentication for non-GET methods
-		if s.apiKeys != nil {
-			key := r.Header.Get("X-API-Key")
-			if key == "" || !s.apiKeys.Validate(key) {
-				Error(w, http.StatusForbidden, "invalid api key")
-				return
-			}
+		r, ok := s.authenticate(w, r, true)
+		if !ok {
+			return
 		}
 		next(w, r)
 	}
+}
+
+// authenticate applies the same bearer path as middleware.APIAuth and MCP.
+// required=false is unused today but keeps the gate in one place.
+func (s *Server) authenticate(w http.ResponseWriter, r *http.Request, required bool) (*http.Request, bool) {
+	if s.apiKeys == nil {
+		return r, true
+	}
+	key := auth.APIKeyFromRequest(r)
+	if key == "" {
+		if !required {
+			return r, true
+		}
+		Error(w, http.StatusUnauthorized, "API key required")
+		return r, false
+	}
+	if !s.apiKeys.Validate(key) {
+		Error(w, http.StatusForbidden, "invalid api key")
+		return r, false
+	}
+	return r.WithContext(auth.WithAPIKey(r.Context(), key)), true
 }
 
 // submissionReviewBody captures POST payload for reviewing submissions.

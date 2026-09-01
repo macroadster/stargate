@@ -35,20 +35,16 @@ func NewAPIKeyHandler(issuer auth.APIKeyIssuer, validator auth.APIKeyValidator, 
 	return &APIKeyHandler{BaseHandler: NewBaseHandler(), issuer: issuer, validator: validator, challenges: challenges}
 }
 
-// HandleRegister is DISABLED for security reasons.
-// Email-based registration without validation is a security vulnerability.
-// Use wallet challenge verification instead.
-func (h *APIKeyHandler) HandleRegister(w http.ResponseWriter, r *http.Request) {
-	h.sendError(w, http.StatusForbidden, "Email-based registration is disabled for security reasons. Use wallet challenge verification instead: POST /api/auth/challenge followed by POST /api/auth/verify")
-	return
-}
-
 // HandleLogin verifies an existing API key.
 // Request: {"api_key":"..."}
 // Response: { "valid": true }
 func (h *APIKeyHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		h.sendError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	if h.validator == nil {
+		h.sendError(w, http.StatusServiceUnavailable, "api key store unavailable")
 		return
 	}
 
@@ -62,6 +58,10 @@ func (h *APIKeyHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	apiKey := strings.TrimSpace(body.APIKey)
+	if apiKey == "" {
+		h.sendError(w, http.StatusBadRequest, "api_key required")
+		return
+	}
 	if !h.validator.Validate(apiKey) {
 		h.sendError(w, http.StatusForbidden, "invalid api key")
 		return
@@ -74,23 +74,26 @@ func (h *APIKeyHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		if found {
 			bound = strings.TrimSpace(rec.Wallet)
 		}
-		if bound != "" && bound != wallet {
+		if bound == "" {
+			h.sendError(w, http.StatusForbidden, "wallet binding requires POST /api/auth/challenge then POST /api/auth/verify")
+			return
+		}
+		if bound != wallet {
 			h.sendError(w, http.StatusForbidden, "wallet already bound; rebind requires verification")
 			return
 		}
-		// Bind only when not already set to this wallet. Re-binding the same
-		// address is a common login path after wallet-verify issuance.
-		if bound != wallet {
-			if updater, ok := h.validator.(auth.APIKeyWalletUpdater); ok {
-				if _, err := updater.UpdateWallet(apiKey, wallet); err != nil {
-					h.sendError(w, http.StatusInternalServerError, "failed to bind wallet to api key")
-					return
-				}
-			}
-		}
 	}
 
-	// Set httpOnly cookie for security
+	h.setAPIKeyCookie(w, r, apiKey)
+
+	h.sendSuccess(w, map[string]interface{}{
+		"valid":   true,
+		"api_key": apiKey,
+		"wallet":  wallet,
+	})
+}
+
+func (h *APIKeyHandler) setAPIKeyCookie(w http.ResponseWriter, r *http.Request, apiKey string) {
 	secure := r.TLS != nil || os.Getenv("NODE_ENV") == "production"
 	http.SetCookie(w, &http.Cookie{
 		Name:     "X-API-Key",
@@ -100,12 +103,6 @@ func (h *APIKeyHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		Secure:   secure,
 		SameSite: http.SameSiteStrictMode,
 		MaxAge:   86400 * 30, // 30 days
-	})
-
-	h.sendSuccess(w, map[string]interface{}{
-		"valid":   true,
-		"api_key": apiKey,
-		"wallet":  wallet,
 	})
 }
 
@@ -204,17 +201,7 @@ func (h *APIKeyHandler) HandleVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Set httpOnly cookie for security
-	secure := r.TLS != nil || os.Getenv("NODE_ENV") == "production"
-	http.SetCookie(w, &http.Cookie{
-		Name:     "X-API-Key",
-		Value:    rec.Key,
-		Path:     "/",
-		HttpOnly: true,
-		Secure:   secure,
-		SameSite: http.SameSiteStrictMode,
-		MaxAge:   86400 * 30, // 30 days
-	})
+	h.setAPIKeyCookie(w, r, rec.Key)
 
 	h.sendSuccess(w, map[string]interface{}{
 		"api_key":  rec.Key,

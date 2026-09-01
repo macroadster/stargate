@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"stargate-backend/core/smart_contract"
 	scservices "stargate-backend/app/smart_contract/services"
-	"stargate-backend/services"
+	"stargate-backend/core/smart_contract"
+	auth "stargate-backend/storage/auth"
 )
 
 func proposalVisibleHash(p smart_contract.Proposal) string {
@@ -97,7 +97,7 @@ func (s *Server) handleProposalApprove(w http.ResponseWriter, r *http.Request, i
 		Error(w, http.StatusForbidden, err.Error())
 		return
 	}
-	resp, err := s.proposalSvc.Approve(r.Context(), id, r.Header.Get("X-API-Key"), true)
+	resp, err := s.proposalSvc.Approve(r.Context(), id, auth.RequestAPIKey(r), true)
 	if err != nil {
 		s.writeServiceErr(w, err)
 		return
@@ -129,7 +129,7 @@ func (s *Server) handleProposalCreate(w http.ResponseWriter, r *http.Request) {
 		ID: body.ID, IngestionID: body.IngestionID, ContractID: body.ContractID,
 		Title: body.Title, DescriptionMD: body.DescriptionMD, VisiblePixelHash: body.VisiblePixelHash,
 		BudgetSats: body.BudgetSats, Status: body.Status, Metadata: body.Metadata, Tasks: body.Tasks,
-		APIKey: r.Header.Get("X-API-Key"),
+		APIKey: auth.RequestAPIKey(r),
 	})
 	if err != nil {
 		s.writeServiceErr(w, err)
@@ -160,20 +160,22 @@ func (s *Server) handleProposalUpdate(w http.ResponseWriter, r *http.Request, id
 }
 
 func (s *Server) handleProposalList(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
 	result, err := s.proposalSvc.List(r.Context(), scservices.ProposalListQuery{
-		Status: r.URL.Query().Get("status"), Skills: splitCSV(r.URL.Query().Get("skills")),
-		MinBudget: int64FromQuery(r, "min_budget_sats", 0), ContractID: r.URL.Query().Get("contract_id"),
-		Limit: intFromQuery(r, "limit", 20), Offset: intFromQuery(r, "offset", 0),
+		Status: q.Get("status"), Skills: splitCSV(q.Get("skills")),
+		MinBudget: int64FromQuery(r, "min_budget_sats", 0), ContractID: q.Get("contract_id"),
+		Limit: intFromQuery(r, "limit", 0), Offset: intFromQuery(r, "offset", 0),
+		Cursor: q.Get("cursor"), CursorDate: q.Get("cursor_date"), CursorType: q.Get("cursor_type"),
 		IncludeConfirmed: includeConfirmed(r),
 	})
 	if err != nil {
 		s.writeServiceErr(w, err)
 		return
 	}
-	JSON(w, http.StatusOK, map[string]interface{}{
-		"proposals": result.Proposals, "total": result.Total, "has_more": result.HasMore,
-		"limit": result.Limit, "offset": result.Offset, "submissions": result.Submissions,
-	})
+	body := result.Page.Fields()
+	body["proposals"] = result.Proposals
+	body["submissions"] = result.Submissions
+	JSON(w, http.StatusOK, body)
 }
 
 func (s *Server) handleProposalGet(w http.ResponseWriter, r *http.Request, id string) {
@@ -205,13 +207,6 @@ func getStegoMethodFromFilename(filename string) string {
 }
 
 // BuildProposalFromIngestion derives a proposal from a pending ingestion record.
-func BuildProposalFromIngestion(body ProposalCreateBody, rec *services.IngestionRecord) (smart_contract.Proposal, error) {
-	return scservices.BuildProposalFromIngestion(scservices.ProposalCreateInput{
-		ID: body.ID, IngestionID: body.IngestionID, ContractID: body.ContractID,
-		Title: body.Title, DescriptionMD: body.DescriptionMD, VisiblePixelHash: body.VisiblePixelHash,
-		BudgetSats: body.BudgetSats, Status: body.Status, Metadata: body.Metadata, Tasks: body.Tasks,
-	}, rec)
-}
 
 // handleSubmissions manages submission endpoints for review and rework.
 func (s *Server) handleSubmissions(w http.ResponseWriter, r *http.Request) {
@@ -244,12 +239,28 @@ func (s *Server) handleSubmissions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSubmissionList(w http.ResponseWriter, r *http.Request) {
-	m, total, err := s.submissionSvc.List(r.Context(), r.URL.Query().Get("contract_id"), splitCSV(r.URL.Query().Get("task_ids")), r.URL.Query().Get("status"))
+	q := r.URL.Query()
+	pageQ := smart_contract.NewPageQuery(
+		intFromQuery(r, "limit", 0),
+		intFromQuery(r, "offset", 0),
+		q.Get("cursor"),
+		q.Get("cursor_date"),
+		q.Get("cursor_type"),
+		smart_contract.DefaultPageLimit,
+	)
+	filter := smart_contract.SubmissionFilter{
+		ContractID: strings.TrimSpace(q.Get("contract_id")),
+		TaskID:     strings.TrimSpace(q.Get("task_id")),
+		TaskIDs:    splitCSV(q.Get("task_ids")),
+		Status:     strings.TrimSpace(q.Get("status")),
+	}
+	pageQ.ApplyToSubmission(&filter)
+	result, err := s.submissionSvc.List(r.Context(), filter)
 	if err != nil {
 		s.writeServiceErr(w, err)
 		return
 	}
-	JSON(w, http.StatusOK, map[string]interface{}{"submissions": m, "total": total})
+	JSON(w, http.StatusOK, result)
 }
 
 func (s *Server) handleSubmissionGet(w http.ResponseWriter, r *http.Request, id string) {

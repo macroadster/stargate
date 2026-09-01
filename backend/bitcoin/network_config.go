@@ -3,6 +3,9 @@ package bitcoin
 import (
 	"log"
 	"os"
+	"strings"
+
+	"github.com/btcsuite/btcd/chaincfg"
 )
 
 // NetworkConfig holds configuration for different Bitcoin networks.
@@ -16,9 +19,20 @@ type NetworkConfig struct {
 	HeightURL   string
 }
 
+// localOnlyChain is true for networks with no public explorer (do not
+// compare tips against testnet4 mempool.space).
+func localOnlyChain(network string) bool {
+	switch strings.ToLower(strings.TrimSpace(network)) {
+	case "regtest", "simnet", "sim":
+		return true
+	default:
+		return false
+	}
+}
+
 // GetNetworkConfig returns configuration for the specified network
 func GetNetworkConfig(network string) *NetworkConfig {
-	switch network {
+	switch strings.ToLower(strings.TrimSpace(network)) {
 	case "testnet4":
 		return &NetworkConfig{
 			Name:        "Bitcoin Testnet4",
@@ -51,6 +65,14 @@ func GetNetworkConfig(network string) *NetworkConfig {
 			FaucetURL:   "https://signetfaucet.com/",
 			HeightURL:   "https://mempool.space/signet/api/blocks/tip/height",
 		}
+	case "regtest", "simnet", "sim":
+		// No public explorer. Empty HeightURL/BaseURL so tip-lag cannot
+		// silently compare a private chain to testnet4.
+		name := "Bitcoin Regtest"
+		if strings.ToLower(strings.TrimSpace(network)) != "regtest" {
+			name = "Bitcoin Simnet"
+		}
+		return &NetworkConfig{Name: name}
 	default:
 		log.Printf("Unknown network '%s', defaulting to testnet4", network)
 		return GetNetworkConfig("testnet4")
@@ -64,6 +86,45 @@ func GetCurrentNetwork() string {
 		network = "testnet4"
 	}
 	return network
+}
+
+// NetworkName prefers a live ChainBackend network (btcd / Esplora) and
+// falls back to BITCOIN_NETWORK. Payment JSON and PSBT builders must use
+// this so a wrong advertised network cannot pair with a correct PSBT.
+func NetworkName(backend ChainBackend) string {
+	if backend != nil {
+		if n := strings.TrimSpace(backend.Network()); n != "" {
+			return n
+		}
+	}
+	return GetCurrentNetwork()
+}
+
+// NetworkParams returns btcd chaincfg params for a Stargate network name.
+// This is the single mapper used by PSBT builders, payment JSON, and
+// ChainBackend / managed btcd. "testnet" is testnet3; it is not testnet4.
+func NetworkParams(network string) *chaincfg.Params {
+	switch strings.ToLower(strings.TrimSpace(network)) {
+	case "mainnet", "main":
+		return &chaincfg.MainNetParams
+	case "testnet", "testnet3":
+		return &chaincfg.TestNet3Params
+	case "testnet4":
+		return &chaincfg.TestNet4Params
+	case "signet":
+		return &chaincfg.SigNetParams
+	case "simnet":
+		return &chaincfg.SimNetParams
+	case "regtest":
+		return &chaincfg.RegressionNetParams
+	default:
+		return &chaincfg.TestNet4Params
+	}
+}
+
+// CurrentNetworkParams returns chaincfg params for GetCurrentNetwork().
+func CurrentNetworkParams() *chaincfg.Params {
+	return NetworkParams(GetCurrentNetwork())
 }
 
 // NewBitcoinNodeClientForNetwork creates a client for the specified network

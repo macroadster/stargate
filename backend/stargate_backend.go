@@ -203,11 +203,32 @@ func customUploadsHandler(uploadsDir string) http.HandlerFunc {
 
 		// Set headers
 		w.Header().Set("Content-Type", mimeType)
+		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Cache-Control", "public, max-age=31536000")
 		w.Header().Set("Content-Length", strconv.FormatInt(fileInfo.Size(), 10))
+		// Untrusted inscription/upload content: prevent active content (SVG/HTML/script)
+		// from executing in the stargate origin if a user navigates to the URL.
+		if isActiveUntrustedContent(mimeType) {
+			w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
+			w.Header().Set("Content-Disposition", "attachment")
+		}
 
 		// Stream file directly to response
 		_, _ = io.Copy(w, file)
+	}
+}
+
+// isActiveUntrustedContent reports MIME types that browsers may execute as documents.
+func isActiveUntrustedContent(mimeType string) bool {
+	m := strings.ToLower(strings.TrimSpace(mimeType))
+	if i := strings.IndexByte(m, ';'); i >= 0 {
+		m = strings.TrimSpace(m[:i])
+	}
+	switch m {
+	case "image/svg+xml", "text/html", "application/xhtml+xml", "text/javascript", "application/javascript":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -462,14 +483,20 @@ func runHTTPServer(store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, api
 	}
 
 	var mirror mirrorState
+	onMirroredFile := func(ctx context.Context, ev ipfs.FileDownloadedEvent) {
+		scmiddleware.IngestDownloadedFile(ctx, ev.FilePath, ev.CID, ingestionSvc, store)
+	}
 	ipfsCfg := ipfs.LoadMirrorConfig()
 	// When the mirror downloads a new file, trigger ingestion immediately
 	// instead of relying on a separate pubsub re-fetch cycle.
-	ipfsCfg.OnFileDownloaded = func(ctx context.Context, ev ipfs.FileDownloadedEvent) {
-		scmiddleware.IngestDownloadedFile(ctx, ev.FilePath, ev.CID, ingestionSvc, store)
-	}
+	ipfsCfg.OnFileDownloaded = onMirroredFile
+	wishCfg := ipfs.LoadWishMirrorConfig()
+	wishCfg.OnFileDownloaded = onMirroredFile
 	if ipfsCfg.Enabled {
-		go mirror.startWithRetry(context.Background(), ipfsCfg)
+		go mirror.startWithRetry(context.Background(), ipfsCfg, false)
+	}
+	if wishCfg.Enabled {
+		go mirror.startWithRetry(context.Background(), wishCfg, true)
 	}
 
 	// Initialize dependency container
@@ -504,6 +531,8 @@ func runHTTPServer(store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, api
 	scannerManager := starlight.GetScannerManager()
 	httpMCPServer := mcp.NewHTTPMCPServer(store, apiKeyValidator, apiKeyIssuer, ingestionSvc, scannerManager, container.SmartContractService, challengeStore)
 	httpMCPServer.SetChainBackend(chainRuntime.Backend)
+	actionLimiter := middleware.NewActionLimiterFromEnv()
+	httpMCPServer.SetActionLimiter(actionLimiter)
 
 	// Set the smart contract handler with the store
 	container.SetSmartContractHandler(store)
@@ -559,6 +588,7 @@ func runHTTPServer(store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, api
 	// Wire chain backend into REST smart-contract server (PSBT / UTXO).
 	if mcpRestServer != nil {
 		mcpRestServer.SetUTXOClient(chainRuntime.Backend)
+		mcpRestServer.SetActionLimiter(actionLimiter)
 	}
 
 	handler := middleware.Recovery(
@@ -645,9 +675,8 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 		}
 	})
 
-	// Auth endpoints
+	// Auth: login/challenge/verify + STARGATE_API_KEY seed share one api_keys store with middleware and MCP.
 	keyHandler := handlers.NewAPIKeyHandler(apiKeyIssuer, apiKeyValidator, challengeStore)
-	// mux.HandleFunc("/api/auth/register", keyHandler.HandleRegister) // DISABLED for security
 	mux.HandleFunc("/api/auth/login", keyHandler.HandleLogin)
 	mux.HandleFunc("/api/auth/logout", keyHandler.HandleLogout)
 	mux.HandleFunc("/api/auth/challenge", keyHandler.HandleChallenge)
@@ -830,6 +859,9 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 	}); err != nil {
 		log.Printf("ipfs ingestion sync disabled: %v", err)
 	}
+	scmiddleware.StartWishGC(context.Background(), ingestionSvc, store, func(ctx context.Context, path string) error {
+		return mirror.UnpinPath(ctx, path)
+	})
 
 	// Pre-cache historical blocks (with rate limiting)
 	go func() {
@@ -983,47 +1015,70 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 }
 
 type mirrorState struct {
-	mu     sync.RWMutex
-	mirror *ipfs.Mirror
+	mu      sync.RWMutex
+	uploads *ipfs.Mirror
+	wishes  *ipfs.Mirror
 }
 
 func (m *mirrorState) Status() ipfs.MirrorStatus {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	if m == nil || m.mirror == nil {
+	if m == nil {
 		return ipfs.MirrorStatus{Enabled: false}
 	}
-	return m.mirror.Status()
+	return ipfs.MergeMirrorStatus(m.uploads, m.wishes)
 }
 
 func (m *mirrorState) UnpinPath(ctx context.Context, path string) error {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
-	if m == nil || m.mirror == nil {
-		return nil
+	uploads := m.uploads
+	wishes := m.wishes
+	m.mu.RUnlock()
+	var first error
+	if uploads != nil {
+		if err := uploads.UnpinPath(ctx, path); err != nil {
+			first = err
+		}
 	}
-	return m.mirror.UnpinPath(ctx, path)
+	if wishes != nil {
+		if err := wishes.UnpinPath(ctx, path); err != nil && first == nil {
+			first = err
+		}
+	}
+	return first
 }
 
-func (m *mirrorState) set(mirror *ipfs.Mirror) {
+func (m *mirrorState) set(mirror *ipfs.Mirror, wish bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.mirror = mirror
+	if wish {
+		m.wishes = mirror
+		return
+	}
+	m.uploads = mirror
 }
 
-func (m *mirrorState) startWithRetry(ctx context.Context, cfg ipfs.MirrorConfig) {
+func (m *mirrorState) startWithRetry(ctx context.Context, cfg ipfs.MirrorConfig, wish bool) {
 	backoff := 5 * time.Second
 	maxBackoff := 1 * time.Minute
+	label := cfg.Topic
+	if label == "" {
+		if wish {
+			label = "wishes"
+		} else {
+			label = "uploads"
+		}
+	}
 
 	for {
 		started, err := ipfs.StartMirror(ctx, cfg)
 		if err == nil && started != nil {
-			m.set(started)
-			log.Printf("IPFS mirror started after retry")
+			m.set(started, wish)
+			log.Printf("IPFS mirror started after retry (topic=%s)", label)
 			return
 		}
 		if err != nil {
-			log.Printf("IPFS mirror startup failed (retrying in %s): %v", backoff, err)
+			log.Printf("IPFS mirror startup failed (topic=%s, retrying in %s): %v", label, backoff, err)
 		}
 
 		select {

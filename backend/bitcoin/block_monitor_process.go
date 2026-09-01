@@ -162,7 +162,9 @@ func (bm *BlockMonitor) checkForNewBlocks() error {
 	log.Printf("block monitor: checkForNewBlocks tip=%d current=%d", tip, bm.currentHeight)
 
 	// Light reorg safety (only re-processes on actual hash mismatch).
-	if err := bm.reconcileCanonicalTip(tip, 2); err != nil {
+	// Depth tracks settlement confirmations so a shallow fake fork cannot
+	// stay as the stored canonical block.
+	if err := bm.reconcileCanonicalTip(tip, reorgWatchDepth()); err != nil {
 		log.Printf("Failed to reconcile canonical tip: %v", err)
 	}
 
@@ -218,6 +220,8 @@ func (bm *BlockMonitor) checkForNewBlocks() error {
 	}
 
 	bm.lastChecked = time.Now()
+	bm.promoteProvisionalProofs(tip)
+	bm.promoteFundedContracts(tip)
 	if err := bm.updateRecentBlocksSummary(); err != nil {
 		log.Printf("Failed to update recent blocks summary: %v", err)
 	}
@@ -250,6 +254,8 @@ func (bm *BlockMonitor) trackTip(tip int64) error {
 
 	if first == 0 || last == 0 || first > last {
 		bm.lastChecked = time.Now()
+		bm.promoteProvisionalProofs(tip)
+		bm.promoteFundedContracts(tip)
 		return nil
 	}
 
@@ -279,6 +285,8 @@ func (bm *BlockMonitor) trackTip(tip int64) error {
 	}
 
 	bm.lastChecked = time.Now()
+	bm.promoteProvisionalProofs(tip)
+	bm.promoteFundedContracts(tip)
 	if err := bm.updateRecentBlocksSummary(); err != nil {
 		log.Printf("Failed to update recent blocks summary: %v", err)
 	}
@@ -345,6 +353,15 @@ func (bm *BlockMonitor) ProcessBlock(height int64) error {
 
 	// Set the height in parsed block (this was missing!)
 	parsedBlock.Height = height
+
+	canonicalHash, _ := bm.getCanonicalBlockHash(height)
+	prevHash := ""
+	if height > 0 {
+		prevHash, _ = bm.getCanonicalBlockHash(height - 1)
+	}
+	if err := validateIngestedBlock(height, parsedBlock, canonicalHash, prevHash); err != nil {
+		return fmt.Errorf("rejecting block %d (failed integrity check): %w", height, err)
+	}
 
 	log.Printf("Parsed block %d: %d transactions, %d images found", height, len(parsedBlock.Transactions), len(parsedBlock.Images))
 
@@ -550,21 +567,3 @@ func (bm *BlockMonitor) fetchTxStatus(txid string) (map[string]any, int64, bool,
 // parseTxOutputsFromJSON builds a minimal Transaction from the Esplora JSON,
 // containing only TxID and Outputs (ScriptPubKey + Value).  This is sufficient
 // for updateTaskFundingProofsFromTx and confirmContractTasks.
-func (bm *BlockMonitor) parseTxOutputsFromJSON(txid string, txJSON map[string]any) Transaction {
-	tx := Transaction{TxID: txid}
-	vouts, _ := txJSON["vout"].([]any)
-	for _, v := range vouts {
-		vout, _ := v.(map[string]any)
-		if vout == nil {
-			continue
-		}
-		scriptHex, _ := vout["scriptpubkey"].(string)
-		scriptBytes, _ := hex.DecodeString(scriptHex)
-		value, _ := vout["value"].(float64)
-		tx.Outputs = append(tx.Outputs, TxOutput{
-			ScriptPubKey: scriptBytes,
-			Value:        int64(value),
-		})
-	}
-	return tx
-}

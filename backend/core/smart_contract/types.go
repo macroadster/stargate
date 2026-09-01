@@ -6,13 +6,6 @@ import "time"
 // Use these instead of magic strings everywhere (core, stores, MCP tools, handlers)
 // to prevent the enum drift described in Cat 5.1.
 const (
-	// Contract statuses
-	ContractStatusCreated   = "created"
-	ContractStatusActive    = "active"
-	ContractStatusFunded    = "funded"
-	ContractStatusConfirmed = "confirmed"
-	ContractStatusExpired   = "expired"
-
 	// Task statuses
 	TaskStatusAvailable = "available"
 	TaskStatusClaimed   = "claimed"
@@ -22,33 +15,27 @@ const (
 	TaskStatusCompleted = "completed" // used in some MCP lists / legacy
 
 	// Proposal statuses
-	ProposalStatusPending   = "pending"
-	ProposalStatusApproved  = "approved"
-	ProposalStatusRejected  = "rejected"
+	ProposalStatusPending  = "pending"
+	ProposalStatusApproved = "approved"
+
 	ProposalStatusPublished = "published"
 
 	// Claim statuses
 	ClaimStatusActive    = "active"
 	ClaimStatusSubmitted = "submitted"
 	ClaimStatusComplete  = "complete"
-	ClaimStatusExpired   = "expired"
-	ClaimStatusRejected  = "rejected"
+
+	ClaimStatusRejected = "rejected"
 
 	// Submission statuses
 	SubmissionStatusPendingReview = "pending_review"
 	SubmissionStatusReviewed      = "reviewed"
-	SubmissionStatusApproved      = "approved"
-	SubmissionStatusRejected      = "rejected"
+
+	SubmissionStatusRejected = "rejected"
 
 	// ContractReworkRequest statuses
 	ReworkStatusOpen     = "open"
 	ReworkStatusResolved = "resolved"
-
-	// Additional legacy / MCP list values for compatibility in schemas
-	StatusPending   = "pending"
-	StatusActive    = "active"
-	StatusCompleted = "completed"
-	StatusAll       = "all"
 )
 
 // Contract captures a goal contract summary.
@@ -58,7 +45,7 @@ type Contract struct {
 	TotalBudgetSats      int64                   `json:"total_budget_sats"`
 	GoalsCount           int                     `json:"goals_count"`
 	AvailableTasksCount  int                     `json:"available_tasks_count"`
-	Status string `json:"status"` // ContractStatusCreated | Active | Funded | Confirmed | Expired (use the consts)
+	Status               string                  `json:"status"` // ContractStatusCreated | Active | Funded | Confirmed | Expired (use the consts)
 	Skills               []string                `json:"skills,omitempty"`
 	StegoImageURL        string                  `json:"stego_image_url,omitempty"`
 	Metadata             map[string]interface{}  `json:"metadata,omitempty"`
@@ -88,7 +75,7 @@ type Task struct {
 	Description      string            `json:"description"`
 	BudgetSats       int64             `json:"budget_sats"`
 	Skills           []string          `json:"skills_required"`
-	Status string `json:"status"` // TaskStatusAvailable | Claimed | Submitted | Approved | Published (use the consts)
+	Status           string            `json:"status"` // TaskStatusAvailable | Claimed | Submitted | Approved | Published (use the consts)
 	ClaimedBy        string            `json:"claimed_by,omitempty"`
 	ContractorWallet string            `json:"contractor_wallet,omitempty"`
 	ClaimedAt        *time.Time        `json:"claimed_at,omitempty"`
@@ -98,6 +85,10 @@ type Task struct {
 	EstimatedHours   int               `json:"estimated_hours,omitempty"`
 	Requirements     map[string]string `json:"requirements,omitempty"`
 	MerkleProof      *MerkleProof      `json:"merkle_proof,omitempty"`
+	// Computed (not persisted). Original wish price and how much this task may still take.
+	WishBudgetSats      int64 `json:"wish_budget_sats,omitempty"`
+	AllocatedSats       int64 `json:"allocated_sats,omitempty"`
+	RemainingBudgetSats int64 `json:"remaining_budget_sats,omitempty"`
 }
 
 // MerkleProof represents the payment proof for a funded task.
@@ -169,7 +160,7 @@ type Submission struct {
 // ContractFilter captures list filters for contracts.
 type ContractFilter struct {
 	Status             string
-	Statuses           []string   // Match any of these statuses (OR); takes precedence over Status when non-empty
+	Statuses           []string // Match any of these statuses (OR); takes precedence over Status when non-empty
 	Skills             []string
 	Creator            string
 	AiIdentifier       string
@@ -185,17 +176,37 @@ type ContractFilter struct {
 }
 
 // TaskFilter captures simple query params for listing tasks.
+// Tasks have no created_at column; cursor paging uses task_id (CursorID).
 type TaskFilter struct {
 	Skills            []string
 	MaxDifficulty     string
 	MinBudgetSats     int64
 	Limit             int
 	Offset            int
+	CursorID          string     // task_id keyset cursor
+	CursorDate        *time.Time // accepted for shared PageQuery; unused by task SQL
+	CursorType        string     // before (default) or after
 	Status            string
 	ContractID        string
 	ClaimedBy         string
 	UpdatedSince      *time.Time // Only include tasks updated since this time
 	LastActivitySince *time.Time // Only include tasks with activity since this time
+}
+
+// SubmissionFilter captures list filters for submissions (MCP + REST).
+// Empty TaskID/TaskIDs/ContractID means no constraint on that field.
+// Limit 0 means no page cap (return all matches after Offset).
+// Cursor paging uses created_at + submission_id.
+type SubmissionFilter struct {
+	ContractID string
+	TaskID     string
+	TaskIDs    []string
+	Status     string
+	Limit      int
+	Offset     int
+	CursorID   string     // submission_id tie-break
+	CursorDate *time.Time // created_at keyset cursor
+	CursorType string     // before (default) or after
 }
 
 // Proposal represents a human/markdown wish that must be approved before tasks are published.
@@ -212,14 +223,28 @@ type Proposal struct {
 }
 
 // ProposalFilter captures list filters for proposals.
+// Limit is preferred; MaxResults is kept as an alias for existing callers.
+// Cursor paging uses created_at + proposal id.
 type ProposalFilter struct {
 	ProposalID string
 	Status     string
 	Skills     []string
 	MinBudget  int64
 	ContractID string
+	Limit      int
 	MaxResults int
 	Offset     int
+	CursorID   string
+	CursorDate *time.Time
+	CursorType string
+}
+
+// PageLimit returns Limit, falling back to MaxResults.
+func (f ProposalFilter) PageLimit() int {
+	if f.Limit > 0 {
+		return f.Limit
+	}
+	return f.MaxResults
 }
 
 // Event is a lightweight activity entry for MCP actions.

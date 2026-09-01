@@ -18,8 +18,8 @@ import (
 	"stargate-backend/core/smart_contract"
 	"stargate-backend/services"
 	"stargate-backend/stego"
-       "stargate-backend/storage/datadir"
-       "stargate-backend/storage/ipfs"
+	"stargate-backend/storage/datadir"
+	"stargate-backend/storage/ipfs"
 )
 
 type ipfsIngestSyncConfig struct {
@@ -28,6 +28,7 @@ type ipfsIngestSyncConfig struct {
 	MaxEntries            int
 	APIURL                string
 	Topic                 string
+	WishTopic             string
 	HTTPTimeout           time.Duration
 	ReconcileRecentBlocks int
 	ReconcileMinInterval  time.Duration
@@ -84,11 +85,11 @@ type pendingIngestAnnouncement struct {
 	FundingMode      string `json:"funding_mode,omitempty"`
 	Timestamp        int64  `json:"timestamp"`
 	// Proposal/task data for peer replication (so peers don't depend on IPFS payload fetch)
-	ProposalTitle string              `json:"proposal_title,omitempty"`
-	ProposalDesc  string              `json:"proposal_desc,omitempty"`
-	BudgetSats    int64               `json:"budget_sats,omitempty"`
-	PayloadCID    string              `json:"payload_cid,omitempty"`
-	Tasks         []announcementTask  `json:"tasks,omitempty"`
+	ProposalTitle string             `json:"proposal_title,omitempty"`
+	ProposalDesc  string             `json:"proposal_desc,omitempty"`
+	BudgetSats    int64              `json:"budget_sats,omitempty"`
+	PayloadCID    string             `json:"payload_cid,omitempty"`
+	Tasks         []announcementTask `json:"tasks,omitempty"`
 }
 
 type announcementTask struct {
@@ -123,15 +124,12 @@ type ingestUpdateAnnouncement struct {
 
 // IngestDownloadedFile is called by the IPFS mirror's OnFileDownloaded callback.
 //
-// IPFS is public and untrusted. This path MUST NOT write SQLite/Postgres rows
-// (ingestions, proposals, contracts, tasks). The mirror already places the file
-// under UPLOADS_DIR; we only ensure content-addressed layout and log stage.
-// SQL apply happens exclusively after on-chain confirmation (block monitor →
-// ReconcileStego → UpsertContractFromStegoPayload).
+// Always stages a content-addressed copy under UPLOADS_DIR. Untrusted IPFS
+// metadata never sets funding/approved/confirmed. Pending human wishes
+// (starlight-wish-v1 or tracked plain text in the image alpha) are applied
+// as status=pending + replicated_wish=true from the image payload only.
+// Product v2 / YAML manifests stay on disk until the block monitor confirms.
 func IngestDownloadedFile(ctx context.Context, filePath string, cid string, ingest *services.IngestionService, store Store) {
-	_ = ctx
-	_ = ingest
-	_ = store
 	if !isImageFile(filePath) {
 		return
 	}
@@ -158,12 +156,13 @@ func IngestDownloadedFile(ctx context.Context, filePath string, cid string, inge
 			return
 		}
 	}
-	log.Printf("mirror stage: IPFS file ready on disk hash=%s cid=%s path=%s (no SQL until on-chain confirm)", stegoHash, cid, dest)
+	log.Printf("mirror stage: IPFS file ready on disk hash=%s cid=%s path=%s", stegoHash, cid, dest)
+	ingestPendingWishFromImage(ctx, blob, cid, ingest, store)
 }
 
-// StartIPFSIngestionSync subscribes to IPFS announcements for availability only.
-// SQL state is not applied from IPFS; peers stage images on disk and wait for
-// the block monitor to confirm funding / OP_RETURN before ReconcileStego.
+// StartIPFSIngestionSync subscribes to IPFS announcements, stages files, and
+// applies pending human wishes from image payloads. Funding / approved /
+// confirmed still come only from the block monitor after OP_RETURN.
 func StartIPFSIngestionSync(ctx context.Context, ingest *services.IngestionService, store Store, reconcileFn IngestReconcileFunc) error {
 	if ingest == nil {
 		return fmt.Errorf("ipfs ingestion sync requires ingestion service")
@@ -184,18 +183,38 @@ func StartIPFSIngestionSync(ctx context.Context, ingest *services.IngestionServi
 	client := ipfs.NewClientFromEnv()
 	go backfillMirroredUploadsIngestion(ctx, ingest, store)
 	go ipfsIngestProcessUpdateQueue(ctx, ingest, store, reconcileFn, cfg, state)
-	go func() {
-		for {
-			if err := ipfsIngestSubscribe(ctx, ingest, store, reconcileFn, cfg, state, client); err != nil {
-				if ctx.Err() != nil {
-					return
+	for _, topic := range uniqueTopics(cfg.Topic, cfg.WishTopic) {
+		topic := topic
+		go func() {
+			for {
+				if err := ipfsIngestSubscribe(ctx, ingest, store, reconcileFn, cfg, state, client, topic); err != nil {
+					if ctx.Err() != nil {
+						return
+					}
+					log.Printf("ipfs ingestion sync error (topic=%s): %v", topic, err)
+					time.Sleep(cfg.Interval)
 				}
-				log.Printf("ipfs ingestion sync error: %v", err)
-				time.Sleep(cfg.Interval)
 			}
-		}
-	}()
+		}()
+	}
 	return nil
+}
+
+func uniqueTopics(topics ...string) []string {
+	seen := make(map[string]struct{}, len(topics))
+	out := make([]string, 0, len(topics))
+	for _, t := range topics {
+		t = strings.TrimSpace(t)
+		if t == "" {
+			continue
+		}
+		if _, ok := seen[t]; ok {
+			continue
+		}
+		seen[t] = struct{}{}
+		out = append(out, t)
+	}
+	return out
 }
 
 func loadIPFSIngestSyncConfig() ipfsIngestSyncConfig {
@@ -222,10 +241,8 @@ func loadIPFSIngestSyncConfig() ipfsIngestSyncConfig {
 	if apiURL == "" {
 		apiURL = "http://127.0.0.1:5001"
 	}
-	topic := strings.TrimSpace(os.Getenv("IPFS_MIRROR_TOPIC"))
-	if topic == "" {
-		topic = "stargate-uploads"
-	}
+	topic := ipfs.MirrorTopic()
+	wishTopic := ipfs.WishTopic()
 	httpTimeout := 30 * time.Second
 	if raw := strings.TrimSpace(os.Getenv("IPFS_HTTP_TIMEOUT_SEC")); raw != "" {
 		if v, err := strconv.Atoi(raw); err == nil && v > 0 {
@@ -256,15 +273,19 @@ func loadIPFSIngestSyncConfig() ipfsIngestSyncConfig {
 		MaxEntries:            maxEntries,
 		APIURL:                apiURL,
 		Topic:                 topic,
+		WishTopic:             wishTopic,
 		HTTPTimeout:           httpTimeout,
 		ReconcileRecentBlocks: reconcileRecentBlocks,
 		ReconcileMinInterval:  reconcileMinInterval,
 	}
 }
 
-func ipfsIngestSubscribe(ctx context.Context, ingest *services.IngestionService, store Store, reconcileFn IngestReconcileFunc, cfg ipfsIngestSyncConfig, state *ipfsIngestSyncState, client *ipfs.Client) error {
+func ipfsIngestSubscribe(ctx context.Context, ingest *services.IngestionService, store Store, reconcileFn IngestReconcileFunc, cfg ipfsIngestSyncConfig, state *ipfsIngestSyncState, client *ipfs.Client, topic string) error {
+	if topic == "" {
+		topic = cfg.Topic
+	}
 	// Use the IPFS client's PubsubSubscribe (routes through embedded node when available)
-	ch, err := client.PubsubSubscribe(ctx, cfg.Topic)
+	ch, err := client.PubsubSubscribe(ctx, topic)
 	if err != nil {
 		return err
 	}
@@ -310,7 +331,7 @@ func ipfsIngestSubscribe(ctx context.Context, ingest *services.IngestionService,
 		if manifestCID == "" || manifestCID == state.lastManifest {
 			continue
 		}
-		if err := ipfsIngestProcessManifest(ctx, ingest, store, cfg, state, client, manifestCID); err != nil {
+		if err := ipfsIngestProcessManifest(ctx, ingest, store, cfg, state, client, topic, manifestCID); err != nil {
 			log.Printf("ipfs ingestion sync failed: %v", err)
 			continue
 		}
@@ -321,7 +342,7 @@ func ipfsIngestSubscribe(ctx context.Context, ingest *services.IngestionService,
 
 // ipfsIngestProcessManifest stages image blobs from a peer manifest onto disk.
 // No SQL writes — confirmation is the only gate into SQLite/Postgres.
-func ipfsIngestProcessManifest(ctx context.Context, ingest *services.IngestionService, store Store, cfg ipfsIngestSyncConfig, state *ipfsIngestSyncState, client *ipfs.Client, manifestCID string) error {
+func ipfsIngestProcessManifest(ctx context.Context, ingest *services.IngestionService, store Store, cfg ipfsIngestSyncConfig, state *ipfsIngestSyncState, client *ipfs.Client, topic, manifestCID string) error {
 	_ = ingest
 	_ = store
 	data, err := client.Cat(ctx, manifestCID)
@@ -373,28 +394,22 @@ func ipfsIngestProcessManifest(ctx context.Context, ingest *services.IngestionSe
 				}
 			}
 		}
+		if strings.TrimSpace(topic) == ipfs.WishTopic() {
+			created := time.Now()
+			if entry.ModTime > 0 {
+				created = time.Unix(entry.ModTime, 0)
+			}
+			ipfs.TrackWish(stegoHash, entry.CID, created)
+			if logical := strings.TrimSpace(entry.Path); logical != "" && logical != stegoHash {
+				ipfs.TrackWish(logical, entry.CID, created)
+			}
+		}
 		state.lastSeen[entry.CID] = entry.ModTime
 	}
 	if staged > 0 {
 		log.Printf("ipfs stage: manifest=%s staged=%d files (no SQL)", manifestCID, staged)
 	}
 	return nil
-}
-
-func fetchStegoPayload(ctx context.Context, client *ipfs.Client, payloadCID string) (stego.Payload, error) {
-	payloadCID = strings.TrimSpace(payloadCID)
-	if payloadCID == "" {
-		return stego.Payload{}, fmt.Errorf("payload_cid missing")
-	}
-	data, err := client.Cat(ctx, payloadCID)
-	if err != nil {
-		return stego.Payload{}, err
-	}
-	var payload stego.Payload
-	if err := json.Unmarshal(data, &payload); err != nil {
-		return stego.Payload{}, fmt.Errorf("payload decode failed: %w", err)
-	}
-	return payload, nil
 }
 
 func ensureProposalFromStegoPayload(ctx context.Context, store Store, stegoCID string, manifest stego.Manifest, payload stego.Payload) error {
@@ -641,6 +656,14 @@ func ipfsIngestProcessPending(ctx context.Context, ingest *services.IngestionSer
 		}
 	}
 	_ = meta // retained for future signed/authenticated channels only
+	createdAt := time.Unix(seenAt, 0)
+	if seenAt <= 0 {
+		createdAt = time.Now()
+	}
+	ipfs.TrackWish(contentHash, ann.ImageCID, createdAt)
+	if id != contentHash {
+		ipfs.TrackWish(id, ann.ImageCID, createdAt)
+	}
 	state.lastSeen[ann.ImageCID] = seenAt
 	log.Printf("ipfs stage: pending announce staged cid=%s id=%s (SQL deferred until on-chain confirm)", ann.ImageCID, id)
 	return nil
@@ -822,37 +845,6 @@ func maybeTriggerReconcile(ctx context.Context, reconcileFn IngestReconcileFunc,
 	}
 }
 
-func resolveProposalIDsForIngestUpdate(ann *ingestUpdateAnnouncement, rec *services.IngestionRecord) []string {
-	out := make([]string, 0, 3)
-	add := func(value string) {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			return
-		}
-		for _, existing := range out {
-			if existing == value {
-				return
-			}
-		}
-		out = append(out, value)
-	}
-	if ann != nil {
-		add(ann.ProposalID)
-		if ann.VisiblePixelHash != "" {
-			add("proposal-" + ann.VisiblePixelHash)
-		}
-	}
-	if rec != nil && rec.Metadata != nil {
-		if v, ok := rec.Metadata["stego_manifest_proposal_id"].(string); ok {
-			add(v)
-		}
-		if v, ok := rec.Metadata["origin_proposal_id"].(string); ok {
-			add(v)
-		}
-	}
-	return out
-}
-
 func extractManifestCID(encoded string) (string, error) {
 	if encoded == "" {
 		return "", nil
@@ -966,10 +958,6 @@ func parseIngestUpdateAnnouncement(encoded string) (*ingestUpdateAnnouncement, e
 	return nil, nil
 }
 
-func multibaseEncodeString(value string) string {
-	return multibaseEncodeBytes([]byte(value))
-}
-
 func multibaseEncodeBytes(value []byte) string {
 	encoded := base64.RawURLEncoding.EncodeToString(value)
 	return "u" + encoded
@@ -1013,53 +1001,9 @@ func ingestIDFromPath(filePath string) string {
 
 // ingestPlainStegoWish creates a pending ingestion for mirrored wish images whose
 // alpha-channel payload is plain text rather than a stego YAML manifest.
-func ingestPlainStegoWish(ctx context.Context, ingest *services.IngestionService, filePath, cid string, rawBytes, blob []byte) bool {
-	if ingest == nil || len(rawBytes) == 0 || len(blob) == 0 {
-		return false
-	}
-	message := strings.TrimSpace(string(rawBytes))
-	if message == "" || looksLikeStegoManifestTextIngest(message) {
-		return false
-	}
-	id := ingestIDFromPath(filePath)
-	if id == "" || strings.HasPrefix(id, ".") {
-		return false
-	}
-	if existing, err := ingest.Get(id); err == nil && existing != nil {
-		return false
-	}
-	meta := map[string]interface{}{
-		"embedded_message":   message,
-		"message":            message,
-		"ipfs_image_cid":     cid,
-		"visible_pixel_hash": id,
-		"ingestion_id":       id,
-	}
-	if strings.TrimSpace(cid) != "" {
-		meta["stego_image_cid"] = cid
-	}
-	rec := services.IngestionRecord{
-		ID:            id,
-		Filename:      filepath.Base(filePath),
-		Method:        getStegoMethodForFilename(filePath),
-		MessageLength: len(rawBytes),
-		ImageBase64:   base64.StdEncoding.EncodeToString(blob),
-		Metadata:      meta,
-		Status:        "pending",
-	}
-	if rec.Filename == "" {
-		rec.Filename = "inscription.png"
-	}
-	if err := ingest.Create(rec); err != nil {
-		log.Printf("mirror ingest: pending wish create %s: %v", id, err)
-		return false
-	}
-	return true
-}
 
-// backfillMirroredUploadsIngestion ensures content-addressed copies exist under
-// UPLOADS_DIR. It does not create SQL ingestion/proposal/contract rows — IPFS
-// and local disk blobs stay staged until on-chain confirmation.
+// backfillMirroredUploadsIngestion restages content-addressed copies and
+// applies pending human wishes from already-mirrored images.
 func backfillMirroredUploadsIngestion(ctx context.Context, ingest *services.IngestionService, store Store) {
 	uploadsDir := strings.TrimSpace(os.Getenv("UPLOADS_DIR"))
 	if uploadsDir == "" {
@@ -1099,7 +1043,7 @@ func backfillMirroredUploadsIngestion(ctx context.Context, ingest *services.Inge
 		return nil
 	})
 	if staged > 0 {
-		log.Printf("ipfs stage backfill: ensured %d upload files content-addressed under %s (no SQL)", staged, uploadsDir)
+		log.Printf("ipfs stage backfill: processed %d upload files under %s", staged, uploadsDir)
 	}
 }
 

@@ -1,19 +1,12 @@
 package starlight
 
 import (
-	"bytes"
 	"fmt"
-	"image"
-	_ "image/gif"
-	_ "image/jpeg"
-	_ "image/png"
 	"log"
 	"math"
 	"os"
 
 	trinstar "github.com/macroadster/trin/pkg/starlight"
-	_ "golang.org/x/image/bmp"
-	_ "golang.org/x/image/webp"
 	"stargate-backend/core"
 	"stargate-backend/stego"
 )
@@ -149,6 +142,16 @@ func (s *TrinScanner) ScanImage(imageData []byte, options core.ScanOptions) (*co
 
 	input, err := LoadUnifiedInput(imageData)
 	if err != nil {
+		// Soft-fail unsupported/oversize formats so AVIF etc. do not trip the circuit breaker.
+		if stego.IsSoftDecodeFailure(err) {
+			return &core.ScanResult{
+				IsStego:          false,
+				StegoProbability: 0,
+				Confidence:       0,
+				Prediction:       "unsupported_format",
+				ExtractionError:  err.Error(),
+			}, nil
+		}
 		return nil, fmt.Errorf("unified input: %w", err)
 	}
 
@@ -222,14 +225,29 @@ func (s *TrinScanner) ExtractMessage(imageData []byte, method string) (*core.Ext
 		}, nil
 	}
 
-	img, _, err := image.Decode(bytes.NewReader(imageData))
+	img, _, err := stego.DecodeImage(imageData)
 	if err != nil {
+		if stego.IsSoftDecodeFailure(err) {
+			return &core.ExtractionResult{
+				MessageFound: false,
+				ExtractionDetails: map[string]interface{}{
+					"status": "unsupported_format",
+					"error":  err.Error(),
+				},
+			}, nil
+		}
 		return nil, fmt.Errorf("failed to decode image: %v", err)
 	}
 
 	payload, err := stego.ExtractAlpha(img)
 	if err != nil {
-		return nil, err
+		return &core.ExtractionResult{
+			MessageFound: false,
+			ExtractionDetails: map[string]interface{}{
+				"status": "extract_error",
+				"error":  err.Error(),
+			},
+		}, nil
 	}
 	if payload != nil {
 		return &core.ExtractionResult{

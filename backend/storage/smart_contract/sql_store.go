@@ -9,9 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"gorm.io/gorm"
 	"stargate-backend/core/smart_contract"
 	"stargate-backend/storage/gormdb"
+
+	"gorm.io/gorm"
 )
 
 // SQLStore is the unified durable MCP store (SQLite + Postgres) opened via gormdb.
@@ -81,10 +82,6 @@ func (s *SQLStore) query(q string, args ...interface{}) (*sql.Rows, error) {
 
 func (s *SQLStore) queryRowContext(ctx context.Context, q string, args ...interface{}) *sql.Row {
 	return s.db.QueryRowContext(ctx, s.rebind(q), args...)
-}
-
-func (s *SQLStore) queryRow(q string, args ...interface{}) *sql.Row {
-	return s.db.QueryRow(s.rebind(q), args...)
 }
 
 func (s *SQLStore) isPostgres() bool { return s.dialect == gormdb.DialectPostgres }
@@ -243,7 +240,6 @@ func (s *SQLStore) Close() {
 	}
 }
 
-
 // Transaction helpers rebind placeholders for the store dialect.
 func (s *SQLStore) txExec(tx *sql.Tx, ctx context.Context, q string, args ...interface{}) (sql.Result, error) {
 	q = s.normalizeInsert(q)
@@ -314,19 +310,16 @@ NOT (
 	}
 
 	// Cursor-based pagination by date (confirmed_at for confirmed lists, created_at for open).
-	// Normalize mixed SQLite timestamp formats ("2026-07-19 05:31:53" vs RFC3339).
+	// Do not mix these columns: open wishes have null confirmed_at; confirmed lists
+	// must not page on created_at or infinite scroll skips/duplicates.
 	if filter.CursorDate != nil {
-		op := "<"
-		if strings.EqualFold(filter.CursorType, "after") {
-			op = ">"
-		}
+		op := dateCursorOp(filter.CursorType)
 		dateCol := "c.confirmed_at"
 		if filter.OrderByCreatedAt {
 			dateCol = "c.created_at"
 		}
-		whereConditions = append(whereConditions,
-			"datetime(replace(replace("+dateCol+",'T',' '),'Z','')) "+op+" datetime(?)")
-		args = append(args, filter.CursorDate.UTC().Format("2006-01-02 15:04:05"))
+		whereConditions = append(whereConditions, s.dateCursorPred(dateCol, op))
+		args = append(args, s.dateCursorArg(*filter.CursorDate))
 	}
 
 	whereClause := ""
@@ -335,8 +328,8 @@ NOT (
 	}
 
 	// Normalize text timestamps so mixed SQLite formats still sort chronologically.
-	const createdAtOrder = "datetime(replace(replace(c.created_at,'T',' '),'Z',''))"
-	const confirmedAtOrder = "datetime(replace(replace(c.confirmed_at,'T',' '),'Z',''))"
+	createdAtOrder := s.dateTimeExpr("c.created_at")
+	confirmedAtOrder := s.dateTimeExpr("c.confirmed_at")
 	orderBy := "ORDER BY c.confirmed_block_height DESC NULLS LAST, " + createdAtOrder + " DESC, c.contract_id DESC"
 	if filter.OrderByCreatedAt {
 		// Open/unconfirmed: newest created first, oldest at the bottom (scroll loads older).
@@ -344,14 +337,7 @@ NOT (
 	} else if filter.OrderByConfirmedAt {
 		orderBy = "ORDER BY " + confirmedAtOrder + " DESC NULLS FIRST, " + createdAtOrder + " DESC, c.contract_id DESC"
 	}
-	if filter.Limit > 0 {
-		orderBy += fmt.Sprintf(" LIMIT %d", filter.Limit)
-		if filter.Offset > 0 {
-			orderBy += fmt.Sprintf(" OFFSET %d", filter.Offset)
-		}
-	} else if filter.Offset > 0 {
-		orderBy += fmt.Sprintf(" OFFSET %d", filter.Offset)
-	}
+	orderBy = s.appendLimitOffset(orderBy, filter.Limit, filter.Offset)
 
 	query := baseSelect + " " + whereClause + " " + orderBy
 
@@ -398,14 +384,34 @@ NOT (
 }
 
 func (s *SQLStore) ListTasks(filter smart_contract.TaskFilter) ([]smart_contract.Task, error) {
-	query := `
-SELECT ` + s.taskSelectList() + `
-FROM mcp_tasks
-WHERE (? = '' OR status = ?)
-AND (? = '' OR contract_id = ?)
-AND (? = '' OR claimed_by = ?)
-`
-	args := []interface{}{filter.Status, filter.Status, filter.ContractID, filter.ContractID, filter.ClaimedBy, filter.ClaimedBy}
+	query := `SELECT ` + s.taskSelectList() + ` FROM mcp_tasks WHERE 1=1`
+	args := []interface{}{}
+	if filter.Status != "" {
+		query += " AND status = ?"
+		args = append(args, filter.Status)
+	}
+	if filter.ContractID != "" {
+		query += " AND contract_id = ?"
+		args = append(args, filter.ContractID)
+	}
+	if filter.ClaimedBy != "" {
+		query += " AND claimed_by = ?"
+		args = append(args, filter.ClaimedBy)
+	}
+	if filter.MinBudgetSats > 0 {
+		query += " AND budget_sats >= ?"
+		args = append(args, filter.MinBudgetSats)
+	}
+	if cursorID := strings.TrimSpace(filter.CursorID); cursorID != "" {
+		query += " AND task_id " + dateCursorOp(filter.CursorType) + " ?"
+		args = append(args, cursorID)
+	}
+	query += " ORDER BY task_id DESC"
+
+	hasGoFilter := len(filter.Skills) > 0 || filter.UpdatedSince != nil || filter.LastActivitySince != nil
+	if filter.Limit > 0 && !hasGoFilter {
+		query = s.appendLimitOffset(query, filter.Limit, filter.Offset)
+	}
 
 	rows, err := s.queryContext(context.Background(), query, args...)
 	if err != nil {
@@ -419,21 +425,41 @@ AND (? = '' OR claimed_by = ?)
 		if err != nil {
 			return nil, err
 		}
-		if filter.MinBudgetSats > 0 && task.BudgetSats < filter.MinBudgetSats {
-			continue
-		}
 		if len(filter.Skills) > 0 && !s.containsSkill(task.Skills, filter.Skills) {
 			continue
 		}
+		if filter.UpdatedSince != nil {
+			if task.MerkleProof == nil {
+				continue
+			}
+			proof := task.MerkleProof
+			hasRecent := proof.SeenAt.After(*filter.UpdatedSince) ||
+				(proof.SweepAttemptedAt != nil && proof.SweepAttemptedAt.After(*filter.UpdatedSince))
+			if !hasRecent {
+				continue
+			}
+		}
+		if filter.LastActivitySince != nil {
+			if task.MerkleProof == nil {
+				continue
+			}
+			proof := task.MerkleProof
+			hasRecent := proof.SeenAt.After(*filter.LastActivitySince) ||
+				(proof.ConfirmedAt != nil && proof.ConfirmedAt.After(*filter.LastActivitySince)) ||
+				(proof.SweepAttemptedAt != nil && proof.SweepAttemptedAt.After(*filter.LastActivitySince))
+			if !hasRecent {
+				continue
+			}
+		}
 		out = append(out, task)
 	}
-	if filter.Offset > 0 && filter.Offset < len(out) {
-		out = out[filter.Offset:]
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
-	if filter.Limit > 0 && filter.Limit < len(out) {
-		out = out[:filter.Limit]
+	if hasGoFilter {
+		out = applyOffsetLimit(out, filter.Offset, filter.Limit)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func scanTaskSQLite(rows *sql.Rows) (smart_contract.Task, error) {
@@ -815,64 +841,111 @@ VALUES (?,?,?,?,?,?,?)
 	return plan.Submission, nil
 }
 
-func (s *SQLStore) ListSubmissions(ctx context.Context, taskIDs []string) ([]smart_contract.Submission, error) {
-	if len(taskIDs) == 0 {
-		return nil, nil
-	}
-	placeholders := strings.Repeat("?,", len(taskIDs))
-	placeholders = placeholders[:len(placeholders)-1]
-	query := fmt.Sprintf(`
-SELECT s.submission_id, s.claim_id, c.task_id, s.status, s.deliverables, s.completion_proof, s.rejection_reason, s.rejection_type, s.rejected_at, s.created_at
+func (s *SQLStore) ListSubmissions(ctx context.Context, filter smart_contract.SubmissionFilter) ([]smart_contract.Submission, error) {
+	query := `
+SELECT s.submission_id, s.claim_id, COALESCE(NULLIF(s.task_id, ''), c.task_id) AS task_id,
+       s.status, s.deliverables, s.completion_proof, s.rejection_reason, s.rejection_type, s.rejected_at, s.created_at
 FROM mcp_submissions s
-JOIN mcp_claims c ON c.claim_id = s.claim_id
-WHERE c.task_id IN (%s)
-ORDER BY s.created_at DESC
-`, placeholders)
+LEFT JOIN mcp_claims c ON c.claim_id = s.claim_id
+LEFT JOIN mcp_tasks t ON t.task_id = COALESCE(NULLIF(s.task_id, ''), c.task_id)
+WHERE 1=1
+`
+	args := make([]interface{}, 0, 8)
 
-	args := make([]interface{}, len(taskIDs))
-	for i, id := range taskIDs {
-		args[i] = id
+	if filter.ContractID != "" {
+		variants := submissionContractIDs(filter.ContractID)
+		placeholders := make([]string, len(variants))
+		for i, v := range variants {
+			placeholders[i] = "?"
+			args = append(args, strings.ToLower(v))
+		}
+		query += " AND LOWER(t.contract_id) IN (" + strings.Join(placeholders, ",") + ")"
 	}
+
+	if taskIDs := submissionTaskIDs(filter); len(taskIDs) > 0 {
+		placeholders := make([]string, len(taskIDs))
+		for i, id := range taskIDs {
+			placeholders[i] = "?"
+			args = append(args, id)
+		}
+		query += " AND COALESCE(NULLIF(s.task_id, ''), c.task_id) IN (" + strings.Join(placeholders, ",") + ")"
+	}
+
+	if status := strings.TrimSpace(filter.Status); status != "" {
+		query += " AND LOWER(s.status) = LOWER(?)"
+		args = append(args, status)
+	}
+
+	if filter.CursorDate != nil || strings.TrimSpace(filter.CursorID) != "" {
+		op := dateCursorOp(filter.CursorType)
+		query += " AND " + s.dateIDCursorPred("s.created_at", "s.submission_id", op)
+		cursorTime := time.Time{}
+		if filter.CursorDate != nil {
+			cursorTime = *filter.CursorDate
+		}
+		arg := s.dateCursorArg(cursorTime)
+		args = append(args, arg, arg, strings.TrimSpace(filter.CursorID))
+	}
+
+	query += " ORDER BY " + s.dateTimeExpr("s.created_at") + " DESC, s.submission_id DESC"
+	query = s.appendLimitOffset(query, filter.Limit, filter.Offset)
 
 	rows, err := s.queryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []smart_contract.Submission
+	out := make([]smart_contract.Submission, 0)
 	for rows.Next() {
-		var sub smart_contract.Submission
-		var delivJSON, proofJSON, rejectionReason, rejectionType []byte
-		var rejectedAtStr, createdAtStr sql.NullString
-		if err := rows.Scan(&sub.SubmissionID, &sub.ClaimID, &sub.TaskID, &sub.Status, &delivJSON, &proofJSON, &rejectionReason, &rejectionType, &rejectedAtStr, &createdAtStr); err != nil {
+		sub, err := scanListedSubmission(rows)
+		if err != nil {
 			return nil, err
-		}
-		if rejectedAtStr.Valid {
-			if t, err := parseSQLiteTime(rejectedAtStr.String); err == nil {
-				sub.RejectedAt = t
-			}
-		}
-		if createdAtStr.Valid {
-			if t, err := parseSQLiteTime(createdAtStr.String); err == nil && t != nil {
-				sub.CreatedAt = *t
-			}
-		}
-		if len(delivJSON) > 0 {
-			_ = json.Unmarshal(delivJSON, &sub.Deliverables)
-		}
-		if len(proofJSON) > 0 {
-			_ = json.Unmarshal(proofJSON, &sub.CompletionProof)
 		}
 		out = append(out, sub)
 	}
 	return out, rows.Err()
 }
 
+func scanListedSubmission(rows *sql.Rows) (smart_contract.Submission, error) {
+	return scanSubmissionRow(rows)
+}
+
+func scanSubmissionRow(sc interface {
+	Scan(dest ...any) error
+}) (smart_contract.Submission, error) {
+	var sub smart_contract.Submission
+	var delivJSON, proofJSON []byte
+	var rejectionReason, rejectionType, rejectedAtStr, createdAtStr sql.NullString
+	if err := sc.Scan(&sub.SubmissionID, &sub.ClaimID, &sub.TaskID, &sub.Status, &delivJSON, &proofJSON, &rejectionReason, &rejectionType, &rejectedAtStr, &createdAtStr); err != nil {
+		return smart_contract.Submission{}, err
+	}
+	sub.RejectionReason = rejectionReason.String
+	sub.RejectionType = rejectionType.String
+	if rejectedAtStr.Valid {
+		if t, err := parseSQLiteTime(rejectedAtStr.String); err == nil {
+			sub.RejectedAt = t
+		}
+	}
+	if createdAtStr.Valid {
+		if t, err := parseSQLiteTime(createdAtStr.String); err == nil && t != nil {
+			sub.CreatedAt = *t
+		}
+	}
+	if len(delivJSON) > 0 {
+		_ = json.Unmarshal(delivJSON, &sub.Deliverables)
+	}
+	if len(proofJSON) > 0 {
+		_ = json.Unmarshal(proofJSON, &sub.CompletionProof)
+	}
+	return sub, nil
+}
+
 func (s *SQLStore) GetSubmission(ctx context.Context, id string) (smart_contract.Submission, error) {
 	rows, err := s.queryContext(ctx, `
-SELECT s.submission_id, s.claim_id, c.task_id, s.status, s.deliverables, s.completion_proof, s.rejection_reason, s.rejection_type, s.rejected_at, s.created_at
+SELECT s.submission_id, s.claim_id, COALESCE(NULLIF(s.task_id, ''), c.task_id) AS task_id,
+       s.status, s.deliverables, s.completion_proof, s.rejection_reason, s.rejection_type, s.rejected_at, s.created_at
 FROM mcp_submissions s
-JOIN mcp_claims c ON c.claim_id = s.claim_id
+LEFT JOIN mcp_claims c ON c.claim_id = s.claim_id
 WHERE s.submission_id = ?
 `, id)
 	if err != nil {
@@ -880,29 +953,7 @@ WHERE s.submission_id = ?
 	}
 	defer rows.Close()
 	if rows.Next() {
-		var sub smart_contract.Submission
-		var delivJSON, proofJSON []byte
-		var rejectedAtStr, createdAtStr sql.NullString
-		if err := rows.Scan(&sub.SubmissionID, &sub.ClaimID, &sub.TaskID, &sub.Status, &delivJSON, &proofJSON, &sub.RejectionReason, &sub.RejectionType, &rejectedAtStr, &createdAtStr); err != nil {
-			return smart_contract.Submission{}, err
-		}
-		if rejectedAtStr.Valid {
-			if t, err := parseSQLiteTime(rejectedAtStr.String); err == nil {
-				sub.RejectedAt = t
-			}
-		}
-		if createdAtStr.Valid {
-			if t, err := parseSQLiteTime(createdAtStr.String); err == nil && t != nil {
-				sub.CreatedAt = *t
-			}
-		}
-		if len(delivJSON) > 0 {
-			_ = json.Unmarshal(delivJSON, &sub.Deliverables)
-		}
-		if len(proofJSON) > 0 {
-			_ = json.Unmarshal(proofJSON, &sub.CompletionProof)
-		}
-		return sub, nil
+		return scanSubmissionRow(rows)
 	}
 	return smart_contract.Submission{}, fmt.Errorf("submission %s not found", id)
 }
@@ -1423,15 +1474,26 @@ func (s *SQLStore) ListProposals(ctx context.Context, filter smart_contract.Prop
 		args = append(args, filter.Status)
 	}
 
-	query += " ORDER BY created_at DESC"
+	if filter.CursorDate != nil || strings.TrimSpace(filter.CursorID) != "" {
+		op := dateCursorOp(filter.CursorType)
+		query += " AND " + s.dateIDCursorPred("created_at", "id", op)
+		cursorTime := time.Time{}
+		if filter.CursorDate != nil {
+			cursorTime = *filter.CursorDate
+		}
+		arg := s.dateCursorArg(cursorTime)
+		args = append(args, arg, arg, strings.TrimSpace(filter.CursorID))
+	}
+
+	query += " ORDER BY " + s.dateTimeExpr("created_at") + " DESC, id DESC"
 
 	// Only apply SQL LIMIT when no Go-side filters (ContractID, MinBudget, Skills)
-	// will further reduce rows.  When those filters are active the SQL LIMIT would
-	// silently discard matching rows before Go can see them (PG store already works
-	// this way — no SQL LIMIT, Go applies MaxResults at the end).
+	// will further reduce rows. When those filters are active the SQL LIMIT would
+	// silently discard matching rows before Go can see them.
 	hasGoFilter := filter.ContractID != "" || filter.MinBudget > 0 || len(filter.Skills) > 0
-	if filter.MaxResults > 0 && !hasGoFilter {
-		query += fmt.Sprintf(" LIMIT %d", filter.MaxResults)
+	pageLimit := filter.PageLimit()
+	if pageLimit > 0 && !hasGoFilter {
+		query = s.appendLimitOffset(query, pageLimit, filter.Offset)
 	}
 
 	rows, err := s.queryContext(ctx, query, args...)
@@ -1499,13 +1561,13 @@ func (s *SQLStore) ListProposals(ctx context.Context, filter smart_contract.Prop
 		}
 		out = append(out, p)
 	}
-	if filter.Offset > 0 && filter.Offset < len(out) {
-		out = out[filter.Offset:]
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
-	if filter.MaxResults > 0 && filter.MaxResults < len(out) {
-		out = out[:filter.MaxResults]
+	if hasGoFilter {
+		out = applyOffsetLimit(out, filter.Offset, pageLimit)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func (s *SQLStore) GetProposal(ctx context.Context, id string) (smart_contract.Proposal, error) {

@@ -75,6 +75,7 @@ curl "` + base + `/mcp/search?q=task&limit=5"</pre>
         <li><code>create_wish</code> - Create a wish (request for work)</li>
         <li><code>create_proposal</code> - Create a proposal</li>
         <li><code>create_task</code> - Create a new task for an existing contract</li>
+        <li><code>rebalance_contract_budget</code> - Scale task prices down to the original wish budget so payouts can settle</li>
         <li><code>claim_task</code> - Claim a task</li>
         <li><code>submit_work</code> - Submit completed work</li>
         <li><code>approve_proposal</code> - Approve a proposal</li>
@@ -461,13 +462,16 @@ await fetch("` + base + `/mcp/chat/send", {
     <h4>Claim a Task (Requires API Key)</h4>
     <pre>curl -k -H "X-API-Key: YOUR_KEY" ` + base + `/mcp/call \
   -H "Content-Type: application/json" \
-  -d '{"tool": "claim_task", "arguments": {"task_id": "TASK_ID"}}'</pre>
+  -d '{"tool": "claim_task", "arguments": {"task_id": "TASK_ID", "amount_sats": 400}}'</pre>
 
     <h4>Associate Wallet with API Key</h4>
-    <p><strong>Important:</strong> Your API key must be associated with a Bitcoin wallet address to receive payments and build PSBTs.</p>
-    <pre>curl -k -H "X-API-Key: YOUR_KEY" ` + base + `/api/auth/register \
+    <p><strong>Important:</strong> Your API key must be associated with a Bitcoin wallet address to receive payments and build PSBTs. Prove address ownership with a signed challenge (not an open register call).</p>
+    <pre>curl -k -X POST ` + base + `/api/auth/challenge \
   -H "Content-Type: application/json" \
-  -d '{"email": "your-email@example.com", "wallet_address": "tb1qyouraddresshere"}'</pre>
+  -d '{"wallet_address": "tb1qyouraddresshere"}'
+curl -k -X POST ` + base + `/api/auth/verify \
+  -H "Content-Type: application/json" \
+  -d '{"wallet_address": "tb1qyouraddresshere", "signature": "SIGN_THE_NONCE"}'</pre>
 
     <h4>Complete Payment Workflow</h4>
     <ol>
@@ -542,7 +546,7 @@ await fetch("` + base + `/mcp/chat/send", {
   "payer_wallet": "tb1qpayer11111111111111111111111111111111",
   "contract_status": "approved",
   "currency": "sats",
-  "network": "testnet"
+  "network": "testnet4"
 }</pre>
 
      <h4>Build a PSBT (Requires Auth)</h4>

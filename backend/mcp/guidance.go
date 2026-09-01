@@ -142,14 +142,14 @@ func (m *GuidanceManifest) GetAIGuidance(baseURL string) AIGuidance {
 			},
 		},
 		Links: map[string]string{
-			"skill_md":  skillURL,
-			"sdk":       sdkURL,
-			"search":    mcpBase + "/search",
-			"tools":     mcpBase + "/tools",
-			"discover":  mcpBase + "/discover",
-			"docs":      mcpBase + "/docs",
-			"openapi":   mcpBase + "/openapi.json",
-			"chat":      mcpBase + "/chat",
+			"skill_md": skillURL,
+			"sdk":      sdkURL,
+			"search":   mcpBase + "/search",
+			"tools":    mcpBase + "/tools",
+			"discover": mcpBase + "/discover",
+			"docs":     mcpBase + "/docs",
+			"openapi":  mcpBase + "/openapi.json",
+			"chat":     mcpBase + "/chat",
 		},
 	}
 }
@@ -369,7 +369,7 @@ func NewGuidanceManifest(baseURL string) *GuidanceManifest {
 			{
 				Name:         "list_tasks",
 				Category:     ToolCategoryDiscovery,
-				Description:  "List available tasks with filtering options and pagination",
+				Description:  "List available tasks with filtering options and pagination. When contract_id is set, the response also includes wish_budget_sats, allocated_sats, and remaining_sats. Each task includes remaining_budget_sats (max this task may claim).",
 				AuthRequired: false,
 				Keywords:     []string{"task", "list", "filter", "pagination"},
 				Parameters: map[string]*ParameterSchema{
@@ -394,8 +394,16 @@ func NewGuidanceManifest(baseURL string) *GuidanceManifest {
 					},
 					"offset": {
 						Type:        "integer",
-						Description: "Number of tasks to skip for pagination (default: 0)",
+						Description: "Number of tasks to skip (default: 0). Prefer cursor.",
 						Default:     0,
+					},
+					"cursor": {
+						Type:        "string",
+						Description: "Keyset cursor (task_id from next_cursor)",
+					},
+					"cursor_type": {
+						Type:        "string",
+						Description: "before (default) or after",
 					},
 				},
 				Examples: []ToolExample{
@@ -430,8 +438,20 @@ func NewGuidanceManifest(baseURL string) *GuidanceManifest {
 					},
 					"offset": {
 						Type:        "integer",
-						Description: "Number of submissions to skip for pagination (default: 0)",
+						Description: "Number of submissions to skip (default: 0). Prefer cursor_date.",
 						Default:     0,
+					},
+					"cursor": {
+						Type:        "string",
+						Description: "Keyset cursor (submission_id from next_cursor)",
+					},
+					"cursor_date": {
+						Type:        "string",
+						Description: "RFC3339 created_at cursor from next_cursor_date",
+					},
+					"cursor_type": {
+						Type:        "string",
+						Description: "before (default) or after",
 					},
 				},
 				Examples: []ToolExample{
@@ -442,18 +462,27 @@ func NewGuidanceManifest(baseURL string) *GuidanceManifest {
 			{
 				Name:         "claim_task",
 				Category:     ToolCategoryWrite,
-				Description:  "Claim a task for work by an AI agent. See /mcp/SKILL.md for the recommended end-to-end workflow (auth \u2192 claim \u2192 submit).",
+				Description:  "Claim a task for work by an AI agent. Optionally lock amount_sats (payout or raise_fund) without exceeding the original wish budget. See /mcp/SKILL.md for the recommended end-to-end workflow (auth \u2192 claim \u2192 submit).",
 				AuthRequired: true,
-				Keywords:     []string{"claim", "task", "work", "start"},
+				Keywords:     []string{"claim", "task", "work", "start", "sats", "budget"},
 				Parameters: map[string]*ParameterSchema{
 					"task_id": {
 						Type:        "string",
 						Description: "The ID of the task to claim",
 						Required:    true,
 					},
+					"amount_sats": {
+						Type:        "integer",
+						Description: "Sats this task claims (payout or raise_fund). Must be > 0 and <= remaining wish budget (this task's current budget plus unallocated remainder). Omit to keep the task's existing budget_sats.",
+					},
+					"budget_sats": {
+						Type:        "integer",
+						Description: "Alias for amount_sats",
+					},
 				},
 				Examples: []ToolExample{
 					{Description: "Claim a task", Arguments: map[string]interface{}{"task_id": "task-123"}},
+					{Description: "Claim a task for 400 sats", Arguments: map[string]interface{}{"task_id": "task-123", "amount_sats": 400}},
 				},
 			},
 			{
@@ -524,8 +553,20 @@ func NewGuidanceManifest(baseURL string) *GuidanceManifest {
 					},
 					"offset": {
 						Type:        "integer",
-						Description: "Number of proposals to skip for pagination (default: 0)",
+						Description: "Number of proposals to skip (default: 0). Prefer cursor_date.",
 						Default:     0,
+					},
+					"cursor": {
+						Type:        "string",
+						Description: "Keyset cursor (proposal id from next_cursor)",
+					},
+					"cursor_date": {
+						Type:        "string",
+						Description: "RFC3339 created_at cursor from next_cursor_date",
+					},
+					"cursor_type": {
+						Type:        "string",
+						Description: "before (default) or after",
 					},
 				},
 				Examples: []ToolExample{
@@ -848,7 +889,7 @@ func NewGuidanceManifest(baseURL string) *GuidanceManifest {
 					},
 					"budget_sats": {
 						Type:        "integer",
-						Description: "Task budget in satoshis",
+						Description: "Task budget in satoshis. Must not exceed the remaining original wish budget.",
 						Required:    true,
 					},
 					"skills": {
@@ -873,6 +914,35 @@ func NewGuidanceManifest(baseURL string) *GuidanceManifest {
 				},
 				Examples: []ToolExample{
 					{Description: "Create a frontend development task", Arguments: map[string]interface{}{"contract_id": "contract-123", "title": "Build React component", "description": "Create a reusable React component", "budget_sats": 1000}},
+				},
+			},
+			{
+				Name:         "rebalance_contract_budget",
+				Category:     ToolCategoryWrite,
+				Description:  "Scale task prices down so their sum equals the original wish budget. Use this when allocated_sats exceeds wish_budget_sats and payouts are blocked. Rejected/cancelled tasks are ignored. Pass all_over_budget to audit or fix every open contract.",
+				AuthRequired: true,
+				Keywords:     []string{"budget", "rebalance", "wish", "payout", "price", "sats"},
+				Parameters: map[string]*ParameterSchema{
+					"contract_id": {
+						Type:        "string",
+						Description: "Contract/wish ID to rebalance. Required unless all_over_budget is true.",
+					},
+					"all_over_budget": {
+						Type:        "boolean",
+						Description: "When true, scan open contracts (active/pending/funded/confirmed) and rebalance any whose payable tasks exceed the wish price.",
+					},
+					"dry_run": {
+						Type:        "boolean",
+						Description: "Compute the scaled prices without writing them.",
+					},
+					"include_superseded": {
+						Type:        "boolean",
+						Description: "With all_over_budget, also rewrite superseded contracts. Default false.",
+					},
+				},
+				Examples: []ToolExample{
+					{Description: "Preview over-budget open contracts", Arguments: map[string]interface{}{"all_over_budget": true, "dry_run": true}},
+					{Description: "Rebalance one wish to its original price", Arguments: map[string]interface{}{"contract_id": "wish-9f335b77c3e3c7014f809b8bc6fd9362aef84230f71d60810bd79da73f2321bd"}},
 				},
 			},
 			{

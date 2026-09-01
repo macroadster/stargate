@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"stargate-backend/core/smart_contract"
 	scmiddleware "stargate-backend/app/smart_contract"
+	"stargate-backend/core/smart_contract"
 )
 
 // Orchestrator manages the built-in autonomous agent loop inside stargate.
@@ -20,7 +20,6 @@ type Orchestrator struct {
 
 	worker  *Worker
 	watcher *Watcher // populated when watcher is enabled
-
 
 	mu      sync.Mutex
 	running bool
@@ -67,21 +66,6 @@ func (o *Orchestrator) Start(ctx context.Context) {
 }
 
 // Stop requests graceful shutdown and waits for the loop to exit.
-func (o *Orchestrator) Stop() {
-	o.mu.Lock()
-	if !o.running {
-		o.mu.Unlock()
-		return
-	}
-	if o.cancel != nil {
-		o.cancel()
-	}
-	o.running = false
-	o.mu.Unlock()
-
-	o.wg.Wait()
-	log.Printf("agents: orchestrator stopped")
-}
 
 func (o *Orchestrator) run(ctx context.Context) {
 	defer o.wg.Done()
@@ -150,8 +134,3 @@ func (o *Orchestrator) run(ctx context.Context) {
 }
 
 // IsRunning reports whether the loop is active.
-func (o *Orchestrator) IsRunning() bool {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	return o.running
-}

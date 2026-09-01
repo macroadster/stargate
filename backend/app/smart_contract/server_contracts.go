@@ -13,24 +13,8 @@ import (
 	"stargate-backend/storage/ipfs"
 )
 
-func applyCreatorWallet(meta map[string]interface{}, apiKey string, apiKeys auth.APIKeyValidator) {
-	if meta == nil {
-		return
-	}
-	if _, ok := meta["creator_wallet"].(string); ok {
-		return
-	}
-	if apiKeys != nil {
-		if rec, ok := apiKeys.Get(apiKey); ok {
-			if wallet := strings.TrimSpace(rec.Wallet); wallet != "" {
-				meta["creator_wallet"] = wallet
-			}
-		}
-	}
-}
-
 func (s *Server) enforceCreatorApproval(r *http.Request, proposal smart_contract.Proposal) error {
-	apiKey := r.Header.Get("X-API-Key")
+	apiKey := auth.RequestAPIKey(r)
 
 	// Get approver's wallet from API key
 	var approverWallet string
@@ -242,16 +226,6 @@ func (s *Server) handleContracts(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleGetContractReworkRequests returns all rework requests for a contract.
-func (s *Server) handleGetContractReworkRequests(w http.ResponseWriter, r *http.Request, contractID string) {
-	reworkReqs, err := s.store.GetContractReworkRequests(r.Context(), contractID)
-	if err != nil {
-		Error(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	JSON(w, http.StatusOK, map[string]interface{}{
-		"rework_requests": reworkReqs,
-	})
-}
 
 // handleContractRework creates a new rework request for a contract.
 func (s *Server) handleContractRework(w http.ResponseWriter, r *http.Request, contractID string) {
@@ -273,7 +247,7 @@ func (s *Server) handleContractRework(w http.ResponseWriter, r *http.Request, co
 		return
 	}
 
-	apiKey := r.Header.Get("X-API-Key")
+	apiKey := auth.RequestAPIKey(r)
 	var requester string
 	if apiKey != "" && s.apiKeys != nil {
 		if rec, ok := s.apiKeys.Get(apiKey); ok {
@@ -297,7 +271,7 @@ func (s *Server) handleContractRework(w http.ResponseWriter, r *http.Request, co
 
 // handleResolveContractRework resolves/closes a rework request.
 func (s *Server) handleResolveContractRework(w http.ResponseWriter, r *http.Request, contractID, requestID string) {
-	apiKey := r.Header.Get("X-API-Key")
+	apiKey := auth.RequestAPIKey(r)
 	var requester string
 	if apiKey != "" && s.apiKeys != nil {
 		if rec, ok := s.apiKeys.Get(apiKey); ok {

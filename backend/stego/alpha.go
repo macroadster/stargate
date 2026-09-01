@@ -8,11 +8,7 @@ import (
 	"fmt"
 	"image"
 	"image/draw"
-	_ "image/gif"
-	_ "image/jpeg"
 	"image/png"
-	_ "golang.org/x/image/bmp"
-	_ "golang.org/x/image/webp"
 )
 
 const (
@@ -41,7 +37,7 @@ func Inscribe(cover []byte, message string, method string) (*InscribeResult, err
 		return nil, fmt.Errorf("only alpha method is supported for inscription (detection supports: alpha, palette, lsb.rgb, exif, raw)")
 	}
 
-	img, _, err := image.Decode(bytes.NewReader(cover))
+	img, _, err := DecodeImage(cover)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode image: %w", err)
 	}
@@ -94,12 +90,12 @@ func EmbedAlpha(img image.Image, payload []byte) (*image.RGBA, error) {
 	for _, b := range fullPayload {
 		for bitIdx := 0; bitIdx < 8; bitIdx++ {
 			bit := (b >> bitIdx) & 1
-			
+
 			// Get current pixel
 			offset := rgba.PixOffset(bounds.Min.X+(pixelIdx%width), bounds.Min.Y+(pixelIdx/width))
 			// Alpha is at offset + 3
 			rgba.Pix[offset+3] = (rgba.Pix[offset+3] & 0xFE) | bit
-			
+
 			pixelIdx++
 		}
 	}
@@ -182,30 +178,3 @@ func ExtractAlpha(img image.Image) ([]byte, error) {
 }
 
 // GetAlphaBits extracts all alpha LSB bits from the image.
-func GetAlphaBits(img image.Image, maxBits int) []uint8 {
-	bounds := img.Bounds()
-	width, height := bounds.Dx(), bounds.Dy()
-	numPixels := width * height
-
-	if maxBits <= 0 || maxBits > numPixels {
-		maxBits = numPixels
-	}
-
-	bits := make([]uint8, maxBits)
-	
-	if rgba, ok := img.(*image.RGBA); ok {
-		for i := 0; i < maxBits; i++ {
-			x := bounds.Min.X + (i % width)
-			y := bounds.Min.Y + (i / width)
-			bits[i] = rgba.Pix[rgba.PixOffset(x, y)+3] & 1
-		}
-	} else {
-		for i := 0; i < maxBits; i++ {
-			x := bounds.Min.X + (i % width)
-			y := bounds.Min.Y + (i / width)
-			_, _, _, a := img.At(x, y).RGBA()
-			bits[i] = uint8(a>>8) & 1
-		}
-	}
-	return bits
-}

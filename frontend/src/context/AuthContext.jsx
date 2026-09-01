@@ -1,11 +1,10 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useState } from 'react';
 import { initDB, getAuthState, setAuthState, clearAuthState, getWalletKeysFromDB, updateWalletKeyInDB, removeWalletKeyFromDB, removeStaleKeysFromDB } from '../utils/db';
 import { apiFetch } from '../utils/api';
 
 const AuthContext = createContext(null);
 
 const STALE_THRESHOLD_MS = 7 * 24 * 60 * 60 * 1000;
-const API_BASE = import.meta.env.VITE_API_BASE || '';
 
 export function AuthProvider({ children }) {
   const [isReady, setIsReady] = useState(false);

@@ -2,6 +2,7 @@ package ipfs
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -263,10 +264,438 @@ func TestDownloadEntry_SkipsExistingFlat(t *testing.T) {
 	}
 }
 
+func TestMirrorStatusIncludesWishTopic(t *testing.T) {
+	t.Setenv("IPFS_MIRROR_TOPIC", DefaultMirrorTopic)
+	t.Setenv("IPFS_WISH_TOPIC", DefaultWishTopic)
+
+	m := &Mirror{
+		cfg: MirrorConfig{
+			Enabled:    true,
+			Topic:      DefaultMirrorTopic,
+			UploadsDir: t.TempDir(),
+		},
+		peerID: "12D3KooWtestpeer",
+	}
+	st := m.Status()
+	if st.Topic != DefaultMirrorTopic {
+		t.Fatalf("topic=%q want %q", st.Topic, DefaultMirrorTopic)
+	}
+	if st.WishTopic != DefaultWishTopic {
+		t.Fatalf("wish_topic=%q want %q", st.WishTopic, DefaultWishTopic)
+	}
+	if len(st.Topics) != 2 {
+		t.Fatalf("topics=%v want both allowlisted names", st.Topics)
+	}
+	if st.Topics[0] != DefaultMirrorTopic || st.Topics[1] != DefaultWishTopic {
+		t.Fatalf("topics=%v want [%q %q]", st.Topics, DefaultMirrorTopic, DefaultWishTopic)
+	}
+}
+
+func TestLoadWishMirrorConfig(t *testing.T) {
+	t.Setenv("IPFS_MIRROR_TOPIC", DefaultMirrorTopic)
+	t.Setenv("IPFS_WISH_TOPIC", DefaultWishTopic)
+	t.Setenv("UPLOADS_DIR", t.TempDir())
+
+	uploads := LoadMirrorConfig()
+	if uploads.WishOnly || uploads.Topic != DefaultMirrorTopic {
+		t.Fatalf("uploads cfg: WishOnly=%v topic=%q", uploads.WishOnly, uploads.Topic)
+	}
+	if uploads.ManifestFileName != "stargate-uploads-manifest.json" {
+		t.Fatalf("uploads manifest=%q", uploads.ManifestFileName)
+	}
+
+	wishes := LoadWishMirrorConfig()
+	if !wishes.WishOnly || wishes.Topic != DefaultWishTopic {
+		t.Fatalf("wish cfg: WishOnly=%v topic=%q", wishes.WishOnly, wishes.Topic)
+	}
+	if wishes.ManifestFileName != "stargate-wishes-manifest.json" {
+		t.Fatalf("wish manifest=%q", wishes.ManifestFileName)
+	}
+	if wishes.UploadsDir != uploads.UploadsDir {
+		t.Fatalf("wish uploads dir %q != uploads %q", wishes.UploadsDir, uploads.UploadsDir)
+	}
+}
+
+func TestScanAndAdd_WishOnlyIncludesTrackedWishes(t *testing.T) {
+	uploads := t.TempDir()
+	storage := t.TempDir()
+	idx := filepath.Join(t.TempDir(), "wishes.json")
+	ResetWishIndexForTest(idx)
+	t.Cleanup(func() { ResetWishIndexForTest("") })
+
+	wishHash := testHash
+	durableHash := "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+
+	for _, hash := range []string{wishHash, durableHash} {
+		p := datadir.PartPath(uploads, hash)
+		if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("img-"+hash[:8]), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	TrackWish(wishHash, "", time.Unix(1_700_000_000, 0))
+
+	newMirror := func(wishOnly bool) *Mirror {
+		return &Mirror{
+			cfg: MirrorConfig{
+				UploadsDir: uploads,
+				MaxFiles:   100,
+				WishOnly:   wishOnly,
+			},
+			client:       &http.Client{Timeout: 2 * time.Second},
+			knownFiles:   make(map[string]fileState),
+			deletedFiles: make(map[string]bool),
+			ipfsClient: &Client{
+				apiURL:     "http://127.0.0.1:9",
+				client:     &http.Client{Timeout: 200 * time.Millisecond},
+				storageDir: storage,
+			},
+		}
+	}
+
+	wishMirror := newMirror(true)
+	if _, err := wishMirror.scanAndAdd(context.Background()); err != nil {
+		t.Fatalf("wish scanAndAdd: %v", err)
+	}
+	if _, ok := wishMirror.knownFiles[wishHash]; !ok {
+		t.Fatalf("wish mirror missing tracked wish; known=%v", keysOf(wishMirror.knownFiles))
+	}
+	if _, ok := wishMirror.knownFiles[durableHash]; ok {
+		t.Fatalf("wish mirror must not include durable file; known=%v", keysOf(wishMirror.knownFiles))
+	}
+
+	uploadsMirror := newMirror(false)
+	if _, err := uploadsMirror.scanAndAdd(context.Background()); err != nil {
+		t.Fatalf("uploads scanAndAdd: %v", err)
+	}
+	if _, ok := uploadsMirror.knownFiles[durableHash]; !ok {
+		t.Fatalf("uploads mirror missing durable file; known=%v", keysOf(uploadsMirror.knownFiles))
+	}
+	if _, ok := uploadsMirror.knownFiles[wishHash]; ok {
+		t.Fatalf("uploads mirror must skip tracked wish; known=%v", keysOf(uploadsMirror.knownFiles))
+	}
+
+	// After promotion, the wish leaves the wish inventory and joins uploads.
+	UntrackWish(wishHash)
+	if _, err := wishMirror.scanAndAdd(context.Background()); err != nil {
+		t.Fatalf("wish rescan: %v", err)
+	}
+	if _, ok := wishMirror.knownFiles[wishHash]; ok {
+		t.Fatalf("promoted wish still on wish mirror; known=%v", keysOf(wishMirror.knownFiles))
+	}
+	if _, err := uploadsMirror.scanAndAdd(context.Background()); err != nil {
+		t.Fatalf("uploads rescan: %v", err)
+	}
+	if _, ok := uploadsMirror.knownFiles[wishHash]; !ok {
+		t.Fatalf("promoted wish missing from uploads mirror; known=%v", keysOf(uploadsMirror.knownFiles))
+	}
+}
+
+func TestMergeMirrorStatus(t *testing.T) {
+	t.Setenv("IPFS_MIRROR_TOPIC", DefaultMirrorTopic)
+	t.Setenv("IPFS_WISH_TOPIC", DefaultWishTopic)
+
+	uploads := &Mirror{
+		cfg: MirrorConfig{
+			Enabled:    true,
+			Topic:      DefaultMirrorTopic,
+			UploadsDir: "/data/uploads",
+		},
+		peerID:        "12D3KooWuploads",
+		lastPublished: "bafyuploads",
+		knownFiles:    map[string]fileState{"aaa": {}},
+	}
+	wishes := &Mirror{
+		cfg: MirrorConfig{
+			Enabled:    true,
+			WishOnly:   true,
+			Topic:      DefaultWishTopic,
+			UploadsDir: "/data/uploads",
+		},
+		peerID:        "12D3KooWwishes",
+		lastPublished: "bafywishes",
+		knownFiles:    map[string]fileState{"bbb": {}, "ccc": {}},
+	}
+
+	st := MergeMirrorStatus(uploads, wishes)
+	if !st.Enabled || !st.WishEnabled {
+		t.Fatalf("enabled=%v wish_enabled=%v", st.Enabled, st.WishEnabled)
+	}
+	if st.Topic != DefaultMirrorTopic || st.WishTopic != DefaultWishTopic {
+		t.Fatalf("topics topic=%q wish_topic=%q", st.Topic, st.WishTopic)
+	}
+	if st.LastPublishedCID != "bafyuploads" || st.WishLastPublishedCID != "bafywishes" {
+		t.Fatalf("cids uploads=%q wishes=%q", st.LastPublishedCID, st.WishLastPublishedCID)
+	}
+	if st.KnownFiles != 1 || st.WishKnownFiles != 2 {
+		t.Fatalf("counts uploads=%d wishes=%d", st.KnownFiles, st.WishKnownFiles)
+	}
+	if st.PeerID != "12D3KooWuploads" {
+		t.Fatalf("peer_id=%q", st.PeerID)
+	}
+}
+
+func TestLogInboundRecordsWishStatus(t *testing.T) {
+	m := &Mirror{
+		cfg: MirrorConfig{
+			Enabled:  true,
+			WishOnly: true,
+			Topic:    DefaultWishTopic,
+		},
+	}
+	raw := `{"type":"stargate-wishes","manifest_cid":"bafkreihgiixc474642ixklagve7xmua6ipsy5hqsrjppgjkxi6xlgegpbi","origin":"12D3KooWBMrUnrLhcy6BLqAKv6aEvgVrP8qXvofVV4roQsDbrwyp","timestamp":1787782841}`
+	m.logInbound(PubsubInbound{
+		Data:         []byte(raw),
+		ReceivedFrom: "12D3KooWneighbor",
+		Publisher:    "12D3KooWBMrUnrLhcy6BLqAKv6aEvgVrP8qXvofVV4roQsDbrwyp",
+	}, raw, "bafkreihgiixc474642ixklagve7xmua6ipsy5hqsrjppgjkxi6xlgegpbi")
+
+	st := m.Status()
+	if st.WishLastInboundFrom != "12D3KooWneighbor" {
+		t.Fatalf("from=%q", st.WishLastInboundFrom)
+	}
+	if st.WishLastInboundPub != "12D3KooWBMrUnrLhcy6BLqAKv6aEvgVrP8qXvofVV4roQsDbrwyp" {
+		t.Fatalf("publisher=%q", st.WishLastInboundPub)
+	}
+	if st.WishLastInboundCID != "bafkreihgiixc474642ixklagve7xmua6ipsy5hqsrjppgjkxi6xlgegpbi" {
+		t.Fatalf("cid=%q", st.WishLastInboundCID)
+	}
+	if st.WishLastInboundOrigin != "12D3KooWBMrUnrLhcy6BLqAKv6aEvgVrP8qXvofVV4roQsDbrwyp" {
+		t.Fatalf("origin=%q", st.WishLastInboundOrigin)
+	}
+	if st.WishLastInboundAt == 0 {
+		t.Fatal("expected inbound timestamp")
+	}
+}
+
 func keysOf(m map[string]fileState) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
 		out = append(out, k)
 	}
 	return out
+}
+
+func TestManifestSnapshotStableAcrossWallClock(t *testing.T) {
+	m := &Mirror{
+		cfg:    MirrorConfig{ManifestVersion: 1},
+		peerID: "12D3KooWtest",
+		knownFiles: map[string]fileState{
+			"bbb": {CID: "bafybbb", Size: 20, ModTime: 200},
+			"aaa": {CID: "bafyaaa", Size: 10, ModTime: 100},
+		},
+	}
+
+	first := m.manifestSnapshot()
+	time.Sleep(15 * time.Millisecond)
+	second := m.manifestSnapshot()
+
+	if first.CreatedAt != 200 {
+		t.Fatalf("CreatedAt=%d want newest file mtime 200", first.CreatedAt)
+	}
+	if first.CreatedAt != second.CreatedAt {
+		t.Fatalf("CreatedAt rotated %d -> %d", first.CreatedAt, second.CreatedAt)
+	}
+	if len(first.Files) != 2 || first.Files[0].Path != "aaa" || first.Files[1].Path != "bbb" {
+		t.Fatalf("files not sorted by path: %+v", first.Files)
+	}
+
+	a, err := json.Marshal(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := json.Marshal(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(a) != string(b) {
+		t.Fatalf("snapshot not content-addressed:\n%s\n%s", a, b)
+	}
+}
+
+func TestProcessManifestRetriesMissingAfterIncomplete(t *testing.T) {
+	uploads := t.TempDir()
+	storage := t.TempDir()
+	client := &Client{
+		apiURL:     "http://127.0.0.1:9",
+		client:     &http.Client{Timeout: 200 * time.Millisecond},
+		storageDir: storage,
+	}
+	ctx := context.Background()
+	payload := []byte("nat-wish-bytes")
+	fileCID, err := client.AddBytes(ctx, "blob", payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	man := manifest{
+		Version:   1,
+		Origin:    "12D3nat",
+		CreatedAt: 100,
+		Files: []manifestEntry{{
+			Path:    testHash,
+			CID:     fileCID,
+			Size:    int64(len(payload)),
+			ModTime: 100,
+		}},
+	}
+	manBytes, err := json.Marshal(man)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manCID, err := client.AddBytes(ctx, "man", manBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m := &Mirror{
+		cfg:          MirrorConfig{UploadsDir: uploads},
+		client:       &http.Client{Timeout: 2 * time.Second},
+		knownFiles:   make(map[string]fileState),
+		deletedFiles: make(map[string]bool),
+		ingestByCID:  make(map[string]*remoteIngest),
+		ipfsClient:   client,
+	}
+
+	filePath := filepath.Join(storage, fileCID)
+	hidden := filePath + ".hidden"
+	if err := os.Rename(filePath, hidden); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := m.processManifest(ctx, manCID); err == nil {
+		t.Fatal("first pass must be incomplete when the file Cat fails")
+	}
+	if m.remoteIngestComplete(manCID) {
+		t.Fatal("failed download must not mark the CID complete")
+	}
+	m.mu.Lock()
+	st := m.ingestByCID[manCID]
+	m.mu.Unlock()
+	if st == nil || len(st.missing) != 1 || st.missing[0].CID != fileCID {
+		t.Fatalf("missing=%+v", st)
+	}
+
+	if err := m.processManifest(ctx, manCID); err == nil {
+		t.Fatal("retry without the object must stay incomplete")
+	}
+
+	if err := os.Rename(hidden, filePath); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.processManifest(ctx, manCID); err != nil {
+		t.Fatalf("second heartbeat: %v", err)
+	}
+	if !m.remoteIngestComplete(manCID) {
+		t.Fatal("successful retry must mark the CID complete")
+	}
+	target, ok := resolveMirrorWriteTarget(uploads, testHash)
+	if !ok {
+		t.Fatal("write target")
+	}
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(payload) {
+		t.Fatalf("downloaded %q", got)
+	}
+}
+
+func TestIngestRemoteManifestSkipsCompleteCID(t *testing.T) {
+	uploads := t.TempDir()
+	storage := t.TempDir()
+	client := &Client{
+		apiURL:     "http://127.0.0.1:9",
+		client:     &http.Client{Timeout: 200 * time.Millisecond},
+		storageDir: storage,
+	}
+	ctx := context.Background()
+	payload := []byte("already-have")
+	fileCID, err := client.AddBytes(ctx, "blob", payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	man := manifest{
+		Version:   1,
+		Origin:    "12D3nat",
+		CreatedAt: 100,
+		Files: []manifestEntry{{
+			Path:    testHash,
+			CID:     fileCID,
+			Size:    int64(len(payload)),
+			ModTime: 100,
+		}},
+	}
+	manBytes, err := json.Marshal(man)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manCID, err := client.AddBytes(ctx, "man", manBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m := &Mirror{
+		cfg:          MirrorConfig{UploadsDir: uploads},
+		client:       &http.Client{Timeout: 2 * time.Second},
+		knownFiles:   make(map[string]fileState),
+		deletedFiles: make(map[string]bool),
+		ingestByCID:  make(map[string]*remoteIngest),
+		ipfsClient:   client,
+	}
+	m.ingestRemoteManifest(ctx, manCID)
+	if !m.remoteIngestComplete(manCID) {
+		t.Fatal("first successful ingest must complete")
+	}
+	if m.lastSeenRemote != manCID {
+		t.Fatalf("lastSeenRemote=%q", m.lastSeenRemote)
+	}
+
+	target, ok := resolveMirrorWriteTarget(uploads, testHash)
+	if !ok {
+		t.Fatal("write target")
+	}
+	if err := os.Remove(target); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(storage, fileCID)); err != nil {
+		t.Fatal(err)
+	}
+
+	m.ingestRemoteManifest(ctx, manCID)
+	if _, err := os.Stat(target); err == nil {
+		t.Fatal("complete CID must not be fetched again")
+	}
+}
+
+func TestManifestSnapshotChangesWithInventory(t *testing.T) {
+	m := &Mirror{
+		cfg:    MirrorConfig{ManifestVersion: 1},
+		peerID: "12D3KooWtest",
+		knownFiles: map[string]fileState{
+			"aaa": {CID: "bafyaaa", Size: 10, ModTime: 100},
+		},
+	}
+	before, err := json.Marshal(m.manifestSnapshot())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m.mu.Lock()
+	m.knownFiles["aaa"] = fileState{CID: "bafyaaa-new", Size: 11, ModTime: 150}
+	m.mu.Unlock()
+
+	after, err := json.Marshal(m.manifestSnapshot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) == string(after) {
+		t.Fatal("snapshot ignored inventory change")
+	}
+	got := m.manifestSnapshot()
+	if got.CreatedAt != 150 {
+		t.Fatalf("CreatedAt=%d want 150 after mtime bump", got.CreatedAt)
+	}
 }

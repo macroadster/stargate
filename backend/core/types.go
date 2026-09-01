@@ -2,7 +2,6 @@ package core
 
 import (
 	"crypto/md5"
-	"encoding/json"
 	"fmt"
 	"time"
 )
@@ -59,13 +58,6 @@ type DirectImageScanResponse struct {
 	ImageInfo        map[string]interface{} `json:"image_info"`
 	ProcessingTimeMs float64                `json:"processing_time_ms"`
 	RequestID        string                 `json:"request_id"`
-}
-
-// BatchItem represents an item in a batch scan request
-type BatchItem struct {
-	Type          string `json:"type"` // "transaction" or "image"
-	TransactionID string `json:"transaction_id,omitempty"`
-	ImageData     string `json:"image_data,omitempty"` // base64 encoded
 }
 
 // BlockScanRequest represents a request to scan all transactions in a Bitcoin block
@@ -126,19 +118,6 @@ type SmartContractImage struct {
 	Metadata         map[string]interface{} `json:"metadata"`
 }
 
-// BlockWithCounts represents a block with comprehensive counting statistics
-type BlockWithCounts struct {
-	ID                 string               `json:"id"`
-	Height             int64                `json:"height"`
-	Timestamp          int64                `json:"timestamp"`
-	TxCount            int                  `json:"tx_count"`
-	Size               int                  `json:"size"`
-	InscriptionCount   int                  `json:"inscription_count"`
-	WitnessImageCount  int                  `json:"witness_image_count"`
-	SmartContractCount int                  `json:"smart_contract_count"`
-	SmartContracts     []SmartContractImage `json:"smart_contracts"`
-}
-
 // ExtractionResult represents the result of extracting a hidden message
 type ExtractionResult struct {
 	MessageFound      bool                   `json:"message_found"`
@@ -182,14 +161,14 @@ type BitcoinInfo struct {
 
 // InfoResponse represents the API information response
 type InfoResponse struct {
-	Name             string            `json:"name"`
-	Version          string            `json:"version"`
-	Description      string            `json:"description"`
-	SupportedFormats            []string          `json:"supported_formats"`
-	StegoMethods                []string          `json:"stego_methods"` // for detection/scanning (all 5 supported)
-	SupportedInscriptionMethod  string            `json:"supported_inscription_method"` // only "alpha" for new inscriptions
-	MaxImageSize                int               `json:"max_image_size"`
-	Endpoints                   map[string]string `json:"endpoints"`
+	Name                       string            `json:"name"`
+	Version                    string            `json:"version"`
+	Description                string            `json:"description"`
+	SupportedFormats           []string          `json:"supported_formats"`
+	StegoMethods               []string          `json:"stego_methods"`                // for detection/scanning (all 5 supported)
+	SupportedInscriptionMethod string            `json:"supported_inscription_method"` // only "alpha" for new inscriptions
+	MaxImageSize               int               `json:"max_image_size"`
+	Endpoints                  map[string]string `json:"endpoints"`
 }
 
 // TransactionInfo represents basic transaction information
@@ -226,25 +205,15 @@ type ErrorDetails struct {
 
 // Helper functions for creating responses
 
-func NewHealthResponse(status string, scanner ScannerInfo, bitcoin BitcoinInfo) HealthResponse {
-	return HealthResponse{
-		Status:    status,
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
-		Version:   "1.0.0",
-		Scanner:   scanner,
-		Bitcoin:   bitcoin,
-	}
-}
-
 func NewInfoResponse() InfoResponse {
 	return InfoResponse{
-		Name:                        "Starlight Bitcoin Steganography Scanner",
-		Version:                     "1.0.0",
-		Description:                 "AI-powered steganography detection for Bitcoin transaction images",
-		SupportedFormats:            []string{"png", "jpg", "jpeg", "gif", "bmp", "webp"},
-		StegoMethods:                []string{"alpha", "palette", "lsb.rgb", "exif", "raw"}, // supported for detection/scanning
-		SupportedInscriptionMethod:  "alpha", // only alpha supported for new inscriptions (detection supports all 5)
-		MaxImageSize:                10485760, // 10MB
+		Name:                       "Starlight Bitcoin Steganography Scanner",
+		Version:                    "1.0.0",
+		Description:                "AI-powered steganography detection for Bitcoin transaction images",
+		SupportedFormats:           []string{"png", "jpg", "jpeg", "gif", "bmp", "webp"},
+		StegoMethods:               []string{"alpha", "palette", "lsb.rgb", "exif", "raw"}, // supported for detection/scanning
+		SupportedInscriptionMethod: "alpha",                                                // only alpha supported for new inscriptions (detection supports all 5)
+		MaxImageSize:               10485760,                                               // 10MB
 		Endpoints: map[string]string{
 			"scan_tx":         "/scan/transaction",
 			"scan_image":      "/scan/image",
@@ -265,10 +234,6 @@ func NewErrorResponse(code, message, requestID string, details map[string]interf
 			RequestID: requestID,
 		},
 	}
-}
-
-func (e ErrorResponse) ToJSON() ([]byte, error) {
-	return json.Marshal(e)
 }
 
 // generateRequestID generates a unique request ID

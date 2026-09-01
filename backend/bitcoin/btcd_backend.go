@@ -11,7 +11,6 @@ import (
 	"sync"
 
 	"github.com/btcsuite/btcd/btcjson"
-	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/rpcclient"
@@ -67,22 +66,7 @@ func NewBtcdBackend(cfg BtcdRPCConfig) (*BtcdBackend, error) {
 }
 
 func chainParamsForNetwork(network string) *chaincfg.Params {
-	switch strings.ToLower(strings.TrimSpace(network)) {
-	case "mainnet", "main":
-		return &chaincfg.MainNetParams
-	case "testnet", "testnet3":
-		return &chaincfg.TestNet3Params
-	case "testnet4":
-		return &chaincfg.TestNet4Params
-	case "signet":
-		return &chaincfg.SigNetParams
-	case "simnet":
-		return &chaincfg.SimNetParams
-	case "regtest":
-		return &chaincfg.RegressionNetParams
-	default:
-		return &chaincfg.TestNet4Params
-	}
+	return NetworkParams(network)
 }
 
 func (b *BtcdBackend) Network() string { return b.network }
@@ -154,6 +138,12 @@ func (b *BtcdBackend) Synced(ctx context.Context) (bool, error) {
 		if info.Headers > info.Blocks+1 {
 			ch <- res{false, nil}
 			return
+		}
+		if n := minPeerCount(); n > 0 {
+			if peers, perr := c.GetPeerInfo(); perr == nil && len(peers) < n {
+				ch <- res{false, nil}
+				return
+			}
 		}
 		ch <- res{true, nil}
 	}()
@@ -354,11 +344,19 @@ func (b *BtcdBackend) NodeStatus(ctx context.Context) (map[string]any, error) {
 	out["size_on_disk"] = info.SizeOnDisk
 	if peers, err := c.GetPeerInfo(); err == nil {
 		out["peers"] = len(peers)
+		out["min_peers"] = minPeerCount()
+		if minPeerCount() > 0 && len(peers) < minPeerCount() {
+			out["synced"] = false
+			out["sync_note"] = "peer count below BTCD_MIN_PEERS (isolation / eclipse risk)"
+		}
 	}
-	synced, _ := b.Synced(ctx)
-	out["synced"] = synced
-	// Overlay external tip lag so health consumers see network lag even when
-	// local IBD is complete (see tip_lag.go).
+	if _, ok := out["synced"]; !ok {
+		synced, _ := b.Synced(ctx)
+		out["synced"] = synced
+	}
+	// Overlay external tip lag / hash mismatch so health consumers see
+	// network lag or a minority fork even when local IBD is complete.
+	// Read-only: never submit explorer blocks or invalidate based on this.
 	mergeTipLagIntoStatus(out)
 	return out, nil
 }
@@ -369,7 +367,7 @@ func (b *BtcdBackend) ListConfirmedUTXOs(address string) ([]AddressUTXO, error) 
 	if err != nil {
 		return nil, err
 	}
-	addr, err := btcutil.DecodeAddress(address, b.params)
+	addr, err := DecodeAddressForNetwork(address, b.params)
 	if err != nil {
 		return nil, fmt.Errorf("decode address: %w", err)
 	}
@@ -398,7 +396,7 @@ func (b *BtcdBackend) ListConfirmedUTXOs(address string) ([]AddressUTXO, error) 
 				continue
 			}
 			for _, vout := range tx.Vout {
-				if !voutPaysAddress(vout, address) {
+				if !voutPaysAddress(vout, address, b.params) {
 					continue
 				}
 				key := fmt.Sprintf("%s:%d", tx.Txid, vout.N)
@@ -438,7 +436,7 @@ func (b *BtcdBackend) ListConfirmedUTXOs(address string) ([]AddressUTXO, error) 
 	return utxos, nil
 }
 
-func voutPaysAddress(vout btcjson.Vout, address string) bool {
+func voutPaysAddress(vout btcjson.Vout, address string, params *chaincfg.Params) bool {
 	if vout.ScriptPubKey.Address == address {
 		return true
 	}
@@ -455,7 +453,10 @@ func voutPaysAddress(vout btcjson.Vout, address string) bool {
 	if err != nil {
 		return false
 	}
-	_, addrs, _, err := txscript.ExtractPkScriptAddrs(script, chainParamsForNetwork(GetCurrentNetwork()))
+	if params == nil {
+		params = CurrentNetworkParams()
+	}
+	_, addrs, _, err := txscript.ExtractPkScriptAddrs(script, params)
 	if err != nil {
 		return false
 	}

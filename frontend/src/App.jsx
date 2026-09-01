@@ -1,4 +1,4 @@
-import React, { Suspense, lazy, useState, useEffect, useRef } from 'react';
+import { Suspense, lazy, useState, useEffect, useRef } from 'react';
 import { Check, Copy, Github, Linkedin } from 'lucide-react';
 import { Routes, Route, useParams, useNavigate, useLocation } from 'react-router-dom';
 
@@ -24,7 +24,7 @@ const RouteFallback = () => (
 
 import { useBlocks } from './hooks/useBlocks';
 import { useInscriptions } from './hooks/useInscriptions';
-import { API_BASE, CONTENT_BASE } from './apiBase';
+import { CONTENT_BASE } from './apiBase';
 import { apiFetch } from './utils/api';
 
 import { useHorizontalScroll } from './hooks/useHorizontalScroll';

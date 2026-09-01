@@ -90,65 +90,6 @@ func BuildCommitmentSweepTx(client UTXOClient, params *chaincfg.Params, txid str
 }
 
 // BuildRegularSweepTx builds a regular sweep transaction (no commitment script)
-func BuildRegularSweepTx(client UTXOClient, params *chaincfg.Params, txid string, vout uint32, redeemScript, preimage []byte, dest btcutil.Address, feeRate int64) (*CommitmentSweepResult, error) {
-	if client == nil {
-		return nil, fmt.Errorf("mempool client required")
-	}
-	if len(redeemScript) == 0 {
-		return nil, fmt.Errorf("redeem script required")
-	}
-	if len(preimage) == 0 {
-		return nil, fmt.Errorf("preimage required")
-	}
-	if feeRate <= 0 {
-		feeRate = 1
-	}
-
-	// Get the output to sweep
-	msg, err := client.FetchTx(txid)
-	if err != nil {
-		return nil, fmt.Errorf("fetch sweep tx: %w", err)
-	}
-	if vout >= uint32(len(msg.TxOut)) {
-		return nil, fmt.Errorf("invalid vout %d for tx with %d outputs", vout, len(msg.TxOut))
-	}
-
-	output := msg.TxOut[vout]
-	if output == nil {
-		return nil, fmt.Errorf("sweep output vout %d not found in tx %s", vout, txid)
-	}
-
-	// Build regular sweep transaction (no commitment script needed)
-	outputValue := output.Value
-	inputVBytes := estimateRegularInputVBytes(redeemScript, preimage)
-	vbytes := int64(10) + int64(len(inputVBytes)) + 34
-	fee := vbytes * feeRate
-	valueAfterFee := outputValue - fee
-	if valueAfterFee < 546 {
-		return nil, fmt.Errorf("output below dust after fee: %d sats", valueAfterFee)
-	}
-
-	hash, err := chainhash.NewHashFromStr(txid)
-	if err != nil {
-		return nil, fmt.Errorf("invalid txid: %w", err)
-	}
-
-	tx := wire.NewMsgTx(1)
-	tx.AddTxIn(&wire.TxIn{PreviousOutPoint: wire.OutPoint{Hash: *hash, Index: vout}})
-	tx.AddTxOut(&wire.TxOut{Value: valueAfterFee, PkScript: redeemScript})
-
-	var buf bytes.Buffer
-	if err := tx.Serialize(&buf); err != nil {
-		return nil, fmt.Errorf("serialize tx: %w", err)
-	}
-
-	return &CommitmentSweepResult{
-		RawTxHex:   hex.EncodeToString(buf.Bytes()),
-		FeeSats:    fee,
-		InputSats:  output.Value,
-		OutputSats: valueAfterFee,
-	}, nil
-}
 
 func estimateRegularInputVBytes(script []byte, preimage []byte) []byte {
 	// Regular sweep doesn't need commitment script, just the preimage
@@ -276,15 +217,6 @@ func BuildRecommitSweepTx(client UTXOClient, params *chaincfg.Params, txid strin
 		P2WSHAddr:        productAddr.EncodeAddress(),
 		Vout:             0, // single output tx
 	}, nil
-}
-
-func buildCommitmentP2WSHScript(params *chaincfg.Params, redeemScript []byte) ([]byte, error) {
-	hash := sha256.Sum256(redeemScript)
-	addr, err := btcutil.NewAddressWitnessScriptHash(hash[:], params)
-	if err != nil {
-		return nil, fmt.Errorf("commitment address: %w", err)
-	}
-	return txscript.PayToAddrScript(addr)
 }
 
 func estimateHashlockInputVBytes(redeemScript, preimage []byte) int64 {

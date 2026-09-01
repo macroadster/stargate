@@ -16,6 +16,8 @@ import (
 	"stargate-backend/starlight"
 	"stargate-backend/storage/auth"
 	scstore "stargate-backend/storage/smart_contract"
+
+	"github.com/btcsuite/btcd/chaincfg"
 )
 
 type allowAllValidator struct{}
@@ -47,6 +49,32 @@ func (m *multiKeyWalletValidator) Validate(key string) bool {
 func (m *multiKeyWalletValidator) Get(key string) (auth.APIKey, bool) {
 	wallet, ok := m.wallets[key]
 	return auth.APIKey{Key: key, Wallet: wallet}, ok
+}
+
+func TestNewHTTPMCPServerUsesConfiguredNetwork(t *testing.T) {
+	cases := []struct {
+		env  string
+		want string
+		net  string
+	}{
+		{"", "testnet4", chaincfg.TestNet4Params.Name},
+		{"testnet4", "testnet4", chaincfg.TestNet4Params.Name},
+		{"signet", "signet", chaincfg.SigNetParams.Name},
+		{"mainnet", "mainnet", chaincfg.MainNetParams.Name},
+		{"testnet", "testnet", chaincfg.TestNet3Params.Name},
+	}
+	for _, tc := range cases {
+		t.Run(tc.want+"/"+tc.env, func(t *testing.T) {
+			t.Setenv("BITCOIN_NETWORK", tc.env)
+			server := NewHTTPMCPServer(nil, nil, nil, nil, nil, nil, auth.NewChallengeStore(10*time.Minute))
+			if server.network != tc.want {
+				t.Fatalf("network=%q want %q", server.network, tc.want)
+			}
+			if server.chainParams().Name != tc.net {
+				t.Fatalf("params=%q want %q", server.chainParams().Name, tc.net)
+			}
+		})
+	}
 }
 
 func TestHTTPMCPServer(t *testing.T) {
@@ -111,6 +139,71 @@ func TestHTTPMCPServer(t *testing.T) {
 	})
 }
 
+func TestListSubmissionsFiltersAndPagination(t *testing.T) {
+	store := scstore.NewMemoryStore(72 * time.Hour)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+	contract := smart_contract.Contract{ContractID: "wish-sublist1", Title: "C1", Status: "active", CreatedAt: now}
+	task1 := smart_contract.Task{TaskID: "task-sub-1", ContractID: contract.ContractID, Title: "T1", Status: "submitted"}
+	task2 := smart_contract.Task{TaskID: "task-sub-2", ContractID: contract.ContractID, Title: "T2", Status: "submitted"}
+	if err := store.UpsertContractWithTasks(ctx, contract, []smart_contract.Task{task1, task2}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	_ = store.SyncClaim(ctx, smart_contract.Claim{ClaimID: "claim-sub-1", TaskID: task1.TaskID, Status: "submitted", CreatedAt: now})
+	_ = store.SyncClaim(ctx, smart_contract.Claim{ClaimID: "claim-sub-2", TaskID: task2.TaskID, Status: "submitted", CreatedAt: now})
+	_ = store.SyncSubmission(ctx, smart_contract.Submission{SubmissionID: "sub-a", ClaimID: "claim-sub-1", TaskID: task1.TaskID, Status: "pending_review", CreatedAt: now.Add(2 * time.Second)})
+	_ = store.SyncSubmission(ctx, smart_contract.Submission{SubmissionID: "sub-b", ClaimID: "claim-sub-2", TaskID: task2.TaskID, Status: "approved", CreatedAt: now.Add(time.Second)})
+
+	server := NewHTTPMCPServer(store, allowAllValidator{}, nil, &services.IngestionService{}, &starlight.ScannerManager{}, nil, auth.NewChallengeStore(10*time.Minute))
+
+	call := func(args map[string]interface{}) map[string]interface{} {
+		t.Helper()
+		body, _ := json.Marshal(MCPRequest{Tool: "list_submissions", Arguments: args})
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("POST", "/mcp/call", bytes.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		server.handleToolCall(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("status %d: %s", w.Code, w.Body.String())
+		}
+		var resp MCPResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if !resp.Success {
+			t.Fatalf("error: %s", resp.Error)
+		}
+		raw, _ := json.Marshal(resp.Result)
+		var out map[string]interface{}
+		if err := json.Unmarshal(raw, &out); err != nil {
+			t.Fatalf("result: %v", err)
+		}
+		return out
+	}
+
+	page := call(map[string]interface{}{"contract_id": "sublist1", "limit": 1, "offset": 0})
+	if page["total"] != float64(1) || page["has_more"] != true || page["limit"] != float64(1) {
+		t.Fatalf("unexpected page meta: %#v", page)
+	}
+	if page["next_cursor"] == "" || page["next_cursor_date"] == "" {
+		t.Fatalf("expected next cursors: %#v", page)
+	}
+	subs, _ := page["submissions"].([]interface{})
+	if len(subs) != 1 {
+		t.Fatalf("expected 1 submission, got %#v", page["submissions"])
+	}
+
+	approved := call(map[string]interface{}{"status": "approved", "task_id": "task-sub-2"})
+	if approved["total"] != float64(1) {
+		t.Fatalf("approved filter: %#v", approved)
+	}
+
+	pending := call(map[string]interface{}{"status": "pending_review"})
+	if pending["total"] != float64(1) {
+		t.Fatalf("pending_review filter: %#v", pending)
+	}
+}
+
 func TestClaimTaskUsesAPIKeyWallet(t *testing.T) {
 	store := scstore.NewMemoryStore(72 * time.Hour)
 	ingestionSvc := &services.IngestionService{}
@@ -166,6 +259,70 @@ func TestClaimTaskUsesAPIKeyWallet(t *testing.T) {
 	}
 	if updated.MerkleProof == nil || updated.MerkleProof.ContractorWallet != wallet {
 		t.Fatalf("expected merkle proof wallet %s, got %#v", wallet, updated.MerkleProof)
+	}
+}
+
+func TestClaimTaskAmountSatsRespectsWishBudget(t *testing.T) {
+	store := scstore.NewMemoryStore(72 * time.Hour)
+	ingestionSvc := &services.IngestionService{}
+	scannerManager := &starlight.ScannerManager{}
+	apiKey := "test-api-key"
+	wallet := "tb1qwallettest000000000000000000000000000000000"
+	server := NewHTTPMCPServer(store, walletValidator{wallet: wallet}, nil, ingestionSvc, scannerManager, nil, auth.NewChallengeStore(10*time.Minute))
+
+	contract := smart_contract.Contract{
+		ContractID:      "wish-claim-amount",
+		Title:           "Wish",
+		TotalBudgetSats: 1000,
+		Status:          "active",
+	}
+	task := smart_contract.Task{
+		TaskID:     "wish-claim-amount-task-1",
+		ContractID: "wish-claim-amount",
+		Title:      "Do work",
+		BudgetSats: 400,
+		Status:     "available",
+	}
+	if err := store.UpsertContractWithTasks(context.Background(), contract, []smart_contract.Task{task}); err != nil {
+		t.Fatal(err)
+	}
+
+	call := func(amount interface{}) MCPResponse {
+		req := MCPRequest{
+			Tool: "claim_task",
+			Arguments: map[string]interface{}{
+				"task_id":     task.TaskID,
+				"amount_sats": amount,
+			},
+		}
+		body, _ := json.Marshal(req)
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("POST", "/mcp/call", bytes.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("X-API-Key", apiKey)
+		server.handleToolCall(w, r)
+		var resp MCPResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("decode: %v body=%s", err, w.Body.String())
+		}
+		return resp
+	}
+
+	over := call(float64(1001))
+	if over.Success {
+		t.Fatalf("expected over-budget claim to fail: %#v", over)
+	}
+
+	ok := call(float64(600))
+	if !ok.Success {
+		t.Fatalf("expected 600 sat claim to succeed: %#v", ok)
+	}
+	updated, err := store.GetTask(task.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.BudgetSats != 600 {
+		t.Fatalf("budget=%d", updated.BudgetSats)
 	}
 }
 

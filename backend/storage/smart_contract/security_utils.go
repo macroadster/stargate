@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
-	"unicode"
 
 	"stargate-backend/core/smart_contract"
 )
@@ -340,16 +339,21 @@ func ValidateProposalInput(proposal *smart_contract.Proposal) error {
 
 	// Validate tasks if present
 	if len(proposal.Tasks) > 0 {
+		var taskBudgetSum int64
 		for i, task := range proposal.Tasks {
 			// Each task must have a budget
 			if task.BudgetSats <= 0 {
 				return fmt.Errorf("task %d (%s) must have a positive budget_sats", i+1, task.Title)
 			}
+			taskBudgetSum += task.BudgetSats
 
 			// Validate task input fields
 			if err := ValidateTaskInput(task); err != nil {
 				return fmt.Errorf("task %d validation failed: %v", i+1, err)
 			}
+		}
+		if proposal.BudgetSats > 0 && taskBudgetSum > proposal.BudgetSats {
+			return fmt.Errorf("task budgets %d exceed proposal budget %d", taskBudgetSum, proposal.BudgetSats)
 		}
 	}
 
@@ -410,73 +414,8 @@ func ValidateTaskInput(task smart_contract.Task) error {
 }
 
 // IsValidStatus checks if a status is valid for the given entity type
-func IsValidStatus(status string, entityType string) bool {
-	if status == "" {
-		return false
-	}
-
-	status = strings.ToLower(status)
-
-	switch entityType {
-	case "proposal":
-		validStatuses := []string{"pending", "approved", "rejected", "published"}
-		for _, valid := range validStatuses {
-			if status == valid {
-				return true
-			}
-		}
-	case "task":
-		validStatuses := []string{"available", "claimed", "submitted", "approved", "published", "completed", "rejected"}
-		for _, valid := range validStatuses {
-			if status == valid {
-				return true
-			}
-		}
-	case "claim":
-		validStatuses := []string{"active", "submitted", "complete", "expired", "rejected"}
-		for _, valid := range validStatuses {
-			if status == valid {
-				return true
-			}
-		}
-	case "submission":
-		validStatuses := []string{"pending_review", "reviewed", "approved", "rejected"}
-		for _, valid := range validStatuses {
-			if status == valid {
-				return true
-			}
-		}
-	}
-
-	return false
-}
 
 // SanitizeFileName sanitizes file names to prevent path traversal
-func SanitizeFileName(filename string) string {
-	if filename == "" {
-		return filename
-	}
-
-	// Remove path separators
-	filename = strings.ReplaceAll(filename, "/", "_")
-	filename = strings.ReplaceAll(filename, "\\", "_")
-	filename = strings.ReplaceAll(filename, "..", "_")
-
-	// Remove control characters
-	result := ""
-	for _, r := range filename {
-		if unicode.IsGraphic(r) && r != '\x00' {
-			result += string(r)
-		}
-	}
-
-	// Limit length
-	if len(result) > 255 {
-		result = result[:255]
-	}
-
-	return result
-}
 
 // ValidateAPIKeyFormat validates API key format
 func ValidateAPIKeyFormat(key string) error {

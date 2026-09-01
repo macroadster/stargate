@@ -10,14 +10,14 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/skip2/go-qrcode"
 	"stargate-backend/core"
 	"stargate-backend/models"
+
+	"github.com/skip2/go-qrcode"
 )
 
 // InscriptionService handles inscription-related business logic
@@ -58,72 +58,6 @@ func (s *InscriptionService) loadInscriptions() ([]models.InscriptionRequest, er
 	}
 
 	return inscriptions, nil
-}
-
-// CreateInscription creates a new inscription
-func (s *InscriptionService) CreateInscription(req models.InscribeRequest, file io.Reader, filename string) (*models.InscriptionRequest, error) {
-	// Load existing inscriptions without holding the write lock
-	inscriptions, err := s.loadInscriptions()
-	if err != nil {
-		return nil, err
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	// Parse price
-	price, _ := strconv.ParseFloat(req.Price, 64)
-
-	// Create uploads directory if it doesn't exist
-	uploadsDir := os.Getenv("UPLOADS_DIR")
-	if err := os.MkdirAll(uploadsDir, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create uploads directory: %w", err)
-	}
-
-	// Generate filename and handle file
-	timestamp := time.Now().Unix()
-	var imagePath string
-
-	// Generate filename and handle file
-	if file != nil && filename != "" {
-		imageFilename := fmt.Sprintf("%d_%s", timestamp, filename)
-		imagePath = filepath.Join(uploadsDir, imageFilename)
-
-		// Save file
-		dst, err := os.Create(imagePath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to save file: %w", err)
-		}
-		defer dst.Close()
-
-		if _, err := io.Copy(dst, file); err != nil {
-			return nil, fmt.Errorf("failed to copy file: %w", err)
-		}
-	} else {
-		imagePath = "" // No image provided
-	}
-
-	// Create inscription
-	inscription := &models.InscriptionRequest{
-		ImageData: imagePath,
-		Text:      req.Text,
-		Price:     price,
-		Address:   req.Address,
-		Timestamp: timestamp,
-		ID:        fmt.Sprintf("pending_%d", timestamp),
-		Status:    "pending",
-	}
-
-	// Add to inscriptions
-	inscriptions = append(inscriptions, *inscription)
-
-	// Save to file
-	if err := s.saveInscriptions(inscriptions); err != nil {
-		return nil, err
-	}
-
-	log.Printf("Created inscription: %s, image: %s", inscription.ID, imagePath)
-	return inscription, nil
 }
 
 // SearchInscriptions searches inscriptions by query
@@ -286,7 +220,6 @@ func (s *SmartContractService) CreateContract(req models.CreateContractRequest) 
 	// Add to contracts
 	contracts = append(contracts, *contract)
 
-	// Save to file
 	if err := s.saveContracts(contracts); err != nil {
 		return nil, err
 	}
@@ -403,19 +336,19 @@ func (ps *PeerService) Register(peerID string) {
 	defer ps.mu.Unlock()
 	ps.peers[peerID] = time.Now()
 }
+
 // Unregister removes a peer from the registry
 func (ps *PeerService) Unregister(peerID string) {
-        ps.mu.Lock()
-        defer ps.mu.Unlock()
-        delete(ps.peers, peerID)
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	delete(ps.peers, peerID)
 }
-
 
 // GetPeers returns a list of currently active peer IDs
 func (ps *PeerService) GetPeers() []string {
 	ps.mu.RLock()
 	defer ps.mu.RUnlock()
-	
+
 	peerIDs := make([]string, 0, len(ps.peers))
 	for id := range ps.peers {
 		peerIDs = append(peerIDs, id)

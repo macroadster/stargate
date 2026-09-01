@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -345,7 +346,7 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 						}
 					}
 					if bm.sweepStore != nil {
-						_ = bm.sweepStore.ConfirmContract(context.Background(), normalizedWish, int(blockHeight), tx.TxID)
+						bm.maybeConfirmContract(normalizedWish, tx.TxID, blockHeight)
 						bm.updateTaskFundingProofsFromTx(normalizedWish, tx, blockHeight)
 						bm.confirmContractTasks(normalizedWish, tx.TxID, blockHeight)
 						// Now that the contract is confirmed, reconcile again
@@ -467,9 +468,8 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 	return smartContracts
 }
 
-// confirmContractTasks marks task proofs as confirmed for the given contract.
-// This is the new-style path for OP_RETURN transactions where donation is paid
-// directly — no sweeping is needed.
+// confirmContractTasks records the funding tx on task proofs. Proofs stay
+// provisional until SettlementReady (N confirmations, no tip-hash mismatch).
 func (bm *BlockMonitor) confirmContractTasks(contractID, txid string, blockHeight int64) {
 	if bm.sweepStore == nil || strings.TrimSpace(contractID) == "" || strings.TrimSpace(txid) == "" {
 		return
@@ -491,18 +491,37 @@ func (bm *BlockMonitor) confirmContractTasks(contractID, txid string, blockHeigh
 		if proof.TxID == "" {
 			proof.TxID = txid
 		}
-		if proof.ConfirmationStatus != "confirmed" {
-			now := time.Now()
+		if proof.BlockHeight == 0 {
+			proof.BlockHeight = blockHeight
+		}
+		now := time.Now()
+		if proof.SeenAt.IsZero() {
+			proof.SeenAt = now
+		}
+		// Mark sweep as not needed — donation was paid directly in the PSBT.
+		if proof.SweepStatus == "" {
+			proof.SweepStatus = "direct"
+		}
+		if proof.ConfirmationStatus == "confirmed" {
+			continue
+		}
+		if bm.settlementReady(proof.BlockHeight) {
 			proof.ConfirmationStatus = "confirmed"
 			proof.ConfirmedAt = &now
-			proof.BlockHeight = blockHeight
-			// Mark sweep as not needed — donation was paid directly in the PSBT.
-			proof.SweepStatus = "direct"
 			if err := bm.sweepStore.UpdateTaskProof(context.Background(), task.TaskID, proof); err != nil {
 				log.Printf("oracle reconcile: failed to confirm proof for %s: %v", task.TaskID, err)
 			} else {
-				log.Printf("oracle reconcile: confirmed task %s via OP_RETURN (direct donation, no sweep needed)", task.TaskID)
+				log.Printf("oracle reconcile: confirmed task %s after %d confirmations (direct donation, no sweep needed)",
+					task.TaskID, SettlementConfirmations())
 			}
+			continue
+		}
+		proof.ConfirmationStatus = "provisional"
+		if err := bm.sweepStore.UpdateTaskProof(context.Background(), task.TaskID, proof); err != nil {
+			log.Printf("oracle reconcile: failed to record provisional proof for %s: %v", task.TaskID, err)
+		} else {
+			log.Printf("oracle reconcile: task %s provisional at height %d (need %d confirmations)",
+				task.TaskID, proof.BlockHeight, SettlementConfirmations())
 		}
 	}
 }
@@ -570,14 +589,16 @@ func (bm *BlockMonitor) updateTaskFundingProofsFromTx(contractID string, tx Tran
 			proof.BlockHeight = blockHeight
 			proof.FundingAddress = addr
 			proof.FundedAmountSats = output.Value
-			if proof.ConfirmationStatus == "" || proof.ConfirmationStatus == "provisional" {
-				proof.ConfirmationStatus = "confirmed"
-			}
-			if proof.ConfirmedAt == nil {
-				proof.ConfirmedAt = &now
-			}
 			if proof.SeenAt.IsZero() {
 				proof.SeenAt = now
+			}
+			if bm.settlementReady(blockHeight) {
+				proof.ConfirmationStatus = "confirmed"
+				if proof.ConfirmedAt == nil {
+					proof.ConfirmedAt = &now
+				}
+			} else if proof.ConfirmationStatus != "confirmed" {
+				proof.ConfirmationStatus = "provisional"
 			}
 			if proof.ContractorWallet == "" {
 				proof.ContractorWallet = addr
@@ -656,9 +677,11 @@ func (bm *BlockMonitor) ensureMatchedContract(contractID string, match *services
 		}
 	}
 
-	// Try to confirm the contract first — if the row already exists,
-	// ConfirmContract will update it and we're done.
-	_ = bm.sweepStore.ConfirmContract(ctx, normalizedID, int(blockHeight), txID)
+	// Confirm only after settlement depth. If the row already exists,
+	// ConfirmContract will update it; otherwise we upsert below.
+	if bm.settlementReady(blockHeight) {
+		_ = bm.sweepStore.ConfirmContract(ctx, normalizedID, int(blockHeight), txID)
+	}
 
 	// Check if the row actually exists now — ConfirmContract doesn't return
 	// "not found" explicitly, it just updates 0 rows.
@@ -714,13 +737,21 @@ func (bm *BlockMonitor) ensureMatchedContract(contractID string, match *services
 		stegoImageURL = fmt.Sprintf("/api/block-image/%d/%s", blockHeight, cid)
 	}
 
+	status := "funded"
+	var confirmedAt *time.Time
+	var confirmedHeight *int
+	if bm.settlementReady(blockHeight) {
+		status = "confirmed"
+		confirmedAt = &now
+		confirmedHeight = &bh
+	}
 	c := smart_contract.Contract{
 		ContractID:           normalizedID,
 		Title:                title,
-		Status:               "confirmed",
+		Status:               status,
 		StegoImageURL:        stegoImageURL,
-		ConfirmedBlockHeight: &bh,
-		ConfirmedAt:          &now,
+		ConfirmedBlockHeight: confirmedHeight,
+		ConfirmedAt:          confirmedAt,
 		Metadata:             meta,
 		CreatedAt:            now,
 	}
@@ -728,6 +759,187 @@ func (bm *BlockMonitor) ensureMatchedContract(contractID string, match *services
 		log.Printf("oracle reconcile: ensureMatchedContract %s: %v", normalizedID, err)
 	} else {
 		log.Printf("oracle reconcile: ensured matched contract %s in MCP store", normalizedID)
+	}
+}
+
+func (bm *BlockMonitor) settlementReady(blockHeight int64) bool {
+	if blockHeight <= 0 {
+		return false
+	}
+	tip, err := bm.getCurrentHeightFromBlockchainInfo()
+	if err != nil || tip <= 0 {
+		return false
+	}
+	return SettlementReady(tip, blockHeight)
+}
+
+func (bm *BlockMonitor) maybeConfirmContract(contractID, txid string, blockHeight int64) {
+	if bm.sweepStore == nil || strings.TrimSpace(contractID) == "" {
+		return
+	}
+	if !bm.settlementReady(blockHeight) {
+		return
+	}
+	if err := bm.sweepStore.ConfirmContract(context.Background(), contractID, int(blockHeight), txid); err != nil {
+		log.Printf("oracle reconcile: ConfirmContract %s: %v", contractID, err)
+	}
+}
+
+// promoteProvisionalProofs upgrades provisional task proofs once they have
+// enough confirmations and the local tip is not on a conflicting fork.
+// Pages all tasks (no 14-day SeenAt cutoff) so recovered proofs still promote.
+func (bm *BlockMonitor) promoteProvisionalProofs(tip int64) {
+	if bm.sweepStore == nil || tip <= 0 || SettlementBlocked() {
+		return
+	}
+	need := SettlementConfirmations()
+	const page = 200
+	for offset := 0; ; offset += page {
+		tasks, err := bm.sweepStore.ListTasks(smart_contract.TaskFilter{
+			Limit:  page,
+			Offset: offset,
+		})
+		if err != nil {
+			log.Printf("oracle reconcile: promote provisional: list tasks: %v", err)
+			return
+		}
+		if len(tasks) == 0 {
+			return
+		}
+		for _, task := range tasks {
+			proof := task.MerkleProof
+			if proof == nil {
+				continue
+			}
+			if !strings.EqualFold(strings.TrimSpace(proof.ConfirmationStatus), "provisional") {
+				continue
+			}
+			if proof.BlockHeight <= 0 || strings.TrimSpace(proof.TxID) == "" {
+				continue
+			}
+			if !SettlementReady(tip, proof.BlockHeight) {
+				continue
+			}
+			now := time.Now()
+			proof.ConfirmationStatus = "confirmed"
+			proof.ConfirmedAt = &now
+			if err := bm.sweepStore.UpdateTaskProof(context.Background(), task.TaskID, proof); err != nil {
+				log.Printf("oracle reconcile: promote provisional %s: %v", task.TaskID, err)
+				continue
+			}
+			bm.maybeConfirmContract(task.ContractID, proof.TxID, proof.BlockHeight)
+			log.Printf("oracle reconcile: promoted task %s to confirmed (height=%d tip=%d need=%d)",
+				task.TaskID, proof.BlockHeight, tip, need)
+		}
+		if len(tasks) < page {
+			return
+		}
+	}
+}
+
+func contractFundingHeight(c smart_contract.Contract) int64 {
+	if c.ConfirmedBlockHeight != nil && *c.ConfirmedBlockHeight > 0 {
+		return int64(*c.ConfirmedBlockHeight)
+	}
+	if c.Metadata == nil {
+		return 0
+	}
+	switch v := c.Metadata["confirmed_height"].(type) {
+	case int64:
+		return v
+	case int:
+		return int64(v)
+	case int32:
+		return int64(v)
+	case float64:
+		return int64(v)
+	default:
+		s := strings.TrimSpace(stringFromAny(v))
+		if s == "" {
+			return 0
+		}
+		n, err := strconv.ParseInt(s, 10, 64)
+		if err != nil {
+			return 0
+		}
+		return n
+	}
+}
+
+func contractFundingTxID(c smart_contract.Contract) string {
+	if c.Metadata == nil {
+		return ""
+	}
+	return strings.TrimSpace(stringFromAny(c.Metadata["confirmed_txid"]))
+}
+
+func contractStegoHash(c smart_contract.Contract) string {
+	if c.Metadata == nil {
+		return ""
+	}
+	for _, k := range []string{"stego_contract_id", "stego_hash", "stego_image_cid"} {
+		if s := strings.TrimSpace(stringFromAny(c.Metadata[k])); s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+// promoteFundedContracts confirms funded rows once their funding height has
+// N confirmations, then re-runs stego/sandbox reconcile.
+func (bm *BlockMonitor) promoteFundedContracts(tip int64) {
+	if tip <= 0 || SettlementBlocked() {
+		return
+	}
+	cl, ok := bm.sweepStore.(contractLister)
+	if !ok || cl == nil {
+		return
+	}
+	const page = 200
+	offset := 0
+	for {
+		contracts, err := cl.ListContracts(smart_contract.ContractFilter{
+			Status: "funded",
+			Limit:  page,
+			Offset: offset,
+		})
+		if err != nil {
+			log.Printf("oracle reconcile: promote funded: list contracts: %v", err)
+			return
+		}
+		if len(contracts) == 0 {
+			return
+		}
+		confirmed := 0
+		for _, c := range contracts {
+			if !strings.EqualFold(strings.TrimSpace(c.Status), "funded") {
+				continue
+			}
+			h := contractFundingHeight(c)
+			if h <= 0 || !SettlementReady(tip, h) {
+				continue
+			}
+			txid := contractFundingTxID(c)
+			if err := bm.sweepStore.ConfirmContract(context.Background(), c.ContractID, int(h), txid); err != nil {
+				log.Printf("oracle reconcile: promote funded ConfirmContract %s: %v", c.ContractID, err)
+				continue
+			}
+			confirmed++
+			if stego := contractStegoHash(c); stego != "" {
+				bm.reconcileOnChainArtifacts(c.ContractID, stego)
+			}
+			log.Printf("oracle reconcile: promoted funded contract %s to confirmed (height=%d tip=%d)",
+				c.ContractID, h, tip)
+		}
+		if len(contracts) < page {
+			return
+		}
+		// Confirmed rows leave the funded set, so incrementing offset would
+		// skip remaining funded that slid to index 0. Advance only when this
+		// full page confirmed none.
+		if confirmed == 0 {
+			offset += page
+		}
 	}
 }
 

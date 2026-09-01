@@ -45,11 +45,26 @@ STARGATE_AGENT_WORKER_ENABLED=true
 # IPFS_MIRROR_ENABLED=true
 #
 # IPFS bootstrap (default when unset: starlight-ai.freemyip.com).
-# Peer ID is discovered over HTTP so server restarts that rotate identity still work.
+# This node's PeerID is persisted at $STARGATE_DATA_DIR/ipfs_identity.key
+# (override with IPFS_IDENTITY_FILE) so identity is stable across restarts.
+# Remote bootstrap Peer IDs are still discovered over HTTP when the
+# multiaddr does not include /p2p/<PeerID>.
 # IPFS_EMBEDDED_BOOTSTRAP=starlight-ai.freemyip.com   # default if unset
 # IPFS_EMBEDDED_BOOTSTRAP=none                        # private mesh only (mDNS)
 # IPFS_EMBEDDED_BOOTSTRAP=public                      # Protocol Labs DHT (CPU-heavy)
 # IPFS_EMBEDDED_BOOTSTRAP=/dns4/host/tcp/4001/p2p/12D3KooW…  # fixed multiaddr
+#
+# Inscribed wishes (no PSBT yet) are file-mirrored on IPFS_WISH_TOPIC
+# (default stargate-wishes), separate from the durable uploads mirror
+# (IPFS_MIRROR_TOPIC, default stargate-uploads). Both publish a periodic
+# manifest so NAT/relay peers can pull files. Unengaged wishes are
+# unpinned and deleted after IPFS_WISH_TTL (default 168h / 7 days).
+# GET /api/ipfs-mirror/status reports topic (uploads), wish_topic,
+# topics (both), and wish-mirror inventory. Peers use that JSON to
+# discover this node's Peer ID.
+# IPFS_WISH_TOPIC=stargate-wishes
+# IPFS_WISH_TTL=168h
+# IPFS_WISH_GC_INTERVAL_SEC=3600
 ```
 
 Verify:

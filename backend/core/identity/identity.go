@@ -54,16 +54,6 @@ func IsPixelHash(s string) bool {
 
 // ContractIDFromVisibleHash returns the canonical wish-prefixed contract ID when
 // the input is a bare pixel hash; otherwise returns the trimmed input.
-func ContractIDFromVisibleHash(hashOrID string) string {
-	h := strings.TrimSpace(hashOrID)
-	if h == "" {
-		return ""
-	}
-	if IsPixelHash(h) || IsPixelHash(Normalize(h)) {
-		return ToWishID(h)
-	}
-	return h
-}
 
 // CandidateIDs returns unique identifiers to try when resolving contracts/proposals
 // from a visible hash and/or ingestion id (bare and wish- prefixed forms).
@@ -99,19 +89,3 @@ func CandidateIDs(visible, ingestionID string) []string {
 }
 
 // ExpandWishVariants returns id and its wish-/bare variants (for UI/API matching).
-func ExpandWishVariants(id string) []string {
-	id = strings.TrimSpace(id)
-	if id == "" {
-		return nil
-	}
-	out := []string{id}
-	n := Normalize(id)
-	if n != id {
-		out = append(out, n)
-	}
-	wish := ToWishID(id)
-	if wish != id {
-		out = append(out, wish)
-	}
-	return out
-}

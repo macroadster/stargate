@@ -40,7 +40,7 @@ type Store interface {
 	UpdateProposalMetadata(ctx context.Context, id string, updates map[string]interface{}) error
 	ApproveProposal(ctx context.Context, id string) error
 	PublishProposal(ctx context.Context, id string) error
-	ListSubmissions(ctx context.Context, taskIDs []string) ([]smart_contract.Submission, error)
+	ListSubmissions(ctx context.Context, filter smart_contract.SubmissionFilter) ([]smart_contract.Submission, error)
 	UpdateSubmissionStatus(ctx context.Context, submissionID, status, reviewerNotes, rejectionType string) error
 	UpdateSubmission(ctx context.Context, sub smart_contract.Submission) error
 	DeleteWish(ctx context.Context, visiblePixelHash string) error

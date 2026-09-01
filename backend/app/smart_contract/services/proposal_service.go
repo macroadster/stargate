@@ -52,17 +52,17 @@ type ProposalListQuery struct {
 	ContractID       string
 	Limit            int
 	Offset           int
+	Cursor           string
+	CursorDate       string
+	CursorType       string
 	IncludeConfirmed bool
 }
 
 // ProposalListResult is a paginated proposal list with submissions.
 type ProposalListResult struct {
 	Proposals   []smart_contract.Proposal
-	Total       int
-	HasMore     bool
-	Limit       int
-	Offset      int
 	Submissions []smart_contract.Submission
+	smart_contract.Page
 }
 
 // ProposalService encapsulates proposal domain operations.
@@ -95,17 +95,10 @@ func NewProposalService(
 }
 
 // SetRecorder updates the event sink.
-func (s *ProposalService) SetRecorder(record EventRecorder) { s.record = record }
 
 // SetPublishTasks wires task publishing (typically EventService.PublishProposalTasks).
-func (s *ProposalService) SetPublishTasks(fn func(ctx context.Context, proposalID string) error) {
-	s.publishTasks = fn
-}
 
 // SetArchiveWish wires wish archival after approval.
-func (s *ProposalService) SetArchiveWish(fn func(ctx context.Context, visibleHash string)) {
-	s.archiveWish = fn
-}
 
 func (s *ProposalService) emit(evt smart_contract.Event) {
 	if s.record != nil {
@@ -263,7 +256,8 @@ func (s *ProposalService) Create(ctx context.Context, body ProposalCreateInput) 
 	if body.Status == "" {
 		body.Status = "pending"
 	}
-	if body.BudgetSats == 0 {
+	omittedBudget := body.BudgetSats == 0
+	if omittedBudget {
 		body.BudgetSats = scstore.DefaultBudgetSats()
 	}
 	if body.Metadata == nil {
@@ -299,8 +293,16 @@ func (s *ProposalService) Create(ctx context.Context, body ProposalCreateInput) 
 		return nil, 0, Fail(http.StatusBadRequest, "contract_id must match visible_pixel_hash for wish proposals")
 	}
 	wishID := "wish-" + visiblePixelHash
-	if _, err := s.store.GetContract(wishID); err != nil {
+	wish, err := scstore.LookupContract(s.store, wishID)
+	if err != nil {
 		return nil, 0, Fail(http.StatusNotFound, "wish not found for visible_pixel_hash")
+	}
+	if wishBudget := scstore.WishBudgetFromContract(wish); wishBudget > 0 {
+		if omittedBudget {
+			body.BudgetSats = wishBudget
+		} else if body.BudgetSats > wishBudget {
+			return nil, 0, Fail(http.StatusBadRequest, fmt.Sprintf("proposal budget_sats %d exceeds original wish budget %d", body.BudgetSats, wishBudget))
+		}
 	}
 	for i := range body.Tasks {
 		if body.Tasks[i].TaskID == "" {
@@ -423,27 +425,26 @@ func (s *ProposalService) Update(ctx context.Context, id string, body ProposalUp
 
 // List returns paginated proposals with optional filtering.
 func (s *ProposalService) List(ctx context.Context, q ProposalListQuery) (*ProposalListResult, error) {
-	countFilter := smart_contract.ProposalFilter{
-		Status: q.Status, Skills: q.Skills, MinBudget: q.MinBudget, ContractID: q.ContractID,
-	}
-	allProposals, err := s.store.ListProposals(ctx, countFilter)
-	if err != nil {
-		return nil, Fail(http.StatusInternalServerError, err.Error())
-	}
-	if !q.IncludeConfirmed {
-		allProposals = filterListedProposals(allProposals)
-	}
-	total := len(allProposals)
+	pageQ := smart_contract.NewPageQuery(q.Limit, q.Offset, q.Cursor, q.CursorDate, q.CursorType, smart_contract.DefaultPageLimit)
 	filter := smart_contract.ProposalFilter{
 		Status: q.Status, Skills: q.Skills, MinBudget: q.MinBudget, ContractID: q.ContractID,
-		MaxResults: q.Limit, Offset: q.Offset,
 	}
+	pageQ.ApplyToProposal(&filter)
+	filter.Limit = smart_contract.OverFetchLimit(pageQ.Limit)
+	filter.MaxResults = filter.Limit
 	proposals, err := s.store.ListProposals(ctx, filter)
 	if err != nil {
 		return nil, Fail(http.StatusInternalServerError, err.Error())
 	}
+	fetched := len(proposals)
 	if !q.IncludeConfirmed {
 		proposals = filterListedProposals(proposals)
+	}
+	proposals = smart_contract.TrimWindow(proposals, pageQ.Limit)
+	lastID, lastDate := "", time.Time{}
+	if n := len(proposals); n > 0 {
+		lastID = proposals[n-1].ID
+		lastDate = proposals[n-1].CreatedAt
 	}
 	taskByID := map[string]smart_contract.Task{}
 	if tasks, err := s.store.ListTasks(smart_contract.TaskFilter{}); err == nil {
@@ -461,10 +462,14 @@ func (s *ProposalService) List(ctx context.Context, q ProposalListQuery) (*Propo
 			}
 		}
 	}
-	subs, _ := s.store.ListSubmissions(ctx, taskIDs)
+	var subs []smart_contract.Submission
+	if len(taskIDs) > 0 {
+		subs, _ = s.store.ListSubmissions(ctx, smart_contract.SubmissionFilter{TaskIDs: taskIDs})
+	}
 	return &ProposalListResult{
-		Proposals: proposals, Total: total, HasMore: q.Offset+len(proposals) < total,
-		Limit: q.Limit, Offset: q.Offset, Submissions: subs,
+		Proposals:   proposals,
+		Submissions: subs,
+		Page:        smart_contract.BuildPage(pageQ.Limit, pageQ.Offset, fetched, len(proposals), lastID, lastDate),
 	}, nil
 }
 

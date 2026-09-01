@@ -3,7 +3,6 @@ package smart_contract
 import (
 	"context"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 )
@@ -69,14 +68,6 @@ func (rl *RateLimiter) CheckRateLimit(clientID string, cost int) bool {
 }
 
 // SecurityContext tracks security state for a request
-type SecurityContext struct {
-	ClientID     string
-	APIKey       string
-	RequestCount int
-	LastRequest  time.Time
-	Suspicious   bool
-	Blocked      bool
-}
 
 // SecurityManager handles security policies and monitoring
 type SecurityManager struct {
@@ -126,77 +117,15 @@ func (sm *SecurityManager) ValidateRequest(ctx context.Context, clientID, apiKey
 }
 
 // MarkSuspicious marks an IP as suspicious
-func (sm *SecurityManager) MarkSuspicious(ipAddr string) {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
-	sm.suspiciousIPs[ipAddr] = time.Now()
-
-	// Auto-block if too many suspicious activities
-	suspiciousCount := 0
-	for ip := range sm.suspiciousIPs {
-		if ip == ipAddr {
-			suspiciousCount++
-		}
-	}
-
-	if suspiciousCount > 5 {
-		sm.blockedIPs[ipAddr] = time.Now()
-	}
-}
 
 // GetSecurityStatus returns security status for monitoring
-func (sm *SecurityManager) GetSecurityStatus() map[string]interface{} {
-	sm.mu.RLock()
-	defer sm.mu.RUnlock()
-
-	return map[string]interface{}{
-		"suspicious_ips": len(sm.suspiciousIPs),
-		"blocked_ips":    len(sm.blockedIPs),
-		"active_clients": len(sm.rateLimiter.clients),
-	}
-}
 
 // Global security manager instance
 var GlobalSecurityManager = NewSecurityManager()
 
 // SecurityMiddleware provides security validation for API calls
-func SecurityMiddleware(ctx context.Context, clientID, apiKey, ipAddr string) error {
-	return GlobalSecurityManager.ValidateRequest(ctx, clientID, apiKey, ipAddr)
-}
 
 // ValidateAPIRequest validates common API request parameters
-func ValidateAPIRequest(method, endpoint string, headers map[string]string) error {
-	// Validate HTTP method
-	allowedMethods := []string{"GET", "POST", "PUT", "DELETE", "PATCH"}
-	methodValid := false
-	for _, allowed := range allowedMethods {
-		if method == allowed {
-			methodValid = true
-			break
-		}
-	}
-	if !methodValid {
-		return fmt.Errorf("HTTP method %s not allowed", method)
-	}
-
-	// Validate endpoint doesn't contain path traversal
-	if strings.Contains(endpoint, "..") || strings.Contains(endpoint, "%2e%2e") {
-		return fmt.Errorf("path traversal detected in endpoint")
-	}
-
-	// Check for suspicious headers
-	suspiciousHeaders := []string{"x-forwarded-for", "x-real-ip", "x-originating-ip"}
-	for _, header := range suspiciousHeaders {
-		if value, exists := headers[header]; exists {
-			if strings.Contains(value, "127.0.0.1") || strings.Contains(value, "::1") {
-				return fmt.Errorf("suspicious header value detected")
-			}
-		}
-	}
-
-	return nil
-}
 
 // AuditLogger logs security events
 type AuditLogger struct {
@@ -244,21 +173,8 @@ func (al *AuditLogger) LogEvent(eventType, clientID, ipAddr, description, severi
 }
 
 // GetRecentEvents returns recent audit events
-func (al *AuditLogger) GetRecentEvents(limit int) []AuditEvent {
-	al.mu.RLock()
-	defer al.mu.RUnlock()
-
-	if limit > len(al.events) {
-		limit = len(al.events)
-	}
-
-	return al.events[len(al.events)-limit:]
-}
 
 // Global audit logger
 var GlobalAuditLogger = NewAuditLogger()
 
 // LogSecurityEvent logs a security event
-func LogSecurityEvent(eventType, clientID, ipAddr, description, severity string) {
-	GlobalAuditLogger.LogEvent(eventType, clientID, ipAddr, description, severity)
-}

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"stargate-backend/core/smart_contract"
+	auth "stargate-backend/storage/auth"
 )
 
 func (s *Server) handleTasks(w http.ResponseWriter, r *http.Request) {
@@ -18,32 +19,51 @@ func (s *Server) handleTasks(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		if path == "" {
+			q := r.URL.Query()
+			pageQ := smart_contract.NewPageQuery(
+				intFromQuery(r, "limit", 0),
+				intFromQuery(r, "offset", 0),
+				q.Get("cursor"),
+				q.Get("cursor_date"),
+				q.Get("cursor_type"),
+				smart_contract.DefaultPageLimit,
+			)
 			filter := smart_contract.TaskFilter{
-				Skills:        splitCSV(r.URL.Query().Get("skills")),
-				MaxDifficulty: r.URL.Query().Get("max_difficulty"),
-				Status:        r.URL.Query().Get("status"),
-				Limit:         intFromQuery(r, "limit", 50),
-				Offset:        intFromQuery(r, "offset", 0),
+				Skills:        splitCSV(q.Get("skills")),
+				MaxDifficulty: q.Get("max_difficulty"),
+				Status:        q.Get("status"),
 				MinBudgetSats: int64FromQuery(r, "min_budget_sats", 0),
-				ContractID:    r.URL.Query().Get("contract_id"),
-				ClaimedBy:     r.URL.Query().Get("claimed_by"),
+				ContractID:    q.Get("contract_id"),
+				ClaimedBy:     q.Get("claimed_by"),
 			}
+			pageQ.ApplyToTask(&filter)
+			filter.Limit = smart_contract.OverFetchLimit(pageQ.Limit)
 			tasks, err := s.store.ListTasks(filter)
 			if err != nil {
 				Error(w, http.StatusInternalServerError, err.Error())
 				return
 			}
+			if tasks == nil {
+				tasks = []smart_contract.Task{}
+			}
+			fetched := len(tasks)
+			tasks = smart_contract.TrimWindow(tasks, pageQ.Limit)
+			lastID := ""
+			if n := len(tasks); n > 0 {
+				lastID = tasks[n-1].TaskID
+			}
+			page := smart_contract.BuildPage(pageQ.Limit, pageQ.Offset, fetched, len(tasks), lastID, time.Time{})
 			// hydrate submissions for these tasks
 			var taskIDs []string
 			for _, t := range tasks {
 				taskIDs = append(taskIDs, t.TaskID)
 			}
-			subs, _ := s.store.ListSubmissions(r.Context(), taskIDs)
-			JSON(w, http.StatusOK, map[string]interface{}{
-				"tasks":         tasks,
-				"total_matches": len(tasks),
-				"submissions":   subs,
-			})
+			subs, _ := s.store.ListSubmissions(r.Context(), smart_contract.SubmissionFilter{TaskIDs: taskIDs})
+			body := page.Fields()
+			body["tasks"] = tasks
+			body["total_matches"] = page.Total
+			body["submissions"] = subs
+			JSON(w, http.StatusOK, body)
 			return
 		}
 
@@ -102,10 +122,16 @@ func (s *Server) handleClaimTask(w http.ResponseWriter, r *http.Request, taskID 
 	}
 	var body struct {
 		EstimatedCompletion *time.Time `json:"estimated_completion,omitempty"`
+		AmountSats          *int64     `json:"amount_sats,omitempty"`
+		BudgetSats          *int64     `json:"budget_sats,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		Error(w, http.StatusBadRequest, "invalid json")
 		return
+	}
+	amountSats := body.AmountSats
+	if amountSats == nil {
+		amountSats = body.BudgetSats
 	}
 
 	if task, err := s.store.GetTask(taskID); err == nil {
@@ -130,7 +156,7 @@ func (s *Server) handleClaimTask(w http.ResponseWriter, r *http.Request, taskID 
 
 	walletAddress := ""
 	if s.apiKeys != nil {
-		key := r.Header.Get("X-API-Key")
+		key := auth.RequestAPIKey(r)
 		if rec, ok := s.apiKeys.Get(key); ok {
 			walletAddress = strings.TrimSpace(rec.Wallet)
 		}
@@ -140,13 +166,13 @@ func (s *Server) handleClaimTask(w http.ResponseWriter, r *http.Request, taskID 
 		return
 	}
 
-	claim, err := s.claimSvc.ClaimTask(taskID, walletAddress, body.EstimatedCompletion)
+	result, err := s.claimSvc.ClaimTaskWithAmount(r.Context(), taskID, walletAddress, body.EstimatedCompletion, amountSats)
 	if err != nil {
 		if err == ErrTaskNotFound {
 			// Attempt to publish tasks lazily from proposals that reference this task id, then retry.
 			if s.tryPublishTasksForTaskID(r.Context(), taskID) == nil {
-				if retry, retryErr := s.claimSvc.ClaimTask(taskID, walletAddress, body.EstimatedCompletion); retryErr == nil {
-					claim = retry
+				if retry, retryErr := s.claimSvc.ClaimTaskWithAmount(r.Context(), taskID, walletAddress, body.EstimatedCompletion, amountSats); retryErr == nil {
+					result = retry
 					err = nil
 				} else {
 					err = retryErr
@@ -168,12 +194,18 @@ func (s *Server) handleClaimTask(w http.ResponseWriter, r *http.Request, taskID 
 		return
 	}
 claim_success:
+	claim := result.Claim
 
 	JSON(w, http.StatusOK, map[string]interface{}{
-		"success":    true,
-		"claim_id":   claim.ClaimID,
-		"expires_at": claim.ExpiresAt,
-		"message":    "Task reserved. Submit work before expiration.",
+		"success":          true,
+		"claim_id":         claim.ClaimID,
+		"expires_at":       claim.ExpiresAt,
+		"message":          "Task reserved. Submit work before expiration.",
+		"amount_sats":      result.AmountSats,
+		"wish_budget_sats": result.WishBudgetSats,
+		"allocated_sats":   result.AllocatedSats,
+		"remaining_sats":   result.RemainingSats,
+		"claimable_sats":   result.ClaimableSats,
 	})
 
 	s.recordEvent(smart_contract.Event{
@@ -314,15 +346,10 @@ func (s *Server) handleDiscover(w http.ResponseWriter, r *http.Request) {
 		},
 		"authentication": map[string]string{
 			"type":        "api_key",
-			"header_name": "X-API-Key",
+			"header_name": "Authorization: Bearer or X-API-Key",
 			"required":    fmt.Sprintf("%t", s.apiKeys != nil),
 		},
-		"rate_limits": map[string]interface{}{
-			"enabled":       false,
-			"notes":         "rate limiting planned; not enforced by default",
-			"recommended":   "10 rps claim, 5 rps submit (see roadmap)",
-			"burst_example": 100,
-		},
+		"rate_limits": s.actionLimiter.Discover(),
 	}
 	JSON(w, http.StatusOK, resp)
 }

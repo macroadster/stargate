@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
-	"log"
 	"net/http"
-	"strings"
 	"time"
+
+	"stargate-backend/middleware"
 )
 
 // checkRateLimit checks if the API key has exceeded rate limit (100 requests per minute)
@@ -32,42 +32,30 @@ func (h *HTTPMCPServer) checkRateLimit(key string) bool {
 	return true
 }
 
-func (h *HTTPMCPServer) authWrap(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("AUDIT: %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
-		// Check API key if configured
-		if h.apiKeyStore != nil {
-			key := r.Header.Get("X-API-Key")
-			if key == "" {
-				// Check Authorization: Bearer <key>
-				auth := r.Header.Get("Authorization")
-				if strings.HasPrefix(auth, "Bearer ") {
-					key = strings.TrimPrefix(auth, "Bearer ")
-				}
-			}
-			if key == "" && h.allowUnauthMCP(r) {
-				next(w, r)
-				return
-			}
-			if key == "" {
-				log.Printf("AUDIT: Missing API key for %s %s", r.Method, r.URL.Path)
-				h.writeHTTPError(w, http.StatusUnauthorized, "API_KEY_REQUIRED", "API key required", "Send X-API-Key or Authorization: Bearer <key>.")
-				return
-			}
-			if !h.apiKeyStore.Validate(key) {
-				log.Printf("AUDIT: Invalid API key for %s %s", r.Method, r.URL.Path)
-				h.writeHTTPError(w, http.StatusForbidden, "API_KEY_INVALID", "Invalid API key", "Double-check the X-API-Key header value.")
-				return
-			}
-			// Check rate limit
-			if !h.checkRateLimit(key) {
-				log.Printf("AUDIT: Rate limit exceeded for key %s on %s %s", key, r.Method, r.URL.Path)
-				h.writeHTTPError(w, http.StatusTooManyRequests, "RATE_LIMITED", "Rate limit exceeded", "Retry after a short delay.")
-				return
-			}
-			log.Printf("AUDIT: Authenticated request for key %s on %s %s", key, r.Method, r.URL.Path)
-		}
-		next(w, r)
+// applyActionLimit counts claim/submit/review once at the MCP HTTP edge.
+// callToolDirect / store calls do not call Allow, so they cannot double-count.
+// Returns false when the request is denied (headers already written; caller writes the body).
+func (h *HTTPMCPServer) applyActionLimit(w http.ResponseWriter, r *http.Request, tool string) (*http.Request, bool) {
+	action, ok := middleware.ActionForTool(tool)
+	if !ok || h.actionLimiter == nil || r == nil || middleware.ActionLimitApplied(r.Context()) {
+		return r, true
+	}
+	key := middleware.IdentityKey(r, h.apiKeyStore, tool)
+	res := h.actionLimiter.Allow(key, action)
+	middleware.WriteRateLimitHeaders(w, res)
+	if !res.Allowed {
+		return r, false
+	}
+	return r.WithContext(middleware.MarkActionLimited(r.Context())), true
+}
+
+func actionLimitError(tool string) *ToolError {
+	return &ToolError{
+		Code:       ErrCodeRateLimited,
+		Message:    "Rate limit exceeded. Retry after a short delay.",
+		Tool:       tool,
+		HttpStatus: http.StatusTooManyRequests,
+		Hint:       "Shared claim/submit/review limit across /api/smart_contract and /mcp/call.",
 	}
 }
 

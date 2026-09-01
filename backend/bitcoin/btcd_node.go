@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -37,18 +36,22 @@ type EmbeddedBtcd struct {
 
 // NodeConfig configures the managed btcd process and RPC connection.
 type NodeConfig struct {
-	Mode       string // managed | external | off
-	Bin        string
-	DataDir    string
-	Network    string
-	RPCHost    string // host:port for RPC (listen and dial)
-	P2PListen  string // e.g. 0.0.0.0:48333
-	RPCUser    string
-	RPCPass    string
-	TxIndex    bool
-	AddrIndex  bool
-	ExtraArgs  []string
+	Mode         string // managed | external | off
+	Bin          string
+	DataDir      string
+	Network      string
+	RPCHost      string // host:port for RPC (listen and dial)
+	P2PListen    string // e.g. 127.0.0.1:48333 (default is localhost, not 0.0.0.0)
+	RPCUser      string
+	RPCPass      string
+	TxIndex      bool
+	AddrIndex    bool
+	ExtraArgs    []string
 	AllowMainnet bool
+	NoListen     bool     // --nolisten (no inbound P2P)
+	Connect      []string // exclusive --connect= peers (also implies nolisten)
+	AddPeer      []string // --addpeer= extra outbound peers
+	MinPeers     int      // health floor; see BTCD_MIN_PEERS
 }
 
 // LoadNodeConfigFromEnv builds NodeConfig from environment variables.
@@ -96,6 +99,7 @@ func LoadNodeConfigFromEnv() NodeConfig {
 	}
 
 	allowMain := envBoolDefault("BTCD_ALLOW_MAINNET", false)
+	noListen := envBoolDefault("BTCD_NOLISTEN", false)
 
 	return NodeConfig{
 		Mode:         mode,
@@ -110,7 +114,36 @@ func LoadNodeConfigFromEnv() NodeConfig {
 		AddrIndex:    addrIndex,
 		ExtraArgs:    extra,
 		AllowMainnet: allowMain,
+		NoListen:     noListen,
+		Connect:      splitPeerList(os.Getenv("BTCD_CONNECT")),
+		AddPeer:      splitPeerList(os.Getenv("BTCD_ADDPEER")),
+		MinPeers:     minPeerCount(),
 	}
+}
+
+// splitPeerList parses comma- or whitespace-separated host:port peers.
+func splitPeerList(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	fields := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == ';' || r == ' ' || r == '\t' || r == '\n'
+	})
+	var out []string
+	seen := make(map[string]struct{}, len(fields))
+	for _, f := range fields {
+		f = strings.TrimSpace(f)
+		if f == "" {
+			continue
+		}
+		if _, ok := seen[f]; ok {
+			continue
+		}
+		seen[f] = struct{}{}
+		out = append(out, f)
+	}
+	return out
 }
 
 func envBoolDefault(key string, def bool) bool {
@@ -146,19 +179,21 @@ func defaultRPCHost(network string) string {
 }
 
 func defaultP2PListen(network string) string {
+	// Bind localhost only so a public interface is not an inbound eclipse surface.
+	// Operators who want inbound set BTCD_P2P_LISTEN=0.0.0.0:<port>.
 	switch network {
 	case "mainnet", "main":
-		return "0.0.0.0:8333"
+		return "127.0.0.1:8333"
 	case "testnet", "testnet3":
-		return "0.0.0.0:18333"
+		return "127.0.0.1:18333"
 	case "signet":
-		return "0.0.0.0:38333"
+		return "127.0.0.1:38333"
 	case "simnet":
-		return "0.0.0.0:18555"
+		return "127.0.0.1:18555"
 	case "regtest":
-		return "0.0.0.0:18444"
+		return "127.0.0.1:18444"
 	default:
-		return "0.0.0.0:48333"
+		return "127.0.0.1:48333"
 	}
 }
 
@@ -253,6 +288,15 @@ func (n *EmbeddedBtcd) Start(ctx context.Context) error {
 		return err
 	}
 
+	// Must run while btcd is not holding ffldb. A prior invalidateblock can
+	// leave Valid+Invalid set together; reconsiderblock is then a no-op and
+	// the node never connects the next block.
+	if n, err := ClearStickyInvalidFlags(cfg.DataDir, cfg.Network); err != nil {
+		log.Printf("btcd: index repair skipped: %v", err)
+	} else {
+		log.Printf("btcd: cleared %d known-invalid index flag(s) before start", n)
+	}
+
 	bin, err := exec.LookPath(cfg.Bin)
 	if err != nil {
 		return fmt.Errorf("btcd binary not found (%s): %w — install btcd or set BTCD_BIN / BTCD_MODE=external", cfg.Bin, err)
@@ -275,25 +319,7 @@ func (n *EmbeddedBtcd) Start(ctx context.Context) error {
 		}
 	}
 
-	args := []string{
-		"--datadir=" + cfg.DataDir,
-		"--rpclisten=" + rpcListen,
-		"--rpcuser=" + cfg.RPCUser,
-		"--rpcpass=" + cfg.RPCPass,
-		"--notls",
-		"--listen=" + cfg.P2PListen,
-	}
-	if netFlag != "" {
-		args = append(args, netFlag)
-	}
-	if cfg.TxIndex {
-		args = append(args, "--txindex")
-	}
-	if cfg.AddrIndex {
-		args = append(args, "--addrindex")
-	}
-	// Explicitly do not enable mining.
-	args = append(args, cfg.ExtraArgs...)
+	args := cfg.btcdProcessArgs(rpcListen, netFlag)
 
 	// Detach process lifetime from the caller's start context so RPC wait
 	// cancellation does not kill btcd.
@@ -331,9 +357,45 @@ func (n *EmbeddedBtcd) Start(ctx context.Context) error {
 		}
 	}()
 
-	log.Printf("btcd: started pid=%d network=%s datadir=%s rpc=%s p2p=%s txindex=%v addrindex=%v mining=false",
-		cmd.Process.Pid, cfg.Network, cfg.DataDir, rpcListen, cfg.P2PListen, cfg.TxIndex, cfg.AddrIndex)
+	log.Printf("btcd: started pid=%d network=%s datadir=%s rpc=%s p2p=%s nolisten=%v connect=%d addpeer=%d txindex=%v addrindex=%v mining=false",
+		cmd.Process.Pid, cfg.Network, cfg.DataDir, rpcListen, cfg.P2PListen, cfg.NoListen || len(cfg.Connect) > 0, len(cfg.Connect), len(cfg.AddPeer), cfg.TxIndex, cfg.AddrIndex)
 	return nil
+}
+
+// btcdProcessArgs builds the managed btcd argv (excluding the binary).
+// Extracted for tests. Never enables mining. Never submits explorer blocks.
+func (cfg NodeConfig) btcdProcessArgs(rpcListen, netFlag string) []string {
+	args := []string{
+		"--datadir=" + cfg.DataDir,
+		"--rpclisten=" + rpcListen,
+		"--rpcuser=" + cfg.RPCUser,
+		"--rpcpass=" + cfg.RPCPass,
+		"--notls",
+	}
+	// --connect pins the peer set (eclipse-resistant if those peers are trusted).
+	// Inbound is disabled whenever we pin, or when BTCD_NOLISTEN is set.
+	if cfg.NoListen || len(cfg.Connect) > 0 {
+		args = append(args, "--nolisten")
+	} else if cfg.P2PListen != "" {
+		args = append(args, "--listen="+cfg.P2PListen)
+	}
+	for _, p := range cfg.Connect {
+		args = append(args, "--connect="+p)
+	}
+	for _, p := range cfg.AddPeer {
+		args = append(args, "--addpeer="+p)
+	}
+	if netFlag != "" {
+		args = append(args, netFlag)
+	}
+	if cfg.TxIndex {
+		args = append(args, "--txindex")
+	}
+	if cfg.AddrIndex {
+		args = append(args, "--addrindex")
+	}
+	args = append(args, cfg.ExtraArgs...)
+	return args
 }
 
 func pipeLog(prefix string, r io.Reader) {
@@ -497,7 +559,8 @@ func logSyncProgress(ctx context.Context, rt *ChainRuntime) {
 	if rt == nil || rt.Backend == nil {
 		return
 	}
-	backend := rt.Backend
+	// First check immediately so settlement is not unprotected for 30s.
+	logSyncOnce(ctx, rt)
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -505,43 +568,79 @@ func logSyncProgress(ctx context.Context, rt *ChainRuntime) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			st, err := backend.NodeStatus(ctx)
-			if err != nil {
-				log.Printf("btcd sync: status error: %v", err)
-				continue
-			}
-			log.Printf("btcd sync: blocks=%v headers=%v peers=%v ibd=%v progress=%v synced=%v",
-				st["blocks"], st["headers"], st["peers"], st["initial_block_download"],
-				st["verification_progress"], st["synced"])
-
-			// External tip lag check (mempool.space / blockstream reference).
-			// Surfaces stuck nodes that report local synced=true but lag the network
-			// (e.g. future-timestamp block rejects on testnet4).
-			if tipLagExternalCheckEnabled() {
-				localTip, _ := toInt64(st["blocks"])
-				if localTip == 0 {
-					if h, herr := backend.GetTipHeight(ctx); herr == nil {
-						localTip = h
-					}
-				}
-				cctx, cancel := context.WithTimeout(ctx, 12*time.Second)
-				extTip, extErr := FetchExternalTipHeight(cctx, backend.Network())
-				cancel()
-				lag := EvaluateTipLag(localTip, extTip, tipLagThreshold(), extErr, time.Now())
-				if extErr != nil {
-					log.Printf("btcd sync: external tip check failed: %v", extErr)
-				} else if lag.Lagging {
-					log.Printf("btcd sync: TIP LAG local=%d external=%d lag=%d threshold=%d duration=%s — node may be stuck (future-timestamp rejects or peer stall)",
-						lag.LocalTip, lag.ExternalTip, lag.LagBlocks, lag.Threshold, lag.LagDuration)
-					if rt.Mode == BtcdModeManaged {
-						maybeRestartManagedBtcd(ctx, rt.Node, lag)
-					}
-				} else if lag.LagBlocks > 0 {
-					log.Printf("btcd sync: external tip=%d local=%d lag=%d (within threshold=%d)",
-						lag.ExternalTip, lag.LocalTip, lag.LagBlocks, lag.Threshold)
-				}
-			}
+			logSyncOnce(ctx, rt)
 		}
+	}
+}
+
+func logSyncOnce(ctx context.Context, rt *ChainRuntime) {
+	if rt == nil || rt.Backend == nil {
+		return
+	}
+	backend := rt.Backend
+	st, err := backend.NodeStatus(ctx)
+	if err != nil {
+		log.Printf("btcd sync: status error: %v", err)
+		return
+	}
+	log.Printf("btcd sync: blocks=%v headers=%v peers=%v ibd=%v progress=%v synced=%v",
+		st["blocks"], st["headers"], st["peers"], st["initial_block_download"],
+		st["verification_progress"], st["synced"])
+
+	// External tip lag + hash check (mempool.space / blockstream reference).
+	// Surfaces stuck nodes and same-height minority forks. Read-only:
+	// never submit explorer blocks or invalidateblock from this path.
+	if !tipLagExternalCheckEnabled() || localOnlyChain(backend.Network()) {
+		return
+	}
+	localTip, _ := toInt64(st["blocks"])
+	if localTip == 0 {
+		if h, herr := backend.GetTipHeight(ctx); herr == nil {
+			localTip = h
+		}
+	}
+	cctx, cancel := context.WithTimeout(ctx, 12*time.Second)
+	defer cancel()
+	extTip, extErr := FetchExternalTipHeight(cctx, backend.Network())
+	lag := EvaluateTipLag(localTip, extTip, tipLagThreshold(), extErr, time.Now())
+	if extErr != nil {
+		log.Printf("btcd sync: external tip check failed: %v", extErr)
+		return
+	}
+	// Compare hashes at min(local, external) so a same-height
+	// minority fork is visible. Height-only lag cannot see this.
+	cmp := localTip
+	if extTip > 0 && (cmp <= 0 || extTip < cmp) {
+		cmp = extTip
+	}
+	if cmp > 0 {
+		localHash, hashErr := backend.GetBlockHash(cctx, cmp)
+		extHash, extHashErr := FetchExternalBlockHash(cctx, backend.Network(), cmp)
+		if hashErr != nil {
+			log.Printf("btcd sync: local hash at %d: %v", cmp, hashErr)
+		} else if extHashErr != nil {
+			log.Printf("btcd sync: external hash at %d: %v", cmp, extHashErr)
+		} else {
+			lag = ApplyTipHashCheck(lag, cmp, localHash, extHash)
+		}
+	}
+	if lag.HashMismatch {
+		log.Printf("btcd sync: TIP HASH MISMATCH at height %d local=%s explorer=%s — settlement blocked (possible eclipse / minority fork)",
+			lag.CompareHeight, lag.LocalTipHash, lag.ExternalTipHash)
+		// Do not restart btcd: a restart does not fix an eclipse.
+		return
+	}
+	if lag.Lagging {
+		log.Printf("btcd sync: TIP LAG local=%d external=%d lag=%d threshold=%d duration=%s — node may be stuck (future-timestamp rejects or peer stall)",
+			lag.LocalTip, lag.ExternalTip, lag.LagBlocks, lag.Threshold, lag.LagDuration)
+		if rt.Mode == BtcdModeManaged {
+			maybeRestartManagedBtcd(ctx, rt.Node, lag)
+		}
+		return
+	}
+	if lag.LagBlocks > 0 {
+		log.Printf("btcd sync: external tip=%d local=%d lag=%d (within threshold=%d)",
+			lag.ExternalTip, lag.LocalTip, lag.LagBlocks, lag.Threshold)
 	}
 }
 
@@ -584,11 +683,3 @@ func (r *ChainRuntime) Close() error {
 }
 
 // ParseRPCPort extracts port for diagnostics.
-func ParseRPCPort(host string) int {
-	_, port, ok := strings.Cut(host, ":")
-	if !ok {
-		return 0
-	}
-	p, _ := strconv.Atoi(port)
-	return p
-}

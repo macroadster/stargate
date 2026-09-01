@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -28,18 +28,20 @@ import (
 	"github.com/libp2p/go-libp2p"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
+	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/routing"
-	connmgr "github.com/libp2p/go-libp2p/p2p/net/connmgr"
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
 	drouting "github.com/libp2p/go-libp2p/p2p/discovery/routing"
+	connmgr "github.com/libp2p/go-libp2p/p2p/net/connmgr"
 	multiaddr "github.com/multiformats/go-multiaddr"
 )
 
 // defaultStarlightBootstrap is used when IPFS_EMBEDDED_BOOTSTRAP is unset.
 // Peer ID is resolved at dial time via GET /api/ipfs-mirror/status (see
-// expandBootstrapPeers) so restarts that rotate identity still work.
+// expandBootstrapPeers). Local identity is persisted under STARGATE_DATA_DIR
+// so this node's PeerID is stable across restarts.
 // Set IPFS_EMBEDDED_BOOTSTRAP=none for private mesh (mDNS only), or =public
 // for the Protocol Labs public DHT (CPU-heavy).
 const defaultStarlightBootstrap = "starlight-ai.freemyip.com"
@@ -111,6 +113,13 @@ type NodeConfig struct {
 	// ForcePrivateReachability tells libp2p not to run public reachability
 	// probing (AutoNAT dial-backs). On by default for private mesh.
 	ForcePrivateReachability bool
+
+	// IdentityPath is the protobuf libp2p private-key file. Empty uses
+	// IdentityPath() ($STARGATE_DATA_DIR/ipfs_identity.key).
+	IdentityPath string
+
+	// Identity is an already-loaded private key. When set it wins over IdentityPath.
+	Identity crypto.PrivKey
 }
 
 // resolveBootstrapPeers parses IPFS_EMBEDDED_BOOTSTRAP and optional public join flag.
@@ -218,8 +227,24 @@ func NewEmbeddedNode(ctx context.Context, cfg NodeConfig) (*EmbeddedNode, error)
 	dhtMode := dhtModeFromString(cfg.DHTMode)
 	bootstrapPeers := cfg.Bootstrap
 
+	priv := cfg.Identity
+	if priv == nil {
+		idPath := strings.TrimSpace(cfg.IdentityPath)
+		if idPath == "" {
+			idPath = IdentityPath()
+		}
+		loaded, idErr := LoadOrCreateIdentity(idPath)
+		if idErr != nil {
+			dstore.Close()
+			cancel()
+			return nil, fmt.Errorf("failed to load IPFS identity: %w", idErr)
+		}
+		priv = loaded
+	}
+
 	var idht *dht.IpfsDHT
 	opts := []libp2p.Option{
+		libp2p.Identity(priv),
 		libp2p.ListenAddrStrings(cfg.ListenAddrs...),
 		libp2p.ConnectionManager(cm),
 		libp2p.Routing(func(h host.Host) (routing.PeerRouting, error) {
@@ -255,7 +280,8 @@ func NewEmbeddedNode(ctx context.Context, cfg NodeConfig) (*EmbeddedNode, error)
 
 	// 7. Initialize Pubsub. DHT discovery and peer exchange are opt-in —
 	// both amplify mesh growth and CPU when public peers are reachable.
-	// Topic guard in getTopic() still caps participation to stargate-uploads.
+	// Topic guard in getTopic() caps participation to the uploads mirror
+	// and the inscribed-wish topic.
 	var psOpts []pubsub.Option
 	if cfg.RoutingDiscovery && idht != nil {
 		routingDiscovery := drouting.NewRoutingDiscovery(idht)
@@ -308,8 +334,17 @@ func NewEmbeddedNode(ctx context.Context, cfg NodeConfig) (*EmbeddedNode, error)
 		log.Printf("Warning: mDNS discovery failed to start: %v", err)
 	}
 
-	log.Printf("Embedded IPFS node started. PeerID: %s, Addrs: %v, dht=%s, bootstrap=%d, peer_exchange=%v, routing_discovery=%v, connmgr=%d/%d",
-		h.ID(), h.Addrs(), dhtModeLabel(dhtMode), len(bootstrapPeers), cfg.PeerExchange, cfg.RoutingDiscovery, low, high)
+	// Join allowlisted file-mirror topics at start so peers see
+	// stargate-uploads and stargate-wishes without waiting for the first
+	// publish or subscribe.
+	for _, name := range AllowedPubsubTopics() {
+		if _, err := node.getTopic(name); err != nil {
+			log.Printf("Embedded IPFS: failed to join topic %q: %v", name, err)
+		}
+	}
+
+	log.Printf("Embedded IPFS node started. PeerID: %s, Addrs: %v, dht=%s, bootstrap=%d, peer_exchange=%v, routing_discovery=%v, connmgr=%d/%d, topics=%v",
+		h.ID(), h.Addrs(), dhtModeLabel(dhtMode), len(bootstrapPeers), cfg.PeerExchange, cfg.RoutingDiscovery, low, high, node.JoinedTopics())
 	return node, nil
 }
 
@@ -436,8 +471,31 @@ func (n *EmbeddedNode) PubsubPublish(ctx context.Context, topicName string, data
 	return t.Publish(ctx, data)
 }
 
+// PubsubInbound is one gossipsub message plus the mesh neighbor and publisher.
+type PubsubInbound struct {
+	Data         []byte
+	ReceivedFrom string
+	Publisher    string
+}
+
 // PubsubSubscribe subscribes to a topic and returns a channel of messages
 func (n *EmbeddedNode) PubsubSubscribe(ctx context.Context, topicName string) (<-chan []byte, error) {
+	ch, err := n.PubsubSubscribeDetailed(ctx, topicName)
+	if err != nil {
+		return nil, err
+	}
+	out := make(chan []byte, 100)
+	go func() {
+		defer close(out)
+		for msg := range ch {
+			out <- msg.Data
+		}
+	}()
+	return out, nil
+}
+
+// PubsubSubscribeDetailed is PubsubSubscribe plus received_from / publisher.
+func (n *EmbeddedNode) PubsubSubscribeDetailed(ctx context.Context, topicName string) (<-chan PubsubInbound, error) {
 	t, err := n.getTopic(topicName)
 	if err != nil {
 		return nil, err
@@ -448,7 +506,7 @@ func (n *EmbeddedNode) PubsubSubscribe(ctx context.Context, topicName string) (<
 		return nil, err
 	}
 
-	out := make(chan []byte, 100)
+	out := make(chan PubsubInbound, 100)
 	go func() {
 		defer sub.Cancel()
 		for {
@@ -464,29 +522,65 @@ func (n *EmbeddedNode) PubsubSubscribe(ctx context.Context, topicName string) (<
 			if msg.ReceivedFrom == n.host.ID() {
 				continue
 			}
-			out <- msg.Data
+			in := PubsubInbound{
+				Data:         msg.Data,
+				ReceivedFrom: msg.ReceivedFrom.String(),
+				Publisher:    msg.GetFrom().String(),
+			}
+			select {
+			case out <- in:
+			case <-n.ctx.Done():
+				close(out)
+				return
+			}
 		}
 	}()
 
 	return out, nil
 }
 
+// TopicPeers returns gossipsub mesh peers for an already-joined topic.
+func (n *EmbeddedNode) TopicPeers(topicName string) []string {
+	if n == nil {
+		return nil
+	}
+	n.topicsMu.RLock()
+	t := n.topics[strings.TrimSpace(topicName)]
+	n.topicsMu.RUnlock()
+	if t == nil {
+		return nil
+	}
+	ids := t.ListPeers()
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, id.String())
+	}
+	sort.Strings(out)
+	return out
+}
+
+// SwarmPeers returns currently connected libp2p peers.
+func (n *EmbeddedNode) SwarmPeers() []string {
+	if n == nil || n.host == nil {
+		return nil
+	}
+	ids := n.host.Network().Peers()
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, id.String())
+	}
+	sort.Strings(out)
+	return out
+}
+
 func (n *EmbeddedNode) getTopic(name string) (*pubsub.Topic, error) {
 	n.topicsMu.Lock()
 	defer n.topicsMu.Unlock()
 
-	// Cap to stargate-uploads topic only.
-	//
-	// stargate-uploads (the file mirror) is the proven replication path.
-	// Other topics (e.g. "stargate-stego") are secondary features that
-	// have not been shown to be robust and are vulnerable to abuse.
-	// Restrict pubsub so we never forward messages for arbitrary topics.
-	allowed := os.Getenv("IPFS_MIRROR_TOPIC")
-	if allowed == "" {
-		allowed = "stargate-uploads"
-	}
-	if name != allowed {
-		return nil, fmt.Errorf("refusing pubsub topic %q (node is capped to %s only; no forwarding of other data)", name, allowed)
+	// Cap to the durable uploads mirror and the inscribed-wish topic.
+	// Other topics (e.g. "stargate-stego") are not joined or forwarded.
+	if !IsAllowedPubsubTopic(name) {
+		return nil, fmt.Errorf("refusing pubsub topic %q (node is capped to %s; no forwarding of other data)", name, strings.Join(AllowedPubsubTopics(), ", "))
 	}
 
 	if t, ok := n.topics[name]; ok {
@@ -499,6 +593,21 @@ func (n *EmbeddedNode) getTopic(name string) (*pubsub.Topic, error) {
 	}
 	n.topics[name] = t
 	return t, nil
+}
+
+// JoinedTopics returns allowlisted pubsub topics this node has Joined.
+func (n *EmbeddedNode) JoinedTopics() []string {
+	if n == nil {
+		return nil
+	}
+	n.topicsMu.RLock()
+	defer n.topicsMu.RUnlock()
+	out := make([]string, 0, len(n.topics))
+	for name := range n.topics {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // Close shuts down the embedded node
@@ -522,4 +631,30 @@ func (n *EmbeddedNode) Close() error {
 // PeerID returns the host's peer ID
 func (n *EmbeddedNode) PeerID() string {
 	return n.host.ID().String()
+}
+
+// Unpin removes a CID and its reachable DAG blocks from the local blockstore.
+func (n *EmbeddedNode) Unpin(ctx context.Context, c cid.Cid) error {
+	if !c.Defined() {
+		return nil
+	}
+	seen := make(map[string]struct{})
+	return n.removeDAG(ctx, c, seen)
+}
+
+func (n *EmbeddedNode) removeDAG(ctx context.Context, c cid.Cid, seen map[string]struct{}) error {
+	key := c.String()
+	if _, ok := seen[key]; ok {
+		return nil
+	}
+	seen[key] = struct{}{}
+
+	nd, err := n.dag.Get(ctx, c)
+	if err != nil {
+		return n.bstore.DeleteBlock(ctx, c)
+	}
+	for _, l := range nd.Links() {
+		_ = n.removeDAG(ctx, l.Cid, seen)
+	}
+	return n.bstore.DeleteBlock(ctx, c)
 }

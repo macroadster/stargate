@@ -1,7 +1,6 @@
 package smart_contract
 
 import (
-	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"strconv"
@@ -190,25 +189,8 @@ func (si *ScriptInterpreter) ValidateTaproot(scriptHex, signature, controlBlock 
 }
 
 // ExtractScriptDetails extracts information from a script
-func (si *ScriptInterpreter) ExtractScriptDetails(scriptHex string) (map[string]interface{}, error) {
-	details := make(map[string]interface{})
 
-	if _, err := hex.DecodeString(scriptHex); err != nil {
-		return nil, fmt.Errorf("invalid script hex: %v", err)
-	}
-
-	details["script_size"] = len(scriptHex) / 2 // hex chars to bytes
-
-	// Detect script type
-	scriptType := si.detectScriptType(scriptHex)
-	details["script_type"] = scriptType
-
-	// Extract opcodes (simplified)
-	opcodes := si.extractOpcodes(scriptHex)
-	details["opcodes"] = opcodes
-
-	return details, nil
-}
+// hex chars to bytes
 
 func (si *ScriptInterpreter) detectScriptType(scriptHex string) string {
 	if strings.Contains(scriptHex, "76a914") && strings.Contains(scriptHex, "88ac") {
@@ -377,49 +359,7 @@ func (si *ScriptInterpreter) validateTaprootContract(scriptHex string, params ma
 }
 
 // VerifySignature verifies a signature against a public key (simplified)
-func (si *ScriptInterpreter) VerifySignature(message, signature, pubKey string) bool {
-	// This is a placeholder for signature verification
-	// In a real implementation, this would use ECDSA verification
-	// For now, just validate hex format
-	_, err1 := hex.DecodeString(signature)
-	_, err2 := hex.DecodeString(pubKey)
-
-	return err1 == nil && err2 == nil && len(signature) > 0 && len(pubKey) > 0
-}
 
 // ComputeHash160 computes RIPEMD160(SHA256) hash (simplified)
-func (si *ScriptInterpreter) ComputeHash160(data string) string {
-	shaHash := sha256.Sum256([]byte(data))
-	// In real implementation, this would apply RIPEMD160
-	return hex.EncodeToString(shaHash[:])
-}
 
 // ComputeMerkleRoot computes Merkle root from a list of hashes
-func (si *ScriptInterpreter) ComputeMerkleRoot(hashes []string) string {
-	if len(hashes) == 0 {
-		return ""
-	}
-
-	// Simple Merkle tree computation
-	current := make([]string, len(hashes))
-	copy(current, hashes)
-
-	for len(current) > 1 {
-		var next []string
-		for i := 0; i < len(current); i += 2 {
-			if i+1 < len(current) {
-				combined := current[i] + current[i+1]
-				hash := sha256.Sum256([]byte(combined))
-				next = append(next, hex.EncodeToString(hash[:]))
-			} else {
-				// Odd number, hash with itself
-				combined := current[i] + current[i]
-				hash := sha256.Sum256([]byte(combined))
-				next = append(next, hex.EncodeToString(hash[:]))
-			}
-		}
-		current = next
-	}
-
-	return current[0]
-}

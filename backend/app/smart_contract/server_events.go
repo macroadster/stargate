@@ -141,12 +141,7 @@ func (s *Server) publishSyncEvent(evt smart_contract.Event) {
 		// But in handleSubmissions:
 		// s.recordEvent(smart_contract.Event{ Type: "submit", EntityID: claimID, ... })
 		// We should probably find the latest submission for this claim.
-		tasks, _ := s.store.ListTasks(smart_contract.TaskFilter{})
-		taskIDs := make([]string, len(tasks))
-		for i, t := range tasks {
-			taskIDs[i] = t.TaskID
-		}
-		subs, _ := s.store.ListSubmissions(ctx, taskIDs)
+		subs, _ := s.store.ListSubmissions(ctx, smart_contract.SubmissionFilter{})
 		var latest *smart_contract.Submission
 		for _, sub := range subs {
 			if sub.ClaimID == evt.EntityID {

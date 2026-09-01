@@ -192,43 +192,7 @@ func (es *EscortService) ValidateBatchProofs(proofs []*MerkleProof) ([]*EscortSt
 }
 
 // GetProofHealth returns health status of a proof
-func (es *EscortService) GetProofHealth(proof *MerkleProof) map[string]any {
-	health := make(map[string]any)
-
-	// Basic proof info
-	health["tx_id"] = proof.TxID
-	health["block_height"] = proof.BlockHeight
-	health["confirmation_status"] = proof.ConfirmationStatus
-	health["funded_amount_sats"] = proof.FundedAmountSats
-
-	// Verification result
-	verificationResult, err := es.verifier.VerifyProof(proof)
-	if err != nil {
-		health["verification_error"] = err.Error()
-		health["health_status"] = "error"
-	} else {
-		health["verification_valid"] = verificationResult.Valid
-		if verificationResult.Valid {
-			health["health_status"] = "healthy"
-		} else {
-			health["health_status"] = "unhealthy"
-			health["verification_error"] = verificationResult.Error
-		}
-	}
-
-	health["checked_at"] = time.Now().Format(time.RFC3339)
-
-	return health
-}
 
 // SetCheckInterval updates the check interval
-func (es *EscortService) SetCheckInterval(interval time.Duration) {
-	es.checkInterval = interval
-	log.Printf("Escort service check interval updated to %s", interval)
-}
 
 // Stop gracefully stops the escort service
-func (es *EscortService) Stop() {
-	log.Printf("Stopping smart contract escort service")
-	// In a real implementation, this would clean up resources
-}

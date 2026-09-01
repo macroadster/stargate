@@ -53,11 +53,11 @@ func TestDHTModeFromString(t *testing.T) {
 	t.Parallel()
 	// Just ensure mapping is stable; compare via label helper.
 	cases := map[string]string{
-		"":       DHTModeClient,
-		"client": DHTModeClient,
-		"CLIENT": DHTModeClient,
-		"server": DHTModeServer,
-		"auto":   DHTModeAuto,
+		"":           DHTModeClient,
+		"client":     DHTModeClient,
+		"CLIENT":     DHTModeClient,
+		"server":     DHTModeServer,
+		"auto":       DHTModeAuto,
 		"autoserver": DHTModeAuto,
 	}
 	for in, want := range cases {
@@ -85,6 +85,7 @@ func TestNewEmbeddedNodePrivateMesh(t *testing.T) {
 		ForcePrivateReachability: true,
 		ConnLowWater:             5,
 		ConnHighWater:            10,
+		IdentityPath:             filepath.Join(tmp, "ipfs_identity.key"),
 	})
 	if err != nil {
 		t.Fatalf("NewEmbeddedNode: %v", err)

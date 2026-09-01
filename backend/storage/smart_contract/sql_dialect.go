@@ -77,13 +77,6 @@ func (s *SQLStore) taskSelectList() string {
 }
 
 // contractSkillsSelect is skills expression for contract rows.
-func (s *SQLStore) contractSkillsSelect(alias string) string {
-	col := "skills"
-	if alias != "" {
-		col = alias + ".skills"
-	}
-	return s.skillsExpr(col) + " AS skills"
-}
 
 // jsonTextExpr returns dialect SQL for extracting a text field from a JSON column.
 // path is a bare key (e.g. "contract_id"), not a JSONPath.
@@ -108,4 +101,60 @@ func formatTimePtr(t *time.Time) interface{} {
 		return nil
 	}
 	return formatTime(*t)
+}
+
+// dateTimeExpr returns a dialect-safe comparable timestamp expression.
+// SQLite stores mixed TEXT formats; Postgres uses TIMESTAMPTZ natively.
+func (s *SQLStore) dateTimeExpr(col string) string {
+	if s.isPostgres() {
+		return col
+	}
+	return "datetime(replace(replace(" + col + ",'T',' '),'Z',''))"
+}
+
+// dateCursorOp is "<" for before (default) and ">" for after.
+func dateCursorOp(cursorType string) string {
+	if strings.EqualFold(cursorType, "after") {
+		return ">"
+	}
+	return "<"
+}
+
+// dateCursorPred is a single-column date comparison (contracts: created_at XOR confirmed_at).
+func (s *SQLStore) dateCursorPred(col, op string) string {
+	expr := s.dateTimeExpr(col)
+	if s.isPostgres() {
+		return expr + " " + op + " ?"
+	}
+	return expr + " " + op + " datetime(?)"
+}
+
+// dateIDCursorPred is a keyset predicate on (dateCol, idCol) so equal timestamps do not skip/duplicate.
+func (s *SQLStore) dateIDCursorPred(dateCol, idCol, op string) string {
+	dateExpr := s.dateTimeExpr(dateCol)
+	eq := "="
+	if s.isPostgres() {
+		return "(" + dateExpr + " " + op + " ? OR (" + dateExpr + " " + eq + " ? AND " + idCol + " " + op + " ?))"
+	}
+	return "(" + dateExpr + " " + op + " datetime(?) OR (" + dateExpr + " " + eq + " datetime(?) AND " + idCol + " " + op + " ?))"
+}
+
+// dateCursorArg binds a cursor timestamp for the active dialect.
+func (s *SQLStore) dateCursorArg(t time.Time) interface{} {
+	if s.isPostgres() {
+		return t.UTC()
+	}
+	return t.UTC().Format("2006-01-02 15:04:05")
+}
+
+func (s *SQLStore) appendLimitOffset(q string, limit, offset int) string {
+	if limit > 0 {
+		q += fmt.Sprintf(" LIMIT %d", limit)
+		if offset > 0 {
+			q += fmt.Sprintf(" OFFSET %d", offset)
+		}
+	} else if offset > 0 {
+		q += fmt.Sprintf(" OFFSET %d", offset)
+	}
+	return q
 }

@@ -10,10 +10,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"image"
-	_ "image/gif"
-	_ "image/jpeg"
-	_ "image/png"
 	"io"
 	"log"
 	"mime/multipart"
@@ -25,15 +21,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/btcsuite/btcd/btcutil"
-	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/txscript"
 
 	"stargate-backend/core/identity"
 	"stargate-backend/core/smart_contract"
 	"stargate-backend/services"
 	"stargate-backend/stego"
-       "stargate-backend/storage/datadir"
+	"stargate-backend/storage/datadir"
 	"stargate-backend/storage/ipfs"
 	scstore "stargate-backend/storage/smart_contract"
 )
@@ -58,19 +52,6 @@ type stegoReconcileConfig struct {
 }
 
 // generatePayoutScript creates a Bitcoin script for the given address.
-func generatePayoutScript(address string) ([]byte, error) {
-	// Default to mainnet parameters
-	params := &chaincfg.MainNetParams
-	addr, err := btcutil.DecodeAddress(address, params)
-	if err != nil {
-		return nil, fmt.Errorf("decode address failed: %w", err)
-	}
-	script, err := txscript.PayToAddrScript(addr)
-	if err != nil {
-		return nil, fmt.Errorf("create payout script failed: %w", err)
-	}
-	return script, nil
-}
 
 // stringFromAny safely converts interface{} to string
 func stringFromAny(value any) string {
@@ -424,7 +405,7 @@ func extractStegoManifest(ctx context.Context, imageData []byte, cfg stegoReconc
 
 // extractStegoNative uses the built-in Go alpha-channel extractor.
 func extractStegoNative(imageData []byte) ([]byte, error) {
-	img, _, err := image.Decode(bytes.NewReader(imageData))
+	img, _, err := stego.DecodeImage(imageData)
 	if err != nil {
 		return nil, err
 	}
@@ -783,7 +764,7 @@ func (s *Server) downloadSandboxArtifacts(ctx context.Context, contractID string
 	}
 
 	uploadsDir := strings.TrimSpace(os.Getenv("UPLOADS_DIR"))
-       resultsDir := datadir.PartResolve(filepath.Join(uploadsDir, "results"), normalizedID)
+	resultsDir := datadir.PartResolve(filepath.Join(uploadsDir, "results"), normalizedID)
 
 	// If results already exist and match the expected hash, skip extraction.
 	if info, err := os.Stat(resultsDir); err == nil && info.IsDir() {
@@ -795,9 +776,9 @@ func (s *Server) downloadSandboxArtifacts(ctx context.Context, contractID string
 	}
 
 	// Try to read the tarball from the local uploads directory first.
-       // The publisher stores it as UPLOADS_DIR/ab/cd/ef/<sandbox_hash> and
-       // the IPFS mirror replicates it to peers using the same hash-based filename.
-       tarballBytes, err := os.ReadFile(datadir.PartResolve(uploadsDir, sandboxHash))
+	// The publisher stores it as UPLOADS_DIR/ab/cd/ef/<sandbox_hash> and
+	// the IPFS mirror replicates it to peers using the same hash-based filename.
+	tarballBytes, err := os.ReadFile(datadir.PartResolve(uploadsDir, sandboxHash))
 	if err != nil {
 		// Not available locally — try IPFS content-addressed fetch.
 		// Also try sandbox_tarball_cid for backward compat with older publishers.
@@ -954,5 +935,3 @@ func (s *Server) extractSandboxTarball(contractID string, tarballBytes []byte, r
 
 	log.Printf("sandbox: extracted %d files for contract %s to %s", fileCount, contractID, resultsDir)
 }
-
-

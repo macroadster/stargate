@@ -15,8 +15,8 @@ import (
 	_ "golang.org/x/image/bmp"
 	_ "golang.org/x/image/webp"
 
-	sc "stargate-backend/core/smart_contract"
 	scmiddleware "stargate-backend/app/smart_contract"
+	sc "stargate-backend/core/smart_contract"
 	"stargate-backend/models"
 	"stargate-backend/services"
 	storageSC "stargate-backend/storage/smart_contract"
@@ -50,14 +50,6 @@ type SmartContractHandler struct {
 	enrichedMu    sync.RWMutex
 	enrichedCache map[string]enrichedCacheEntry
 	enrichedTTL   time.Duration
-}
-
-func includeConfirmedQuery(r *http.Request) bool {
-	raw := strings.TrimSpace(r.URL.Query().Get("include_confirmed"))
-	if raw == "" {
-		return false
-	}
-	return strings.EqualFold(raw, "true") || strings.EqualFold(raw, "yes") || raw == "1"
 }
 
 func hasCursorParams(r *http.Request) bool {
@@ -139,15 +131,6 @@ func proofConfirmed(proof *sc.MerkleProof) bool {
 	}
 	if proof.ConfirmedAt != nil {
 		return true
-	}
-	return false
-}
-
-func proofsConfirmed(proofs []sc.MerkleProof) bool {
-	for i := range proofs {
-		if proofConfirmed(&proofs[i]) {
-			return true
-		}
 	}
 	return false
 }
@@ -249,17 +232,9 @@ func (h *SmartContractHandler) setEnrichedCache(key string, items []models.Inscr
 }
 
 // contractsPageHasMore reports whether another page may exist.
-// fetchedCount is the store result length before twin-dedupe; pageLen is what
-// the client will receive. A full pre-dedupe page means more rows may remain
-// even when dedupe shrinks the response below limit.
+// Twin-dedupe must use the pre-collapse fetch count (see Page.HasMoreFromFetch).
 func contractsPageHasMore(fetchedCount, pageLen, limit int) bool {
-	if limit <= 0 {
-		return false
-	}
-	if fetchedCount >= limit {
-		return true
-	}
-	return pageLen >= limit
+	return sc.HasMoreFromFetch(fetchedCount, pageLen, limit)
 }
 
 // HandleGetContracts handles getting smart contracts with support for filtering and pagination
@@ -491,51 +466,4 @@ func (h *SmartContractHandler) HandleGetContracts(w http.ResponseWriter, r *http
 
 	w.Header().Set("Content-Type", "application/json")
 	h.sendSuccess(w, response)
-}
-
-// HandleCreateContract handles creating a new smart contract
-func (h *SmartContractHandler) HandleCreateContract(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		h.sendError(w, http.StatusMethodNotAllowed, "Method not allowed")
-		return
-	}
-
-	var req models.CreateContractRequest
-	if err := h.parseJSON(r, &req); err != nil {
-		h.sendError(w, http.StatusBadRequest, "Invalid JSON")
-		return
-	}
-
-	contract, err := h.contractService.CreateContract(req)
-	if err != nil {
-		h.sendError(w, http.StatusInternalServerError, "Failed to create contract")
-		return
-	}
-
-	h.sendSuccess(w, contract)
-}
-
-// HandleGetContract handles getting a contract by ID
-func (h *SmartContractHandler) HandleGetContract(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		h.sendError(w, http.StatusMethodNotAllowed, "Method not allowed")
-		return
-	}
-
-	// Extract contract ID from URL path
-	path := strings.TrimPrefix(r.URL.Path, "/api/contract-stego/")
-	parts := strings.Split(path, "/")
-	if len(parts) < 1 {
-		h.sendError(w, http.StatusBadRequest, "Invalid contract ID")
-		return
-	}
-
-	contractID := parts[0]
-	contract, err := h.contractService.GetContractByID(contractID)
-	if err != nil {
-		h.sendError(w, http.StatusNotFound, "Contract not found")
-		return
-	}
-
-	h.sendSuccess(w, contract)
 }

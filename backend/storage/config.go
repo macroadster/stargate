@@ -15,9 +15,9 @@ import (
 type StorageType string
 
 const (
-	StorageMemory    StorageType = "memory"
-	StorageSQLite    StorageType = "sqlite"
-	StoragePostgres  StorageType = "postgres"
+	StorageMemory     StorageType = "memory"
+	StorageSQLite     StorageType = "sqlite"
+	StoragePostgres   StorageType = "postgres"
 	StorageFilesystem StorageType = "filesystem" // legacy data layer only
 )
 
@@ -27,9 +27,9 @@ const (
 //
 // Supported modes (Phase 6/7 clarification):
 //   - sqlite   : durable embedded single-binary distribution (mcp.db + api_keys.db +
-//                blocks.db for inscription metadata). Recommended default.
+//     blocks.db for inscription metadata). Recommended default.
 //   - memory   : ephemeral in-memory (API keys + RAM cache). Intended for ease of
-//                debugging business logic and fast unit tests. No durable files.
+//     debugging business logic and fast unit tests. No durable files.
 //   - postgres : shared durable production backend.
 //   - filesystem: legacy explicit mode (kept for compatibility).
 //
@@ -43,8 +43,8 @@ type StorageConfig struct {
 	PGDSN string // from STARGATE_PG_DSN or DATABASE_URL
 
 	// Base directories
-	DataDir          string // blocks, uploads, etc.
-	SQLiteDir        string // where mcp.db / api_keys.db / ingestions.db live
+	DataDir   string // blocks, uploads, etc.
+	SQLiteDir string // where mcp.db / api_keys.db / ingestions.db live
 
 	// Explicit DB paths (override derived paths)
 	MCPDBPath        string // STARGATE_MCP_DB
@@ -68,9 +68,9 @@ type StorageConfig struct {
 // in stargate_backend.go and container/container.go.
 //
 // Priority for Type:
-//   1. Explicit STARGATE_STORAGE (memory|sqlite|postgres|filesystem)
-//   2. If STARGATE_PG_DSN / DATABASE_URL is set → postgres
-//   3. Default: sqlite (best for single-binary embedded usage)
+//  1. Explicit STARGATE_STORAGE (memory|sqlite|postgres|filesystem)
+//  2. If STARGATE_PG_DSN / DATABASE_URL is set → postgres
+//  3. Default: sqlite (best for single-binary embedded usage)
 func LoadStorageConfigFromEnv() StorageConfig {
 	cfg := StorageConfig{}
 
@@ -151,7 +151,6 @@ func LoadStorageConfigFromEnv() StorageConfig {
 }
 
 // DefaultDataDir returns the root data directory (delegates to datadir.Default).
-func DefaultDataDir() string { return datadir.Default() }
 
 // DefaultPath returns a path under the default data directory.
 func DefaultPath(subpath string) string { return datadir.Path(subpath) }

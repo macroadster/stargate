@@ -76,7 +76,7 @@ Any instance that processes the block and has the hash-named files can reconcile
 
 ### Files and IPFS
 
-Files under `UPLOADS_DIR` are named by SHA256 (P2P-neutral). An optional IPFS mirror syncs those root-level files between peers. Bitcoin remains settlement and proof; OP_RETURN hashes let nodes verify and reconstruct contracts.
+Files under `UPLOADS_DIR` are named by SHA256 (P2P-neutral). An optional IPFS file mirror syncs those files between peers on two topics: durable PSBT-built artifacts on `stargate-uploads`, and inscribed wishes without a PSBT on `stargate-wishes`. Both publish a periodic manifest so NAT/relay peers can pull inventory after reconnect. Unengaged wishes are unpinned and deleted after 7 days. `GET /api/ipfs-mirror/status` reports both topics (`topic`, `wish_topic`, `topics`) plus wish-mirror inventory fields. The node’s libp2p identity is stored under `STARGATE_DATA_DIR` so the Peer ID is stable across restarts. Bitcoin remains settlement and proof; OP_RETURN hashes let nodes verify and reconstruct contracts.
 
 ### Storage
 

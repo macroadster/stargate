@@ -72,16 +72,37 @@ func (t *SQLTime) parse(s string) error {
 		// SQLite datetime('now')
 		"2006-01-02 15:04:05.000",
 	}
-	var lastErr error
 	for _, f := range formats {
 		parsed, err := time.Parse(f, s)
 		if err == nil {
 			t.Time = parsed.UTC()
 			return nil
 		}
-		lastErr = err
 	}
-	return fmt.Errorf("gormdb.SQLTime: parse %q: %w", s, lastErr)
+	// Unix seconds / millis written as TEXT by older stores.
+	if unix, err := parseUnixLike(s); err == nil {
+		t.Time = unix
+		return nil
+	}
+	// Unparseable timestamps must not fail the whole row scan — login used to
+	// 500 when Validate (COUNT) succeeded but Get/First could not scan created_at.
+	t.Time = time.Time{}
+	return nil
+}
+
+func parseUnixLike(s string) (time.Time, error) {
+	var n int64
+	if _, err := fmt.Sscan(s, &n); err != nil {
+		return time.Time{}, err
+	}
+	if n <= 0 {
+		return time.Time{}, fmt.Errorf("non-positive unix")
+	}
+	// millis if it looks like 13+ digits
+	if n > 1_000_000_000_000 {
+		return time.UnixMilli(n).UTC(), nil
+	}
+	return time.Unix(n, 0).UTC(), nil
 }
 
 // Value implements driver.Valuer. Always emit RFC3339Nano UTC for portability.

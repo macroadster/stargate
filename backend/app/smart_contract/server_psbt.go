@@ -13,10 +13,11 @@ import (
 	"strings"
 	"time"
 
+	scservices "stargate-backend/app/smart_contract/services"
 	"stargate-backend/bitcoin"
 	"stargate-backend/core/smart_contract"
-	scservices "stargate-backend/app/smart_contract/services"
 	"stargate-backend/services"
+	auth "stargate-backend/storage/auth"
 	"stargate-backend/storage/ipfs"
 	scstore "stargate-backend/storage/smart_contract"
 
@@ -35,7 +36,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		Error(w, http.StatusServiceUnavailable, "psbt builder unavailable")
 		return
 	}
-	payerKey := r.Header.Get("X-API-Key")
+	payerKey := auth.RequestAPIKey(r)
 	payerRec, ok := s.apiKeys.Get(payerKey)
 	if !ok {
 		Error(w, http.StatusForbidden, "invalid api key")
@@ -76,9 +77,9 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		return
 	}
 
-	params := &chaincfg.TestNet4Params
+	params := s.chainParams()
 
-	payerAddr, err := btcutil.DecodeAddress(payerRec.Wallet, params)
+	payerAddr, err := bitcoin.DecodeAddressForNetwork(payerRec.Wallet, params)
 	if err != nil {
 		Error(w, http.StatusBadRequest, fmt.Sprintf("invalid payer wallet: %v", err))
 		return
@@ -91,7 +92,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 				Error(w, http.StatusBadRequest, "payer address required")
 				return
 			}
-			decoded, err := btcutil.DecodeAddress(strings.TrimSpace(addr), params)
+			decoded, err := bitcoin.DecodeAddressForNetwork(strings.TrimSpace(addr), params)
 			if err != nil {
 				Error(w, http.StatusBadRequest, fmt.Sprintf("invalid payer address: %v", err))
 				return
@@ -103,7 +104,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 	}
 	var changeAddr btcutil.Address
 	if strings.TrimSpace(body.ChangeAddress) != "" {
-		changeAddr, err = btcutil.DecodeAddress(strings.TrimSpace(body.ChangeAddress), params)
+		changeAddr, err = bitcoin.DecodeAddressForNetwork(strings.TrimSpace(body.ChangeAddress), params)
 		if err != nil {
 			Error(w, http.StatusBadRequest, fmt.Sprintf("invalid change address: %v", err))
 			return
@@ -173,6 +174,10 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		primaryPayer = rf.PayerAddrs[0]
 		changeAddr = nil
 	}
+	if wishCap := scstore.WishBudgetFromContract(contract); wishCap > 0 && target > wishCap {
+		Error(w, http.StatusBadRequest, fmt.Sprintf("budget_sats %d exceeds original wish budget %d", target, wishCap))
+		return
+	}
 	if !isRaiseFund(fundingMode) && len(payerAddresses) > 1 && changeAddr == nil {
 		Error(w, http.StatusBadRequest, "change_address required when using multiple payer addresses")
 		return
@@ -238,7 +243,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 			Error(w, http.StatusBadRequest, "donation address not configured")
 			return
 		}
-		donationAddr, err = btcutil.DecodeAddress(donation, params)
+		donationAddr, err = bitcoin.DecodeAddressForNetwork(donation, params)
 		if err != nil {
 			Error(w, http.StatusBadRequest, fmt.Sprintf("invalid donation address: %v", err))
 			return
@@ -286,7 +291,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 				Error(w, http.StatusBadRequest, "payout address required")
 				return
 			}
-			addr, err := btcutil.DecodeAddress(strings.TrimSpace(payout.Address), params)
+			addr, err := bitcoin.DecodeAddressForNetwork(strings.TrimSpace(payout.Address), params)
 			if err != nil {
 				Error(w, http.StatusBadRequest, fmt.Sprintf("invalid payout address: %v", err))
 				return
@@ -311,6 +316,10 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 				Error(w, http.StatusBadRequest, "payout total exceeds budget_sats")
 				return
 			}
+			if wishCap := scstore.WishBudgetFromContract(contract); wishCap > 0 && payoutTotal > wishCap {
+				Error(w, http.StatusBadRequest, fmt.Sprintf("payout total %d exceeds original wish budget %d", payoutTotal, wishCap))
+				return
+			}
 		}
 	}
 
@@ -318,14 +327,14 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 	if payoutTotal == 0 {
 		if strings.TrimSpace(body.ContractorAPIKey) != "" {
 			if rec, ok := s.apiKeys.Get(body.ContractorAPIKey); ok && strings.TrimSpace(rec.Wallet) != "" {
-				contractorAddr, err = btcutil.DecodeAddress(rec.Wallet, params)
+				contractorAddr, err = bitcoin.DecodeAddressForNetwork(rec.Wallet, params)
 			}
 		}
 		if contractorAddr == nil && strings.TrimSpace(fundingAddress) != "" {
-			contractorAddr, err = btcutil.DecodeAddress(strings.TrimSpace(fundingAddress), params)
+			contractorAddr, err = bitcoin.DecodeAddressForNetwork(strings.TrimSpace(fundingAddress), params)
 		}
 		if contractorAddr == nil && strings.TrimSpace(body.ContractorWallet) != "" {
-			contractorAddr, err = btcutil.DecodeAddress(strings.TrimSpace(body.ContractorWallet), params)
+			contractorAddr, err = bitcoin.DecodeAddressForNetwork(strings.TrimSpace(body.ContractorWallet), params)
 		}
 		if err != nil {
 			Error(w, http.StatusBadRequest, fmt.Sprintf("invalid contractor wallet: %v", err))
@@ -414,6 +423,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 				"pixel_source":            defaultPixelSource(pixelSource, pixelBytes),
 				"budget_sats":             target,
 				"contractor":              "",
+				"network":                 s.chainNetwork(),
 				"network_params":          params.Name,
 			})
 		}
@@ -457,6 +467,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 			"contract_id":     contractID,
 			"budget_sats":     target,
 			"payer_addresses": addressSlice(raiseFundPayerAddrs),
+			"network":         s.chainNetwork(),
 			"network_params":  params.Name,
 			"split_psbt":      true,
 			"funding_txids":   fundingTxIDs,
@@ -469,11 +480,15 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 			s.mempool,
 			params,
 			raiseFundPayers,
-			payouts,
-			pixelBytes,
-			commitmentSats,
-			commitmentLockAddr,
-			body.FeeRate,
+			bitcoin.PSBTRequest{
+				Payouts:           payouts,
+				PixelHash:         pixelBytes,
+				ProductPixelHash:  productPixelBytes,
+				CommitmentSats:    commitmentSats,
+				DonationAddress:   donationAddr,
+				CommitmentAddress: commitmentLockAddr,
+				FeeRateSatPerVB:   body.FeeRate,
+			},
 		)
 	} else {
 		effectiveChangeAddr := changeAddr
@@ -581,6 +596,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		"contract_id":             contractID,
 		"budget_sats":             target,
 		"contractor":              contractorAddressFor(contractorAddr),
+		"network":                 s.chainNetwork(),
 		"network_params":          params.Name,
 		"op_return_script":        hex.EncodeToString(res.OPReturnScript),
 		"op_return_vout":          res.OPReturnVout,
@@ -588,8 +604,6 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		"donation_address":        res.DonationAddr,
 	})
 }
-
-
 
 func normalizePixelBytes(b []byte) []byte {
 	if l := len(b); l == 20 || l == 32 {
@@ -640,23 +654,33 @@ func (s *Server) resolvePSBTPixel(contractID, pixelHash string, usePixelHash boo
 
 // raiseFundContext holds precomputed raise_fund PSBT inputs.
 type raiseFundContext struct {
-	FundraiserAddr  btcutil.Address
-	Payouts         []bitcoin.PayoutOutput
-	Payers          []bitcoin.PayerTarget
-	PayerAddrs      []btcutil.Address
-	PayoutsByPayer  map[string][]bitcoin.PayoutOutput
-	PayersByWallet  map[string]bitcoin.PayerTarget
-	PayerOrder      []string
-	PayerTotals     map[string]int64
-	TaskIDs         []string
-	TasksByWallet   map[string][]string
-	TargetSats      int64
+	FundraiserAddr btcutil.Address
+	Payouts        []bitcoin.PayoutOutput
+	Payers         []bitcoin.PayerTarget
+	PayerAddrs     []btcutil.Address
+	PayoutsByPayer map[string][]bitcoin.PayoutOutput
+	PayersByWallet map[string]bitcoin.PayerTarget
+	PayerOrder     []string
+	PayerTotals    map[string]int64
+	TaskIDs        []string
+	TasksByWallet  map[string][]string
+	TargetSats     int64
+}
+
+func (s *Server) ensureWishBudgetFit(ctx context.Context, contractID string) {
+	if s == nil || s.store == nil || strings.TrimSpace(contractID) == "" {
+		return
+	}
+	if _, err := scstore.RebalanceTasksToWishBudget(ctx, s.store, contractID, false); err != nil {
+		log.Printf("wish budget rebalance skipped for %s: %v", contractID, err)
+	}
 }
 
 func (s *Server) prepareRaiseFundContext(ctx context.Context, contractID, fundingAddress string, params *chaincfg.Params) (*raiseFundContext, error) {
 	if s.store == nil {
 		return nil, fmt.Errorf("task store unavailable for raise_fund")
 	}
+	s.ensureWishBudgetFit(ctx, contractID)
 	tasks, err := s.store.ListTasks(smart_contract.TaskFilter{ContractID: contractID})
 	if err != nil {
 		return nil, fmt.Errorf("failed to load tasks: %v", err)
@@ -667,7 +691,7 @@ func (s *Server) prepareRaiseFundContext(ctx context.Context, contractID, fundin
 	if strings.TrimSpace(fundingAddress) == "" {
 		return nil, fmt.Errorf("missing fundraiser payout address")
 	}
-	fundAddr, err := btcutil.DecodeAddress(strings.TrimSpace(fundingAddress), params)
+	fundAddr, err := bitcoin.DecodeAddressForNetwork(strings.TrimSpace(fundingAddress), params)
 	if err != nil {
 		return nil, fmt.Errorf("invalid fundraiser payout address: %v", err)
 	}
@@ -681,6 +705,9 @@ func (s *Server) prepareRaiseFundContext(ctx context.Context, contractID, fundin
 	var payerOrder []string
 	var payoutTotal int64
 	for _, task := range tasks {
+		if !scstore.TaskCountsTowardBudget(task) {
+			continue
+		}
 		if task.BudgetSats <= 0 {
 			return nil, fmt.Errorf("task budget missing for %s", task.TaskID)
 		}
@@ -703,7 +730,7 @@ func (s *Server) prepareRaiseFundContext(ctx context.Context, contractID, fundin
 		out.TasksByWallet[taskWallet] = append(out.TasksByWallet[taskWallet], task.TaskID)
 	}
 	for _, wallet := range payerOrder {
-		addr, err := btcutil.DecodeAddress(wallet, params)
+		addr, err := bitcoin.DecodeAddressForNetwork(wallet, params)
 		if err != nil {
 			return nil, fmt.Errorf("invalid contractor wallet: %v", err)
 		}
@@ -714,6 +741,11 @@ func (s *Server) prepareRaiseFundContext(ctx context.Context, contractID, fundin
 	}
 	if len(out.Payers) == 0 {
 		return nil, fmt.Errorf("no contractor wallets found for raise_fund")
+	}
+	if contract, err := scstore.LookupContract(s.store, contractID); err == nil {
+		if wishCap := scstore.WishBudgetFromContract(contract); wishCap > 0 && payoutTotal > wishCap {
+			return nil, fmt.Errorf("raise_fund total %d exceeds original wish budget %d", payoutTotal, wishCap)
+		}
 	}
 	out.TargetSats = payoutTotal
 	out.PayerOrder = payerOrder
@@ -728,10 +760,9 @@ func contractorAddressFor(addr btcutil.Address) string {
 }
 
 func (s *Server) publishIngestUpdate(ctx context.Context, proposalID, ingestionID, visiblePixelHash string, fundingTxIDs []string, res *bitcoin.PSBTResult, commitmentLockAddr btcutil.Address, commitmentTarget string, payoutScripts [][]byte, payoutScriptHashes, payoutScriptHash160s []string) {
-	topic := strings.TrimSpace(os.Getenv("IPFS_MIRROR_TOPIC"))
-	if topic == "" {
-		return
-	}
+	topic := ipfs.MirrorTopic()
+	ipfs.UntrackWish(ingestionID)
+	ipfs.UntrackWish(visiblePixelHash)
 	ingestionID = strings.TrimSpace(ingestionID)
 	visiblePixelHash = strings.TrimSpace(visiblePixelHash)
 	if ingestionID == "" && visiblePixelHash == "" {
@@ -784,10 +815,9 @@ func (s *Server) publishIngestUpdate(ctx context.Context, proposalID, ingestionI
 }
 
 func (s *Server) publishPendingStegoIngest(ctx context.Context, proposalID, visiblePixelHash string) {
-	topic := strings.TrimSpace(os.Getenv("IPFS_MIRROR_TOPIC"))
-	if topic == "" {
-		topic = "stargate-uploads"
-	}
+	topic := ipfs.MirrorTopic()
+	ipfs.UntrackWish(visiblePixelHash)
+	ipfs.UntrackWish(proposalID)
 	if s.store == nil {
 		return
 	}
@@ -930,13 +960,6 @@ func (s *Server) updateProposalMetadataBestEffort(ctx context.Context, proposalI
 	}
 }
 
-func (s *Server) ingestionFromProposalMeta(meta map[string]interface{}, visiblePixelHash string) *services.IngestionRecord {
-	if s.psbtSvc == nil {
-		return nil
-	}
-	return s.psbtSvc.IngestionFromProposalMeta(meta, visiblePixelHash)
-}
-
 func isRaiseFund(mode string) bool {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
 	case "raise_fund", "fundraiser", "fundraise":
@@ -944,27 +967,6 @@ func isRaiseFund(mode string) bool {
 	default:
 		return false
 	}
-}
-
-func looksLikeRaiseFund(value string) bool {
-	normalized := strings.ToLower(strings.TrimSpace(value))
-	return strings.Contains(normalized, "fund raising") ||
-		strings.Contains(normalized, "fundraising") ||
-		strings.Contains(normalized, "raise fund") ||
-		strings.Contains(normalized, "fundraise")
-}
-
-func fundingAddressFromMeta(meta map[string]interface{}) string {
-	if meta == nil {
-		return ""
-	}
-	if v := strings.TrimSpace(toString(meta["funding_address"])); v != "" {
-		return v
-	}
-	if v := strings.TrimSpace(toString(meta["address"])); v != "" {
-		return v
-	}
-	return ""
 }
 
 func toString(value interface{}) string {
@@ -1006,40 +1008,6 @@ func firstString(values []string) string {
 		}
 	}
 	return ""
-}
-
-func (s *Server) resolveContractorPayers(ctx context.Context, contractID string, params *chaincfg.Params) ([]btcutil.Address, error) {
-	if s.store == nil {
-		return nil, fmt.Errorf("task store unavailable")
-	}
-	tasks, err := s.store.ListTasks(smart_contract.TaskFilter{ContractID: contractID})
-	if err != nil {
-		return nil, fmt.Errorf("load contractor wallets: %w", err)
-	}
-	seen := make(map[string]struct{})
-	var addrs []btcutil.Address
-	for _, task := range tasks {
-		candidate := strings.TrimSpace(task.ContractorWallet)
-		if candidate == "" && task.MerkleProof != nil {
-			candidate = strings.TrimSpace(task.MerkleProof.ContractorWallet)
-		}
-		if candidate == "" {
-			continue
-		}
-		if _, ok := seen[candidate]; ok {
-			continue
-		}
-		addr, err := btcutil.DecodeAddress(candidate, params)
-		if err != nil {
-			return nil, fmt.Errorf("invalid contractor wallet: %v", err)
-		}
-		seen[candidate] = struct{}{}
-		addrs = append(addrs, addr)
-	}
-	if len(addrs) == 0 {
-		return nil, fmt.Errorf("no contractor wallets available for funding inputs")
-	}
-	return addrs, nil
 }
 
 func resolvePixelHashFromIngestion(rec *services.IngestionRecord, normalize func([]byte) []byte) []byte {
@@ -1174,8 +1142,8 @@ func (s *Server) handleCommitmentPSBT(w http.ResponseWriter, r *http.Request, co
 		Error(w, http.StatusBadRequest, "missing destination address")
 		return
 	}
-	params := networkParamsFromEnv()
-	destAddr, err := btcutil.DecodeAddress(destAddress, params)
+	params := s.chainParams()
+	destAddr, err := bitcoin.DecodeAddressForNetwork(destAddress, params)
 	if err != nil {
 		Error(w, http.StatusBadRequest, fmt.Sprintf("invalid destination address: %v", err))
 		return
@@ -1222,7 +1190,7 @@ func (s *Server) handlePaymentDetails(w http.ResponseWriter, r *http.Request, co
 		Error(w, http.StatusServiceUnavailable, "api key validation unavailable")
 		return
 	}
-	payerKey := r.Header.Get("X-API-Key")
+	payerKey := auth.RequestAPIKey(r)
 	payerRec, ok := s.apiKeys.Get(payerKey)
 	if !ok {
 		Error(w, http.StatusForbidden, "invalid api key")
@@ -1234,6 +1202,7 @@ func (s *Server) handlePaymentDetails(w http.ResponseWriter, r *http.Request, co
 	}
 
 	ctx := r.Context()
+	s.ensureWishBudgetFit(ctx, contractID)
 
 	// Get contract tasks to calculate payment details
 	tasks, err := s.store.ListTasks(smart_contract.TaskFilter{ContractID: contractID})
@@ -1274,6 +1243,12 @@ func (s *Server) handlePaymentDetails(w http.ResponseWriter, r *http.Request, co
 		Error(w, http.StatusBadRequest, "no approved tasks with payouts found")
 		return
 	}
+	if contract, err := scstore.LookupContract(s.store, contractID); err == nil {
+		if wishCap := scstore.WishBudgetFromContract(contract); wishCap > 0 && totalPayoutSats > wishCap {
+			Error(w, http.StatusBadRequest, fmt.Sprintf("approved task payouts %d exceed original wish budget %d", totalPayoutSats, wishCap))
+			return
+		}
+	}
 	if missingWallets > 0 {
 		Error(w, http.StatusBadRequest, fmt.Sprintf("approved tasks missing contractor wallet (%d missing)", missingWallets))
 		return
@@ -1311,8 +1286,23 @@ func (s *Server) handlePaymentDetails(w http.ResponseWriter, r *http.Request, co
 		"contract_status":   contractStatus,
 		"proposal_metadata": proposal.Metadata,
 		"currency":          "sats",
-		"network":           "testnet", // TODO: Get from config
+		"network":           s.chainNetwork(),
+		"network_params":    s.chainParams().Name,
 	})
+}
+
+// chainNetwork is the advertised Bitcoin network for payment JSON and PSBT
+// responses. Prefer the live ChainBackend (btcd) so the string cannot drift
+// from the node that selected UTXOs.
+func (s *Server) chainNetwork() string {
+	if cb, ok := s.mempool.(bitcoin.ChainBackend); ok {
+		return bitcoin.NetworkName(cb)
+	}
+	return bitcoin.GetCurrentNetwork()
+}
+
+func (s *Server) chainParams() *chaincfg.Params {
+	return bitcoin.NetworkParams(s.chainNetwork())
 }
 
 func (s *Server) resolveCommitmentTask(contractID, taskID string) (smart_contract.Task, error) {
@@ -1332,32 +1322,4 @@ func (s *Server) resolveCommitmentTask(contractID, taskID string) (smart_contrac
 		}
 	}
 	return smart_contract.Task{}, fmt.Errorf("no task with commitment metadata")
-}
-
-func contractIDFromMeta(meta map[string]interface{}, fallback string) string {
-	if meta != nil {
-		if v, ok := meta["visible_pixel_hash"].(string); ok && strings.TrimSpace(v) != "" {
-			return strings.TrimSpace(v)
-		}
-		if v, ok := meta["contract_id"].(string); ok && strings.TrimSpace(v) != "" {
-			return strings.TrimSpace(v)
-		}
-		if v, ok := meta["ingestion_id"].(string); ok && strings.TrimSpace(v) != "" {
-			return strings.TrimSpace(v)
-		}
-	}
-	return fallback
-}
-
-func networkParamsFromEnv() *chaincfg.Params {
-	switch bitcoin.GetCurrentNetwork() {
-	case "mainnet":
-		return &chaincfg.MainNetParams
-	case "signet":
-		return &chaincfg.SigNetParams
-	case "testnet":
-		return &chaincfg.TestNet3Params
-	default:
-		return &chaincfg.TestNet4Params
-	}
 }

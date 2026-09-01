@@ -3,7 +3,6 @@ package handlers
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -24,8 +23,8 @@ import (
 	_ "golang.org/x/image/bmp"
 	_ "golang.org/x/image/webp"
 
-	sc "stargate-backend/core/smart_contract"
 	scmiddleware "stargate-backend/app/smart_contract"
+	sc "stargate-backend/core/smart_contract"
 	"stargate-backend/models"
 	"stargate-backend/security"
 	"stargate-backend/services"
@@ -203,56 +202,11 @@ func normalizeWishText(text string) string {
 	return strings.ToLower(strings.Join(strings.Fields(text), " "))
 }
 
-func wishKeyFromText(text string) string {
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return ""
-	}
-	line := text
-	if idx := strings.IndexRune(text, '\n'); idx >= 0 {
-		line = text[:idx]
-	}
-	return normalizeWishText(line)
-}
-
 func looksLikeStegoManifestText(text string) bool {
 	lower := strings.ToLower(text)
 	return strings.Contains(lower, "schema_version:") &&
 		strings.Contains(lower, "proposal_id:") &&
 		strings.Contains(lower, "visible_pixel_hash:")
-}
-
-func proposalContractID(p sc.Proposal) string {
-	if v, ok := p.Metadata["visible_pixel_hash"].(string); ok && strings.TrimSpace(v) != "" {
-		return strings.TrimSpace(v)
-	}
-	if v, ok := p.Metadata["contract_id"].(string); ok && strings.TrimSpace(v) != "" {
-		return strings.TrimSpace(v)
-	}
-	if v, ok := p.Metadata["ingestion_id"].(string); ok && strings.TrimSpace(v) != "" {
-		return strings.TrimSpace(v)
-	}
-	if strings.TrimSpace(p.VisiblePixelHash) != "" {
-		return strings.TrimSpace(p.VisiblePixelHash)
-	}
-	return baseContractID(p.ID)
-}
-
-func ingestionContractID(rec services.IngestionRecord) string {
-	if v, ok := rec.Metadata["visible_pixel_hash"].(string); ok && strings.TrimSpace(v) != "" {
-		return strings.TrimSpace(v)
-	}
-	if v, ok := rec.Metadata["contract_id"].(string); ok && strings.TrimSpace(v) != "" {
-		return strings.TrimSpace(v)
-	}
-	if v, ok := rec.Metadata["ingestion_id"].(string); ok && strings.TrimSpace(v) != "" {
-		return strings.TrimSpace(v)
-	}
-	return baseContractID(rec.ID)
-}
-
-func isRejectedProposalStatus(status string) bool {
-	return strings.EqualFold(strings.TrimSpace(status), "rejected")
 }
 
 func appendWishTimestamp(message string, ts int64) string {
@@ -273,14 +227,6 @@ func stripWishTimestamp(message string) string {
 		return message
 	}
 	return strings.TrimSpace(message[:idx])
-}
-
-func computeVisiblePixelHash(imageBytes []byte, text string) string {
-	// Include text (message) in hash if provided, for uniqueness of wish/inscription
-	// (previously ignored the text param, now uses both for Cat 6.6)
-	input := append(imageBytes, []byte(text)...)
-	sum := sha256.Sum256(input)
-	return fmt.Sprintf("%x", sum[:])
 }
 
 func wishContractID(visibleHash string) string {
@@ -350,27 +296,6 @@ func isMethodCompatible(method, ext string) bool {
 }
 
 // ensureIngestionImageFile writes the base64 image to uploads dir if missing and returns the path.
-func ensureIngestionImageFile(rec services.IngestionRecord) (string, error) {
-	uploadsDir := os.Getenv("UPLOADS_DIR")
-	if err := os.MkdirAll(uploadsDir, 0755); err != nil {
-		return "", err
-	}
-	target := security.SafeFilePath(uploadsDir, rec.Filename)
-	if _, err := os.Stat(target); err == nil {
-		return target, nil
-	}
-	if isUploadTombstoned(uploadsDir, filepath.Base(rec.Filename)) {
-		return "", fmt.Errorf("upload tombstoned")
-	}
-	data, err := base64.StdEncoding.DecodeString(rec.ImageBase64)
-	if err != nil {
-		return "", err
-	}
-	if err := os.WriteFile(target, data, 0644); err != nil {
-		return "", err
-	}
-	return target, nil
-}
 
 func isUploadTombstoned(uploadsDir, filename string) bool {
 	if uploadsDir == "" || filename == "" {
@@ -639,13 +564,7 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 	}
 
 	// Record the wish creator
-	creatorKey := strings.TrimSpace(r.Header.Get("X-API-Key"))
-	if creatorKey == "" {
-		auth := r.Header.Get("Authorization")
-		if strings.HasPrefix(auth, "Bearer ") {
-			creatorKey = strings.TrimPrefix(auth, "Bearer ")
-		}
-	}
+	creatorKey := auth.RequestAPIKey(r)
 	var creatorWallet string
 	if creatorKey != "" && h.apiKeyValidator != nil {
 		if apiKeyRec, ok := h.apiKeyValidator.Get(creatorKey); ok {
@@ -693,6 +612,9 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 		return
 	}
 	log.Printf("DEBUG: Successfully stored stego image to %s", imagePath)
+	// Register before the uploads scan can run so the file lands on the
+	// wish file-mirror (stargate-wishes), not the durable uploads topic.
+	ipfs.TrackWish(ingestionID, "", time.Now())
 
 	if h.ingestionService != nil {
 		log.Printf("DEBUG: Creating ingestion record for %s", ingestionID)
@@ -711,6 +633,17 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 		// Publish announcement
 		log.Printf("DEBUG: Publishing pending ingest announcement for %s", ingestionID)
 		publishPendingIngestAnnouncement(ingestionID, ingestionID, imageFilename, "alpha", embeddedMessage, price, priceUnit, address, fundingMode, stegoImgBytes)
+		if rec, err := h.ingestionService.Get(ingestionID); err == nil && rec != nil {
+			if rec.Metadata == nil {
+				rec.Metadata = map[string]interface{}{}
+			}
+			if tracked, ok := ipfs.LookupWish(ingestionID); ok && tracked.CID != "" {
+				_ = h.ingestionService.UpdateMetadata(ingestionID, map[string]interface{}{
+					"ipfs_image_cid": tracked.CID,
+					"ipfs_topic":     ipfs.WishTopic(),
+				})
+			}
+		}
 	}
 
 	if h.store != nil {
@@ -791,13 +724,7 @@ func (h *InscriptionHandler) HandleDeleteInscription(w http.ResponseWriter, r *h
 
 	// Get requester wallet from API key (provided by wrapWithAuth)
 	var requesterWallet string
-	apiKey := strings.TrimSpace(r.Header.Get("X-API-Key"))
-	if apiKey == "" {
-		auth := r.Header.Get("Authorization")
-		if strings.HasPrefix(auth, "Bearer ") {
-			apiKey = strings.TrimPrefix(auth, "Bearer ")
-		}
-	}
+	apiKey := auth.RequestAPIKey(r)
 	if apiKey != "" && h.apiKeyValidator != nil {
 		if apiKeyRec, ok := h.apiKeyValidator.Get(apiKey); ok {
 			requesterWallet = strings.TrimSpace(apiKeyRec.Wallet)
@@ -834,7 +761,11 @@ func (h *InscriptionHandler) HandleDeleteInscription(w http.ResponseWriter, r *h
 		if err := h.ingestionService.Delete(r.Context(), visibleHash); err != nil {
 			log.Printf("Failed to delete ingestion record %s: %v", visibleHash, err)
 		}
+		if tracked, ok := ipfs.LookupWish(visibleHash); ok && tracked.CID != "" {
+			_ = ipfs.NewClientFromEnv().Unpin(r.Context(), tracked.CID)
+		}
 	}
+	ipfs.UntrackWish(visibleHash)
 
 	// 2. Delete from MCP store (cascading delete)
 	if h.store != nil {
@@ -1013,7 +944,6 @@ func (h *InscriptionHandler) fromContract(c sc.Contract) models.InscriptionReque
 			if _, err := os.Stat(hashPath); err == nil {
 				imagePath = hashPath
 			} else {
-				// Fallback to old pattern with prefix
 				if matches, _ := filepath.Glob(filepath.Join(uploadsDir, baseID+"_*")); len(matches) > 0 {
 					imagePath = matches[0]
 				}
@@ -1069,85 +999,6 @@ func (h *InscriptionHandler) fromContract(c sc.Contract) models.InscriptionReque
 	}
 }
 
-func (h *InscriptionHandler) fromProposal(p sc.Proposal) models.InscriptionRequest {
-	uploadsDir := os.Getenv("UPLOADS_DIR")
-	imagePath := ""
-	baseID := baseContractID(p.ID)
-	if baseID == "" {
-		baseID = strings.TrimSpace(p.VisiblePixelHash)
-	}
-	if baseID == "" {
-		if v, ok := p.Metadata["visible_pixel_hash"].(string); ok {
-			baseID = strings.TrimSpace(v)
-		}
-	}
-	if baseID != "" {
-		// Try partitioned and flat hash-only locations.
-		hashPath := datadir.PartResolve(uploadsDir, baseID)
-		if _, err := os.Stat(hashPath); err == nil {
-			imagePath = hashPath
-		} else {
-			// Fallback to old pattern with prefix
-			if matches, _ := filepath.Glob(filepath.Join(uploadsDir, baseID+"_*")); len(matches) > 0 {
-				imagePath = matches[0]
-			}
-		}
-	}
-	wishText := ""
-	if v, ok := p.Metadata["wish_text"].(string); ok {
-		wishText = strings.TrimSpace(v)
-	}
-	if wishText == "" {
-		if v, ok := p.Metadata["embedded_message"].(string); ok {
-			wishText = strings.TrimSpace(v)
-		}
-	}
-	if wishText == "" {
-		if v, ok := p.Metadata["message"].(string); ok {
-			wishText = strings.TrimSpace(v)
-		}
-	}
-	wishText = stripWishTimestamp(wishText)
-	text := strings.TrimSpace(p.DescriptionMD)
-	if wishText != "" {
-		text = wishText
-	}
-	if text == "" {
-		text = p.Title
-	}
-	return models.InscriptionRequest{
-		ImageData: imagePath,
-		Text:      text,
-		Price:     float64(p.BudgetSats) / 1e8,
-		Timestamp: p.CreatedAt.Unix(),
-		ID:        p.ID,
-		Status:    p.Status,
-	}
-}
-
-func (h *InscriptionHandler) upsertOpenContract(visibleHash, title, priceStr string) {
-	if h.store == nil || visibleHash == "" {
-		return
-	}
-	priceSat := parsePriceSats(priceStr)
-	contract := sc.Contract{
-		ContractID:          wishContractID(visibleHash),
-		Title:               title,
-		TotalBudgetSats:     priceSat,
-		GoalsCount:          0,
-		AvailableTasksCount: 0,
-		Status:              "pending",
-	}
-
-	// Prefer stores that expose UpsertContractWithTasks for idempotency.
-	type upserter interface {
-		UpsertContractWithTasks(ctx context.Context, contract sc.Contract, tasks []sc.Task) error
-	}
-	if u, ok := h.store.(upserter); ok {
-		_ = u.UpsertContractWithTasks(context.Background(), contract, nil)
-	}
-}
-
 func publishPendingIngestAnnouncement(ingestionID, visibleHash, filename, method, message, price, priceUnit, address, fundingMode string, imgBytes []byte) {
 	if !ipfsIngestSyncEnabled() {
 		return
@@ -1159,10 +1010,7 @@ func publishPendingIngestAnnouncement(ingestionID, visibleHash, filename, method
 	if strings.TrimSpace(ingestionID) == "" || len(imgBytes) == 0 {
 		return
 	}
-	topic := strings.TrimSpace(os.Getenv("IPFS_MIRROR_TOPIC"))
-	if topic == "" {
-		topic = "stargate-uploads"
-	}
+	topic := ipfs.WishTopic()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -1176,6 +1024,10 @@ func publishPendingIngestAnnouncement(ingestionID, visibleHash, filename, method
 	if err != nil {
 		log.Printf("pending ingest announce: ipfs add failed for %s: %v", ingestionID, err)
 		return
+	}
+	ipfs.TrackWish(visibleHash, imageCID, time.Now())
+	if strings.TrimSpace(ingestionID) != "" && ingestionID != visibleHash {
+		ipfs.TrackWish(ingestionID, imageCID, time.Now())
 	}
 	ann := pendingIngestAnnouncement{
 		Type:             "pending_ingest",
@@ -1204,36 +1056,4 @@ func publishPendingIngestAnnouncement(ingestionID, visibleHash, filename, method
 func ipfsIngestSyncEnabled() bool {
 	// Match loadIPFSIngestSyncConfig: enabled by default unless explicitly false.
 	return !strings.EqualFold(strings.TrimSpace(os.Getenv("IPFS_INGEST_SYNC_ENABLED")), "false")
-}
-
-func (h *InscriptionHandler) updateContractID(oldHash, newContractID string) {
-	// Update the contract ID in the database to match the new stego hash
-	if h.store != nil {
-		// Try to get the existing contract by old ID first
-		contract, err := h.store.GetContract(oldHash)
-		if err != nil {
-			// Create new contract if it doesn't exist
-			contract = sc.Contract{
-				ContractID: newContractID,
-				Title:      "Auto-generated wish",
-				Status:     "pending",
-			}
-		} else {
-			// Update existing contract with new ID
-			contract.ContractID = newContractID
-		}
-
-		// Use the available upsert method
-		if upserter, ok := h.store.(interface {
-			UpsertContractWithTasks(ctx context.Context, contract sc.Contract, tasks []sc.Task) error
-		}); ok {
-			if err := upserter.UpsertContractWithTasks(context.Background(), contract, nil); err != nil {
-				fmt.Printf("Failed to update contract ID from %s to %s: %v\n", oldHash, newContractID, err)
-			} else {
-				fmt.Printf("Updated contract ID from %s to %s\n", oldHash, newContractID)
-			}
-		} else {
-			fmt.Printf("Store does not support UpsertContractWithTasks\n")
-		}
-	}
 }

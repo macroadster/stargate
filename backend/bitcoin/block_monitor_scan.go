@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -98,50 +97,14 @@ func sanitizeInscriptionsForDisk(inscriptions []InscriptionData) []InscriptionDa
 }
 
 // stripPushdataPrefixLocal removes a leading push opcode (OP_PUSH, OP_PUSHDATA1/2/4) from a payload when present.
-func stripPushdataPrefixLocal(b []byte) []byte {
-	if len(b) == 0 {
-		return b
-	}
-	op := b[0]
-	switch {
-	case op <= 75:
-		if len(b) > int(op) {
-			return b[1:]
-		}
-	case op == 0x4c && len(b) > 1: // OP_PUSHDATA1
-		l := int(b[1])
-		if len(b) >= 2+l {
-			return b[2:]
-		}
-	case op == 0x4d && len(b) > 2: // OP_PUSHDATA2
-		l := int(b[1]) | int(b[2])<<8
-		if len(b) >= 3+l {
-			return b[3:]
-		}
-	case op == 0x4e && len(b) > 4: // OP_PUSHDATA4
-		l := int(b[1]) | int(b[2])<<8 | int(b[3])<<16 | int(b[4])<<24
-		if len(b) >= 5+l {
-			return b[5:]
-		}
-	}
-	return b
-}
+
+// OP_PUSHDATA1
+
+// OP_PUSHDATA2
+
+// OP_PUSHDATA4
 
 // stripNonPrintablePrefixLocal trims leading control bytes to get to the printable payload.
-func stripNonPrintablePrefixLocal(b []byte) []byte {
-	i := 0
-	for i < len(b) {
-		c := b[i]
-		if c == '\n' || c == '\r' || c == '\t' || (c >= 32 && c < 127) {
-			break
-		}
-		i++
-	}
-	if i > 0 && i < len(b) {
-		return b[i:]
-	}
-	return b
-}
 
 // convertTransactions converts parsed transactions to transaction data format
 func (bm *BlockMonitor) convertTransactions(transactions []Transaction) []TransactionData {
@@ -167,84 +130,8 @@ func (bm *BlockMonitor) convertTransactions(transactions []Transaction) []Transa
 }
 
 // scanBlockViaAPI calls the /scan/block API endpoint to scan a block
-func (bm *BlockMonitor) scanBlockViaAPI(height int64) ([]map[string]any, error) {
-	// Create the request for the /scan/block API
-	request := core.BlockScanRequest{
-		BlockHeight: int(height),
-		ScanOptions: core.ScanOptions{
-			ExtractMessage:      true,
-			ConfidenceThreshold: 0.5,
-			IncludeMetadata:     true,
-		},
-	}
 
-	// Marshal the request
-	requestBody, err := json.Marshal(request)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal scan request: %w", err)
-	}
-
-	// Make HTTP request to the Go backend's Bitcoin API
-	client := &http.Client{Timeout: 300 * time.Second} // 5 minute timeout for large blocks
-	req, err := http.NewRequest("POST", "http://localhost:3001/bitcoin/v1/scan/block", bytes.NewBuffer(requestBody))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to call scan API: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("scan API returned status %d: %s", resp.StatusCode, string(body))
-	}
-
-	// Parse the response
-	var scanResponse core.BlockScanResponse
-	if err := json.NewDecoder(resp.Body).Decode(&scanResponse); err != nil {
-		return nil, fmt.Errorf("failed to decode scan response: %w", err)
-	}
-
-	// Convert the API response to the expected format for block monitor
-	var results []map[string]any
-	for i, inscription := range scanResponse.Inscriptions {
-		result := map[string]any{
-			"tx_id":             inscription.TxID,
-			"image_index":       i,
-			"file_name":         inscription.FileName,
-			"size_bytes":        inscription.SizeBytes,
-			"format":            "unknown",
-			"scanned_at":        time.Now().Unix(),
-			"is_stego":          false,
-			"confidence":        0.0,
-			"stego_type":        "",
-			"extracted_message": "",
-			"scan_error":        "",
-			"stego_details":     nil,
-		}
-
-		if inscription.ScanResult != nil {
-			result["is_stego"] = inscription.ScanResult.IsStego
-			result["confidence"] = inscription.ScanResult.Confidence
-			if inscription.ScanResult.StegoType != "" {
-				result["stego_type"] = inscription.ScanResult.StegoType
-			}
-			if inscription.ScanResult.ExtractedMessage != "" {
-				result["extracted_message"] = inscription.ScanResult.ExtractedMessage
-			}
-			if inscription.ScanResult.ExtractionError != "" {
-				result["scan_error"] = inscription.ScanResult.ExtractionError
-			}
-		}
-
-		results = append(results, result)
-	}
-
-	return results, nil
-}
+// 5 minute timeout for large blocks
 
 // scanImagesDirectly scans images using the BitcoinAPI directly
 func (bm *BlockMonitor) scanImagesDirectly(images []ExtractedImageData) ([]map[string]any, error) {
@@ -623,7 +510,7 @@ func (bm *BlockMonitor) matchPayoutScript(tx Transaction, payload scanPayload) (
 
 func (bm *BlockMonitor) scriptForAddress(address string) []byte {
 	params := bm.networkParams()
-	addr, err := btcutil.DecodeAddress(address, params)
+	addr, err := DecodeAddressForNetwork(address, params)
 	if err != nil {
 		return nil
 	}
@@ -635,18 +522,7 @@ func (bm *BlockMonitor) scriptForAddress(address string) []byte {
 }
 
 func (bm *BlockMonitor) networkParams() *chaincfg.Params {
-	switch bm.bitcoinClient.GetNetwork() {
-	case "mainnet":
-		return &chaincfg.MainNetParams
-	case "signet":
-		return &chaincfg.SigNetParams
-	case "testnet":
-		return &chaincfg.TestNet3Params
-	case "testnet4":
-		return &chaincfg.TestNet4Params
-	default:
-		return &chaincfg.TestNet4Params
-	}
+	return NetworkParams(bm.bitcoinClient.GetNetwork())
 }
 
 func (bm *BlockMonitor) moveIngestionImage(blockDir string, rec *services.IngestionRecord) (string, error) {
@@ -819,27 +695,9 @@ func (bm *BlockMonitor) unpinUploadPath(path string) {
 	}
 }
 
-func (bm *BlockMonitor) cleanupUploadArtifacts(rec *services.IngestionRecord) {
-	if bm == nil || rec == nil {
-		return
-	}
-	id := strings.TrimSpace(rec.ID)
-	if id == "" {
-		return
-	}
-	uploadsDir := os.Getenv("UPLOADS_DIR")
-	// Try partitioned and flat hash-only locations.
-	hashPath := datadir.PartResolve(uploadsDir, id)
-	if _, err := os.Stat(hashPath); err == nil {
-		bm.unpinUploadPath(hashPath)
-	}
-	// Also cleanup old pattern files
-	pattern := filepath.Join(uploadsDir, id+"_*")
-	matches, _ := filepath.Glob(pattern)
-	for _, match := range matches {
-		bm.unpinUploadPath(match)
-	}
-}
+// Try partitioned and flat hash-only locations.
+
+// Also cleanup old pattern files
 
 func (bm *BlockMonitor) maybeReconcileStego(rec *services.IngestionRecord) {
 	if bm.stegoReconciler == nil || rec == nil {
@@ -1041,32 +899,16 @@ func (bm *BlockMonitor) markIngestionConfirmed(rec *services.IngestionRecord, tx
 			if identity.IsPixelHash(identity.Normalize(contractID)) {
 				contractID = identity.ToWishID(contractID)
 			}
-			if err := bm.sweepStore.ConfirmContract(context.Background(), contractID, int(height), txid); err != nil {
+			if !bm.settlementReady(height) {
+				log.Printf("oracle reconcile: contract %s seen in block %d — waiting for %d confirmations before ConfirmContract",
+					contractID, height, SettlementConfirmations())
+			} else if err := bm.sweepStore.ConfirmContract(context.Background(), contractID, int(height), txid); err != nil {
 				log.Printf("oracle reconcile: failed to confirm contract %s: %v", contractID, err)
 			} else {
 				log.Printf("oracle reconcile: successfully confirmed contract %s with stego_image_url calculated by storage layer", contractID)
 			}
 		}
 	}
-}
-
-func contractIDFromIngestion(rec *services.IngestionRecord) string {
-	if rec == nil {
-		return ""
-	}
-	if meta := rec.Metadata; meta != nil {
-		if contractID, ok := meta["contract_id"].(string); ok {
-			if trimmed := strings.TrimSpace(contractID); trimmed != "" {
-				return trimmed
-			}
-		}
-		if visibleHash, ok := meta["visible_pixel_hash"].(string); ok {
-			if trimmed := strings.TrimSpace(visibleHash); trimmed != "" {
-				return trimmed
-			}
-		}
-	}
-	return strings.TrimSpace(rec.ID)
 }
 
 func copyFile(src, dest string) error {
@@ -1230,39 +1072,10 @@ func upsertContractByID(contracts []SmartContractData, updated SmartContractData
 }
 
 // GetBlockInscriptions retrieves inscriptions for a specific block height
-func (bm *BlockMonitor) GetBlockInscriptions(height int64) (*BlockInscriptionsResponse, error) {
-	// First, try to find existing block data
-	blockDir, err := bm.findBlockDirectory(height)
-	if err != nil {
-		return &BlockInscriptionsResponse{
-			BlockHeight: height,
-			Success:     false,
-			Error:       "Block not found",
-		}, nil
-	}
 
-	// Read inscriptions.json
-	inscriptionsFile := filepath.Join(blockDir, "inscriptions.json")
-	data, err := os.ReadFile(inscriptionsFile)
-	if err != nil {
-		return &BlockInscriptionsResponse{
-			BlockHeight: height,
-			Success:     false,
-			Error:       "Inscriptions data not found",
-		}, nil
-	}
+// First, try to find existing block data
 
-	var response BlockInscriptionsResponse
-	if err := json.Unmarshal(data, &response); err != nil {
-		return &BlockInscriptionsResponse{
-			BlockHeight: height,
-			Success:     false,
-			Error:       "Failed to parse inscriptions data",
-		}, nil
-	}
-
-	return &response, nil
-}
+// Read inscriptions.json
 
 // findBlockDirectory finds the directory for a given block height using
 // the partitioned-aware FindBlockDir (no more full root scan).

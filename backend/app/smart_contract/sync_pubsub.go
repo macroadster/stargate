@@ -71,15 +71,11 @@ func loadSyncPubsubConfig() syncPubsubConfig {
 	}
 
 	// When using the embedded IPFS node (the normal single-binary case),
-	// we strictly limit it to the stargate-uploads mirror topic only.
-	// The MCP sync pubsub (and stego pubsub) on other topics are not
-	// part of the official replication path and can cause unnecessary
-	// CPU/network activity ("burning electricity for nothing").
-	// Only the mirror on stargate-uploads is considered the robust,
-	// supported approach.
+	// pubsub is capped to the uploads mirror and the inscribed-wish topic.
+	// MCP sync pubsub (stargate-stego) is not part of that allowlist.
 	embeddedEnabled := strings.ToLower(os.Getenv("IPFS_EMBEDDED_ENABLED")) != "false"
 	if enabled && embeddedEnabled {
-		log.Printf("mcp sync pubsub disabled: embedded IPFS node is capped to the stargate-uploads mirror topic only. Non-mirror pubsub features are disabled to avoid unproven paths and unnecessary resource usage.")
+		log.Printf("mcp sync pubsub disabled: embedded IPFS node is capped to the uploads and wish file-mirror topics. Non-allowlisted pubsub features are disabled to avoid unproven paths and unnecessary resource usage.")
 		enabled = false
 	}
 
@@ -200,10 +196,6 @@ func syncPubsubSubscribe(ctx context.Context, server *Server, cfg syncPubsubConf
 			}
 		}
 	}
-}
-
-func decodePubsubPayload(data []byte) []byte {
-	return data
 }
 
 // PublishSyncAnnouncement broadcasts a sync message to the cluster.

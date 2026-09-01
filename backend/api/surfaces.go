@@ -3,7 +3,6 @@ package api
 import (
 	"encoding/json"
 	"net/http"
-	"sync"
 )
 
 // Surface ownership for the single-binary API.
@@ -58,27 +57,27 @@ var DefaultAliases = []RouteAlias{
 
 // DefaultToolREST maps MCP tool names to their REST backing paths (docs/parity).
 var DefaultToolREST = map[string]string{
-	"list_contracts":               "GET /api/smart_contract/contracts",
-	"get_contract":                 "GET /api/smart_contract/contracts/{id}",
-	"get_open_contracts":           "GET /api/open-contracts",
-	"list_proposals":               "GET /api/smart_contract/proposals",
-	"get_proposal":                 "GET /api/smart_contract/proposals/{id}",
-	"create_proposal":              "POST /api/smart_contract/proposals",
-	"approve_proposal":             "POST /api/smart_contract/proposals/{id}/approve",
-	"list_tasks":                   "GET /api/smart_contract/tasks",
-	"get_task":                     "GET /api/smart_contract/tasks/{id}",
-	"claim_task":                   "POST /api/smart_contract/tasks/{id}/claim",
-	"submit_work":                  "POST /api/smart_contract/claims/{id}/submit",
-	"list_submissions":             "GET /api/smart_contract/submissions",
-	"approve_submission":           "POST /api/smart_contract/submissions/{id}/review",
-	"reject_submission":            "POST /api/smart_contract/submissions/{id}/review",
-	"list_events":                  "GET /api/smart_contract/events",
-	"build_psbt":                   "POST /api/smart_contract/contracts/{id}/psbt",
-	"scan_image":                   "POST /bitcoin/v1/scan/image",
-	"scan_transaction":             "POST /bitcoin/v1/scan/transaction",
-	"get_scanner_info":             "GET /bitcoin/v1/info",
-	"get_auth_challenge":           "GET /api/auth/challenge",
-	"verify_auth_challenge":        "POST /api/auth/verify",
+	"list_contracts":        "GET /api/smart_contract/contracts",
+	"get_contract":          "GET /api/smart_contract/contracts/{id}",
+	"get_open_contracts":    "GET /api/open-contracts",
+	"list_proposals":        "GET /api/smart_contract/proposals",
+	"get_proposal":          "GET /api/smart_contract/proposals/{id}",
+	"create_proposal":       "POST /api/smart_contract/proposals",
+	"approve_proposal":      "POST /api/smart_contract/proposals/{id}/approve",
+	"list_tasks":            "GET /api/smart_contract/tasks",
+	"get_task":              "GET /api/smart_contract/tasks/{id}",
+	"claim_task":            "POST /api/smart_contract/tasks/{id}/claim",
+	"submit_work":           "POST /api/smart_contract/claims/{id}/submit",
+	"list_submissions":      "GET /api/smart_contract/submissions",
+	"approve_submission":    "POST /api/smart_contract/submissions/{id}/review",
+	"reject_submission":     "POST /api/smart_contract/submissions/{id}/review",
+	"list_events":           "GET /api/smart_contract/events",
+	"build_psbt":            "POST /api/smart_contract/contracts/{id}/psbt",
+	"scan_image":            "POST /bitcoin/v1/scan/image",
+	"scan_transaction":      "POST /bitcoin/v1/scan/transaction",
+	"get_scanner_info":      "GET /bitcoin/v1/info",
+	"get_auth_challenge":    "GET /api/auth/challenge",
+	"verify_auth_challenge": "POST /api/auth/verify",
 }
 
 // Catalog returns the full surface catalog.
@@ -108,29 +107,5 @@ func WithDeprecation(primary string, next http.HandlerFunc) http.HandlerFunc {
 		w.Header().Set("Link", "<"+primary+">; rel=\"successor-version\"")
 		w.Header().Set("X-Stargate-Primary-Path", primary)
 		next(w, r)
-	}
-}
-
-// RegisterAliases registers legacy paths that share a handler, with deprecation headers.
-func RegisterAliases(mux *http.ServeMux, primary string, handler http.HandlerFunc, aliases ...string) {
-	for _, alias := range aliases {
-		mux.HandleFunc(alias, WithDeprecation(primary, handler))
-	}
-}
-
-// RegisterAliasHandlers registers each alias with the same handler + deprecation.
-func RegisterAliasHandlers(mux *http.ServeMux, handler http.HandlerFunc, aliases []RouteAlias) {
-	for _, a := range aliases {
-		primary := a.Primary
-		mux.HandleFunc(a.Path, WithDeprecation(primary, handler))
-	}
-}
-
-var deprecationLogOnce sync.Map
-
-// LogDeprecationOnce logs the first use of a legacy path (optional observability).
-func LogDeprecationOnce(path, primary string, logf func(string, ...interface{})) {
-	if _, loaded := deprecationLogOnce.LoadOrStore(path, true); !loaded && logf != nil {
-		logf("api surface: legacy path %s used (primary: %s)", path, primary)
 	}
 }

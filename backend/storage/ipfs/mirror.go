@@ -37,6 +37,10 @@ type MirrorConfig struct {
 	ManifestVersion   int
 	ManifestFileName  string
 	AnnouncementLabel string
+	// WishOnly publishes only tracked inscribed wishes (stargate-wishes).
+	// The durable uploads mirror leaves those files off its manifest so
+	// NAT/relay peers still get a periodic inventory on the wish topic.
+	WishOnly bool
 	// OnFileDownloaded is copied to the Mirror before goroutines start,
 	// so there is no race between the subscribe loop and callback setup.
 	OnFileDownloaded func(ctx context.Context, ev FileDownloadedEvent)
@@ -63,15 +67,28 @@ type Mirror struct {
 	mu               sync.Mutex
 	knownFiles       map[string]fileState
 	deletedFiles     map[string]bool
+	ingestByCID      map[string]*remoteIngest
 	onFileDownloaded func(ctx context.Context, ev FileDownloadedEvent)
+	lastInboundFrom  string
+	lastInboundPub   string
+	lastInboundCID   string
+	lastInboundOrig  string
+	lastInboundAt    time.Time
 }
+
+// remoteIngest tracks one peer catalog. A heartbeat of the same CID must
+// retry missing files; "seen" is not "complete".
+type remoteIngest struct {
+	complete bool
+	missing  []manifestEntry
+	files    []manifestEntry
+}
+
+const maxRemoteIngest = 64
 
 // OnFileDownloaded registers a callback invoked every time the mirror
 // downloads a new file.  Use this to trigger ingestion without a separate
 // IPFS pubsub subscription.
-func (m *Mirror) OnFileDownloaded(fn func(ctx context.Context, ev FileDownloadedEvent)) {
-	m.onFileDownloaded = fn
-}
 
 type fileState struct {
 	Size    int64
@@ -101,14 +118,35 @@ type announcement struct {
 }
 
 type MirrorStatus struct {
-	Enabled           bool   `json:"enabled"`
-	PeerID            string `json:"peer_id,omitempty"`
-	Topic             string `json:"topic,omitempty"`
-	UploadsDir        string `json:"uploads_dir,omitempty"`
-	LastPublishedCID  string `json:"last_published_cid,omitempty"`
-	LastPublishAt     int64  `json:"last_publish_at,omitempty"`
-	LastSeenRemoteCID string `json:"last_seen_remote_cid,omitempty"`
-	KnownFiles        int    `json:"known_files,omitempty"`
+	Enabled           bool     `json:"enabled"`
+	PeerID            string   `json:"peer_id,omitempty"`
+	Topic             string   `json:"topic,omitempty"`
+	WishTopic         string   `json:"wish_topic,omitempty"`
+	Topics            []string `json:"topics,omitempty"`
+	UploadsDir        string   `json:"uploads_dir,omitempty"`
+	LastPublishedCID  string   `json:"last_published_cid,omitempty"`
+	LastPublishAt     int64    `json:"last_publish_at,omitempty"`
+	LastSeenRemoteCID string   `json:"last_seen_remote_cid,omitempty"`
+	KnownFiles        int      `json:"known_files,omitempty"`
+	// Wish* fields are filled by the combined /api/ipfs-mirror/status
+	// handler when the wish file-mirror is running.
+	WishEnabled           bool   `json:"wish_enabled,omitempty"`
+	WishLastPublishedCID  string `json:"wish_last_published_cid,omitempty"`
+	WishLastPublishAt     int64  `json:"wish_last_publish_at,omitempty"`
+	WishLastSeenRemoteCID string `json:"wish_last_seen_remote_cid,omitempty"`
+	WishKnownFiles        int    `json:"wish_known_files,omitempty"`
+	// Mesh / inbound diagnostics (NAT peers poll this; no Kubo swarm API).
+	SwarmPeers            []string `json:"swarm_peers"`
+	UploadsMeshPeers      []string `json:"uploads_mesh_peers"`
+	WishMeshPeers         []string `json:"wish_mesh_peers"`
+	LastInboundFrom       string   `json:"last_inbound_from,omitempty"`
+	LastInboundCID        string   `json:"last_inbound_cid,omitempty"`
+	LastInboundAt         int64    `json:"last_inbound_at,omitempty"`
+	WishLastInboundFrom   string   `json:"wish_last_inbound_from,omitempty"`
+	WishLastInboundPub    string   `json:"wish_last_inbound_publisher,omitempty"`
+	WishLastInboundCID    string   `json:"wish_last_inbound_cid,omitempty"`
+	WishLastInboundOrigin string   `json:"wish_last_inbound_origin,omitempty"`
+	WishLastInboundAt     int64    `json:"wish_last_inbound_at,omitempty"`
 }
 
 type pubsubMessage struct {
@@ -124,16 +162,116 @@ func (m *Mirror) Status() MirrorStatus {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	return MirrorStatus{
+	st := MirrorStatus{
 		Enabled:           m.cfg.Enabled,
 		PeerID:            m.peerID,
-		Topic:             m.cfg.Topic,
 		UploadsDir:        m.cfg.UploadsDir,
+		Topics:            AllowedPubsubTopics(),
 		LastPublishedCID:  m.lastPublished,
 		LastPublishAt:     m.lastPublishAt.Unix(),
 		LastSeenRemoteCID: m.lastSeenRemote,
 		KnownFiles:        len(m.knownFiles),
 	}
+	if m.cfg.WishOnly {
+		st.WishTopic = m.cfg.Topic
+		if st.WishTopic == "" {
+			st.WishTopic = WishTopic()
+		}
+		st.Topic = MirrorTopic()
+		st.WishEnabled = m.cfg.Enabled
+		st.WishLastPublishedCID = m.lastPublished
+		st.WishLastPublishAt = m.lastPublishAt.Unix()
+		st.WishLastSeenRemoteCID = m.lastSeenRemote
+		st.WishKnownFiles = len(m.knownFiles)
+		st.WishLastInboundFrom = m.lastInboundFrom
+		st.WishLastInboundPub = m.lastInboundPub
+		st.WishLastInboundCID = m.lastInboundCID
+		st.WishLastInboundOrigin = m.lastInboundOrig
+		if !m.lastInboundAt.IsZero() {
+			st.WishLastInboundAt = m.lastInboundAt.Unix()
+		}
+		// Per-mirror callers should not treat wish inventory as uploads.
+		st.LastPublishedCID = ""
+		st.LastPublishAt = 0
+		st.LastSeenRemoteCID = ""
+		st.KnownFiles = 0
+	} else {
+		st.Topic = m.cfg.Topic
+		st.WishTopic = WishTopic()
+		st.LastInboundFrom = m.lastInboundFrom
+		st.LastInboundCID = m.lastInboundCID
+		if !m.lastInboundAt.IsZero() {
+			st.LastInboundAt = m.lastInboundAt.Unix()
+		}
+	}
+	return st
+}
+
+// MergeMirrorStatus combines the durable uploads mirror and the wish
+// file-mirror into the single /api/ipfs-mirror/status payload.
+func MergeMirrorStatus(uploads, wishes *Mirror) MirrorStatus {
+	if uploads == nil && wishes == nil {
+		return MirrorStatus{Enabled: false, Topics: AllowedPubsubTopics(), Topic: MirrorTopic(), WishTopic: WishTopic()}
+	}
+	st := MirrorStatus{Topic: MirrorTopic(), WishTopic: WishTopic(), Topics: AllowedPubsubTopics()}
+	if uploads != nil {
+		st = uploads.Status()
+	}
+	if wishes == nil {
+		st.SwarmPeers = meshFrom(uploads, nil, "")
+		st.UploadsMeshPeers = meshFrom(uploads, nil, MirrorTopic())
+		st.WishMeshPeers = meshFrom(uploads, nil, WishTopic())
+		return st
+	}
+	ws := wishes.Status()
+	if !st.Enabled {
+		st.Enabled = ws.Enabled
+		if st.PeerID == "" {
+			st.PeerID = ws.PeerID
+		}
+		if st.UploadsDir == "" {
+			st.UploadsDir = ws.UploadsDir
+		}
+	}
+	st.WishTopic = ws.WishTopic
+	if st.WishTopic == "" {
+		st.WishTopic = WishTopic()
+	}
+	st.WishEnabled = ws.WishEnabled || ws.Enabled
+	st.WishLastPublishedCID = ws.WishLastPublishedCID
+	st.WishLastPublishAt = ws.WishLastPublishAt
+	st.WishLastSeenRemoteCID = ws.WishLastSeenRemoteCID
+	st.WishKnownFiles = ws.WishKnownFiles
+	st.WishLastInboundFrom = ws.WishLastInboundFrom
+	st.WishLastInboundPub = ws.WishLastInboundPub
+	st.WishLastInboundCID = ws.WishLastInboundCID
+	st.WishLastInboundOrigin = ws.WishLastInboundOrigin
+	st.WishLastInboundAt = ws.WishLastInboundAt
+	if len(st.Topics) == 0 {
+		st.Topics = AllowedPubsubTopics()
+	}
+	st.SwarmPeers = meshFrom(uploads, wishes, "")
+	st.UploadsMeshPeers = meshFrom(uploads, nil, MirrorTopic())
+	st.WishMeshPeers = meshFrom(wishes, uploads, WishTopic())
+	return st
+}
+
+func meshFrom(primary, fallback *Mirror, topic string) []string {
+	for _, m := range []*Mirror{primary, fallback} {
+		if m == nil || m.ipfsClient == nil {
+			continue
+		}
+		if topic == "" {
+			if peers := m.ipfsClient.SwarmPeers(); len(peers) > 0 {
+				return peers
+			}
+			continue
+		}
+		if peers := m.ipfsClient.TopicPeers(topic); len(peers) > 0 {
+			return peers
+		}
+	}
+	return []string{}
 }
 
 func (m *Mirror) UnpinPath(ctx context.Context, path string) error {
@@ -182,7 +320,14 @@ func (m *Mirror) deletedFilePath() string {
 	if m == nil || m.cfg.UploadsDir == "" {
 		return ""
 	}
-	return filepath.Join(m.cfg.UploadsDir, ".ipfs-mirror-deleted.json")
+	name := ".ipfs-mirror-deleted.json"
+	if m.cfg.WishOnly {
+		// Separate tombstone file so expiring a wish does not prevent
+		// the durable uploads mirror from adopting it after promotion,
+		// and so upload deletes do not hide live wishes.
+		name = ".ipfs-wish-mirror-deleted.json"
+	}
+	return filepath.Join(m.cfg.UploadsDir, name)
 }
 
 func (m *Mirror) loadDeleted() {
@@ -251,7 +396,7 @@ func LoadMirrorConfig() MirrorConfig {
 		UploadEnabled:     envBool("IPFS_MIRROR_UPLOAD_ENABLED", true),
 		DownloadEnabled:   envBool("IPFS_MIRROR_DOWNLOAD_ENABLED", true),
 		APIURL:            envString("IPFS_API_URL", "http://127.0.0.1:5001"),
-		Topic:             envString("IPFS_MIRROR_TOPIC", "stargate-uploads"),
+		Topic:             MirrorTopic(),
 		UploadsDir:        uploadsDir,
 		PollInterval:      envDurationSeconds("IPFS_MIRROR_POLL_INTERVAL_SEC", 10),
 		PublishInterval:   envDurationSeconds("IPFS_MIRROR_PUBLISH_INTERVAL_SEC", 30),
@@ -261,6 +406,19 @@ func LoadMirrorConfig() MirrorConfig {
 		ManifestFileName:  "stargate-uploads-manifest.json",
 		AnnouncementLabel: "stargate-uploads",
 	}
+}
+
+// LoadWishMirrorConfig is the ephemeral inscribed-wish file mirror. Same
+// enable/timing flags as the uploads mirror; different topic, manifest,
+// and file filter (tracked wishes only). NAT/relay peers need this
+// periodic inventory — a one-shot CID announce is not enough.
+func LoadWishMirrorConfig() MirrorConfig {
+	cfg := LoadMirrorConfig()
+	cfg.Topic = WishTopic()
+	cfg.WishOnly = true
+	cfg.ManifestFileName = "stargate-wishes-manifest.json"
+	cfg.AnnouncementLabel = "stargate-wishes"
+	return cfg
 }
 
 func StartMirror(ctx context.Context, cfg MirrorConfig) (*Mirror, error) {
@@ -288,6 +446,7 @@ func StartMirror(ctx context.Context, cfg MirrorConfig) (*Mirror, error) {
 		ipfsClient:       ipfsClient,
 		knownFiles:       make(map[string]fileState),
 		deletedFiles:     make(map[string]bool),
+		ingestByCID:      make(map[string]*remoteIngest),
 		onFileDownloaded: cfg.OnFileDownloaded,
 	}
 	m.loadDeleted()
@@ -307,7 +466,11 @@ func StartMirror(ctx context.Context, cfg MirrorConfig) (*Mirror, error) {
 		m.cfg.DownloadEnabled = false
 	}
 
-	log.Printf("IPFS mirror enabled (peer=%s topic=%s uploads=%s)", m.peerID, m.cfg.Topic, m.cfg.UploadsDir)
+	kind := "uploads"
+	if m.cfg.WishOnly {
+		kind = "wishes"
+	}
+	log.Printf("IPFS mirror enabled (kind=%s peer=%s topic=%s uploads=%s)", kind, m.peerID, m.cfg.Topic, m.cfg.UploadsDir)
 
 	if cfg.UploadEnabled {
 		go m.publishLoop(ctx)
@@ -361,13 +524,30 @@ func (m *Mirror) publishLoop(ctx context.Context) {
 				continue
 			}
 
+			// Unchanged inventory: re-announce the existing CID so NAT/relay
+			// peers can catch up. Do not remint — CreatedAt used to be
+			// time.Now(), which minted a unique object every 30s.
+			if !changed && m.lastPublished != "" {
+				if err := m.announceManifest(ctx, m.lastPublished); err != nil {
+					log.Printf("IPFS mirror announce failed: %v", err)
+					continue
+				}
+				m.lastPublishAt = time.Now()
+				mesh, swarm := m.topicPeerIDs(), m.swarmPeerIDs()
+				log.Printf("IPFS mirror announced manifest: %s (changed=false files=%d mesh_n=%d mesh=%v swarm_n=%d swarm=%v)",
+					m.lastPublished, m.knownFileCount(), len(mesh), mesh, len(swarm), swarm)
+				continue
+			}
+
 			manifestCID, err := m.publishManifest(ctx)
 			if err != nil {
 				log.Printf("IPFS mirror publish failed: %v", err)
 			} else if manifestCID != "" {
 				m.lastPublished = manifestCID
 				m.lastPublishAt = time.Now()
-				log.Printf("IPFS mirror published manifest: %s (changed=%t files=%d)", manifestCID, changed, m.knownFileCount())
+				mesh, swarm := m.topicPeerIDs(), m.swarmPeerIDs()
+				log.Printf("IPFS mirror published manifest: %s (changed=%t files=%d mesh_n=%d mesh=%v swarm_n=%d swarm=%v)",
+					manifestCID, changed, m.knownFileCount(), len(mesh), mesh, len(swarm), swarm)
 			}
 		}
 	}
@@ -427,6 +607,18 @@ func (m *Mirror) scanAndAdd(ctx context.Context) (bool, error) {
 		// public URLs remain /uploads/<hash> and older nodes stay compatible.
 		logical := logicalMirrorPath(rel)
 
+		// Uploads mirror: skip tracked wishes (they live on the wish
+		// file-mirror). Wish mirror: skip everything else.
+		if !m.includeLogical(logical) {
+			m.mu.Lock()
+			if _, ok := m.knownFiles[logical]; ok {
+				delete(m.knownFiles, logical)
+				changed = true
+			}
+			m.mu.Unlock()
+			return nil
+		}
+
 		info, err := entry.Info()
 		if err != nil {
 			return nil
@@ -456,6 +648,9 @@ func (m *Mirror) scanAndAdd(ctx context.Context) (bool, error) {
 		m.mu.Lock()
 		m.knownFiles[logical] = state
 		m.mu.Unlock()
+		if m.cfg.WishOnly {
+			TrackWish(logical, cid, time.Unix(state.ModTime, 0))
+		}
 
 		changed = true
 		count++
@@ -467,6 +662,17 @@ func (m *Mirror) scanAndAdd(ctx context.Context) (bool, error) {
 	}
 
 	return changed, nil
+}
+
+func (m *Mirror) includeLogical(logical string) bool {
+	if m == nil {
+		return false
+	}
+	isWish := IsTrackedWish(logical)
+	if m.cfg.WishOnly {
+		return isWish
+	}
+	return !isWish
 }
 
 // isPartitionDirRel reports whether rel (slash-separated, relative to
@@ -552,31 +758,48 @@ func (m *Mirror) publishManifest(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if manifestCID == "" || manifestCID == m.lastPublished {
-		return manifestCID, nil
+	if manifestCID == "" {
+		return "", nil
 	}
+	if err := m.announceManifest(ctx, manifestCID); err != nil {
+		return "", err
+	}
+	return manifestCID, nil
+}
 
-	msg := announcement{
+// announceManifest publishes a small pubsub pointer at ManifestCID.
+// Timestamp lives here (not in the IPFS object) so heartbeats stay cheap.
+func (m *Mirror) announceManifest(ctx context.Context, manifestCID string) error {
+	if manifestCID == "" {
+		return nil
+	}
+	payload, err := json.Marshal(announcement{
 		Type:        m.cfg.AnnouncementLabel,
 		ManifestCID: manifestCID,
 		Origin:      m.peerID,
 		Timestamp:   time.Now().Unix(),
-	}
-	payload, err := json.Marshal(msg)
+	})
 	if err != nil {
-		return "", err
+		return err
 	}
-
-	if err := m.pubsubPublish(ctx, payload); err != nil {
-		return "", err
-	}
-
-	return manifestCID, nil
+	return m.pubsubPublish(ctx, payload)
 }
 
 func (m *Mirror) createManifest(ctx context.Context) (string, error) {
+	payload, err := json.Marshal(m.manifestSnapshot())
+	if err != nil {
+		return "", err
+	}
+	return m.addBytes(ctx, m.cfg.ManifestFileName, payload)
+}
+
+// manifestSnapshot is content-addressed: same inventory ⇒ same bytes ⇒ same CID.
+// CreatedAt is the newest file mtime, not wall-clock, so periodic heartbeats
+// do not mint a new object.
+func (m *Mirror) manifestSnapshot() manifest {
 	m.mu.Lock()
 	entries := make([]manifestEntry, 0, len(m.knownFiles))
+	var createdAt int64
 	for path, state := range m.knownFiles {
 		entries = append(entries, manifestEntry{
 			Path:    path,
@@ -584,34 +807,35 @@ func (m *Mirror) createManifest(ctx context.Context) (string, error) {
 			Size:    state.Size,
 			ModTime: state.ModTime,
 		})
+		if state.ModTime > createdAt {
+			createdAt = state.ModTime
+		}
 	}
+	peerID := m.peerID
+	version := m.cfg.ManifestVersion
 	m.mu.Unlock()
 
 	sort.Slice(entries, func(i, j int) bool {
 		return entries[i].Path < entries[j].Path
 	})
 
-	payload, err := json.Marshal(manifest{
-		Version:   m.cfg.ManifestVersion,
-		Origin:    m.peerID,
-		CreatedAt: time.Now().Unix(),
+	return manifest{
+		Version:   version,
+		Origin:    peerID,
+		CreatedAt: createdAt,
 		Files:     entries,
-	})
-	if err != nil {
-		return "", err
 	}
-
-	return m.addBytes(ctx, m.cfg.ManifestFileName, payload)
 }
 
 func (m *Mirror) subscribeOnce(ctx context.Context) error {
 	// Use the global IPFS client for pubsub when embedded node is available
 	if m.ipfsClient != nil && m.ipfsClient.embedded != nil {
-		ch, err := m.ipfsClient.PubsubSubscribe(ctx, m.cfg.Topic)
+		ch, err := m.ipfsClient.PubsubSubscribeDetailed(ctx, m.cfg.Topic)
 		if err != nil {
 			return err
 		}
-		for data := range ch {
+		for in := range ch {
+			data := in.Data
 			var msg pubsubMessage
 			if json.Unmarshal(data, &msg) == nil && msg.From == m.peerID {
 				continue
@@ -624,16 +848,11 @@ func (m *Mirror) subscribeOnce(ctx context.Context) error {
 			manifestCID, err := m.extractManifestCID(encoded)
 			if err != nil {
 				log.Printf("IPFS mirror message decode failed: %v", err)
+				m.logInbound(in, encoded, "decode-error")
 				continue
 			}
-			if manifestCID == "" || manifestCID == m.lastSeenRemote {
-				continue
-			}
-			if err := m.processManifest(ctx, manifestCID); err != nil {
-				log.Printf("IPFS mirror sync failed: %v", err)
-			} else {
-				m.lastSeenRemote = manifestCID
-			}
+			m.logInbound(in, encoded, manifestCID)
+			m.ingestRemoteManifest(ctx, manifestCID)
 		}
 		return nil
 	}
@@ -675,43 +894,55 @@ func (m *Mirror) subscribeOnce(ctx context.Context) error {
 		manifestCID, err := m.extractManifestCID(msg.Data)
 		if err != nil {
 			log.Printf("IPFS mirror message decode failed: %v", err)
+			m.logInbound(PubsubInbound{ReceivedFrom: msg.From}, msg.Data, "decode-error")
 			continue
 		}
-		if manifestCID == "" {
-			continue
-		}
-		if manifestCID == "" || manifestCID == m.lastSeenRemote {
-			continue
-		}
-		if err := m.processManifest(ctx, manifestCID); err != nil {
-			log.Printf("IPFS mirror sync failed: %v", err)
-		} else {
-			m.lastSeenRemote = manifestCID
-		}
+		m.logInbound(PubsubInbound{ReceivedFrom: msg.From}, msg.Data, manifestCID)
+		m.ingestRemoteManifest(ctx, manifestCID)
 	}
 }
 
+// ingestRemoteManifest pulls a peer catalog. Same-CID heartbeats retry
+// only when the previous pass left missing files.
+func (m *Mirror) ingestRemoteManifest(ctx context.Context, manifestCID string) {
+	if m == nil || manifestCID == "" {
+		return
+	}
+	m.lastSeenRemote = manifestCID
+	if m.remoteIngestComplete(manifestCID) {
+		return
+	}
+	if err := m.processManifest(ctx, manifestCID); err != nil {
+		log.Printf("IPFS mirror sync failed: %v", err)
+	}
+}
+
+func (m *Mirror) remoteIngestComplete(manifestCID string) bool {
+	if m == nil || manifestCID == "" {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	st, ok := m.ingestByCID[manifestCID]
+	return ok && st.complete
+}
+
 func (m *Mirror) processManifest(ctx context.Context, manifestCID string) error {
-	data, err := m.cat(ctx, manifestCID)
+	all, todo, err := m.remoteManifestWork(ctx, manifestCID)
 	if err != nil {
 		return err
 	}
 
-	var incoming manifest
-	if err := json.Unmarshal(data, &incoming); err != nil {
-		return fmt.Errorf("invalid manifest: %w", err)
-	}
-
 	downloaded := 0
 	skipped := 0
-	failed := 0
-	for _, entry := range incoming.Files {
+	var missing []manifestEntry
+	for _, entry := range todo {
 		if entry.Path == "" || entry.CID == "" {
 			continue
 		}
 		applied, err := m.downloadEntry(ctx, entry)
 		if err != nil {
-			failed++
+			missing = append(missing, entry)
 			log.Printf("IPFS mirror download failed for %s: %v", entry.Path, err)
 			continue
 		}
@@ -722,8 +953,73 @@ func (m *Mirror) processManifest(ctx context.Context, manifestCID string) error 
 		}
 	}
 
+	failed := len(missing)
+	m.rememberIngest(manifestCID, all, missing)
 	log.Printf("IPFS mirror synced manifest: %s (downloaded=%d skipped=%d failed=%d)", manifestCID, downloaded, skipped, failed)
+	if failed > 0 {
+		return fmt.Errorf("incomplete ingest %s: failed=%d", manifestCID, failed)
+	}
 	return nil
+}
+
+func (m *Mirror) remoteManifestWork(ctx context.Context, manifestCID string) (all, todo []manifestEntry, err error) {
+	m.mu.Lock()
+	if st, ok := m.ingestByCID[manifestCID]; ok && len(st.files) > 0 {
+		all = append([]manifestEntry(nil), st.files...)
+		if len(st.missing) > 0 {
+			todo = append([]manifestEntry(nil), st.missing...)
+		} else {
+			todo = append([]manifestEntry(nil), st.files...)
+		}
+		m.mu.Unlock()
+		return all, todo, nil
+	}
+	m.mu.Unlock()
+
+	data, err := m.cat(ctx, manifestCID)
+	if err != nil {
+		return nil, nil, err
+	}
+	var incoming manifest
+	if err := json.Unmarshal(data, &incoming); err != nil {
+		return nil, nil, fmt.Errorf("invalid manifest: %w", err)
+	}
+	return incoming.Files, incoming.Files, nil
+}
+
+func (m *Mirror) rememberIngest(manifestCID string, files, missing []manifestEntry) {
+	if m == nil || manifestCID == "" {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.ingestByCID == nil {
+		m.ingestByCID = make(map[string]*remoteIngest)
+	}
+	m.ingestByCID[manifestCID] = &remoteIngest{
+		complete: len(missing) == 0,
+		missing:  append([]manifestEntry(nil), missing...),
+		files:    append([]manifestEntry(nil), files...),
+	}
+	if len(m.ingestByCID) <= maxRemoteIngest {
+		return
+	}
+	for cid, st := range m.ingestByCID {
+		if st.complete && cid != manifestCID {
+			delete(m.ingestByCID, cid)
+			if len(m.ingestByCID) <= maxRemoteIngest {
+				return
+			}
+		}
+	}
+	for cid := range m.ingestByCID {
+		if cid != manifestCID {
+			delete(m.ingestByCID, cid)
+			if len(m.ingestByCID) <= maxRemoteIngest {
+				return
+			}
+		}
+	}
 }
 
 func (m *Mirror) downloadEntry(ctx context.Context, entry manifestEntry) (bool, error) {
@@ -743,6 +1039,13 @@ func (m *Mirror) downloadEntry(ctx context.Context, entry manifestEntry) (bool, 
 				CID:     entry.CID,
 			}
 			m.mu.Unlock()
+			if m.cfg.WishOnly {
+				created := time.Now()
+				if entry.ModTime > 0 {
+					created = time.Unix(entry.ModTime, 0)
+				}
+				TrackWish(logical, entry.CID, created)
+			}
 			return false, nil
 		}
 	}
@@ -790,6 +1093,13 @@ func (m *Mirror) downloadEntry(ctx context.Context, entry manifestEntry) (bool, 
 	}
 	fn := m.onFileDownloaded
 	m.mu.Unlock()
+	if m.cfg.WishOnly {
+		created := time.Now()
+		if entry.ModTime > 0 {
+			created = time.Unix(entry.ModTime, 0)
+		}
+		TrackWish(logical, entry.CID, created)
+	}
 
 	if fn != nil {
 		fn(ctx, FileDownloadedEvent{
@@ -807,6 +1117,67 @@ func (m *Mirror) knownFileCount() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return len(m.knownFiles)
+}
+
+func (m *Mirror) topicPeerIDs() []string {
+	if m == nil || m.ipfsClient == nil {
+		return nil
+	}
+	topic := m.cfg.Topic
+	if topic == "" {
+		if m.cfg.WishOnly {
+			topic = WishTopic()
+		} else {
+			topic = MirrorTopic()
+		}
+	}
+	return m.ipfsClient.TopicPeers(topic)
+}
+
+func (m *Mirror) swarmPeerIDs() []string {
+	if m == nil || m.ipfsClient == nil {
+		return nil
+	}
+	return m.ipfsClient.SwarmPeers()
+}
+
+func (m *Mirror) logInbound(in PubsubInbound, encoded, manifestCID string) {
+	if m == nil {
+		return
+	}
+	cid := strings.TrimSpace(manifestCID)
+	if cid == "" {
+		cid = "empty"
+	}
+	var ann announcement
+	_ = json.Unmarshal([]byte(encoded), &ann)
+	origin := strings.TrimSpace(ann.Origin)
+	if origin == "" {
+		origin = "empty"
+	}
+	typ := strings.TrimSpace(ann.Type)
+	if typ == "" {
+		typ = "empty"
+	}
+	received := strings.TrimSpace(in.ReceivedFrom)
+	if received == "" {
+		received = "unknown"
+	}
+	publisher := strings.TrimSpace(in.Publisher)
+	if publisher == "" {
+		publisher = "unknown"
+	}
+	mesh := m.topicPeerIDs()
+	log.Printf("IPFS pubsub inbound topic=%s received_from=%s publisher=%s origin=%s type=%s cid=%s mesh_n=%d mesh=%v",
+		m.cfg.Topic, received, publisher, origin, typ, cid, len(mesh), mesh)
+
+	m.mu.Lock()
+	m.lastInboundFrom = received
+	m.lastInboundPub = publisher
+	m.lastInboundCID = cid
+	m.lastInboundOrig = origin
+	m.lastInboundAt = time.Now()
+	m.mu.Unlock()
 }
 
 func (m *Mirror) extractManifestCID(encoded string) (string, error) {

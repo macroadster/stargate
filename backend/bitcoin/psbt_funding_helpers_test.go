@@ -19,6 +19,18 @@ func TestResolveFundingCommitmentRequiresSats(t *testing.T) {
 	}
 }
 
+func TestExtraProofOutputCount(t *testing.T) {
+	if n := extraProofOutputCount(nil, nil); n != 0 {
+		t.Fatalf("none: got %d", n)
+	}
+	if n := extraProofOutputCount(nil, []byte{0x00}); n != 1 {
+		t.Fatalf("hashlock: got %d", n)
+	}
+	if n := extraProofOutputCount(&donationOutputs{}, nil); n != 2 {
+		t.Fatalf("donation+opreturn: got %d", n)
+	}
+}
+
 func TestSelectFundingUTXOsInsufficient(t *testing.T) {
 	_, _, err := selectFundingUTXOs(nil, 0, nil, nil, 1000, 1, nil)
 	if err == nil {

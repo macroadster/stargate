@@ -176,6 +176,7 @@ func NewClientFromEnv() *Client {
 				RoutingDiscovery:         routingDiscovery,
 				EnableNATPortMap:         enableNAT,
 				ForcePrivateReachability: forcePrivate,
+				IdentityPath:             IdentityPath(),
 			})
 			if err != nil {
 				log.Printf("Warning: failed to start embedded IPFS node: %v", err)
@@ -419,6 +420,44 @@ func (c *Client) PubsubPublish(ctx context.Context, topic string, message []byte
 	return nil
 }
 
+// TopicPeers returns gossipsub mesh peers for topic (embedded node only).
+func (c *Client) TopicPeers(topic string) []string {
+	if c == nil || c.embedded == nil {
+		return nil
+	}
+	return c.embedded.TopicPeers(topic)
+}
+
+// SwarmPeers returns connected libp2p peers (embedded node only).
+func (c *Client) SwarmPeers() []string {
+	if c == nil || c.embedded == nil {
+		return nil
+	}
+	return c.embedded.SwarmPeers()
+}
+
+// PubsubSubscribeDetailed returns inbound messages with received_from / publisher.
+func (c *Client) PubsubSubscribeDetailed(ctx context.Context, topic string) (<-chan PubsubInbound, error) {
+	if c == nil {
+		return nil, fmt.Errorf("IPFS client is disabled")
+	}
+	if c.embedded != nil {
+		return c.embedded.PubsubSubscribeDetailed(ctx, topic)
+	}
+	plain, err := c.PubsubSubscribe(ctx, topic)
+	if err != nil {
+		return nil, err
+	}
+	out := make(chan PubsubInbound, 100)
+	go func() {
+		defer close(out)
+		for data := range plain {
+			out <- PubsubInbound{Data: data}
+		}
+	}()
+	return out, nil
+}
+
 // PubsubSubscribe subscribes to a topic and returns a channel of message data.
 // It handles both embedded node and external HTTP API streaming.
 func (c *Client) PubsubSubscribe(ctx context.Context, topic string) (<-chan []byte, error) {
@@ -513,4 +552,61 @@ func (c *Client) PeerID(ctx context.Context) string {
 		return payload.ID
 	}
 	return ""
+}
+
+// Unpin removes a CID from the embedded node, the local HTTP API pinset,
+// and the on-disk object cache.
+func (c *Client) Unpin(ctx context.Context, cidStr string) error {
+	if c == nil {
+		return nil
+	}
+	cidStr = strings.TrimSpace(cidStr)
+	if cidStr == "" {
+		return nil
+	}
+
+	var firstErr error
+	if c.embedded != nil && !strings.HasPrefix(cidStr, "local-") {
+		id, err := cid.Parse(cidStr)
+		if err == nil {
+			if err := c.embedded.Unpin(ctx, id); err != nil && firstErr == nil {
+				firstErr = err
+			}
+		}
+	}
+
+	if !strings.HasPrefix(cidStr, "local-") {
+		if err := c.unpinHTTP(ctx, cidStr); err != nil && firstErr == nil {
+			// HTTP node may be absent when using the embedded node only.
+			if c.embedded == nil {
+				firstErr = err
+			}
+		}
+	}
+
+	localPath := filepath.Join(c.storageDir, cidStr)
+	if _, err := os.Stat(localPath); err == nil {
+		if err := os.Remove(localPath); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+func (c *Client) unpinHTTP(ctx context.Context, cidStr string) error {
+	reqURL := fmt.Sprintf("%s/api/v0/pin/rm?arg=%s", c.apiURL, url.QueryEscape(cidStr))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("ipfs unpin failed: %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+	return nil
 }
