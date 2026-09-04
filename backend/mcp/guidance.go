@@ -948,7 +948,7 @@ func NewGuidanceManifest(baseURL string) *GuidanceManifest {
 			{
 				Name:         "build_psbt",
 				Category:     ToolCategoryUtility,
-				Description:  "Build a Partially Signed Bitcoin Transaction (PSBT) for contract payouts. Always includes an OP_RETURN pixel commitment (default commitment_sats=1000).",
+				Description:  "Build a Partially Signed Bitcoin Transaction (PSBT) for contract payouts. Always includes an OP_RETURN pixel commitment (default commitment_sats=1000). Optional payer_addresses selects extra confirmed UTXOs the same way REST POST /api/smart_contract/contracts/{id}/psbt does.",
 				AuthRequired: true,
 				Keywords:     []string{"bitcoin", "psbt", "payout", "transaction"},
 				Parameters: map[string]*ParameterSchema{
@@ -968,11 +968,17 @@ func NewGuidanceManifest(baseURL string) *GuidanceManifest {
 					},
 					"change_address": {
 						Type:        "string",
-						Description: "Optional change address for remaining balance (for privacy, defaults to payer address)",
+						Description: "Optional change address for remaining balance (for privacy, defaults to first payer address)",
+					},
+					"payer_addresses": {
+						Type:        "array",
+						Description: "Optional extra confirmed-UTXO payer addresses (same as REST payer_addresses). Omit to spend only the API-key wallet.",
+						Items:       &ParameterSchema{Type: "string"},
 					},
 				},
 				Examples: []ToolExample{
 					{Description: "Build PSBT for contract payouts", Arguments: map[string]interface{}{"pixel_hash": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef", "fee_rate_sat_per_vb": 1}},
+					{Description: "Spend an extra P2PKH when the API-key P2WPKH is too small", Arguments: map[string]interface{}{"pixel_hash": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef", "commitment_sats": 546, "payer_addresses": []string{"tb1qzpd8ux628cylkuwawfqf2lmjjgfpu3vl09hysj", "mh1RWfDLN6GvPRsgCwj7CfYH14GFP6uG36"}}},
 				},
 			},
 			{

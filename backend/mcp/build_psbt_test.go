@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -90,6 +91,15 @@ func mustTestP2WPKH(t *testing.T, fill byte) btcutil.Address {
 	addr, err := btcutil.NewAddressWitnessPubKeyHash(bytes.Repeat([]byte{fill}, 20), &chaincfg.TestNet4Params)
 	if err != nil {
 		t.Fatalf("p2wpkh: %v", err)
+	}
+	return addr
+}
+
+func mustTestP2PKH(t *testing.T, fill byte) btcutil.Address {
+	t.Helper()
+	addr, err := btcutil.NewAddressPubKeyHash(bytes.Repeat([]byte{fill}, 20), &chaincfg.TestNet4Params)
+	if err != nil {
+		t.Fatalf("p2pkh: %v", err)
 	}
 	return addr
 }
@@ -219,6 +229,129 @@ func TestHandleBuildPSBTKeepsOPReturnCommitment(t *testing.T) {
 				t.Fatalf("commitment_sats=%v", out["commitment_sats"])
 			}
 		})
+	}
+}
+
+func TestHandleBuildPSBTPayerAddressesCoversSmallP2WPKH(t *testing.T) {
+	// Live scar (probe 44f7844c): API-key P2WPKH holds only the 1000-sat payout
+	// leftover. Required is 1000 payout + 546 commitment. Without payer_addresses
+	// MCP fails need 1546 / selected 1000. REST already accepted the extra P2PKH.
+	t.Setenv("BITCOIN_NETWORK", "testnet4")
+	t.Setenv("STARLIGHT_DONATION_ADDRESS", "")
+
+	payer := mustTestP2WPKH(t, 0x11)
+	legacy := mustTestP2PKH(t, 0x22)
+	contractor := mustTestP2WPKH(t, 0x99)
+	pixelHash := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	contractID := "wish-" + pixelHash
+
+	store := scstore.NewMemoryStore(72 * time.Hour)
+	ctx := context.Background()
+	if err := store.UpsertContractWithTasks(ctx, smart_contract.Contract{
+		ContractID:      contractID,
+		Title:           "Payer address scar",
+		TotalBudgetSats: 1000,
+		Status:          "active",
+	}, []smart_contract.Task{{
+		TaskID:           contractID + "-task-1",
+		ContractID:       contractID,
+		Title:            "Approved payout",
+		BudgetSats:       1000,
+		Status:           "approved",
+		ContractorWallet: contractor.EncodeAddress(),
+	}}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	server := NewHTTPMCPServer(store, walletValidator{wallet: payer.EncodeAddress()}, nil, &services.IngestionService{}, &starlight.ScannerManager{}, nil, auth.NewChallengeStore(10*time.Minute))
+	mock := newPSBTMockUTXO()
+	seedPSBTUTXO(t, mock, payer, 1000)
+	seedPSBTUTXO(t, mock, legacy, 3754)
+	server.utxoClient = mock
+
+	call := func(t *testing.T, args map[string]interface{}) (map[string]interface{}, MCPResponse) {
+		t.Helper()
+		body, err := json.Marshal(MCPRequest{Tool: "build_psbt", Arguments: args})
+		if err != nil {
+			t.Fatal(err)
+		}
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("POST", "/mcp/call", bytes.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("X-API-Key", "test-key")
+		server.handleToolCall(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("status %d: %s", w.Code, w.Body.String())
+		}
+		var resp MCPResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		var out map[string]interface{}
+		if resp.Result != nil {
+			raw, _ := json.Marshal(resp.Result)
+			if err := json.Unmarshal(raw, &out); err != nil {
+				t.Fatalf("result: %v", err)
+			}
+		}
+		return out, resp
+	}
+
+	args := map[string]interface{}{
+		"pixel_hash":      pixelHash,
+		"commitment_sats": 546,
+	}
+	_, resp := call(t, args)
+	if resp.Success {
+		t.Fatal("expected single-payer build to fail when P2WPKH is only 1000 sats")
+	}
+	if !strings.Contains(resp.Error, "need 1546") && !strings.Contains(resp.Message, "need 1546") && !strings.Contains(resp.Error, "selected 1000") {
+		t.Fatalf("expected need 1546 / selected 1000, got error=%q message=%q", resp.Error, resp.Message)
+	}
+
+	args["payer_addresses"] = []interface{}{payer.EncodeAddress(), legacy.EncodeAddress()}
+	out, resp := call(t, args)
+	if !resp.Success {
+		t.Fatalf("build_psbt with payer_addresses failed: %s (%s)", resp.Error, resp.Message)
+	}
+	scriptHex, _ := out["op_return_script"].(string)
+	script, err := hex.DecodeString(scriptHex)
+	if err != nil || len(script) == 0 || script[0] != 0x6a {
+		t.Fatalf("op_return_script %q is not OP_RETURN", scriptHex)
+	}
+	psbtHex, _ := out["psbt_hex"].(string)
+	tx := unsignedTxFromPSBTHexMCP(t, psbtHex)
+	found := false
+	for _, txOut := range tx.TxOut {
+		if len(txOut.PkScript) > 0 && txOut.PkScript[0] == txscript.OP_RETURN {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("unsigned hex has %d outputs and no OP_RETURN", len(tx.TxOut))
+	}
+	selected, _ := out["selected_sats"].(float64)
+	if selected < 1546 {
+		t.Fatalf("selected_sats=%v, want at least 1546", selected)
+	}
+	rawPayers, _ := json.Marshal(out["payer_addresses"])
+	if !bytes.Contains(rawPayers, []byte(legacy.EncodeAddress())) {
+		t.Fatalf("payer_addresses missing legacy: %s", rawPayers)
+	}
+}
+
+func TestMcpStringSliceAcceptsJSONArray(t *testing.T) {
+	got, ok := mcpStringSlice([]interface{}{"a", "b"})
+	if !ok || len(got) != 2 || got[0] != "a" || got[1] != "b" {
+		t.Fatalf("[]interface{}: %v %v", got, ok)
+	}
+	got, ok = mcpStringSlice([]string{"c"})
+	if !ok || len(got) != 1 || got[0] != "c" {
+		t.Fatalf("[]string: %v %v", got, ok)
+	}
+	if _, ok := mcpStringSlice("nope"); ok {
+		t.Fatal("string should not parse as slice")
 	}
 }
 

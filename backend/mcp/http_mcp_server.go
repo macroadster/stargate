@@ -32,6 +32,7 @@ import (
 	"stargate-backend/storage/datadir"
 	scstore "stargate-backend/storage/smart_contract"
 
+	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
 )
 
@@ -2565,11 +2566,11 @@ func (h *HTTPMCPServer) handleRebalanceContractBudget(ctx context.Context, args 
 			}
 		}
 		return map[string]interface{}{
-			"dry_run":             dryRun,
-			"include_superseded":  includeSuperseded,
-			"contracts":           results,
-			"over_budget_count":   len(results),
-			"rebalanced_count":    changed,
+			"dry_run":            dryRun,
+			"include_superseded": includeSuperseded,
+			"contracts":          results,
+			"over_budget_count":  len(results),
+			"rebalanced_count":   changed,
 		}, nil
 	}
 
@@ -2581,13 +2582,13 @@ func (h *HTTPMCPServer) handleRebalanceContractBudget(ctx context.Context, args 
 		return nil, NewInternalError("rebalance_contract_budget", err.Error())
 	}
 	return map[string]interface{}{
-		"dry_run":            dryRun,
-		"contract":           res,
-		"wish_budget_sats":   res.WishBudgetSats,
-		"allocated_before":   res.AllocatedBefore,
-		"allocated_after":    res.AllocatedAfter,
-		"changed":            res.Changed,
-		"changes":            res.Changes,
+		"dry_run":          dryRun,
+		"contract":         res,
+		"wish_budget_sats": res.WishBudgetSats,
+		"allocated_before": res.AllocatedBefore,
+		"allocated_after":  res.AllocatedAfter,
+		"changed":          res.Changed,
+		"changes":          res.Changes,
 	}, nil
 }
 
@@ -2644,6 +2645,31 @@ func (h *HTTPMCPServer) handleBuildPSBT(ctx context.Context, args map[string]int
 		return nil, NewValidationError("build_psbt", fmt.Sprintf("invalid payer address: %v", err))
 	}
 
+	// Same coin-selection surface as REST handleContractPSBT: optional
+	// payer_addresses replace the single API-key wallet. Needed when that
+	// wallet only holds the leftover payout UTXO (probe 44f7844c: need 1546,
+	// selected 1000) and the extra coin lives on the P2PKH change address.
+	payerAddresses := []btcutil.Address{payerAddress}
+	if rawPayers, exists := args["payer_addresses"]; exists && rawPayers != nil {
+		strs, ok := mcpStringSlice(rawPayers)
+		if !ok {
+			return nil, NewValidationError("build_psbt", "payer_addresses must be an array of address strings")
+		}
+		if len(strs) > 0 {
+			payerAddresses = payerAddresses[:0]
+			for _, addr := range strs {
+				if strings.TrimSpace(addr) == "" {
+					return nil, NewValidationError("build_psbt", "payer address required")
+				}
+				decoded, decErr := bitcoin.DecodeAddressForNetwork(strings.TrimSpace(addr), params)
+				if decErr != nil {
+					return nil, NewValidationError("build_psbt", fmt.Sprintf("invalid payer address: %v", decErr))
+				}
+				payerAddresses = append(payerAddresses, decoded)
+			}
+		}
+	}
+
 	changeAddress := payerAddress
 	if changeAddrStr, ok := args["change_address"].(string); ok && strings.TrimSpace(changeAddrStr) != "" {
 		changeAddr, err := bitcoin.DecodeAddressForNetwork(strings.TrimSpace(changeAddrStr), params)
@@ -2651,6 +2677,8 @@ func (h *HTTPMCPServer) handleBuildPSBT(ctx context.Context, args map[string]int
 			return nil, NewValidationError("build_psbt", fmt.Sprintf("invalid change address: %v", err))
 		}
 		changeAddress = changeAddr
+	} else if len(payerAddresses) > 0 {
+		changeAddress = payerAddresses[0]
 	}
 
 	tasks, err := h.store.ListTasks(smart_contract.TaskFilter{
@@ -2725,6 +2753,7 @@ func (h *HTTPMCPServer) handleBuildPSBT(ctx context.Context, args map[string]int
 
 	req := bitcoin.PSBTRequest{
 		PayerAddress:      payerAddress,
+		PayerAddresses:    payerAddresses,
 		Payouts:           payouts,
 		FeeRateSatPerVB:   feeRate,
 		ChangeAddress:     changeAddress,
@@ -2759,9 +2788,42 @@ func (h *HTTPMCPServer) handleBuildPSBT(ctx context.Context, args map[string]int
 		"funding_txid":       result.FundingTxID,
 		"contract_id":        contractID,
 		"payout_count":       len(payouts),
+		"payer_address":      payerAddress.EncodeAddress(),
+		"payer_addresses":    encodeAddresses(payerAddresses),
 		"network":            h.network,
 		"network_params":     params.Name,
 	}, nil
+}
+
+func encodeAddresses(addrs []btcutil.Address) []string {
+	out := make([]string, 0, len(addrs))
+	for _, addr := range addrs {
+		if addr == nil {
+			continue
+		}
+		out = append(out, addr.EncodeAddress())
+	}
+	return out
+}
+
+// mcpStringSlice accepts JSON arrays as []interface{} or []string.
+func mcpStringSlice(v interface{}) ([]string, bool) {
+	switch s := v.(type) {
+	case []string:
+		return s, true
+	case []interface{}:
+		out := make([]string, 0, len(s))
+		for _, item := range s {
+			str, ok := item.(string)
+			if !ok {
+				return nil, false
+			}
+			out = append(out, str)
+		}
+		return out, true
+	default:
+		return nil, false
+	}
 }
 
 // mcpInt64 accepts JSON numbers as float64 or int (MCP args arrive both ways).

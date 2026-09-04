@@ -292,7 +292,7 @@ await fetch("` + base + `/mcp/chat/send", {
 
     <h3>Bitcoin Utilities</h3>
     <ul>
-        <li><strong>build_psbt</strong> - Build a Partially Signed Bitcoin Transaction (PSBT) for contract payouts. Selects UTXOs from payer addresses and creates outputs for contractor payments, optional commitment outputs, and configurable change address for privacy.</li>
+        <li><strong>build_psbt</strong> - Build a Partially Signed Bitcoin Transaction (PSBT) for contract payouts. Selects UTXOs from the API-key wallet, or from optional <code>payer_addresses</code> (same coin-selection surface as REST). Always includes an OP_RETURN pixel commitment.</li>
         <li><strong>validate_address</strong> - Validate a Bitcoin address and get detailed information about its type and network</li>
     </ul>
 
@@ -594,6 +594,17 @@ curl -k -X POST ` + base + `/api/auth/verify \
         "pixel_hash": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
         "fee_rate_sat_per_vb": 1,
         "change_address": "tb1qprivacy111111111111111111111111111111111"
+      }
+    }' \
+    ` + base + `/mcp/call</pre>
+      <p><strong>Build PSBT with extra payer addresses (when the API-key UTXO is too small):</strong></p>
+      <pre>curl -X POST -H "Content-Type: application/json" -H "X-API-Key: YOUR_KEY" \
+    -d '{
+      "tool": "build_psbt",
+      "arguments": {
+        "pixel_hash": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+        "commitment_sats": 546,
+        "payer_addresses": ["tb1qpayerwpkh1111111111111111111111111111", "mh1RWfDLN6GvPRsgCwj7CfYH14GFP6uG36"]
       }
     }' \
     ` + base + `/mcp/call</pre>
