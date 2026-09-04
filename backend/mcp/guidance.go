@@ -948,7 +948,7 @@ func NewGuidanceManifest(baseURL string) *GuidanceManifest {
 			{
 				Name:         "build_psbt",
 				Category:     ToolCategoryUtility,
-				Description:  "Build a Partially Signed Bitcoin Transaction (PSBT) for contract payouts.",
+				Description:  "Build a Partially Signed Bitcoin Transaction (PSBT) for contract payouts. Always includes an OP_RETURN pixel commitment (default commitment_sats=1000).",
 				AuthRequired: true,
 				Keywords:     []string{"bitcoin", "psbt", "payout", "transaction"},
 				Parameters: map[string]*ParameterSchema{

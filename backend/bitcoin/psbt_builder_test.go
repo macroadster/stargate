@@ -381,6 +381,46 @@ func TestTxIDPreCalculationSegWit(t *testing.T) {
 	}
 }
 
+func TestBuildFundingPSBTKeepsOPReturnInUnsignedHex(t *testing.T) {
+	params := &chaincfg.TestNet4Params
+	payer := mustP2WPKH(t, params, 0x11)
+	dest := mustP2WPKH(t, params, 0x99)
+	donation := mustP2WPKH(t, params, 0x33)
+	client := newRaiseFundMockUTXO()
+	seedAddrUTXO(t, client, payer, 50_000)
+	wishHash := bytes.Repeat([]byte{0xab}, 32)
+
+	res, err := BuildFundingPSBT(client, params, PSBTRequest{
+		PayerAddress:    payer,
+		Payouts:         []PayoutOutput{{Address: dest, ValueSats: 10_000}},
+		PixelHash:       wishHash,
+		CommitmentSats:  1000,
+		DonationAddress: donation,
+		FeeRateSatPerVB: 1,
+		ChangeAddress:   payer,
+	})
+	if err != nil {
+		t.Fatalf("BuildFundingPSBT: %v", err)
+	}
+	if len(res.OPReturnScript) == 0 || res.OPReturnScript[0] != txscript.OP_RETURN {
+		t.Fatal("result missing OP_RETURN script")
+	}
+	tx := unsignedTxFromPSBTHex(t, res.EncodedHex)
+	found := false
+	for _, txOut := range tx.TxOut {
+		if len(txOut.PkScript) > 0 && txOut.PkScript[0] == txscript.OP_RETURN {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("unsigned hex has %d outputs and no OP_RETURN (payout+change scar)", len(tx.TxOut))
+	}
+	if res.CommitmentSats != 1000 {
+		t.Fatalf("commitment sats=%d", res.CommitmentSats)
+	}
+}
+
 func TestTxIDPreCalculationLegacy(t *testing.T) {
 	params := &chaincfg.TestNet4Params
 	res := fundingPSBTForAddr(t, mustP2PKH(t, params, 0x44))

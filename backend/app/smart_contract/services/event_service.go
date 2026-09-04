@@ -75,9 +75,13 @@ func (s *EventService) PublishProposalTasks(ctx context.Context, proposalID stri
 			task.ContractID = contractID
 		}
 		if task.MerkleProof == nil && p.VisiblePixelHash != "" {
+			funded := task.BudgetSats
+			if funded <= 0 {
+				funded = p.BudgetSats / int64(len(p.Tasks))
+			}
 			task.MerkleProof = &smart_contract.MerkleProof{
 				VisiblePixelHash:   p.VisiblePixelHash,
-				FundedAmountSats:   p.BudgetSats / int64(len(p.Tasks)),
+				FundedAmountSats:   funded,
 				FundingAddress:     fundingAddr,
 				ConfirmationStatus: "provisional",
 			}

@@ -2687,26 +2687,39 @@ func (h *HTTPMCPServer) handleBuildPSBT(ctx context.Context, args map[string]int
 		return nil, NewValidationError("build_psbt", "no approved tasks with contractor wallets found")
 	}
 
-	feeRate := int64(10)
-	if fr, ok := args["fee_rate_sat_per_vb"].(float64); ok && fr > 0 {
-		feeRate = int64(fr)
+	feeRate := int64(1)
+	if fr, ok := mcpInt64(args["fee_rate_sat_per_vb"]); ok && fr > 0 {
+		feeRate = fr
 	}
 
-	commitmentSats := int64(0)
-	if cs, ok := args["commitment_sats"].(float64); ok && cs > 0 {
-		commitmentSats = int64(cs)
-	}
-
-	var pixelHashBytes []byte
-	if commitmentSats > 0 {
-		pixelHashBytes, err = hex.DecodeString(normalizedHash)
-		if err != nil {
-			validation.AddFieldError("pixel_hash", normalizedHash, "must be a valid hex string", false)
-		} else if len(pixelHashBytes) != 32 {
-			validation.AddFieldError("pixel_hash", normalizedHash, "must be exactly 32 bytes (64 hex characters)", false)
+	// Pixel commitment is required for payout recognition. Official
+	// build_psbt used to emit payout+change only when commitment_sats
+	// was omitted or arrived as a JSON integer (not float64).
+	commitmentSats := int64(1000)
+	if cs, ok := mcpInt64(args["commitment_sats"]); ok {
+		if cs <= 0 {
+			return nil, NewValidationError("build_psbt", "commitment_sats must be at least 546 sats so the OP_RETURN pixel commitment is funded")
 		}
-		if validation.HasErrors() {
-			return nil, validation
+		commitmentSats = cs
+	}
+	if commitmentSats < 546 {
+		commitmentSats = 546
+	}
+
+	pixelHashBytes, err := hex.DecodeString(normalizedHash)
+	if err != nil {
+		validation.AddFieldError("pixel_hash", normalizedHash, "must be a valid hex string", false)
+	} else if len(pixelHashBytes) != 32 {
+		validation.AddFieldError("pixel_hash", normalizedHash, "must be exactly 32 bytes (64 hex characters)", false)
+	}
+	if validation.HasErrors() {
+		return nil, validation
+	}
+
+	donationAddr := payerAddress
+	if raw := strings.TrimSpace(os.Getenv("STARLIGHT_DONATION_ADDRESS")); raw != "" {
+		if decoded, decErr := bitcoin.DecodeAddressForNetwork(raw, params); decErr == nil {
+			donationAddr = decoded
 		}
 	}
 
@@ -2717,12 +2730,16 @@ func (h *HTTPMCPServer) handleBuildPSBT(ctx context.Context, args map[string]int
 		ChangeAddress:     changeAddress,
 		PixelHash:         pixelHashBytes,
 		CommitmentSats:    commitmentSats,
-		CommitmentAddress: payerAddress,
+		DonationAddress:   donationAddr,
+		CommitmentAddress: donationAddr,
 	}
 
 	result, err := bitcoin.BuildFundingPSBT(mempoolClient, params, req)
 	if err != nil {
 		return nil, NewInternalError("build_psbt", fmt.Sprintf("Failed to build PSBT: %v", err))
+	}
+	if len(result.OPReturnScript) == 0 || result.OPReturnScript[0] != 0x6a {
+		return nil, NewInternalError("build_psbt", "PSBT missing OP_RETURN pixel commitment")
 	}
 
 	return map[string]interface{}{
@@ -2736,12 +2753,36 @@ func (h *HTTPMCPServer) handleBuildPSBT(ctx context.Context, args map[string]int
 		"payout_amounts":     result.PayoutAmounts,
 		"commitment_sats":    result.CommitmentSats,
 		"commitment_address": result.CommitmentAddr,
+		"donation_address":   result.DonationAddr,
+		"op_return_script":   hex.EncodeToString(result.OPReturnScript),
+		"op_return_vout":     result.OPReturnVout,
 		"funding_txid":       result.FundingTxID,
 		"contract_id":        contractID,
 		"payout_count":       len(payouts),
 		"network":            h.network,
 		"network_params":     params.Name,
 	}, nil
+}
+
+// mcpInt64 accepts JSON numbers as float64 or int (MCP args arrive both ways).
+func mcpInt64(v interface{}) (int64, bool) {
+	switch n := v.(type) {
+	case int:
+		return int64(n), true
+	case int32:
+		return int64(n), true
+	case int64:
+		return n, true
+	case float64:
+		return int64(n), true
+	case float32:
+		return int64(n), true
+	case json.Number:
+		i, err := n.Int64()
+		return i, err == nil
+	default:
+		return 0, false
+	}
 }
 
 func (h *HTTPMCPServer) chainParams() *chaincfg.Params {
