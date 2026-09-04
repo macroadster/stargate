@@ -64,6 +64,19 @@ func (s *EventService) PublishProposalTasks(ctx context.Context, proposalID stri
 		Status:              "active",
 	}
 
+	// Allocate unset task budgets from the remaining wish first.
+	// Never fall back to wish/N — that overshoots when siblings already
+	// hold explicit amounts (e.g. 2000 + 3000/3 + 3000/3 on a 3000 wish).
+	titles := make([]string, len(p.Tasks))
+	explicit := make([]int64, len(p.Tasks))
+	for i, t := range p.Tasks {
+		titles[i] = t.Title
+		if t.BudgetSats > 0 {
+			explicit[i] = t.BudgetSats
+		}
+	}
+	amounts := scstore.AllocateTaskBudgets(titles, explicit, p.BudgetSats)
+
 	fundingAddr := scstore.FundingAddressFromMeta(p.Metadata)
 	tasks := make([]smart_contract.Task, 0, len(p.Tasks))
 	for i, t := range p.Tasks {
@@ -74,20 +87,24 @@ func (s *EventService) PublishProposalTasks(ctx context.Context, proposalID stri
 		if task.ContractID == "" || task.ContractID == p.ID {
 			task.ContractID = contractID
 		}
+		if task.BudgetSats <= 0 {
+			task.BudgetSats = amounts[i]
+		}
 		if task.MerkleProof == nil && p.VisiblePixelHash != "" {
-			funded := task.BudgetSats
-			if funded <= 0 {
-				funded = p.BudgetSats / int64(len(p.Tasks))
-			}
 			task.MerkleProof = &smart_contract.MerkleProof{
 				VisiblePixelHash:   p.VisiblePixelHash,
-				FundedAmountSats:   funded,
+				FundedAmountSats:   task.BudgetSats,
 				FundingAddress:     fundingAddr,
 				ConfirmationStatus: "provisional",
 			}
 		}
-		if task.MerkleProof != nil && task.MerkleProof.FundingAddress == "" {
-			task.MerkleProof.FundingAddress = fundingAddr
+		if task.MerkleProof != nil {
+			if task.MerkleProof.FundingAddress == "" {
+				task.MerkleProof.FundingAddress = fundingAddr
+			}
+			if task.MerkleProof.FundedAmountSats <= 0 {
+				task.MerkleProof.FundedAmountSats = task.BudgetSats
+			}
 		}
 		tasks = append(tasks, task)
 	}

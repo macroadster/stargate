@@ -236,6 +236,37 @@ func TestRebalanceOpenOverBudgetSkipsSuperseded(t *testing.T) {
 	}
 }
 
+func TestCreateMissingTasksLastEatsRemainder(t *testing.T) {
+	store := NewMemoryStore(time.Hour)
+	ctx := context.Background()
+	if err := store.UpsertContractWithTasks(ctx, smart_contract.Contract{
+		ContractID:          "wish-missing",
+		Title:               "Missing",
+		TotalBudgetSats:     1000,
+		AvailableTasksCount: 3,
+		Status:              "active",
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	tasks, err := store.ListTasks(smart_contract.TaskFilter{ContractID: "wish-missing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tasks) != 3 {
+		t.Fatalf("got %d tasks, want 3", len(tasks))
+	}
+	var sum int64
+	for _, task := range tasks {
+		if task.BudgetSats <= 0 {
+			t.Fatalf("task %q budget %d", task.Title, task.BudgetSats)
+		}
+		sum += task.BudgetSats
+	}
+	if sum != 1000 {
+		t.Fatalf("missing-task split sum=%d want 1000 (old TotalBudgetSats/N dropped remainder)", sum)
+	}
+}
+
 func TestValidateNewTaskBudget(t *testing.T) {
 	store := NewMemoryStore(time.Hour)
 	ctx := context.Background()

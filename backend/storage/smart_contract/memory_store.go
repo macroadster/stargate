@@ -831,16 +831,23 @@ func (s *MemoryStore) createMissingTasks() {
 			continue
 		}
 
-		// Create default tasks for the contract
-		for i := 0; i < contract.AvailableTasksCount; i++ {
+		// Split the wish across the missing tasks. Last task eats remainder
+		// so integer division cannot leave dust (or invent extra sats).
+		n := contract.AvailableTasksCount
+		titles := make([]string, n)
+		for i := 0; i < n; i++ {
+			titles[i] = fmt.Sprintf("Task %d for %s", i+1, contract.Title)
+		}
+		amounts := AllocateTaskBudgets(titles, nil, contract.TotalBudgetSats)
+		for i := 0; i < n; i++ {
 			taskID := fmt.Sprintf("%s-task-%d", contractID, i+1)
 			task := smart_contract.Task{
 				TaskID:         taskID,
 				ContractID:     contractID,
 				GoalID:         fmt.Sprintf("goal-%d", i+1),
-				Title:          fmt.Sprintf("Task %d for %s", i+1, contract.Title),
+				Title:          titles[i],
 				Description:    fmt.Sprintf("Default task %d for contract %s", i+1, contract.Title),
-				BudgetSats:     contract.TotalBudgetSats / int64(contract.AvailableTasksCount),
+				BudgetSats:     amounts[i],
 				Status:         "available",
 				Difficulty:     "medium",
 				EstimatedHours: 8,
