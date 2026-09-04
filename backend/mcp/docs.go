@@ -292,7 +292,7 @@ await fetch("` + base + `/mcp/chat/send", {
 
     <h3>Bitcoin Utilities</h3>
     <ul>
-        <li><strong>build_psbt</strong> - Build a Partially Signed Bitcoin Transaction (PSBT) for contract payouts. Selects UTXOs from the API-key wallet, or from optional <code>payer_addresses</code> (same coin-selection surface as REST). Always includes an OP_RETURN pixel commitment.</li>
+        <li><strong>build_psbt</strong> - Build a Partially Signed Bitcoin Transaction (PSBT) for contract payouts. Selects UTXOs from the API-key wallet, or from optional <code>payer_addresses</code> (same coin-selection surface as REST). Always includes an OP_RETURN pixel commitment (default <code>commitment_sats=1000</code>).</li>
         <li><strong>validate_address</strong> - Validate a Bitcoin address and get detailed information about its type and network</li>
     </ul>
 
@@ -557,25 +557,31 @@ curl -k -X POST ` + base + `/api/auth/verify \
        "pixel_hash": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
        "fee_rate_sat_per_vb": 10
      }
-   }' \
-   ` + base + `/mcp/call</pre>
-     <p><strong>Response Example:</strong></p>
-     <pre>{
-   "psbt_base64": "cHNidP8BAA...",
-   "psbt_hex": "70736274ff010...",
-   "fee_sats": 420,
-   "change_sats": 4580,
-   "change_addresses": ["tb1qpayer1..."],
-   "change_amounts": [4580],
-   "selected_sats": 13000,
-   "payout_amounts": [5000, 3000],
-   "commitment_sats": 0,
-   "commitment_address": "",
-   "funding_txid": "",
-   "contract_id": "wish-deadbeef...",
-   "payout_count": 2
+    }' \
+    ` + base + `/mcp/call</pre>
+     <p>Omitting <code>commitment_sats</code> defaults to 1000. Explicit <code>0</code> is a validation error (handler refuses <code>cs &lt;= 0</code>). The unsigned PSBT always includes an OP_RETURN pixel commitment; the handler refuses a PSBT without one.</p>
+      <p><strong>Response Example:</strong></p>
+      <pre>{
+    "psbt_base64": "cHNidP8BAA...",
+    "psbt_hex": "70736274ff010...",
+    "fee_sats": 420,
+    "change_sats": 4580,
+    "change_addresses": ["tb1qpayer1..."],
+    "change_amounts": [4580],
+    "selected_sats": 13000,
+    "payout_amounts": [5000, 3000],
+    "commitment_sats": 1000,
+    "commitment_address": "tb1qpayer1...",
+    "donation_address": "tb1qpayer1...",
+    "op_return_script": "6a20deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+    "op_return_vout": 2,
+    "funding_txid": "",
+    "contract_id": "wish-deadbeef...",
+    "payout_count": 2,
+    "payer_address": "tb1qpayer1...",
+    "payer_addresses": ["tb1qpayer1..."]
 }</pre>
-      <p><strong>Build PSBT with Commitment Output:</strong></p>
+      <p><strong>Override commitment_sats (default 1000):</strong></p>
       <pre>curl -X POST -H "Content-Type: application/json" -H "X-API-Key: YOUR_KEY" \
     -d '{
       "tool": "build_psbt",

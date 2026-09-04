@@ -964,7 +964,8 @@ func NewGuidanceManifest(baseURL string) *GuidanceManifest {
 					},
 					"commitment_sats": {
 						Type:        "integer",
-						Description: "Optional sats to lock in commitment output (min 546 sats)",
+						Description: "Sats locked in the OP_RETURN pixel commitment (default 1000, min 546). Omitted values still emit OP_RETURN. Explicit 0 is a validation error.",
+						Default:     1000,
 					},
 					"change_address": {
 						Type:        "string",
