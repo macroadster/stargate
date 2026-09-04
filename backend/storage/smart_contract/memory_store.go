@@ -275,7 +275,7 @@ func (s *MemoryStore) ListTasks(filter smart_contract.TaskFilter) ([]smart_contr
 		if filter.Status != "" && !strings.EqualFold(filter.Status, t.Status) {
 			continue
 		}
-		if filter.ContractID != "" && !strings.EqualFold(filter.ContractID, t.ContractID) {
+		if filter.ContractID != "" && !contractIDMatches(t.ContractID, filter.ContractID) {
 			continue
 		}
 		if filter.ClaimedBy != "" && !strings.EqualFold(filter.ClaimedBy, t.ClaimedBy) {

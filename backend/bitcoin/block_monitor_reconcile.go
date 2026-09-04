@@ -474,10 +474,10 @@ func (bm *BlockMonitor) confirmContractTasks(contractID, txid string, blockHeigh
 	if bm.sweepStore == nil || strings.TrimSpace(contractID) == "" || strings.TrimSpace(txid) == "" {
 		return
 	}
-	twentyFourHoursAgo := time.Now().Add(-24 * time.Hour)
+	// Do not filter LastActivitySince here. First-time proofs have zero SeenAt,
+	// so a 24h activity window would skip the write of tx_id / height.
 	tasks, err := bm.sweepStore.ListTasks(smart_contract.TaskFilter{
-		ContractID:        contractID,
-		LastActivitySince: &twentyFourHoursAgo,
+		ContractID: contractID,
 	})
 	if err != nil {
 		log.Printf("oracle reconcile: failed to list tasks for %s: %v", contractID, err)
@@ -530,11 +530,10 @@ func (bm *BlockMonitor) updateTaskFundingProofsFromTx(contractID string, tx Tran
 	if bm.sweepStore == nil || strings.TrimSpace(contractID) == "" {
 		return
 	}
-	// Also filter by recent activity for efficiency, even though we're already filtering by contract
-	twentyFourHoursAgo := time.Now().Add(-24 * time.Hour)
+	// Match every task on this contract (wish-/bare variants via ListTasks).
+	// LastActivitySince would drop first-time proofs with zero SeenAt.
 	tasks, err := bm.sweepStore.ListTasks(smart_contract.TaskFilter{
-		ContractID:        contractID,
-		LastActivitySince: &twentyFourHoursAgo,
+		ContractID: contractID,
 	})
 	if err != nil {
 		log.Printf("oracle reconcile: failed to list tasks for funding update %s: %v", contractID, err)

@@ -391,8 +391,13 @@ func (s *SQLStore) ListTasks(filter smart_contract.TaskFilter) ([]smart_contract
 		args = append(args, filter.Status)
 	}
 	if filter.ContractID != "" {
-		query += " AND contract_id = ?"
-		args = append(args, filter.ContractID)
+		variants := submissionContractIDs(filter.ContractID)
+		placeholders := make([]string, len(variants))
+		for i, v := range variants {
+			placeholders[i] = "?"
+			args = append(args, v)
+		}
+		query += " AND contract_id IN (" + strings.Join(placeholders, ",") + ")"
 	}
 	if filter.ClaimedBy != "" {
 		query += " AND claimed_by = ?"

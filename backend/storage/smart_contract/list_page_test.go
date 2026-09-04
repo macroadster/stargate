@@ -59,6 +59,36 @@ func runListTasksCursorAndLimit(t *testing.T, store Store) {
 	}
 }
 
+func TestListTasksWishPrefixVariants(t *testing.T) {
+	t.Parallel()
+	hash := "44f7844cb04233e58ea4c16e7ed1149d4f1f2d5cc10553b433f64d3d84011eb2"
+	run := func(t *testing.T, store Store) {
+		t.Helper()
+		ctx := context.Background()
+		now := time.Now().UTC().Truncate(time.Second)
+		c := core.Contract{ContractID: "wish-" + hash, Title: "Probe", Status: "funded", CreatedAt: now}
+		task := core.Task{
+			TaskID: "proposal-probe-task-1", ContractID: c.ContractID,
+			Title: "Probe", Status: "available",
+			MerkleProof: &core.MerkleProof{ConfirmationStatus: "provisional"},
+		}
+		if err := store.UpsertContractWithTasks(ctx, c, []core.Task{task}); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+		for _, id := range []string{hash, "wish-" + hash} {
+			got, err := store.ListTasks(core.TaskFilter{ContractID: id})
+			if err != nil {
+				t.Fatalf("list %s: %v", id, err)
+			}
+			if len(got) != 1 || got[0].TaskID != task.TaskID {
+				t.Fatalf("list %s: want probe task, got %+v", id, got)
+			}
+		}
+	}
+	t.Run("memory", func(t *testing.T) { run(t, NewMemoryStore(time.Hour)) })
+	t.Run("sqlite", func(t *testing.T) { run(t, newTestSQLiteStore(t)) })
+}
+
 func TestListProposalsCursorAndLimit(t *testing.T) {
 	t.Parallel()
 	t.Run("memory", func(t *testing.T) {
