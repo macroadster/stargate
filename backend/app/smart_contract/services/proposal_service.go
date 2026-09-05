@@ -304,6 +304,22 @@ func (s *ProposalService) Create(ctx context.Context, body ProposalCreateInput) 
 			return nil, 0, Fail(http.StatusBadRequest, fmt.Sprintf("proposal budget_sats %d exceeds original wish budget %d", body.BudgetSats, wishBudget))
 		}
 	}
+	if len(body.Tasks) == 0 && strings.TrimSpace(body.DescriptionMD) != "" {
+		body.Tasks = scstore.BuildTasksFromMarkdown(body.ID, body.DescriptionMD, visiblePixelHash, body.BudgetSats, scstore.FundingAddressFromMeta(body.Metadata))
+	} else if len(body.Tasks) > 0 {
+		titles := make([]string, len(body.Tasks))
+		explicit := make([]int64, len(body.Tasks))
+		for i, t := range body.Tasks {
+			titles[i] = t.Title
+			if t.BudgetSats > 0 {
+				explicit[i] = t.BudgetSats
+			}
+		}
+		amounts := scstore.AllocateTaskBudgets(titles, explicit, body.BudgetSats)
+		for i := range body.Tasks {
+			body.Tasks[i].BudgetSats = amounts[i]
+		}
+	}
 	for i := range body.Tasks {
 		if body.Tasks[i].TaskID == "" {
 			body.Tasks[i].TaskID = body.ID + "-task-" + strconv.Itoa(i+1)

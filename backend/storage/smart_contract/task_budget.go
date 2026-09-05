@@ -469,8 +469,14 @@ func AnnotateTasksWithBudget(store Store, tasks []smart_contract.Task) []smart_c
 	return tasks
 }
 
-// AllocateTaskBudgets splits total across tasks so the sum never exceeds total.
-// Positive entries in explicit keep those amounts (scaled down if they overflow).
+// AllocateTaskBudgets splits total across tasks so the sum equals total when
+// total > 0. Positive entries in explicit keep those amounts (scaled down if
+// they overflow). Unset entries share the remainder; the last unset task eats
+// leftover sats so integer division cannot invent or drop money.
+//
+// The old live scar priced task i as total/i while the list was still growing
+// (budget/1 + budget/2 + budget/3). That overshoots. This function is the only
+// legal splitter.
 func AllocateTaskBudgets(titles []string, explicit []int64, total int64) []int64 {
 	n := len(titles)
 	out := make([]int64, n)
@@ -562,19 +568,11 @@ func AllocateTaskBudgets(titles []string, explicit []int64, total int64) []int64
 }
 
 func taskBudgetWeight(title string) int64 {
-	title = strings.ToLower(strings.TrimSpace(title))
-	switch {
-	case strings.Contains(title, "planning") || strings.Contains(title, "analysis"):
-		return 20
-	case strings.Contains(title, "implement") || strings.Contains(title, "develop") || strings.Contains(title, "build"):
-		return 50
-	case strings.Contains(title, "test") || strings.Contains(title, "qa") || strings.Contains(title, "validation"):
-		return 20
-	case strings.Contains(title, "document") || strings.Contains(title, "guide"):
-		return 10
-	default:
-		return 25
-	}
+	// Equal shares. Title-keyword weights looked clever and made the same
+	// three-task wish land as 500/250/250 depending on verbs. Prices are
+	// either explicit or even; leftover sats go to the last unset task.
+	_ = title
+	return 1
 }
 
 func lastPositive(vals []int64) int {

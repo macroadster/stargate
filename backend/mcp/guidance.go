@@ -576,7 +576,7 @@ func NewGuidanceManifest(baseURL string) *GuidanceManifest {
 			{
 				Name:         "create_proposal",
 				Category:     ToolCategoryWrite,
-				Description:  "Create a new proposal tied to a wish. Use structured task sections (### Task X: Title) for automatic task creation. See /mcp/SKILL.md for AI agent best practices. Always provide visible_pixel_hash (the wish/contract pixel hash) when the proposal is tied to an existing wish.",
+				Description:  "Create a new proposal tied to a wish. Use structured task sections (### Task X: Title) for automatic task creation. Task prices are allocated so they sum exactly to budget_sats (or the wish price if budget_sats is omitted). Do not put Budget: N sats lines inside task bodies — pass budget_sats at the top level. Multi-task proposals are first-class; the old budget/1+budget/2+budget/3 split is gone. Always provide visible_pixel_hash.",
 				AuthRequired: true,
 				Keywords:     []string{"proposal", "create", "wish", "competition"},
 				Parameters: map[string]*ParameterSchema{

@@ -231,15 +231,19 @@ func extractTaskSkills(title string) []string {
 	return []string{"planning", "development", "testing"}
 }
 
-// calculateTaskBudget assigns a share of totalBudget. Prefer AllocateTaskBudgets
-// when splitting a wish across several tasks so the sum cannot exceed the cap.
+// calculateTaskBudget is a leftover single-title helper. New code must call
+// AllocateTaskBudgets on the full task list so the sum equals the wish.
 func calculateTaskBudget(title string, totalBudget int64, taskCount int) int64 {
 	if totalBudget <= 0 || taskCount <= 0 {
 		return totalBudget
 	}
-	amounts := AllocateTaskBudgets([]string{title}, nil, totalBudget)
+	titles := make([]string, taskCount)
+	for i := range titles {
+		titles[i] = title
+	}
+	amounts := AllocateTaskBudgets(titles, nil, totalBudget)
 	if len(amounts) == 0 {
-		return totalBudget / int64(taskCount)
+		return 0
 	}
 	return amounts[0]
 }

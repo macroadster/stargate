@@ -500,6 +500,77 @@ func TestProposalCreationRequiresWish(t *testing.T) {
 		}
 	})
 
+	t.Run("create_proposal_multi_task_budgets_sum_to_wish", func(t *testing.T) {
+		visibleHash := strings.Repeat("2", 64)
+		wishID := "wish-" + visibleHash
+		if err := store.UpsertContractWithTasks(context.Background(), smart_contract.Contract{
+			ContractID:      wishID,
+			Title:           "Wish",
+			TotalBudgetSats: 1000,
+			Status:          "pending",
+		}, nil); err != nil {
+			t.Fatalf("seed wish: %v", err)
+		}
+
+		md := strings.Join([]string{
+			"### Task 1: First slice of work",
+			"one",
+			"### Task 2: Second slice of work",
+			"two",
+			"### Task 3: Third slice of work",
+			"three",
+		}, "\n")
+		req := MCPRequest{
+			Tool: "create_proposal",
+			Arguments: map[string]interface{}{
+				"title":              "Three tasks",
+				"description_md":     md,
+				"budget_sats":        1000,
+				"visible_pixel_hash": visibleHash,
+			},
+		}
+		body, _ := json.Marshal(req)
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("POST", "/mcp/call", bytes.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("X-API-Key", "test-key")
+		server.handleToolCall(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+		var resp MCPResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if !resp.Success {
+			t.Fatalf("expected success, got %s", resp.Error)
+		}
+		data, _ := json.Marshal(resp.Result)
+		var payload struct {
+			Proposal struct {
+				ID    string `json:"id"`
+				Tasks []struct {
+					BudgetSats int64 `json:"budget_sats"`
+				} `json:"tasks"`
+			} `json:"proposal"`
+			AllocatedSats int64 `json:"allocated_sats"`
+			TaskCount     int   `json:"task_count"`
+		}
+		if err := json.Unmarshal(data, &payload); err != nil {
+			t.Fatalf("payload: %v body=%s", err, string(data))
+		}
+		if payload.TaskCount != 3 || len(payload.Proposal.Tasks) != 3 {
+			t.Fatalf("tasks=%d count=%d", len(payload.Proposal.Tasks), payload.TaskCount)
+		}
+		var sum int64
+		for _, task := range payload.Proposal.Tasks {
+			sum += task.BudgetSats
+		}
+		if sum != 1000 || payload.AllocatedSats != 1000 {
+			t.Fatalf("allocated=%d sum=%d want 1000 (old scar 1833)", payload.AllocatedSats, sum)
+		}
+	})
+
 	t.Run("approve_proposal_requires_wish", func(t *testing.T) {
 		apiKey := "approve-test-key"
 		creatorWallet := "tb1qcreatorwallet000000000000000000000000000"

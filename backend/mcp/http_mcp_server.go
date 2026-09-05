@@ -974,6 +974,18 @@ func (h *HTTPMCPServer) handleCreateProposal(ctx context.Context, args map[strin
 
 	proposalID := fmt.Sprintf("proposal-%d", time.Now().UnixNano())
 	contractID := "wish-" + visiblePixelHash
+	fundingAddr := scstore.FundingAddressFromMeta(map[string]interface{}{})
+	if creatorWallet != "" {
+		fundingAddr = creatorWallet
+	}
+	tasks := scstore.BuildTasksFromMarkdown(proposalID, descriptionMD, visiblePixelHash, budgetSats, fundingAddr)
+	var allocated int64
+	for _, t := range tasks {
+		allocated += t.BudgetSats
+	}
+	if budgetSats > 0 && allocated != budgetSats {
+		return nil, NewCreateProposalError("BUDGET_MISMATCH", fmt.Sprintf("allocated task budgets %d do not equal proposal budget %d", allocated, budgetSats), "budget_sats")
+	}
 	proposal := smart_contract.Proposal{
 		ID:               proposalID,
 		Title:            title,
@@ -982,14 +994,17 @@ func (h *HTTPMCPServer) handleCreateProposal(ctx context.Context, args map[strin
 		BudgetSats:       budgetSats,
 		Status:           "pending",
 		CreatedAt:        time.Now(),
+		Tasks:            tasks,
 		Metadata: map[string]interface{}{
 			"creator_wallet":     creatorWallet,
 			"contract_id":        contractID,
 			"visible_pixel_hash": visiblePixelHash,
+			"funding_address":    fundingAddr,
+			"embedded_message":   descriptionMD,
 		},
 	}
 
-	log.Printf("MCP CREATE PROPOSAL DEBUG: ID=%s, metadata=%+v", proposal.ID, proposal.Metadata)
+	log.Printf("MCP CREATE PROPOSAL DEBUG: ID=%s, tasks=%d, allocated=%d, metadata=%+v", proposal.ID, len(tasks), allocated, proposal.Metadata)
 	err := h.store.CreateProposal(ctx, proposal)
 	if err != nil {
 		errMsg := err.Error()
@@ -999,11 +1014,17 @@ func (h *HTTPMCPServer) handleCreateProposal(ctx context.Context, args map[strin
 		if strings.Contains(errMsg, "already approved/published") {
 			return nil, NewCreateProposalError("ALREADY_FINALIZED", "This wish already has an approved or published proposal and is no longer accepting new proposals", "visible_pixel_hash")
 		}
+		if strings.Contains(errMsg, "exceed proposal budget") || strings.Contains(errMsg, "under-allocate proposal budget") {
+			return nil, NewCreateProposalError("BUDGET_MISMATCH", errMsg, "budget_sats")
+		}
 		return nil, NewInternalError("create_proposal", fmt.Sprintf("Failed to create proposal: %v", err))
 	}
 
 	return map[string]interface{}{
-		"proposal": proposal,
+		"proposal":        proposal,
+		"task_count":      len(tasks),
+		"allocated_sats":  allocated,
+		"wish_budget_sats": wishBudget,
 	}, nil
 }
 

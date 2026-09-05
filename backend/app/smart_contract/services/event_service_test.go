@@ -70,3 +70,45 @@ func TestPublishProposalTasksDoesNotSplitWishByN(t *testing.T) {
 		t.Fatalf("merkle funded sum %d, want 3000", funded)
 	}
 }
+
+func TestPublishProposalTasksScalesExplicitOverflow(t *testing.T) {
+	mem := scstore.NewMemoryStore(time.Hour)
+	store := &hookStore{
+		MemoryStore: mem,
+		p: smart_contract.Proposal{
+			ID:               "prop-overflow",
+			Title:            "Overflow",
+			BudgetSats:       1000,
+			VisiblePixelHash: "bb",
+			Tasks: []smart_contract.Task{
+				{Title: "Core", BudgetSats: 1000},
+				{Title: "Ship", BudgetSats: 500},
+				{Title: "Audio", BudgetSats: 250},
+			},
+			Metadata: map[string]interface{}{"contract_id": "wish-bb"},
+		},
+	}
+	svc := NewEventService(store, nil)
+	if err := svc.PublishProposalTasks(context.Background(), "prop-overflow"); err != nil {
+		t.Fatal(err)
+	}
+	tasks, err := mem.ListTasks(smart_contract.TaskFilter{ContractID: "wish-bb"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tasks) != 3 {
+		t.Fatalf("got %d tasks", len(tasks))
+	}
+	var sum int64
+	for _, task := range tasks {
+		if task.BudgetSats <= 0 {
+			t.Fatalf("task %q budget %d", task.Title, task.BudgetSats)
+		}
+		sum += task.BudgetSats
+	}
+	// Old publish path kept the explicit 1000+500+250=1750 because it only
+	// filled unset budgets. Allocator must now scale the set to 1000.
+	if sum != 1000 {
+		t.Fatalf("published sum=%d want 1000 (old leftover was 1750)", sum)
+	}
+}

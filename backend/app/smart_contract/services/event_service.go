@@ -64,9 +64,9 @@ func (s *EventService) PublishProposalTasks(ctx context.Context, proposalID stri
 		Status:              "active",
 	}
 
-	// Allocate unset task budgets from the remaining wish first.
-	// Never fall back to wish/N — that overshoots when siblings already
-	// hold explicit amounts (e.g. 2000 + 3000/3 + 3000/3 on a 3000 wish).
+	// Always run the allocator. Explicit amounts are honored when they fit;
+	// overflow is scaled so the published sum equals the wish. Never leave a
+	// pre-set BudgetSats alone if the set overshoots (old wish/N leftover).
 	titles := make([]string, len(p.Tasks))
 	explicit := make([]int64, len(p.Tasks))
 	for i, t := range p.Tasks {
@@ -87,9 +87,7 @@ func (s *EventService) PublishProposalTasks(ctx context.Context, proposalID stri
 		if task.ContractID == "" || task.ContractID == p.ID {
 			task.ContractID = contractID
 		}
-		if task.BudgetSats <= 0 {
-			task.BudgetSats = amounts[i]
-		}
+		task.BudgetSats = amounts[i]
 		if task.MerkleProof == nil && p.VisiblePixelHash != "" {
 			task.MerkleProof = &smart_contract.MerkleProof{
 				VisiblePixelHash:   p.VisiblePixelHash,
@@ -102,9 +100,7 @@ func (s *EventService) PublishProposalTasks(ctx context.Context, proposalID stri
 			if task.MerkleProof.FundingAddress == "" {
 				task.MerkleProof.FundingAddress = fundingAddr
 			}
-			if task.MerkleProof.FundedAmountSats <= 0 {
-				task.MerkleProof.FundedAmountSats = task.BudgetSats
-			}
+			task.MerkleProof.FundedAmountSats = task.BudgetSats
 		}
 		tasks = append(tasks, task)
 	}
