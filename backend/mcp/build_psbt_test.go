@@ -341,6 +341,92 @@ func TestHandleBuildPSBTPayerAddressesCoversSmallP2WPKH(t *testing.T) {
 	}
 }
 
+func TestHandleBuildPSBTMergesSameContractorDustTasks(t *testing.T) {
+	// Live scar (97ad5c72 Retro Arcade): MCP listed three approved tasks
+	// 181+272+547 as three P2PKH outputs. 181 is dust; signed hex refused.
+	t.Setenv("BITCOIN_NETWORK", "testnet4")
+	t.Setenv("STARLIGHT_DONATION_ADDRESS", "")
+
+	payer := mustTestP2WPKH(t, 0x11)
+	contractor := mustTestP2PKH(t, 0x99)
+	pixelHash := "97ad5c72e81b89a103beea1ec57cb2c5795bf05e190be23eb96c7ab1ac49e124"
+	contractID := "wish-" + pixelHash
+
+	store := scstore.NewMemoryStore(72 * time.Hour)
+	ctx := context.Background()
+	if err := store.UpsertContractWithTasks(ctx, smart_contract.Contract{
+		ContractID:      contractID,
+		Title:           "Retro Arcade dust scar",
+		TotalBudgetSats: 1000,
+		Status:          "active",
+	}, []smart_contract.Task{
+		{TaskID: contractID + "-task-1", ContractID: contractID, Title: "Core", BudgetSats: 547, Status: "approved", ContractorWallet: contractor.EncodeAddress()},
+		{TaskID: contractID + "-task-2", ContractID: contractID, Title: "AI", BudgetSats: 272, Status: "approved", ContractorWallet: contractor.EncodeAddress()},
+		{TaskID: contractID + "-task-3", ContractID: contractID, Title: "Polish", BudgetSats: 181, Status: "approved", ContractorWallet: contractor.EncodeAddress()},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	server := NewHTTPMCPServer(store, walletValidator{wallet: payer.EncodeAddress()}, nil, &services.IngestionService{}, &starlight.ScannerManager{}, nil, auth.NewChallengeStore(10*time.Minute))
+	mock := newPSBTMockUTXO()
+	seedPSBTUTXO(t, mock, payer, 50_000)
+	server.utxoClient = mock
+
+	body, err := json.Marshal(MCPRequest{Tool: "build_psbt", Arguments: map[string]interface{}{
+		"pixel_hash":      pixelHash,
+		"commitment_sats": 1000,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/mcp/call", bytes.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("X-API-Key", "test-key")
+	server.handleToolCall(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+	var resp MCPResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !resp.Success {
+		t.Fatalf("build_psbt failed: %s (%s)", resp.Error, resp.Message)
+	}
+	raw, _ := json.Marshal(resp.Result)
+	var out map[string]interface{}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("result: %v", err)
+	}
+	amounts, _ := out["payout_amounts"].([]interface{})
+	if len(amounts) != 1 || amounts[0] != float64(1000) {
+		t.Fatalf("payout_amounts=%v want [1000]", amounts)
+	}
+	if out["payout_count"] != float64(3) {
+		t.Fatalf("payout_count=%v want 3 approved tasks (pre-merge)", out["payout_count"])
+	}
+	tx := unsignedTxFromPSBTHexMCP(t, out["psbt_hex"].(string))
+	destScript, err := txscript.PayToAddrScript(contractor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var destOuts int
+	var destVal int64
+	for _, txOut := range tx.TxOut {
+		if bytes.Equal(txOut.PkScript, destScript) {
+			destOuts++
+			destVal += txOut.Value
+		}
+		if txOut.Value > 0 && txOut.Value < bitcoin.DustLimitP2PKH {
+			t.Fatalf("dust output %d", txOut.Value)
+		}
+	}
+	if destOuts != 1 || destVal != 1000 {
+		t.Fatalf("dest outputs=%d val=%d want 1x1000", destOuts, destVal)
+	}
+}
+
 func TestMcpStringSliceAcceptsJSONArray(t *testing.T) {
 	got, ok := mcpStringSlice([]interface{}{"a", "b"})
 	if !ok || len(got) != 2 || got[0] != "a" || got[1] != "b" {

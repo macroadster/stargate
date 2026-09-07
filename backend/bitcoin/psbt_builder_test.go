@@ -421,6 +421,89 @@ func TestBuildFundingPSBTKeepsOPReturnInUnsignedHex(t *testing.T) {
 	}
 }
 
+func TestBuildFundingPSBTMergesSameAddressDustPayouts(t *testing.T) {
+	// Live scar (97ad5c72): three approved tasks 181+272+547 to the same
+	// P2PKH. Builder emitted three outputs; 181 is below dust and
+	// mempool.space rejected the signed hex with -26 dust.
+	params := &chaincfg.TestNet4Params
+	payer := mustP2WPKH(t, params, 0x11)
+	dest := mustP2PKH(t, params, 0x99)
+	donation := mustP2WPKH(t, params, 0x33)
+	client := newRaiseFundMockUTXO()
+	seedAddrUTXO(t, client, payer, 50_000)
+	wishHash := bytes.Repeat([]byte{0x97}, 32)
+
+	res, err := BuildFundingPSBT(client, params, PSBTRequest{
+		PayerAddress: payer,
+		Payouts: []PayoutOutput{
+			{Address: dest, ValueSats: 181},
+			{Address: dest, ValueSats: 272},
+			{Address: dest, ValueSats: 547},
+		},
+		PixelHash:       wishHash,
+		CommitmentSats:  1000,
+		DonationAddress: donation,
+		FeeRateSatPerVB: 1,
+		ChangeAddress:   payer,
+	})
+	if err != nil {
+		t.Fatalf("BuildFundingPSBT: %v", err)
+	}
+	if len(res.PayoutAmounts) != 1 || res.PayoutAmounts[0] != 1000 {
+		t.Fatalf("payout amounts=%v want [1000]", res.PayoutAmounts)
+	}
+	tx := unsignedTxFromPSBTHex(t, res.EncodedHex)
+	var destOuts int
+	var destVal int64
+	var foundOPReturn bool
+	destScript, err := txscript.PayToAddrScript(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, txOut := range tx.TxOut {
+		if bytes.Equal(txOut.PkScript, destScript) {
+			destOuts++
+			destVal += txOut.Value
+		}
+		if len(txOut.PkScript) > 0 && txOut.PkScript[0] == txscript.OP_RETURN {
+			foundOPReturn = true
+		}
+		if txOut.Value > 0 && txOut.Value < DustLimitP2PKH {
+			t.Fatalf("dust output %d sats", txOut.Value)
+		}
+	}
+	if destOuts != 1 || destVal != 1000 {
+		t.Fatalf("dest outputs=%d val=%d want 1x1000", destOuts, destVal)
+	}
+	if !foundOPReturn {
+		t.Fatal("merged payout dropped OP_RETURN")
+	}
+}
+
+func TestBuildFundingPSBTRejectsCombinedDustPayout(t *testing.T) {
+	params := &chaincfg.TestNet4Params
+	payer := mustP2WPKH(t, params, 0x11)
+	dest := mustP2PKH(t, params, 0x99)
+	client := newRaiseFundMockUTXO()
+	seedAddrUTXO(t, client, payer, 50_000)
+
+	_, err := BuildFundingPSBT(client, params, PSBTRequest{
+		PayerAddress: payer,
+		Payouts: []PayoutOutput{
+			{Address: dest, ValueSats: 181},
+			{Address: dest, ValueSats: 200},
+		},
+		FeeRateSatPerVB: 1,
+		ChangeAddress:   payer,
+	})
+	if err == nil {
+		t.Fatal("expected combined 381-sat payout to fail dust check")
+	}
+	if !bytes.Contains([]byte(err.Error()), []byte("below dust limit")) {
+		t.Fatalf("error=%v", err)
+	}
+}
+
 func TestTxIDPreCalculationLegacy(t *testing.T) {
 	params := &chaincfg.TestNet4Params
 	res := fundingPSBTForAddr(t, mustP2PKH(t, params, 0x44))
