@@ -380,12 +380,14 @@ func (h *SearchHandler) searchData(query string) models.SearchResult {
 		}
 	}
 
-	// Search contracts from Store
+	// Search contracts from Store. Include settlement txids so a paste of
+	// confirmed_txid / funding_txid (e.g. f3549ce6…) finds the wish, not just
+	// title / contract_id. Prefix match lets a short explorer prefix work.
 	if h.store != nil {
 		contractList, err := h.store.ListContracts(sc.ContractFilter{})
 		if err == nil {
 			for _, c := range contractList {
-				if matchesQuery(c.ContractID, c.Title, strings.Join(c.Skills, " ")) {
+				if contractMatchesQuery(q, c) {
 					blockHeight := int64(0)
 					if c.ConfirmedBlockHeight != nil {
 						blockHeight = int64(*c.ConfirmedBlockHeight)
@@ -417,4 +419,47 @@ func (h *SearchHandler) searchData(query string) models.SearchResult {
 		Contracts:    contracts,
 		Proposals:    proposals,
 	}
+}
+
+// contractMatchesQuery reports whether a store contract should appear for q.
+// Confirmed settlement lives on metadata.confirmed_txid (and funding_txid);
+// title/id-only search misses a paste from the explorer.
+func contractMatchesQuery(q string, c sc.Contract) bool {
+	if strings.TrimSpace(q) == "" {
+		return true
+	}
+	values := []string{c.ContractID, c.Title, strings.Join(c.Skills, " ")}
+	if strings.HasPrefix(c.ContractID, "wish-") {
+		values = append(values, strings.TrimPrefix(c.ContractID, "wish-"))
+	}
+	if c.Metadata != nil {
+		for _, key := range []string{"confirmed_txid", "funding_txid", "tx_id", "visible_pixel_hash"} {
+			if v, ok := c.Metadata[key]; ok && v != nil {
+				values = append(values, strings.TrimSpace(fmt.Sprintf("%v", v)))
+			}
+		}
+		switch v := c.Metadata["funding_txids"].(type) {
+		case []string:
+			values = append(values, v...)
+		case []any:
+			for _, item := range v {
+				if s, ok := item.(string); ok {
+					values = append(values, s)
+				}
+			}
+		case string:
+			values = append(values, v)
+		}
+	}
+	ql := strings.ToLower(strings.TrimSpace(q))
+	for _, v := range values {
+		if v == "" {
+			continue
+		}
+		vl := strings.ToLower(v)
+		if strings.Contains(vl, ql) || strings.HasPrefix(vl, ql) {
+			return true
+		}
+	}
+	return false
 }
