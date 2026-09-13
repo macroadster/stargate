@@ -280,6 +280,10 @@ func (s *Server) handleSubmissionReview(w http.ResponseWriter, r *http.Request, 
 		Error(w, http.StatusBadRequest, "invalid json")
 		return
 	}
+	if err := s.AuthorizeSubmissionReview(r.Context(), auth.RequestAPIKey(r), id); err != nil {
+		Error(w, http.StatusForbidden, err.Error())
+		return
+	}
 	resp, err := s.submissionSvc.Review(r.Context(), id, scservices.SubmissionReviewInput{
 		Action: body.Action, Notes: body.Notes, RejectionType: body.RejectionType,
 	})

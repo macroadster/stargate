@@ -208,12 +208,43 @@ func (s *SubmissionService) Review(ctx context.Context, submissionID string, bod
 	}, nil
 }
 
+// SubmissionTaskID returns the task a submission belongs to, walking its claim
+// when TaskID is unset.
+//
+// Submission.TaskID is omitempty while ClaimID is not, so a submission can
+// legitimately arrive identifying its task only through its claim.
+// UpdateSubmissionStatus cascades the task via the claim, but callers that
+// re-read the submission afterwards still see an empty TaskID, so they need
+// this to reach the task.
+func SubmissionTaskID(store scstore.Store, sub smart_contract.Submission) (string, error) {
+	if taskID := strings.TrimSpace(sub.TaskID); taskID != "" {
+		return taskID, nil
+	}
+	claimID := strings.TrimSpace(sub.ClaimID)
+	if claimID == "" {
+		return "", fmt.Errorf("submission %s has neither task nor claim", sub.SubmissionID)
+	}
+	claim, err := store.GetClaim(claimID)
+	if err != nil {
+		return "", fmt.Errorf("cannot resolve claim %s for submission %s: %w", claimID, sub.SubmissionID, err)
+	}
+	taskID := strings.TrimSpace(claim.TaskID)
+	if taskID == "" {
+		return "", fmt.Errorf("claim %s has no task", claimID)
+	}
+	return taskID, nil
+}
+
 func (s *SubmissionService) maybeResolveRework(ctx context.Context, submissionID string) {
 	submission, err := s.store.GetSubmission(ctx, submissionID)
-	if err != nil || submission.TaskID == "" {
+	if err != nil {
 		return
 	}
-	task, err := s.store.GetTask(submission.TaskID)
+	taskID, err := SubmissionTaskID(s.store, submission)
+	if err != nil {
+		return
+	}
+	task, err := s.store.GetTask(taskID)
 	if err != nil || task.ContractID == "" {
 		return
 	}
