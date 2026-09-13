@@ -2,7 +2,6 @@ package smart_contract
 
 import (
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -14,61 +13,7 @@ import (
 )
 
 func (s *Server) enforceCreatorApproval(r *http.Request, proposal smart_contract.Proposal) error {
-	apiKey := auth.RequestAPIKey(r)
-
-	// Get approver's wallet from API key
-	var approverWallet string
-	if s.apiKeys != nil {
-		if approverRec, ok := s.apiKeys.Get(apiKey); ok {
-			approverWallet = strings.TrimSpace(approverRec.Wallet)
-		}
-	}
-	if approverWallet == "" {
-		return fmt.Errorf("api key with wallet binding required for approval")
-	}
-
-	// 0. GLOBAL AUDITOR: Check if the bound wallet is the donation address
-	donationAddr := strings.TrimSpace(os.Getenv("STARLIGHT_DONATION_ADDRESS"))
-	if donationAddr != "" && strings.EqualFold(approverWallet, donationAddr) {
-		log.Printf("AUTHORIZATION: Allowing approval for proposal %s based on Global Auditor status (%s)", proposal.ID, approverWallet)
-		return nil
-	}
-
-	// 1. Check if matches Wish Creator by wallet
-	visibleHash := proposalVisibleHash(proposal)
-	if visibleHash != "" && s.ingestionSvc != nil {
-		// Try both hash and wish-hash
-		rec, err := s.ingestionSvc.Get(visibleHash)
-		if err != nil {
-			rec, _ = s.ingestionSvc.Get("wish-" + visibleHash)
-		}
-
-		if rec != nil && rec.Metadata != nil {
-			if wishCreatorWallet, ok := rec.Metadata["creator_wallet"].(string); ok {
-				if strings.EqualFold(strings.TrimSpace(wishCreatorWallet), approverWallet) {
-					return nil
-				}
-			}
-		}
-	}
-
-	// 2. Fallback: if no wish creator info exists at all, allow for now to prevent deadlock on old data
-	hasWishCreatorInfo := false
-	if visibleHash != "" && s.ingestionSvc != nil {
-		rec, _ := s.ingestionSvc.Get(visibleHash)
-		if rec != nil && rec.Metadata != nil {
-			if _, ok := rec.Metadata["creator_wallet"].(string); ok {
-				hasWishCreatorInfo = true
-			}
-		}
-	}
-
-	if !hasWishCreatorInfo {
-		log.Printf("WARNING: allowing approval for proposal %s with NO wish creator info via REST", proposal.ID)
-		return nil
-	}
-
-	return fmt.Errorf("approver wallet %s does not match wish creator", approverWallet)
+	return s.authorizer().Authorize(auth.RequestAPIKey(r), ProposalWishHash(proposal), "proposal "+proposal.ID)
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {

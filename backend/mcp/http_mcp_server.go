@@ -1120,6 +1120,10 @@ func (h *HTTPMCPServer) handleRejectSubmission(ctx context.Context, args map[str
 		return nil, NewNotFoundError("reject_submission", "submission", submissionID)
 	}
 
+	if err := h.authorizeSubmissionReview(ctx, apiKey, submissionID, submission); err != nil {
+		return nil, NewUnauthorizedError("reject_submission", err.Error())
+	}
+
 	err = h.store.UpdateSubmissionStatus(ctx, submissionID, "rejected", notes, rejectionType)
 	if err != nil {
 		return nil, NewInternalError("reject_submission", fmt.Sprintf("Failed to reject submission: %v", err))
@@ -1153,6 +1157,10 @@ func (h *HTTPMCPServer) handleApproveSubmission(ctx context.Context, args map[st
 		return nil, NewNotFoundError("approve_submission", "submission", submissionID)
 	}
 
+	if err := h.authorizeSubmissionReview(ctx, apiKey, submissionID, submission); err != nil {
+		return nil, NewUnauthorizedError("approve_submission", err.Error())
+	}
+
 	err = h.store.UpdateSubmissionStatus(ctx, submissionID, "approved", "", "")
 	if err != nil {
 		return nil, NewInternalError("approve_submission", fmt.Sprintf("Failed to approve submission: %v", err))
@@ -1164,71 +1172,22 @@ func (h *HTTPMCPServer) handleApproveSubmission(ctx context.Context, args map[st
 	}, nil
 }
 
+func (h *HTTPMCPServer) authorizer() scmiddleware.WishCreatorAuthorizer {
+	return scmiddleware.WishCreatorAuthorizer{Keys: h.apiKeyStore, Ingestion: h.ingestionSvc}
+}
+
 func (h *HTTPMCPServer) requireAuthorizedApprover(apiKey string, proposal smart_contract.Proposal) error {
-	// Get approver's wallet from API key
-	var approverWallet string
-	if h.apiKeyStore != nil {
-		if approverRec, ok := h.apiKeyStore.Get(apiKey); ok {
-			approverWallet = strings.TrimSpace(approverRec.Wallet)
-		}
+	return h.authorizer().Authorize(apiKey, scmiddleware.ProposalWishHash(proposal), "proposal "+proposal.ID)
+}
+
+// authorizeSubmissionReview enforces the same wish-creator rule as the REST
+// route for approve/reject of a submission.
+func (h *HTTPMCPServer) authorizeSubmissionReview(ctx context.Context, apiKey, submissionID string, submission smart_contract.Submission) error {
+	hash, err := scmiddleware.SubmissionWishHash(h.store, submission)
+	if err != nil {
+		return err
 	}
-	if approverWallet == "" {
-		return fmt.Errorf("api key with wallet binding required for approval")
-	}
-
-	// 0. GLOBAL AUDITOR: Check if the bound wallet is the donation address
-	donationAddr := strings.TrimSpace(os.Getenv("STARLIGHT_DONATION_ADDRESS"))
-	if donationAddr != "" && strings.EqualFold(approverWallet, donationAddr) {
-		log.Printf("AUTHORIZATION: Allowing approval for proposal %s based on Global Auditor status (%s)", proposal.ID, approverWallet)
-		return nil
-	}
-
-	// 1. Check if matches Wish Creator by wallet
-	visibleHash := strings.TrimSpace(proposal.VisiblePixelHash)
-	if visibleHash == "" {
-		if v, ok := proposal.Metadata["visible_pixel_hash"].(string); ok {
-			visibleHash = strings.TrimSpace(v)
-		}
-	}
-
-	// 1. Check if matches Wish Creator by wallet (from ingestion record)
-	if visibleHash != "" && h.ingestionSvc != nil {
-		// Try both hash and wish-hash
-		rec, err := h.ingestionSvc.Get(visibleHash)
-		if err != nil {
-			rec, _ = h.ingestionSvc.Get("wish-" + visibleHash)
-		}
-
-		if rec != nil && rec.Metadata != nil {
-			if wishCreatorWallet, ok := rec.Metadata["creator_wallet"].(string); ok {
-				if strings.EqualFold(strings.TrimSpace(wishCreatorWallet), approverWallet) {
-					return nil
-				}
-			}
-		}
-	}
-
-	// 2. Self-approval guard: the proposal's creator_wallet is the agent that
-	// *created the proposal*, NOT the wish owner. Never use it to authorize
-	// approval — that would let the proposer approve their own proposal.
-
-	// 3. If no wish creator info exists at all, allow for now to prevent deadlock on old data
-	hasWishCreatorInfo := false
-	if visibleHash != "" && h.ingestionSvc != nil {
-		rec, _ := h.ingestionSvc.Get(visibleHash)
-		if rec != nil && rec.Metadata != nil {
-			if _, ok := rec.Metadata["creator_wallet"].(string); ok {
-				hasWishCreatorInfo = true
-			}
-		}
-	}
-
-	if !hasWishCreatorInfo {
-		log.Printf("WARNING: allowing approval for proposal %s with NO wish creator info", proposal.ID)
-		return nil
-	}
-
-	return fmt.Errorf("approver wallet %s does not match wish creator", approverWallet)
+	return h.authorizer().Authorize(apiKey, hash, "submission "+submissionID)
 }
 
 func (h *HTTPMCPServer) handleScanImage(ctx context.Context, args map[string]interface{}) (interface{}, error) {
