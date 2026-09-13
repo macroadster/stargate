@@ -32,7 +32,7 @@ func TestSubmissionFilterFromArgs(t *testing.T) {
 
 func TestSubmissionServiceListPagination(t *testing.T) {
 	store := scstore.NewMemoryStore(time.Hour)
-	svc := NewSubmissionService(store, nil, nil)
+	svc := NewSubmissionService(store, nil, nil, nil)
 	ctx := context.Background()
 	seedListSubmissions(t, store)
 
