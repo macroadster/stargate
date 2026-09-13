@@ -88,16 +88,7 @@ func (s *Server) writeServiceErr(w http.ResponseWriter, err error) {
 }
 
 func (s *Server) handleProposalApprove(w http.ResponseWriter, r *http.Request, id string) {
-	proposal, err := s.store.GetProposal(r.Context(), id)
-	if err != nil {
-		Error(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if err := s.enforceCreatorApproval(r, proposal); err != nil {
-		Error(w, http.StatusForbidden, err.Error())
-		return
-	}
-	resp, err := s.proposalSvc.Approve(r.Context(), id, auth.RequestAPIKey(r), true)
+	resp, err := s.proposalSvc.Approve(r.Context(), id, scservices.ProposalActor{APIKey: auth.RequestAPIKey(r)})
 	if err != nil {
 		s.writeServiceErr(w, err)
 		return

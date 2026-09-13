@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -197,6 +198,77 @@ func TestProposalEditEventsRecordAuthorizedWallet(t *testing.T) {
 		}
 		assertEventActor(t, events, "publish", wallet)
 	})
+}
+
+// az6: Approve used to take creatorOK, so a caller could authorize itself by
+// passing true. These call Approve directly, which is where that argument was
+// trusted.
+func TestProposalApproveRefusesWhenAuthorizerMissing(t *testing.T) {
+	store := scstore.NewMemoryStore(time.Hour)
+	seedEditProposal(t, store, "prop-approve-noauthz", "pending")
+	svc := editService(store, nil, nil)
+
+	_, err := svc.Approve(context.Background(), "prop-approve-noauthz", ProposalActor{APIKey: "any-key"})
+	if err == nil {
+		t.Fatal("expected a service with no authorizer to refuse the approval, got nil")
+	}
+	if se := AsStatus(err); se == nil || se.Status != http.StatusInternalServerError {
+		t.Fatalf("expected 500 for a wiring failure, got %v", err)
+	}
+	assertProposalStatusNot(t, store, "prop-approve-noauthz", "approved")
+}
+
+func TestProposalApproveDeniesBeforeMutating(t *testing.T) {
+	store := scstore.NewMemoryStore(time.Hour)
+	seedEditProposal(t, store, "prop-approve-denied", "pending")
+
+	var events []core.Event
+	svc := editService(store, func(evt core.Event) { events = append(events, evt) },
+		&stubProposalAuthorizer{err: errors.New("approver wallet bc1qstranger does not match wish creator")})
+
+	_, err := svc.Approve(context.Background(), "prop-approve-denied", ProposalActor{APIKey: "stranger-key"})
+	if err == nil {
+		t.Fatal("expected a refused authorization to deny the approval, got nil")
+	}
+	if se := AsStatus(err); se == nil || se.Status != http.StatusForbidden {
+		t.Fatalf("expected 403, got %v", err)
+	}
+
+	assertProposalStatusNot(t, store, "prop-approve-denied", "approved")
+	if len(events) != 0 {
+		t.Fatalf("a denied approval must not emit events, got %+v", events)
+	}
+}
+
+// There is no longer a parameter a caller can set to skip the check: the only way
+// through Approve is the authorizer saying yes.
+func TestProposalApproveConsultsAuthorizerWithCallerKey(t *testing.T) {
+	store := scstore.NewMemoryStore(time.Hour)
+	seedEditProposal(t, store, "prop-approve-actor", "pending")
+
+	stub := &stubProposalAuthorizer{err: errors.New("denied")}
+	svc := editService(store, nil, stub)
+
+	if _, err := svc.Approve(context.Background(), "prop-approve-actor", ProposalActor{APIKey: "caller-key"}); err == nil {
+		t.Fatal("approval was not authorized")
+	}
+	if stub.calls != 1 {
+		t.Fatalf("authorizer called %d times, want 1", stub.calls)
+	}
+	if stub.gotKey != "caller-key" || stub.gotProp != "prop-approve-actor" {
+		t.Fatalf("authorizer got (%q, %q), want (caller-key, prop-approve-actor)", stub.gotKey, stub.gotProp)
+	}
+}
+
+func assertProposalStatusNot(t *testing.T, store scstore.Store, proposalID, notWant string) {
+	t.Helper()
+	prop, err := store.GetProposal(context.Background(), proposalID)
+	if err != nil {
+		t.Fatalf("get proposal: %v", err)
+	}
+	if strings.EqualFold(prop.Status, notWant) {
+		t.Fatalf("proposal %s is %q despite the refusal", proposalID, prop.Status)
+	}
 }
 
 func assertEventActor(t *testing.T, events []core.Event, eventType, wantActor string) {
