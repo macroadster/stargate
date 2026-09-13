@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 )
@@ -31,4 +32,30 @@ func TestOrchestratorStopWaitsAndAllowsRestart(t *testing.T) {
 		t.Fatal("restarted orchestrator reports stopped")
 	}
 	o.Stop()
+}
+
+func TestOrchestratorConcurrentStartStop(t *testing.T) {
+	cfg := Config{
+		Enabled:      true,
+		PollInterval: time.Hour,
+		MaxCycles:    100,
+	}
+	o := NewOrchestrator(cfg, nil, NewStubExecutor(t.TempDir()))
+
+	var callers sync.WaitGroup
+	for range 8 {
+		callers.Add(1)
+		go func() {
+			defer callers.Done()
+			for range 25 {
+				o.Start(context.Background())
+				o.Stop()
+			}
+		}()
+	}
+	callers.Wait()
+
+	if o.IsRunning() {
+		t.Fatal("orchestrator still running after concurrent stops")
+	}
 }

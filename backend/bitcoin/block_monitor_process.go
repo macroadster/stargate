@@ -51,7 +51,14 @@ func (bm *BlockMonitor) reconcileSweepLoop(stop <-chan struct{}) {
 	defer ticker.Stop()
 
 	// Initial small delay so startup forward scan + first reconcileCanonicalTip settle first
-	time.Sleep(15 * time.Second)
+	startupDelay := time.NewTimer(15 * time.Second)
+	select {
+	case <-stop:
+		startupDelay.Stop()
+		log.Println("reconcile sweep loop stopped during startup delay")
+		return
+	case <-startupDelay.C:
+	}
 
 	for {
 		select {

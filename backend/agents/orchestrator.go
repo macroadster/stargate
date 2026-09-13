@@ -24,7 +24,7 @@ type Orchestrator struct {
 	mu      sync.Mutex
 	running bool
 	cancel  context.CancelFunc
-	wg      sync.WaitGroup
+	done    chan struct{}
 }
 
 // NewOrchestrator constructs an orchestrator. If executor is nil, a StubExecutor is used.
@@ -57,10 +57,11 @@ func (o *Orchestrator) Start(ctx context.Context) {
 	o.running = true
 	ctx, cancel := context.WithCancel(ctx)
 	o.cancel = cancel
-	o.wg.Add(1)
+	done := make(chan struct{})
+	o.done = done
 	o.mu.Unlock()
 
-	go o.run(ctx)
+	go o.run(ctx, done)
 	log.Printf("agents: orchestrator started (watcher=%v worker=%v ai=%s poll=%s)",
 		o.cfg.WatcherEnabled, o.cfg.WorkerEnabled, o.cfg.AIIdentifier, o.cfg.PollInterval)
 }
@@ -69,21 +70,25 @@ func (o *Orchestrator) Start(ctx context.Context) {
 func (o *Orchestrator) Stop() {
 	o.mu.Lock()
 	cancel := o.cancel
+	done := o.done
 	o.mu.Unlock()
 
 	if cancel != nil {
 		cancel()
 	}
-	o.wg.Wait()
+	if done != nil {
+		<-done
+	}
 }
 
-func (o *Orchestrator) run(ctx context.Context) {
+func (o *Orchestrator) run(ctx context.Context, done chan struct{}) {
 	defer func() {
 		o.mu.Lock()
 		o.running = false
 		o.cancel = nil
+		o.done = nil
+		close(done)
 		o.mu.Unlock()
-		o.wg.Done()
 	}()
 
 	cycle := 0
