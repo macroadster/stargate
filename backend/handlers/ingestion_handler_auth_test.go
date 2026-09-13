@@ -61,6 +61,11 @@ func TestIngestionEndpointsRejectWhenIngestTokenUnset(t *testing.T) {
 			if rec.Code != http.StatusUnauthorized {
 				t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
 			}
+			if tc.name == "ingest" {
+				if got, err := svc.Get("id"); err == nil && got != nil {
+					t.Fatal("record was stored despite the 401: denial happened after the write")
+				}
+			}
 		})
 	}
 }
