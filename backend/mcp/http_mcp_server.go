@@ -243,10 +243,14 @@ func NewHTTPMCPServer(store scmiddleware.Store, apiKeyStore auth.APIKeyValidator
 	// silently dropped them, which routing through Review alone would not fix.
 	reviewEvents := scmiddleware.PublishEvent
 
+	// The same gate the REST server builds, so both surfaces authorize review
+	// through one implementation rather than two call sites of the same rule.
+	reviewGate := scmiddleware.SubmissionReviewGate{Store: store, Keys: apiKeyStore, Ingestion: ingestionSvc}
+
 	return &HTTPMCPServer{
 		store:            store,
 		claimSvc:         scservices.NewClaimService(store),
-		submissionSvc:    scservices.NewSubmissionService(store, reviewEvents),
+		submissionSvc:    scservices.NewSubmissionService(store, reviewEvents, reviewGate),
 		apiKeyStore:      apiKeyStore,
 		apiKeyIssuer:     apiKeyIssuer,
 		ingestionSvc:     ingestionSvc,
@@ -1125,13 +1129,9 @@ func (h *HTTPMCPServer) handleRejectSubmission(ctx context.Context, args map[str
 		return nil, NewNotFoundError("reject_submission", "submission", submissionID)
 	}
 
-	if err := h.authorizeSubmissionReview(ctx, apiKey, submissionID, submission); err != nil {
-		return nil, NewUnauthorizedError("reject_submission", err.Error())
-	}
-
 	if _, err := h.reviewSubmission(ctx, "reject_submission", submissionID, scservices.SubmissionReviewInput{
 		Action: "reject", Notes: notes, RejectionType: rejectionType,
-	}); err != nil {
+	}, apiKey); err != nil {
 		return nil, err
 	}
 
@@ -1163,13 +1163,9 @@ func (h *HTTPMCPServer) handleApproveSubmission(ctx context.Context, args map[st
 		return nil, NewNotFoundError("approve_submission", "submission", submissionID)
 	}
 
-	if err := h.authorizeSubmissionReview(ctx, apiKey, submissionID, submission); err != nil {
-		return nil, NewUnauthorizedError("approve_submission", err.Error())
-	}
-
 	if _, err := h.reviewSubmission(ctx, "approve_submission", submissionID, scservices.SubmissionReviewInput{
 		Action: "approve",
-	}); err != nil {
+	}, apiKey); err != nil {
 		return nil, err
 	}
 
@@ -1182,11 +1178,13 @@ func (h *HTTPMCPServer) handleApproveSubmission(ctx context.Context, args map[st
 // reviewSubmission applies a review through SubmissionService so the MCP tools
 // get the same side effects as the REST route: rework resolution on approve and
 // a review event. Calling store.UpdateSubmissionStatus directly skipped both.
-func (h *HTTPMCPServer) reviewSubmission(ctx context.Context, tool, submissionID string, in scservices.SubmissionReviewInput) (map[string]interface{}, error) {
+//
+// Review also authorizes apiKey, which is why the tools no longer pre-check.
+func (h *HTTPMCPServer) reviewSubmission(ctx context.Context, tool, submissionID string, in scservices.SubmissionReviewInput, apiKey string) (map[string]interface{}, error) {
 	if h.submissionSvc == nil {
 		return nil, NewServiceUnavailableError(tool, "submission service")
 	}
-	resp, err := h.submissionSvc.Review(ctx, submissionID, in)
+	resp, err := h.submissionSvc.Review(ctx, submissionID, in, scservices.ReviewActor{APIKey: apiKey})
 	if err == nil {
 		return resp, nil
 	}
@@ -1196,6 +1194,8 @@ func (h *HTTPMCPServer) reviewSubmission(ctx context.Context, tool, submissionID
 			return nil, NewNotFoundError(tool, "submission", submissionID)
 		case http.StatusBadRequest:
 			return nil, NewValidationError(tool, se.Message)
+		case http.StatusForbidden:
+			return nil, NewUnauthorizedError(tool, se.Message)
 		}
 	}
 	return nil, NewInternalError(tool, fmt.Sprintf("Failed to %s: %v", strings.TrimSuffix(tool, "_submission"), err))
@@ -1206,18 +1206,8 @@ func (h *HTTPMCPServer) authorizer() scmiddleware.WishCreatorAuthorizer {
 }
 
 func (h *HTTPMCPServer) requireAuthorizedApprover(apiKey string, proposal smart_contract.Proposal) error {
-	return h.authorizer().Authorize(apiKey, scmiddleware.ProposalWishHash(proposal), "proposal "+proposal.ID, scmiddleware.AllowOnMissingCreator)
-}
-
-// authorizeSubmissionReview enforces the same wish-creator rule as the REST
-// route for approve/reject of a submission, including denying when no creator
-// can be established.
-func (h *HTTPMCPServer) authorizeSubmissionReview(ctx context.Context, apiKey, submissionID string, submission smart_contract.Submission) error {
-	hash, err := scmiddleware.SubmissionWishHash(h.store, submission)
-	if err != nil {
-		return err
-	}
-	return h.authorizer().Authorize(apiKey, hash, "submission "+submissionID, scmiddleware.DenyOnMissingCreator)
+	_, err := h.authorizer().Authorize(apiKey, scmiddleware.ProposalWishHash(proposal), "proposal "+proposal.ID, scmiddleware.AllowOnMissingCreator)
+	return err
 }
 
 func (h *HTTPMCPServer) handleScanImage(ctx context.Context, args map[string]interface{}) (interface{}, error) {

@@ -13,7 +13,8 @@ import (
 )
 
 func (s *Server) enforceCreatorApproval(r *http.Request, proposal smart_contract.Proposal) error {
-	return s.authorizer().Authorize(auth.RequestAPIKey(r), ProposalWishHash(proposal), "proposal "+proposal.ID, AllowOnMissingCreator)
+	_, err := s.authorizer().Authorize(auth.RequestAPIKey(r), ProposalWishHash(proposal), "proposal "+proposal.ID, AllowOnMissingCreator)
+	return err
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {

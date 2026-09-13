@@ -71,11 +71,19 @@ func seedSubmission(t *testing.T, store scstore.Store, submissionID, taskID stri
 	}
 }
 
+// authorizeReview exercises the gate the server hands to SubmissionService,
+// which is where submission review authorization is enforced. The wallet it
+// returns is covered by the service tests that assert on the review event.
+func (s *Server) authorizeReview(ctx context.Context, apiKey, submissionID string) error {
+	_, err := s.submissionGate().AuthorizeSubmissionReview(ctx, apiKey, submissionID)
+	return err
+}
+
 func TestAuthorizeSubmissionReviewRejectsStranger(t *testing.T) {
 	srv, store := authzFixture(t)
 	seedSubmission(t, store, "sub-1", "task-1")
 
-	if err := srv.AuthorizeSubmissionReview(context.Background(), testStrangerKey, "sub-1"); err == nil {
+	if err := srv.authorizeReview(context.Background(), testStrangerKey, "sub-1"); err == nil {
 		t.Fatal("expected a wallet that does not own the wish to be denied, got nil")
 	}
 }
@@ -84,7 +92,7 @@ func TestAuthorizeSubmissionReviewAllowsWishCreator(t *testing.T) {
 	srv, store := authzFixture(t)
 	seedSubmission(t, store, "sub-2", "task-2")
 
-	if err := srv.AuthorizeSubmissionReview(context.Background(), testCreatorKey, "sub-2"); err != nil {
+	if err := srv.authorizeReview(context.Background(), testCreatorKey, "sub-2"); err != nil {
 		t.Fatalf("expected the wish creator to be allowed, got %v", err)
 	}
 }
@@ -93,7 +101,7 @@ func TestAuthorizeSubmissionReviewRejectsUnknownKey(t *testing.T) {
 	srv, store := authzFixture(t)
 	seedSubmission(t, store, "sub-3", "task-3")
 
-	if err := srv.AuthorizeSubmissionReview(context.Background(), "not-a-key", "sub-3"); err == nil {
+	if err := srv.authorizeReview(context.Background(), "not-a-key", "sub-3"); err == nil {
 		t.Fatal("expected an unbound api key to be denied, got nil")
 	}
 }
@@ -110,7 +118,7 @@ func TestAuthorizeSubmissionReviewFailsClosedWithoutTask(t *testing.T) {
 		t.Fatalf("seed submission: %v", err)
 	}
 
-	if err := srv.AuthorizeSubmissionReview(context.Background(), testCreatorKey, "sub-orphan"); err == nil {
+	if err := srv.authorizeReview(context.Background(), testCreatorKey, "sub-orphan"); err == nil {
 		t.Fatal("expected an unresolvable submission to be denied, got nil")
 	}
 }
@@ -140,10 +148,10 @@ func TestAuthorizeSubmissionReviewResolvesViaClaim(t *testing.T) {
 		t.Fatalf("seed submission: %v", err)
 	}
 
-	if err := srv.AuthorizeSubmissionReview(ctx, testCreatorKey, "sub-via-claim"); err != nil {
+	if err := srv.authorizeReview(ctx, testCreatorKey, "sub-via-claim"); err != nil {
 		t.Fatalf("expected the wish creator to be allowed via the claim walk, got %v", err)
 	}
-	if err := srv.AuthorizeSubmissionReview(ctx, testStrangerKey, "sub-via-claim"); err == nil {
+	if err := srv.authorizeReview(ctx, testStrangerKey, "sub-via-claim"); err == nil {
 		t.Fatal("expected a stranger to be denied via the claim walk, got nil")
 	}
 }
@@ -151,7 +159,7 @@ func TestAuthorizeSubmissionReviewResolvesViaClaim(t *testing.T) {
 func TestAuthorizeSubmissionReviewRejectsMissingSubmission(t *testing.T) {
 	srv, _ := authzFixture(t)
 
-	if err := srv.AuthorizeSubmissionReview(context.Background(), testCreatorKey, "nope"); err == nil {
+	if err := srv.authorizeReview(context.Background(), testCreatorKey, "nope"); err == nil {
 		t.Fatal("expected a missing submission to be denied, got nil")
 	}
 }
@@ -176,7 +184,7 @@ func TestSubmissionWishHashStripsContractPrefix(t *testing.T) {
 func TestWishCreatorAuthorizerRequiresWalletBinding(t *testing.T) {
 	a := WishCreatorAuthorizer{keysWithoutWallet(), nil}
 
-	if err := a.Authorize("key-nowallet", testWishHash, "proposal p1", AllowOnMissingCreator); err == nil {
+	if _, err := a.Authorize("key-nowallet", testWishHash, "proposal p1", AllowOnMissingCreator); err == nil {
 		t.Fatal("expected a key with no wallet binding to be denied, got nil")
 	}
 }
@@ -187,8 +195,13 @@ func TestWishCreatorAuthorizerAllowsGlobalAuditor(t *testing.T) {
 		testStrangerKey: {Key: testStrangerKey, Wallet: testStrangerWlt},
 	}}}
 
-	if err := a.Authorize(testStrangerKey, testWishHash, "proposal p1", DenyOnMissingCreator); err != nil {
+	wallet, err := a.Authorize(testStrangerKey, testWishHash, "proposal p1", DenyOnMissingCreator)
+	if err != nil {
 		t.Fatalf("expected the donation address to act as global auditor, got %v", err)
+	}
+	// The auditor's own wallet, not the creator's: callers record who acted.
+	if wallet != testStrangerWlt {
+		t.Fatalf("authorized wallet = %q, want the auditor %q", wallet, testStrangerWlt)
 	}
 }
 
@@ -200,10 +213,10 @@ func TestMissingCreatorPolicyDivergesOnUnknownWish(t *testing.T) {
 	a := srv.authorizer()
 	const unknown = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
 
-	if err := a.Authorize(testStrangerKey, unknown, "proposal p1", AllowOnMissingCreator); err != nil {
+	if _, err := a.Authorize(testStrangerKey, unknown, "proposal p1", AllowOnMissingCreator); err != nil {
 		t.Fatalf("proposal approval should retain its allowance until irl.2, got %v", err)
 	}
-	if err := a.Authorize(testStrangerKey, unknown, "submission s1", DenyOnMissingCreator); err == nil {
+	if _, err := a.Authorize(testStrangerKey, unknown, "submission s1", DenyOnMissingCreator); err == nil {
 		t.Fatal("expected payout review to deny an unresolvable creator, got nil")
 	}
 }
@@ -223,7 +236,7 @@ func TestDenyOnMissingCreatorExplainsReplicatedWish(t *testing.T) {
 		t.Fatalf("seed replicated ingestion: %v", err)
 	}
 
-	err := srv.authorizer().Authorize(testStrangerKey, replicated, "submission s1", DenyOnMissingCreator)
+	_, err := srv.authorizer().Authorize(testStrangerKey, replicated, "submission s1", DenyOnMissingCreator)
 	if err == nil {
 		t.Fatal("expected a replicated wish to deny payout review, got nil")
 	}
@@ -237,7 +250,7 @@ func TestDenyOnMissingCreatorExplainsReplicatedWish(t *testing.T) {
 func TestDenyOnMissingCreatorStillAllowsOwner(t *testing.T) {
 	srv, _ := authzFixture(t)
 
-	if err := srv.authorizer().Authorize(testCreatorKey, testWishHash, "submission s1", DenyOnMissingCreator); err != nil {
+	if _, err := srv.authorizer().Authorize(testCreatorKey, testWishHash, "submission s1", DenyOnMissingCreator); err != nil {
 		t.Fatalf("expected the wish creator to be allowed under the strict policy, got %v", err)
 	}
 }

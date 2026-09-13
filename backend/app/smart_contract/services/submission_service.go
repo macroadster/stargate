@@ -26,15 +26,37 @@ type SubmissionReworkInput struct {
 	Notes        string
 }
 
+// SubmissionReviewAuthorizer decides whether the holder of an API key may review
+// a submission, returning the wallet it authorized so the caller records the
+// identity that was actually accepted.
+//
+// Defined here rather than alongside its implementation because services cannot
+// import app/smart_contract.
+type SubmissionReviewAuthorizer interface {
+	AuthorizeSubmissionReview(ctx context.Context, apiKey, submissionID string) (string, error)
+}
+
+// ReviewActor identifies who is performing a review. Only the API key is taken:
+// the wallet is whatever the authorizer resolves from it, so a caller cannot
+// name one identity while being authorized as another.
+type ReviewActor struct {
+	APIKey string
+}
+
 // SubmissionService encapsulates submission review/rework domain logic.
 type SubmissionService struct {
 	store  scstore.Store
 	record EventRecorder
+	authz  SubmissionReviewAuthorizer
 }
 
 // NewSubmissionService constructs a SubmissionService.
-func NewSubmissionService(store scstore.Store, record EventRecorder) *SubmissionService {
-	return &SubmissionService{store: store, record: record}
+//
+// authz is required: Review refuses every review without it rather than falling
+// back to trusting its caller. Pass nil only where review is never called, or in
+// tests asserting that refusal.
+func NewSubmissionService(store scstore.Store, record EventRecorder, authz SubmissionReviewAuthorizer) *SubmissionService {
+	return &SubmissionService{store: store, record: record, authz: authz}
 }
 
 // SetRecorder updates the event sink.
@@ -166,7 +188,21 @@ func (s *SubmissionService) Get(ctx context.Context, submissionID string) (smart
 }
 
 // Review updates submission status and may auto-resolve rework requests.
-func (s *SubmissionService) Review(ctx context.Context, submissionID string, body SubmissionReviewInput) (map[string]interface{}, error) {
+//
+// Authorization happens here, not in the handlers. Review is the payout gate, so
+// the check belongs with the state change it guards: handlers were each
+// enforcing it separately, which left the rule optional for any new caller.
+func (s *SubmissionService) Review(ctx context.Context, submissionID string, body SubmissionReviewInput, actor ReviewActor) (map[string]interface{}, error) {
+	if s.authz == nil {
+		// Refuse rather than proceed unauthorized: an unwired service must not be
+		// the difference between a guarded payout and an open one.
+		return nil, Fail(http.StatusInternalServerError, "submission review authorizer not configured")
+	}
+	wallet, err := s.authz.AuthorizeSubmissionReview(ctx, actor.APIKey, submissionID)
+	if err != nil {
+		return nil, Fail(http.StatusForbidden, err.Error())
+	}
+
 	if body.Action == "" {
 		return nil, Fail(http.StatusBadRequest, "action is required")
 	}
@@ -197,8 +233,10 @@ func (s *SubmissionService) Review(ctx context.Context, submissionID string, bod
 	if newStatus == "approved" {
 		s.maybeResolveRework(ctx, submissionID)
 	}
+	// The authorized wallet, not a literal "reviewer": approving a submission
+	// releases funds, so the record has to say which key did it.
 	s.emit(smart_contract.Event{
-		Type: "review", EntityID: submissionID, Actor: "reviewer",
+		Type: "review", EntityID: submissionID, Actor: wallet,
 		Message: fmt.Sprintf("submission %s", body.Action), CreatedAt: time.Now(),
 	})
 	return map[string]interface{}{

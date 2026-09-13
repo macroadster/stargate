@@ -268,6 +268,11 @@ func TestMCPApproveSubmissionEmitsReviewEvent(t *testing.T) {
 		select {
 		case evt := <-events:
 			if evt.Type == "review" && evt.EntityID == "mcp-sub-event" {
+				// End to end through the real gate, not a stub: the recorded actor
+				// is the wallet authorization accepted, not the old "reviewer".
+				if evt.Actor != surfaceCreatorWlt {
+					t.Fatalf("event actor = %q, want the approving wallet %q", evt.Actor, surfaceCreatorWlt)
+				}
 				return
 			}
 		case <-deadline:
