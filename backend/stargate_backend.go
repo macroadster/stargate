@@ -928,6 +928,9 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 	mux.HandleFunc("/api/data/scan", dataAPI.HandleScanBlockOnDemand)
 	mux.HandleFunc("/api/data/block-images", dataAPI.HandleGetBlockImages)
 	// /api/block-images retired (3bk.8); use /api/data/block-images
+	if os.Getenv("STARLIGHT_CALLBACK_SECRET") == "" {
+		log.Printf("SECURITY: /api/stego/callback is disabled until STARLIGHT_CALLBACK_SECRET is configured")
+	}
 	mux.HandleFunc("/api/stego/callback", dataAPI.HandleStegoCallback)
 	mux.HandleFunc("/content/", dataAPI.HandleContent)
 
