@@ -238,10 +238,15 @@ func NewHTTPMCPServer(store scmiddleware.Store, apiKeyStore auth.APIKeyValidator
 	}
 	baseURL = strings.TrimSuffix(baseURL, "/")
 
+	// PublishEvent fans out to the sinks the REST server registers, so review
+	// events reach the same place from either surface. A nil recorder here
+	// silently dropped them, which routing through Review alone would not fix.
+	reviewEvents := scmiddleware.PublishEvent
+
 	return &HTTPMCPServer{
 		store:            store,
 		claimSvc:         scservices.NewClaimService(store),
-		submissionSvc:    scservices.NewSubmissionService(store, nil),
+		submissionSvc:    scservices.NewSubmissionService(store, reviewEvents),
 		apiKeyStore:      apiKeyStore,
 		apiKeyIssuer:     apiKeyIssuer,
 		ingestionSvc:     ingestionSvc,
@@ -1124,9 +1129,10 @@ func (h *HTTPMCPServer) handleRejectSubmission(ctx context.Context, args map[str
 		return nil, NewUnauthorizedError("reject_submission", err.Error())
 	}
 
-	err = h.store.UpdateSubmissionStatus(ctx, submissionID, "rejected", notes, rejectionType)
-	if err != nil {
-		return nil, NewInternalError("reject_submission", fmt.Sprintf("Failed to reject submission: %v", err))
+	if _, err := h.reviewSubmission(ctx, "reject_submission", submissionID, scservices.SubmissionReviewInput{
+		Action: "reject", Notes: notes, RejectionType: rejectionType,
+	}); err != nil {
+		return nil, err
 	}
 
 	return map[string]interface{}{
@@ -1161,15 +1167,38 @@ func (h *HTTPMCPServer) handleApproveSubmission(ctx context.Context, args map[st
 		return nil, NewUnauthorizedError("approve_submission", err.Error())
 	}
 
-	err = h.store.UpdateSubmissionStatus(ctx, submissionID, "approved", "", "")
-	if err != nil {
-		return nil, NewInternalError("approve_submission", fmt.Sprintf("Failed to approve submission: %v", err))
+	if _, err := h.reviewSubmission(ctx, "approve_submission", submissionID, scservices.SubmissionReviewInput{
+		Action: "approve",
+	}); err != nil {
+		return nil, err
 	}
 
 	return map[string]interface{}{
 		"message":       "submission approved",
 		"submission_id": submissionID,
 	}, nil
+}
+
+// reviewSubmission applies a review through SubmissionService so the MCP tools
+// get the same side effects as the REST route: rework resolution on approve and
+// a review event. Calling store.UpdateSubmissionStatus directly skipped both.
+func (h *HTTPMCPServer) reviewSubmission(ctx context.Context, tool, submissionID string, in scservices.SubmissionReviewInput) (map[string]interface{}, error) {
+	if h.submissionSvc == nil {
+		return nil, NewServiceUnavailableError(tool, "submission service")
+	}
+	resp, err := h.submissionSvc.Review(ctx, submissionID, in)
+	if err == nil {
+		return resp, nil
+	}
+	if se := scservices.AsStatus(err); se != nil {
+		switch se.Status {
+		case http.StatusNotFound:
+			return nil, NewNotFoundError(tool, "submission", submissionID)
+		case http.StatusBadRequest:
+			return nil, NewValidationError(tool, se.Message)
+		}
+	}
+	return nil, NewInternalError(tool, fmt.Sprintf("Failed to %s: %v", strings.TrimSuffix(tool, "_submission"), err))
 }
 
 func (h *HTTPMCPServer) authorizer() scmiddleware.WishCreatorAuthorizer {
