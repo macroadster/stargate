@@ -155,12 +155,27 @@ func ProposalWishHash(p smart_contract.Proposal) string {
 // submission -> task -> contract, since Submission carries no wish reference of
 // its own. Contract IDs use the "wish-<hash>" form.
 //
+// Submission.TaskID is omitempty while ClaimID is not, so a submission may
+// identify its task only through its claim; those must resolve rather than be
+// denied, now that callers fail closed on an unresolvable wish.
+//
 // It returns an error rather than an empty hash when the chain cannot be walked,
 // so callers fail closed instead of authorizing against an unknown wish.
 func SubmissionWishHash(store Store, sub smart_contract.Submission) (string, error) {
 	taskID := strings.TrimSpace(sub.TaskID)
 	if taskID == "" {
-		return "", fmt.Errorf("submission %s has no task, cannot resolve wish creator", sub.SubmissionID)
+		claimID := strings.TrimSpace(sub.ClaimID)
+		if claimID == "" {
+			return "", fmt.Errorf("submission %s has neither task nor claim, cannot resolve wish creator", sub.SubmissionID)
+		}
+		claim, err := store.GetClaim(claimID)
+		if err != nil {
+			return "", fmt.Errorf("cannot resolve claim %s for submission %s: %w", claimID, sub.SubmissionID, err)
+		}
+		taskID = strings.TrimSpace(claim.TaskID)
+		if taskID == "" {
+			return "", fmt.Errorf("claim %s has no task, cannot resolve wish creator", claimID)
+		}
 	}
 
 	task, err := store.GetTask(taskID)

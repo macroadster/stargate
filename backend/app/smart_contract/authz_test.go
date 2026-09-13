@@ -98,8 +98,8 @@ func TestAuthorizeSubmissionReviewRejectsUnknownKey(t *testing.T) {
 	}
 }
 
-// A submission with no task cannot be traced to a wish, so it must fail closed
-// rather than fall through to the missing-creator allowance.
+// A submission with neither task nor claim cannot be traced to a wish, so it
+// must fail closed rather than fall through to the missing-creator allowance.
 func TestAuthorizeSubmissionReviewFailsClosedWithoutTask(t *testing.T) {
 	srv, store := authzFixture(t)
 	if err := store.SyncSubmission(context.Background(), smart_contract.Submission{
@@ -112,6 +112,39 @@ func TestAuthorizeSubmissionReviewFailsClosedWithoutTask(t *testing.T) {
 
 	if err := srv.AuthorizeSubmissionReview(context.Background(), testCreatorKey, "sub-orphan"); err == nil {
 		t.Fatal("expected an unresolvable submission to be denied, got nil")
+	}
+}
+
+// TaskID is omitempty, so a submission may reach us carrying only a ClaimID.
+// Failing closed must not deny those: the wish is reachable via the claim.
+func TestAuthorizeSubmissionReviewResolvesViaClaim(t *testing.T) {
+	srv, store := authzFixture(t)
+	ctx := context.Background()
+	seedSubmission(t, store, "sub-claim-seed", "task-claim")
+
+	if err := store.SyncClaim(ctx, smart_contract.Claim{
+		ClaimID:   "claim-1",
+		TaskID:    "task-claim",
+		Status:    "submitted",
+		CreatedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("seed claim: %v", err)
+	}
+	// No TaskID: the claim is the only route to the wish.
+	if err := store.SyncSubmission(ctx, smart_contract.Submission{
+		SubmissionID: "sub-via-claim",
+		ClaimID:      "claim-1",
+		Status:       "pending_review",
+		CreatedAt:    time.Now(),
+	}); err != nil {
+		t.Fatalf("seed submission: %v", err)
+	}
+
+	if err := srv.AuthorizeSubmissionReview(ctx, testCreatorKey, "sub-via-claim"); err != nil {
+		t.Fatalf("expected the wish creator to be allowed via the claim walk, got %v", err)
+	}
+	if err := srv.AuthorizeSubmissionReview(ctx, testStrangerKey, "sub-via-claim"); err == nil {
+		t.Fatal("expected a stranger to be denied via the claim walk, got nil")
 	}
 }
 
