@@ -28,6 +28,7 @@ import { CONTENT_BASE } from './apiBase';
 import { apiFetch } from './utils/api';
 
 import { useHorizontalScroll } from './hooks/useHorizontalScroll';
+import { shouldShowInscription } from './components/Inscription/inscriptionUtils';
 
 const formatTimeAgo = (timestamp) => {
   const now = Date.now();
@@ -59,7 +60,16 @@ function MainContent() {
   const [copiedText, setCopiedText] = useState('');
   const sentinelRef = useRef(null);
   const [hideText, setHideText] = useState(true);
+  const [hideImages, setHideImages] = useState(true);
   const [pendingRefreshKey, setPendingRefreshKey] = useState(0);
+  const isSignedIn = Boolean(auth?.apiKey);
+
+  useEffect(() => {
+    if (!isSignedIn) {
+      setHideText(true);
+      setHideImages(true);
+    }
+  }, [isSignedIn]);
   const { elRef: scrollRef, isDragging } = useHorizontalScroll();
   const prevBlocksLengthRef = useRef(0);
 
@@ -107,53 +117,18 @@ function MainContent() {
     loadMoreInscriptions,
     isLoading: isLoadingInscriptions,
     error: inscriptionsError
-  } = useInscriptions(selectedBlock, hideText);
+  } = useInscriptions(selectedBlock, hideText, hideImages);
 
   // Show scanning panel only before any real blocks have arrived.
   const milestoneHeights = new Set([0, 174923, 210000, 420000, 481824, 630000, 709632, 840000]);
   const scannedBlocks = blocks.filter(b => !b.isFuture && !milestoneHeights.has(b.height));
   const isEarlyScanning = scannedBlocks.length === 0;
 
-  const filteredInscriptions = inscriptions.filter((inscription) => {
-    if (!hideText) return true;
-
-    const mime = (inscription.mime_type || '').toLowerCase();
-    const hasTextContent = !!(inscription.text || inscription.metadata?.extracted_message);
-    const fileName = (inscription.file_name || '').toLowerCase();
-    const url = (inscription.image_url || inscription.thumbnail || '').toLowerCase();
-    const urlLooksLikeTextFile = url.endsWith('.txt');
-
-    // Obviously text by mime or common text protocol filenames (BRC-20, .bitmap, json, etc.)
-    const isObviouslyText = mime.startsWith('text/') ||
-                            mime.includes('json') ||
-                            fileName.endsWith('.json') ||
-                            fileName.endsWith('.txt') ||
-                            fileName.endsWith('.bitmap') ||
-                            fileName.endsWith('.md') ||
-                            fileName.includes('brc-20') ||
-                            fileName.includes('brc20');
-
-    // Recognize images even if backend gave bare "jpeg"/"png" (instead of "image/jpeg")
-    // or the filename has a standard image extension. This keeps real image inscriptions
-    // visible in the grid when "hide text" is on, and prevents "unknown" type display.
-    const isImageByMimeOrName =
-      mime.includes('image') ||
-      ['jpeg', 'jpg', 'png', 'gif', 'webp', 'avif', 'bmp', 'svg'].includes(mime) ||
-      fileName.endsWith('.jpeg') || fileName.endsWith('.jpg') || fileName.endsWith('.png') ||
-      fileName.endsWith('.gif') || fileName.endsWith('.webp') || fileName.endsWith('.avif') ||
-      fileName.endsWith('.bmp') || fileName.endsWith('.svg');
-
-    // Visual image if: declares image mime, or served from the app's image asset path,
-    // or has a content url but is not obviously text (allows images that have odd mime in summary data).
-    const isBlockImage = url.includes('/block-image/');
-    const hasContentUrl = !!url && !urlLooksLikeTextFile;
-    const isActuallyImageFile = (isImageByMimeOrName || isBlockImage || (hasContentUrl && !isObviouslyText)) && !urlLooksLikeTextFile;
-
-    // Hide text inscriptions. Keep visuals (incl. stego images that carry extracted messages).
-    const isTextInscription = isObviouslyText || (hasTextContent && !isActuallyImageFile);
-
-    return !isTextInscription;
-  });
+  // Hide text / image inscriptions independently. Stego and smart-contract images stay
+  // visible when hide-images is on (they are the point of the Smart Contracts grid).
+  const filteredInscriptions = inscriptions.filter((inscription) =>
+    shouldShowInscription(inscription, { hideText, hideImages })
+  );
 
   // Track if we're navigating via URL to prevent loops
   const urlNavigatedHeightRef = useRef(null);
@@ -726,7 +701,15 @@ function MainContent() {
         renderInlineSearch={renderInlineSearch}
         showTextToggle
         hideText={hideText}
-        onToggleText={() => setHideText(!hideText)}
+        onToggleText={() => {
+          if (!isSignedIn) return;
+          setHideText((value) => !value);
+        }}
+        hideImages={hideImages}
+        onToggleImages={() => {
+          if (!isSignedIn) return;
+          setHideImages((value) => !value);
+        }}
       />
 
       <div style={{ minHeight: 0, overflow: 'auto', display: 'flex', flexDirection: 'column' }}>

@@ -71,11 +71,12 @@ export const isConfirmedContract = (inscription) => {
   );
 };
 
-export const resolveModalImage = (inscription) => {
+export const classifyInscription = (inscription) => {
   const mime = (inscription?.mime_type || '').toLowerCase();
   const fileName = (inscription?.file_name || '').toLowerCase();
   const url = (inscription?.image_url || inscription?.thumbnail || '').toLowerCase();
   const urlLooksLikeTextFile = url.endsWith('.txt');
+  const hasTextContent = !!(inscription?.text || inscription?.metadata?.extracted_message);
   const isObviouslyText =
     mime.startsWith('text/') ||
     mime.includes('json') ||
@@ -98,8 +99,34 @@ export const resolveModalImage = (inscription) => {
     fileName.endsWith('.avif') ||
     fileName.endsWith('.bmp') ||
     fileName.endsWith('.svg');
-  const isActuallyImageFile =
+  const isImage =
     (isImageByMimeOrName || isBlockImage || (hasContentUrl && !isObviouslyText)) && !urlLooksLikeTextFile;
+  const isText = isObviouslyText || (hasTextContent && !isImage);
+  const stegoProbability = Number(inscription?.metadata?.stego_probability || 0);
+  const contractType = (inscription?.contract_type || '').toLowerCase();
+  const isSmartContract = !!(
+    inscription?.contract_id ||
+    inscription?.metadata?.contract_id ||
+    inscription?.metadata?.is_stego ||
+    inscription?.metadata?.stego_type ||
+    stegoProbability > 0 ||
+    isBlockImage ||
+    contractType.includes('steganographic') ||
+    contractType.includes('smart contract')
+  );
+  return { isText, isImage, isSmartContract, isObviouslyText, isBlockImage };
+};
+
+export const shouldShowInscription = (inscription, { hideText = true, hideImages = true } = {}) => {
+  const { isText, isImage, isSmartContract } = classifyInscription(inscription);
+  if (hideText && isText) return false;
+  if (hideImages && isImage && !isSmartContract) return false;
+  return true;
+};
+
+export const resolveModalImage = (inscription) => {
+  const mime = (inscription?.mime_type || '').toLowerCase();
+  const { isImage: isActuallyImageFile } = classifyInscription(inscription);
   const modalImageSource = isActuallyImageFile ? inscription?.thumbnail || inscription?.image_url : null;
   const scanImageSource = modalImageSource || inscription?.image_url || inscription?.thumbnail || '';
   const isHtmlContent = mime.includes('text/html') || mime.includes('application/xhtml');

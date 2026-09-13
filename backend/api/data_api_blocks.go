@@ -840,8 +840,22 @@ func (api *DataAPI) HandleGetBlockInscriptionsPaginated(w http.ResponseWriter, r
 	inscriptions := block.Inscriptions
 	imageURLOverrides := map[int]string{}
 	metadataOverrides := map[int]map[string]any{}
+	var contractInscriptions []bitcoin.InscriptionData
+	var contractImageOverrides map[int]string
+	var contractMetadataOverrides map[int]map[string]any
 	if len(block.SmartContracts) > 0 {
-		contractInscriptions, contractImageOverrides, contractMetadataOverrides := buildContractInscriptions(filterSmartContractsForUI(block.SmartContracts), height)
+		contractInscriptions, contractImageOverrides, contractMetadataOverrides = buildContractInscriptions(filterSmartContractsForUI(block.SmartContracts), height)
+	}
+	if filter == "contract" {
+		// Smart-contract / stego images only — used when the UI hides both text and regular image inscriptions.
+		inscriptions = contractInscriptions
+		if contractImageOverrides != nil {
+			imageURLOverrides = contractImageOverrides
+		}
+		if contractMetadataOverrides != nil {
+			metadataOverrides = contractMetadataOverrides
+		}
+	} else if len(contractInscriptions) > 0 {
 		if len(inscriptions) == 0 {
 			inscriptions = contractInscriptions
 			imageURLOverrides = contractImageOverrides
