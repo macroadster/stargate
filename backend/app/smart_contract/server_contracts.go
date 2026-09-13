@@ -12,11 +12,6 @@ import (
 	"stargate-backend/storage/ipfs"
 )
 
-func (s *Server) enforceCreatorApproval(r *http.Request, proposal smart_contract.Proposal) error {
-	_, err := s.authorizer().Authorize(auth.RequestAPIKey(r), ProposalWishHash(proposal), "proposal "+proposal.ID)
-	return err
-}
-
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }

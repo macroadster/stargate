@@ -17,8 +17,8 @@ import (
 // on behalf of the creator of a wish.
 //
 // Both the REST handlers and the MCP tool surface authorize against this type so
-// the rule exists in one place; previously enforceCreatorApproval and
-// requireAuthorizedApprover carried separate copies that could drift.
+// the rule exists in one place; the REST and MCP approval paths used to carry
+// separate copies that could drift.
 type WishCreatorAuthorizer struct {
 	Keys      auth.APIKeyValidator
 	Ingestion *services.IngestionService

@@ -147,19 +147,27 @@ func (s *ProposalService) emit(evt smart_contract.Event) {
 }
 
 // Approve approves a proposal and publishes tasks.
-func (s *ProposalService) Approve(ctx context.Context, id, apiKey string, creatorOK bool) (map[string]interface{}, error) {
+//
+// Authorization runs here rather than being asserted by the caller. This used to
+// take a creatorOK bool: its one caller checked the creator and then passed true,
+// so authorization was an argument, and a second caller passing true would have
+// been authorized by saying so (stargate-az6). That reads as though a check
+// happened, which is worse than an obviously absent one.
+func (s *ProposalService) Approve(ctx context.Context, id string, actor ProposalActor) (map[string]interface{}, error) {
 	if s.store == nil {
 		return nil, Fail(http.StatusBadRequest, "store unavailable")
 	}
+	wallet, err := s.authorizeEdit(ctx, actor, id, "approve")
+	if err != nil {
+		return nil, err
+	}
+	apiKey := actor.APIKey
 	proposal, err := s.store.GetProposal(ctx, id)
 	if err != nil {
 		return nil, Fail(http.StatusBadRequest, err.Error())
 	}
 	if proposal.Metadata == nil {
 		proposal.Metadata = map[string]interface{}{}
-	}
-	if !creatorOK {
-		return nil, Fail(http.StatusForbidden, "creator approval required")
 	}
 	if err := s.requireWishForApproval(ctx, proposal); err != nil {
 		return nil, Fail(http.StatusBadRequest, err.Error())
@@ -227,7 +235,7 @@ func (s *ProposalService) Approve(ctx context.Context, id, apiKey string, creato
 		s.archiveWish(ctx, visibleHash)
 	}
 	s.emit(smart_contract.Event{
-		Type: "approve", EntityID: id, Actor: "approver",
+		Type: "approve", EntityID: id, Actor: wallet,
 		Message: "proposal approved", CreatedAt: time.Now(),
 	})
 	return map[string]interface{}{
@@ -285,7 +293,7 @@ func (s *ProposalService) Create(ctx context.Context, body ProposalCreateInput) 
 			return nil, 0, Fail(http.StatusBadRequest, err.Error())
 		}
 		s.emit(smart_contract.Event{
-			Type: "proposal_create", EntityID: proposal.ID, Actor: "creator",
+			Type: "proposal_create", EntityID: proposal.ID, Actor: s.eventActor(body.APIKey),
 			Message: "proposal created from ingestion", CreatedAt: time.Now(),
 		})
 		return map[string]interface{}{
@@ -388,7 +396,7 @@ func (s *ProposalService) Create(ctx context.Context, body ProposalCreateInput) 
 		return nil, 0, Fail(http.StatusBadRequest, err.Error())
 	}
 	s.emit(smart_contract.Event{
-		Type: "proposal_create", EntityID: p.ID, Actor: "creator",
+		Type: "proposal_create", EntityID: p.ID, Actor: s.eventActor(body.APIKey),
 		Message: fmt.Sprintf("proposal created with %d tasks", len(p.Tasks)), CreatedAt: time.Now(),
 	})
 	return map[string]interface{}{
@@ -723,6 +731,24 @@ func budgetFromMetaLocal(meta map[string]interface{}) int64 {
 		}
 	}
 	return scstore.DefaultBudgetSats()
+}
+
+// eventActor resolves the wallet bound to apiKey, for use as an event actor.
+//
+// Proposal creation is not restricted to wallet-bound keys, so this can come back
+// empty, and empty is the honest answer: the events filter already treats a blank
+// actor as "no identity to match on" (server_events.go). The literal "creator" it
+// replaces was indistinguishable from a real identity while never being one
+// (stargate-az6).
+func (s *ProposalService) eventActor(apiKey string) string {
+	if s.apiKeys == nil {
+		return ""
+	}
+	rec, ok := s.apiKeys.Get(strings.TrimSpace(apiKey))
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(rec.Wallet)
 }
 
 func applyCreatorWallet(meta map[string]interface{}, apiKey string, apiKeys auth.APIKeyValidator) {
