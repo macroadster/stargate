@@ -25,11 +25,21 @@ import (
 
 	"stargate-backend/core/identity"
 	"stargate-backend/core/smart_contract"
+	"stargate-backend/security"
 	"stargate-backend/services"
 	"stargate-backend/stego"
 	"stargate-backend/storage/datadir"
 	"stargate-backend/storage/ipfs"
 	scstore "stargate-backend/storage/smart_contract"
+)
+
+// Caps on peer-supplied sandbox tarballs. A small on-chain stego payload can
+// point at a tarball that would otherwise exhaust memory or fill the disk.
+// Vars rather than consts so tests can lower them; production values stay here.
+var (
+	sandboxMaxEntries          = 4096
+	sandboxMaxFileBytes  int64 = 32 << 20  // 32 MiB per regular file
+	sandboxMaxTotalBytes int64 = 256 << 20 // 256 MiB extracted
 )
 
 type stegoReconcileRequest struct {
@@ -909,6 +919,7 @@ func (s *Server) extractSandboxTarball(contractID string, tarballBytes []byte, r
 	defer gr.Close()
 	tr := tar.NewReader(gr)
 	fileCount := 0
+	var totalBytes int64
 	for {
 		hdr, err := tr.Next()
 		if err == io.EOF {
@@ -921,25 +932,41 @@ func (s *Server) extractSandboxTarball(contractID string, tarballBytes []byte, r
 		if hdr.Typeflag != tar.TypeReg {
 			continue
 		}
-		outPath := filepath.Join(resultsDir, filepath.FromSlash(hdr.Name))
-		// Guard against path traversal.
-		if !strings.HasPrefix(filepath.Clean(outPath), filepath.Clean(resultsDir)) {
-			log.Printf("sandbox: skipping path traversal in tarball: %s", hdr.Name)
+		if fileCount >= sandboxMaxEntries {
+			log.Printf("sandbox: entry cap %d reached for %s, stopping", sandboxMaxEntries, contractID)
+			return
+		}
+		if hdr.Size < 0 || hdr.Size > sandboxMaxFileBytes {
+			log.Printf("sandbox: skipping oversized entry %s (%d bytes) for %s", hdr.Name, hdr.Size, contractID)
+			continue
+		}
+		if totalBytes+hdr.Size > sandboxMaxTotalBytes {
+			log.Printf("sandbox: total-size cap %d reached for %s, stopping", sandboxMaxTotalBytes, contractID)
+			return
+		}
+		outPath, err := security.SanitizePath(resultsDir, filepath.FromSlash(hdr.Name))
+		if err != nil {
+			log.Printf("sandbox: skipping path traversal in tarball: %s (%v)", hdr.Name, err)
 			continue
 		}
 		if err := os.MkdirAll(filepath.Dir(outPath), 0755); err != nil {
 			log.Printf("sandbox: mkdir failed for %s: %v", outPath, err)
 			continue
 		}
-		data, err := io.ReadAll(tr)
+		data, err := io.ReadAll(io.LimitReader(tr, sandboxMaxFileBytes+1))
 		if err != nil {
 			log.Printf("sandbox: read entry %s failed: %v", hdr.Name, err)
+			continue
+		}
+		if int64(len(data)) > sandboxMaxFileBytes {
+			log.Printf("sandbox: skipping oversized entry body %s for %s", hdr.Name, contractID)
 			continue
 		}
 		if err := os.WriteFile(outPath, data, 0644); err != nil {
 			log.Printf("sandbox: write %s failed: %v", outPath, err)
 			continue
 		}
+		totalBytes += int64(len(data))
 		fileCount++
 	}
 
