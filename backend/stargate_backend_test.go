@@ -153,3 +153,100 @@ func TestRegisterDiagnosticRoutesOptInIsLoopbackOnly(t *testing.T) {
 		t.Fatalf("spoofed pprof: %d", w.Code)
 	}
 }
+
+// irl.5: a cleaned path that only shares a string prefix with the base is not
+// inside it. The old HasPrefix check treated /tmp/uploads-sibling as inside
+// /tmp/uploads, which is one config change away from mattering.
+func TestConfinedResolvedPathRejectsSiblingPrefix(t *testing.T) {
+	base := filepath.Join(t.TempDir(), "uploads")
+	sibling := base + "-sibling"
+	if err := os.MkdirAll(base, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(sibling, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := confinedResolvedPath(base, filepath.Join(sibling, "secret")); err == nil {
+		t.Fatal("expected a sibling that only shares the string prefix to be refused")
+	}
+}
+
+func TestConfinedResolvedPathAllowsInsideAndBase(t *testing.T) {
+	base := filepath.Join(t.TempDir(), "uploads")
+	inside := filepath.Join(base, "ab", "cd", "ef", "file")
+
+	got, err := confinedResolvedPath(base, inside)
+	if err != nil {
+		t.Fatalf("inside path refused: %v", err)
+	}
+	if got != filepath.Clean(inside) {
+		t.Fatalf("got %q, want %q", got, filepath.Clean(inside))
+	}
+
+	got, err = confinedResolvedPath(base, base)
+	if err != nil {
+		t.Fatalf("base itself refused: %v", err)
+	}
+	if got != filepath.Clean(base) {
+		t.Fatalf("base: got %q, want %q", got, filepath.Clean(base))
+	}
+}
+
+func TestConfinedResolvedPathRejectsTraversal(t *testing.T) {
+	base := filepath.Join(t.TempDir(), "uploads")
+	escape := filepath.Join(base, "..", "outside")
+	if _, err := confinedResolvedPath(base, escape); err == nil {
+		t.Fatal("expected a path that walks out of the base to be refused")
+	}
+}
+
+func TestCustomUploadsHandlerRejectsEncodedTraversal(t *testing.T) {
+	root := t.TempDir()
+	uploads := filepath.Join(root, "uploads")
+	sibling := filepath.Join(root, "uploads-sibling")
+	if err := os.MkdirAll(uploads, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(sibling, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	secret := filepath.Join(sibling, "secret.txt")
+	if err := os.WriteFile(secret, []byte("leaked"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	handler := customUploadsHandler(uploads)
+
+	// ServeMux 301s a literal '..' segment. Percent-encoded forms survive mux
+	// cleaning and used to arrive at the handler with '../' intact.
+	req := httptest.NewRequest(http.MethodGet, "/uploads/..%2fuploads-sibling%2fsecret.txt", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code == http.StatusOK && strings.Contains(w.Body.String(), "leaked") {
+		t.Fatalf("encoded traversal served sibling content: %d %q", w.Code, w.Body.String())
+	}
+	if w.Code != http.StatusForbidden && w.Code != http.StatusNotFound {
+		t.Fatalf("encoded traversal: got %d %q, want 403 or 404", w.Code, w.Body.String())
+	}
+}
+
+func TestCustomUploadsHandlerServesInside(t *testing.T) {
+	uploads := t.TempDir()
+	name := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	path := filepath.Join(uploads, name)
+	if err := os.WriteFile(path, []byte("payload"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	handler := customUploadsHandler(uploads)
+	req := httptest.NewRequest(http.MethodGet, "/uploads/"+name, nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("inside file: %d %q", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "payload") {
+		t.Fatalf("inside file body = %q", w.Body.String())
+	}
+}
