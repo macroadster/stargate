@@ -106,7 +106,7 @@ func (s *Server) handleProposalApprove(w http.ResponseWriter, r *http.Request, i
 }
 
 func (s *Server) handleProposalPublish(w http.ResponseWriter, r *http.Request, id string) {
-	resp, err := s.proposalSvc.Publish(r.Context(), id)
+	resp, err := s.proposalSvc.Publish(r.Context(), id, scservices.ProposalActor{APIKey: auth.RequestAPIKey(r)})
 	if err != nil {
 		s.writeServiceErr(w, err)
 		return
@@ -151,7 +151,7 @@ func (s *Server) handleProposalUpdate(w http.ResponseWriter, r *http.Request, id
 	resp, err := s.proposalSvc.Update(r.Context(), id, scservices.ProposalUpdateInput{
 		Title: body.Title, DescriptionMD: body.DescriptionMD, VisiblePixelHash: body.VisiblePixelHash,
 		BudgetSats: body.BudgetSats, ContractID: body.ContractID, Metadata: body.Metadata, Tasks: body.Tasks,
-	})
+	}, scservices.ProposalActor{APIKey: auth.RequestAPIKey(r)})
 	if err != nil {
 		s.writeServiceErr(w, err)
 		return
