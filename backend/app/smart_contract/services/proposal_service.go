@@ -65,22 +65,46 @@ type ProposalListResult struct {
 	smart_contract.Page
 }
 
+// ProposalEditAuthorizer decides whether the holder of an API key may edit or
+// publish a proposal, returning the wallet it authorized so the caller records
+// the identity that was actually accepted.
+//
+// Defined here rather than alongside its implementation because services cannot
+// import app/smart_contract.
+type ProposalEditAuthorizer interface {
+	AuthorizeProposalEdit(ctx context.Context, apiKey, proposalID string) (string, error)
+}
+
+// ProposalActor identifies who is editing or publishing a proposal. Only the API
+// key is taken, for the same reason as ReviewActor: the wallet is whatever the
+// authorizer resolves, so a caller cannot name one identity while being
+// authorized as another.
+type ProposalActor struct {
+	APIKey string
+}
+
 // ProposalService encapsulates proposal domain operations.
 type ProposalService struct {
 	store        scstore.Store
 	ingestionSvc *appservices.IngestionService
 	apiKeys      auth.APIKeyValidator
 	record       EventRecorder
+	authz        ProposalEditAuthorizer
 	publishTasks func(ctx context.Context, proposalID string) error
 	archiveWish  func(ctx context.Context, visibleHash string)
 }
 
 // NewProposalService constructs a ProposalService.
+//
+// authz is required by Update and Publish, which refuse without it rather than
+// trusting their caller. Pass nil only where neither is reachable, or in tests
+// asserting that refusal.
 func NewProposalService(
 	store scstore.Store,
 	ingestionSvc *appservices.IngestionService,
 	apiKeys auth.APIKeyValidator,
 	record EventRecorder,
+	authz ProposalEditAuthorizer,
 	publishTasks func(ctx context.Context, proposalID string) error,
 	archiveWish func(ctx context.Context, visibleHash string),
 ) *ProposalService {
@@ -89,9 +113,25 @@ func NewProposalService(
 		ingestionSvc: ingestionSvc,
 		apiKeys:      apiKeys,
 		record:       record,
+		authz:        authz,
 		publishTasks: publishTasks,
 		archiveWish:  archiveWish,
 	}
+}
+
+// authorizeEdit resolves the wallet allowed to change proposalID, or an error
+// describing the refusal. Update and Publish share it so the two cannot drift.
+func (s *ProposalService) authorizeEdit(ctx context.Context, actor ProposalActor, proposalID, action string) (string, error) {
+	if s.authz == nil {
+		// Refuse rather than proceed unauthorized: an unwired service must not be
+		// the difference between a guarded proposal and an open one.
+		return "", Fail(http.StatusInternalServerError, "proposal edit authorizer not configured")
+	}
+	wallet, err := s.authz.AuthorizeProposalEdit(ctx, actor.APIKey, proposalID)
+	if err != nil {
+		return "", Fail(http.StatusForbidden, fmt.Sprintf("cannot %s proposal %s: %v", action, proposalID, err))
+	}
+	return wallet, nil
 }
 
 // SetRecorder updates the event sink.
@@ -198,12 +238,20 @@ func (s *ProposalService) Approve(ctx context.Context, id, apiKey string, creato
 }
 
 // Publish marks a proposal published.
-func (s *ProposalService) Publish(ctx context.Context, id string) (map[string]interface{}, error) {
+//
+// Authorization runs here rather than in the handler: publish sat next to an
+// approve path that did check the creator, and the asymmetry was invisible from
+// the route table (stargate-irl.7).
+func (s *ProposalService) Publish(ctx context.Context, id string, actor ProposalActor) (map[string]interface{}, error) {
+	wallet, err := s.authorizeEdit(ctx, actor, id, "publish")
+	if err != nil {
+		return nil, err
+	}
 	if err := s.store.PublishProposal(ctx, id); err != nil {
 		return nil, Fail(http.StatusBadRequest, err.Error())
 	}
 	s.emit(smart_contract.Event{
-		Type: "publish", EntityID: id, Actor: "approver",
+		Type: "publish", EntityID: id, Actor: wallet,
 		Message: "proposal published", CreatedAt: time.Now(),
 	})
 	return map[string]interface{}{
@@ -349,7 +397,16 @@ func (s *ProposalService) Create(ctx context.Context, body ProposalCreateInput) 
 }
 
 // Update applies a partial update to a pending proposal.
-func (s *ProposalService) Update(ctx context.Context, id string, body ProposalUpdateInput) (map[string]interface{}, error) {
+//
+// Being pending is not permission to edit: the status gate was the only check
+// here, so any wallet-bound key could rewrite another creator's budget_sats,
+// contract_id and tasks (stargate-irl.7). Ingest and sync paths do not reach
+// this method; they write through the store metadata helpers.
+func (s *ProposalService) Update(ctx context.Context, id string, body ProposalUpdateInput, actor ProposalActor) (map[string]interface{}, error) {
+	wallet, err := s.authorizeEdit(ctx, actor, id, "update")
+	if err != nil {
+		return nil, err
+	}
 	existing, err := s.store.GetProposal(ctx, id)
 	if err != nil {
 		return nil, Fail(http.StatusNotFound, err.Error())
@@ -431,7 +488,7 @@ func (s *ProposalService) Update(ctx context.Context, id string, body ProposalUp
 		return nil, Fail(http.StatusBadRequest, err.Error())
 	}
 	s.emit(smart_contract.Event{
-		Type: "update", EntityID: updated.ID, Actor: "editor",
+		Type: "update", EntityID: updated.ID, Actor: wallet,
 		Message: "proposal updated", CreatedAt: time.Now(),
 	})
 	return map[string]interface{}{

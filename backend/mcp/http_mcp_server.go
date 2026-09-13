@@ -2467,6 +2467,13 @@ func (h *HTTPMCPServer) handleCreateTask(ctx context.Context, args map[string]in
 	if _, err := h.store.GetContract(contractID); err != nil {
 		return nil, NewValidationError("create_task", fmt.Sprintf("Contract not found: %s", contractID))
 	}
+
+	// Only the wish creator may add work to their contract. API keys are
+	// self-serve, so without this any key could spam tasks onto anyone's
+	// contract and draw down its budget (stargate-irl.7).
+	if _, err := scmiddleware.AuthorizeContractOwner(h.apiKeyStore, h.ingestionSvc, apiKey, contractID); err != nil {
+		return nil, NewUnauthorizedError("create_task", err.Error())
+	}
 	if snap, snapErr := scstore.LoadBudgetSnapshotForContract(h.store, contractID); snapErr == nil {
 		if err := snap.ValidateNewTaskBudget(budgetSats); err != nil {
 			return nil, NewValidationError("create_task", err.Error())

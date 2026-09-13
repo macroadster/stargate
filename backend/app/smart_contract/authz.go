@@ -166,8 +166,13 @@ func SubmissionWishHash(store Store, sub smart_contract.Submission) (string, err
 	if contractID == "" {
 		return "", fmt.Errorf("task %s has no contract, cannot resolve wish creator", taskID)
 	}
+	return ContractWishHash(contractID)
+}
 
-	hash := strings.TrimSpace(strings.TrimPrefix(contractID, "wish-"))
+// ContractWishHash returns the visible pixel hash a contract belongs to.
+// Contract IDs use the "wish-<hash>" form.
+func ContractWishHash(contractID string) (string, error) {
+	hash := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(contractID), "wish-"))
 	if hash == "" {
 		return "", fmt.Errorf("contract %s does not identify a wish", contractID)
 	}
@@ -211,4 +216,52 @@ func (g SubmissionReviewGate) AuthorizeSubmissionReview(ctx context.Context, api
 // submissionGate builds the gate from the server's dependencies.
 func (s *Server) submissionGate() SubmissionReviewGate {
 	return SubmissionReviewGate{Store: s.store, Keys: s.apiKeys, Ingestion: s.ingestionSvc}
+}
+
+// ProposalEditGate authorizes editing and publishing a proposal against the
+// creator of the wish it refers to. It is handed to ProposalService for the same
+// reason as SubmissionReviewGate: publish and PATCH each reached the store with
+// no check at all, and one of them sat beside an approve path that did check
+// (stargate-irl.7).
+//
+// It satisfies services.ProposalEditAuthorizer.
+type ProposalEditGate struct {
+	Store     Store
+	Keys      auth.APIKeyValidator
+	Ingestion *services.IngestionService
+}
+
+// AuthorizeProposalEdit reports whether apiKey may edit or publish the given
+// proposal, returning the wallet it authorized.
+func (g ProposalEditGate) AuthorizeProposalEdit(ctx context.Context, apiKey, proposalID string) (string, error) {
+	proposal, err := g.Store.GetProposal(ctx, proposalID)
+	if err != nil || proposal.ID == "" {
+		return "", fmt.Errorf("proposal %s not found", proposalID)
+	}
+
+	hash := ProposalWishHash(proposal)
+	if hash == "" {
+		// A proposal that names no wish has no creator to compare against, so
+		// there is nothing to authorize against and it stays closed.
+		return "", fmt.Errorf("proposal %s does not identify a wish", proposalID)
+	}
+	return WishCreatorAuthorizer{Keys: g.Keys, Ingestion: g.Ingestion}.
+		Authorize(apiKey, hash, "proposal "+proposalID)
+}
+
+// proposalGate builds the gate from the server's dependencies.
+func (s *Server) proposalGate() ProposalEditGate {
+	return ProposalEditGate{Store: s.store, Keys: s.apiKeys, Ingestion: s.ingestionSvc}
+}
+
+// AuthorizeContractOwner reports whether apiKey's wallet may act on contractID,
+// returning the wallet it authorized. Tasks are created against a contract, so
+// ownership of the contract's wish is what governs writing to it.
+func AuthorizeContractOwner(keys auth.APIKeyValidator, ingestion *services.IngestionService, apiKey, contractID string) (string, error) {
+	hash, err := ContractWishHash(contractID)
+	if err != nil {
+		return "", err
+	}
+	return WishCreatorAuthorizer{Keys: keys, Ingestion: ingestion}.
+		Authorize(apiKey, hash, "contract "+contractID)
 }
