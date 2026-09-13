@@ -290,7 +290,7 @@ func (s *Server) handleSubmissionRework(w http.ResponseWriter, r *http.Request, 
 	}
 	resp, err := s.submissionSvc.Rework(r.Context(), id, scservices.SubmissionReworkInput{
 		Deliverables: body.Deliverables, Notes: body.Notes,
-	})
+	}, scservices.ReworkActor{APIKey: auth.RequestAPIKey(r)})
 	if err != nil {
 		s.writeServiceErr(w, err)
 		return

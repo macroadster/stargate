@@ -246,11 +246,15 @@ func NewHTTPMCPServer(store scmiddleware.Store, apiKeyStore auth.APIKeyValidator
 	// The same gate the REST server builds, so both surfaces authorize review
 	// through one implementation rather than two call sites of the same rule.
 	reviewGate := scmiddleware.SubmissionReviewGate{Store: store, Keys: apiKeyStore, Ingestion: ingestionSvc}
+	// This surface exposes no rework tool today. The gate is still wired rather
+	// than left nil so that adding one is not silently a 500, or worse a reason
+	// to reach for the caller-trusting shortcut.
+	reworkGate := scmiddleware.SubmissionReworkGate{Store: store, Keys: apiKeyStore}
 
 	return &HTTPMCPServer{
 		store:            store,
 		claimSvc:         scservices.NewClaimService(store),
-		submissionSvc:    scservices.NewSubmissionService(store, reviewEvents, reviewGate),
+		submissionSvc:    scservices.NewSubmissionService(store, reviewEvents, reviewGate, reworkGate),
 		apiKeyStore:      apiKeyStore,
 		apiKeyIssuer:     apiKeyIssuer,
 		ingestionSvc:     ingestionSvc,

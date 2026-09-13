@@ -88,7 +88,7 @@ func NewServer(store Store, apiKeys auth.APIKeyValidator, ingest *services.Inges
 	}
 	srv.eventSvc.SetRecorder(srv.recordEvent)
 	srv.proposalSvc = scservices.NewProposalService(store, ingest, apiKeys, srv.recordEvent, srv.proposalGate(), srv.eventSvc.PublishProposalTasks, srv.archiveWishContract)
-	srv.submissionSvc = scservices.NewSubmissionService(store, srv.recordEvent, srv.submissionGate())
+	srv.submissionSvc = scservices.NewSubmissionService(store, srv.recordEvent, srv.submissionGate(), srv.reworkGate())
 	RegisterEventSink(srv.recordEvent)
 	return srv
 }

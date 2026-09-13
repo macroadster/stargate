@@ -63,7 +63,7 @@ func assertSubmissionStatus(t *testing.T, store scstore.Store, submissionID, wan
 func TestReviewRefusesWhenAuthorizerMissing(t *testing.T) {
 	store := scstore.NewMemoryStore(time.Hour)
 	seedReviewSubmission(t, store, "sub-noauthz")
-	svc := NewSubmissionService(store, nil, nil)
+	svc := NewSubmissionService(store, nil, nil, nil)
 
 	_, err := svc.Review(context.Background(), "sub-noauthz", SubmissionReviewInput{Action: "approve"}, ReviewActor{APIKey: "any-key"})
 	if err == nil {
@@ -81,7 +81,7 @@ func TestReviewDeniesWhenAuthorizerRefuses(t *testing.T) {
 
 	var events []core.Event
 	svc := NewSubmissionService(store, func(evt core.Event) { events = append(events, evt) },
-		&stubReviewAuthorizer{err: errors.New("approver wallet bc1qstranger does not match wish creator")})
+		&stubReviewAuthorizer{err: errors.New("approver wallet bc1qstranger does not match wish creator")}, nil)
 
 	_, err := svc.Review(context.Background(), "sub-denied", SubmissionReviewInput{Action: "approve"}, ReviewActor{APIKey: "stranger-key"})
 	if err == nil {
@@ -106,7 +106,7 @@ func TestReviewAuthorizesEveryAction(t *testing.T) {
 			store := scstore.NewMemoryStore(time.Hour)
 			seedReviewSubmission(t, store, "sub-"+action)
 			stub := &stubReviewAuthorizer{err: errors.New("denied")}
-			svc := NewSubmissionService(store, nil, stub)
+			svc := NewSubmissionService(store, nil, stub, nil)
 
 			_, err := svc.Review(context.Background(), "sub-"+action, SubmissionReviewInput{Action: action}, ReviewActor{APIKey: "stranger-key"})
 			if err == nil {
@@ -129,7 +129,7 @@ func TestReviewRecordsAuthorizedWalletAsActor(t *testing.T) {
 
 	var events []core.Event
 	svc := NewSubmissionService(store, func(evt core.Event) { events = append(events, evt) },
-		&stubReviewAuthorizer{wallet: wallet})
+		&stubReviewAuthorizer{wallet: wallet}, nil)
 
 	if _, err := svc.Review(context.Background(), "sub-actor", SubmissionReviewInput{Action: "approve"}, ReviewActor{APIKey: "creator-key"}); err != nil {
 		t.Fatalf("expected an authorized review to succeed, got %v", err)
@@ -156,7 +156,7 @@ func TestReviewPassesActorKeyToAuthorizer(t *testing.T) {
 	store := scstore.NewMemoryStore(time.Hour)
 	seedReviewSubmission(t, store, "sub-threaded")
 	stub := &stubReviewAuthorizer{wallet: "bc1qauthorized"}
-	svc := NewSubmissionService(store, nil, stub)
+	svc := NewSubmissionService(store, nil, stub, nil)
 
 	if _, err := svc.Review(context.Background(), "sub-threaded", SubmissionReviewInput{Action: "approve"}, ReviewActor{APIKey: "creator-key"}); err != nil {
 		t.Fatalf("review: %v", err)

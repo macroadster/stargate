@@ -58,7 +58,7 @@ func TestRESTSubmissionListSharesServiceQuery(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &rest); err != nil {
 		t.Fatalf("decode REST: %v", err)
 	}
-	svc := scservices.NewSubmissionService(store, nil, nil)
+	svc := scservices.NewSubmissionService(store, nil, nil, nil)
 	got, err := svc.List(ctx, scservices.SubmissionFilterFromArgs(map[string]interface{}{
 		"contract_id": "sublist1",
 		"status":      "pending_review",
