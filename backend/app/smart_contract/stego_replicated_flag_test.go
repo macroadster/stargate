@@ -42,7 +42,7 @@ func TestEnsureStegoIngestionDoesNotStampExistingRecord(t *testing.T) {
 	}
 
 	// The flag drives an authorization message, so confirm the owner still passes.
-	if _, err := srv.authorizer().Authorize(testCreatorKey, testWishHash, "submission s1", DenyOnMissingCreator); err != nil {
+	if _, err := srv.authorizer().Authorize(testCreatorKey, testWishHash, "submission s1"); err != nil {
 		t.Fatalf("wish creator should still be authorized after reconcile, got %v", err)
 	}
 }

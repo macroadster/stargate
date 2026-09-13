@@ -24,31 +24,21 @@ type WishCreatorAuthorizer struct {
 	Ingestion *services.IngestionService
 }
 
-// MissingCreatorPolicy selects what happens when no creator wallet can be
-// established for a wish. This is a real fork in behaviour, not a detail:
-// records replicated from peers never carry a creator (see wishOwnership), so
-// for those wishes this policy alone decides the outcome.
-type MissingCreatorPolicy int
-
-const (
-	// DenyOnMissingCreator refuses the action. Required for anything that
-	// releases funds, where an unidentifiable approver must not be honoured.
-	DenyOnMissingCreator MissingCreatorPolicy = iota
-
-	// AllowOnMissingCreator permits the action and logs it. Retained for
-	// proposal approval, whose pre-existing allowance predates this
-	// consolidation; stargate-irl.2 tracks closing it.
-	AllowOnMissingCreator
-)
-
 // Authorize reports whether apiKey's bound wallet may act as the creator of the
 // wish identified by visibleHash. subject names what is being acted on and is
-// used only in log and error messages. policy decides the unresolvable case.
+// used only in log and error messages.
+//
+// An unestablishable creator denies, for proposals as well as submissions. There
+// is deliberately no override: proposal approval used to log a warning and allow
+// it through, which let any wallet-bound key approve wishes whose ingest carried
+// missing or partial creator metadata. An env-gated escape hatch would be
+// explicit but would restore that hole in the first deployment to meet a legacy
+// ingest, so the allowance is gone rather than configurable (stargate-irl.2).
 //
 // It returns the wallet it authorized, so callers that record who acted use the
 // identity authorization actually accepted rather than one passed alongside it.
 // Those can disagree; the audit trail should not be able to.
-func (a WishCreatorAuthorizer) Authorize(apiKey, visibleHash, subject string, policy MissingCreatorPolicy) (string, error) {
+func (a WishCreatorAuthorizer) Authorize(apiKey, visibleHash, subject string) (string, error) {
 	wallet := a.boundWallet(apiKey)
 	if wallet == "" {
 		return "", fmt.Errorf("api key with wallet binding required to approve %s", subject)
@@ -65,11 +55,6 @@ func (a WishCreatorAuthorizer) Authorize(apiKey, visibleHash, subject string, po
 			return wallet, nil
 		}
 		return "", fmt.Errorf("approver wallet %s does not match wish creator", wallet)
-	}
-
-	if policy == AllowOnMissingCreator {
-		log.Printf("WARNING: allowing %s with NO wish creator info", subject)
-		return wallet, nil
 	}
 
 	// A replicated wish is the expected reason to land here, so say so rather
@@ -209,9 +194,6 @@ type SubmissionReviewGate struct {
 
 // AuthorizeSubmissionReview reports whether apiKey may review (approve, reject
 // or mark reviewed) the given submission, returning the wallet it authorized.
-//
-// Submission review is the payout gate, so it denies on an unresolvable
-// creator instead of taking proposal approval's compatibility allowance.
 func (g SubmissionReviewGate) AuthorizeSubmissionReview(ctx context.Context, apiKey, submissionID string) (string, error) {
 	sub, err := g.Store.GetSubmission(ctx, submissionID)
 	if err != nil || sub.SubmissionID == "" {
@@ -223,7 +205,7 @@ func (g SubmissionReviewGate) AuthorizeSubmissionReview(ctx context.Context, api
 		return "", err
 	}
 	return WishCreatorAuthorizer{Keys: g.Keys, Ingestion: g.Ingestion}.
-		Authorize(apiKey, hash, "submission "+submissionID, DenyOnMissingCreator)
+		Authorize(apiKey, hash, "submission "+submissionID)
 }
 
 // submissionGate builds the gate from the server's dependencies.
