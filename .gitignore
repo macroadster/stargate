@@ -33,6 +33,7 @@ data
 
 # Ephemeral test artifacts
 test-results/
+.playwright-mcp/
 *.swp
 *.swp
 
