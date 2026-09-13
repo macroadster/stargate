@@ -3,6 +3,7 @@ package handlers
 import (
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -23,7 +24,11 @@ func TestHandleHashImageRejectsWhenIngestTokenUnset(t *testing.T) {
 }
 
 func TestIngestionEndpointsRejectWhenIngestTokenUnset(t *testing.T) {
-	h := &IngestionHandler{service: &services.IngestionService{}}
+	svc, err := services.NewIngestionService(filepath.Join(t.TempDir(), "ingestion.db"))
+	if err != nil {
+		t.Fatalf("create ingestion service: %v", err)
+	}
+	h := &IngestionHandler{service: svc}
 	tests := []struct {
 		name   string
 		method string
@@ -35,7 +40,7 @@ func TestIngestionEndpointsRejectWhenIngestTokenUnset(t *testing.T) {
 			name:   "ingest",
 			method: http.MethodPost,
 			path:   "/api/ingest-inscription",
-			body:   `{}`,
+			body:   `{"id":"id","filename":"test.png","method":"test","image_base64":"aGk="}`,
 			call:   h.HandleIngest,
 		},
 		{
