@@ -245,6 +245,9 @@ func TestMCPApproveSubmissionEmitsReviewEvent(t *testing.T) {
 	srv, store := surfaceFixture(t)
 	seedSurfaceSubmission(t, store, "mcp-sub-event", "mcp-task-event", "mcp-claim-event", true)
 
+	// RegisterEventSink appends to a process-global slice with no way to
+	// unregister, so this sink outlives the test. Safe only because nothing else
+	// in this package asserts on sinks; do not copy this into another test.
 	events := make(chan smart_contract.Event, 8)
 	scmiddleware.RegisterEventSink(func(evt smart_contract.Event) {
 		select {

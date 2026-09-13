@@ -423,10 +423,6 @@ func (s *Server) ensureStegoIngestion(ctx context.Context, contractID, stegoCID,
 		"stego_manifest_created_at": manifest.CreatedAt,
 		"origin_proposal_id":        manifest.ProposalID,
 		"visible_pixel_hash":        manifest.VisiblePixelHash,
-		// No creator_wallet: the only creator identity on the wire is the stego
-		// payload, which is untrusted. Marking the record replicated lets
-		// authorization report that accurately rather than as missing data.
-		"stego_replicated": true,
 	}
 	// Determine appropriate steganography method based on image format
 	stegoMethod := getStegoMethodFromImage(stegoBytes, "stego.png")
@@ -441,9 +437,19 @@ func (s *Server) ensureStegoIngestion(ctx context.Context, contractID, stegoCID,
 		Status:        "verified",
 	}
 	if existing, err := s.ingestionSvc.Get(contractID); err == nil && existing != nil {
+		// Deliberately without stego_replicated: UpdateFromIngest merges with
+		// incoming precedence, so stamping it here would mark a locally created
+		// wish as replicated the next time its stego image is reconciled.
 		_ = s.ingestionSvc.UpdateFromIngest(contractID, rec)
 		return
 	}
+	// Set only on create, where the record genuinely originates from a peer.
+	// No creator_wallet accompanies it: the only creator identity on the wire is
+	// the untrusted stego payload, so this flag exists purely to let
+	// authorization report "replicated" instead of "creator data missing". It
+	// must not be read as a deny signal on its own, since a known creator is
+	// checked first.
+	meta["stego_replicated"] = true
 	if err := s.ingestionSvc.Create(rec); err != nil {
 		log.Printf("stego reconcile: failed to create ingestion %s: %v", contractID, err)
 	}
