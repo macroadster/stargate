@@ -128,6 +128,29 @@ func TestMCPApproveRaiseFundBindsPayoutAddress(t *testing.T) {
 	}
 }
 
+func TestMCPApproveUnknownProposalDoesNotRevealAbsence(t *testing.T) {
+	srv, _ := surfaceFixture(t)
+
+	resp := callTool(t, srv, surfaceCreatorKey, "approve_proposal", map[string]interface{}{
+		"proposal_id": "mcp-prop-does-not-exist",
+	})
+
+	if resp.Success {
+		t.Fatal("approving a proposal that does not exist must fail")
+	}
+	// This surface used to answer RESOURCE_NOT_FOUND here, because it looked the
+	// proposal up itself before authorizing. Authorization now runs first and the
+	// gate cannot authorize a proposal it cannot load, so the answer is
+	// UNAUTHORIZED and identical to the stranger case above.
+	//
+	// That is deliberate rather than incidental: a caller who is not the creator
+	// learns nothing about whether a given proposal ID exists. Pinned because it
+	// is a visible change to this surface's contract, not an internal detail.
+	if resp.ErrorCode != ErrCodeUnauthorized {
+		t.Fatalf("error_code = %q, want %q (body: %s)", resp.ErrorCode, ErrCodeUnauthorized, resp.Error)
+	}
+}
+
 func TestMCPApproveProposalStillRefusesStranger(t *testing.T) {
 	srv, store := surfaceFixture(t)
 	seedApprovableProposal(t, store, "mcp-prop-stranger", nil)

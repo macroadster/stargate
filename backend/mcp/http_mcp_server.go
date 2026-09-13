@@ -1109,6 +1109,10 @@ func (h *HTTPMCPServer) proposalError(tool, proposalID string, err error) error 
 	}
 	switch se.Kind {
 	case scservices.KindProposalNotFound:
+		// Rarely reached: the gate loads the proposal to authorize against it, so
+		// an unknown ID is refused as UNAUTHORIZED before this point rather than
+		// confirming to a non-creator that the ID exists. This covers the proposal
+		// disappearing between that load and the service's own.
 		return NewNotFoundError(tool, "proposal", proposalID)
 	case scservices.KindWishNotFound:
 		return NewNotFoundError(tool, "wish", se.Message)
