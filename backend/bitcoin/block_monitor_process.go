@@ -16,7 +16,8 @@ import (
 )
 
 // monitorLoop runs the main monitoring loop
-func (bm *BlockMonitor) monitorLoop() {
+func (bm *BlockMonitor) monitorLoop(stop <-chan struct{}) {
+	defer bm.wg.Done()
 	ticker := time.NewTicker(bm.checkInterval)
 	defer ticker.Stop()
 
@@ -31,14 +32,15 @@ func (bm *BlockMonitor) monitorLoop() {
 				log.Printf("Error checking for new blocks: %v", err)
 			}
 			log.Printf("block monitor: checkForNewBlocks completed in %v", time.Since(start))
-		case <-bm.stopChan:
+		case <-stop:
 			log.Println("Block monitor stopped")
 			return
 		}
 	}
 }
 
-func (bm *BlockMonitor) reconcileSweepLoop() {
+func (bm *BlockMonitor) reconcileSweepLoop(stop <-chan struct{}) {
+	defer bm.wg.Done()
 	window := monitorRecentReconcileWindow()
 	interval := monitorReconcileInterval()
 
@@ -49,7 +51,14 @@ func (bm *BlockMonitor) reconcileSweepLoop() {
 	defer ticker.Stop()
 
 	// Initial small delay so startup forward scan + first reconcileCanonicalTip settle first
-	time.Sleep(15 * time.Second)
+	startupDelay := time.NewTimer(15 * time.Second)
+	select {
+	case <-stop:
+		startupDelay.Stop()
+		log.Println("reconcile sweep loop stopped during startup delay")
+		return
+	case <-startupDelay.C:
+	}
 
 	for {
 		select {
@@ -62,7 +71,7 @@ func (bm *BlockMonitor) reconcileSweepLoop() {
 			}
 			cancel()
 			log.Printf("block monitor: ReconcileRecentBlocks (sweep) took %v", time.Since(start))
-		case <-bm.stopChan:
+		case <-stop:
 			log.Println("reconcile sweep loop stopped")
 			return
 		}

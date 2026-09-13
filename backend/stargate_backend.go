@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -11,11 +12,13 @@ import (
 	"net/http"
 	_ "net/http/pprof" // registers on DefaultServeMux; only mounted when STARGATE_PPROF=true
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"stargate-backend/agents"
@@ -307,7 +310,7 @@ func initializeMCPComponents() (scmiddleware.Store, auth.APIKeyIssuer, auth.APIK
 }
 
 // startMCPServices starts background services for sync (works with PostgreSQL or embedded SQLite).
-func startMCPServices(escort *smart_contract.EscortService, store scmiddleware.Store) {
+func startMCPServices(ctx context.Context, escort *smart_contract.EscortService, store scmiddleware.Store) {
 	pgDsn := os.Getenv("STARGATE_PG_DSN")
 
 	if store == nil {
@@ -340,7 +343,7 @@ func startMCPServices(escort *smart_contract.EscortService, store scmiddleware.S
 			}
 		}
 
-		if err := scmiddleware.StartIngestionSync(context.Background(), ingestDsn, store, syncInterval); err != nil {
+		if err := scmiddleware.StartIngestionSync(ctx, ingestDsn, store, syncInterval); err != nil {
 			log.Printf("ingestion sync disabled (init error): %v", err)
 		} else {
 			log.Printf("ingestion sync enabled (interval=%s)", syncInterval)
@@ -368,7 +371,7 @@ func startMCPServices(escort *smart_contract.EscortService, store scmiddleware.S
 		}
 
 		provider := scmiddleware.NewFundingProvider(fundingProvider, fundingAPIBase)
-		if err := scmiddleware.StartFundingSync(context.Background(), store, provider, escort, fundingInterval); err != nil {
+		if err := scmiddleware.StartFundingSync(ctx, store, provider, escort, fundingInterval); err != nil {
 			log.Printf("funding sync disabled (init error): %v", err)
 		} else {
 			log.Printf("funding sync enabled (interval=%s, provider=%s)", fundingInterval, fundingProvider)
@@ -445,14 +448,18 @@ func main() {
 		}
 	}()
 
-	// Start HTTP server (includes MCP endpoints)
-	go runHTTPServer(store, apiKeyIssuer, apiKeyValidator, ingestionSvc, challengeStore, ipfsClient)
+	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
 
-	// Wait indefinitely
-	select {} // Block forever
+	// runHTTPServer owns the server-scoped background services and returns only
+	// after they have stopped, so process-level defers (including IPFS close)
+	// are guaranteed to run on SIGINT/SIGTERM.
+	if err := runHTTPServer(ctx, store, apiKeyIssuer, apiKeyValidator, ingestionSvc, challengeStore, ipfsClient); err != nil {
+		log.Printf("HTTP server exited: %v", err)
+	}
 }
 
-func runHTTPServer(store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, apiKeyValidator auth.APIKeyValidator, ingestionSvc *services.IngestionService, challengeStore *auth.ChallengeStore, ipfsClient *ipfs.Client) {
+func runHTTPServer(ctx context.Context, store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, apiKeyValidator auth.APIKeyValidator, ingestionSvc *services.IngestionService, challengeStore *auth.ChallengeStore, ipfsClient *ipfs.Client) error {
 	log.Println("=== STARTING STARGATE HTTP SERVER ===")
 
 	// Wrap the MCP store so ConfirmContract / status updates / upserts invalidate
@@ -493,10 +500,10 @@ func runHTTPServer(store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, api
 	wishCfg := ipfs.LoadWishMirrorConfig()
 	wishCfg.OnFileDownloaded = onMirroredFile
 	if ipfsCfg.Enabled {
-		go mirror.startWithRetry(context.Background(), ipfsCfg, false)
+		go mirror.startWithRetry(ctx, ipfsCfg, false)
 	}
 	if wishCfg.Enabled {
-		go mirror.startWithRetry(context.Background(), wishCfg, true)
+		go mirror.startWithRetry(ctx, wishCfg, true)
 	}
 
 	// Initialize dependency container
@@ -504,11 +511,11 @@ func runHTTPServer(store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, api
 
 	// Start Bitcoin full node (btcd, no mining) or external/off chain backend.
 	// This replaces unreliable public mempool.space polling for block data.
-	chainCtx, chainCancel := context.WithCancel(context.Background())
+	chainCtx, chainCancel := context.WithCancel(ctx)
 	chainRuntime, err := bitcoin.StartChainFromEnv(chainCtx)
 	if err != nil {
 		chainCancel()
-		log.Fatalf("bitcoin chain backend failed to start: %v", err)
+		return fmt.Errorf("bitcoin chain backend failed to start: %w", err)
 	}
 	defer func() {
 		chainCancel()
@@ -547,7 +554,7 @@ func runHTTPServer(store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, api
 
 	// Start MCP background services if using PostgreSQL AND MCP server is not running separately
 	if os.Getenv("STARGATE_MODE") != "mcp-only" && os.Getenv("STARGATE_MODE") != "both" {
-		startMCPServices(escort, store)
+		startMCPServices(ctx, escort, store)
 	} else {
 		log.Println("MCP background services skipped (will be handled by separate MCP process)")
 	}
@@ -565,9 +572,8 @@ func runHTTPServer(store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, api
 		}
 
 		agentOrch := agents.NewOrchestrator(agentCfg, store, nil)
-		agentOrch.Start(context.Background())
-		// Note: orchestrator runs until process exit for now (matches other background services).
-		// If a full shutdown path is added later, call agentOrch.Stop() on termination.
+		agentOrch.Start(ctx)
+		defer agentOrch.Stop()
 		log.Printf("Built-in agents enabled (watcher=%v, worker=%v, tool=%s, model=%s)",
 			agentCfg.WatcherEnabled, agentCfg.WorkerEnabled, agentCfg.ExecutorTool, agentCfg.ExecutorModel)
 	} else {
@@ -581,7 +587,8 @@ func runHTTPServer(store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, api
 	httpMCPServer.RegisterRoutes(mux)
 
 	// Apply middleware to all routes
-	routes, mcpRestServer := setupRoutes(mux, container, store, apiKeyIssuer, apiKeyValidator, challengeStore, ingestionSvc, &mirror, escort, chainRuntime.Backend)
+	routes, mcpRestServer, blockMonitor := setupRoutes(ctx, mux, container, store, apiKeyIssuer, apiKeyValidator, challengeStore, ingestionSvc, &mirror, escort, chainRuntime.Backend)
+	defer blockMonitor.Stop()
 
 	// Set smart_contract server reference on MCP server (must be done after mcpRestServer is created)
 	httpMCPServer.SetServer(mcpRestServer)
@@ -628,6 +635,8 @@ func runHTTPServer(store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, api
 		defer t.Stop()
 		for {
 			select {
+			case <-ctx.Done():
+				return
 			case <-t.C:
 				g := runtime.NumGoroutine()
 				log.Printf("DIAG heartbeat: goroutines=%d", g)
@@ -635,13 +644,35 @@ func runHTTPServer(store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, api
 		}
 	}()
 
-	// Do not use log.Fatal here — it skips defers (would orphan managed btcd).
-	if err := http.ListenAndServe(":"+httpPort, handler); err != nil {
-		log.Printf("HTTP server exited: %v", err)
+	server := &http.Server{Addr: ":" + httpPort, Handler: handler}
+	serverErr := make(chan error, 1)
+	go func() {
+		serverErr <- server.ListenAndServe()
+	}()
+
+	select {
+	case err := <-serverErr:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	case <-ctx.Done():
+		log.Printf("Shutdown requested; draining HTTP requests")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			_ = server.Close()
+			<-serverErr
+			return fmt.Errorf("HTTP shutdown: %w", err)
+		}
+		if err := <-serverErr; err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return err
+		}
+		return nil
 	}
 }
 
-func setupRoutes(mux *http.ServeMux, container *container.Container, store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, apiKeyValidator auth.APIKeyValidator, challengeStore *auth.ChallengeStore, ingestionSvc *services.IngestionService, mirror *mirrorState, escort *smart_contract.EscortService, chainBackend bitcoin.ChainBackend) (http.Handler, *scmiddleware.Server) {
+func setupRoutes(ctx context.Context, mux *http.ServeMux, container *container.Container, store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, apiKeyValidator auth.APIKeyValidator, challengeStore *auth.ChallengeStore, ingestionSvc *services.IngestionService, mirror *mirrorState, escort *smart_contract.EscortService, chainBackend bitcoin.ChainBackend) (http.Handler, *scmiddleware.Server, *bitcoin.BlockMonitor) {
 	// Initialize MCP REST server for HTTP routes
 	mcpRestServer := scmiddleware.NewServer(store, apiKeyValidator, ingestionSvc)
 	if escort != nil {
@@ -651,10 +682,10 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 		mcpRestServer.SetUTXOClient(chainBackend)
 	}
 	mcpRestServer.RegisterRoutes(mux)
-	if err := scmiddleware.StartStegoPubsubSync(context.Background(), mcpRestServer); err != nil {
+	if err := scmiddleware.StartStegoPubsubSync(ctx, mcpRestServer); err != nil {
 		log.Printf("stego pubsub sync disabled: %v", err)
 	}
-	if err := scmiddleware.StartSyncPubsubSync(context.Background(), mcpRestServer); err != nil {
+	if err := scmiddleware.StartSyncPubsubSync(ctx, mcpRestServer); err != nil {
 		log.Printf("mcp event sync disabled: %v", err)
 	}
 	// Health endpoints
@@ -852,12 +883,12 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 	blockMonitor.SetSweepDependencies(store, sweepClient)
 	// OP_RETURN-based matching: block monitor discovers contracts during normal
 	// block processing — no event-driven reconciliation needed.
-	if err := scmiddleware.StartIPFSIngestionSync(context.Background(), ingestionSvc, store, func(ctx context.Context, recent int) error {
+	if err := scmiddleware.StartIPFSIngestionSync(ctx, ingestionSvc, store, func(ctx context.Context, recent int) error {
 		return blockMonitor.ReconcileRecentBlocks(ctx, recent)
 	}); err != nil {
 		log.Printf("ipfs ingestion sync disabled: %v", err)
 	}
-	scmiddleware.StartWishGC(context.Background(), ingestionSvc, store, func(ctx context.Context, path string) error {
+	scmiddleware.StartWishGC(ctx, ingestionSvc, store, func(ctx context.Context, path string) error {
 		return mirror.UnpinPath(ctx, path)
 	})
 
@@ -874,36 +905,37 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 
 		// Cache priority blocks immediately
 		for _, height := range priorityBlocks {
+			if ctx.Err() != nil {
+				return
+			}
 			log.Printf("Caching priority historical block %d...", height)
 			if err := blockMonitor.ProcessBlock(height); err != nil {
 				log.Printf("Failed to cache block %d: %v", height, err)
 			} else {
 				log.Printf("Successfully cached block %d", height)
 			}
-			time.Sleep(2 * time.Second) // Longer delay for priority blocks
+			if !waitForContext(ctx, 2*time.Second) {
+				return
+			}
 		}
 
 		// Cache other blocks with longer delays
 		for _, height := range otherBlocks {
+			if ctx.Err() != nil {
+				return
+			}
 			log.Printf("Caching historical block %d...", height)
 			if err := blockMonitor.ProcessBlock(height); err != nil {
 				log.Printf("Failed to cache block %d: %v", height, err)
 			} else {
 				log.Printf("Successfully cached block %d", height)
 			}
-			time.Sleep(5 * time.Second) // Much longer delay to avoid rate limits
+			if !waitForContext(ctx, 5*time.Second) {
+				return
+			}
 		}
 
 		log.Println("Historical blocks caching completed")
-	}()
-
-	// Start the block monitor in background
-	go func() {
-		if err := blockMonitor.Start(); err != nil {
-			log.Printf("Failed to start block monitor: %v", err)
-		} else {
-			log.Println("Block monitor started successfully")
-		}
 	}()
 
 	dataAPI := api.NewDataAPI(
@@ -915,6 +947,11 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 	// Keep the content tx index in sync as new blocks arrive.
 	if blockMonitor != nil {
 		blockMonitor.OnBlockProcessed(dataAPI.IndexBlock)
+	}
+	if err := blockMonitor.Start(); err != nil {
+		log.Printf("Failed to start block monitor: %v", err)
+	} else {
+		log.Println("Block monitor started successfully")
 	}
 
 	mux.HandleFunc("/api/data/block/", dataAPI.HandleGetBlockData)
@@ -1012,7 +1049,18 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 	// MCP tools are available via HTTP endpoints at /mcp/
 
 	log.Printf("All routes registered, returning handler")
-	return mux, mcpRestServer
+	return mux, mcpRestServer, blockMonitor
+}
+
+func waitForContext(ctx context.Context, delay time.Duration) bool {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
 }
 
 // diagnosticsEnabled is the opt-in gate for /metrics and /debug/pprof.

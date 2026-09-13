@@ -23,7 +23,9 @@ type BlockMonitor struct {
 	currentHeight   int64
 	lastChecked     time.Time
 	isRunning       bool
-	stopChan        chan bool
+	isStopping      bool
+	stopChan        chan struct{}
+	wg              sync.WaitGroup
 	mu              sync.RWMutex
 	dataStorage     DataStorageInterface
 	ingestion       *services.IngestionService
@@ -287,12 +289,9 @@ func (bm *BlockMonitor) Start() error {
 	bm.mu.Lock()
 	defer bm.mu.Unlock()
 
-	if bm.isRunning {
+	if bm.isRunning || bm.isStopping {
 		return fmt.Errorf("block monitor is already running")
 	}
-
-	bm.isRunning = true
-	bm.stopChan = make(chan bool)
 
 	// Create blocks directory
 	if err := os.MkdirAll(bm.blocksDir, 0755); err != nil {
@@ -311,12 +310,17 @@ func (bm *BlockMonitor) Start() error {
 	}
 	log.Printf("Starting block monitor (%s mode) with %s interval, bitcoinAPI set: %v", mode, bm.checkInterval, bm.bitcoinAPI != nil)
 
-	go bm.monitorLoop()
+	bm.isRunning = true
+	bm.stopChan = make(chan struct{})
+	stopChan := bm.stopChan
+	bm.wg.Add(1)
+	go bm.monitorLoop(stopChan)
 	// Only start the reconcile sweep goroutine when we actually use periodic
 	// recent-block healing (disabled in the default tip-only mode to avoid
 	// parking an idle goroutine forever on stopChan).
 	if !monitorTrackTipOnly() && monitorRecentReconcileWindow() > 0 {
-		go bm.reconcileSweepLoop()
+		bm.wg.Add(1)
+		go bm.reconcileSweepLoop(stopChan)
 	} else {
 		log.Printf("block monitor: periodic reconcile sweep disabled (tip-only tracking)")
 	}
@@ -325,8 +329,31 @@ func (bm *BlockMonitor) Start() error {
 }
 
 // Stop stops the block monitoring process
+func (bm *BlockMonitor) Stop() {
+	bm.mu.Lock()
+	if !bm.isRunning {
+		bm.mu.Unlock()
+		return
+	}
+	bm.isRunning = false
+	bm.isStopping = true
+	close(bm.stopChan)
+	bm.mu.Unlock()
+
+	bm.wg.Wait()
+
+	bm.mu.Lock()
+	bm.isStopping = false
+	bm.stopChan = nil
+	bm.mu.Unlock()
+}
 
 // IsRunning returns whether the monitor is currently running
+func (bm *BlockMonitor) IsRunning() bool {
+	bm.mu.RLock()
+	defer bm.mu.RUnlock()
+	return bm.isRunning
+}
 
 // GetStatistics returns current monitoring statistics
 func (bm *BlockMonitor) GetStatistics() map[string]any {
