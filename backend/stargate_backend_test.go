@@ -219,15 +219,29 @@ func TestCustomUploadsHandlerRejectsEncodedTraversal(t *testing.T) {
 	handler := customUploadsHandler(uploads)
 
 	// ServeMux 301s a literal '..' segment. Percent-encoded forms survive mux
-	// cleaning and used to arrive at the handler with '../' intact.
-	req := httptest.NewRequest(http.MethodGet, "/uploads/..%2fuploads-sibling%2fsecret.txt", nil)
-	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, req)
-	if w.Code == http.StatusOK && strings.Contains(w.Body.String(), "leaked") {
-		t.Fatalf("encoded traversal served sibling content: %d %q", w.Code, w.Body.String())
+	// cleaning and used to arrive at the handler with '../' intact. irl.5
+	// names both encodings; they decode to the same walk but must each stay
+	// pinned so a later rewrite cannot drop one.
+	cases := []struct {
+		name string
+		url  string
+	}{
+		{"dotdot-slash", "/uploads/..%2fuploads-sibling%2fsecret.txt"},
+		{"encoded-dots", "/uploads/%2e%2e/uploads-sibling/secret.txt"},
+		{"encoded-dots-and-slash", "/uploads/%2e%2e%2fuploads-sibling%2fsecret.txt"},
 	}
-	if w.Code != http.StatusForbidden && w.Code != http.StatusNotFound {
-		t.Fatalf("encoded traversal: got %d %q, want 403 or 404", w.Code, w.Body.String())
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tc.url, nil)
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, req)
+			if w.Code == http.StatusOK && strings.Contains(w.Body.String(), "leaked") {
+				t.Fatalf("encoded traversal served sibling content: %d %q", w.Code, w.Body.String())
+			}
+			if w.Code != http.StatusForbidden && w.Code != http.StatusNotFound {
+				t.Fatalf("encoded traversal: got %d %q, want 403 or 404", w.Code, w.Body.String())
+			}
+		})
 	}
 }
 
