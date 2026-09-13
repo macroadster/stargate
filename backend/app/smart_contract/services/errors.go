@@ -15,6 +15,16 @@ const (
 	// KindProposalNotFound marks a failure caused by the proposal itself being
 	// absent.
 	KindProposalNotFound Kind = "proposal_not_found"
+	// KindBudgetExceeded marks a proposal budget larger than the wish it answers.
+	KindBudgetExceeded Kind = "budget_exceeded"
+	// KindBudgetMismatch marks task budgets that do not sum to the proposal
+	// budget, in either direction.
+	KindBudgetMismatch Kind = "budget_mismatch"
+	// KindProposalLimitReached marks the per-wish proposal cap being exhausted.
+	KindProposalLimitReached Kind = "proposal_limit_reached"
+	// KindProposalAlreadyFinalized marks a wish that already has an approved or
+	// published proposal and accepts no more.
+	KindProposalAlreadyFinalized Kind = "proposal_already_finalized"
 )
 
 // StatusError is a domain error with an HTTP-oriented status code.

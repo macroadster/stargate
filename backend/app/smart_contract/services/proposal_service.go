@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -290,7 +291,7 @@ func (s *ProposalService) Create(ctx context.Context, body ProposalCreateInput) 
 		}
 		applyCreatorWallet(proposal.Metadata, body.APIKey, s.apiKeys)
 		if err := s.store.CreateProposal(ctx, proposal); err != nil {
-			return nil, 0, Fail(http.StatusBadRequest, err.Error())
+			return nil, 0, createStoreError(err)
 		}
 		s.emit(smart_contract.Event{
 			Type: "proposal_create", EntityID: proposal.ID, Actor: s.eventActor(body.APIKey),
@@ -351,13 +352,13 @@ func (s *ProposalService) Create(ctx context.Context, body ProposalCreateInput) 
 	wishID := "wish-" + visiblePixelHash
 	wish, err := scstore.LookupContract(s.store, wishID)
 	if err != nil {
-		return nil, 0, Fail(http.StatusNotFound, "wish not found for visible_pixel_hash")
+		return nil, 0, FailKind(http.StatusNotFound, KindWishNotFound, "wish not found for visible_pixel_hash")
 	}
 	if wishBudget := scstore.WishBudgetFromContract(wish); wishBudget > 0 {
 		if omittedBudget {
 			body.BudgetSats = wishBudget
 		} else if body.BudgetSats > wishBudget {
-			return nil, 0, Fail(http.StatusBadRequest, fmt.Sprintf("proposal budget_sats %d exceeds original wish budget %d", body.BudgetSats, wishBudget))
+			return nil, 0, FailKind(http.StatusBadRequest, KindBudgetExceeded, fmt.Sprintf("proposal budget_sats %d exceeds original wish budget %d", body.BudgetSats, wishBudget))
 		}
 	}
 	if len(body.Tasks) == 0 && strings.TrimSpace(body.DescriptionMD) != "" {
@@ -393,7 +394,7 @@ func (s *ProposalService) Create(ctx context.Context, body ProposalCreateInput) 
 		Status: body.Status, CreatedAt: time.Now(), Tasks: body.Tasks, Metadata: body.Metadata,
 	}
 	if err := s.store.CreateProposal(ctx, p); err != nil {
-		return nil, 0, Fail(http.StatusBadRequest, err.Error())
+		return nil, 0, createStoreError(err)
 	}
 	s.emit(smart_contract.Event{
 		Type: "proposal_create", EntityID: p.ID, Actor: s.eventActor(body.APIKey),
@@ -749,6 +750,24 @@ func (s *ProposalService) eventActor(apiKey string) string {
 		return ""
 	}
 	return strings.TrimSpace(rec.Wallet)
+}
+
+// createStoreError attaches a Kind to the store's create refusals so a caller
+// can tell them apart. All three are 400 to REST, so status cannot separate
+// them; the MCP surface used to match on message substrings, which meant
+// rewording a store error silently downgraded a specific error code to a generic
+// internal one. Classification is by sentinel, and it lives here rather than in
+// each surface so the surfaces cannot drift on it.
+func createStoreError(err error) error {
+	switch {
+	case errors.Is(err, scstore.ErrProposalLimitReached):
+		return FailKind(http.StatusBadRequest, KindProposalLimitReached, err.Error())
+	case errors.Is(err, scstore.ErrProposalAlreadyFinalized):
+		return FailKind(http.StatusBadRequest, KindProposalAlreadyFinalized, err.Error())
+	case errors.Is(err, scstore.ErrTaskBudgetMismatch):
+		return FailKind(http.StatusBadRequest, KindBudgetMismatch, err.Error())
+	}
+	return Fail(http.StatusBadRequest, err.Error())
 }
 
 func applyCreatorWallet(meta map[string]interface{}, apiKey string, apiKeys auth.APIKeyValidator) {
