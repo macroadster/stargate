@@ -145,6 +145,9 @@ func (api *DataAPI) listAvailableBlockHeights() []int64 {
 		if err != nil || !d.IsDir() {
 			return nil
 		}
+		if bitcoin.IsArchivedBlockPath(baseDir, path) {
+			return filepath.SkipDir
+		}
 		name := d.Name()
 		if idx := strings.Index(name, "_"); idx > 0 {
 			if h, err := strconv.ParseInt(name[:idx], 10, 64); err == nil && h > 0 {

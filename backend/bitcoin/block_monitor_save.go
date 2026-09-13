@@ -77,6 +77,28 @@ func FindBlockDir(blocksRoot string, height int64) (string, error) {
 	return "", fmt.Errorf("no block directory found for height %d under %s", height, blocksRoot)
 }
 
+// IsArchivedBlockPath reports whether path sits under an inactive tree of
+// blocksRoot (reorgs/ or a leading _archive dir). Walks of the live blocks
+// tree must skip these so empty pre-scan / orphaned copies cannot overwrite
+// the canonical height in the hot cache.
+func IsArchivedBlockPath(blocksRoot, path string) bool {
+	if blocksRoot == "" || path == "" {
+		return false
+	}
+	rel, err := filepath.Rel(blocksRoot, path)
+	if err != nil || rel == "." || rel == "" {
+		return false
+	}
+	if strings.HasPrefix(rel, "..") {
+		return false
+	}
+	first := rel
+	if i := strings.IndexAny(rel, `/\`); i >= 0 {
+		first = rel[:i]
+	}
+	return first == "reorgs" || strings.HasPrefix(first, "_")
+}
+
 // getBlockHashForDir returns the stored block hash for a block directory.
 // Tries block.json first (for full data), falls back to inscriptions.json "block_hash"
 // (works for lightweight "metadata only" boring blocks).

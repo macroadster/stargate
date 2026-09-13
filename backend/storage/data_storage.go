@@ -406,6 +406,12 @@ func (ds *DataStorage) loadCache() {
 		if walkErr != nil || !d.IsDir() {
 			return nil
 		}
+		// reorgs/ and _archive trees are not live data. WalkDir visits them
+		// after 000/, so loading them would overwrite the canonical height
+		// with an empty pre-scan copy (thumbnail on disk, 0 inscriptions in API).
+		if bitcoin.IsArchivedBlockPath(ds.dataDir, path) {
+			return filepath.SkipDir
+		}
 		// Look for a directory whose name starts with digits_ (the leaf block dir)
 		name := d.Name()
 		underscore := strings.Index(name, "_")
@@ -428,10 +434,12 @@ func (ds *DataStorage) loadCache() {
 		}
 
 		var blockInfo struct {
-			BlockHash      string `json:"block_hash"`
-			BlockHeight    int64  `json:"block_height"`
-			Timestamp      int64  `json:"timestamp"`
-			Images         []struct {
+			BlockHash         string `json:"block_hash"`
+			BlockHeight       int64  `json:"block_height"`
+			Timestamp         int64  `json:"timestamp"`
+			TxCount           int    `json:"tx_count"`
+			TotalTransactions int    `json:"total_transactions"`
+			Images            []struct {
 				TxID      string `json:"tx_id"`
 				Format    string `json:"format"`
 				SizeBytes int    `json:"size_bytes"`
@@ -451,10 +459,15 @@ func (ds *DataStorage) loadCache() {
 		if contracts == nil {
 			contracts = make([]bitcoin.SmartContractData, 0)
 		}
+		txCount := blockInfo.TxCount
+		if txCount == 0 {
+			txCount = blockInfo.TotalTransactions
+		}
 		cacheEntry := &BlockDataCache{
 			BlockHeight:    blockInfo.BlockHeight,
 			BlockHash:      blockInfo.BlockHash,
 			Timestamp:      blockInfo.Timestamp,
+			TxCount:        txCount,
 			Inscriptions:   make([]bitcoin.InscriptionData, len(blockInfo.Images)),
 			Images:         make([]bitcoin.ExtractedImageData, len(blockInfo.Images)),
 			SmartContracts: contracts,
@@ -492,7 +505,15 @@ func (ds *DataStorage) loadCache() {
 			}
 		}
 
-		// Store in cache
+		// Same height can appear twice if a walk leaks into reorgs/. Keep the
+		// richer record so an empty orphan cannot clobber a scanned block.
+		if existing, ok := ds.cache[blockInfo.BlockHeight]; ok {
+			incomingScore := len(blockInfo.Images)*1000 + txCount
+			existingScore := len(existing.Images)*1000 + existing.TxCount
+			if existingScore >= incomingScore {
+				return nil
+			}
+		}
 		ds.cache[blockInfo.BlockHeight] = cacheEntry
 		loadedCount++
 		return nil
