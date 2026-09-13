@@ -919,6 +919,7 @@ func (s *Server) extractSandboxTarball(contractID string, tarballBytes []byte, r
 	defer gr.Close()
 	tr := tar.NewReader(gr)
 	fileCount := 0
+	headerCount := 0
 	var totalBytes int64
 	for {
 		hdr, err := tr.Next()
@@ -929,12 +930,16 @@ func (s *Server) extractSandboxTarball(contractID string, tarballBytes []byte, r
 			log.Printf("sandbox: tar read error for %s: %v", contractID, err)
 			return
 		}
-		if hdr.Typeflag != tar.TypeReg {
-			continue
-		}
-		if fileCount >= sandboxMaxEntries {
+		// Count every header, including ones we later skip. Counting only
+		// successful writes left traversal / oversized / non-regular entries
+		// unbounded and let a valid file land after the cap.
+		headerCount++
+		if headerCount > sandboxMaxEntries {
 			log.Printf("sandbox: entry cap %d reached for %s, stopping", sandboxMaxEntries, contractID)
 			return
+		}
+		if hdr.Typeflag != tar.TypeReg {
+			continue
 		}
 		if hdr.Size < 0 || hdr.Size > sandboxMaxFileBytes {
 			log.Printf("sandbox: skipping oversized entry %s (%d bytes) for %s", hdr.Name, hdr.Size, contractID)

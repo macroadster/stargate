@@ -348,6 +348,33 @@ func TestExtractSandboxTarball_CapsEntryCount(t *testing.T) {
 	}
 }
 
+func TestExtractSandboxTarball_EntryCapCountsSkippedHeaders(t *testing.T) {
+	old := sandboxMaxEntries
+	sandboxMaxEntries = 2
+	t.Cleanup(func() { sandboxMaxEntries = old })
+
+	parent := t.TempDir()
+	dir := filepath.Join(parent, "results")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{}
+	// Three skipped headers (traversal) then a valid file. The valid entry
+	// must never be processed: the cap is on headers, not successful writes.
+	s.extractSandboxTarball("wish-skipcap", gzipTar(t,
+		tarFile{"../a.txt", []byte("nope")},
+		tarFile{"../b.txt", []byte("nope")},
+		tarFile{"../c.txt", []byte("nope")},
+		tarFile{"ok.txt", []byte("yes")},
+	), dir)
+	if _, err := os.Stat(filepath.Join(dir, "ok.txt")); err == nil {
+		t.Fatal("valid entry after >cap skipped headers was processed")
+	}
+	if _, err := os.Stat(filepath.Join(parent, "a.txt")); err == nil {
+		t.Fatal("traversal wrote outside results dir")
+	}
+}
+
 func TestExtractSandboxTarball_CapsFileBytes(t *testing.T) {
 	old := sandboxMaxFileBytes
 	sandboxMaxFileBytes = 8
