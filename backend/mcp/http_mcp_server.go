@@ -1177,17 +1177,18 @@ func (h *HTTPMCPServer) authorizer() scmiddleware.WishCreatorAuthorizer {
 }
 
 func (h *HTTPMCPServer) requireAuthorizedApprover(apiKey string, proposal smart_contract.Proposal) error {
-	return h.authorizer().Authorize(apiKey, scmiddleware.ProposalWishHash(proposal), "proposal "+proposal.ID)
+	return h.authorizer().Authorize(apiKey, scmiddleware.ProposalWishHash(proposal), "proposal "+proposal.ID, scmiddleware.AllowOnMissingCreator)
 }
 
 // authorizeSubmissionReview enforces the same wish-creator rule as the REST
-// route for approve/reject of a submission.
+// route for approve/reject of a submission, including denying when no creator
+// can be established.
 func (h *HTTPMCPServer) authorizeSubmissionReview(ctx context.Context, apiKey, submissionID string, submission smart_contract.Submission) error {
 	hash, err := scmiddleware.SubmissionWishHash(h.store, submission)
 	if err != nil {
 		return err
 	}
-	return h.authorizer().Authorize(apiKey, hash, "submission "+submissionID)
+	return h.authorizer().Authorize(apiKey, hash, "submission "+submissionID, scmiddleware.DenyOnMissingCreator)
 }
 
 func (h *HTTPMCPServer) handleScanImage(ctx context.Context, args map[string]interface{}) (interface{}, error) {

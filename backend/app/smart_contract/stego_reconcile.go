@@ -423,6 +423,10 @@ func (s *Server) ensureStegoIngestion(ctx context.Context, contractID, stegoCID,
 		"stego_manifest_created_at": manifest.CreatedAt,
 		"origin_proposal_id":        manifest.ProposalID,
 		"visible_pixel_hash":        manifest.VisiblePixelHash,
+		// No creator_wallet: the only creator identity on the wire is the stego
+		// payload, which is untrusted. Marking the record replicated lets
+		// authorization report that accurately rather than as missing data.
+		"stego_replicated": true,
 	}
 	// Determine appropriate steganography method based on image format
 	stegoMethod := getStegoMethodFromImage(stegoBytes, "stego.png")

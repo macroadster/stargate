@@ -3,6 +3,7 @@ package smart_contract
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -142,7 +143,7 @@ func TestSubmissionWishHashStripsContractPrefix(t *testing.T) {
 func TestWishCreatorAuthorizerRequiresWalletBinding(t *testing.T) {
 	a := WishCreatorAuthorizer{keysWithoutWallet(), nil}
 
-	if err := a.Authorize("key-nowallet", testWishHash, "proposal p1"); err == nil {
+	if err := a.Authorize("key-nowallet", testWishHash, "proposal p1", AllowOnMissingCreator); err == nil {
 		t.Fatal("expected a key with no wallet binding to be denied, got nil")
 	}
 }
@@ -153,8 +154,58 @@ func TestWishCreatorAuthorizerAllowsGlobalAuditor(t *testing.T) {
 		testStrangerKey: {Key: testStrangerKey, Wallet: testStrangerWlt},
 	}}}
 
-	if err := a.Authorize(testStrangerKey, testWishHash, "proposal p1"); err != nil {
+	if err := a.Authorize(testStrangerKey, testWishHash, "proposal p1", DenyOnMissingCreator); err != nil {
 		t.Fatalf("expected the donation address to act as global auditor, got %v", err)
+	}
+}
+
+// The two policies must diverge on an unresolvable creator, since that is the
+// whole point of the distinction: proposals keep the pre-existing allowance,
+// payouts do not.
+func TestMissingCreatorPolicyDivergesOnUnknownWish(t *testing.T) {
+	srv, _ := authzFixture(t)
+	a := srv.authorizer()
+	const unknown = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+
+	if err := a.Authorize(testStrangerKey, unknown, "proposal p1", AllowOnMissingCreator); err != nil {
+		t.Fatalf("proposal approval should retain its allowance until irl.2, got %v", err)
+	}
+	if err := a.Authorize(testStrangerKey, unknown, "submission s1", DenyOnMissingCreator); err == nil {
+		t.Fatal("expected payout review to deny an unresolvable creator, got nil")
+	}
+}
+
+// Replicated wishes are the realistic way to reach the missing-creator branch,
+// and the denial should name that cause so operators do not chase absent data.
+func TestDenyOnMissingCreatorExplainsReplicatedWish(t *testing.T) {
+	srv, _ := authzFixture(t)
+	const replicated = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+	if err := srv.ingestionSvc.Create(ingestion.IngestionRecord{
+		ID:        replicated,
+		Filename:  "stego.png",
+		Status:    "verified",
+		CreatedAt: time.Now(),
+		Metadata:  map[string]interface{}{"stego_replicated": true},
+	}); err != nil {
+		t.Fatalf("seed replicated ingestion: %v", err)
+	}
+
+	err := srv.authorizer().Authorize(testStrangerKey, replicated, "submission s1", DenyOnMissingCreator)
+	if err == nil {
+		t.Fatal("expected a replicated wish to deny payout review, got nil")
+	}
+	if !strings.Contains(err.Error(), "replicated from another node") {
+		t.Fatalf("error should explain the replica case, got %q", err)
+	}
+}
+
+// A wallet that owns the wish must still be allowed under the strict policy;
+// failing closed should not degrade into denying everyone.
+func TestDenyOnMissingCreatorStillAllowsOwner(t *testing.T) {
+	srv, _ := authzFixture(t)
+
+	if err := srv.authorizer().Authorize(testCreatorKey, testWishHash, "submission s1", DenyOnMissingCreator); err != nil {
+		t.Fatalf("expected the wish creator to be allowed under the strict policy, got %v", err)
 	}
 }
 
