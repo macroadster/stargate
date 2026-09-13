@@ -574,9 +574,30 @@ func TestProposalCreationRequiresWish(t *testing.T) {
 	t.Run("approve_proposal_requires_wish", func(t *testing.T) {
 		apiKey := "approve-test-key"
 		creatorWallet := "tb1qcreatorwallet000000000000000000000000000"
-		// Use walletValidator so the API key has a wallet binding
-		walletServer := NewHTTPMCPServer(store, walletValidator{wallet: creatorWallet}, nil, ingestionSvc, scannerManager, nil, auth.NewChallengeStore(10*time.Minute))
 		visibleHash := strings.Repeat("a", 64)
+
+		// Since irl.2 an unidentifiable wish creator denies approval, so this
+		// subtest needs a real ingestion record naming the key's wallet as
+		// creator. Without it the request is refused before reaching the
+		// missing-wish check that this subtest exists to cover. It previously
+		// relied on the fail-open allowance to get that far.
+		testDB := filepath.Join(t.TempDir(), "requires-wish.db")
+		testIngestionSvc, err := services.NewIngestionService(testDB)
+		if err != nil {
+			t.Fatalf("failed to create ingestion service: %v", err)
+		}
+		if err := testIngestionSvc.Create(services.IngestionRecord{
+			ID:       visibleHash,
+			Filename: "test.png",
+			Method:   "test",
+			Status:   "completed",
+			Metadata: map[string]interface{}{"creator_wallet": creatorWallet},
+		}); err != nil {
+			t.Fatalf("failed to seed ingestion record: %v", err)
+		}
+
+		// Use walletValidator so the API key has a wallet binding
+		walletServer := NewHTTPMCPServer(store, walletValidator{wallet: creatorWallet}, nil, testIngestionSvc, scannerManager, nil, auth.NewChallengeStore(10*time.Minute))
 		proposal := smart_contract.Proposal{
 			ID:               "proposal-approve-test",
 			Title:            "Approve proposal",

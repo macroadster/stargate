@@ -1206,7 +1206,7 @@ func (h *HTTPMCPServer) authorizer() scmiddleware.WishCreatorAuthorizer {
 }
 
 func (h *HTTPMCPServer) requireAuthorizedApprover(apiKey string, proposal smart_contract.Proposal) error {
-	_, err := h.authorizer().Authorize(apiKey, scmiddleware.ProposalWishHash(proposal), "proposal "+proposal.ID, scmiddleware.AllowOnMissingCreator)
+	_, err := h.authorizer().Authorize(apiKey, scmiddleware.ProposalWishHash(proposal), "proposal "+proposal.ID)
 	return err
 }
 

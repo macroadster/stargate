@@ -184,7 +184,7 @@ func TestSubmissionWishHashStripsContractPrefix(t *testing.T) {
 func TestWishCreatorAuthorizerRequiresWalletBinding(t *testing.T) {
 	a := WishCreatorAuthorizer{keysWithoutWallet(), nil}
 
-	if _, err := a.Authorize("key-nowallet", testWishHash, "proposal p1", AllowOnMissingCreator); err == nil {
+	if _, err := a.Authorize("key-nowallet", testWishHash, "proposal p1"); err == nil {
 		t.Fatal("expected a key with no wallet binding to be denied, got nil")
 	}
 }
@@ -195,7 +195,7 @@ func TestWishCreatorAuthorizerAllowsGlobalAuditor(t *testing.T) {
 		testStrangerKey: {Key: testStrangerKey, Wallet: testStrangerWlt},
 	}}}
 
-	wallet, err := a.Authorize(testStrangerKey, testWishHash, "proposal p1", DenyOnMissingCreator)
+	wallet, err := a.Authorize(testStrangerKey, testWishHash, "proposal p1")
 	if err != nil {
 		t.Fatalf("expected the donation address to act as global auditor, got %v", err)
 	}
@@ -205,25 +205,23 @@ func TestWishCreatorAuthorizerAllowsGlobalAuditor(t *testing.T) {
 	}
 }
 
-// The two policies must diverge on an unresolvable creator, since that is the
-// whole point of the distinction: proposals keep the pre-existing allowance,
-// payouts do not.
-func TestMissingCreatorPolicyDivergesOnUnknownWish(t *testing.T) {
+// An unresolvable creator now denies on both paths. Proposal approval used to be
+// allowed here, which is what irl.2 closed; the two must not diverge again.
+func TestMissingCreatorDeniesProposalsAndSubmissions(t *testing.T) {
 	srv, _ := authzFixture(t)
 	a := srv.authorizer()
 	const unknown = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
 
-	if _, err := a.Authorize(testStrangerKey, unknown, "proposal p1", AllowOnMissingCreator); err != nil {
-		t.Fatalf("proposal approval should retain its allowance until irl.2, got %v", err)
-	}
-	if _, err := a.Authorize(testStrangerKey, unknown, "submission s1", DenyOnMissingCreator); err == nil {
-		t.Fatal("expected payout review to deny an unresolvable creator, got nil")
+	for _, subject := range []string{"proposal p1", "submission s1"} {
+		if _, err := a.Authorize(testStrangerKey, unknown, subject); err == nil {
+			t.Fatalf("expected %s to be denied when no creator can be established, got nil", subject)
+		}
 	}
 }
 
 // Replicated wishes are the realistic way to reach the missing-creator branch,
 // and the denial should name that cause so operators do not chase absent data.
-func TestDenyOnMissingCreatorExplainsReplicatedWish(t *testing.T) {
+func TestMissingCreatorDenialExplainsReplicatedWish(t *testing.T) {
 	srv, _ := authzFixture(t)
 	const replicated = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
 	if err := srv.ingestionSvc.Create(ingestion.IngestionRecord{
@@ -236,7 +234,7 @@ func TestDenyOnMissingCreatorExplainsReplicatedWish(t *testing.T) {
 		t.Fatalf("seed replicated ingestion: %v", err)
 	}
 
-	_, err := srv.authorizer().Authorize(testStrangerKey, replicated, "submission s1", DenyOnMissingCreator)
+	_, err := srv.authorizer().Authorize(testStrangerKey, replicated, "submission s1")
 	if err == nil {
 		t.Fatal("expected a replicated wish to deny payout review, got nil")
 	}
@@ -247,10 +245,10 @@ func TestDenyOnMissingCreatorExplainsReplicatedWish(t *testing.T) {
 
 // A wallet that owns the wish must still be allowed under the strict policy;
 // failing closed should not degrade into denying everyone.
-func TestDenyOnMissingCreatorStillAllowsOwner(t *testing.T) {
+func TestMissingCreatorDenialStillAllowsOwner(t *testing.T) {
 	srv, _ := authzFixture(t)
 
-	if _, err := srv.authorizer().Authorize(testCreatorKey, testWishHash, "submission s1", DenyOnMissingCreator); err != nil {
+	if _, err := srv.authorizer().Authorize(testCreatorKey, testWishHash, "submission s1"); err != nil {
 		t.Fatalf("expected the wish creator to be allowed under the strict policy, got %v", err)
 	}
 }

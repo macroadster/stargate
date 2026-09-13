@@ -52,9 +52,26 @@ func TestApproveProposalRequiresWishContract(t *testing.T) {
 		},
 	}
 
-	server := NewServer(store, mockStore, nil)
-
 	visibleHash := strings.Repeat("b", 64)
+
+	// Since irl.2 an unidentifiable wish creator denies approval, so the server
+	// needs an ingestion record naming this key's wallet as creator. Without it
+	// the request is refused before reaching the missing-contract check this test
+	// exists to cover; it previously relied on the fail-open allowance.
+	ingestSvc, err := services.NewIngestionService(filepath.Join(t.TempDir(), "requires-contract.db"))
+	if err != nil {
+		t.Fatalf("ingestion service: %v", err)
+	}
+	if err := ingestSvc.Create(services.IngestionRecord{
+		ID:       visibleHash,
+		Filename: "wish.png",
+		Status:   "completed",
+		Metadata: map[string]interface{}{"creator_wallet": creatorWallet},
+	}); err != nil {
+		t.Fatalf("seed ingestion: %v", err)
+	}
+
+	server := NewServer(store, mockStore, ingestSvc)
 	proposal := smart_contract.Proposal{
 		ID:               "proposal-approve-rest",
 		Title:            "Approve proposal",
