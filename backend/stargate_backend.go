@@ -9,7 +9,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
-	_ "net/http/pprof" // registers pprof handlers on http.DefaultServeMux for CPU/memory profiling
+	_ "net/http/pprof" // registers on DefaultServeMux; only mounted when STARGATE_PPROF=true
 	"os"
 	"path/filepath"
 	"runtime"
@@ -18,21 +18,21 @@ import (
 	"sync"
 	"time"
 
-	"stargate-backend/api"
 	"stargate-backend/agents"
+	"stargate-backend/api"
+	scmiddleware "stargate-backend/app/smart_contract"
 	"stargate-backend/bitcoin"
 	"stargate-backend/container"
 	"stargate-backend/core/smart_contract"
 	"stargate-backend/handlers"
-	"stargate-backend/storage/ipfs"
 	"stargate-backend/mcp"
 	"stargate-backend/middleware"
-	scmiddleware "stargate-backend/app/smart_contract"
 	"stargate-backend/services"
 	"stargate-backend/starlight"
 	"stargate-backend/storage"
 	auth "stargate-backend/storage/auth"
-       "stargate-backend/storage/datadir"
+	"stargate-backend/storage/datadir"
+	"stargate-backend/storage/ipfs"
 	scstore "stargate-backend/storage/smart_contract"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -145,9 +145,9 @@ func customUploadsHandler(uploadsDir string) http.HandlerFunc {
 			return
 		}
 
-               // Resolve path through the partition layout (tries
-               // partitioned ab/cd/ef/<key> first, then flat fallback).
-               filePath := datadir.ResolveUploadRelPath(uploadsDir, relPath)
+		// Resolve path through the partition layout (tries
+		// partitioned ab/cd/ef/<key> first, then flat fallback).
+		filePath := datadir.ResolveUploadRelPath(uploadsDir, relPath)
 
 		// Security check: ensure the cleaned path is still within uploads directory
 		if !strings.HasPrefix(filepath.Clean(filePath), uploadsDir) {
@@ -426,12 +426,12 @@ func main() {
 	// Ensure consistent data paths
 	consolidateEnvironmentPaths()
 
-       // Migrate flat uploads into three-level partitioned layout (idempotent).
-       if uDir := os.Getenv("UPLOADS_DIR"); uDir != "" {
-               if err := datadir.MigrateUploads(uDir); err != nil {
-                       log.Printf("WARNING: uploads partition migration failed: %v", err)
-               }
-       }
+	// Migrate flat uploads into three-level partitioned layout (idempotent).
+	if uDir := os.Getenv("UPLOADS_DIR"); uDir != "" {
+		if err := datadir.MigrateUploads(uDir); err != nil {
+			log.Printf("WARNING: uploads partition migration failed: %v", err)
+		}
+	}
 
 	// Initialize MCP components (needed for both server and background)
 	store, apiKeyIssuer, apiKeyValidator, ingestionSvc, challengeStore := initializeMCPComponents()
@@ -614,8 +614,12 @@ func runHTTPServer(store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, api
 	log.Printf("MCP HTTP tools at: http://localhost:%s/mcp/tools", httpPort)
 	log.Printf("MCP HTTP calls at: http://localhost:%s/mcp/call", httpPort)
 	log.Printf("Proxy to steganography API (port 8080) at: http://localhost:%s/stego/", httpPort)
-	log.Printf("Metrics at: http://localhost:%s/metrics", httpPort)
-	log.Printf("pprof (CPU/heap/goroutine profiling) at: http://localhost:%s/debug/pprof/", httpPort)
+	if diagnosticsEnabled("STARGATE_METRICS") {
+		log.Printf("Metrics (loopback only) at: http://localhost:%s/metrics", httpPort)
+	}
+	if diagnosticsEnabled("STARGATE_PPROF") {
+		log.Printf("pprof (loopback only) at: http://localhost:%s/debug/pprof/", httpPort)
+	}
 	log.Printf("Runtime info: GOMAXPROCS=%d numCPU=%d", runtime.GOMAXPROCS(0), runtime.NumCPU())
 
 	// Lightweight periodic diagnostic heartbeat to correlate CPU with activity.
@@ -701,13 +705,7 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 		http.Redirect(w, r, "/api/docs/swagger.html", http.StatusFound)
 	})
 
-	mux.Handle("/metrics", promhttp.Handler())
-
-	// pprof for runtime profiling (CPU, heap, goroutines, etc). Use:
-	//   go tool pprof http://localhost:PORT/debug/pprof/profile?seconds=30
-	//   go tool pprof http://localhost:PORT/debug/pprof/heap
-	//   curl http://localhost:PORT/debug/pprof/goroutine?debug=1
-	mux.Handle("/debug/pprof/", http.DefaultServeMux)
+	registerDiagnosticRoutes(mux)
 
 	// Inscription endpoints
 	mux.HandleFunc("/api/inscriptions", container.InscriptionHandler.HandleGetInscriptions)
@@ -749,24 +747,24 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 	_ = os.MkdirAll(uploadsDir, 0755)
 	mux.HandleFunc("/uploads/", customUploadsHandler(uploadsDir))
 
-       // Serve sandbox files (alias for /uploads/results).
-       // Uses partition-aware resolution so /sandbox/<hash>/file resolves to
-       // results/ab/cd/ef/<hash>/file on disk.
+	// Serve sandbox files (alias for /uploads/results).
+	// Uses partition-aware resolution so /sandbox/<hash>/file resolves to
+	// results/ab/cd/ef/<hash>/file on disk.
 	resultsDir := filepath.Join(uploadsDir, "results")
 	_ = os.MkdirAll(resultsDir, 0755)
-       mux.HandleFunc("/sandbox/", func(w http.ResponseWriter, r *http.Request) {
-               rel := strings.TrimPrefix(r.URL.Path, "/sandbox/")
-               if rel == "" || rel == "." {
-                       http.NotFound(w, r)
-                       return
-               }
-               resolved := datadir.ResolveUploadRelPath(uploadsDir, "results/"+rel)
-               if !strings.HasPrefix(filepath.Clean(resolved), filepath.Clean(resultsDir)) {
-                       http.Error(w, "Forbidden", http.StatusForbidden)
-                       return
-               }
-               http.ServeFile(w, r, resolved)
-       })
+	mux.HandleFunc("/sandbox/", func(w http.ResponseWriter, r *http.Request) {
+		rel := strings.TrimPrefix(r.URL.Path, "/sandbox/")
+		if rel == "" || rel == "." {
+			http.NotFound(w, r)
+			return
+		}
+		resolved := datadir.ResolveUploadRelPath(uploadsDir, "results/"+rel)
+		if !strings.HasPrefix(filepath.Clean(resolved), filepath.Clean(resultsDir)) {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+		http.ServeFile(w, r, resolved)
+	})
 
 	// Serve frontend files from embedded FS
 	frontendFS, _ := fs.Sub(frontendAssets, "assets/frontend")
@@ -967,7 +965,7 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 
 		// Fallback: check UPLOADS_DIR (images received via IPFS or local creation)
 		if uDir := os.Getenv("UPLOADS_DIR"); uDir != "" {
-                       uploadPath := datadir.PartResolve(uDir, filename)
+			uploadPath := datadir.PartResolve(uDir, filename)
 			if !strings.HasPrefix(filepath.Clean(uploadPath), filepath.Clean(uDir)) {
 				http.Error(w, "Invalid filename", http.StatusBadRequest)
 				return
@@ -1015,6 +1013,29 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 
 	log.Printf("All routes registered, returning handler")
 	return mux, mcpRestServer
+}
+
+// diagnosticsEnabled is the opt-in gate for /metrics and /debug/pprof.
+// Unset or anything other than 1/true/yes/on leaves the route unregistered.
+func diagnosticsEnabled(key string) bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
+	return v == "1" || v == "true" || v == "yes" || v == "on"
+}
+
+// registerDiagnosticRoutes mounts /metrics and /debug/pprof only when the
+// matching env is set. Both stay loopback-only even then: the process binds
+// 0.0.0.0, and heap dumps / node topology must not be reachable from the
+// network. Off by default (irl.4).
+func registerDiagnosticRoutes(mux *http.ServeMux) {
+	if diagnosticsEnabled("STARGATE_METRICS") {
+		mux.Handle("/metrics", middleware.LoopbackOnly(promhttp.Handler()))
+	}
+	if diagnosticsEnabled("STARGATE_PPROF") {
+		// pprof for runtime profiling (CPU, heap, goroutines). Use:
+		//   go tool pprof http://localhost:PORT/debug/pprof/profile?seconds=30
+		//   go tool pprof http://localhost:PORT/debug/pprof/heap
+		mux.Handle("/debug/pprof/", middleware.LoopbackOnly(http.DefaultServeMux))
+	}
 }
 
 type mirrorState struct {

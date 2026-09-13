@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"log"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -56,5 +58,83 @@ func TestInitializeMCPComponentsFallsBackToMemoryWhenSQLiteInitFails(t *testing.
 	}
 	if !strings.Contains(logOutput, "Components initialized with memory store") {
 		t.Fatalf("expected actual memory store log, got %q", logOutput)
+	}
+}
+
+func TestDiagnosticsEnabled(t *testing.T) {
+	t.Setenv("STARGATE_METRICS", "")
+	if diagnosticsEnabled("STARGATE_METRICS") {
+		t.Fatal("empty must be off")
+	}
+	for _, v := range []string{"0", "false", "no", "off", "maybe", "enabled"} {
+		t.Setenv("STARGATE_METRICS", v)
+		if diagnosticsEnabled("STARGATE_METRICS") {
+			t.Fatalf("%q must be off", v)
+		}
+	}
+	for _, v := range []string{"1", "true", "TRUE", "TRUE ", " yes ", "On"} {
+		t.Setenv("STARGATE_METRICS", v)
+		if !diagnosticsEnabled("STARGATE_METRICS") {
+			t.Fatalf("%q must be on", v)
+		}
+	}
+}
+
+func TestRegisterDiagnosticRoutesOffByDefault(t *testing.T) {
+	t.Setenv("STARGATE_METRICS", "")
+	t.Setenv("STARGATE_PPROF", "")
+
+	mux := http.NewServeMux()
+	registerDiagnosticRoutes(mux)
+
+	for _, path := range []string{"/metrics", "/debug/pprof/", "/debug/pprof/heap"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.RemoteAddr = "127.0.0.1:1"
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("%s registered while unset: %d", path, w.Code)
+		}
+	}
+}
+
+func TestRegisterDiagnosticRoutesOptInIsLoopbackOnly(t *testing.T) {
+	t.Setenv("STARGATE_METRICS", "1")
+	t.Setenv("STARGATE_PPROF", "true")
+
+	mux := http.NewServeMux()
+	registerDiagnosticRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req.RemoteAddr = "127.0.0.1:1"
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code == http.StatusNotFound || w.Code == http.StatusForbidden {
+		t.Fatalf("loopback metrics: %d", w.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/debug/pprof/", nil)
+	req.RemoteAddr = "[::1]:1"
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code == http.StatusNotFound || w.Code == http.StatusForbidden {
+		t.Fatalf("loopback pprof: %d", w.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req.RemoteAddr = "8.8.8.8:443"
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("public metrics: %d", w.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/debug/pprof/", nil)
+	req.RemoteAddr = "8.8.8.8:443"
+	req.Header.Set("X-Forwarded-For", "127.0.0.1")
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("spoofed pprof: %d", w.Code)
 	}
 }

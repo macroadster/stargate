@@ -183,6 +183,8 @@ func TestRunCLIEnv(t *testing.T) {
 	t.Setenv("STARGATE_HTTP_PORT", "7777")
 	t.Setenv("STARGATE_DATA_DIR", "/var/lib/stargate")
 	t.Setenv("STARGATE_API_KEY", "supersecrettoken")
+	t.Setenv("STARGATE_METRICS", "")
+	t.Setenv("STARGATE_PPROF", "")
 
 	var stdout, stderr bytes.Buffer
 	handled, code := runCLI([]string{"env"}, &stdout, &stderr)
@@ -215,6 +217,18 @@ func TestRunCLIEnv(t *testing.T) {
 	}
 	if m["STARGATE_HTTP_PORT"] != "7777" {
 		t.Fatalf("json port: %#v", m["STARGATE_HTTP_PORT"])
+	}
+	if m["STARGATE_METRICS"] != "false" {
+		t.Fatalf("json metrics default: %#v", m["STARGATE_METRICS"])
+	}
+	if m["STARGATE_PPROF"] != "false" {
+		t.Fatalf("json pprof default: %#v", m["STARGATE_PPROF"])
+	}
+	if !strings.Contains(out, "STARGATE_METRICS") {
+		t.Fatalf("missing STARGATE_METRICS in env table: %q", out)
+	}
+	if !strings.Contains(out, "STARGATE_PPROF") {
+		t.Fatalf("missing STARGATE_PPROF in env table: %q", out)
 	}
 }
 
