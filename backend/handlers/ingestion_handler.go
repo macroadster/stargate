@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"stargate-backend/services"
@@ -30,15 +31,19 @@ type ingestRequest struct {
 }
 
 func NewIngestionHandler(service *services.IngestionService) *IngestionHandler {
-	return &IngestionHandler{
+	h := &IngestionHandler{
 		service:   service,
 		ingestKey: os.Getenv("STARGATE_INGEST_TOKEN"),
 	}
+	if h.ingestKey == "" {
+		log.Printf("SECURITY: STARGATE_INGEST_TOKEN is unset; token-protected ingestion endpoints will reject requests")
+	}
+	return h
 }
 
 func (h *IngestionHandler) authorize(r *http.Request) bool {
 	if h.ingestKey == "" {
-		return true
+		return false
 	}
 	token := r.Header.Get("X-Ingest-Token")
 	return token != "" && token == h.ingestKey
