@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	scservices "stargate-backend/app/smart_contract/services"
 	"stargate-backend/core/smart_contract"
 	"stargate-backend/services"
 	auth "stargate-backend/storage/auth"
@@ -162,20 +163,9 @@ func ProposalWishHash(p smart_contract.Proposal) string {
 // It returns an error rather than an empty hash when the chain cannot be walked,
 // so callers fail closed instead of authorizing against an unknown wish.
 func SubmissionWishHash(store Store, sub smart_contract.Submission) (string, error) {
-	taskID := strings.TrimSpace(sub.TaskID)
-	if taskID == "" {
-		claimID := strings.TrimSpace(sub.ClaimID)
-		if claimID == "" {
-			return "", fmt.Errorf("submission %s has neither task nor claim, cannot resolve wish creator", sub.SubmissionID)
-		}
-		claim, err := store.GetClaim(claimID)
-		if err != nil {
-			return "", fmt.Errorf("cannot resolve claim %s for submission %s: %w", claimID, sub.SubmissionID, err)
-		}
-		taskID = strings.TrimSpace(claim.TaskID)
-		if taskID == "" {
-			return "", fmt.Errorf("claim %s has no task, cannot resolve wish creator", claimID)
-		}
+	taskID, err := scservices.SubmissionTaskID(store, sub)
+	if err != nil {
+		return "", fmt.Errorf("cannot resolve wish creator: %w", err)
 	}
 
 	task, err := store.GetTask(taskID)
