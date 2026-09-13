@@ -2,6 +2,9 @@
 
 ## Beads Workflow
 
+- Required CLI: `bd` 1.2.2 or newer. Check with `bd version` before reading or
+  updating the tracker; older clients are not compatible with this repository's
+  Dolt-backed state.
 - Issue lifecycle: `bd ready` → `bd update <id> --status in_progress` → work → `bd close <id>`.
 - Keep bd synced with git: prefer working inside `stargate/` so bd can read git status.
 
@@ -12,7 +15,7 @@ bd ready              # Find available work
 bd show <id>          # View issue details
 bd update <id> --status in_progress  # Claim work
 bd close <id>         # Complete work
-bd sync               # Sync with git
+bd export -o .beads/issues.jsonl  # Export tracker state for git
 ```
 
 ## Issue Tracking with bd (beads)
@@ -100,12 +103,18 @@ bd close bd-42 --reason "Completed" --json
 - Getting stuck on build/deployment issues
 - Blaming "image not deployed" when code is wrong
 
-### Auto-Sync
+### Git Export
 
-bd automatically syncs with git:
-- Exports to `.beads/issues.jsonl` after changes (5s debounce)
-- Imports from JSONL when newer (e.g., after `git pull`)
-- No manual export/import needed!
+Do not rely on automatic export, and do not run `bd sync` (that command does
+not exist in bd 1.2.2). After any tracker change, explicitly run:
+
+```bash
+bd export -o .beads/issues.jsonl
+```
+
+Review and commit the resulting `.beads/issues.jsonl` change with the code it
+tracks. After pulling a newer JSONL into an empty or stale local database,
+follow the import guidance reported by `bd doctor` for the installed CLI.
 
 ### GitHub Copilot Integration
 
@@ -195,7 +204,7 @@ For more details, see README.md and QUICKSTART.md.
 5. **PUSH TO REMOTE** - This is MANDATORY:
    ```bash
    git pull --rebase
-   bd sync
+   bd export -o .beads/issues.jsonl
    git push
    git status  # MUST show "up to date with origin"
    ```
@@ -438,7 +447,7 @@ bd create --title="..." --type=task --priority=2
 bd update <id> --status=in_progress
 bd close <id> --reason="Completed"
 bd close <id1> <id2>  # Close multiple issues at once
-bd sync               # Commit and push changes
+bd export -o .beads/issues.jsonl  # Export tracker changes for git
 ```
 
 ### Workflow Pattern
@@ -447,7 +456,7 @@ bd sync               # Commit and push changes
 2. **Claim**: Use `bd update <id> --status=in_progress`
 3. **Work**: Implement the task
 4. **Complete**: Use `bd close <id>`
-5. **Sync**: Always run `bd sync` at session end
+5. **Export**: Always run `bd export -o .beads/issues.jsonl` at session end
 
 ### Key Concepts
 
@@ -463,9 +472,9 @@ bd sync               # Commit and push changes
 ```bash
 git status              # Check what changed
 git add <files>         # Stage code changes
-bd sync                 # Commit beads changes
+bd export -o .beads/issues.jsonl  # Materialize beads changes
 git commit -m "..."     # Commit code
-bd sync                 # Commit any new beads changes
+bd export -o .beads/issues.jsonl  # Export any final beads changes
 git push                # Push to remote
 ```
 
@@ -475,7 +484,7 @@ git push                # Push to remote
 - Update status as you work (in_progress → closed)
 - Create new issues with `bd create` when you discover tasks
 - Use descriptive titles and set appropriate priority/type
-- Always `bd sync` before ending session
+- Always `bd export -o .beads/issues.jsonl` before ending session
 
 <!-- end-bv-agent-instructions -->
 
