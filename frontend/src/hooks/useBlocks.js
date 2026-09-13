@@ -36,6 +36,7 @@ const generateBlock = (block) => {
     hasBRC20: false,
     has_images: hasImages,
     thumbnail: block.thumbnail_url || block.thumbnailUrl || (hasImages ? '🎨' : null),
+    thumbnailIsContract: Boolean(block.thumbnail_is_contract ?? block.thumbnailIsContract),
     tx_count: txCount,
     witness_images: block.images || []
   };

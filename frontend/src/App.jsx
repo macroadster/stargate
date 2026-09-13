@@ -736,6 +736,7 @@ function MainContent() {
               block={block}
               onClick={handleBlockSelect}
               isSelected={selectedBlock?.height === block.height}
+              hideImages={hideImages}
             />
           ))}
         </div>

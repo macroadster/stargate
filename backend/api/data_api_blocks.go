@@ -435,34 +435,9 @@ func (api *DataAPI) HandleGetBlockSummaries(w http.ResponseWriter, r *http.Reque
 
 		// Compute a representative thumbnail URL for the block card.
 		// Prefer the first real smart contract image (served via block-image), else first inscription.
-		thumbnailURL := ""
-		for _, c := range smartContracts {
-			if isSyntheticStegoContract(c) {
-				continue
-			}
-			meta := c.Metadata
-			fileName := strings.TrimSpace(stringFromAny(meta["image_file"]))
-			if fileName == "" {
-				fileName = filepath.Base(strings.TrimSpace(c.ImagePath))
-			}
-			if fileName != "" {
-				thumbnailURL = fmt.Sprintf("/api/block-image/%d/%s", block.BlockHeight, fileName)
-				break
-			}
-		}
-		if thumbnailURL == "" && len(inscriptions) > 0 {
-			// Prefer an actual image inscription for the card thumbnail (by content_type
-			// or filename). Many blocks mix text + images; always taking [0] often
-			// picked a .txt and caused the <img> to error → fallback pickaxe emoji.
-			if chosen := pickImageLikeInscription(inscriptions); chosen != nil {
-				thumbnailURL = fmt.Sprintf("/content/%s%s", chosen.TxID, func() string {
-					if chosen.InputIndex >= 0 {
-						return fmt.Sprintf("?witness=%d", chosen.InputIndex)
-					}
-					return ""
-				}())
-			}
-		}
+		// thumbnail_is_contract is only true for a real contract cover so Hide images
+		// can suppress ordinary inscription JPEGs in the block rail.
+		thumbnailURL, thumbnailIsContract := pickBlockCardThumbnail(block)
 
 		// Fallback for blocks where the persisted Inscriptions list is (currently) empty
 		// but we know via the tx index (from prior content access or startup scan) that
@@ -500,6 +475,7 @@ func (api *DataAPI) HandleGetBlockSummaries(w http.ResponseWriter, r *http.Reque
 			"preview_inscriptions":  preview,
 			"has_images":            hasImages,
 			"thumbnail_url":         thumbnailURL,
+			"thumbnail_is_contract": thumbnailIsContract,
 		})
 	}
 

@@ -25,6 +25,7 @@ import {
   isConfirmedContract,
   parseStegoManifest,
   shouldShowInscription,
+  shouldShowBlockThumbnailImage,
 } from './inscriptionUtils';
 
 describe('inscriptionUtils', () => {
@@ -100,5 +101,27 @@ describe('shouldShowInscription', () => {
     expect(shouldShowInscription(textInscription, opts)).toBe(true);
     expect(shouldShowInscription(imageInscription, opts)).toBe(true);
     expect(shouldShowInscription(contractImage, opts)).toBe(true);
+  });
+});
+
+describe('shouldShowBlockThumbnailImage', () => {
+  const spamThumb = { thumbnail: '/content/abc?witness=0', thumbnailIsContract: false };
+  const contractThumb = { thumbnail: '/api/block-image/100/stego.png', thumbnailIsContract: true };
+  const diskFallback = { thumbnail: '/api/block-image/152151/spam.avif', thumbnailIsContract: false };
+
+  it('hides ordinary inscription thumbs when hideImages is on', () => {
+    expect(shouldShowBlockThumbnailImage(spamThumb, true)).toBe(false);
+    expect(shouldShowBlockThumbnailImage(diskFallback, true)).toBe(false);
+    expect(shouldShowBlockThumbnailImage(contractThumb, true)).toBe(true);
+  });
+
+  it('shows every image thumb when hideImages is off', () => {
+    expect(shouldShowBlockThumbnailImage(spamThumb, false)).toBe(true);
+    expect(shouldShowBlockThumbnailImage(diskFallback, false)).toBe(true);
+    expect(shouldShowBlockThumbnailImage(contractThumb, false)).toBe(true);
+  });
+
+  it('does not treat a /block-image URL as a contract without the flag', () => {
+    expect(shouldShowBlockThumbnailImage({ thumbnail: '/api/block-image/1/x.png' }, true)).toBe(false);
   });
 });

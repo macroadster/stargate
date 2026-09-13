@@ -144,6 +144,76 @@ func TestHandleGetBlockInscriptionsPaginated_ContractFilter(t *testing.T) {
 	}
 }
 
+func TestPickBlockCardThumbnail_MarksContractCover(t *testing.T) {
+	block := &storage.BlockDataCache{
+		BlockHeight: 456,
+		Inscriptions: []bitcoin.InscriptionData{
+			{
+				TxID:        "imgtx",
+				InputIndex:  0,
+				ContentType: "image/png",
+				FileName:    "random.png",
+			},
+		},
+		SmartContracts: []bitcoin.SmartContractData{
+			{
+				ContractID: "wish-contract-1",
+				ImagePath:  "images/stego.png",
+				Metadata: map[string]any{
+					"tx_id":      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+					"image_file": "stego.png",
+					"is_stego":   true,
+				},
+			},
+		},
+	}
+	url, isContract := pickBlockCardThumbnail(block)
+	if !isContract {
+		t.Fatalf("expected contract thumbnail, url=%q", url)
+	}
+	if url != "/api/block-image/456/stego.png" {
+		t.Fatalf("unexpected contract thumbnail url %q", url)
+	}
+}
+
+func TestPickBlockCardThumbnail_RegularImageIsNotContract(t *testing.T) {
+	block := &storage.BlockDataCache{
+		BlockHeight: 152155,
+		Inscriptions: []bitcoin.InscriptionData{
+			{
+				TxID:        "8d6dcac8cce141dc592a8d9e4a18ad5c8ca7b7a06f24cb68c308c63ffe2557b2",
+				InputIndex:  0,
+				ContentType: "image/jpeg",
+				FileName:    "spam.jpg",
+			},
+		},
+	}
+	url, isContract := pickBlockCardThumbnail(block)
+	if isContract {
+		t.Fatalf("regular inscription thumbnail must not be marked contract, url=%q", url)
+	}
+	if url != "/content/8d6dcac8cce141dc592a8d9e4a18ad5c8ca7b7a06f24cb68c308c63ffe2557b2?witness=0" {
+		t.Fatalf("unexpected inscription thumbnail url %q", url)
+	}
+}
+
+func TestPickBlockCardThumbnail_SyntheticStegoIgnored(t *testing.T) {
+	block := &storage.BlockDataCache{
+		BlockHeight: 99,
+		SmartContracts: []bitcoin.SmartContractData{
+			{
+				ContractID: "stego_0_1",
+				ImagePath:  "images/false-positive.png",
+				Metadata:   map[string]any{"image_file": "false-positive.png"},
+			},
+		},
+	}
+	url, isContract := pickBlockCardThumbnail(block)
+	if url != "" || isContract {
+		t.Fatalf("synthetic stego_ contracts must not become card thumbnails, url=%q isContract=%v", url, isContract)
+	}
+}
+
 // --- mocks ---
 
 type mockDataStorage struct {

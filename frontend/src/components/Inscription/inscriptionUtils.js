@@ -124,6 +124,15 @@ export const shouldShowInscription = (inscription, { hideText = true, hideImages
   return true;
 };
 
+/** Block-rail <img> preview. Hide-images suppresses ordinary inscription JPEGs. */
+export const shouldShowBlockThumbnailImage = (block, hideImages = true) => {
+  const thumb = block?.thumbnail;
+  const isUrl = typeof thumb === 'string' && (thumb.startsWith('/') || thumb.startsWith('http'));
+  if (!isUrl) return false;
+  if (!hideImages) return true;
+  return Boolean(block?.thumbnailIsContract);
+};
+
 export const resolveModalImage = (inscription) => {
   const mime = (inscription?.mime_type || '').toLowerCase();
   const { isImage: isActuallyImageFile } = classifyInscription(inscription);

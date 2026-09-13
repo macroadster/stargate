@@ -1,4 +1,6 @@
-const BlockCard = ({ block, onClick, isSelected }) => {
+import { shouldShowBlockThumbnailImage } from '../Inscription/inscriptionUtils';
+
+const BlockCard = ({ block, onClick, isSelected, hideImages = true }) => {
   const stegoCount = block.steganography_summary?.stego_count || 0;
   const smartContractCount = block.smart_contract_count ?? stegoCount;
   const hasSmartContracts = smartContractCount > 0;
@@ -165,7 +167,7 @@ const BlockCard = ({ block, onClick, isSelected }) => {
             }
             const thumb = block.thumbnail;
             const isUrl = typeof thumb === 'string' && (thumb.startsWith('/') || thumb.startsWith('http'));
-            if (isUrl) {
+            if (isUrl && shouldShowBlockThumbnailImage(block, hideImages)) {
               return (
                 <img
                   src={thumb}
@@ -197,9 +199,7 @@ const BlockCard = ({ block, onClick, isSelected }) => {
           })()}
           {/* Fallback emoji shown when thumbnail image fails to load */}
           {(() => {
-            const thumb = block.thumbnail;
-            const isUrl = typeof thumb === 'string' && (thumb.startsWith('/') || thumb.startsWith('http'));
-            if (isUrl) {
+            if (shouldShowBlockThumbnailImage(block, hideImages)) {
               const fb = hasSmartContracts ? '🎨' : (hasWitnessImages ? '🖼️' : '⛏️');
               return <div className="text-5xl hidden items-center justify-center">{fb}</div>;
             }
