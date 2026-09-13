@@ -30,6 +30,7 @@ import (
 	"stargate-backend/handlers"
 	"stargate-backend/mcp"
 	"stargate-backend/middleware"
+	"stargate-backend/security"
 	"stargate-backend/services"
 	"stargate-backend/starlight"
 	"stargate-backend/storage"
@@ -149,11 +150,11 @@ func customUploadsHandler(uploadsDir string) http.HandlerFunc {
 		}
 
 		// Resolve path through the partition layout (tries
-		// partitioned ab/cd/ef/<key> first, then flat fallback).
-		filePath := datadir.ResolveUploadRelPath(uploadsDir, relPath)
-
-		// Security check: ensure the cleaned path is still within uploads directory
-		if !strings.HasPrefix(filepath.Clean(filePath), uploadsDir) {
+		// partitioned ab/cd/ef/<key> first, then flat fallback), then confine
+		// it with the separator-aware helper. A bare HasPrefix check treats
+		// uploadsDir + "-sibling" as inside uploadsDir (stargate-irl.5).
+		filePath, err := confinedUploadPath(uploadsDir, relPath)
+		if err != nil {
 			http.Error(w, "Forbidden", http.StatusForbidden)
 			return
 		}
@@ -789,8 +790,11 @@ func setupRoutes(ctx context.Context, mux *http.ServeMux, container *container.C
 			http.NotFound(w, r)
 			return
 		}
-		resolved := datadir.ResolveUploadRelPath(uploadsDir, "results/"+rel)
-		if !strings.HasPrefix(filepath.Clean(resolved), filepath.Clean(resultsDir)) {
+		// Resolve through the uploads root so results/<hash>/file still maps
+		// onto the partitioned tree, then confine to resultsDir so a sibling
+		// of that directory cannot be served (stargate-irl.5).
+		resolved, err := confinedResolvedPath(resultsDir, datadir.ResolveUploadRelPath(uploadsDir, "results/"+rel))
+		if err != nil {
 			http.Error(w, "Forbidden", http.StatusForbidden)
 			return
 		}
@@ -1002,8 +1006,8 @@ func setupRoutes(ctx context.Context, mux *http.ServeMux, container *container.C
 
 		// Fallback: check UPLOADS_DIR (images received via IPFS or local creation)
 		if uDir := os.Getenv("UPLOADS_DIR"); uDir != "" {
-			uploadPath := datadir.PartResolve(uDir, filename)
-			if !strings.HasPrefix(filepath.Clean(uploadPath), filepath.Clean(uDir)) {
+			uploadPath, err := confinedResolvedPath(uDir, datadir.PartResolve(uDir, filename))
+			if err != nil {
 				http.Error(w, "Invalid filename", http.StatusBadRequest)
 				return
 			}
@@ -1061,6 +1065,30 @@ func waitForContext(ctx context.Context, delay time.Duration) bool {
 	case <-timer.C:
 		return true
 	}
+}
+
+// confinedUploadPath resolves a URL-relative upload path through the partition
+// layout and refuses anything that escapes baseDir. SanitizePath is the check;
+// ResolveUploadRelPath is only the layout mapping.
+func confinedUploadPath(baseDir, relPath string) (string, error) {
+	return confinedResolvedPath(baseDir, datadir.ResolveUploadRelPath(baseDir, relPath))
+}
+
+// confinedResolvedPath accepts an already-resolved filesystem path and refuses
+// it unless it stays inside baseDir, including the base itself. Relativizing
+// first lets SanitizePath run on a join of two cleaned paths instead of a
+// hand-rolled HasPrefix that treats baseDir+"-sibling" as inside baseDir.
+func confinedResolvedPath(baseDir, resolved string) (string, error) {
+	baseDir = filepath.Clean(baseDir)
+	resolved = filepath.Clean(resolved)
+	rel, err := filepath.Rel(baseDir, resolved)
+	if err != nil {
+		return "", err
+	}
+	if rel == "." {
+		return baseDir, nil
+	}
+	return security.SanitizePath(baseDir, rel)
 }
 
 // diagnosticsEnabled is the opt-in gate for /metrics and /debug/pprof.
