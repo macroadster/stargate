@@ -205,6 +205,7 @@ type HTTPMCPServer struct {
 	store            scmiddleware.Store
 	claimSvc         *scservices.ClaimService
 	submissionSvc    *scservices.SubmissionService
+	proposalSvc      *scservices.ProposalService
 	apiKeyStore      auth.APIKeyValidator
 	apiKeyIssuer     auth.APIKeyIssuer
 	ingestionSvc     *services.IngestionService
@@ -251,7 +252,14 @@ func NewHTTPMCPServer(store scmiddleware.Store, apiKeyStore auth.APIKeyValidator
 	// to reach for the caller-trusting shortcut.
 	reworkGate := scmiddleware.SubmissionReworkGate{Store: store, Keys: apiKeyStore}
 
-	return &HTTPMCPServer{
+	// Approving a proposal is one operation and now has one implementation. This
+	// surface called store.ApproveProposal directly, so it skipped the approve
+	// event, the raise_fund payout-address binding, task building from the
+	// description and wish archiving (stargate-fhz). Authorization was never the
+	// gap; the drift was in everything the service does after it.
+	proposalGate := scmiddleware.ProposalEditGate{Store: store, Keys: apiKeyStore, Ingestion: ingestionSvc}
+
+	h := &HTTPMCPServer{
 		store:            store,
 		claimSvc:         scservices.NewClaimService(store),
 		submissionSvc:    scservices.NewSubmissionService(store, reviewEvents, reviewGate, reworkGate),
@@ -272,6 +280,28 @@ func NewHTTPMCPServer(store scmiddleware.Store, apiKeyStore auth.APIKeyValidator
 		chatHub:          NewChatHub(),
 		sessions:         make(map[string]*MCPSession),
 	}
+	// publishProposalTasks and archiveWish route through h.server, which is set
+	// later by SetServer, so they are methods rather than values captured here.
+	h.proposalSvc = scservices.NewProposalService(store, ingestionSvc, apiKeyStore, scmiddleware.PublishEvent, proposalGate, h.publishProposalTasks, h.archiveWish)
+	return h
+}
+
+// publishProposalTasks and archiveWish forward the service's post-approval steps
+// to the REST server once one is attached. Both are no-ops until then, which is
+// what this surface already did with task publishing: h.server is nil in tests
+// and set in production, so neither is made a hard dependency of approving.
+func (h *HTTPMCPServer) publishProposalTasks(ctx context.Context, proposalID string) error {
+	if h.server == nil {
+		return nil
+	}
+	return h.server.PublishProposalTasks(ctx, proposalID)
+}
+
+func (h *HTTPMCPServer) archiveWish(ctx context.Context, visibleHash string) {
+	if h.server == nil {
+		return
+	}
+	h.server.ArchiveWishContract(ctx, visibleHash)
 }
 
 // SetChainBackend wires the local btcd (or fallback) chain source for tools.
@@ -1054,59 +1084,44 @@ func (h *HTTPMCPServer) handleApproveProposal(ctx context.Context, args map[stri
 		return nil, validation
 	}
 
-	// Get the proposal to check if wish exists
-	proposals, err := h.store.ListProposals(ctx, smart_contract.ProposalFilter{})
+	if h.proposalSvc == nil {
+		return nil, NewServiceUnavailableError("approve_proposal", "proposal service")
+	}
+
+	// Authorization, the wish check, the raise_fund payout binding, task
+	// building, wish archiving and the approve event all live in Approve. Doing
+	// any of it here again is how the two surfaces drifted apart.
+	resp, err := h.proposalSvc.Approve(ctx, proposalID, scservices.ProposalActor{APIKey: apiKey})
 	if err != nil {
-		return nil, NewInternalError("approve_proposal", fmt.Sprintf("Failed to list proposals: %v", err))
+		return nil, h.proposalError("approve_proposal", proposalID, err)
 	}
+	return resp, nil
+}
 
-	var proposal *smart_contract.Proposal
-	for i := range proposals {
-		if proposals[i].ID == proposalID {
-			proposal = &proposals[i]
-			break
-		}
+// proposalError translates a ProposalService failure into this surface's error
+// taxonomy. Status alone cannot distinguish a missing wish from a malformed
+// request, since REST answers 400 to both, so the absent-resource cases carry a
+// Kind and are matched on that rather than on message text.
+func (h *HTTPMCPServer) proposalError(tool, proposalID string, err error) error {
+	se := scservices.AsStatus(err)
+	if se == nil {
+		return NewInternalError(tool, fmt.Sprintf("Failed to %s: %v", strings.TrimSuffix(tool, "_proposal"), err))
 	}
-	if proposal == nil {
-		return nil, NewNotFoundError("approve_proposal", "proposal", proposalID)
+	switch se.Kind {
+	case scservices.KindProposalNotFound:
+		return NewNotFoundError(tool, "proposal", proposalID)
+	case scservices.KindWishNotFound:
+		return NewNotFoundError(tool, "wish", se.Message)
 	}
-
-	if err := h.requireAuthorizedApprover(apiKey, *proposal); err != nil {
-		return nil, NewUnauthorizedError("approve_proposal", fmt.Sprintf("Not authorized to approve this proposal: %v", err))
+	switch se.Status {
+	case http.StatusNotFound:
+		return NewNotFoundError(tool, "proposal", proposalID)
+	case http.StatusForbidden:
+		return NewUnauthorizedError(tool, se.Message)
+	case http.StatusBadRequest:
+		return NewValidationError(tool, se.Message)
 	}
-
-	// Check if wish contract exists
-	wishID := "wish-" + proposal.VisiblePixelHash
-	contracts, err := h.store.ListContracts(smart_contract.ContractFilter{})
-	if err != nil {
-		return nil, NewInternalError("approve_proposal", fmt.Sprintf("Failed to check wish existence: %v", err))
-	}
-	wishExists := false
-	for _, contract := range contracts {
-		if contract.ContractID == wishID {
-			wishExists = true
-			break
-		}
-	}
-	if !wishExists {
-		return nil, NewNotFoundError("approve_proposal", "wish", proposal.VisiblePixelHash)
-	}
-
-	err = h.store.ApproveProposal(ctx, proposalID)
-	if err != nil {
-		return nil, NewInternalError("approve_proposal", fmt.Sprintf("Failed to approve proposal: %v", err))
-	}
-
-	if h.server != nil {
-		if publishErr := h.server.PublishProposalTasks(ctx, proposalID); publishErr != nil {
-			log.Printf("failed to publish tasks for proposal %s: %v", proposalID, publishErr)
-		}
-	}
-
-	return map[string]interface{}{
-		"message":     "proposal approved",
-		"proposal_id": proposalID,
-	}, nil
+	return NewInternalError(tool, se.Message)
 }
 
 func (h *HTTPMCPServer) handleRejectSubmission(ctx context.Context, args map[string]interface{}, apiKey string) (interface{}, error) {
@@ -1207,11 +1222,6 @@ func (h *HTTPMCPServer) reviewSubmission(ctx context.Context, tool, submissionID
 
 func (h *HTTPMCPServer) authorizer() scmiddleware.WishCreatorAuthorizer {
 	return scmiddleware.WishCreatorAuthorizer{Keys: h.apiKeyStore, Ingestion: h.ingestionSvc}
-}
-
-func (h *HTTPMCPServer) requireAuthorizedApprover(apiKey string, proposal smart_contract.Proposal) error {
-	_, err := h.authorizer().Authorize(apiKey, scmiddleware.ProposalWishHash(proposal), "proposal "+proposal.ID)
-	return err
 }
 
 func (h *HTTPMCPServer) handleScanImage(ctx context.Context, args map[string]interface{}) (interface{}, error) {

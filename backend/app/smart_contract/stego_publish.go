@@ -620,6 +620,14 @@ func (s *Server) publishStegoForProposal(ctx context.Context, proposalID string,
 	return nil
 }
 
+// ArchiveWishContract exposes archiveWishContract to other surfaces so they can
+// hand the same post-approval step to ProposalService instead of omitting it.
+// The MCP surface approved proposals without ever archiving the wish
+// (stargate-fhz).
+func (s *Server) ArchiveWishContract(ctx context.Context, visibleHash string) {
+	s.archiveWishContract(ctx, visibleHash)
+}
+
 func (s *Server) archiveWishContract(ctx context.Context, visibleHash string) {
 	if s.store == nil {
 		return

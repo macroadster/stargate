@@ -164,13 +164,13 @@ func (s *ProposalService) Approve(ctx context.Context, id string, actor Proposal
 	apiKey := actor.APIKey
 	proposal, err := s.store.GetProposal(ctx, id)
 	if err != nil {
-		return nil, Fail(http.StatusBadRequest, err.Error())
+		return nil, FailKind(http.StatusBadRequest, KindProposalNotFound, err.Error())
 	}
 	if proposal.Metadata == nil {
 		proposal.Metadata = map[string]interface{}{}
 	}
 	if err := s.requireWishForApproval(ctx, proposal); err != nil {
-		return nil, Fail(http.StatusBadRequest, err.Error())
+		return nil, FailKind(http.StatusBadRequest, KindWishNotFound, err.Error())
 	}
 	meta := proposal.Metadata
 	if meta == nil {
