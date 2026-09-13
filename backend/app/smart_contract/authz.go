@@ -44,37 +44,41 @@ const (
 // Authorize reports whether apiKey's bound wallet may act as the creator of the
 // wish identified by visibleHash. subject names what is being acted on and is
 // used only in log and error messages. policy decides the unresolvable case.
-func (a WishCreatorAuthorizer) Authorize(apiKey, visibleHash, subject string, policy MissingCreatorPolicy) error {
+//
+// It returns the wallet it authorized, so callers that record who acted use the
+// identity authorization actually accepted rather than one passed alongside it.
+// Those can disagree; the audit trail should not be able to.
+func (a WishCreatorAuthorizer) Authorize(apiKey, visibleHash, subject string, policy MissingCreatorPolicy) (string, error) {
 	wallet := a.boundWallet(apiKey)
 	if wallet == "" {
-		return fmt.Errorf("api key with wallet binding required to approve %s", subject)
+		return "", fmt.Errorf("api key with wallet binding required to approve %s", subject)
 	}
 
 	if a.isGlobalAuditor(wallet) {
 		log.Printf("AUTHORIZATION: Allowing %s based on Global Auditor status (%s)", subject, wallet)
-		return nil
+		return wallet, nil
 	}
 
 	own := a.wishOwnership(visibleHash)
 	if own.known {
 		if strings.EqualFold(own.creator, wallet) {
-			return nil
+			return wallet, nil
 		}
-		return fmt.Errorf("approver wallet %s does not match wish creator", wallet)
+		return "", fmt.Errorf("approver wallet %s does not match wish creator", wallet)
 	}
 
 	if policy == AllowOnMissingCreator {
 		log.Printf("WARNING: allowing %s with NO wish creator info", subject)
-		return nil
+		return wallet, nil
 	}
 
 	// A replicated wish is the expected reason to land here, so say so rather
 	// than reporting it as missing data: the creator exists, just not on this
 	// node, and approval belongs on the node that holds their key.
 	if own.replicated {
-		return fmt.Errorf("cannot approve %s: wish %s was replicated from another node and carries no creator wallet; approve it on the node that created it", subject, own.hash)
+		return "", fmt.Errorf("cannot approve %s: wish %s was replicated from another node and carries no creator wallet; approve it on the node that created it", subject, own.hash)
 	}
-	return fmt.Errorf("cannot approve %s: no creator wallet recorded for wish %s", subject, own.hash)
+	return "", fmt.Errorf("cannot approve %s: no creator wallet recorded for wish %s", subject, own.hash)
 }
 
 // boundWallet returns the wallet bound to apiKey, or "" when the key is unknown
@@ -190,21 +194,39 @@ func (s *Server) authorizer() WishCreatorAuthorizer {
 	return WishCreatorAuthorizer{Keys: s.apiKeys, Ingestion: s.ingestionSvc}
 }
 
+// SubmissionReviewGate authorizes submission review for any surface. It is
+// handed to SubmissionService so the check runs inside the review itself rather
+// than in each handler that calls it: a new caller that forgets to authorize is
+// then refused by construction instead of silently approving payouts.
+//
+// It satisfies services.SubmissionReviewAuthorizer. The interface lives in
+// services because services cannot import this package.
+type SubmissionReviewGate struct {
+	Store     Store
+	Keys      auth.APIKeyValidator
+	Ingestion *services.IngestionService
+}
+
 // AuthorizeSubmissionReview reports whether apiKey may review (approve, reject
-// or mark reviewed) the given submission. Exported so the MCP tool surface
-// enforces the same rule as the REST route.
+// or mark reviewed) the given submission, returning the wallet it authorized.
 //
 // Submission review is the payout gate, so it denies on an unresolvable
 // creator instead of taking proposal approval's compatibility allowance.
-func (s *Server) AuthorizeSubmissionReview(ctx context.Context, apiKey, submissionID string) error {
-	sub, err := s.store.GetSubmission(ctx, submissionID)
+func (g SubmissionReviewGate) AuthorizeSubmissionReview(ctx context.Context, apiKey, submissionID string) (string, error) {
+	sub, err := g.Store.GetSubmission(ctx, submissionID)
 	if err != nil || sub.SubmissionID == "" {
-		return fmt.Errorf("submission %s not found", submissionID)
+		return "", fmt.Errorf("submission %s not found", submissionID)
 	}
 
-	hash, err := SubmissionWishHash(s.store, sub)
+	hash, err := SubmissionWishHash(g.Store, sub)
 	if err != nil {
-		return err
+		return "", err
 	}
-	return s.authorizer().Authorize(apiKey, hash, "submission "+submissionID, DenyOnMissingCreator)
+	return WishCreatorAuthorizer{Keys: g.Keys, Ingestion: g.Ingestion}.
+		Authorize(apiKey, hash, "submission "+submissionID, DenyOnMissingCreator)
+}
+
+// submissionGate builds the gate from the server's dependencies.
+func (s *Server) submissionGate() SubmissionReviewGate {
+	return SubmissionReviewGate{Store: s.store, Keys: s.apiKeys, Ingestion: s.ingestionSvc}
 }
