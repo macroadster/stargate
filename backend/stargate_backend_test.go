@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -9,9 +10,23 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	scstore "stargate-backend/storage/smart_contract"
 )
+
+func TestWaitForContextStopsDelayOnCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	started := time.Now()
+	if waitForContext(ctx, time.Hour) {
+		t.Fatal("cancelled context reported completed delay")
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("cancelled wait took %s", elapsed)
+	}
+}
 
 func TestInitializeMCPComponentsFallsBackToMemoryWhenSQLiteInitFails(t *testing.T) {
 	tmpDir := t.TempDir()
