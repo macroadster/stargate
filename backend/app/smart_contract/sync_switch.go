@@ -30,9 +30,10 @@ var syncLegacyWarnOnce sync.Once
 // the other name entirely. An operator had no way to turn sync off.
 //
 // Unset means enabled, which both call sites already did. An unparseable value
-// warns and falls back to that default rather than disabling: silently not
-// syncing is the failure mode that is hard to notice, and a typo should not
-// produce it.
+// warns and does not decide, so the next name is still consulted and only a
+// genuinely undecided pair reaches the default. A typo in one name therefore
+// neither disables sync nor overrides a real value under the other; see
+// syncEnabledFrom for why the second half matters.
 func syncEnabled() bool {
 	// The canonical name is consulted first, so a deployment can migrate by
 	// adding it without first removing the old one.
