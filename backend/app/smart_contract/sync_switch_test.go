@@ -48,6 +48,15 @@ func TestSyncEnabled(t *testing.T) {
 		// A typo must not be the thing that silently stops sync.
 		{name: "unparseable canonical stays enabled", canonical: "maybe", want: true},
 		{name: "unparseable legacy stays enabled", legacy: "disabled", want: true},
+
+		// Where precedence and the unparseable rule meet. Reported by maya on
+		// #26: with precedence alone a typo in the canonical name outranks a
+		// working legacy setting and, because an unparseable value must not
+		// disable sync, silently switches it back on for a deployment that had
+		// turned it off. An unrecognised value declines to decide instead.
+		{name: "typo in canonical does not override a working legacy false", canonical: "maybe", legacy: "false", want: false},
+		{name: "typo in canonical does not override a working legacy true", canonical: "nope", legacy: "true", want: true},
+		{name: "both unparseable falls through to the default", canonical: "maybe", legacy: "nope", want: true},
 	}
 
 	for _, tc := range cases {
@@ -121,22 +130,15 @@ func TestOneSwitchStopsProposalPublish(t *testing.T) {
 	})
 }
 
-// TestPubsubConfigConsultsTheSwitch is deliberately limited, and the limit is
-// the point.
+// The pubsub call site is deliberately not asserted here, and this is the
+// reason rather than an oversight.
 //
-// loadSyncPubsubConfig only ever reports enabled when an IPFS node answers
-// CheckNode within 2s, and it forces disabled when the embedded node is in use.
-// With no node in a unit test it returns false whatever the switch says, so
-// "enabled" is not assertable here and a test that only ever checks for false
-// would pass against any implementation. The switch itself is covered by
-// TestSyncEnabled above; this pins only that the disable path is reachable.
-func TestPubsubConfigConsultsTheSwitch(t *testing.T) {
-	t.Setenv("IPFS_ENABLED", "true")
-	t.Setenv("IPFS_EMBEDDED_ENABLED", "false")
-	t.Setenv("STARGATE_SYNC_ENABLED", "false")
-	t.Setenv("STARGATE_SYNC_ENABLE", "")
-
-	if loadSyncPubsubConfig().Enabled {
-		t.Error("pubsub sync enabled with STARGATE_SYNC_ENABLED=false")
-	}
-}
+// loadSyncPubsubConfig reports enabled only when an IPFS node answers CheckNode
+// within 2s, and forces disabled when the embedded node is in use. With no node
+// in a unit test it returns false whatever the switch says, so a test there
+// passes even against an implementation that ignores the switch entirely -- it
+// would be exactly the false-only test this file argues is worthless. An earlier
+// version of this file had one, with a comment claiming it pinned the disable
+// path; it did not pin anything. The switch logic is covered by TestSyncEnabled,
+// and the wiring of a call site to it is covered above for the path where that
+// is observable.

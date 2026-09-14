@@ -34,32 +34,40 @@ var syncLegacyWarnOnce sync.Once
 // syncing is the failure mode that is hard to notice, and a typo should not
 // produce it.
 func syncEnabled() bool {
-	raw, name := syncEnabledRaw()
-	if raw == "" {
-		return true
+	// The canonical name is consulted first, so a deployment can migrate by
+	// adding it without first removing the old one.
+	if enabled, ok := syncEnabledFrom(SyncEnabledEnv); ok {
+		return enabled
 	}
-	enabled, ok := parseBool(raw)
-	if !ok {
-		log.Printf("%s=%q is not a recognised boolean; sync stays enabled. Use true or false.", name, raw)
-		return true
-	}
-	return enabled
-}
-
-// syncEnabledRaw returns the value in effect and the variable it came from. The
-// canonical name wins when both are set, so a deployment can migrate by adding
-// the new name without first removing the old one.
-func syncEnabledRaw() (value, name string) {
-	if raw := strings.TrimSpace(os.Getenv(SyncEnabledEnv)); raw != "" {
-		return raw, SyncEnabledEnv
-	}
-	if raw := strings.TrimSpace(os.Getenv(syncEnabledLegacyEnv)); raw != "" {
+	if enabled, ok := syncEnabledFrom(syncEnabledLegacyEnv); ok {
 		syncLegacyWarnOnce.Do(func() {
 			log.Printf("%s is deprecated; use %s. Honouring it for now.", syncEnabledLegacyEnv, SyncEnabledEnv)
 		})
-		return raw, syncEnabledLegacyEnv
+		return enabled
 	}
-	return "", SyncEnabledEnv
+	return true
+}
+
+// syncEnabledFrom reads one variable, reporting whether it decided the question.
+//
+// A value that is set but not understood does not decide it. That matters
+// because of how the two rules interact: with precedence alone, a typo in the
+// canonical name would take priority over a working legacy setting and, since an
+// unparseable value must not disable sync, would silently turn it back on for a
+// deployment that had turned it off. Declining to decide lets the legacy value
+// still be honoured, and only a genuinely unset pair falls through to the
+// default.
+func syncEnabledFrom(name string) (enabled, decided bool) {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return false, false
+	}
+	enabled, ok := parseBool(raw)
+	if !ok {
+		log.Printf("%s=%q is not a recognised boolean and is being ignored. Use true or false.", name, raw)
+		return false, false
+	}
+	return enabled, true
 }
 
 // parseBool accepts the spellings people actually put in environment files.
