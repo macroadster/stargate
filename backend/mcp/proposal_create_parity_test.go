@@ -3,6 +3,8 @@ package mcp
 import (
 	"context"
 	"net/http"
+	"regexp"
+	"strconv"
 	"testing"
 
 	scservices "stargate-backend/app/smart_contract/services"
@@ -182,6 +184,19 @@ func TestMCPCreateProposalStillReportsLimitReached(t *testing.T) {
 	// rewording the store cannot silently downgrade this to an internal error.
 	if want := "CREATE_PROPOSAL_LIMIT_REACHED"; resp.ErrorCode != want {
 		t.Fatalf("error_code = %q, want %q (body: %s)", resp.ErrorCode, want, resp.Error)
+	}
+
+	// The number the caller is told must be the number the store enforces. This
+	// reads the digits back out of the rendered message rather than rebuilding
+	// it, so it fails whether the message hardcodes a stale value or the cap
+	// moves underneath it.
+	digits := regexp.MustCompile(`\d+`).FindString(resp.Error)
+	stated, err := strconv.Atoi(digits)
+	if err != nil {
+		t.Fatalf("no limit stated in %q", resp.Error)
+	}
+	if stated != scstore.MaxProposalsPerWish {
+		t.Fatalf("message states a limit of %d, store enforces %d: %q", stated, scstore.MaxProposalsPerWish, resp.Error)
 	}
 }
 

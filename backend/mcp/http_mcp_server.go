@@ -1076,7 +1076,10 @@ func (h *HTTPMCPServer) createProposalError(visiblePixelHash string, err error) 
 	case scservices.KindBudgetMismatch:
 		return NewCreateProposalError("BUDGET_MISMATCH", se.Message, "budget_sats")
 	case scservices.KindProposalLimitReached:
-		return NewCreateProposalError("LIMIT_REACHED", "Maximum of 5 proposals reached for this wish to prevent spam", "visible_pixel_hash")
+		// The cap is the store's to define. Spelling the number out here meant
+		// raising MaxProposalsPerWish would leave this surface telling callers a
+		// different limit than the one being enforced.
+		return NewCreateProposalError("LIMIT_REACHED", fmt.Sprintf("Maximum of %d proposals reached for this wish to prevent spam", scstore.MaxProposalsPerWish), "visible_pixel_hash")
 	case scservices.KindProposalAlreadyFinalized:
 		return NewCreateProposalError("ALREADY_FINALIZED", "This wish already has an approved or published proposal and is no longer accepting new proposals", "visible_pixel_hash")
 	}
