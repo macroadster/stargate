@@ -354,9 +354,9 @@ func ValidateProposalInput(proposal *smart_contract.Proposal) error {
 		}
 		if proposal.BudgetSats > 0 && taskBudgetSum != proposal.BudgetSats {
 			if taskBudgetSum > proposal.BudgetSats {
-				return fmt.Errorf("task budgets %d exceed proposal budget %d", taskBudgetSum, proposal.BudgetSats)
+				return fmt.Errorf("task budgets %d exceed proposal budget %d: %w", taskBudgetSum, proposal.BudgetSats, ErrTaskBudgetMismatch)
 			}
-			return fmt.Errorf("task budgets %d under-allocate proposal budget %d", taskBudgetSum, proposal.BudgetSats)
+			return fmt.Errorf("task budgets %d under-allocate proposal budget %d: %w", taskBudgetSum, proposal.BudgetSats, ErrTaskBudgetMismatch)
 		}
 	}
 

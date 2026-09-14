@@ -2,6 +2,7 @@ package smart_contract
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -34,7 +35,7 @@ func PrepareProposalForCreate(p *coresc.Proposal) (visibleHash string, metadataJ
 		}
 	}
 	if err := ValidateProposalInput(p); err != nil {
-		return "", nil, "", fmt.Errorf("proposal validation failed: %v", err)
+		return "", nil, "", fmt.Errorf("proposal validation failed: %w", err)
 	}
 	if p.Status == "" {
 		p.Status = "pending"
@@ -77,14 +78,29 @@ func PrepareProposalForCreate(p *coresc.Proposal) (visibleHash string, metadataJ
 	return visibleHash, metadataJSON, wishToSupersede, nil
 }
 
+// Callers above the store need to distinguish these refusals from each other:
+// the MCP surface answers a different error code for each. They are sentinels so
+// that classification survives a reworded message, which matching on text does
+// not.
+var (
+	// ErrProposalAlreadyFinalized means the wish already has an approved or
+	// published proposal and accepts no more.
+	ErrProposalAlreadyFinalized = errors.New("proposal already approved or published for this wish")
+	// ErrProposalLimitReached means the per-wish proposal cap is exhausted.
+	ErrProposalLimitReached = errors.New("proposal limit reached for this wish")
+	// ErrTaskBudgetMismatch means the task budgets do not sum to the proposal
+	// budget, in either direction.
+	ErrTaskBudgetMismatch = errors.New("task budgets do not match proposal budget")
+)
+
 // ProposalConflictApprovedMsg is the shared error text for approved/published VPH conflicts.
 func ProposalConflictApprovedMsg(visibleHash, conflictID string) error {
-	return fmt.Errorf("a proposal with visible_pixel_hash=%s is already approved/published (id=%s)", visibleHash, conflictID)
+	return fmt.Errorf("a proposal with visible_pixel_hash=%s is already approved/published (id=%s): %w", visibleHash, conflictID, ErrProposalAlreadyFinalized)
 }
 
 // ProposalMaxPerWishMsg is the shared error when too many proposals exist for a wish.
 func ProposalMaxPerWishMsg(visibleHash string) error {
-	return fmt.Errorf("maximum of 5 proposals reached for wish %s", visibleHash)
+	return fmt.Errorf("maximum of %d proposals reached for wish %s: %w", MaxProposalsPerWish, visibleHash, ErrProposalLimitReached)
 }
 
 // MaxProposalsPerWish is the safeguard applied by both dialects on create.

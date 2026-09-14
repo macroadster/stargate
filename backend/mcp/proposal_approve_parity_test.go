@@ -4,9 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
-	"time"
 
-	scmiddleware "stargate-backend/app/smart_contract"
 	"stargate-backend/core/smart_contract"
 	scstore "stargate-backend/storage/smart_contract"
 )
@@ -61,16 +59,7 @@ func TestMCPApproveProposalEmitsApproveEventNamingTheWallet(t *testing.T) {
 	srv, store := surfaceFixture(t)
 	seedApprovableProposal(t, store, "mcp-prop-event", nil)
 
-	// RegisterEventSink appends to a process-global slice with no way to
-	// unregister, so this sink outlives the test. Safe only because nothing else
-	// in this package asserts on sinks; do not copy this into another test.
-	events := make(chan smart_contract.Event, 8)
-	scmiddleware.RegisterEventSink(func(evt smart_contract.Event) {
-		select {
-		case events <- evt:
-		default:
-		}
-	})
+	events := captureEvents(t)
 
 	resp := callTool(t, srv, surfaceCreatorKey, "approve_proposal", map[string]interface{}{
 		"proposal_id": "mcp-prop-event",
@@ -79,21 +68,12 @@ func TestMCPApproveProposalEmitsApproveEventNamingTheWallet(t *testing.T) {
 		t.Fatalf("expected the wish creator to be allowed, got: %s", resp.Error)
 	}
 
-	deadline := time.After(2 * time.Second)
-	for {
-		select {
-		case evt := <-events:
-			if evt.Type == "approve" && evt.EntityID == "mcp-prop-event" {
-				// The actor is the wallet authorization accepted, resolved by the
-				// service rather than a hardcoded string.
-				if evt.Actor != surfaceCreatorWlt {
-					t.Fatalf("event actor = %q, want the approving wallet %q", evt.Actor, surfaceCreatorWlt)
-				}
-				return
-			}
-		case <-deadline:
-			t.Fatal("no approve event was recorded for an MCP approval; an approval over this surface left no audit trail")
-		}
+	// Before this, an approval over this surface left no audit trail at all.
+	// The actor is the wallet authorization accepted, resolved by the service
+	// rather than a hardcoded string.
+	evt := awaitEvent(t, events, "approve", "mcp-prop-event")
+	if evt.Actor != surfaceCreatorWlt {
+		t.Fatalf("event actor = %q, want the approving wallet %q", evt.Actor, surfaceCreatorWlt)
 	}
 }
 

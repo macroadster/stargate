@@ -994,81 +994,100 @@ func (h *HTTPMCPServer) handleCreateProposal(ctx context.Context, args map[strin
 		return nil, validation
 	}
 
-	// Check if wish contract exists and cap proposal budget to the original wish price
-	wishID := "wish-" + visiblePixelHash
-	wish, wishErr := scstore.LookupContract(h.store, wishID)
-	if wishErr != nil || strings.TrimSpace(wish.ContractID) == "" {
-		return nil, NewNotFoundError("create_proposal", "wish", visiblePixelHash)
-	}
-	wishBudget := scstore.WishBudgetFromContract(wish)
-	if wishBudget > 0 {
-		if budgetSats == 0 {
-			budgetSats = wishBudget
-		} else if budgetSats > wishBudget {
-			return nil, NewCreateProposalError("BUDGET_EXCEEDED", fmt.Sprintf("proposal budget_sats %d exceeds original wish budget %d", budgetSats, wishBudget), "budget_sats")
-		}
+	if h.proposalSvc == nil {
+		return nil, NewServiceUnavailableError("create_proposal", "proposal service")
 	}
 
-	// Get creator wallet from API key
-	var creatorWallet string
-	if apiKeyRec, ok := h.apiKeyStore.Get(apiKey); ok {
-		creatorWallet = strings.TrimSpace(apiKeyRec.Wallet)
+	// wish_budget_sats is part of this surface's response, so the wish is still
+	// read here. The budget cap itself is not re-applied: Create enforces it and
+	// answers KindBudgetExceeded, which is mapped below.
+	wishBudget := int64(0)
+	if wish, wishErr := scstore.LookupContract(h.store, "wish-"+visiblePixelHash); wishErr == nil {
+		wishBudget = scstore.WishBudgetFromContract(wish)
 	}
 
-	proposalID := fmt.Sprintf("proposal-%d", time.Now().UnixNano())
-	contractID := "wish-" + visiblePixelHash
+	// funding_address is metadata this surface writes and REST does not, so it is
+	// passed in rather than reproduced inside the service. creator_wallet is set
+	// by Create from the same API key.
 	fundingAddr := scstore.FundingAddressFromMeta(map[string]interface{}{})
-	if creatorWallet != "" {
-		fundingAddr = creatorWallet
+	if apiKeyRec, ok := h.apiKeyStore.Get(apiKey); ok && strings.TrimSpace(apiKeyRec.Wallet) != "" {
+		fundingAddr = strings.TrimSpace(apiKeyRec.Wallet)
 	}
-	tasks := scstore.BuildTasksFromMarkdown(proposalID, descriptionMD, visiblePixelHash, budgetSats, fundingAddr)
-	var allocated int64
-	for _, t := range tasks {
-		allocated += t.BudgetSats
-	}
-	if budgetSats > 0 && allocated != budgetSats {
-		return nil, NewCreateProposalError("BUDGET_MISMATCH", fmt.Sprintf("allocated task budgets %d do not equal proposal budget %d", allocated, budgetSats), "budget_sats")
-	}
-	proposal := smart_contract.Proposal{
-		ID:               proposalID,
+
+	// ContractID is deliberately omitted. This surface used to store
+	// "wish-"+hash, which the service rejects as unequal to visible_pixel_hash,
+	// so the two surfaces disagreed on the shape of one metadata field for the
+	// same object. Create defaults it to the bare hash; the "wish-" prefix stays
+	// where it belongs, on the contract row id. Rows written before this keep
+	// their prefixed value (stargate-fhz).
+	resp, _, err := h.proposalSvc.Create(ctx, scservices.ProposalCreateInput{
 		Title:            title,
 		DescriptionMD:    descriptionMD,
 		VisiblePixelHash: visiblePixelHash,
 		BudgetSats:       budgetSats,
-		Status:           "pending",
-		CreatedAt:        time.Now(),
-		Tasks:            tasks,
+		APIKey:           apiKey,
 		Metadata: map[string]interface{}{
-			"creator_wallet":     creatorWallet,
-			"contract_id":        contractID,
-			"visible_pixel_hash": visiblePixelHash,
-			"funding_address":    fundingAddr,
-			"embedded_message":   descriptionMD,
+			"funding_address":  fundingAddr,
+			"embedded_message": descriptionMD,
 		},
+	})
+	if err != nil {
+		return nil, h.createProposalError(visiblePixelHash, err)
 	}
 
-	log.Printf("MCP CREATE PROPOSAL DEBUG: ID=%s, tasks=%d, allocated=%d, metadata=%+v", proposal.ID, len(tasks), allocated, proposal.Metadata)
-	err := h.store.CreateProposal(ctx, proposal)
-	if err != nil {
-		errMsg := err.Error()
-		if strings.Contains(errMsg, "maximum of 5 proposals reached") {
-			return nil, NewCreateProposalError("LIMIT_REACHED", "Maximum of 5 proposals reached for this wish to prevent spam", "visible_pixel_hash")
-		}
-		if strings.Contains(errMsg, "already approved/published") {
-			return nil, NewCreateProposalError("ALREADY_FINALIZED", "This wish already has an approved or published proposal and is no longer accepting new proposals", "visible_pixel_hash")
-		}
-		if strings.Contains(errMsg, "exceed proposal budget") || strings.Contains(errMsg, "under-allocate proposal budget") {
-			return nil, NewCreateProposalError("BUDGET_MISMATCH", errMsg, "budget_sats")
-		}
-		return nil, NewInternalError("create_proposal", fmt.Sprintf("Failed to create proposal: %v", err))
+	// This surface answers with the stored proposal and its allocation totals,
+	// while the service answers with counts. Read the row back rather than
+	// rebuilding it, so what is reported is what was written.
+	proposalID, _ := resp["proposal_id"].(string)
+	stored, getErr := h.store.GetProposal(ctx, proposalID)
+	if getErr != nil {
+		return nil, NewInternalError("create_proposal", fmt.Sprintf("Failed to read back proposal %s: %v", proposalID, getErr))
+	}
+	var allocated int64
+	for _, t := range stored.Tasks {
+		allocated += t.BudgetSats
 	}
 
 	return map[string]interface{}{
-		"proposal":        proposal,
-		"task_count":      len(tasks),
-		"allocated_sats":  allocated,
+		"proposal":         stored,
+		"task_count":       len(stored.Tasks),
+		"allocated_sats":   allocated,
 		"wish_budget_sats": wishBudget,
 	}, nil
+}
+
+// createProposalError keeps this surface's create_proposal error codes while the
+// refusals themselves are decided by the service. Each is matched on Kind: the
+// codes used to be recovered by searching the store's message text, so any
+// rewording downstream would have silently turned a specific code into a generic
+// internal error.
+func (h *HTTPMCPServer) createProposalError(visiblePixelHash string, err error) error {
+	se := scservices.AsStatus(err)
+	if se == nil {
+		return NewInternalError("create_proposal", fmt.Sprintf("Failed to create proposal: %v", err))
+	}
+	switch se.Kind {
+	case scservices.KindWishNotFound:
+		return NewNotFoundError("create_proposal", "wish", visiblePixelHash)
+	case scservices.KindBudgetExceeded:
+		return NewCreateProposalError("BUDGET_EXCEEDED", se.Message, "budget_sats")
+	case scservices.KindBudgetMismatch:
+		return NewCreateProposalError("BUDGET_MISMATCH", se.Message, "budget_sats")
+	case scservices.KindProposalLimitReached:
+		return NewCreateProposalError("LIMIT_REACHED", "Maximum of 5 proposals reached for this wish to prevent spam", "visible_pixel_hash")
+	case scservices.KindProposalAlreadyFinalized:
+		return NewCreateProposalError("ALREADY_FINALIZED", "This wish already has an approved or published proposal and is no longer accepting new proposals", "visible_pixel_hash")
+	}
+	switch se.Status {
+	case http.StatusNotFound:
+		// Only the wish and the ingestion record can be absent here, and the wish
+		// carries a Kind. Mapping on status too means a future absent-thing
+		// failure is not reported as an internal error.
+		return NewNotFoundError("create_proposal", "wish", visiblePixelHash)
+	case http.StatusBadRequest:
+		return NewValidationError("create_proposal", se.Message)
+	}
+	return NewInternalError("create_proposal", se.Message)
 }
 
 func (h *HTTPMCPServer) handleApproveProposal(ctx context.Context, args map[string]interface{}, apiKey string) (interface{}, error) {

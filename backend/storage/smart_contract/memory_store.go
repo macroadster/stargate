@@ -750,7 +750,7 @@ func (s *MemoryStore) CreateProposal(ctx context.Context, p smart_contract.Propo
 
 	// Comprehensive security validation
 	if err := ValidateProposalInput(&p); err != nil {
-		return fmt.Errorf("proposal validation failed: %v", err)
+		return fmt.Errorf("proposal validation failed: %w", err)
 	}
 
 	// Validate status field
@@ -772,13 +772,16 @@ func (s *MemoryStore) CreateProposal(ctx context.Context, p smart_contract.Propo
 		for _, prop := range s.proposals {
 			if prop.VisiblePixelHash == visibleHash && prop.ID != p.ID {
 				if strings.EqualFold(prop.Status, "approved") || strings.EqualFold(prop.Status, "published") {
-					return fmt.Errorf("a proposal with visible_pixel_hash=%s is already approved/published (id=%s)", visibleHash, prop.ID)
+					// Was an inline copy of this text, so the "shared" constructors
+					// were shared by one store. Calling them keeps both dialects on
+					// one message and one sentinel.
+					return ProposalConflictApprovedMsg(visibleHash, prop.ID)
 				}
 				count++
 			}
 		}
-		if count >= 5 {
-			return fmt.Errorf("maximum of 5 proposals reached for wish %s", visibleHash)
+		if count >= MaxProposalsPerWish {
+			return ProposalMaxPerWishMsg(visibleHash)
 		}
 	}
 
@@ -1007,7 +1010,7 @@ func (s *MemoryStore) UpdateProposal(ctx context.Context, p smart_contract.Propo
 	}
 
 	if err := ValidateProposalInput(&p); err != nil {
-		return fmt.Errorf("proposal validation failed: %v", err)
+		return fmt.Errorf("proposal validation failed: %w", err)
 	}
 
 	s.proposals[p.ID] = p
