@@ -62,10 +62,7 @@ var (
 )
 
 func loadSyncPubsubConfig() syncPubsubConfig {
-	enabled := true
-	if raw := os.Getenv("STARGATE_SYNC_ENABLED"); raw != "" {
-		enabled = strings.EqualFold(raw, "true")
-	}
+	enabled := syncEnabled()
 	if !ipfs.IsEnabled() {
 		enabled = false
 	}
