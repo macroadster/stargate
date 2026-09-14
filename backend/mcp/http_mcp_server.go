@@ -397,7 +397,7 @@ func (h *HTTPMCPServer) extractSessionID(r *http.Request) string {
 
 // ensureSession returns an existing valid session from the request or creates a new one.
 // A valid request bearer/cookie is bound onto the session so later MCP-Session-Id
-// calls share the same api_keys validator as /api (including STARGATE_API_KEY seed).
+// calls share the same api_keys validator as /api.
 func (h *HTTPMCPServer) ensureSession(r *http.Request) string {
 	sid := h.extractSessionID(r)
 	if sid == "" {

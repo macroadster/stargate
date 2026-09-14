@@ -531,7 +531,7 @@ func cmdEnv(args []string, stdout, stderr io.Writer) (bool, int) {
 		"UPLOADS_DIR", "BLOCKS_DIR", "IPFS_STORAGE_DIR", "IPFS_EMBEDDED_REPO", "IPFS_IDENTITY_FILE", "IPFS_WISH_TOPIC",
 		"STARGATE_MCP_DB", "STARGATE_API_KEYS_DB", "STARGATE_INGESTIONS_DB",
 		"STARGATE_AGENT_ENABLED", "STARGATE_METRICS", "STARGATE_PPROF",
-		"STARGATE_API_KEY", "STARLIGHT_DONATION_ADDRESS",
+		"STARLIGHT_DONATION_ADDRESS",
 		"IPFS_ENABLED", "BITCOIN_NETWORK", "BTCD_MODE", "BTCD_BIN", "BTCD_DATADIR", "BTCD_RPC_HOST", "BTCD_ALLOW_MAINNET",
 	}
 	for _, k := range keys {
@@ -578,7 +578,6 @@ func effectiveConfig() map[string]any {
 		"BTCD_BIN":                   envOr("BTCD_BIN", "btcd"),
 		"BTCD_ALLOW_MAINNET":         envOr("BTCD_ALLOW_MAINNET", "false"),
 		"STARLIGHT_DONATION_ADDRESS": redact(os.Getenv("STARLIGHT_DONATION_ADDRESS")),
-		"STARGATE_API_KEY":           redact(os.Getenv("STARGATE_API_KEY")),
 		"STARGATE_PG_DSN":            redact(os.Getenv("STARGATE_PG_DSN")),
 		"DATABASE_URL":               redact(os.Getenv("DATABASE_URL")),
 	}

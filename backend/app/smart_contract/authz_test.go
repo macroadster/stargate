@@ -189,7 +189,7 @@ func TestWishCreatorAuthorizerRequiresWalletBinding(t *testing.T) {
 	}
 }
 
-func TestWishCreatorAuthorizerAllowsGlobalAuditor(t *testing.T) {
+func TestWishCreatorAuthorizerAllowsDonationWallet(t *testing.T) {
 	t.Setenv("STARLIGHT_DONATION_ADDRESS", testStrangerWlt)
 	a := WishCreatorAuthorizer{Keys: &mockAPIKeyStore{keys: map[string]auth.APIKey{
 		testStrangerKey: {Key: testStrangerKey, Wallet: testStrangerWlt},
@@ -197,7 +197,7 @@ func TestWishCreatorAuthorizerAllowsGlobalAuditor(t *testing.T) {
 
 	wallet, err := a.Authorize(testStrangerKey, testWishHash, "proposal p1")
 	if err != nil {
-		t.Fatalf("expected the donation address to act as global auditor, got %v", err)
+		t.Fatalf("expected the donation address to act as node settlement wallet, got %v", err)
 	}
 	// The auditor's own wallet, not the creator's: callers record who acted.
 	if wallet != testStrangerWlt {

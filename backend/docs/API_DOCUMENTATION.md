@@ -22,7 +22,7 @@ The MCP API requires an API key sent via the `X-API-Key` header:
 X-API-Key: your-api-key-here
 ```
 
-Set the `STARGATE_API_KEY` environment variable to configure the required key.
+Issue a key with `POST /api/auth/challenge` + `POST /api/auth/verify` (signed Bitcoin nonce). There is no environment-seeded API key.
 
 ### Other APIs
 Most other endpoints do not require authentication, but this may change in future versions.
@@ -653,7 +653,6 @@ Key environment variables for configuration:
 
 ```bash
 # MCP / Smart Contract Configuration (STARGATE_ prefix)
-STARGATE_API_KEY=your-api-key                    # API key for MCP authentication
 STARGATE_PG_DSN=postgresql://user:pass@localhost/db  # PostgreSQL connection string
 STARGATE_STORE_DRIVER=sqlite                   # Store type: sqlite (default for single-binary), memory, postgres
 STARGATE_DEFAULT_CLAIM_TTL_HOURS=72            # Task claim expiration time

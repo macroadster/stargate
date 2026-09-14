@@ -210,7 +210,7 @@ npm start      # http://localhost:3000
 - MCP: `/mcp/docs`, `/mcp/SKILL.md`, `/mcp/openapi.json`
 - In-app manuals: `/docs` (from `frontend/public/docs/`)
 
-Optional Starlight scanner integration (stego approval pipeline) uses env such as `STARGATE_STEGO_APPROVAL_ENABLED`, `STARGATE_PROXY_BASE`, `STARGATE_API_KEY`, and optional `IPFS_API_URL`. For the native Trin/GGUF path use `STARLIGHT_GGUF` / `STARLIGHT_TRIN_MODEL`, or rely on auto-download into `$STARGATE_DATA_DIR/models/starlight.gguf` (`STARLIGHT_HF_*`). See deployment docs and `docs/arch/TRIN_STARLIGHT_SCANNER.md`.
+Optional Starlight scanner integration (stego approval pipeline) uses env such as `STARGATE_STEGO_APPROVAL_ENABLED`, `STARGATE_PROXY_BASE`, and optional `IPFS_API_URL`. For the native Trin/GGUF path use `STARLIGHT_GGUF` / `STARLIGHT_TRIN_MODEL`, or rely on auto-download into `$STARGATE_DATA_DIR/models/starlight.gguf` (`STARLIGHT_HF_*`). See deployment docs and `docs/arch/TRIN_STARLIGHT_SCANNER.md`. API keys are issued only by `POST /api/auth/challenge` + `POST /api/auth/verify`; `STARGATE_API_KEY` is ignored.
 
 ## Usage (UI)
 

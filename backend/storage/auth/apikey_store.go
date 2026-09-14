@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"strings"
 	"sync"
@@ -56,7 +57,8 @@ func NewAPIKeyStore() *APIKeyStore {
 	return &APIKeyStore{keys: make(map[string]APIKey)}
 }
 
-// Seed adds a pre-existing key (e.g., from env).
+// Seed adds a pre-existing key. Production keys are issued by challenge/verify;
+// this is a test helper, not an environment backdoor.
 func (s *APIKeyStore) Seed(key, email, source string) {
 	if strings.TrimSpace(key) == "" {
 		return
@@ -66,23 +68,13 @@ func (s *APIKeyStore) Seed(key, email, source string) {
 	s.keys[key] = APIKey{Key: key, Email: email, Source: source, CreatedAt: time.Now()}
 }
 
-// SeedEnvironmentVariables seeds STARGATE_API_KEY and STARLIGHT_DONATION_ADDRESS from environment variables.
+// SeedEnvironmentVariables used to mint an unverified login from
+// STARGATE_API_KEY (optionally bound to STARLIGHT_DONATION_ADDRESS). That was
+// a static-secret backdoor. Keys are issued only by challenge/verify now.
+// The hook remains so storage backends have one startup call; it only warns
+// if the leftover env var is still set (stargate-2f6).
 func (s *APIKeyStore) SeedEnvironmentVariables() {
-	plan := PlanEnvSeed()
-	if plan.BindKey != "" {
-		s.mu.Lock()
-		s.keys[plan.BindKey] = APIKey{
-			Key: plan.BindKey, Wallet: plan.BindWallet, Source: "seed", CreatedAt: time.Now(),
-		}
-		s.mu.Unlock()
-		return
-	}
-	if plan.SeedKeyOnly != "" {
-		s.Seed(plan.SeedKeyOnly, "", "seed")
-	}
-	if plan.SeedDonationAsKey != "" {
-		s.Seed(plan.SeedDonationAsKey, "donation@starlight", "donation_seed")
-	}
+	warnIgnoredAPIKeyEnv()
 }
 
 // Validate returns true if the key exists.
@@ -173,31 +165,9 @@ func hashAPIKey(key string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// EnvSeedPlan describes how STARGATE_API_KEY / STARLIGHT_DONATION_ADDRESS should be applied.
-// Both SQL dialects interpret this the same way so seed behavior cannot drift.
-type EnvSeedPlan struct {
-	// BindKey+BindWallet when both env vars set (key bound to donation wallet).
-	BindKey    string
-	BindWallet string
-	// SeedKeyOnly when only STARGATE_API_KEY is set.
-	SeedKeyOnly string
-	// SeedDonationAsKey when only STARLIGHT_DONATION_ADDRESS is set (legacy seed path).
-	SeedDonationAsKey string
-}
-
-// PlanEnvSeed reads environment once for API key stores (memory / sqlite / postgres).
-func PlanEnvSeed() EnvSeedPlan {
-	stargateKey := strings.TrimSpace(os.Getenv("STARGATE_API_KEY"))
-	donationAddr := strings.TrimSpace(os.Getenv("STARLIGHT_DONATION_ADDRESS"))
-	if stargateKey != "" && donationAddr != "" {
-		return EnvSeedPlan{BindKey: stargateKey, BindWallet: donationAddr}
+func warnIgnoredAPIKeyEnv() {
+	if strings.TrimSpace(os.Getenv("STARGATE_API_KEY")) == "" {
+		return
 	}
-	plan := EnvSeedPlan{}
-	if stargateKey != "" {
-		plan.SeedKeyOnly = stargateKey
-	}
-	if donationAddr != "" {
-		plan.SeedDonationAsKey = donationAddr
-	}
-	return plan
+	log.Printf("SECURITY: STARGATE_API_KEY is ignored; API keys are issued only by POST /api/auth/challenge + /api/auth/verify")
 }

@@ -7,7 +7,7 @@ import (
 )
 
 // One bearer path for /api and /mcp (ADR 0005): X-API-Key, Authorization: Bearer, or the X-API-Key cookie.
-// Register/login, middleware, MCP session, and STARGATE_API_KEY seed all resolve keys through this extractor
+// Challenge/verify, login, middleware, and MCP sessions all resolve keys through this extractor
 // plus the shared APIKeyValidator (api_keys table — no second key store).
 
 type apiKeyCtxKey struct{}

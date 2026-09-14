@@ -57,7 +57,6 @@ type stegoReconcileResponse struct {
 
 type stegoReconcileConfig struct {
 	ProxyBase   string
-	APIKey      string
 	ScanTimeout time.Duration
 }
 
@@ -120,7 +119,6 @@ func loadStegoReconcileConfig() stegoReconcileConfig {
 	}
 	return stegoReconcileConfig{
 		ProxyBase:   proxyBase,
-		APIKey:      strings.TrimSpace(os.Getenv("STARGATE_API_KEY")),
 		ScanTimeout: timeout,
 	}
 }
@@ -374,9 +372,6 @@ func extractStegoManifest(ctx context.Context, imageData []byte, cfg stegoReconc
 		return nil, err
 	}
 	req.Header.Set("Content-Type", writer.FormDataContentType())
-	if cfg.APIKey != "" {
-		req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
-	}
 	client := &http.Client{Timeout: cfg.ScanTimeout}
 	resp, err := client.Do(req)
 	if err != nil {

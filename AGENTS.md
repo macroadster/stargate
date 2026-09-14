@@ -360,7 +360,7 @@ Enable with environment variables (all optional, sensible defaults exist):
 - `STARGATE_AGENT_WORKER_ENABLED=true`
 - `STARGATE_AGENT_AI_IDENTIFIER="stargate-builtin-agent"`
 - `STARGATE_AGENT_POLL_INTERVAL=60`
-- `STARLIGHT_DONATION_ADDRESS` (gives the agent global auditor powers for approvals)
+- `STARLIGHT_DONATION_ADDRESS` (P2WPKH sweep destination; a key issued by challenge/verify for that wallet is this node's settlement actor)
 
 The agent writes results under `UPLOADS_DIR/results/<hash>/` (served at `/uploads/` and `/sandbox/` by the **same** `stargate` process).
 

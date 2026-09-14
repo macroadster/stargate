@@ -478,9 +478,6 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 		proxyURL := fmt.Sprintf("%s/inscribe", strings.TrimRight(h.proxyBase, "/"))
 		proxyReq, _ := http.NewRequest(http.MethodPost, proxyURL, &buf)
 		proxyReq.Header.Set("Content-Type", writer.FormDataContentType())
-		if apiKey := os.Getenv("STARGATE_API_KEY"); apiKey != "" {
-			proxyReq.Header.Set("Authorization", "Bearer "+apiKey)
-		}
 
 		resp, err := http.DefaultClient.Do(proxyReq)
 		if err != nil {
@@ -742,7 +739,7 @@ func (h *InscriptionHandler) HandleDeleteInscription(w http.ResponseWriter, r *h
 		// Verify ownership
 		if creatorWallet, ok := rec.Metadata["creator_wallet"].(string); ok && creatorWallet != "" {
 			if requesterWallet == "" || !strings.EqualFold(strings.TrimSpace(creatorWallet), requesterWallet) {
-				// Special case: check global auditor status (donation address)
+				// Donation-wallet settlement: same rule as WishCreatorAuthorizer.isDonationWallet.
 				donationAddr := strings.TrimSpace(os.Getenv("STARLIGHT_DONATION_ADDRESS"))
 				if donationAddr == "" || !strings.EqualFold(requesterWallet, donationAddr) {
 					h.sendError(w, http.StatusForbidden, "Only the wish creator or an authorized auditor can delete this wish")

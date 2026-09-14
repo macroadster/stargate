@@ -30,7 +30,6 @@ import (
 type stegoApprovalConfig struct {
 	Enabled         bool
 	ProxyBase       string
-	APIKey          string
 	DefaultMethod   string
 	Issuer          string
 	AnnounceEnabled bool
@@ -107,7 +106,6 @@ func loadStegoApprovalConfig() stegoApprovalConfig {
 	return stegoApprovalConfig{
 		Enabled:         enabled,
 		ProxyBase:       proxyBase,
-		APIKey:          strings.TrimSpace(os.Getenv("STARGATE_API_KEY")),
 		DefaultMethod:   method,
 		Issuer:          issuer,
 		AnnounceEnabled: announceEnabled,
@@ -948,9 +946,6 @@ func (s *Server) inscribeStego(ctx context.Context, cfg stegoApprovalConfig, cov
 				continue
 			}
 			req.Header.Set("Content-Type", writer.FormDataContentType())
-			if cfg.APIKey != "" {
-				req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
-			}
 
 			client := &http.Client{Timeout: cfg.InscribeTimeout}
 			resp, err = client.Do(req)

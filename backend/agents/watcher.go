@@ -96,7 +96,7 @@ func (w *Watcher) RunOnce(ctx context.Context) []smart_contract.Task {
 }
 
 // processPendingProposals audits pending proposals and rejects obviously bad ones.
-// Good proposals are left pending (or auto-approved if we are configured as global auditor).
+// Good proposals are left pending (or auto-approved if a donation address is configured).
 func (w *Watcher) processPendingProposals(ctx context.Context) {
 	proposals, err := w.store.ListProposals(ctx, smart_contract.ProposalFilter{Status: "pending"})
 	if err != nil {
@@ -163,7 +163,7 @@ func (w *Watcher) processPendingProposals(ctx context.Context) {
 		log.Printf("agents/watcher: proposal %s passed audit", pid)
 		w.seenProposals[pid] = true
 
-		// Auto-approve if we are acting as global auditor (donation address configured)
+		// Auto-approve if this node has a donation address (in-process settlement).
 		if w.shouldAutoApprove() {
 			if err := w.approveProposal(ctx, pid); err != nil {
 				log.Printf("agents/watcher: auto-approve failed for %s: %v", pid, err)

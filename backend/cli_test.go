@@ -182,7 +182,7 @@ func TestRunCLIServeFlags(t *testing.T) {
 func TestRunCLIEnv(t *testing.T) {
 	t.Setenv("STARGATE_HTTP_PORT", "7777")
 	t.Setenv("STARGATE_DATA_DIR", "/var/lib/stargate")
-	t.Setenv("STARGATE_API_KEY", "supersecrettoken")
+	t.Setenv("STARGATE_PG_DSN", "supersecrettoken")
 	t.Setenv("STARGATE_METRICS", "")
 	t.Setenv("STARGATE_PPROF", "")
 

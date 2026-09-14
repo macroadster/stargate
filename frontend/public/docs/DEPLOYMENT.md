@@ -24,9 +24,8 @@ Useful environment variables:
 # Network
 STARGATE_BITCOIN_NETWORK=testnet   # or mainnet
 
-# Optional Starlight scanner (Python ML service)
+# Optional Starlight scanner (legacy Python sidecar; default is in-process GGUF)
 STARGATE_PROXY_BASE=http://127.0.0.1:8080
-STARGATE_API_KEY=...               # if scanner requires auth
 
 # Optional donation address (direct P2WPKH in funding PSBTs)
 STARLIGHT_DONATION_ADDRESS=bc1q...
@@ -126,10 +125,8 @@ Typical flow:
 git clone <your-starlight-helm-repo>
 cd starlight-helm
 
-# Create shared secrets (API keys / ingest tokens must match across components that call each other)
+# Create shared secrets (ingest/callback tokens only — API keys are issued by wallet challenge/verify)
 kubectl create secret generic stargate-stack-secrets \
-  --from-literal=starlight-api-key='...' \
-  --from-literal=stargate-api-key='...' \
   --from-literal=starlight-ingest-token='...' \
   --from-literal=stargate-ingest-token='...' \
   --from-literal=starlight-stego-callback-secret='...'
@@ -153,7 +150,7 @@ curl -s http://localhost:3001/api/health   # after port-forward or ingress
 **Notes for operators:**
 - Prefer the **unified stargate image** over separate frontend/backend Deployments
 - Default storage for new single-binary installs is **SQLite**; Postgres remains optional for larger shared deployments
-- Matching API keys / ingest tokens between Stargate and a separate Starlight scanner service avoids 401/403 on inscribe and callbacks
+- Matching ingest / callback tokens between Stargate and a leftover Starlight sidecar avoids 401/403 on those optional endpoints. API login is wallet challenge/verify, not a shared env key.
 - Ingress, HPA, Prometheus scrape targets, and multi-replica Postgres are chart-specific — keep those details in the Helm repo, not in end-user manuals
 
 ---
@@ -174,9 +171,9 @@ Enable only if you want peer file distribution:
 |---------|--------|
 | Nothing on :3001 | Process running? Port free? Firewall? |
 | UI loads, API fails | Same origin vs `API_BASE`; reverse proxy paths |
-| Scanner / inscribe errors | `STARGATE_PROXY_BASE`, API keys, scanner health |
+| Scanner / inscribe errors | `STARGATE_PROXY_BASE`, scanner health; default path is in-process GGUF |
 | Contracts not replicating on peer | Peer has block visibility + hash-named files under uploads; wait for mirror |
-| Auth 401/403 between services | Shared secrets must match |
+| Auth 401/403 | Wallet challenge/verify issued key; leftover ingest/callback tokens if using those endpoints |
 
 Logs: run in foreground or check container/pod logs. Metrics often at `/metrics` when enabled.
 

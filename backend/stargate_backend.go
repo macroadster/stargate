@@ -706,7 +706,7 @@ func setupRoutes(ctx context.Context, mux *http.ServeMux, container *container.C
 		}
 	})
 
-	// Auth: login/challenge/verify + STARGATE_API_KEY seed share one api_keys store with middleware and MCP.
+	// Auth: login/challenge/verify share one api_keys store with middleware and MCP.
 	keyHandler := handlers.NewAPIKeyHandler(apiKeyIssuer, apiKeyValidator, challengeStore)
 	mux.HandleFunc("/api/auth/login", keyHandler.HandleLogin)
 	mux.HandleFunc("/api/auth/logout", keyHandler.HandleLogout)

@@ -84,12 +84,8 @@ func exerciseAPIKeySurface(t *testing.T, s apiKeySurface) {
 	t.Setenv("STARGATE_API_KEY", "env-contract-key")
 	t.Setenv("STARLIGHT_DONATION_ADDRESS", "tb1qdonation")
 	s.SeedEnvironmentVariables()
-	if !s.Validate("env-contract-key") {
-		t.Fatal("STARGATE_API_KEY seed must validate")
-	}
-	env, ok := s.Get("env-contract-key")
-	if !ok || env.Wallet != "tb1qdonation" {
-		t.Fatalf("seed bind wallet: %+v ok=%v", env, ok)
+	if s.Validate("env-contract-key") {
+		t.Fatal("STARGATE_API_KEY must not seed a login")
 	}
 
 	if err := s.InvalidateByWallet("tb1qissued"); err != nil {

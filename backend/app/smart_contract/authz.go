@@ -44,8 +44,8 @@ func (a WishCreatorAuthorizer) Authorize(apiKey, visibleHash, subject string) (s
 		return "", fmt.Errorf("api key with wallet binding required to approve %s", subject)
 	}
 
-	if a.isGlobalAuditor(wallet) {
-		log.Printf("AUTHORIZATION: Allowing %s based on Global Auditor status (%s)", subject, wallet)
+	if a.isDonationWallet(wallet) {
+		log.Printf("AUTHORIZATION: Allowing %s based on donation-wallet settlement (%s)", subject, wallet)
 		return wallet, nil
 	}
 
@@ -79,9 +79,10 @@ func (a WishCreatorAuthorizer) boundWallet(apiKey string) string {
 	return strings.TrimSpace(rec.Wallet)
 }
 
-// isGlobalAuditor reports whether wallet is the configured donation address,
-// which is treated as a node-wide approver.
-func (a WishCreatorAuthorizer) isGlobalAuditor(wallet string) bool {
+// isDonationWallet reports whether wallet is this node's configured donation
+// address. A key issued by challenge/verify for that wallet may settle work
+// on this node. It is not a network-wide auditor and is not env-seeded.
+func (a WishCreatorAuthorizer) isDonationWallet(wallet string) bool {
 	donationAddr := strings.TrimSpace(os.Getenv("STARLIGHT_DONATION_ADDRESS"))
 	return donationAddr != "" && strings.EqualFold(wallet, donationAddr)
 }
