@@ -308,29 +308,17 @@ func initializeMCPComponents() *storage.AllStores {
 }
 
 // startMCPServices starts background services for sync (works with PostgreSQL or embedded SQLite).
-func startMCPServices(ctx context.Context, escort *smart_contract.EscortService, store scmiddleware.Store) {
-	pgDsn := os.Getenv("STARGATE_PG_DSN")
-
+func startMCPServices(ctx context.Context, escort *smart_contract.EscortService, store scmiddleware.Store, ingest *services.IngestionService) {
 	if store == nil {
 		log.Printf("no valid store available, skipping background services")
 		return
 	}
 
-	// Build ingestion DSN for sync
-	var ingestDsn string
-	if pgDsn != "" {
-		ingestDsn = pgDsn
-	} else {
-		// Use embedded SQLite for ingestion
-		ingestDsn = os.Getenv("STARGATE_INGESTIONS_DB")
-		if ingestDsn == "" {
-			dataDir := os.Getenv("STARGATE_DATA_DIR")
-			if dataDir == "" {
-				dataDir = "data"
-			}
-			ingestDsn = filepath.Join(dataDir, "ingestions.db")
-		}
-	}
+	// The ingestion service is passed in, not derived. This used to build a DSN
+	// here and hand it to StartIngestionSync, which constructed a third ingestion
+	// service of its own; the derivation read STARGATE_PG_DSN but never
+	// DATABASE_URL and never the configured storage type, so it could address a
+	// different database than AllStores (stargate-t04).
 
 	// Start ingestion -> MCP sync
 	if os.Getenv("STARGATE_ENABLE_INGEST_SYNC") != "false" {
@@ -341,7 +329,7 @@ func startMCPServices(ctx context.Context, escort *smart_contract.EscortService,
 			}
 		}
 
-		if err := scmiddleware.StartIngestionSync(ctx, ingestDsn, store, syncInterval); err != nil {
+		if err := scmiddleware.StartIngestionSync(ctx, ingest, store, syncInterval); err != nil {
 			log.Printf("ingestion sync disabled (init error): %v", err)
 		} else {
 			log.Printf("ingestion sync enabled (interval=%s)", syncInterval)
@@ -559,7 +547,7 @@ func runHTTPServer(ctx context.Context, allStores *storage.AllStores, ipfsClient
 
 	// Start MCP background services if using PostgreSQL AND MCP server is not running separately
 	if os.Getenv("STARGATE_MODE") != "mcp-only" && os.Getenv("STARGATE_MODE") != "both" {
-		startMCPServices(ctx, escort, store)
+		startMCPServices(ctx, escort, store, ingestionSvc)
 	} else {
 		log.Println("MCP background services skipped (will be handled by separate MCP process)")
 	}
