@@ -2,8 +2,10 @@ package mcp
 
 import (
 	"context"
+	"net/http"
 	"testing"
 
+	scservices "stargate-backend/app/smart_contract/services"
 	"stargate-backend/core/smart_contract"
 	scstore "stargate-backend/storage/smart_contract"
 )
@@ -204,6 +206,41 @@ func TestMCPCreateProposalStillReportsAlreadyFinalized(t *testing.T) {
 	}
 	if want := "CREATE_PROPOSAL_ALREADY_FINALIZED"; resp.ErrorCode != want {
 		t.Fatalf("error_code = %q, want %q (body: %s)", resp.ErrorCode, want, resp.Error)
+	}
+}
+
+// TestCreateProposalErrorMapsEveryKind covers the mapping directly because one of
+// the four codes cannot be provoked through this surface: create_proposal builds
+// its tasks from markdown, so their budgets always sum, and only a caller
+// supplying its own task budgets reaches the store's mismatch refusal. REST can.
+// The code is still part of this surface's contract, so the mapping is pinned
+// even where the path is not reachable from here.
+func TestCreateProposalErrorMapsEveryKind(t *testing.T) {
+	srv, _ := surfaceFixture(t)
+
+	cases := []struct {
+		kind scservices.Kind
+		want string
+	}{
+		{scservices.KindBudgetExceeded, "CREATE_PROPOSAL_BUDGET_EXCEEDED"},
+		{scservices.KindBudgetMismatch, "CREATE_PROPOSAL_BUDGET_MISMATCH"},
+		{scservices.KindProposalLimitReached, "CREATE_PROPOSAL_LIMIT_REACHED"},
+		{scservices.KindProposalAlreadyFinalized, "CREATE_PROPOSAL_ALREADY_FINALIZED"},
+		{scservices.KindWishNotFound, ErrCodeNotFound},
+	}
+
+	for _, tc := range cases {
+		t.Run(string(tc.kind), func(t *testing.T) {
+			err := srv.createProposalError(surfaceWishHash,
+				scservices.FailKind(http.StatusBadRequest, tc.kind, "refused"))
+			toolErr, ok := err.(*ToolError)
+			if !ok {
+				t.Fatalf("error is %T, want *ToolError", err)
+			}
+			if toolErr.Code != tc.want {
+				t.Fatalf("code = %q, want %q", toolErr.Code, tc.want)
+			}
+		})
 	}
 }
 

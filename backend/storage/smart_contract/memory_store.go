@@ -750,7 +750,7 @@ func (s *MemoryStore) CreateProposal(ctx context.Context, p smart_contract.Propo
 
 	// Comprehensive security validation
 	if err := ValidateProposalInput(&p); err != nil {
-		return fmt.Errorf("proposal validation failed: %v", err)
+		return fmt.Errorf("proposal validation failed: %w", err)
 	}
 
 	// Validate status field
@@ -1010,7 +1010,7 @@ func (s *MemoryStore) UpdateProposal(ctx context.Context, p smart_contract.Propo
 	}
 
 	if err := ValidateProposalInput(&p); err != nil {
-		return fmt.Errorf("proposal validation failed: %v", err)
+		return fmt.Errorf("proposal validation failed: %w", err)
 	}
 
 	s.proposals[p.ID] = p

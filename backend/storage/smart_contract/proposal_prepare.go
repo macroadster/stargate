@@ -35,7 +35,7 @@ func PrepareProposalForCreate(p *coresc.Proposal) (visibleHash string, metadataJ
 		}
 	}
 	if err := ValidateProposalInput(p); err != nil {
-		return "", nil, "", fmt.Errorf("proposal validation failed: %v", err)
+		return "", nil, "", fmt.Errorf("proposal validation failed: %w", err)
 	}
 	if p.Status == "" {
 		p.Status = "pending"
