@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -64,6 +65,9 @@ type fullMockSweepStore struct {
 	tasks     []smart_contract.Task
 	proofs    map[string]*smart_contract.MerkleProof
 	contracts []smart_contract.Contract
+	// confirmErr makes ConfirmContract fail, so the caller's handling of a
+	// failed confirm is reachable (stargate-22a).
+	confirmErr error
 }
 
 func (m *fullMockSweepStore) UpdateTaskProof(_ context.Context, taskID string, proof *smart_contract.MerkleProof) error {
@@ -105,7 +109,22 @@ func (m *fullMockSweepStore) ListTasks(filter smart_contract.TaskFilter) ([]smar
 	return out, nil
 }
 func (m *fullMockSweepStore) UpdateContractStatus(_ context.Context, _, _ string) error { return nil }
+
+// GetContract satisfies the optional contractGetter the post-confirm reconcile
+// asserts (stargate-22a). Absent rows error, as the real stores do.
+func (m *fullMockSweepStore) GetContract(id string) (smart_contract.Contract, error) {
+	for _, c := range m.contracts {
+		if c.ContractID == id {
+			return c, nil
+		}
+	}
+	return smart_contract.Contract{}, fmt.Errorf("contract %s not found", id)
+}
+
 func (m *fullMockSweepStore) ConfirmContract(_ context.Context, contractID string, _ int, _ string) error {
+	if m.confirmErr != nil {
+		return m.confirmErr
+	}
 	for i := range m.contracts {
 		if m.contracts[i].ContractID == contractID {
 			m.contracts[i].Status = "confirmed"
