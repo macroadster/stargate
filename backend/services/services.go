@@ -310,9 +310,10 @@ func (s *HealthService) GetHealthStatus() *core.HealthResponse {
 
 // PeerService handles peer discovery and registration for WebRTC
 type PeerService struct {
-	peers map[string]time.Time
-	mu    sync.RWMutex
-	done  chan struct{}
+	peers   map[string]time.Time
+	mu      sync.RWMutex
+	done    chan struct{}
+	stopped sync.Once
 }
 
 // NewPeerService creates a new peer service
@@ -378,10 +379,9 @@ func (ps *PeerService) cleanup() {
 }
 
 // Stop requests the cleanup goroutine to exit (used for clean shutdown).
+//
+// Safe to call more than once, including concurrently; see ContractCache.Stop
+// for the check-then-act race this replaced (stargate-ard).
 func (ps *PeerService) Stop() {
-	select {
-	case <-ps.done:
-	default:
-		close(ps.done)
-	}
+	ps.stopped.Do(func() { close(ps.done) })
 }

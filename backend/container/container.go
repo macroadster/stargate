@@ -144,3 +144,25 @@ func (c *Container) SetSmartContractHandler(store scmiddleware.Store) {
 
 // Close stops background goroutines owned by services in the container
 // (e.g. peer cleanup, contract cache TTL cleaner). Safe to call multiple times.
+//
+// This comment sat here for a while with no method under it, and nothing called
+// the Stop methods it describes (stargate-ard). Because it read as though the
+// work were done, stargate-gkh gave BlockMonitor and Orchestrator shutdown paths
+// and left these two alone.
+//
+// Each construction starts one cleanup goroutine, so what this buys in a process
+// that builds one container and then exits is small — exit reclaims them either
+// way. It matters for anything that builds containers repeatedly, tests
+// included, and it makes the two Stop methods reachable rather than dead.
+func (c *Container) Close() {
+	// The cache is shared: it comes from AllStores, and stopping it stops the
+	// cleaner for every holder. That is correct at process shutdown, which is
+	// this method's only caller, but it is the reason Close is not something to
+	// call on one container while another is still serving.
+	if c.ContractCache != nil {
+		c.ContractCache.Stop()
+	}
+	if c.PeerService != nil {
+		c.PeerService.Stop()
+	}
+}

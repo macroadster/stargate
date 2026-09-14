@@ -33,6 +33,9 @@ func TestContainerSharesTheOneDataLayer(t *testing.T) {
 	}
 
 	c := NewContainer(stores)
+	// These tests predate Close existing (stargate-ard), and leaked a cleanup
+	// goroutine per construction until it did.
+	defer c.Close()
 
 	if c.IngestionService != stores.IngestionService {
 		t.Error("container holds a different ingestion service than AllStores built; " +
@@ -77,6 +80,7 @@ func TestContainerIgnoresStorageEnvironment(t *testing.T) {
 	// Postgres and then set IngestionService to nil, while AllStores' SQLite
 	// service kept working.
 	c := NewContainer(stores)
+	defer c.Close()
 
 	if c.IngestionService == nil {
 		t.Fatal("ingestion service is nil: construction still consults the environment")
