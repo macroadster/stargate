@@ -8,10 +8,7 @@ import (
 	"stargate-backend/handlers"
 	"stargate-backend/services"
 	"stargate-backend/storage"
-	"stargate-backend/storage/auth"
 	"stargate-backend/storage/smart_contract"
-	"strconv"
-	"time"
 )
 
 // Container holds all application dependencies
@@ -41,28 +38,22 @@ type Container struct {
 	IngestionHandler     *handlers.IngestionHandler
 }
 
-// NewContainer creates a new dependency container
-func NewContainer(apiKeyIssuer auth.APIKeyIssuer, apiKeyValidator auth.APIKeyValidator) *Container {
-	storageType := os.Getenv("STARGATE_STORAGE")
-	pgDSN := os.Getenv("STARGATE_PG_DSN")
-	if pgDSN == "" {
-		pgDSN = os.Getenv("DATABASE_URL") // fallback env name
-	}
-
-	// Initialize cache
-	contractCacheTTL := 2 * time.Minute
-	contractCacheSize := 1000
-	if env := os.Getenv("CONTRACT_CACHE_TTL"); env != "" {
-		if duration, err := time.ParseDuration(env); err == nil {
-			contractCacheTTL = duration
-		}
-	}
-	if env := os.Getenv("CONTRACT_CACHE_SIZE"); env != "" {
-		if size, err := strconv.Atoi(env); err == nil && size > 0 {
-			contractCacheSize = size
-		}
-	}
-	contractCache := smart_contract.NewContractCache(contractCacheTTL, contractCacheSize)
+// NewContainer wires handlers onto storage that has already been built.
+//
+// It used to re-read STARGATE_STORAGE, the Postgres DSN, STARGATE_DATA_DIR and
+// the cache settings and construct its own ingestion service, data storage and
+// contract cache, giving the process two independent data layers over the same
+// data (stargate-a49). Taking AllStores means the layer is built once, by
+// NewAllStores, and the two can no longer disagree.
+func NewContainer(stores *storage.AllStores) *Container {
+	// The key stores come from AllStores too, rather than being passed
+	// separately, so the handlers cannot be handed a different pair than the one
+	// the rest of the process authenticates against.
+	apiKeyIssuer := stores.APIKeyIssuer
+	apiKeyValidator := stores.APIKeyValidator
+	// The cache the rest of the process reads. A second one was allocated here
+	// while NewAllStores' went unused.
+	contractCache := stores.ContractCache
 
 	// Initialize services
 	dataDir := os.Getenv("BLOCKS_DIR")
@@ -87,32 +78,18 @@ func NewContainer(apiKeyIssuer auth.APIKeyIssuer, apiKeyValidator auth.APIKeyVal
 	healthService := services.NewHealthService()
 	peerService := services.NewPeerService()
 
-	var ingestionService *services.IngestionService
-	ingestionDSN := pgDSN
-	if ingestionDSN == "" {
-		// Fall back to SQLite ingestion database
-		ingestionDSN = os.Getenv("STARGATE_INGESTIONS_DB")
-		if ingestionDSN == "" {
-			dataDir := os.Getenv("STARGATE_DATA_DIR")
-			if dataDir == "" {
-				dataDir = "data"
-			}
-			ingestionDSN = filepath.Join(dataDir, "sqlite", "ingestions.db")
-		}
-	}
-	ingestionService = initIngestionService(ingestionDSN)
-
-	// Data storage selection
-	var dataStorage storage.ExtendedDataStorage
-	dataStorage = storage.NewDataStorage(dataDir)
-	if storageType == "postgres" && pgDSN != "" {
-		if pgStore, err := storage.NewPostgresStorage(pgDSN); err != nil {
-			log.Printf("Failed to init Postgres storage, falling back to filesystem: %v", err)
-		} else {
-			log.Printf("Using Postgres storage backend")
-			dataStorage = pgStore
-		}
-	}
+	// The one ingestion service and the one data layer, both from NewAllStores.
+	//
+	// This built its own of each. The ingestion DSN it derived was not even the
+	// same one: it preferred the Postgres DSN whenever the environment carried
+	// it, while NewAllStores only uses that DSN when the configured type is
+	// postgres. With STARGATE_STORAGE=sqlite and a DATABASE_URL present the two
+	// therefore addressed different databases, and initIngestionService returned
+	// nil after ~15s of retries if that Postgres was unreachable. The block
+	// monitor nil-guards its ingestion handle, so the effect was ingestion
+	// reconciliation silently never running rather than a crash.
+	ingestionService := stores.IngestionService
+	dataStorage := stores.DataStorage
 
 	// Initialize handlers
 	healthHandler := handlers.NewHealthHandler(healthService)
@@ -163,21 +140,6 @@ func (c *Container) SetSmartContractHandler(store scmiddleware.Store) {
 	if c.SearchHandler != nil {
 		c.SearchHandler.SetStore(store)
 	}
-}
-
-// initIngestionService retries connecting to Postgres a few times to avoid startup races.
-func initIngestionService(pgDSN string) *services.IngestionService {
-	const maxAttempts = 5
-	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		if svc, err := services.NewIngestionService(pgDSN); err == nil {
-			return svc
-		} else {
-			log.Printf("failed to init ingestion service (attempt %d/%d): %v", attempt, maxAttempts, err)
-		}
-		time.Sleep(time.Duration(attempt) * time.Second)
-	}
-	log.Printf("ingestion service disabled after retries")
-	return nil
 }
 
 // Close stops background goroutines owned by services in the container

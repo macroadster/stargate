@@ -285,7 +285,7 @@ func findImagePath(heightStr string, filename string) (string, bool) {
 // debugging business logic and unit tests.
 // sqlite mode: durable embedded single-binary (recommended default).
 // No hybrid (filesystem JSON + sqlite) is supported — it would duplicate data.
-func initializeMCPComponents() (scmiddleware.Store, auth.APIKeyIssuer, auth.APIKeyValidator, *services.IngestionService, *auth.ChallengeStore) {
+func initializeMCPComponents() *storage.AllStores {
 	cfg := storage.LoadStorageConfigFromEnv()
 
 	allStores, err := storage.NewAllStores(cfg)
@@ -300,14 +300,11 @@ func initializeMCPComponents() (scmiddleware.Store, auth.APIKeyIssuer, auth.APIK
 		log.Printf("Components initialized with memory store")
 	}
 
-	// For backward compatibility with the old return signature we still return
-	// the pieces that the rest of main expects.
-	// DataStorage and ContractCache are also available on allStores if needed.
-	return mcpStore,
-		allStores.APIKeyIssuer,
-		allStores.APIKeyValidator,
-		allStores.IngestionService,
-		allStores.ChallengeStore
+	// Returned whole rather than unpacked into pieces. Unpacking is how a second
+	// data layer got built alongside this one: with only the pieces in hand,
+	// runHTTPServer had no ingestion service or data storage to hand the
+	// container, so the container made its own (stargate-a49).
+	return allStores
 }
 
 // startMCPServices starts background services for sync (works with PostgreSQL or embedded SQLite).
@@ -438,7 +435,7 @@ func main() {
 	}
 
 	// Initialize MCP components (needed for both server and background)
-	store, apiKeyIssuer, apiKeyValidator, ingestionSvc, challengeStore := initializeMCPComponents()
+	allStores := initializeMCPComponents()
 
 	// Initialize IPFS client (includes embedded node if enabled)
 	ipfsClient := ipfs.NewClientFromEnv()
@@ -455,13 +452,20 @@ func main() {
 	// runHTTPServer owns the server-scoped background services and returns only
 	// after they have stopped, so process-level defers (including IPFS close)
 	// are guaranteed to run on SIGINT/SIGTERM.
-	if err := runHTTPServer(ctx, store, apiKeyIssuer, apiKeyValidator, ingestionSvc, challengeStore, ipfsClient); err != nil {
+	if err := runHTTPServer(ctx, allStores, ipfsClient); err != nil {
 		log.Printf("HTTP server exited: %v", err)
 	}
 }
 
-func runHTTPServer(ctx context.Context, store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, apiKeyValidator auth.APIKeyValidator, ingestionSvc *services.IngestionService, challengeStore *auth.ChallengeStore, ipfsClient *ipfs.Client) error {
+func runHTTPServer(ctx context.Context, allStores *storage.AllStores, ipfsClient *ipfs.Client) error {
 	log.Println("=== STARTING STARGATE HTTP SERVER ===")
+
+	// One data layer, unpacked here for readability rather than rebuilt.
+	var store scmiddleware.Store = allStores.SmartContractStore
+	apiKeyIssuer := allStores.APIKeyIssuer
+	apiKeyValidator := allStores.APIKeyValidator
+	ingestionSvc := allStores.IngestionService
+	challengeStore := allStores.ChallengeStore
 
 	// Wrap the MCP store so ConfirmContract / status updates / upserts invalidate
 	// /api/open-contracts list caches (prevents stale /contracts first pages).
@@ -508,7 +512,7 @@ func runHTTPServer(ctx context.Context, store scmiddleware.Store, apiKeyIssuer a
 	}
 
 	// Initialize dependency container
-	container := container.NewContainer(apiKeyIssuer, apiKeyValidator)
+	container := container.NewContainer(allStores)
 
 	// Start Bitcoin full node (btcd, no mining) or external/off chain backend.
 	// This replaces unreliable public mempool.space polling for block data.
@@ -871,7 +875,11 @@ func setupRoutes(ctx context.Context, mux *http.ServeMux, container *container.C
 		blockMonitor.SetChainBackend(chainBackend)
 	}
 	log.Printf("DIAG: block monitor created (effective intervals logged at start)")
-	blockMonitor.SetIngestionService(container.IngestionService)
+	// The same handle StartIPFSIngestionSync and StartWishGC are given below.
+	// This read container.IngestionService while they read ingestionSvc, and the
+	// two were separately constructed services over what was not necessarily even
+	// the same database (stargate-a49).
+	blockMonitor.SetIngestionService(ingestionSvc)
 	blockMonitor.SetStegoReconciler(bitcoin.StegoReconcilerFunc(func(ctx context.Context, stegoCID, expectedHash string) error {
 		return mcpRestServer.ReconcileStego(ctx, stegoCID, expectedHash)
 	}))
