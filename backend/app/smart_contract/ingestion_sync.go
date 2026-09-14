@@ -23,7 +23,7 @@ import (
 // publishProposalEvent publishes a proposal creation event via IPFS for cross-instance sync
 func publishProposalEvent(ctx context.Context, proposal smart_contract.Proposal) error {
 	// Check if sync is enabled
-	if os.Getenv("STARGATE_SYNC_ENABLE") == "false" {
+	if !syncEnabled() {
 		return nil
 	}
 
