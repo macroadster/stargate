@@ -58,7 +58,7 @@ At funding time, the PSBT may carry an OP_RETURN with exactly **two** hashes (64
 - **wish_hash** (32 bytes): SHA256 of the original wish image pixels
 - **stego_hash** (32 bytes): SHA256 of the stego image (v2 JSON payload embedded in the image)
 
-The stego v2 JSON includes proposal/tasks metadata and **sandbox_hash** (SHA256 of the deliverables tarball). That keeps the sandbox reference off-chain while remaining discoverable to any node that has the stego file.
+The stego v2 JSON includes proposal/tasks metadata and **sandbox_hash** (SHA256 of the deliverables tarball). That keeps the sandbox reference off-chain while remaining discoverable to any node that has the stego file. Optional first-class fields `creator_wallet` + `creator_sig` are a Bitcoin signed message over `STARLIGHT-WISH-V1\n<wish_hash>` so a replica can verify authorship without trusting payload metadata (ADR 0007).
 
 Donations (when configured via `STARLIGHT_DONATION_ADDRESS`) are **direct P2WPKH** outputs — no hashlocks, no sweeps, no recommitment. One funding transaction, minimal ceremony.
 

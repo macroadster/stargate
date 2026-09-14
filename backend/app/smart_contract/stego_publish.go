@@ -22,8 +22,8 @@ import (
 	"stargate-backend/core/smart_contract"
 	"stargate-backend/services"
 	"stargate-backend/stego"
-       "stargate-backend/storage/datadir"
-       "stargate-backend/storage/ipfs"
+	"stargate-backend/storage/datadir"
+	"stargate-backend/storage/ipfs"
 	scstore "stargate-backend/storage/smart_contract"
 )
 
@@ -209,13 +209,13 @@ func (s *Server) PreparePublishArtifacts(ctx context.Context, proposalID string)
 	// Hash the sandbox directory first, then write directly to UPLOADS_DIR/<hash>.
 	// The reconcile process and IPFS mirror both use hash-based filenames,
 	// so there is no need for an intermediate sandbox-<vph>.tar file.
-       sandboxDir := datadir.PartResolve(filepath.Join(uploadsDir, "results"), visibleHash)
+	sandboxDir := datadir.PartResolve(filepath.Join(uploadsDir, "results"), visibleHash)
 	if sandboxDirHash, err := stego.HashSandboxDir(sandboxDir); err == nil {
-               hashPath := datadir.PartPath(uploadsDir, sandboxDirHash)
+		hashPath := datadir.PartPath(uploadsDir, sandboxDirHash)
 		if _, statErr := os.Stat(hashPath); os.IsNotExist(statErr) {
-                       if err := os.MkdirAll(filepath.Dir(hashPath), 0755); err != nil {
-                               log.Printf("stego prepare: failed to create partition dir: %v", err)
-                       } else if _, writeErr := stego.WriteSandboxTarball(sandboxDir, hashPath); writeErr != nil {
+			if err := os.MkdirAll(filepath.Dir(hashPath), 0755); err != nil {
+				log.Printf("stego prepare: failed to create partition dir: %v", err)
+			} else if _, writeErr := stego.WriteSandboxTarball(sandboxDir, hashPath); writeErr != nil {
 				log.Printf("stego prepare: failed to write sandbox tarball %s: %v", hashPath, writeErr)
 			} else {
 				log.Printf("stego prepare: sandbox tarball stored as %s", hashPath)
@@ -235,6 +235,7 @@ func (s *Server) PreparePublishArtifacts(ctx context.Context, proposalID string)
 	payload.Issuer = cfg.Issuer
 	payload.CreatedAt = manifestCreatedAt
 	payload.SandboxHash = result.SandboxHash
+	applyCreatorAttestation(&payload, coverRec.Metadata)
 	manifestBytes, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal embedded payload: %w", err)
@@ -259,12 +260,12 @@ func (s *Server) PreparePublishArtifacts(ctx context.Context, proposalID string)
 	result.StegoImageHash = stegoHash
 	result.StegoBytes = stegoBytes
 
-       // Write stego image to UPLOADS_DIR/ab/cd/ef/<stegoHash> so the IPFS mirror
+	// Write stego image to UPLOADS_DIR/ab/cd/ef/<stegoHash> so the IPFS mirror
 	// syncs it to peers using hash-based filenames.
-       stegoPath := datadir.PartPath(uploadsDir, stegoHash)
-       if err := os.MkdirAll(filepath.Dir(stegoPath), 0755); err != nil {
-               log.Printf("stego prepare: failed to create partition dir: %v", err)
-       }
+	stegoPath := datadir.PartPath(uploadsDir, stegoHash)
+	if err := os.MkdirAll(filepath.Dir(stegoPath), 0755); err != nil {
+		log.Printf("stego prepare: failed to create partition dir: %v", err)
+	}
 	if err := os.WriteFile(stegoPath, stegoBytes, 0644); err != nil {
 		log.Printf("stego prepare: failed to write stego image to %s: %v", stegoPath, err)
 	} else {
@@ -319,7 +320,7 @@ func (s *Server) FinalizePublishArtifacts(ctx context.Context, proposalID string
 		// Upload sandbox tarball.
 		uploadsDir := strings.TrimSpace(os.Getenv("UPLOADS_DIR"))
 		if artifacts.SandboxHash != "" {
-                       tarballPath := datadir.PartResolve(uploadsDir, artifacts.SandboxHash)
+			tarballPath := datadir.PartResolve(uploadsDir, artifacts.SandboxHash)
 			if tarballData, readErr := os.ReadFile(tarballPath); readErr == nil {
 				if tarballCID, addErr := ipfsClient.AddBytes(ctx, artifacts.SandboxHash, tarballData); addErr == nil {
 					meta["sandbox_tarball_cid"] = tarballCID
@@ -490,12 +491,12 @@ func (s *Server) publishStegoForProposal(ctx context.Context, proposalID string,
 	// file is needed.
 	sandboxHash := ""
 	uploadsDir := strings.TrimSpace(os.Getenv("UPLOADS_DIR"))
-       sandboxDir := datadir.PartResolve(filepath.Join(uploadsDir, "results"), visibleHash)
+	sandboxDir := datadir.PartResolve(filepath.Join(uploadsDir, "results"), visibleHash)
 	if h, err := stego.HashSandboxDir(sandboxDir); err == nil {
 		sandboxHash = h
-               hashPath := datadir.PartPath(uploadsDir, sandboxHash)
+		hashPath := datadir.PartPath(uploadsDir, sandboxHash)
 		if _, statErr := os.Stat(hashPath); os.IsNotExist(statErr) {
-                       _ = os.MkdirAll(filepath.Dir(hashPath), 0755)
+			_ = os.MkdirAll(filepath.Dir(hashPath), 0755)
 			if _, writeErr := stego.WriteSandboxTarball(sandboxDir, hashPath); writeErr != nil {
 				log.Printf("stego publish: failed to write sandbox tarball %s: %v", hashPath, writeErr)
 			} else {
@@ -527,6 +528,7 @@ func (s *Server) publishStegoForProposal(ctx context.Context, proposalID string,
 	payload.Issuer = cfg.Issuer
 	payload.CreatedAt = manifestCreatedAt
 	payload.SandboxHash = sandboxHash
+	applyCreatorAttestation(&payload, coverRec.Metadata)
 	manifestBytes, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("failed to marshal embedded payload: %w", err)
@@ -702,6 +704,22 @@ func addProposalStegoMeta(meta map[string]interface{}, p smart_contract.Proposal
 	}
 }
 
+// applyCreatorAttestation copies a locally stored, already-verified
+// attestation onto first-class payload fields. It does not read
+// payload.Metadata and does not invent a wallet from Issuer.
+func applyCreatorAttestation(payload *stegoPayload, ingestMeta map[string]interface{}) {
+	if payload == nil || ingestMeta == nil {
+		return
+	}
+	wallet := strings.TrimSpace(toString(ingestMeta["creator_wallet"]))
+	sig := strings.TrimSpace(toString(ingestMeta["creator_sig"]))
+	if wallet == "" || sig == "" {
+		return
+	}
+	payload.CreatorWallet = wallet
+	payload.CreatorSig = sig
+}
+
 func addWishStegoMeta(meta map[string]interface{}, ingestMeta map[string]interface{}) {
 	if meta == nil || ingestMeta == nil {
 		return
@@ -844,6 +862,9 @@ func extractStegoMetadata(meta map[string]interface{}) []stegoMetadataEntry {
 	sort.Strings(keys)
 	out := make([]stegoMetadataEntry, 0, len(keys))
 	for _, k := range keys {
+		if stego.IsCreatorAttestationMetaKey(k) {
+			continue
+		}
 		v := meta[k]
 		val, ok := formatStegoMetaValue(v)
 		if !ok {

@@ -417,6 +417,26 @@ WHERE id = $1
 	})
 }
 
+// SetCreatorWalletIfAbsent records a verified creator wallet. It never
+// overwrites a non-empty value: a crafted replica must not steal an origin
+// row (stargate-6ds).
+func (s *IngestionService) SetCreatorWalletIfAbsent(id, wallet string) error {
+	wallet = strings.TrimSpace(wallet)
+	if id == "" || wallet == "" {
+		return fmt.Errorf("missing id or wallet")
+	}
+	rec, err := s.Get(id)
+	if err != nil {
+		return err
+	}
+	if rec.Metadata != nil {
+		if existing, ok := rec.Metadata["creator_wallet"].(string); ok && strings.TrimSpace(existing) != "" {
+			return nil
+		}
+	}
+	return s.UpdateMetadata(id, map[string]interface{}{"creator_wallet": wallet})
+}
+
 func (s *IngestionService) UpdateMetadata(id string, updates map[string]interface{}) error {
 	if id == "" {
 		return fmt.Errorf("missing id")

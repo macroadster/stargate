@@ -696,8 +696,106 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 		"id":                 ingestionID,
 		"ingestion_id":       ingestionID,
 		"visible_pixel_hash": ingestionID,
+		"creator_message":    stego.WishCreatorMessage(ingestionID),
 	})
 	return
+}
+
+// HandleInscription dispatches authenticated /api/inscriptions/{id} routes.
+func (h *InscriptionHandler) HandleInscription(w http.ResponseWriter, r *http.Request) {
+	rest := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/inscriptions/"), "/")
+	if rest == "" {
+		h.sendError(w, http.StatusNotFound, "Missing ID")
+		return
+	}
+	if strings.HasSuffix(rest, "/attest") {
+		if r.Method != http.MethodPost {
+			h.sendError(w, http.StatusMethodNotAllowed, "Method not allowed")
+			return
+		}
+		id := strings.Trim(strings.TrimSuffix(rest, "/attest"), "/")
+		h.HandleCreatorAttest(w, r, id)
+		return
+	}
+	if r.Method == http.MethodDelete {
+		h.HandleDeleteInscription(w, r)
+		return
+	}
+	h.sendError(w, http.StatusMethodNotAllowed, "Method not allowed")
+}
+
+// HandleCreatorAttest records a Bitcoin signature over the wish hash by the
+// API key's bound wallet. The signature is stored locally and later embedded
+// as first-class stego fields so replicas can verify authorship.
+func (h *InscriptionHandler) HandleCreatorAttest(w http.ResponseWriter, r *http.Request, id string) {
+	visibleHash := strings.TrimPrefix(strings.TrimSpace(id), "wish-")
+	if visibleHash == "" {
+		h.sendError(w, http.StatusBadRequest, "Missing ID")
+		return
+	}
+	if h.ingestionService == nil {
+		h.sendError(w, http.StatusServiceUnavailable, "ingestion service unavailable")
+		return
+	}
+
+	var body struct {
+		Signature string `json:"signature"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		h.sendError(w, http.StatusBadRequest, "Invalid JSON")
+		return
+	}
+	sig := strings.TrimSpace(body.Signature)
+	if sig == "" {
+		h.sendError(w, http.StatusBadRequest, "signature is required")
+		return
+	}
+
+	apiKey := auth.RequestAPIKey(r)
+	var wallet string
+	if apiKey != "" && h.apiKeyValidator != nil {
+		if rec, ok := h.apiKeyValidator.Get(apiKey); ok {
+			wallet = strings.TrimSpace(rec.Wallet)
+		}
+	}
+	if wallet == "" {
+		h.sendError(w, http.StatusForbidden, "api key with wallet binding required")
+		return
+	}
+
+	rec, err := h.ingestionService.Get(visibleHash)
+	if err != nil || rec == nil {
+		h.sendError(w, http.StatusNotFound, "Inscription not found")
+		return
+	}
+	if existing, ok := rec.Metadata["creator_wallet"].(string); ok {
+		if existing = strings.TrimSpace(existing); existing != "" && !strings.EqualFold(existing, wallet) {
+			h.sendError(w, http.StatusForbidden, "only the wish creator can attest this wish")
+			return
+		}
+	}
+
+	if err := scmiddleware.VerifyCreatorAttestation(wallet, sig, visibleHash); err != nil {
+		h.sendError(w, http.StatusForbidden, "invalid creator signature")
+		return
+	}
+
+	if err := h.ingestionService.UpdateMetadata(visibleHash, map[string]interface{}{
+		"creator_sig": sig,
+	}); err != nil {
+		h.sendError(w, http.StatusInternalServerError, "failed to store creator signature")
+		return
+	}
+	if err := h.ingestionService.SetCreatorWalletIfAbsent(visibleHash, wallet); err != nil {
+		h.sendError(w, http.StatusInternalServerError, "failed to record creator wallet")
+		return
+	}
+
+	h.sendSuccess(w, map[string]string{
+		"status":             "attested",
+		"visible_pixel_hash": visibleHash,
+		"creator_wallet":     wallet,
+	})
 }
 
 // HandleDeleteInscription handles deleting an inscription and its associated wish

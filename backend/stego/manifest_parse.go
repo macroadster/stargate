@@ -58,6 +58,8 @@ func parseEmbeddedJSON(data []byte) (Manifest, Payload, error) {
 		SandboxHash:      strings.TrimSpace(p.SandboxHash),
 		CreatedAt:        p.CreatedAt,
 		Issuer:           strings.TrimSpace(p.Issuer),
+		CreatorWallet:    strings.TrimSpace(p.CreatorWallet),
+		CreatorSig:       strings.TrimSpace(p.CreatorSig),
 		// PayloadCID deliberately empty — payload is inline
 	}
 	return m, p, nil
@@ -82,6 +84,8 @@ func ParseManifestYAML(data []byte) (Manifest, error) {
 	raw.TasksCID = strings.TrimSpace(raw.TasksCID)
 	raw.SandboxHash = strings.TrimSpace(raw.SandboxHash)
 	raw.Issuer = strings.TrimSpace(raw.Issuer)
+	raw.CreatorWallet = strings.TrimSpace(raw.CreatorWallet)
+	raw.CreatorSig = strings.TrimSpace(raw.CreatorSig)
 	raw.ContractID = strings.TrimSpace(raw.ContractID)
 	if raw.ProposalID == "" {
 		return Manifest{}, fmt.Errorf("manifest proposal_id missing")

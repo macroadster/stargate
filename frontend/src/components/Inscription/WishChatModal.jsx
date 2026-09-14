@@ -11,7 +11,7 @@ import {
   Loader2,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
-import { apiFetch } from '../../utils/api';
+import { apiFetch, extractApiErrorMessage } from '../../utils/api';
 import MarkdownContent from '../Common/MarkdownContent';
 import {
   emptyDraft,
@@ -49,6 +49,9 @@ const WishChatModal = ({ onClose, onSuccess }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [errorText, setErrorText] = useState('');
   const [result, setResult] = useState(null);
+  const [attestMessage, setAttestMessage] = useState('');
+  const [attestSig, setAttestSig] = useState('');
+  const [attestStatus, setAttestStatus] = useState('');
   const dragDepth = useRef(0);
 
   // Keep wallet in sync with auth
@@ -124,8 +127,14 @@ const WishChatModal = ({ onClose, onSuccess }) => {
         }
 
         const body = await response.json();
-        setResult(body);
+        const inscribed = body?.data || body;
+        setResult(inscribed);
         setPhase('done');
+        const hash = inscribed.visible_pixel_hash || inscribed.ingestion_id || inscribed.id;
+        const creatorMessage = inscribed.creator_message || (hash ? `STARLIGHT-WISH-V1\n${hash}` : '');
+        setAttestMessage(creatorMessage);
+        setAttestSig('');
+        setAttestStatus('');
         pushMessages([
           {
             role: 'bot',
@@ -133,8 +142,11 @@ const WishChatModal = ({ onClose, onSuccess }) => {
             content: [
               '✅ **Wish submitted for inscription.**',
               '',
-              body?.id ? `Inscription ID: \`${body.id}\`` : '',
+              hash ? `Inscription ID: \`${hash}\`` : '',
               'It is now pending — track it under Pending Transactions.',
+              creatorMessage
+                ? '\nTo let other nodes recognize you as creator, sign the message shown in the draft panel with the same wallet you used to log in.'
+                : '',
             ]
               .filter(Boolean)
               .join('\n'),
@@ -156,6 +168,43 @@ const WishChatModal = ({ onClose, onSuccess }) => {
     },
     [auth.apiKey, onSuccess, pushMessages],
   );
+
+  const submitAttestation = useCallback(async () => {
+    const hash = result?.visible_pixel_hash || result?.ingestion_id || result?.id;
+    if (!hash || !attestSig.trim()) return;
+    setAttestStatus('signing');
+    try {
+      const response = await apiFetch(`/api/inscriptions/${hash}/attest`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Key': auth.apiKey || '',
+        },
+        body: JSON.stringify({ signature: attestSig.trim() }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(extractApiErrorMessage(body, `Attest failed (${response.status})`));
+      }
+      setAttestStatus('done');
+      pushMessages([
+        {
+          role: 'bot',
+          kind: 'success',
+          content: 'Creator signature recorded. Replicas can now verify you authored this wish.',
+        },
+      ]);
+    } catch (err) {
+      setAttestStatus('error');
+      pushMessages([
+        {
+          role: 'bot',
+          kind: 'error',
+          content: `❌ ${err?.message || 'Could not record creator signature.'}`,
+        },
+      ]);
+    }
+  }, [attestSig, auth.apiKey, pushMessages, result]);
 
   const handleUserText = useCallback(
     async (text) => {
@@ -264,6 +313,9 @@ const WishChatModal = ({ onClose, onSuccess }) => {
     const fresh = emptyDraft(auth.wallet || '');
     setDraft(fresh);
     setResult(null);
+    setAttestMessage('');
+    setAttestSig('');
+    setAttestStatus('');
     setErrorText('');
     setPhase('collecting');
     setMessages(welcomeMessages(auth.wallet || '').map((m) => ({ ...m, id: nextId() })));
@@ -459,6 +511,27 @@ const WishChatModal = ({ onClose, onSuccess }) => {
               >
                 {phase === 'submitting' ? 'Inscribing…' : 'Inscribe wish'}
               </button>
+            )}
+            {phase === 'done' && attestMessage && attestStatus !== 'done' && (
+              <div className="wish-chat-field">
+                <span>Creator signature</span>
+                <code className="auth-challenge-nonce font-mono text-xs break-all">{attestMessage}</code>
+                <textarea
+                  rows={2}
+                  value={attestSig}
+                  onChange={(e) => setAttestSig(e.target.value)}
+                  placeholder="Paste wallet signmessage signature"
+                  aria-label="Creator signature"
+                />
+                <button
+                  type="button"
+                  className="wish-chat-chip"
+                  disabled={!attestSig.trim() || attestStatus === 'signing'}
+                  onClick={submitAttestation}
+                >
+                  {attestStatus === 'signing' ? 'Recording…' : 'Record signature'}
+                </button>
+              </div>
             )}
             {phase === 'done' && (
               <div className="wish-chat-done-actions">

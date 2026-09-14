@@ -736,7 +736,7 @@ func setupRoutes(ctx context.Context, mux *http.ServeMux, container *container.C
 
 	// Inscription endpoints
 	mux.HandleFunc("/api/inscriptions", container.InscriptionHandler.HandleGetInscriptions)
-	mux.Handle("/api/inscriptions/", wrapWithAuth(container.InscriptionHandler.HandleDeleteInscription))
+	mux.Handle("/api/inscriptions/", wrapWithAuth(container.InscriptionHandler.HandleInscription))
 	mux.Handle("/api/inscribe", wrapWithAuth(container.InscriptionHandler.HandleCreateInscription))
 
 	// Surface ownership catalog (primary vs legacy aliases) — see api/surfaces.go and docs/arch/MCP_UNIFIED_PLAN.md

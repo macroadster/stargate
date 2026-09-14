@@ -446,17 +446,38 @@ func (s *Server) ensureStegoIngestion(ctx context.Context, contractID, stegoCID,
 		// incoming precedence, so stamping it here would mark a locally created
 		// wish as replicated the next time its stego image is reconciled.
 		_ = s.ingestionSvc.UpdateFromIngest(contractID, rec)
+		s.applyVerifiedCreator(contractID, manifest)
 		return
 	}
 	// Set only on create, where the record genuinely originates from a peer.
-	// No creator_wallet accompanies it: the only creator identity on the wire is
-	// the untrusted stego payload, so this flag exists purely to let
-	// authorization report "replicated" instead of "creator data missing". It
-	// must not be read as a deny signal on its own, since a known creator is
-	// checked first.
+	// creator_wallet is not copied from the wire; applyVerifiedCreator writes
+	// it only after a signature check, and never overwrites an existing value.
+	// stego_replicated lets authorization report "replicated" instead of
+	// "creator data missing". It must not be read as a deny signal on its own.
 	meta["stego_replicated"] = true
 	if err := s.ingestionSvc.Create(rec); err != nil {
 		log.Printf("stego reconcile: failed to create ingestion %s: %v", contractID, err)
+		return
+	}
+	s.applyVerifiedCreator(contractID, manifest)
+}
+
+// applyVerifiedCreator records creator_wallet from a first-class attestation
+// only after the signature verifies. It never writes an unverified wallet and
+// never overwrites a wallet already on the row.
+func (s *Server) applyVerifiedCreator(contractID string, manifest stego.Manifest) {
+	if s.ingestionSvc == nil {
+		return
+	}
+	hash := strings.TrimSpace(manifest.VisiblePixelHash)
+	if hash == "" {
+		hash = strings.TrimSpace(contractID)
+	}
+	if err := VerifyCreatorAttestation(manifest.CreatorWallet, manifest.CreatorSig, hash); err != nil {
+		return
+	}
+	if err := s.ingestionSvc.SetCreatorWalletIfAbsent(contractID, strings.TrimSpace(manifest.CreatorWallet)); err != nil {
+		log.Printf("stego reconcile: failed to record verified creator for %s: %v", contractID, err)
 	}
 }
 
