@@ -121,11 +121,22 @@ func (a WishCreatorAuthorizer) wishOwnership(visibleHash string) wishOwnership {
 
 	own.replicated, _ = rec.Metadata["stego_replicated"].(bool)
 
+	// An empty value does not establish a creator. inscription_handler.go writes
+	// creator_wallet unconditionally, including when no creator key resolved, and
+	// "" type-asserts as a string just as well as a wallet does. Treating that as
+	// known meant the denial read "approver wallet X does not match wish creator",
+	// which asserts a creator exists and sends the operator looking for a
+	// different key, when nothing about the wish records who made it
+	// (stargate-b11). Every case denied before and still denies; only the
+	// explanation changes.
 	creator, ok := rec.Metadata["creator_wallet"].(string)
 	if !ok {
 		return own
 	}
-	own.creator, own.known = strings.TrimSpace(creator), true
+	if creator = strings.TrimSpace(creator); creator == "" {
+		return own
+	}
+	own.creator, own.known = creator, true
 	return own
 }
 
