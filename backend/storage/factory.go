@@ -35,18 +35,19 @@ type AllStores struct {
 }
 
 // NewAllStores creates every storage backend according to the supplied
-// config. This is the single function that should eventually replace the
-// duplicated initialization logic in stargate_backend.go and container.go.
+// config. It is the single construction path: stargate_backend.go calls it once
+// and hands the result to NewContainer, which builds nothing of its own.
 //
-// It is intentionally additive in Phase 2 — callers are not yet migrated.
+// Anything added here must be safe to call with a config built in code, not only
+// one from LoadStorageConfigFromEnv, since that is how the callers are tested.
 func NewAllStores(cfg StorageConfig) (*AllStores, error) {
 	all := &AllStores{}
 
 	// 1. Contract cache (always in-memory, configured from env)
 	// LoadStorageConfigFromEnv fills these in, so a config from there is always
-	// positive. A config built in code is not, and NewContractCache starts a
-	// ticker on the TTL, which panics on a non-positive interval from inside its
-	// own goroutine and so takes the process down rather than returning an error.
+	// positive. A config built in code is not, and NewContractCache tickers on
+	// ttl/2, which panics on a non-positive interval from inside its own
+	// goroutine and so takes the process down rather than returning an error.
 	// Defaulting here keeps this factory safe to call with a hand-built config,
 	// which is the point of it being the single construction path.
 	cacheTTL := cfg.ContractCacheTTL
