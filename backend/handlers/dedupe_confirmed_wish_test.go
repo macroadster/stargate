@@ -32,19 +32,19 @@ func TestDedupeConfirmedWishTwins(t *testing.T) {
 	if len(out) != 2 {
 		t.Fatalf("got %d want 2: %+v", len(out), out)
 	}
-	var sawWish, sawOther bool
+	var sawBare, sawOther bool
 	for _, c := range out {
 		if c.ContractID == "wish-"+hash {
-			sawWish = true
+			t.Fatal("wish- twin should be dropped")
 		}
 		if c.ContractID == hash {
-			t.Fatal("bare twin should be dropped")
+			sawBare = true
 		}
 		if c.ContractID == "other-contract" {
 			sawOther = true
 		}
 	}
-	if !sawWish || !sawOther {
+	if !sawBare || !sawOther {
 		t.Fatalf("missing expected rows: %+v", out)
 	}
 }

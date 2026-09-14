@@ -71,6 +71,56 @@ func TestPublishProposalTasksDoesNotSplitWishByN(t *testing.T) {
 	}
 }
 
+func TestPublishProposalTasksAdoptsWishPrefixOntoBareHash(t *testing.T) {
+	hash := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	wishID := "wish-" + hash
+	mem := scstore.NewMemoryStore(time.Hour)
+	ctx := context.Background()
+	if err := mem.UpsertContractWithTasks(ctx, smart_contract.Contract{
+		ContractID: wishID, Title: "Open wish", Status: "pending", CreatedAt: time.Now(),
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	store := &hookStore{
+		MemoryStore: mem,
+		p: smart_contract.Proposal{
+			ID:               "prop-adopt",
+			Title:            "Published",
+			BudgetSats:       1000,
+			VisiblePixelHash: hash,
+			Tasks:            []smart_contract.Task{{Title: "Do it"}},
+			Metadata:         map[string]interface{}{"contract_id": hash},
+		},
+	}
+	svc := NewEventService(store, nil)
+	if err := svc.PublishProposalTasks(ctx, "prop-adopt"); err != nil {
+		t.Fatal(err)
+	}
+	live, err := scstore.LookupContract(mem, wishID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if live.ContractID != hash || live.Status != "active" {
+		t.Fatalf("lookup by wish id: %#v", live)
+	}
+	if leftover, err := mem.GetContract(wishID); err == nil && leftover.Status != "superseded" {
+		t.Fatalf("wish- leftover status=%q", leftover.Status)
+	}
+	list, err := mem.ListContracts(smart_contract.ContractFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	liveCount := 0
+	for _, c := range scstore.CollapsePixelHashTwins(list) {
+		if scstore.NormalizeContractID(c.ContractID) == hash && c.Status != "superseded" {
+			liveCount++
+		}
+	}
+	if liveCount != 1 {
+		t.Fatalf("expected 1 live row after collapse, got %d from %+v", liveCount, list)
+	}
+}
+
 func TestPublishProposalTasksScalesExplicitOverflow(t *testing.T) {
 	mem := scstore.NewMemoryStore(time.Hour)
 	store := &hookStore{

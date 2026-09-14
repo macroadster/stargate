@@ -14,11 +14,13 @@ import (
 	_ "golang.org/x/image/bmp"
 	_ "golang.org/x/image/webp"
 
-	sc "stargate-backend/core/smart_contract"
 	scmiddleware "stargate-backend/app/smart_contract"
+	"stargate-backend/core/identity"
+	sc "stargate-backend/core/smart_contract"
 	"stargate-backend/models"
 	"stargate-backend/services"
 	"stargate-backend/storage"
+	storageSC "stargate-backend/storage/smart_contract"
 )
 
 // SearchHandler handles search requests
@@ -386,15 +388,17 @@ func (h *SearchHandler) searchData(query string) models.SearchResult {
 	if h.store != nil {
 		contractList, err := h.store.ListContracts(sc.ContractFilter{})
 		if err == nil {
+			contractList = storageSC.CollapsePixelHashTwins(contractList)
 			for _, c := range contractList {
 				if contractMatchesQuery(q, c) {
 					blockHeight := int64(0)
 					if c.ConfirmedBlockHeight != nil {
 						blockHeight = int64(*c.ConfirmedBlockHeight)
 					}
-					// Extract visible_pixel_hash from contract_id (format: wish-{hash})
 					visibleHash := ""
-					if strings.HasPrefix(c.ContractID, "wish-") {
+					if n := identity.Normalize(c.ContractID); identity.IsPixelHash(n) {
+						visibleHash = n
+					} else if strings.HasPrefix(c.ContractID, "wish-") {
 						visibleHash = strings.TrimPrefix(c.ContractID, "wish-")
 					}
 					addContract(c.ContractID, blockHeight, c.StegoImageURL, "Smart Contract", visibleHash, c.Metadata, c.Title, c.TotalBudgetSats, c.Status, c.ConfirmedBlockHeight)

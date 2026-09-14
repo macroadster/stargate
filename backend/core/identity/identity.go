@@ -1,8 +1,9 @@
 // Package identity defines the shared wish / proposal / contract identity model.
 //
-// Visible pixel hashes (64-char hex) are the stable join key across:
+// Visible pixel hashes (64-char hex) are the stable join key and the stored
+// contract primary key across:
 //   - inscriptions / ingestion records
-//   - wishes (contract ID wish-<hash>)
+//   - wishes / contracts (bare hash; wish-<hash> is a lookup alias only)
 //   - proposals (metadata.visible_pixel_hash)
 //   - stego manifests (visible_pixel_hash + proposal_id)
 //   - on-chain commitments (hashlock / OP_RETURN linkage)
@@ -27,6 +28,7 @@ func Normalize(id string) string {
 }
 
 // ToWishID returns wish-<normalized-hash>.
+// Historical alias only — new writes persist CanonicalContractID.
 func ToWishID(hash string) string {
 	n := Normalize(hash)
 	if n == "" {
@@ -36,6 +38,18 @@ func ToWishID(hash string) string {
 		// already wish- form after normalize of inner — rebuild for consistency
 	}
 	return "wish-" + n
+}
+
+// CanonicalContractID is the stored contract primary key.
+// For a 64-hex visible pixel hash (with or without a wish- prefix) this is the
+// bare lowercase hash. Other ids are returned trimmed, unchanged.
+func CanonicalContractID(id string) string {
+	id = strings.TrimSpace(id)
+	n := Normalize(id)
+	if IsPixelHash(n) {
+		return strings.ToLower(n)
+	}
+	return id
 }
 
 // IsPixelHash reports whether s looks like a 64-char hex pixel/stego hash.
@@ -51,9 +65,6 @@ func IsPixelHash(s string) bool {
 	}
 	return true
 }
-
-// ContractIDFromVisibleHash returns the canonical wish-prefixed contract ID when
-// the input is a bare pixel hash; otherwise returns the trimmed input.
 
 // CandidateIDs returns unique identifiers to try when resolving contracts/proposals
 // from a visible hash and/or ingestion id (bare and wish- prefixed forms).
@@ -89,3 +100,6 @@ func CandidateIDs(visible, ingestionID string) []string {
 }
 
 // ExpandWishVariants returns id and its wish-/bare variants (for UI/API matching).
+func ExpandWishVariants(id string) []string {
+	return CandidateIDs(id, "")
+}

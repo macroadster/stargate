@@ -350,6 +350,26 @@ func (s *MemoryStore) GetContract(id string) (smart_contract.Contract, error) {
 	return c, nil
 }
 
+// ForceSupersedeContract marks a row superseded even when it is confirmed.
+func (s *MemoryStore) ForceSupersedeContract(_ context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil
+	}
+	c, ok := s.contracts[id]
+	if !ok {
+		return nil
+	}
+	if strings.EqualFold(strings.TrimSpace(c.Status), "superseded") {
+		return nil
+	}
+	c.Status = "superseded"
+	s.contracts[id] = c
+	return nil
+}
+
 // GetClaim returns a claim by ID.
 func (s *MemoryStore) GetClaim(id string) (smart_contract.Claim, error) {
 	s.mu.RLock()
@@ -688,11 +708,19 @@ func (s *MemoryStore) ConfirmContract(ctx context.Context, contractID string, bl
 	}
 	targetID := foundID
 	if plan.IsPixelHash {
-		targetID = wishID
+		targetID = plan.Canonical
 	}
 
 	ApplyConfirmToContract(&contract, targetID, blockHeight, txid, apply.StegoImageURL, time.Now())
 	s.contracts[targetID] = contract
+	if foundID != targetID {
+		for tid, task := range s.tasks {
+			if task.ContractID == foundID {
+				task.ContractID = targetID
+				s.tasks[tid] = task
+			}
+		}
+	}
 
 	if plan.IsPixelHash {
 		for _, alias := range apply.AliasesToForceSupersede {
@@ -702,6 +730,12 @@ func (s *MemoryStore) ConfirmContract(ctx context.Context, contractID string, bl
 			if c, ok := s.contracts[alias]; ok && !strings.EqualFold(c.Status, "superseded") {
 				c.Status = "superseded"
 				s.contracts[alias] = c
+			}
+		}
+		if foundID != targetID {
+			if c, ok := s.contracts[foundID]; ok && !strings.EqualFold(c.Status, "superseded") {
+				c.Status = "superseded"
+				s.contracts[foundID] = c
 			}
 		}
 	} else if apply.SupersedeWishIfNonPixel {
@@ -1324,9 +1358,13 @@ func (s *MemoryStore) DeleteWish(ctx context.Context, visiblePixelHash string) e
 		}
 	}
 
+	wanted := map[string]struct{}{}
+	for _, id := range plan.ContractIDs {
+		wanted[id] = struct{}{}
+	}
 	taskIDs := make(map[string]bool)
 	for id, t := range s.tasks {
-		if t.ContractID == plan.WishID {
+		if _, ok := wanted[t.ContractID]; ok {
 			taskIDs[id] = true
 			delete(s.tasks, id)
 		}
@@ -1343,7 +1381,9 @@ func (s *MemoryStore) DeleteWish(ctx context.Context, visiblePixelHash string) e
 		}
 	}
 
-	delete(s.contracts, plan.WishID)
+	for _, id := range plan.ContractIDs {
+		delete(s.contracts, id)
+	}
 	return nil
 }
 

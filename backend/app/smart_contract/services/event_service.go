@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"stargate-backend/core/identity"
 	"stargate-backend/core/smart_contract"
 	scstore "stargate-backend/storage/smart_contract"
 )
@@ -55,6 +56,13 @@ func (s *EventService) PublishProposalTasks(ctx context.Context, proposalID stri
 	}
 
 	contractID := ContractIDFromMeta(p.Metadata, p.ID)
+	if n := identity.CanonicalContractID(contractID); identity.IsPixelHash(n) {
+		adopted, adoptErr := scstore.AdoptPixelHashToCanonical(ctx, s.store, n)
+		if adoptErr != nil {
+			return adoptErr
+		}
+		contractID = adopted
+	}
 	contract := smart_contract.Contract{
 		ContractID:          contractID,
 		Title:               p.Title,

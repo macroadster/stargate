@@ -65,3 +65,20 @@ func (s *NotifyingStore) UpsertContractWithTasks(ctx context.Context, contract c
 }
 
 // Unwrap returns the underlying store (for type assertions / tests).
+func (s *NotifyingStore) Unwrap() Store {
+	return s.Store
+}
+
+// ForceSupersedeContract delegates then notifies listeners.
+func (s *NotifyingStore) ForceSupersedeContract(ctx context.Context, id string) error {
+	inner := unwrapStore(s.Store)
+	fs, ok := inner.(forceSuperseder)
+	if !ok {
+		return nil
+	}
+	if err := fs.ForceSupersedeContract(ctx, id); err != nil {
+		return err
+	}
+	s.notify()
+	return nil
+}

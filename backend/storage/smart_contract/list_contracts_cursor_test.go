@@ -188,11 +188,11 @@ func TestSQLiteListContractsExcludesBareTwinWhenWishConfirmed(t *testing.T) {
 			sawOther = true
 		}
 	}
-	if !sawWish {
-		t.Fatal("expected wish- canonical row")
+	if !sawBare {
+		t.Fatal("expected bare canonical row")
 	}
-	if sawBare {
-		t.Fatal("bare twin must be excluded from ListContracts when wish is confirmed")
+	if sawWish {
+		t.Fatal("wish- twin must be excluded from ListContracts when bare is confirmed")
 	}
 	if !sawOther {
 		t.Fatal("expected unrelated confirmed contract")

@@ -12,18 +12,31 @@ import (
 // DeleteWishPlan is the dialect-agnostic cascade target for deleting a wish.
 type DeleteWishPlan struct {
 	VisiblePixelHash string
-	WishID           string // wish-<hash>
+	WishID           string   // historical wish-<hash> alias
+	CanonicalID      string   // stored PK (bare VPH when pixel hash)
+	ContractIDs      []string // both shapes, for cascade delete
 }
 
-// BuildDeleteWishPlan normalizes visible pixel hash → wish contract id.
+// BuildDeleteWishPlan normalizes visible pixel hash → contract ids to delete.
 func BuildDeleteWishPlan(visiblePixelHash string) (DeleteWishPlan, error) {
 	v := strings.TrimSpace(visiblePixelHash)
 	if v == "" {
 		return DeleteWishPlan{}, fmt.Errorf("visible_pixel_hash required")
 	}
+	canonical := identity.CanonicalContractID(v)
+	if canonical == "" {
+		canonical = v
+	}
+	wishID := identity.ToWishID(v)
+	ids := []string{canonical}
+	if wishID != "" && wishID != canonical {
+		ids = append(ids, wishID)
+	}
 	return DeleteWishPlan{
-		VisiblePixelHash: v,
-		WishID:           identity.ToWishID(v),
+		VisiblePixelHash: identity.Normalize(v),
+		WishID:           wishID,
+		CanonicalID:      canonical,
+		ContractIDs:      ids,
 	}, nil
 }
 

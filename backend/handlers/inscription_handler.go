@@ -24,6 +24,7 @@ import (
 	_ "golang.org/x/image/webp"
 
 	scmiddleware "stargate-backend/app/smart_contract"
+	"stargate-backend/core/identity"
 	sc "stargate-backend/core/smart_contract"
 	"stargate-backend/models"
 	"stargate-backend/security"
@@ -32,6 +33,7 @@ import (
 	auth "stargate-backend/storage/auth"
 	"stargate-backend/storage/datadir"
 	"stargate-backend/storage/ipfs"
+	storageSC "stargate-backend/storage/smart_contract"
 )
 
 // InscriptionHandler handles inscription-related requests
@@ -230,11 +232,7 @@ func stripWishTimestamp(message string) string {
 }
 
 func wishContractID(visibleHash string) string {
-	visibleHash = strings.TrimSpace(visibleHash)
-	if visibleHash == "" {
-		return ""
-	}
-	return "wish-" + visibleHash
+	return identity.CanonicalContractID(visibleHash)
 }
 
 func baseContractID(contractID string) string {
@@ -676,7 +674,7 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 		}
 
 		wishContract := sc.Contract{
-			ContractID:      "wish-" + ingestionID,
+			ContractID:      identity.CanonicalContractID(ingestionID),
 			Title:           proposalTitle,
 			TotalBudgetSats: parsePriceSats(price),
 			GoalsCount:      0,
@@ -767,8 +765,7 @@ func (h *InscriptionHandler) HandleDeleteInscription(w http.ResponseWriter, r *h
 	// 2. Delete from MCP store (cascading delete)
 	if h.store != nil {
 		// Double check status in contract store
-		wishID := wishContractID(visibleHash)
-		if contract, err := h.store.GetContract(wishID); err == nil {
+		if contract, err := storageSC.LookupContract(h.store, visibleHash); err == nil {
 			if !isPendingContractStatus(contract.Status) {
 				h.sendError(w, http.StatusForbidden, fmt.Sprintf("Cannot delete a contract with status '%s'", contract.Status))
 				return

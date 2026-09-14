@@ -286,17 +286,17 @@ FROM mcp_contracts c
 		args = append(args, filter.Status)
 	}
 
-	// Exclude bare-hash confirmed rows when a wish-<hash> twin is also confirmed.
+	// Exclude wish-<hash> confirmed rows when the bare-hash twin is also confirmed.
 	// Page-local dedupe alone is not enough: collapsing one twin shrinks the page
 	// below LIMIT and incorrectly ends infinite scroll on /contracts.
 	whereConditions = append(whereConditions, `
 NOT (
   lower(COALESCE(c.status, '')) = 'confirmed'
-  AND c.contract_id NOT LIKE 'wish-%'
+  AND c.contract_id LIKE 'wish-%'
   AND EXISTS (
-    SELECT 1 FROM mcp_contracts w
-    WHERE w.contract_id = 'wish-' || c.contract_id
-      AND lower(COALESCE(w.status, '')) = 'confirmed'
+    SELECT 1 FROM mcp_contracts b
+    WHERE 'wish-' || b.contract_id = c.contract_id
+      AND lower(COALESCE(b.status, '')) = 'confirmed'
   )
 )`)
 
@@ -1170,6 +1170,16 @@ func (s *SQLStore) UpdateContractStatus(ctx context.Context, contractID, status 
 	return err
 }
 
+// ForceSupersedeContract marks a row superseded even when it is confirmed.
+func (s *SQLStore) ForceSupersedeContract(ctx context.Context, id string) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil
+	}
+	_, err := s.execContext(ctx, `UPDATE mcp_contracts SET status='superseded' WHERE contract_id=? AND lower(status)<>'superseded'`, id)
+	return err
+}
+
 func (s *SQLStore) ConfirmContract(ctx context.Context, contractID string, blockHeight int, txid string) error {
 	contractID = strings.TrimSpace(contractID)
 	if contractID == "" {
@@ -1207,8 +1217,7 @@ WHERE contract_id=?
 		return n > 0, nil
 	}
 
-	// Prefer canonical wish-<hash> for pixel hashes so ensureMatchedContract +
-	// markIngestionConfirmed + stego reconcile all land on one row.
+	// Prefer canonical bare hash so ingest + confirm + stego land on one row.
 	var confirmedID string
 	for _, id := range plan.ConfirmTryOrder(contractID) {
 		ok, err := confirmRow(id)
@@ -1221,43 +1230,23 @@ WHERE contract_id=?
 		}
 	}
 
-	// Peer bootstrap: only the wish row exists under the other id form.
-	// Confirm in place onto the canonical wish id (never mint a second confirmed row).
-	if confirmedID == "" && plan.IsPixelHash {
-		sourceID := ""
-		for _, candidate := range []string{wishID, normalized, contractID} {
-			var n int
-			_ = s.queryRowContext(ctx, `SELECT COUNT(1) FROM mcp_contracts WHERE contract_id=?`, candidate).Scan(&n)
-			if n > 0 {
-				sourceID = candidate
-				break
-			}
+	// Only the historical wish- row exists: copy it onto the bare PK, then
+	// collapse the prefix twin. Do not mint a row when nothing is stored.
+	if plan.IsPixelHash && confirmedID != "" && confirmedID != plan.Canonical {
+		if err := s.bootstrapConfirmContract(ctx, confirmedID, plan.Canonical, blockHeight, txid, stegoImageURL); err != nil {
+			return err
 		}
-		if sourceID != "" && sourceID != wishID {
-			// Copy source → canonical wish id, then confirm wish (dialect-safe upsert).
-			if err := s.bootstrapConfirmContract(ctx, sourceID, wishID, blockHeight, txid, stegoImageURL); err != nil {
-				return err
-			}
-			confirmedID = wishID
-		} else if sourceID == wishID {
-			// Should have been caught by confirmRow; retry once.
-			if ok, err := confirmRow(wishID); err != nil {
-				return err
-			} else if ok {
-				confirmedID = wishID
-			}
-		}
+		confirmedID = plan.Canonical
 	}
 
-	// Collapse dual IDs: after confirm, force-supersede bare-hash aliases even if
+	// Collapse dual IDs: after confirm, force-supersede wish- aliases even if
 	// they were already confirmed. ConfirmContract is the trusted chain path —
 	// untrusted stego/IPFS demotion still uses supersedeEligibleStatusSQL elsewhere.
 	if plan.IsPixelHash {
-		var wishStatus string
-		_ = s.queryRowContext(ctx, `SELECT COALESCE(status,'') FROM mcp_contracts WHERE contract_id=?`, wishID).Scan(&wishStatus)
-		if strings.EqualFold(strings.TrimSpace(wishStatus), "confirmed") {
+		var canonStatus string
+		_ = s.queryRowContext(ctx, `SELECT COALESCE(status,'') FROM mcp_contracts WHERE contract_id=?`, plan.Canonical).Scan(&canonStatus)
+		if strings.EqualFold(strings.TrimSpace(canonStatus), "confirmed") {
 			for _, alias := range plan.Aliases {
-				// Force supersede any twin row so /contracts cannot list both.
 				_, _ = s.execContext(ctx, `UPDATE mcp_contracts SET status='superseded' WHERE contract_id=? AND lower(status)<>'superseded'`, alias)
 			}
 		}
@@ -1281,8 +1270,8 @@ WHERE status='approved' AND (
 	return err
 }
 
-// bootstrapConfirmContract copies a bare/source contract row onto the canonical wish id
-// and remaps tasks. Works for SQLite and Postgres (skills + metadata casts).
+// bootstrapConfirmContract copies a source contract row onto destID (the
+// canonical bare hash) and remaps tasks. Works for SQLite and Postgres.
 func (s *SQLStore) bootstrapConfirmContract(ctx context.Context, sourceID, wishID string, blockHeight int, txid, stegoImageURL string) error {
 	var title string
 	var budget int64
@@ -1825,18 +1814,20 @@ func (s *SQLStore) DeleteWish(ctx context.Context, visiblePixelHash string) erro
 		return err
 	}
 
-	_, err = s.execContext(ctx, `DELETE FROM mcp_proposals WHERE id=? OR visible_pixel_hash=?`, plan.WishID, plan.VisiblePixelHash)
+	_, err = s.execContext(ctx, `DELETE FROM mcp_proposals WHERE id=? OR id=? OR visible_pixel_hash=?`, plan.WishID, plan.CanonicalID, plan.VisiblePixelHash)
 	if err != nil {
 		return err
 	}
 
-	_, err = s.execContext(ctx, `DELETE FROM mcp_tasks WHERE contract_id=?`, plan.WishID)
-	if err != nil {
-		return err
+	for _, id := range plan.ContractIDs {
+		if _, err = s.execContext(ctx, `DELETE FROM mcp_tasks WHERE contract_id=?`, id); err != nil {
+			return err
+		}
+		if _, err = s.execContext(ctx, `DELETE FROM mcp_contracts WHERE contract_id=?`, id); err != nil {
+			return err
+		}
 	}
-
-	_, err = s.execContext(ctx, `DELETE FROM mcp_contracts WHERE contract_id=?`, plan.WishID)
-	return err
+	return nil
 }
 
 func (s *SQLStore) CreateContractReworkRequest(ctx context.Context, contractID, requester, notes string) (smart_contract.ContractReworkRequest, error) {

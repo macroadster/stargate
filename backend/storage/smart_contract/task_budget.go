@@ -269,26 +269,32 @@ func LookupContract(store Store, contractID string) (smart_contract.Contract, er
 		}
 		return c, true
 	}
-	if c, ok := try(contractID); ok {
-		return c, nil
-	}
-	for _, id := range identity.CandidateIDs(contractID, "") {
+	var hits []smart_contract.Contract
+	collect := func(id string) {
 		if c, ok := try(id); ok {
-			return c, nil
+			hits = append(hits, c)
 		}
+	}
+	collect(contractID)
+	for _, id := range identity.CandidateIDs(contractID, "") {
+		collect(id)
 	}
 	if n := identity.Normalize(contractID); n != "" {
-		if c, ok := try(identity.ToWishID(n)); ok {
-			return c, nil
-		}
-		if c, ok := try(n); ok {
-			return c, nil
-		}
+		collect(identity.ToWishID(n))
+		collect(n)
+		collect(identity.CanonicalContractID(n))
 	}
-	if last != nil {
-		return smart_contract.Contract{}, last
+	if len(hits) == 0 {
+		if last != nil {
+			return smart_contract.Contract{}, last
+		}
+		return smart_contract.Contract{}, fmt.Errorf("contract not found")
 	}
-	return smart_contract.Contract{}, fmt.Errorf("contract not found")
+	best := hits[0]
+	for _, c := range hits[1:] {
+		best = PreferContract(best, c)
+	}
+	return best, nil
 }
 
 // ListSiblingTasks returns unique tasks for a contract and its id aliases.

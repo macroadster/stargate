@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"stargate-backend/core/identity"
 	"stargate-backend/core/smart_contract"
 	appservices "stargate-backend/services"
 	auth "stargate-backend/storage/auth"
@@ -346,11 +347,13 @@ func (s *ProposalService) Create(ctx context.Context, body ProposalCreateInput) 
 		contractID = visiblePixelHash
 		body.Metadata["contract_id"] = contractID
 	}
-	if contractID != visiblePixelHash {
+	if identity.Normalize(contractID) != identity.Normalize(visiblePixelHash) {
 		return nil, 0, Fail(http.StatusBadRequest, "contract_id must match visible_pixel_hash for wish proposals")
 	}
-	wishID := "wish-" + visiblePixelHash
-	wish, err := scstore.LookupContract(s.store, wishID)
+	if n := identity.CanonicalContractID(visiblePixelHash); identity.IsPixelHash(n) {
+		body.Metadata["contract_id"] = n
+	}
+	wish, err := scstore.LookupContract(s.store, visiblePixelHash)
 	if err != nil {
 		return nil, 0, FailKind(http.StatusNotFound, KindWishNotFound, "wish not found for visible_pixel_hash")
 	}

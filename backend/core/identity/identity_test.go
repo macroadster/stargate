@@ -1,6 +1,9 @@
 package identity
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestCandidateIDs(t *testing.T) {
 	ids := CandidateIDs("abc", "ing-1")
@@ -36,5 +39,19 @@ func TestToWishID(t *testing.T) {
 	}
 	if got := ToWishID("wish-abc"); got != "wish-abc" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func TestCanonicalContractID(t *testing.T) {
+	h := "A1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2"
+	want := strings.ToLower(h)
+	if got := CanonicalContractID(h); got != want {
+		t.Fatalf("bare: got %q want %q", got, want)
+	}
+	if got := CanonicalContractID("wish-" + h); got != want {
+		t.Fatalf("wish prefix: got %q want %q", got, want)
+	}
+	if got := CanonicalContractID("wish-aa"); got != "wish-aa" {
+		t.Fatalf("non-pixel kept: got %q", got)
 	}
 }

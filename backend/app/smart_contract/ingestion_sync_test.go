@@ -56,7 +56,7 @@ func TestProcessRecordDefersContractUntilPSBT(t *testing.T) {
 		t.Fatalf("processRecord without PSBT: %v", err)
 	}
 
-	proposal, err := store.GetProposal(ctx, "wish-"+ingestionID)
+	proposal, err := store.GetProposal(ctx, ingestionID)
 	if err != nil {
 		t.Fatalf("expected proposal to be created before PSBT: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestProcessRecordDefersContractUntilPSBT(t *testing.T) {
 		t.Fatalf("processRecord with PSBT: %v", err)
 	}
 
-	contract, err := store.GetContract("wish-" + ingestionID)
+	contract, err := store.GetContract(ingestionID)
 	if err != nil {
 		t.Fatalf("expected contract after PSBT: %v", err)
 	}

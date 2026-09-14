@@ -22,6 +22,7 @@ import (
 	scservices "stargate-backend/app/smart_contract/services"
 	"stargate-backend/bitcoin"
 	"stargate-backend/core"
+	"stargate-backend/core/identity"
 	"stargate-backend/core/smart_contract"
 	"stargate-backend/handlers"
 	"stargate-backend/middleware"
@@ -2677,14 +2678,16 @@ func (h *HTTPMCPServer) handleBuildPSBT(ctx context.Context, args map[string]int
 	}
 
 	normalizedHash := strings.TrimSpace(pixelHash)
-	contractID := "wish-" + normalizedHash
-
-	_, err := h.store.GetContract(contractID)
+	contract, err := scstore.LookupContract(h.store, normalizedHash)
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
-			return nil, NewNotFoundError("build_psbt", "contract", contractID)
+			return nil, NewNotFoundError("build_psbt", "contract", normalizedHash)
 		}
 		return nil, NewInternalError("build_psbt", fmt.Sprintf("Failed to get contract: %v", err))
+	}
+	contractID := contract.ContractID
+	if contractID == "" {
+		contractID = identity.CanonicalContractID(normalizedHash)
 	}
 
 	params := h.chainParams()

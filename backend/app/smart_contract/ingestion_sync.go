@@ -408,11 +408,10 @@ func parseMarkdownProposal(ingestionID, markdown string, meta map[string]interfa
 	}
 	contractID := contractIDBase
 	if contractID == "" {
-		contractID = fmt.Sprintf("wish-%s", ingestionID)
+		contractID = ingestionID
 	}
-	// Always use wish- prefix for contract ID when visible hash is available
-	if visibleHash != "" && !strings.HasPrefix(contractID, "wish-") {
-		contractID = fmt.Sprintf("wish-%s", visibleHash)
+	if n := identity.CanonicalContractID(contractID); n != "" {
+		contractID = n
 	}
 	budget := budgetFromMeta(meta)
 	fundingAddr := scstore.FundingAddressFromMeta(meta)
@@ -482,8 +481,8 @@ func buildProposalFromReplicatedTasks(ingestionID, tasksJSON string, meta map[st
 		contractIDBase = strings.TrimSpace(ingestionID)
 	}
 	contractID := contractIDBase
-	if contractID != "" && !strings.HasPrefix(contractID, "wish-") {
-		contractID = fmt.Sprintf("wish-%s", contractID)
+	if n := identity.CanonicalContractID(contractID); n != "" {
+		contractID = n
 	}
 
 	title := strings.TrimSpace(metaString(meta["proposal_title"]))

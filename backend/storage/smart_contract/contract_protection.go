@@ -10,19 +10,15 @@ import (
 // ConfirmContractIDPlan describes how ConfirmContract should resolve a caller's
 // contract_id into a single confirmed row (and which aliases to collapse).
 //
-// Historical bug: ConfirmContract bootstrapped a bare-hash confirmed row from
-// wish-<hash> and then tried to supersede the wish. After integrity hardening,
-// confirmed wishes cannot be demoted via supersedeEligibleStatusSQL — so both
-// rows stayed status=confirmed and /contracts listed the wish twice.
-//
-// For 64-hex pixel hashes the canonical id is wish-<hash> (identity.ToWishID).
-// Confirm prefers that row; bare-hash aliases are force-superseded after confirm.
+// For 64-hex pixel hashes the stored id is the bare hash (identity.CanonicalContractID).
+// wish-<hash> is a historical alias: confirm updates the live row, adopts a
+// wish-only leftover onto the bare PK, and force-supersedes the prefix twin.
 type ConfirmContractIDPlan struct {
 	// Normalized bare hash (or non-pixel id with prefixes stripped once).
 	Normalized string
-	// Preferred row to confirm for pixel-hash wishes.
+	// Preferred row to confirm for pixel-hash wishes (bare VPH).
 	Canonical string
-	// Other ids that may exist historically (bare hash) and must not stay confirmed.
+	// Other ids that may exist historically (wish-<hash>) and must not stay confirmed.
 	Aliases []string
 	// True when Normalized is a 64-char hex pixel/stego hash.
 	IsPixelHash bool
@@ -36,14 +32,13 @@ func PlanConfirmContractIDs(contractID string) ConfirmContractIDPlan {
 		return ConfirmContractIDPlan{}
 	}
 	if identity.IsPixelHash(normalized) {
-		canonical := identity.ToWishID(normalized)
+		canonical := identity.CanonicalContractID(normalized)
 		aliases := []string{}
-		if normalized != canonical {
-			aliases = append(aliases, normalized)
+		if wishID := identity.ToWishID(normalized); wishID != canonical {
+			aliases = append(aliases, wishID)
 		}
-		// If caller passed a non-canonical form we still try it before bootstrap.
 		return ConfirmContractIDPlan{
-			Normalized:  normalized,
+			Normalized:  canonical,
 			Canonical:   canonical,
 			Aliases:     aliases,
 			IsPixelHash: true,
@@ -77,7 +72,7 @@ func BlockImageFileKey(contractID string) string {
 }
 
 // ConfirmTryOrder is the preference order of existing rows to UPDATE.
-// Pixel hashes: canonical wish- first, then caller id, then bare hash.
+// Pixel hashes: canonical bare hash first, then caller id, then wish- alias.
 func (p ConfirmContractIDPlan) ConfirmTryOrder(callerID string) []string {
 	callerID = strings.TrimSpace(callerID)
 	seen := map[string]struct{}{}
@@ -97,6 +92,9 @@ func (p ConfirmContractIDPlan) ConfirmTryOrder(callerID string) []string {
 		add(p.Canonical)
 		add(callerID)
 		add(p.Normalized)
+		for _, alias := range p.Aliases {
+			add(alias)
+		}
 		return out
 	}
 	add(callerID)

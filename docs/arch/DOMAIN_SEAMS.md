@@ -20,13 +20,13 @@ Funding confirmation and wish→proposal→product flows historically required r
 
 | Object | How it stores the key |
 | --- | --- |
-| Wish / open contract | `ContractID = wish-<hash>` (`core/identity.ToWishID`) |
+| Wish / open contract | `ContractID = <hash>` (`core/identity.CanonicalContractID`; `wish-<hash>` is a lookup alias) |
 | Proposal | `VisiblePixelHash` + `metadata.visible_pixel_hash` |
 | Ingestion | record ID and/or `metadata.visible_pixel_hash` |
 | Stego manifest | `visible_pixel_hash`, `proposal_id` |
 | Task proof | `VisiblePixelHash` (wish), `ProductPixelHash` (stego/product) |
 
-Helpers: **`stargate-backend/core/identity`** (`CandidateIDs`, `ToWishID`, `IsPixelHash`). Prefer these over ad-hoc `wish-` string rules.
+Helpers: **`stargate-backend/core/identity`** (`CanonicalContractID`, `CandidateIDs`, `ToWishID`, `IsPixelHash`). Prefer these over ad-hoc `wish-` string rules.
 
 ## Seams (interfaces)
 
