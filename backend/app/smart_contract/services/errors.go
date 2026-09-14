@@ -25,6 +25,9 @@ const (
 	// KindProposalAlreadyFinalized marks a wish that already has an approved or
 	// published proposal and accepts no more.
 	KindProposalAlreadyFinalized Kind = "proposal_already_finalized"
+	// KindContractNotFound marks a failure caused by the referenced contract
+	// being absent.
+	KindContractNotFound Kind = "contract_not_found"
 )
 
 // StatusError is a domain error with an HTTP-oriented status code.

@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	scservices "stargate-backend/app/smart_contract/services"
 	"stargate-backend/core/smart_contract"
 	auth "stargate-backend/storage/auth"
 	"stargate-backend/storage/ipfs"
@@ -188,21 +189,18 @@ func (s *Server) handleContractRework(w http.ResponseWriter, r *http.Request, co
 		return
 	}
 
-	apiKey := auth.RequestAPIKey(r)
-	var requester string
-	if apiKey != "" && s.apiKeys != nil {
-		if rec, ok := s.apiKeys.Get(apiKey); ok {
-			requester = strings.TrimSpace(rec.Wallet)
-		}
-	}
-
-	if requester == "" {
-		Error(w, http.StatusForbidden, "authenticated user required")
-		return
-	}
-
-	reworkReq, err := s.store.CreateContractReworkRequest(r.Context(), contractID, requester, body.Notes)
+	// Being bound to a wallet is not being the wish creator. This resolved the
+	// caller's own wallet and stored it as the requester, so any self-issued key
+	// could file a request against any contract and be recorded as its creator
+	// (stargate-irl.8). Authorization and the recorded identity both live in the
+	// service now, so this surface cannot disagree with the MCP one.
+	reworkReq, err := s.reworkReqSvc.CreateRequest(r.Context(), contractID, body.Notes,
+		scservices.ReworkRequestActor{APIKey: auth.RequestAPIKey(r)})
 	if err != nil {
+		if se := scservices.AsStatus(err); se != nil {
+			Error(w, se.Status, se.Message)
+			return
+		}
 		Error(w, http.StatusInternalServerError, err.Error())
 		return
 	}
