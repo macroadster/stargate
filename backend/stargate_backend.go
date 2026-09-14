@@ -513,6 +513,9 @@ func runHTTPServer(ctx context.Context, allStores *storage.AllStores, ipfsClient
 
 	// Initialize dependency container
 	container := container.NewContainer(allStores)
+	// Stops the peer-cleanup and contract-cache goroutines on the way out, which
+	// the Container comment claimed for a while without a method to back it.
+	defer container.Close()
 
 	// Start Bitcoin full node (btcd, no mining) or external/off chain backend.
 	// This replaces unreliable public mempool.space polling for block data.
