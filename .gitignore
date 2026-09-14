@@ -34,7 +34,10 @@ data
 # Ephemeral test artifacts
 test-results/
 .playwright-mcp/
-*.swp
+playwright-report/
+blob-report/
+# Agent / browser verification screenshots dropped at the repo root
+/*.png
 *.swp
 
 opencode.json
