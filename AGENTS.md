@@ -54,6 +54,10 @@ bd update bd-42 --priority 1 --json
 bd close bd-42 --reason "Completed" --json
 ```
 
+Do not re-run `bd close --reason` on an already-closed issue to fix the
+reason. In bd 1.2.2 that prints success and leaves `close_reason` unchanged.
+Reopen, re-close, then export (see Git Export).
+
 ### Issue Types
 
 - `bug` - Something broken
@@ -115,6 +119,22 @@ bd export -o .beads/issues.jsonl
 Review and commit the resulting `.beads/issues.jsonl` change with the code it
 tracks. After pulling a newer JSONL into an empty or stale local database,
 follow the import guidance reported by `bd doctor` for the installed CLI.
+
+Do not use `bd close --reason` to correct a closed issue. In bd 1.2.2 the
+command reports success (and echoes the new reason) but does not update
+`close_reason`. To replace a wrong reason, reopen then re-close, then
+confirm the export actually changed:
+
+```bash
+bd update <id> -s open
+bd close <id> --reason "corrected text"
+bd show <id> --json   # confirm close_reason
+bd export -o .beads/issues.jsonl
+```
+
+`closed_at` is rewritten to the correction time. Use
+`bd update --append-notes` only when the original reason should stay as
+history.
 
 ### GitHub Copilot Integration
 
@@ -449,6 +469,10 @@ bd close <id> --reason="Completed"
 bd close <id1> <id2>  # Close multiple issues at once
 bd export -o .beads/issues.jsonl  # Export tracker changes for git
 ```
+
+Do not re-run `bd close --reason` on an already-closed issue to fix the
+reason (bd 1.2.2 prints success and leaves `close_reason` unchanged).
+Reopen, re-close, then export; see Git Export.
 
 ### Workflow Pattern
 
