@@ -684,9 +684,6 @@ func (bm *BlockMonitor) ensureMatchedContract(contractID string, match *services
 
 	// Check if the row actually exists now — ConfirmContract doesn't return
 	// "not found" explicitly, it just updates 0 rows.
-	type contractGetter interface {
-		GetContract(id string) (smart_contract.Contract, error)
-	}
 	if cg, ok := bm.sweepStore.(contractGetter); ok {
 		if _, err := cg.GetContract(normalizedID); err == nil {
 			return // already exists
@@ -772,10 +769,20 @@ func (bm *BlockMonitor) settlementReady(blockHeight int64) bool {
 	return SettlementReady(tip, blockHeight)
 }
 
-// It reports whether the contract was actually confirmed, so callers can run
-// the follow-up work that only makes sense once the status has changed
+// maybeConfirmContract confirms a contract once its funding height is settled.
+//
+// It reports whether the confirm was attempted and did not error, so callers can
+// run the follow-up work that only makes sense once the status has changed
 // (stargate-22a). It previously returned nothing, which left the task-proof
 // caller no way to tell a confirm from a settlement-not-ready bail.
+//
+// True is not proof a row changed, and what it means depends on the store. For an
+// absent contract MemoryStore returns "contract not found", while SQLStore updates
+// zero rows, finds nothing to bootstrap, and returns nil — the gap
+// ensureMatchedContract notes above, where it re-reads with GetContract rather than
+// trust the error. Production runs SQLStore, so treat true as "no error" and re-read
+// if it matters; reconcileConfirmedContractArtifacts does, and no-ops on a missing
+// row. Both predate this function returning anything.
 func (bm *BlockMonitor) maybeConfirmContract(contractID, txid string, blockHeight int64) bool {
 	if bm.sweepStore == nil || strings.TrimSpace(contractID) == "" {
 		return false
