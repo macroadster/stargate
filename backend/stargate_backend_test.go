@@ -61,10 +61,10 @@ func TestInitializeMCPComponentsFallsBackToMemoryWhenSQLiteInitFails(t *testing.
 		log.SetOutput(origWriter)
 	})
 
-	store, _, _, _, _ := initializeMCPComponents()
+	allStores := initializeMCPComponents()
 
-	if _, ok := store.(*scstore.MemoryStore); !ok {
-		t.Fatalf("expected memory store fallback, got %T", store)
+	if _, ok := allStores.SmartContractStore.(*scstore.MemoryStore); !ok {
+		t.Fatalf("expected memory store fallback, got %T", allStores.SmartContractStore)
 	}
 
 	logOutput := logBuf.String()
