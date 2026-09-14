@@ -86,9 +86,13 @@ func (a WishCreatorAuthorizer) isGlobalAuditor(wallet string) bool {
 	return donationAddr != "" && strings.EqualFold(wallet, donationAddr)
 }
 
-// wishOwnership is what the authorizer could establish about a wish. known
-// distinguishes "no creator recorded" from "creator recorded as empty", which
-// callers treat differently, and replicated explains why a creator is absent.
+// wishOwnership is what the authorizer could establish about a wish. known says
+// a creator was established, and replicated explains why one is absent.
+//
+// known used to distinguish "no creator recorded" from "creator recorded as
+// empty" on the grounds that callers treated them differently. They did not: an
+// empty creator denied every caller, just with a message that blamed their key.
+// The two are now the same case (stargate-b11).
 type wishOwnership struct {
 	hash       string
 	creator    string
