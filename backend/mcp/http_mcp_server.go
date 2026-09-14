@@ -206,6 +206,7 @@ type HTTPMCPServer struct {
 	claimSvc         *scservices.ClaimService
 	submissionSvc    *scservices.SubmissionService
 	proposalSvc      *scservices.ProposalService
+	reworkReqSvc     *scservices.ContractReworkService
 	apiKeyStore      auth.APIKeyValidator
 	apiKeyIssuer     auth.APIKeyIssuer
 	ingestionSvc     *services.IngestionService
@@ -282,6 +283,7 @@ func NewHTTPMCPServer(store scmiddleware.Store, apiKeyStore auth.APIKeyValidator
 	}
 	// publishProposalTasks and archiveWish route through h.server, which is set
 	// later by SetServer, so they are methods rather than values captured here.
+	h.reworkReqSvc = scservices.NewContractReworkService(store, scmiddleware.ReworkRequestGate{Keys: apiKeyStore, Ingestion: ingestionSvc}, scmiddleware.PublishEvent)
 	h.proposalSvc = scservices.NewProposalService(store, ingestionSvc, apiKeyStore, scmiddleware.PublishEvent, proposalGate, h.publishProposalTasks, h.archiveWish)
 	return h
 }
@@ -1658,26 +1660,31 @@ func (h *HTTPMCPServer) handleCreateContractReworkRequest(ctx context.Context, a
 		return nil, validation
 	}
 
-	if apiKey == "" {
-		return nil, NewUnauthorizedError("create_contract_rework_request", "API key required to create rework request")
+	if h.reworkReqSvc == nil {
+		return nil, NewServiceUnavailableError("create_contract_rework_request", "rework request service")
 	}
 
-	var requester string
-	if h.apiKeyStore != nil {
-		if keyInfo, ok := h.apiKeyStore.Get(apiKey); ok {
-			requester = strings.TrimSpace(keyInfo.Wallet)
-		}
-	}
-	if requester == "" {
-		return nil, NewUnauthorizedError("create_contract_rework_request", "API key must have an associated wallet address")
-	}
-
-	reworkReq, err := h.store.CreateContractReworkRequest(ctx, contractID, requester, notes)
+	// A wallet-bound key was required here, but never checked against the wish
+	// creator, so the requester recorded on the request was simply whoever asked
+	// (stargate-irl.8). The service authorizes and records the wallet it
+	// accepted.
+	reworkReq, err := h.reworkReqSvc.CreateRequest(ctx, contractID, notes,
+		scservices.ReworkRequestActor{APIKey: apiKey})
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		se := scservices.AsStatus(err)
+		if se == nil {
+			return nil, NewInternalError("create_contract_rework_request", fmt.Sprintf("Failed to create rework request: %v", err))
+		}
+		if se.Kind == scservices.KindContractNotFound {
 			return nil, NewNotFoundError("create_contract_rework_request", "contract", contractID)
 		}
-		return nil, NewInternalError("create_contract_rework_request", fmt.Sprintf("Failed to create rework request: %v", err))
+		switch se.Status {
+		case http.StatusForbidden:
+			return nil, NewUnauthorizedError("create_contract_rework_request", se.Message)
+		case http.StatusBadRequest:
+			return nil, NewValidationError("create_contract_rework_request", se.Message)
+		}
+		return nil, NewInternalError("create_contract_rework_request", se.Message)
 	}
 
 	return reworkReq, nil
