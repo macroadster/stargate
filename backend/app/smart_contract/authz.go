@@ -103,13 +103,15 @@ type wishOwnership struct {
 
 // wishOwnership looks up what is recorded about the creator of visibleHash.
 //
-// Only the local wish path records creator_wallet (inscription_handler.go). The
-// stego reconcile and IPFS sync paths do not, because the only creator identity
-// on the wire is the stego payload, which is attacker-controlled and therefore
-// excluded from stegoPayloadMetadataAllowlist. manifest.Issuer is not a
-// substitute: it is STARGATE_STEGO_ISSUER, a free-form node label, so trusting
-// it would let any replicating node claim authorship of every wish it mirrors.
-// Replicated wishes consequently have no locally verifiable creator at all.
+// creator_wallet is written two ways. The local wish path records it at
+// inscription time (inscription_handler.go). After stargate-6ds, stego
+// reconcile records it too, but only after VerifyCreatorAttestation succeeds
+// (applyVerifiedCreator). It is never copied from payload metadata, which is
+// attacker-controlled and excluded from stegoPayloadMetadataAllowlist.
+// manifest.Issuer is not a substitute: it is STARGATE_STEGO_ISSUER, a
+// free-form node label, so trusting it would let any replicating node claim
+// authorship of every wish it mirrors. A replica without a verified
+// attestation therefore still has no locally verifiable creator.
 func (a WishCreatorAuthorizer) wishOwnership(visibleHash string) wishOwnership {
 	own := wishOwnership{hash: strings.TrimSpace(visibleHash)}
 	if own.hash == "" || a.Ingestion == nil {
