@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -40,6 +41,11 @@ var (
 	sandboxMaxEntries          = 4096
 	sandboxMaxFileBytes  int64 = 32 << 20  // 32 MiB per regular file
 	sandboxMaxTotalBytes int64 = 256 << 20 // 256 MiB extracted
+)
+
+var (
+	errSandboxNotConfirmed     = errors.New("sandbox pull requires a confirmed contract")
+	errSandboxContractNotFound = errors.New("contract not found")
 )
 
 type stegoReconcileRequest struct {
@@ -221,13 +227,6 @@ func (s *Server) reconcileStegoFromLocalFile(ctx context.Context, stegoHash stri
 		return err
 	}
 	s.ensureStegoIngestion(ctx, contractID, stegoHash, stegoHash, stegoBytes, manifest)
-
-	// If the contract is already confirmed, kick off sandbox extraction.
-	if c, err := s.store.GetContract(contractID); err == nil {
-		if strings.EqualFold(strings.TrimSpace(c.Status), "confirmed") {
-			go s.downloadSandboxArtifacts(context.Background(), contractID)
-		}
-	}
 	log.Printf("stego: applied from local file: contract_id=%s, hash=%s", contractID, stegoHash)
 	return nil
 }
@@ -775,28 +774,32 @@ func looksLikeHash(s string) bool {
 	return true
 }
 
-// downloadSandboxArtifacts fetches and extracts the sandbox tarball for a
-// confirmed contract.  It looks up sandbox_hash from the associated proposal
-// or contract metadata, then searches for the tarball on the local filesystem
-// (UPLOADS_DIR/<sandbox_hash>) first — the IPFS mirror syncs tarballs between
-// peers using hash-based filenames.  Falls back to IPFS Cat if the file isn't
-// available locally yet.
-//
-// The function is idempotent — if the results directory already exists and
-// passes hash verification, the extraction is skipped.
-func (s *Server) downloadSandboxArtifacts(ctx context.Context, contractID string) {
-	if s.store == nil || contractID == "" {
-		return
+// downloadSandboxArtifacts is the explicit replica pull: find the hash-named
+// tarball (disk, then IPFS), verify, unpack to results/<id>. Confirm is the
+// gate on the pull, not the pull itself — confirm / sync / stego reconcile
+// must not call this. Idempotent if the tree is already there and matches.
+func (s *Server) downloadSandboxArtifacts(ctx context.Context, contractID string) error {
+	if s.store == nil || strings.TrimSpace(contractID) == "" {
+		return errSandboxContractNotFound
 	}
 	normalizedID := scstore.NormalizeContractID(contractID)
 	if normalizedID == "" {
-		return
+		return errSandboxContractNotFound
+	}
+
+	status, err := s.lookupContractStatus(contractID, normalizedID)
+	if err != nil {
+		return err
+	}
+	if !strings.EqualFold(status, "confirmed") {
+		log.Printf("sandbox: refusing pull for %s: status=%s", contractID, status)
+		return errSandboxNotConfirmed
 	}
 
 	sandboxHash := s.findSandboxHash(ctx, contractID, normalizedID)
 	if sandboxHash == "" {
 		log.Printf("sandbox: no sandbox_hash found for contract %s, skipping", contractID)
-		return
+		return fmt.Errorf("sandbox_hash not found for contract %s", contractID)
 	}
 
 	uploadsDir := strings.TrimSpace(os.Getenv("UPLOADS_DIR"))
@@ -806,7 +809,7 @@ func (s *Server) downloadSandboxArtifacts(ctx context.Context, contractID string
 	if info, err := os.Stat(resultsDir); err == nil && info.IsDir() {
 		if err := stego.VerifySandboxHash(resultsDir, sandboxHash); err == nil {
 			log.Printf("sandbox: artifacts already present and verified for %s", contractID)
-			return
+			return nil
 		}
 		log.Printf("sandbox: artifacts present but hash mismatch for %s, re-extracting", contractID)
 	}
@@ -826,12 +829,12 @@ func (s *Server) downloadSandboxArtifacts(ctx context.Context, contractID string
 		ipfsClient := ipfs.NewClientFromEnv()
 		if ipfsClient == nil {
 			log.Printf("sandbox: tarball not on disk and IPFS disabled for %s", contractID)
-			return
+			return fmt.Errorf("sandbox tarball not on disk and IPFS disabled")
 		}
 		tarballBytes, err = ipfsClient.Cat(ctx, fetchKey)
 		if err != nil {
 			log.Printf("sandbox: tarball %s not on disk and IPFS fetch failed for %s: %v", fetchKey, contractID, err)
-			return
+			return fmt.Errorf("sandbox tarball fetch failed: %w", err)
 		}
 		log.Printf("sandbox: fetched tarball from IPFS for %s (%d bytes)", contractID, len(tarballBytes))
 	} else {
@@ -843,10 +846,29 @@ func (s *Server) downloadSandboxArtifacts(ctx context.Context, contractID string
 	actual := hex.EncodeToString(sum[:])
 	if !strings.EqualFold(actual, sandboxHash) {
 		log.Printf("sandbox: hash mismatch for %s: expected %s got %s", contractID, sandboxHash, actual)
-		return
+		return fmt.Errorf("sandbox tarball hash mismatch")
 	}
 
 	s.extractSandboxTarball(contractID, tarballBytes, resultsDir)
+	return nil
+}
+
+func (s *Server) lookupContractStatus(contractID, normalizedID string) (string, error) {
+	ids := []string{contractID, normalizedID, "wish-" + strings.TrimPrefix(normalizedID, "wish-")}
+	seen := map[string]bool{}
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		c, err := s.store.GetContract(id)
+		if err != nil {
+			continue
+		}
+		return strings.TrimSpace(c.Status), nil
+	}
+	return "", errSandboxContractNotFound
 }
 
 // findSandboxHash searches proposal and contract metadata for sandbox_hash.

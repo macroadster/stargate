@@ -237,10 +237,8 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 			bm.markIngestionConfirmed(match, tx.TxID, blockHeight, imageFile, imagePath)
 			bm.updateTaskFundingProofsFromTx(match.ID, tx, blockHeight)
 			bm.confirmContractTasks(match.ID, tx.TxID, blockHeight)
-			// Scan OP_RETURN outputs for stego hash so we can reconcile
-			// the stego image (extract proposal/tasks) and sandbox tarball.
-			// The funding_txid path confirms the contract but doesn't
-			// trigger stego reconcile or sandbox extraction on its own.
+			// Scan OP_RETURN outputs for stego hash so we can apply the
+			// on-chain image (proposal/tasks/sandbox_hash). Metadata only.
 			for _, output := range tx.Outputs {
 				_, stegoHash, opOk := parseOPReturnHashes(output.ScriptPubKey)
 				if opOk && stegoHash != "" {
@@ -312,10 +310,8 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 				bm.markIngestionConfirmed(match, tx.TxID, blockHeight, imageFile, imagePath)
 				bm.updateTaskFundingProofsFromTx(match.ID, tx, blockHeight)
 				bm.confirmContractTasks(match.ID, tx.TxID, blockHeight)
-				// Trigger stego reconciliation and sandbox extraction using
-				// the on-chain stego hash.  sandbox_hash is inside the stego
-				// v2 JSON payload — reconcileOnChainArtifacts reads it from
-				// there after extracting the stego image.
+				// Apply the on-chain stego image (proposal/tasks/sandbox_hash).
+				// This is metadata only; it does not unpack the sandbox tarball.
 				bm.reconcileOnChainArtifacts(match.ID, stegoHash)
 				for _, candidate := range candidatesByID[match.ID] {
 					delete(primaryCandidates, candidate)
@@ -343,10 +339,6 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 						}
 						bm.updateTaskFundingProofsFromTx(normalizedWish, tx, blockHeight)
 						bm.confirmContractTasks(normalizedWish, tx.TxID, blockHeight)
-						// Post-confirm extract only when the scan itself confirmed.
-						if bm.scanMayConfirm(blockHeight) {
-							bm.reconcileOnChainArtifacts(normalizedWish, stegoHash)
-						}
 					}
 				} else {
 					log.Printf("oracle reconcile: block %d tx %s: OP_RETURN wish=%s (no stego hash), skipping", blockHeight, tx.TxID, wishHash)
@@ -801,18 +793,14 @@ func (bm *BlockMonitor) cachedIngestionMeta(limit int) []services.IngestionRecor
 
 // maybeConfirmContract confirms a contract once its funding height is settled.
 //
-// It reports whether the confirm was attempted and did not error, so callers can
-// run the follow-up work that only makes sense once the status has changed
-// (stargate-22a). It previously returned nothing, which left the task-proof
-// caller no way to tell a confirm from a settlement-not-ready bail.
-//
-// True is not proof a row changed, and what it means depends on the store. For an
-// absent contract MemoryStore returns "contract not found", while SQLStore updates
+// It reports whether the confirm was attempted and did not error. True is not
+// proof a row changed, and what it means depends on the store. For an absent
+// contract MemoryStore returns "contract not found", while SQLStore updates
 // zero rows, finds nothing to bootstrap, and returns nil — the gap
-// ensureMatchedContract notes above, where it re-reads with GetContract rather than
-// trust the error. Production runs SQLStore, so treat true as "no error" and re-read
-// if it matters; reconcileConfirmedContractArtifacts does, and no-ops on a missing
-// row. Both predate this function returning anything.
+// ensureMatchedContract notes above, where it re-reads with GetContract rather
+// than trust the error. Production runs SQLStore, so treat true as "no error"
+// and re-read if it matters. Confirm is confirm-only: it does not extract a
+// sandbox tarball.
 func (bm *BlockMonitor) maybeConfirmContract(contractID, txid string, blockHeight int64) bool {
 	if bm.sweepStore == nil || strings.TrimSpace(contractID) == "" {
 		return false
@@ -834,41 +822,6 @@ type contractGetter interface {
 	GetContract(id string) (smart_contract.Contract, error)
 }
 
-// reconcileConfirmedContractArtifacts re-runs stego/sandbox reconcile for a
-// contract that has just become confirmed.
-//
-// Reconcile only starts the sandbox extract when the contract already reads
-// confirmed (stego_reconcile.go checks GetContract status before spawning
-// downloadSandboxArtifacts). At one confirmation the row is not confirmed yet,
-// so that pass reconciles the stego image and skips the extract. Something has
-// to reconcile again after the status changes or the tarball is never extracted.
-//
-// promoteFundedContracts already does this for the status=funded path and the
-// OP_RETURN scan path does it inline, both added by stargate-4u5. The task-proof
-// path was the one that confirmed without re-reconciling (stargate-22a).
-func (bm *BlockMonitor) reconcileConfirmedContractArtifacts(contractID string) {
-	id := strings.TrimSpace(contractID)
-	if id == "" {
-		return
-	}
-	getter, ok := bm.sweepStore.(contractGetter)
-	if !ok || getter == nil {
-		return
-	}
-	c, err := getter.GetContract(id)
-	if err != nil {
-		log.Printf("oracle reconcile: post-confirm reconcile %s: GetContract: %v", id, err)
-		return
-	}
-	stego := contractStegoHash(c)
-	if stego == "" {
-		// Nothing to reconcile from. Contracts created outside the stego path
-		// carry no stego hash, and the 4u5 paths skip them the same way.
-		return
-	}
-	bm.reconcileOnChainArtifacts(id, stego)
-}
-
 // promoteProvisionalProofs upgrades provisional task proofs once they have
 // enough confirmations and the local tip is not on a conflicting fork.
 // Pages all tasks (no 14-day SeenAt cutoff) so recovered proofs still promote.
@@ -877,9 +830,6 @@ func (bm *BlockMonitor) promoteProvisionalProofs(tip int64) {
 		return
 	}
 	need := SettlementConfirmations()
-	// Spans the paging loop so a contract with tasks on two pages still
-	// reconciles once.
-	reconciled := make(map[string]bool)
 	const page = 200
 	for offset := 0; ; offset += page {
 		tasks, err := bm.sweepStore.ListTasks(smart_contract.TaskFilter{
@@ -914,15 +864,7 @@ func (bm *BlockMonitor) promoteProvisionalProofs(tip int64) {
 				log.Printf("oracle reconcile: promote provisional %s: %v", task.TaskID, err)
 				continue
 			}
-			if bm.maybeConfirmContract(task.ContractID, proof.TxID, proof.BlockHeight) {
-				// Only once per contract: a contract usually has several tasks
-				// promoting in the same pass, and each reconcile re-reads the
-				// stego image and can spawn an extract.
-				if id := strings.TrimSpace(task.ContractID); !reconciled[id] {
-					reconciled[id] = true
-					bm.reconcileConfirmedContractArtifacts(id)
-				}
-			}
+			bm.maybeConfirmContract(task.ContractID, proof.TxID, proof.BlockHeight)
 			log.Printf("oracle reconcile: promoted task %s to confirmed (height=%d tip=%d need=%d)",
 				task.TaskID, proof.BlockHeight, tip, need)
 		}
@@ -968,20 +910,8 @@ func contractFundingTxID(c smart_contract.Contract) string {
 	return strings.TrimSpace(stringFromAny(c.Metadata["confirmed_txid"]))
 }
 
-func contractStegoHash(c smart_contract.Contract) string {
-	if c.Metadata == nil {
-		return ""
-	}
-	for _, k := range []string{"stego_contract_id", "stego_hash", "stego_image_cid"} {
-		if s := strings.TrimSpace(stringFromAny(c.Metadata[k])); s != "" {
-			return s
-		}
-	}
-	return ""
-}
-
 // promoteFundedContracts confirms funded rows once their funding height has
-// N confirmations, then re-runs stego/sandbox reconcile.
+// N confirmations. Confirm is confirm-only; it does not re-run stego reconcile.
 func (bm *BlockMonitor) promoteFundedContracts(tip int64) {
 	if tip <= 0 || SettlementBlocked() {
 		return
@@ -1020,9 +950,6 @@ func (bm *BlockMonitor) promoteFundedContracts(tip int64) {
 				continue
 			}
 			confirmed++
-			if stego := contractStegoHash(c); stego != "" {
-				bm.reconcileOnChainArtifacts(c.ContractID, stego)
-			}
 			log.Printf("oracle reconcile: promoted funded contract %s to confirmed (height=%d tip=%d)",
 				c.ContractID, h, tip)
 		}

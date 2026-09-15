@@ -110,8 +110,8 @@ func (m *fullMockSweepStore) ListTasks(filter smart_contract.TaskFilter) ([]smar
 }
 func (m *fullMockSweepStore) UpdateContractStatus(_ context.Context, _, _ string) error { return nil }
 
-// GetContract satisfies the optional contractGetter the post-confirm reconcile
-// asserts (stargate-22a). Absent rows error, as the real stores do.
+// GetContract satisfies the optional contractGetter used by
+// ensureMatchedContract. Absent rows error, as the real stores do.
 func (m *fullMockSweepStore) GetContract(id string) (smart_contract.Contract, error) {
 	for _, c := range m.contracts {
 		if c.ContractID == id {

@@ -57,14 +57,11 @@ func provisionalTask(taskID, contractID, txid string) smart_contract.Task {
 	}
 }
 
-// A contract that confirms only through task proofs must re-run stego reconcile.
-//
-// Reconcile starts the sandbox extract only when the contract already reads
-// confirmed, so the pass at one confirmation reconciles and skips the extract.
-// stargate-4u5 added the re-run for the funded path and the OP_RETURN scan path;
-// the task-proof path confirmed and stopped, so the tarball was never extracted
-// (stargate-22a).
-func TestProofConfirmPathReconcilesSandboxArtifacts(t *testing.T) {
+// Confirm is confirm-only. The task-proof path used to re-run stego reconcile
+// after maybeConfirmContract so the confirmed-status extract branch would fire
+// (stargate-22a). Extract is distribution, not settlement — confirm must not
+// invoke ReconcileStego.
+func TestProofConfirmPathDoesNotReconcileStego(t *testing.T) {
 	t.Setenv("CHAIN_SETTLEMENT_CONFIRMATIONS", "20")
 	t.Setenv("BITCOIN_NETWORK", "testnet4")
 	resetTipLagStateForTest()
@@ -91,10 +88,8 @@ func TestProofConfirmPathReconcilesSandboxArtifacts(t *testing.T) {
 
 	bm.promoteProvisionalProofs(119)
 
-	// Positive control: without the confirm there is nothing to reconcile after,
-	// and the rest of the assertion would say nothing.
 	if got := store.proofs["task-1"]; got == nil || got.ConfirmationStatus != "confirmed" {
-		t.Fatalf("task proof was not promoted, so the reconcile assertion is vacuous: %+v", got)
+		t.Fatalf("task proof was not promoted, so the no-reconcile assertion is vacuous: %+v", got)
 	}
 	confirmed := false
 	for _, c := range store.contracts {
@@ -103,19 +98,17 @@ func TestProofConfirmPathReconcilesSandboxArtifacts(t *testing.T) {
 		}
 	}
 	if !confirmed {
-		t.Fatalf("contract was not confirmed, so there is no post-confirm reconcile to observe")
+		t.Fatalf("contract was not confirmed, so this test proves nothing")
 	}
 
-	calls := rec.seen()
-	if len(calls) != 1 || calls[0] != stegoHash {
-		t.Errorf("expected exactly one reconcile for %s after the proof confirm, got %v", stegoHash, calls)
+	if calls := rec.seen(); len(calls) != 0 {
+		t.Errorf("confirm invoked ReconcileStego: %v", calls)
 	}
 }
 
-// Several tasks on one contract promote in the same pass. The contract should be
-// reconciled once, not once per task: each reconcile re-reads the stego image and
-// can spawn an extract.
-func TestProofConfirmReconcilesOncePerContract(t *testing.T) {
+// Several tasks on one contract promote in the same pass. Confirm still must
+// not call ReconcileStego, once or many times.
+func TestProofConfirmDoesNotReconcilePerTask(t *testing.T) {
 	t.Setenv("CHAIN_SETTLEMENT_CONFIRMATIONS", "20")
 	t.Setenv("BITCOIN_NETWORK", "testnet4")
 	resetTipLagStateForTest()
@@ -148,11 +141,11 @@ func TestProofConfirmReconcilesOncePerContract(t *testing.T) {
 
 	for _, id := range []string{"task-1", "task-2", "task-3"} {
 		if got := store.proofs[id]; got == nil || got.ConfirmationStatus != "confirmed" {
-			t.Fatalf("%s was not promoted, so the dedupe assertion is vacuous: %+v", id, got)
+			t.Fatalf("%s was not promoted, so the no-reconcile assertion is vacuous: %+v", id, got)
 		}
 	}
-	if calls := rec.seen(); len(calls) != 1 {
-		t.Errorf("three tasks on one contract produced %d reconciles, want 1: %v", len(calls), calls)
+	if calls := rec.seen(); len(calls) != 0 {
+		t.Errorf("confirm invoked ReconcileStego %d times: %v", len(calls), calls)
 	}
 }
 
@@ -220,9 +213,8 @@ func TestMaybeConfirmContractReportsWhetherItConfirmed(t *testing.T) {
 	}
 }
 
-// A failed ConfirmContract must read as false, and must not trigger the
-// post-confirm reconcile: the status did not change, so the extract the
-// reconcile exists to start would be skipped anyway.
+// A failed ConfirmContract must read as false. Confirm is confirm-only, so a
+// failed confirm also must not reach the reconciler.
 //
 // This case is here because a mutation survived without it. The shared mock
 // never failed, so returning true after a ConfirmContract error was
@@ -264,5 +256,42 @@ func TestProofConfirmDoesNotReconcileWhenConfirmFails(t *testing.T) {
 	}
 	if calls := rec.seen(); len(calls) != 0 {
 		t.Errorf("reconciled despite a failed confirm: %v", calls)
+	}
+}
+
+// promoteFundedContracts used to re-run reconcileOnChainArtifacts after
+// ConfirmContract (stargate-4u5) so the confirmed-status extract would fire.
+func TestPromoteFundedContractsDoesNotReconcileAfterConfirm(t *testing.T) {
+	t.Setenv("CHAIN_SETTLEMENT_CONFIRMATIONS", "20")
+	t.Setenv("BITCOIN_NETWORK", "testnet4")
+	resetTipLagStateForTest()
+
+	const stegoHash = "feed11feed22feed33feed44feed55feed66feed77feed88feed99feed00aabb"
+	stageStegoImage(t, stegoHash)
+
+	store := &fullMockSweepStore{
+		proofs: make(map[string]*smart_contract.MerkleProof),
+		contracts: []smart_contract.Contract{{
+			ContractID: "wish-funded",
+			Status:     "funded",
+			Metadata: map[string]interface{}{
+				"confirmed_height": int64(100),
+				"confirmed_txid":   strings.Repeat("22", 32),
+				"stego_hash":       stegoHash,
+			},
+		}},
+	}
+	rec := &recordingReconciler{}
+	bm := NewBlockMonitor(NewBitcoinNodeClient("http://localhost:0"))
+	bm.SetSweepDependencies(store, NewMempoolClient())
+	bm.SetChainBackend(&mockChain{height: 119})
+	bm.SetStegoReconciler(rec)
+
+	bm.promoteFundedContracts(119)
+	if store.contracts[0].Status != "confirmed" {
+		t.Fatalf("funded contract was not confirmed, got %q", store.contracts[0].Status)
+	}
+	if calls := rec.seen(); len(calls) != 0 {
+		t.Errorf("promoteFundedContracts invoked ReconcileStego: %v", calls)
 	}
 }

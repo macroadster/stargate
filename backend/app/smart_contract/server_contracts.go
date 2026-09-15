@@ -2,6 +2,7 @@ package smart_contract
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"os"
@@ -153,6 +154,10 @@ func (s *Server) handleContracts(w http.ResponseWriter, r *http.Request) {
 			s.handleContractRework(w, r, contractID)
 			return
 		}
+		if len(parts) > 2 && parts[1] == "sandbox" && parts[2] == "pull" {
+			s.handleSandboxPull(w, r, parts[0])
+			return
+		}
 		Error(w, http.StatusNotFound, "unknown contract action")
 	case http.MethodPatch:
 		if len(parts) > 1 && parts[1] == "rework" && len(parts) > 2 && parts[2] != "" {
@@ -165,6 +170,35 @@ func (s *Server) handleContracts(w http.ResponseWriter, r *http.Request) {
 	default:
 		Error(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
+}
+
+// handleSandboxPull is the explicit replica extract. Confirm is the gate, not
+// the pull: unconfirmed or missing contracts are refused.
+func (s *Server) handleSandboxPull(w http.ResponseWriter, r *http.Request, contractID string) {
+	if r.Method != http.MethodPost {
+		Error(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	contractID = strings.TrimSpace(contractID)
+	if contractID == "" {
+		Error(w, http.StatusBadRequest, "contract id required")
+		return
+	}
+	if err := s.downloadSandboxArtifacts(r.Context(), contractID); err != nil {
+		switch {
+		case errors.Is(err, errSandboxContractNotFound):
+			Error(w, http.StatusNotFound, err.Error())
+		case errors.Is(err, errSandboxNotConfirmed):
+			Error(w, http.StatusConflict, err.Error())
+		default:
+			Error(w, http.StatusBadRequest, err.Error())
+		}
+		return
+	}
+	JSON(w, http.StatusOK, map[string]string{
+		"status":      "ok",
+		"contract_id": contractID,
+	})
 }
 
 // handleGetContractReworkRequests returns all rework requests for a contract.
