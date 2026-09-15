@@ -321,6 +321,38 @@ func TestRESTSandboxPullExtractsWhenConfirmed(t *testing.T) {
 	}
 }
 
+func TestRESTSandboxPullReportsExtractFailure(t *testing.T) {
+	uploads := t.TempDir()
+	t.Setenv("UPLOADS_DIR", uploads)
+
+	// A confirmed contract whose "tarball" is not gzip/tar. Hash still
+	// matches the staged bytes so we get past verify and into extract.
+	bad := []byte("not-a-tarball")
+	sum := sha256.Sum256(bad)
+	hash := hex.EncodeToString(sum[:])
+	path := datadir.PartPath(uploads, hash)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(path, bad, 0o600); err != nil {
+		t.Fatalf("stage junk: %v", err)
+	}
+
+	store := scstore.NewMemoryStore(0)
+	srv := NewServer(store, nil, nil)
+	seedContractWithSandbox(t, store, "contract-osv4-badtar", "confirmed", hash)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/smart_contract/contracts/contract-osv4-badtar/sandbox/pull", nil)
+	rec := httptest.NewRecorder()
+	srv.handleContracts(rec, req)
+	if rec.Code == http.StatusOK {
+		t.Fatalf("status=%d body=%s, want extract failure not 200", rec.Code, rec.Body.String())
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s, want 400", rec.Code, rec.Body.String())
+	}
+}
+
 func TestSandboxTarballHashMatchesStagedFile(t *testing.T) {
 	// Guard the fixture: downloadSandboxArtifacts compares sha256(tarball)
 	// to sandbox_hash. A helper that hashed the dir instead would make

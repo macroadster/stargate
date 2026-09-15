@@ -849,7 +849,9 @@ func (s *Server) downloadSandboxArtifacts(ctx context.Context, contractID string
 		return fmt.Errorf("sandbox tarball hash mismatch")
 	}
 
-	s.extractSandboxTarball(contractID, tarballBytes, resultsDir)
+	if err := s.extractSandboxTarball(contractID, tarballBytes, resultsDir); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -944,15 +946,18 @@ func (s *Server) findSandboxCID(ctx context.Context, contractID, normalizedID st
 }
 
 // extractSandboxTarball extracts a tar archive to the results directory.
-func (s *Server) extractSandboxTarball(contractID string, tarballBytes []byte, resultsDir string) {
+// Hard stops (mkdir, gzip, tar read, entry/total caps) return an error so
+// the explicit pull does not report success after a failed unpack. Skipped
+// entries (traversal, oversized file) stay non-fatal.
+func (s *Server) extractSandboxTarball(contractID string, tarballBytes []byte, resultsDir string) error {
 	if err := os.MkdirAll(resultsDir, 0755); err != nil {
 		log.Printf("sandbox: failed to create results dir %s: %v", resultsDir, err)
-		return
+		return fmt.Errorf("create results dir: %w", err)
 	}
 	gr, err := gzip.NewReader(bytes.NewReader(tarballBytes))
 	if err != nil {
 		log.Printf("sandbox: gzip open failed for %s: %v", contractID, err)
-		return
+		return fmt.Errorf("gzip open: %w", err)
 	}
 	defer gr.Close()
 	tr := tar.NewReader(gr)
@@ -966,7 +971,7 @@ func (s *Server) extractSandboxTarball(contractID string, tarballBytes []byte, r
 		}
 		if err != nil {
 			log.Printf("sandbox: tar read error for %s: %v", contractID, err)
-			return
+			return fmt.Errorf("tar read: %w", err)
 		}
 		// Count every header, including ones we later skip. Counting only
 		// successful writes left traversal / oversized / non-regular entries
@@ -974,7 +979,7 @@ func (s *Server) extractSandboxTarball(contractID string, tarballBytes []byte, r
 		headerCount++
 		if headerCount > sandboxMaxEntries {
 			log.Printf("sandbox: entry cap %d reached for %s, stopping", sandboxMaxEntries, contractID)
-			return
+			return fmt.Errorf("sandbox entry cap %d reached", sandboxMaxEntries)
 		}
 		if hdr.Typeflag != tar.TypeReg {
 			continue
@@ -985,7 +990,7 @@ func (s *Server) extractSandboxTarball(contractID string, tarballBytes []byte, r
 		}
 		if totalBytes+hdr.Size > sandboxMaxTotalBytes {
 			log.Printf("sandbox: total-size cap %d reached for %s, stopping", sandboxMaxTotalBytes, contractID)
-			return
+			return fmt.Errorf("sandbox total-size cap %d reached", sandboxMaxTotalBytes)
 		}
 		outPath, err := security.SanitizePath(resultsDir, filepath.FromSlash(hdr.Name))
 		if err != nil {
@@ -1014,4 +1019,5 @@ func (s *Server) extractSandboxTarball(contractID string, tarballBytes []byte, r
 	}
 
 	log.Printf("sandbox: extracted %d files for contract %s to %s", fileCount, contractID, resultsDir)
+	return nil
 }

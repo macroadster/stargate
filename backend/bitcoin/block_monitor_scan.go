@@ -738,10 +738,10 @@ func (bm *BlockMonitor) maybeReconcileStego(rec *services.IngestionRecord) {
 }
 
 // reconcileOnChainArtifacts uses the stego_hash from the OP_RETURN to find
-// the stego image in UPLOADS_DIR and trigger stego reconciliation + sandbox
-// extraction.  sandbox_hash is inside the stego v2 JSON payload — the stego
-// reconciler extracts it automatically.  This is the primary replication
-// path — no pubsub or STARGATE_STEGO_APPROVAL_ENABLED needed.
+// the stego image in UPLOADS_DIR and apply the v2 payload (proposal, tasks,
+// sandbox_hash). Metadata only — it does not unpack the sandbox tarball.
+// This is the primary replication path — no pubsub or
+// STARGATE_STEGO_APPROVAL_ENABLED needed.
 func (bm *BlockMonitor) reconcileOnChainArtifacts(contractID, stegoHash string) {
 	if contractID == "" {
 		return

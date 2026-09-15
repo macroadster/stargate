@@ -286,10 +286,12 @@ func gzipTar(t *testing.T, files ...tarFile) []byte {
 func TestExtractSandboxTarball_WritesRegularFiles(t *testing.T) {
 	dir := t.TempDir()
 	s := &Server{}
-	s.extractSandboxTarball("wish-ok", gzipTar(t,
+	if err := s.extractSandboxTarball("wish-ok", gzipTar(t,
 		tarFile{"index.html", []byte("<html>ok</html>")},
 		tarFile{"notes.txt", []byte("hello")},
-	), dir)
+	), dir); err != nil {
+		t.Fatalf("extract: %v", err)
+	}
 	for _, name := range []string{"index.html", "notes.txt"} {
 		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
 			t.Fatalf("missing %s: %v", name, err)
@@ -304,10 +306,12 @@ func TestExtractSandboxTarball_RejectsTraversal(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := &Server{}
-	s.extractSandboxTarball("wish-trav", gzipTar(t,
+	if err := s.extractSandboxTarball("wish-trav", gzipTar(t,
 		tarFile{"../escape.txt", []byte("nope")},
 		tarFile{"ok.txt", []byte("yes")},
-	), dir)
+	), dir); err != nil {
+		t.Fatalf("extract: %v", err)
+	}
 	if _, err := os.Stat(filepath.Join(parent, "escape.txt")); err == nil {
 		t.Fatal("traversal wrote outside results dir")
 	}
@@ -338,11 +342,14 @@ func TestExtractSandboxTarball_CapsEntryCount(t *testing.T) {
 
 	dir := t.TempDir()
 	s := &Server{}
-	s.extractSandboxTarball("wish-cap", gzipTar(t,
+	err := s.extractSandboxTarball("wish-cap", gzipTar(t,
 		tarFile{"a.txt", []byte("a")},
 		tarFile{"b.txt", []byte("b")},
 		tarFile{"c.txt", []byte("c")},
 	), dir)
+	if err == nil {
+		t.Fatal("entry cap should fail the extract")
+	}
 	if n := countRegularFiles(t, dir); n > 2 {
 		t.Fatalf("entry cap ignored, wrote %d files", n)
 	}
@@ -361,12 +368,15 @@ func TestExtractSandboxTarball_EntryCapCountsSkippedHeaders(t *testing.T) {
 	s := &Server{}
 	// Three skipped headers (traversal) then a valid file. The valid entry
 	// must never be processed: the cap is on headers, not successful writes.
-	s.extractSandboxTarball("wish-skipcap", gzipTar(t,
+	err := s.extractSandboxTarball("wish-skipcap", gzipTar(t,
 		tarFile{"../a.txt", []byte("nope")},
 		tarFile{"../b.txt", []byte("nope")},
 		tarFile{"../c.txt", []byte("nope")},
 		tarFile{"ok.txt", []byte("yes")},
 	), dir)
+	if err == nil {
+		t.Fatal("header cap should fail the extract")
+	}
 	if _, err := os.Stat(filepath.Join(dir, "ok.txt")); err == nil {
 		t.Fatal("valid entry after >cap skipped headers was processed")
 	}
@@ -382,11 +392,13 @@ func TestExtractSandboxTarball_CapsFileBytes(t *testing.T) {
 
 	dir := t.TempDir()
 	s := &Server{}
-	s.extractSandboxTarball("wish-filecap", gzipTar(t,
+	if err := s.extractSandboxTarball("wish-filecap", gzipTar(t,
 		tarFile{"ok.txt", []byte("12345678")},
 		tarFile{"big.txt", []byte("123456789")},
 		tarFile{"also.txt", []byte("ok")},
-	), dir)
+	), dir); err != nil {
+		t.Fatalf("extract: %v", err)
+	}
 	if _, err := os.Stat(filepath.Join(dir, "ok.txt")); err != nil {
 		t.Fatalf("file at the cap should be written: %v", err)
 	}
@@ -405,10 +417,13 @@ func TestExtractSandboxTarball_CapsTotalBytes(t *testing.T) {
 
 	dir := t.TempDir()
 	s := &Server{}
-	s.extractSandboxTarball("wish-total", gzipTar(t,
+	err := s.extractSandboxTarball("wish-total", gzipTar(t,
 		tarFile{"a.txt", []byte("12345678")},
 		tarFile{"b.txt", []byte("12345678")},
 	), dir)
+	if err == nil {
+		t.Fatal("total-size cap should fail the extract")
+	}
 	if _, err := os.Stat(filepath.Join(dir, "a.txt")); err != nil {
 		t.Fatalf("first file under the total cap should be written: %v", err)
 	}

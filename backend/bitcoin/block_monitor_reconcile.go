@@ -327,8 +327,8 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 				if stegoHash != "" {
 					log.Printf("oracle reconcile: block %d tx %s: OP_RETURN wish=%s stego=%s has no candidate, attempting stego reconcile from disk", blockHeight, tx.TxID, wishHash, stegoHash)
 					bm.reconcileOnChainArtifacts(wishHash, stegoHash)
-					// After reconciliation, confirm the newly-created contract
-					// and trigger sandbox extraction.
+					// After reconciliation, confirm the newly-created contract.
+					// Confirm is confirm-only; it does not unpack the sandbox.
 					normalizedWish := identity.CanonicalContractID(wishHash)
 					if normalizedWish == "" {
 						normalizedWish = wishHash
