@@ -172,8 +172,9 @@ func (s *Server) handleContracts(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleSandboxPull is the explicit replica extract. Confirm is the gate, not
-// the pull: unconfirmed or missing contracts are refused.
+// handleSandboxPull is the manual replica extract / origin no-op. Confirm is
+// the gate: unconfirmed or missing contracts are refused. On-chain confirm
+// already extracts; this is a retry if that pull missed.
 func (s *Server) handleSandboxPull(w http.ResponseWriter, r *http.Request, contractID string) {
 	if r.Method != http.MethodPost {
 		Error(w, http.StatusMethodNotAllowed, "method not allowed")

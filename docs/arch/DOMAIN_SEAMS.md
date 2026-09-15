@@ -30,18 +30,20 @@ Helpers: **`stargate-backend/core/identity`** (`CanonicalContractID`, `Candidate
 
 ## Seams (interfaces)
 
-Defined in `app/smart_contract/ports.go` and `bitcoin.StegoReconciler`:
+Defined in `app/smart_contract/ports.go` and `bitcoin.StegoReconciler` / `bitcoin.SandboxExtractor`:
 
 1. **PSBT → Stego publish** (`StegoPublishPort`): `PreparePublishArtifacts` before build; `FinalizePublishArtifacts` after (async IPFS/pubsub). Block monitor never calls publish.
-2. **Block monitor → Stego reconcile** (`bitcoin.StegoReconciler` / `StegoReconcilePort`): on funding match, `ReconcileStego(cid, expectedHash)` only — no direct store writes for product payload in bitcoin package.
-3. **Stego reconcile → Store** (`ContractFromStegoPort`): `UpsertContractFromStegoPayload` maps manifest+payload → proposal/contract/tasks.
-4. **Block monitor → Ingestion**: match tx scripts/witnesses to ingestion candidates (`ingestionCandidateBuckets`); update proofs / ensure contract row via `sweepStore` / confirm APIs.
-5. **Ingestion sync → Proposals**: pending ingestions may create proposals (`ingestion_sync`); uses `identity.CandidateIDs` for contract existence checks.
+2. **Block monitor → Stego reconcile** (`bitcoin.StegoReconciler` / `StegoReconcilePort`): on funding match, `ReconcileStego(cid, expectedHash)` only — no direct store writes for product payload in bitcoin package. Metadata only; does not unpack the sandbox.
+3. **Block monitor → Sandbox extract** (`bitcoin.SandboxExtractor` / `SandboxExtractPort`): after this node's on-chain `ConfirmContract` succeeds, `ExtractSandbox(contractID)` → `DownloadSandboxArtifacts`. Gossip, `processEvent`, and stego reconcile must not extract. `POST .../sandbox/pull` stays as a manual retry.
+4. **Stego reconcile → Store** (`ContractFromStegoPort`): `UpsertContractFromStegoPayload` maps manifest+payload → proposal/contract/tasks.
+5. **Block monitor → Ingestion**: match tx scripts/witnesses to ingestion candidates (`ingestionCandidateBuckets`); update proofs / ensure contract row via `sweepStore` / confirm APIs.
+6. **Ingestion sync → Proposals**: pending ingestions may create proposals (`ingestion_sync`); uses `identity.CandidateIDs` for contract existence checks.
 
 ## Dependency direction
 
 ```
 bitcoin ──injects──► StegoReconciler (implemented by app/smart_contract.Server)
+bitcoin ──injects──► SandboxExtractor (implemented by app/smart_contract.Server)
 bitcoin ──uses────► IngestionService (read/match)
 app/smart_contract ──uses──► stego (encode/decode), storage, identity
 handlers/mcp ──uses──► app/smart_contract, storage
@@ -57,7 +59,7 @@ When touching confirmation or publish flows:
 - [ ] Keep chain matching in `bitcoin/*`
 - [ ] Keep manifest/payload codec in `stego/*`
 - [ ] Keep proposal/task upsert in `app/smart_contract` (ports)
-- [ ] Wire new collaborations through interfaces in `ports.go` / `StegoReconciler`
+- [ ] Wire new collaborations through interfaces in `ports.go` / `StegoReconciler` / `SandboxExtractor`
 
 ## ADRs
 

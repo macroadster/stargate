@@ -132,6 +132,17 @@ func (m *fullMockSweepStore) ConfirmContract(_ context.Context, contractID strin
 	}
 	return nil
 }
+
+func (m *fullMockSweepStore) UpsertContractWithTasks(_ context.Context, c smart_contract.Contract, _ []smart_contract.Task) error {
+	for i := range m.contracts {
+		if m.contracts[i].ContractID == c.ContractID {
+			m.contracts[i] = c
+			return nil
+		}
+	}
+	m.contracts = append(m.contracts, c)
+	return nil
+}
 func (m *fullMockSweepStore) ListContracts(filter smart_contract.ContractFilter) ([]smart_contract.Contract, error) {
 	var out []smart_contract.Contract
 	for _, c := range m.contracts {

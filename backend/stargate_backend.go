@@ -874,6 +874,9 @@ func setupRoutes(ctx context.Context, mux *http.ServeMux, container *container.C
 	blockMonitor.SetStegoReconciler(bitcoin.StegoReconcilerFunc(func(ctx context.Context, stegoCID, expectedHash string) error {
 		return mcpRestServer.ReconcileStego(ctx, stegoCID, expectedHash)
 	}))
+	blockMonitor.SetSandboxExtractor(bitcoin.SandboxExtractorFunc(func(ctx context.Context, contractID string) error {
+		return mcpRestServer.DownloadSandboxArtifacts(ctx, contractID)
+	}))
 	blockMonitor.SetIPFSUnpin(func(ctx context.Context, path string) error {
 		return mirror.UnpinPath(ctx, path)
 	})

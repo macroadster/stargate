@@ -911,7 +911,7 @@ func (bm *BlockMonitor) markIngestionConfirmed(rec *services.IngestionRecord, tx
 			if !bm.scanMayConfirm(height) {
 				log.Printf("oracle reconcile: contract %s seen in block %d — waiting for %d confirmations before ConfirmContract",
 					contractID, height, SettlementConfirmations())
-			} else if err := bm.sweepStore.ConfirmContract(context.Background(), contractID, int(height), txid); err != nil {
+			} else if err := bm.confirmContractOnChain(context.Background(), contractID, int(height), txid); err != nil {
 				log.Printf("oracle reconcile: failed to confirm contract %s: %v", contractID, err)
 			} else {
 				log.Printf("oracle reconcile: successfully confirmed contract %s with stego_image_url calculated by storage layer", contractID)

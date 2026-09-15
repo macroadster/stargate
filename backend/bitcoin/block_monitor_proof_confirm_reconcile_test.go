@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"stargate-backend/core/smart_contract"
+	"stargate-backend/services"
 )
 
 // recordingReconciler notes every ReconcileStego call.
@@ -27,6 +28,25 @@ func (r *recordingReconciler) ReconcileStego(_ context.Context, stegoCID, _ stri
 }
 
 func (r *recordingReconciler) seen() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.calls...)
+}
+
+// recordingExtractor notes every ExtractSandbox call.
+type recordingExtractor struct {
+	mu    sync.Mutex
+	calls []string
+}
+
+func (r *recordingExtractor) ExtractSandbox(_ context.Context, contractID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.calls = append(r.calls, contractID)
+	return nil
+}
+
+func (r *recordingExtractor) seen() []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return append([]string(nil), r.calls...)
@@ -57,10 +77,8 @@ func provisionalTask(taskID, contractID, txid string) smart_contract.Task {
 	}
 }
 
-// Confirm is confirm-only. The task-proof path used to re-run stego reconcile
-// after maybeConfirmContract so the confirmed-status extract branch would fire
-// (stargate-22a). Extract is distribution, not settlement — confirm must not
-// invoke ReconcileStego.
+// On-chain confirm extracts the sandbox on this node and must not re-run
+// stego reconcile (osv.1/2 stay: gossip/stego do not extract).
 func TestProofConfirmPathDoesNotReconcileStego(t *testing.T) {
 	t.Setenv("CHAIN_SETTLEMENT_CONFIRMATIONS", "20")
 	t.Setenv("BITCOIN_NETWORK", "testnet4")
@@ -81,10 +99,12 @@ func TestProofConfirmPathDoesNotReconcileStego(t *testing.T) {
 	}
 
 	rec := &recordingReconciler{}
+	ext := &recordingExtractor{}
 	bm := NewBlockMonitor(NewBitcoinNodeClient("http://localhost:0"))
 	bm.SetSweepDependencies(store, NewMempoolClient())
 	bm.SetChainBackend(&mockChain{height: 119})
 	bm.SetStegoReconciler(rec)
+	bm.SetSandboxExtractor(ext)
 
 	bm.promoteProvisionalProofs(119)
 
@@ -103,6 +123,11 @@ func TestProofConfirmPathDoesNotReconcileStego(t *testing.T) {
 
 	if calls := rec.seen(); len(calls) != 0 {
 		t.Errorf("confirm invoked ReconcileStego: %v", calls)
+	}
+	if calls := ext.seen(); len(calls) == 0 {
+		t.Error("on-chain confirm did not extract the sandbox")
+	} else if calls[0] != "contract-22a" {
+		t.Errorf("extracted %v, want contract-22a", calls)
 	}
 }
 
@@ -132,10 +157,12 @@ func TestProofConfirmDoesNotReconcilePerTask(t *testing.T) {
 	}
 
 	rec := &recordingReconciler{}
+	ext := &recordingExtractor{}
 	bm := NewBlockMonitor(NewBitcoinNodeClient("http://localhost:0"))
 	bm.SetSweepDependencies(store, NewMempoolClient())
 	bm.SetChainBackend(&mockChain{height: 119})
 	bm.SetStegoReconciler(rec)
+	bm.SetSandboxExtractor(ext)
 
 	bm.promoteProvisionalProofs(119)
 
@@ -146,6 +173,9 @@ func TestProofConfirmDoesNotReconcilePerTask(t *testing.T) {
 	}
 	if calls := rec.seen(); len(calls) != 0 {
 		t.Errorf("confirm invoked ReconcileStego %d times: %v", len(calls), calls)
+	}
+	if calls := ext.seen(); len(calls) == 0 {
+		t.Error("on-chain confirm did not extract the sandbox")
 	}
 }
 
@@ -213,8 +243,8 @@ func TestMaybeConfirmContractReportsWhetherItConfirmed(t *testing.T) {
 	}
 }
 
-// A failed ConfirmContract must read as false. Confirm is confirm-only, so a
-// failed confirm also must not reach the reconciler.
+// A failed ConfirmContract must read as false. A failed confirm must not
+// extract or reach the reconciler.
 //
 // This case is here because a mutation survived without it. The shared mock
 // never failed, so returning true after a ConfirmContract error was
@@ -239,17 +269,19 @@ func TestProofConfirmDoesNotReconcileWhenConfirmFails(t *testing.T) {
 	}
 
 	rec := &recordingReconciler{}
+	ext := &recordingExtractor{}
 	bm := NewBlockMonitor(NewBitcoinNodeClient("http://localhost:0"))
 	bm.SetSweepDependencies(store, NewMempoolClient())
 	bm.SetChainBackend(&mockChain{height: 119})
 	bm.SetStegoReconciler(rec)
+	bm.SetSandboxExtractor(ext)
 
 	if bm.maybeConfirmContract("contract-fail", strings.Repeat("dd", 32), 100) {
 		t.Error("reported a confirm after ConfirmContract returned an error")
 	}
 
 	// And through the real caller: the proof still promotes, the contract does not
-	// confirm, so nothing should reconcile.
+	// confirm, so nothing should reconcile or extract.
 	bm.promoteProvisionalProofs(119)
 	if got := store.proofs["task-fail"]; got == nil || got.ConfirmationStatus != "confirmed" {
 		t.Fatalf("task proof was not promoted, so this test proves nothing: %+v", got)
@@ -257,10 +289,13 @@ func TestProofConfirmDoesNotReconcileWhenConfirmFails(t *testing.T) {
 	if calls := rec.seen(); len(calls) != 0 {
 		t.Errorf("reconciled despite a failed confirm: %v", calls)
 	}
+	if calls := ext.seen(); len(calls) != 0 {
+		t.Errorf("extracted despite a failed confirm: %v", calls)
+	}
 }
 
-// promoteFundedContracts used to re-run reconcileOnChainArtifacts after
-// ConfirmContract (stargate-4u5) so the confirmed-status extract would fire.
+// promoteFundedContracts extracts after ConfirmContract and must not re-run
+// stego reconcile (stargate-4u5 second clock stays gone).
 func TestPromoteFundedContractsDoesNotReconcileAfterConfirm(t *testing.T) {
 	t.Setenv("CHAIN_SETTLEMENT_CONFIRMATIONS", "20")
 	t.Setenv("BITCOIN_NETWORK", "testnet4")
@@ -282,10 +317,12 @@ func TestPromoteFundedContractsDoesNotReconcileAfterConfirm(t *testing.T) {
 		}},
 	}
 	rec := &recordingReconciler{}
+	ext := &recordingExtractor{}
 	bm := NewBlockMonitor(NewBitcoinNodeClient("http://localhost:0"))
 	bm.SetSweepDependencies(store, NewMempoolClient())
 	bm.SetChainBackend(&mockChain{height: 119})
 	bm.SetStegoReconciler(rec)
+	bm.SetSandboxExtractor(ext)
 
 	bm.promoteFundedContracts(119)
 	if store.contracts[0].Status != "confirmed" {
@@ -293,5 +330,110 @@ func TestPromoteFundedContractsDoesNotReconcileAfterConfirm(t *testing.T) {
 	}
 	if calls := rec.seen(); len(calls) != 0 {
 		t.Errorf("promoteFundedContracts invoked ReconcileStego: %v", calls)
+	}
+	if calls := ext.seen(); len(calls) == 0 {
+		t.Error("promoteFundedContracts did not extract the sandbox after confirm")
+	} else if calls[0] != "wish-funded" {
+		t.Errorf("extracted %v, want wish-funded", calls)
+	}
+}
+
+func TestMaybeConfirmContractExtractsOnSuccess(t *testing.T) {
+	t.Setenv("CHAIN_SETTLEMENT_CONFIRMATIONS", "20")
+	t.Setenv("BITCOIN_NETWORK", "testnet4")
+	resetTipLagStateForTest()
+
+	store := &fullMockSweepStore{
+		proofs: make(map[string]*smart_contract.MerkleProof),
+		contracts: []smart_contract.Contract{{
+			ContractID: "contract-extract",
+			Status:     "active",
+		}},
+	}
+	ext := &recordingExtractor{}
+	bm := NewBlockMonitor(NewBitcoinNodeClient("http://localhost:0"))
+	bm.SetSweepDependencies(store, NewMempoolClient())
+	bm.SetChainBackend(&mockChain{height: 119})
+	bm.SetSandboxExtractor(ext)
+
+	if !bm.maybeConfirmContract("contract-extract", strings.Repeat("dd", 32), 100) {
+		t.Fatal("expected confirm to succeed")
+	}
+	if calls := ext.seen(); len(calls) != 1 || calls[0] != "contract-extract" {
+		t.Fatalf("extract calls=%v, want [contract-extract]", calls)
+	}
+
+	// Settlement not ready: no second extract.
+	if bm.maybeConfirmContract("contract-extract", strings.Repeat("dd", 32), 118) {
+		t.Error("reported a confirm while settlement was not ready")
+	}
+	if calls := ext.seen(); len(calls) != 1 {
+		t.Fatalf("extract after not-ready confirm: %v", calls)
+	}
+}
+
+func TestEnsureMatchedContractExtractsWhenScanMayConfirm(t *testing.T) {
+	t.Setenv("CHAIN_SETTLEMENT_CONFIRMATIONS", "20")
+	t.Setenv("BITCOIN_NETWORK", "testnet4")
+	resetTipLagStateForTest()
+
+	vph := strings.Repeat("ab", 32)
+	store := &fullMockSweepStore{
+		proofs: make(map[string]*smart_contract.MerkleProof),
+		contracts: []smart_contract.Contract{{
+			ContractID: vph,
+			Status:     "active",
+		}},
+	}
+	ext := &recordingExtractor{}
+	bm := NewBlockMonitor(NewBitcoinNodeClient("http://localhost:0"))
+	bm.SetSweepDependencies(store, NewMempoolClient())
+	bm.SetChainBackend(&mockChain{height: 119})
+	bm.SetSandboxExtractor(ext)
+
+	rec := &services.IngestionRecord{
+		ID: vph,
+		Metadata: map[string]interface{}{
+			"visible_pixel_hash": vph,
+		},
+	}
+	bm.ensureMatchedContract(vph, rec, strings.Repeat("11", 32), 100, "")
+	if calls := ext.seen(); len(calls) == 0 {
+		t.Fatal("ensureMatchedContract did not extract after on-chain confirm")
+	}
+}
+
+func TestEnsureMatchedContractDoesNotExtractOnCatchUp(t *testing.T) {
+	t.Setenv("CHAIN_SETTLEMENT_CONFIRMATIONS", "20")
+	t.Setenv("BITCOIN_NETWORK", "testnet4")
+	resetTipLagStateForTest()
+
+	vph := strings.Repeat("cd", 32)
+	store := &fullMockSweepStore{
+		proofs: make(map[string]*smart_contract.MerkleProof),
+		contracts: []smart_contract.Contract{{
+			ContractID: vph,
+			Status:     "active",
+		}},
+	}
+	ext := &recordingExtractor{}
+	bm := NewBlockMonitor(NewBitcoinNodeClient("http://localhost:0"))
+	bm.SetSweepDependencies(store, NewMempoolClient())
+	// Tip 119, height 1: far behind settlement — catch-up must not confirm or extract.
+	bm.SetChainBackend(&mockChain{height: 119})
+	bm.SetSandboxExtractor(ext)
+
+	rec := &services.IngestionRecord{
+		ID: vph,
+		Metadata: map[string]interface{}{
+			"visible_pixel_hash": vph,
+		},
+	}
+	bm.ensureMatchedContract(vph, rec, strings.Repeat("11", 32), 1, "")
+	if calls := ext.seen(); len(calls) != 0 {
+		t.Errorf("catch-up ensureMatchedContract extracted: %v", calls)
+	}
+	if store.contracts[0].Status != "active" {
+		t.Errorf("catch-up changed status to %q", store.contracts[0].Status)
 	}
 }

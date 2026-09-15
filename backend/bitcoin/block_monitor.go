@@ -16,28 +16,29 @@ import (
 
 // BlockMonitor handles comprehensive Bitcoin block monitoring and data extraction
 type BlockMonitor struct {
-	bitcoinClient   *BitcoinNodeClient
-	rawClient       *RawBlockClient
-	chain           ChainBackend
-	bitcoinAPI      *BitcoinAPI
-	currentHeight   int64
-	lastChecked     time.Time
-	isRunning       bool
-	isStopping      bool
-	stopChan        chan struct{}
-	wg              sync.WaitGroup
-	mu              sync.RWMutex
-	dataStorage     DataStorageInterface
-	ingestion       *services.IngestionService
-	sweepStore      SweepTaskStore
-	sweepMempool    UTXOClient
-	stegoReconciler StegoReconciler
-	unpinPath       func(context.Context, string) error
-	ipfsClient      *ipfs.Client
-	reconcileMu     sync.Mutex
-	oracleMetaMu    sync.Mutex
-	oracleMetaRecs  []services.IngestionRecord
-	oracleMetaAt    time.Time
+	bitcoinClient    *BitcoinNodeClient
+	rawClient        *RawBlockClient
+	chain            ChainBackend
+	bitcoinAPI       *BitcoinAPI
+	currentHeight    int64
+	lastChecked      time.Time
+	isRunning        bool
+	isStopping       bool
+	stopChan         chan struct{}
+	wg               sync.WaitGroup
+	mu               sync.RWMutex
+	dataStorage      DataStorageInterface
+	ingestion        *services.IngestionService
+	sweepStore       SweepTaskStore
+	sweepMempool     UTXOClient
+	stegoReconciler  StegoReconciler
+	sandboxExtractor SandboxExtractor
+	unpinPath        func(context.Context, string) error
+	ipfsClient       *ipfs.Client
+	reconcileMu      sync.Mutex
+	oracleMetaMu     sync.Mutex
+	oracleMetaRecs   []services.IngestionRecord
+	oracleMetaAt     time.Time
 
 	// Configuration
 	checkInterval time.Duration
@@ -132,6 +133,16 @@ type StegoReconciler interface {
 
 // StegoReconcilerFunc adapts a function to the StegoReconciler interface.
 type StegoReconcilerFunc func(ctx context.Context, stegoCID, expectedHash string) error
+
+// SandboxExtractor is the seam from this node's on-chain confirm into sandbox
+// extract. Implemented by app/smart_contract.Server.DownloadSandboxArtifacts.
+// Gossip, processEvent, and stego reconcile must not call this.
+type SandboxExtractor interface {
+	ExtractSandbox(ctx context.Context, contractID string) error
+}
+
+// SandboxExtractorFunc adapts a function to the SandboxExtractor interface.
+type SandboxExtractorFunc func(ctx context.Context, contractID string) error
 
 // BlockMetadata contains processing metadata
 type BlockMetadata struct {
@@ -276,6 +287,12 @@ func (bm *BlockMonitor) SetIngestionService(ingestion *services.IngestionService
 // SetStegoReconciler wires stego reconcile to run when ingestions are confirmed.
 func (bm *BlockMonitor) SetStegoReconciler(reconciler StegoReconciler) {
 	bm.stegoReconciler = reconciler
+}
+
+// SetSandboxExtractor wires sandbox extract to run after this node confirms
+// a contract on-chain. ConfirmContract on the store is status-only.
+func (bm *BlockMonitor) SetSandboxExtractor(extractor SandboxExtractor) {
+	bm.sandboxExtractor = extractor
 }
 
 func (bm *BlockMonitor) SetIPFSUnpin(unpin func(context.Context, string) error) {

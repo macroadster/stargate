@@ -738,7 +738,7 @@ Publisher Node                           Peer Node
                                          │   ├─ Find UPLOADS_DIR/<stego_hash> on disk
                                          │   ├─ Extract v2 JSON → proposal, tasks, sandbox_hash
                                          │   └─ upsertContractFromStegoPayload()  (metadata only)
-                                         └─ Confirm marks the row. Extract is a later explicit pull.
+                                         └─ This node's on-chain ConfirmContract unpacks the sandbox.
 ```
 
 ### 12.5 On-Chain Detection (Block Monitor)
@@ -748,9 +748,9 @@ The block monitor (`block_monitor.go` → `reconcileOracleIngestions`) processes
 1. **funding_txid match**: If the tx matches a known `funding_txid` from ingestion metadata, confirm the contract, then scan OP_RETURN outputs for the stego hash and call `reconcileOnChainArtifacts`
 2. **OP_RETURN match**: Parse OP_RETURN → `parseOPReturnHashes(script)` → try matching `wish_hash` against candidates (ingestions, proposals, contracts)
 3. **No-candidate fallback**: If no candidate matches but `stego_hash` is present, call `reconcileOnChainArtifacts` directly — the stego reconciler reads the v2 payload from disk and creates the contract
-4. Confirm is confirm-only. A replica that wants the tree calls `POST /api/smart_contract/contracts/{id}/sandbox/pull` (`downloadSandboxArtifacts`), which still refuses unconfirmed contracts
+4. This node's on-chain `ConfirmContract` (`maybeConfirmContract`, `promoteFundedContracts`, `markIngestionConfirmed` / `ensureMatchedContract` when `scanMayConfirm`) then calls `downloadSandboxArtifacts`. Unconfirmed still refuses. `processEvent`, sync gossip, and stego reconcile still do not extract. `POST .../sandbox/pull` stays as a manual retry.
 
-**No pubsub or STARGATE_STEGO_APPROVAL_ENABLED required**: Any node watching the blockchain + syncing files via IPFS mirror can replicate proposal/task metadata. Unpacking the tarball is a separate, explicit choice.
+**No pubsub or STARGATE_STEGO_APPROVAL_ENABLED required**: Any node watching the blockchain + syncing files via IPFS mirror can replicate proposal/task metadata. Unpacking the tarball is this node's on-chain confirm, not gossip or first-pass stego.
 
 ### 12.6 Sandbox Tarball Flow
 
@@ -758,12 +758,14 @@ The block monitor (`block_monitor.go` → `reconcileOracleIngestions`) processes
 - Tar `UPLOADS_DIR/results/<visible_pixel_hash>/` → write to `UPLOADS_DIR/<sandbox_hash>`
 - The `sandbox_hash` is embedded in the stego v2 JSON payload
 
-**Peer side** (`downloadSandboxArtifacts`, explicit pull after confirm):
-- Confirm / sync / stego reconcile do not start the pull
+**Peer side** (`downloadSandboxArtifacts`, this node's on-chain confirm):
+- After `ConfirmContract` succeeds on this node, `SandboxExtractor` unpacks the tarball
+- `processEvent`, sync gossip, and stego reconcile do not start the pull
 - Read `sandbox_hash` from proposal/contract metadata (populated during stego reconciliation from the v2 payload)
 - Find `UPLOADS_DIR/<sandbox_hash>` on disk (synced via IPFS mirror)
 - Verify SHA256 matches → extract tar to `UPLOADS_DIR/results/<visible_pixel_hash>/`
 - Files served at `/sandbox/<visible_pixel_hash>/`
+- `POST .../sandbox/pull` remains a manual retry if the confirm-time pull missed
 
 ### 12.7 Data Model
 

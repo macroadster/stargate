@@ -774,10 +774,15 @@ func looksLikeHash(s string) bool {
 	return true
 }
 
-// downloadSandboxArtifacts is the explicit replica pull: find the hash-named
-// tarball (disk, then IPFS), verify, unpack to results/<id>. Confirm is the
-// gate on the pull, not the pull itself — confirm / sync / stego reconcile
-// must not call this. Idempotent if the tree is already there and matches.
+// DownloadSandboxArtifacts finds the hash-named tarball (disk, then IPFS),
+// verifies it, and unpacks to results/<id>. Confirm is the gate: unconfirmed
+// contracts are refused. This node's on-chain confirm path and POST
+// .../sandbox/pull both call this. processEvent, sync gossip, and stego
+// reconcile must not. Idempotent if the tree is already there and matches.
+func (s *Server) DownloadSandboxArtifacts(ctx context.Context, contractID string) error {
+	return s.downloadSandboxArtifacts(ctx, contractID)
+}
+
 func (s *Server) downloadSandboxArtifacts(ctx context.Context, contractID string) error {
 	if s.store == nil || strings.TrimSpace(contractID) == "" {
 		return errSandboxContractNotFound

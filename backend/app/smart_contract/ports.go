@@ -17,8 +17,8 @@ import (
 //	│ BlockMonitor│ ◄── StegoReconciler ────── ┌──────────────┐
 //	│ (bitcoin)   │     (injected at wiring)   │ StegoReconcile│
 //	└──────┬──────┘                            └──────┬───────┘
-//	       │ confirm + match ingestions               │ UpsertFromPayload
-//	       ▼                                          ▼
+//	       │ on-chain confirm → ExtractSandbox        │ UpsertFromPayload
+//	       │ confirm + match ingestions               ▼
 //	┌─────────────┐                            ┌──────────────┐
 //	│ Ingestion   │ ◄── ensureStegoIngestion ──│ Store        │
 //	│ Service     │                            │ (storage)    │
@@ -46,9 +46,17 @@ type ContractFromStegoPort interface {
 	UpsertContractFromStegoPayload(ctx context.Context, contractID, stegoCID, stegoHash string, manifest stego.Manifest, payload stego.Payload) error
 }
 
+// SandboxExtractPort unpacks a confirmed contract's sandbox tarball.
+// BlockMonitor injects this after this node's on-chain ConfirmContract.
+// processEvent, sync gossip, and stego reconcile must not call it.
+type SandboxExtractPort interface {
+	DownloadSandboxArtifacts(ctx context.Context, contractID string) error
+}
+
 // Ensure Server implements the publish/reconcile ports (compile-time checks).
 var (
-	_ StegoPublishPort     = (*Server)(nil)
-	_ StegoReconcilePort   = (*Server)(nil)
+	_ StegoPublishPort      = (*Server)(nil)
+	_ StegoReconcilePort    = (*Server)(nil)
 	_ ContractFromStegoPort = (*Server)(nil)
+	_ SandboxExtractPort    = (*Server)(nil)
 )
