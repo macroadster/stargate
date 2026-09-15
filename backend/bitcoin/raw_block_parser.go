@@ -56,7 +56,7 @@ func (rbc *RawBlockClient) GetRawBlockHex(blockHeight int64) (string, error) {
 			return "", fmt.Errorf("chain backend raw block %d: %w", blockHeight, err)
 		}
 		if len(hexData) > 0 {
-			log.Printf("Downloaded raw block %d from chain backend (%d hex chars)", blockHeight, len(hexData))
+			log.Printf("loaded raw block %d from %T (%d hex chars)", blockHeight, rbc.chain, len(hexData))
 			return hexData, nil
 		}
 	}

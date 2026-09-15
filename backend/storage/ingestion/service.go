@@ -472,10 +472,25 @@ WHERE id = $1
 }
 
 func (s *IngestionService) ListRecent(status string, limit int) ([]IngestionRecord, error) {
+	return s.listRecent(status, limit, true)
+}
+
+// ListRecentMeta is ListRecent without image_base64. Oracle matching only
+// needs hashes and metadata; loading hundreds of PNG blobs per block is what
+// pinned CPU at 100% during catch-up (stargate-3p2.1).
+func (s *IngestionService) ListRecentMeta(status string, limit int) ([]IngestionRecord, error) {
+	return s.listRecent(status, limit, false)
+}
+
+func (s *IngestionService) listRecent(status string, limit int, withImage bool) ([]IngestionRecord, error) {
 	if limit <= 0 {
 		limit = 100
 	}
-	query := fmt.Sprintf(`SELECT id, filename, method, message_length, image_base64, metadata, status, created_at FROM %s`, s.tableName)
+	cols := `id, filename, method, message_length, metadata, status, created_at`
+	if withImage {
+		cols = `id, filename, method, message_length, image_base64, metadata, status, created_at`
+	}
+	query := fmt.Sprintf(`SELECT %s FROM %s`, cols, s.tableName)
 	var args []interface{}
 	limitPlaceholder := "$1"
 	if status != "" {
@@ -497,7 +512,13 @@ func (s *IngestionService) ListRecent(status string, limit int) ([]IngestionReco
 		var rec IngestionRecord
 		var metadataRaw []byte
 		var createdAtRaw interface{}
-		if err := rows.Scan(&rec.ID, &rec.Filename, &rec.Method, &rec.MessageLength, &rec.ImageBase64, &metadataRaw, &rec.Status, &createdAtRaw); err != nil {
+		var err error
+		if withImage {
+			err = rows.Scan(&rec.ID, &rec.Filename, &rec.Method, &rec.MessageLength, &rec.ImageBase64, &metadataRaw, &rec.Status, &createdAtRaw)
+		} else {
+			err = rows.Scan(&rec.ID, &rec.Filename, &rec.Method, &rec.MessageLength, &metadataRaw, &rec.Status, &createdAtRaw)
+		}
+		if err != nil {
 			return nil, err
 		}
 		rec.CreatedAt = scanTime(createdAtRaw)

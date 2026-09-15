@@ -870,11 +870,20 @@ func (bm *BlockMonitor) markIngestionConfirmed(rec *services.IngestionRecord, tx
 		"image_path":       imagePath,
 	}
 	if meta := rec.Metadata; meta != nil {
-		if prevHeight, ok := meta["confirmed_height"].(float64); ok && int64(prevHeight) != height {
-			updates["reorg_from_height"] = int64(prevHeight)
+		if prevHeight, ok := meta["confirmed_height"].(float64); ok && int64(prevHeight) > 0 {
+			if int64(prevHeight) > height {
+				// Do not rewrite a newer confirm down to a historical catch-up height.
+				delete(updates, "confirmed_height")
+			} else if int64(prevHeight) != height {
+				updates["reorg_from_height"] = int64(prevHeight)
+			}
 		} else if prevHeightStr, ok := meta["confirmed_height"].(string); ok {
-			if prevHeightInt, err := strconv.ParseInt(strings.TrimSpace(prevHeightStr), 10, 64); err == nil && prevHeightInt != height {
-				updates["reorg_from_height"] = prevHeightInt
+			if prevHeightInt, err := strconv.ParseInt(strings.TrimSpace(prevHeightStr), 10, 64); err == nil && prevHeightInt > 0 {
+				if prevHeightInt > height {
+					delete(updates, "confirmed_height")
+				} else if prevHeightInt != height {
+					updates["reorg_from_height"] = prevHeightInt
+				}
 			}
 		}
 		if prevTxid, ok := meta["confirmed_txid"].(string); ok && strings.TrimSpace(prevTxid) != "" && strings.TrimSpace(prevTxid) != txid {
@@ -899,7 +908,7 @@ func (bm *BlockMonitor) markIngestionConfirmed(rec *services.IngestionRecord, tx
 			if identity.IsPixelHash(identity.Normalize(contractID)) {
 				contractID = identity.CanonicalContractID(contractID)
 			}
-			if !bm.settlementReady(height) {
+			if !bm.scanMayConfirm(height) {
 				log.Printf("oracle reconcile: contract %s seen in block %d — waiting for %d confirmations before ConfirmContract",
 					contractID, height, SettlementConfirmations())
 			} else if err := bm.sweepStore.ConfirmContract(context.Background(), contractID, int(height), txid); err != nil {

@@ -1101,10 +1101,41 @@ func (api *DataAPI) IndexBlock(height int64) {
 	}
 	api.txMu.Unlock()
 
-	// New block arrived → drop the heights cache so block-summaries sees it promptly.
+	// Insert into the cached height list. Do not wipe on every backfill
+	// height — that forced a full WalkDir per UI poll during catch-up
+	// (stargate-3p2.2).
+	api.rememberHeight(height)
+}
+
+// rememberHeight inserts height into the desc-sorted heights cache.
+// An empty cache is left alone so the next listAvailableBlockHeights rebuilds.
+func (api *DataAPI) rememberHeight(height int64) {
+	if height <= 0 {
+		return
+	}
 	api.heightsMu.Lock()
-	api.heightsCache = nil
-	api.heightsMu.Unlock()
+	defer api.heightsMu.Unlock()
+	if len(api.heightsCache) == 0 {
+		return
+	}
+	for _, h := range api.heightsCache {
+		if h == height {
+			return
+		}
+	}
+	out := make([]int64, 0, len(api.heightsCache)+1)
+	inserted := false
+	for _, h := range api.heightsCache {
+		if !inserted && height > h {
+			out = append(out, height)
+			inserted = true
+		}
+		out = append(out, h)
+	}
+	if !inserted {
+		out = append(out, height)
+	}
+	api.heightsCache = out
 }
 
 func (api *DataAPI) lookupTxHeight(txid string) (int64, bool) {

@@ -7,10 +7,38 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"stargate-backend/bitcoin"
 	"stargate-backend/storage"
 )
+
+func TestRememberHeightInsertsWithoutWiping(t *testing.T) {
+	api := &DataAPI{
+		heightsCache:    []int64{152000, 151999, 145900},
+		heightsCacheTTL: 15 * time.Second,
+	}
+	api.rememberHeight(145901)
+	api.rememberHeight(152464)
+	api.rememberHeight(152000) // dup
+	want := []int64{152464, 152000, 151999, 145901, 145900}
+	if len(api.heightsCache) != len(want) {
+		t.Fatalf("len=%d want %d: %v", len(api.heightsCache), len(want), api.heightsCache)
+	}
+	for i := range want {
+		if api.heightsCache[i] != want[i] {
+			t.Fatalf("cache=%v want %v", api.heightsCache, want)
+		}
+	}
+}
+
+func TestRememberHeightEmptyCacheStaysEmpty(t *testing.T) {
+	api := &DataAPI{}
+	api.rememberHeight(100)
+	if len(api.heightsCache) != 0 {
+		t.Fatalf("empty cache should stay empty so the next walk rebuilds, got %v", api.heightsCache)
+	}
+}
 
 // Verify that text inscriptions include inline content even when requesting fields=summary.
 func TestHandleGetBlockInscriptionsPaginated_TextContentIncluded(t *testing.T) {

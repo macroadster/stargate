@@ -415,6 +415,39 @@ func TestConfirmContractTasks_BareHashFindsWishPrefixedTask(t *testing.T) {
 	}
 }
 
+func TestConfirmContractTasks_CatchupHeightStaysProvisional(t *testing.T) {
+	t.Setenv("CHAIN_SETTLEMENT_CONFIRMATIONS", "20")
+	t.Setenv("BITCOIN_NETWORK", "testnet4")
+	resetTipLagStateForTest()
+
+	fakeTxID := strings.Repeat("ca", 32)
+	store := &fullMockSweepStore{
+		proofs: make(map[string]*smart_contract.MerkleProof),
+		tasks: []smart_contract.Task{{
+			TaskID:     "task-catchup",
+			ContractID: "contract-catchup",
+			MerkleProof: &smart_contract.MerkleProof{
+				ConfirmationStatus: "provisional",
+			},
+		}},
+	}
+	bm := NewBlockMonitor(NewBitcoinNodeClient("http://localhost:0"))
+	bm.SetSweepDependencies(store, NewMempoolClient())
+	bm.SetChainBackend(&mockChain{height: 152464})
+
+	bm.confirmContractTasks("contract-catchup", fakeTxID, 145884)
+	proof := store.proofs["task-catchup"]
+	if proof == nil {
+		t.Fatal("expected proof write")
+	}
+	if proof.ConfirmationStatus != "provisional" {
+		t.Fatalf("catch-up scan must not confirm, got %q", proof.ConfirmationStatus)
+	}
+	if proof.BlockHeight != 145884 {
+		t.Fatalf("height=%d", proof.BlockHeight)
+	}
+}
+
 func TestConfirmContractTasks_StaysProvisionalUntilDepth(t *testing.T) {
 	t.Setenv("CHAIN_SETTLEMENT_CONFIRMATIONS", "20")
 	t.Setenv("BITCOIN_NETWORK", "testnet4")

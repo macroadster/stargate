@@ -14,6 +14,7 @@ import (
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/txscript"
 
+	"stargate-backend/core/identity"
 	"stargate-backend/core/smart_contract"
 	"stargate-backend/services"
 )
@@ -150,14 +151,7 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 		return smartContracts
 	}
 
-	var recs []services.IngestionRecord
-	if bm.ingestion != nil {
-		var err error
-		recs, err = bm.ingestion.ListRecent("", 500)
-		if err != nil {
-			log.Printf("oracle reconcile: failed to list ingestions: %v", err)
-		}
-	}
+	recs := bm.cachedIngestionMeta(500)
 
 	primaryCandidates := make(map[string]*services.IngestionRecord, len(recs))
 	fallbackCandidates := make(map[string]*services.IngestionRecord, len(recs))
@@ -339,20 +333,20 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 					bm.reconcileOnChainArtifacts(wishHash, stegoHash)
 					// After reconciliation, confirm the newly-created contract
 					// and trigger sandbox extraction.
-					normalizedWish := wishHash
-					if len(normalizedWish) == 64 {
-						if _, decErr := hex.DecodeString(normalizedWish); decErr == nil {
-							normalizedWish = "wish-" + normalizedWish
-						}
+					normalizedWish := identity.CanonicalContractID(wishHash)
+					if normalizedWish == "" {
+						normalizedWish = wishHash
 					}
 					if bm.sweepStore != nil {
-						bm.maybeConfirmContract(normalizedWish, tx.TxID, blockHeight)
+						if bm.scanMayConfirm(blockHeight) {
+							bm.maybeConfirmContract(normalizedWish, tx.TxID, blockHeight)
+						}
 						bm.updateTaskFundingProofsFromTx(normalizedWish, tx, blockHeight)
 						bm.confirmContractTasks(normalizedWish, tx.TxID, blockHeight)
-						// Now that the contract is confirmed, reconcile again
-						// so downloadSandboxArtifacts fires (it checks for
-						// confirmed status before extracting).
-						bm.reconcileOnChainArtifacts(normalizedWish, stegoHash)
+						// Post-confirm extract only when the scan itself confirmed.
+						if bm.scanMayConfirm(blockHeight) {
+							bm.reconcileOnChainArtifacts(normalizedWish, stegoHash)
+						}
 					}
 				} else {
 					log.Printf("oracle reconcile: block %d tx %s: OP_RETURN wish=%s (no stego hash), skipping", blockHeight, tx.TxID, wishHash)
@@ -505,7 +499,7 @@ func (bm *BlockMonitor) confirmContractTasks(contractID, txid string, blockHeigh
 		if proof.ConfirmationStatus == "confirmed" {
 			continue
 		}
-		if bm.settlementReady(proof.BlockHeight) {
+		if bm.scanMayConfirm(proof.BlockHeight) {
 			proof.ConfirmationStatus = "confirmed"
 			proof.ConfirmedAt = &now
 			if err := bm.sweepStore.UpdateTaskProof(context.Background(), task.TaskID, proof); err != nil {
@@ -584,14 +578,18 @@ func (bm *BlockMonitor) updateTaskFundingProofsFromTx(contractID string, tx Tran
 			if proof == nil {
 				proof = &smart_contract.MerkleProof{}
 			}
-			proof.TxID = tx.TxID
-			proof.BlockHeight = blockHeight
+			if strings.TrimSpace(proof.TxID) == "" {
+				proof.TxID = tx.TxID
+			}
+			if proof.BlockHeight == 0 || blockHeight > proof.BlockHeight {
+				proof.BlockHeight = blockHeight
+			}
 			proof.FundingAddress = addr
 			proof.FundedAmountSats = output.Value
 			if proof.SeenAt.IsZero() {
 				proof.SeenAt = now
 			}
-			if bm.settlementReady(blockHeight) {
+			if bm.scanMayConfirm(blockHeight) {
 				proof.ConfirmationStatus = "confirmed"
 				if proof.ConfirmedAt == nil {
 					proof.ConfirmedAt = &now
@@ -664,21 +662,21 @@ func (bm *BlockMonitor) ensureMatchedContract(contractID string, match *services
 	}
 	ctx := context.Background()
 
-	// Build contract ID with wish- prefix for consistency.
 	visibleHash := stringFromAny(match.Metadata["visible_pixel_hash"])
 	if visibleHash == "" {
 		visibleHash = contractID
 	}
-	normalizedID := contractID
-	if len(normalizedID) == 64 {
-		if _, err := hex.DecodeString(normalizedID); err == nil {
-			normalizedID = "wish-" + normalizedID
-		}
+	// Stored PK is the bare VPH. wish- is a lookup alias only (stargate-3p2.4).
+	normalizedID := identity.CanonicalContractID(contractID)
+	if vph := identity.CanonicalContractID(visibleHash); vph != "" && identity.IsPixelHash(vph) {
+		normalizedID = vph
+	}
+	if normalizedID == "" {
+		normalizedID = strings.TrimSpace(contractID)
 	}
 
-	// Confirm only after settlement depth. If the row already exists,
-	// ConfirmContract will update it; otherwise we upsert below.
-	if bm.settlementReady(blockHeight) {
+	// Confirm only on a near-tip scan. Deep catch-up records provisional only.
+	if bm.scanMayConfirm(blockHeight) {
 		_ = bm.sweepStore.ConfirmContract(ctx, normalizedID, int(blockHeight), txID)
 	}
 
@@ -736,7 +734,7 @@ func (bm *BlockMonitor) ensureMatchedContract(contractID string, match *services
 	status := "funded"
 	var confirmedAt *time.Time
 	var confirmedHeight *int
-	if bm.settlementReady(blockHeight) {
+	if bm.scanMayConfirm(blockHeight) {
 		status = "confirmed"
 		confirmedAt = &now
 		confirmedHeight = &bh
@@ -762,11 +760,43 @@ func (bm *BlockMonitor) settlementReady(blockHeight int64) bool {
 	if blockHeight <= 0 {
 		return false
 	}
-	tip, err := bm.getCurrentHeightFromBlockchainInfo()
+	tip, err := bm.getChainTipHeight()
 	if err != nil || tip <= 0 {
 		return false
 	}
 	return SettlementReady(tip, blockHeight)
+}
+
+func (bm *BlockMonitor) scanMayConfirm(blockHeight int64) bool {
+	if blockHeight <= 0 {
+		return false
+	}
+	tip, err := bm.getChainTipHeight()
+	if err != nil || tip <= 0 {
+		return false
+	}
+	return ScanMayConfirm(tip, blockHeight)
+}
+
+const oracleMetaCacheTTL = 30 * time.Second
+
+func (bm *BlockMonitor) cachedIngestionMeta(limit int) []services.IngestionRecord {
+	if bm.ingestion == nil {
+		return nil
+	}
+	bm.oracleMetaMu.Lock()
+	defer bm.oracleMetaMu.Unlock()
+	if len(bm.oracleMetaRecs) > 0 && time.Since(bm.oracleMetaAt) < oracleMetaCacheTTL {
+		return bm.oracleMetaRecs
+	}
+	recs, err := bm.ingestion.ListRecentMeta("", limit)
+	if err != nil {
+		log.Printf("oracle reconcile: failed to list ingestions: %v", err)
+		return bm.oracleMetaRecs
+	}
+	bm.oracleMetaRecs = recs
+	bm.oracleMetaAt = time.Now()
+	return recs
 }
 
 // maybeConfirmContract confirms a contract once its funding height is settled.

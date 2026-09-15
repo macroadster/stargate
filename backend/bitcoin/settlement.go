@@ -50,6 +50,33 @@ func SettlementReady(tip, height int64) bool {
 	return blockConfirmations(tip, height) >= SettlementConfirmations()
 }
 
+// ScanMayConfirm is SettlementReady plus a near-tip bound.
+//
+// Catch-up scans heights thousands of blocks behind the live tip, so
+// SettlementReady is true for every one of them. Confirming on that path
+// rewrites confirmed_height to the scanned historical block and re-runs
+// stego extract (stargate-3p2.3). Live confirm stays in the window just
+// past settlement depth; older proofs promote via promoteProvisionalProofs.
+func ScanMayConfirm(tip, height int64) bool {
+	if !SettlementReady(tip, height) {
+		return false
+	}
+	need := SettlementConfirmations()
+	if need < 1 {
+		need = 1
+	}
+	return tip-height <= need
+}
+
+// liveTipWhileBackfill is the live tip to process in parallel with sequential
+// gap backfill. 0 means the backfill range already includes the tip.
+func liveTipWhileBackfill(backfillLast, tip int64) int64 {
+	if tip > 0 && tip > backfillLast {
+		return tip
+	}
+	return 0
+}
+
 // SettlementBlocked is true when health says we must not confirm new contracts:
 // explorer/local hash mismatch (possible eclipse / minority fork) or tip lag
 // against a real explorer. Local-only networks never inherit another chain's tip.

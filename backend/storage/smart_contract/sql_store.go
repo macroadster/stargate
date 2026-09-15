@@ -287,15 +287,16 @@ FROM mcp_contracts c
 	}
 
 	// Exclude wish-<hash> confirmed rows when the bare-hash twin is also confirmed.
-	// Page-local dedupe alone is not enough: collapsing one twin shrinks the page
-	// below LIMIT and incorrectly ends infinite scroll on /contracts.
+	// Probe b.contract_id = substr(wish-id, 6) so SQLite can use the PK index.
+	// `'wish-' || b.contract_id = c.contract_id` computes on the inner row and
+	// full-scans mcp_contracts per wish- row (stargate-3p2.5).
 	whereConditions = append(whereConditions, `
 NOT (
   lower(COALESCE(c.status, '')) = 'confirmed'
   AND c.contract_id LIKE 'wish-%'
   AND EXISTS (
     SELECT 1 FROM mcp_contracts b
-    WHERE 'wish-' || b.contract_id = c.contract_id
+    WHERE b.contract_id = substr(c.contract_id, 6)
       AND lower(COALESCE(b.status, '')) = 'confirmed'
   )
 )`)

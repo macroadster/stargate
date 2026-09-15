@@ -35,6 +35,9 @@ type BlockMonitor struct {
 	unpinPath       func(context.Context, string) error
 	ipfsClient      *ipfs.Client
 	reconcileMu     sync.Mutex
+	oracleMetaMu    sync.Mutex
+	oracleMetaRecs  []services.IngestionRecord
+	oracleMetaAt    time.Time
 
 	// Configuration
 	checkInterval time.Duration
