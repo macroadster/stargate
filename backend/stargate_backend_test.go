@@ -299,7 +299,11 @@ func TestSandboxHandlerServesUnpackedFile(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("<html>ok</html>"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(dir, "quantum.min.css"), []byte("body{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	handler := sandboxHandler(uploads, results)
+
 	req := httptest.NewRequest(http.MethodGet, "/sandbox/"+hash+"/", nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
@@ -308,5 +312,39 @@ func TestSandboxHandlerServesUnpackedFile(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), "<html>ok</html>") {
 		t.Fatalf("body=%q", w.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/sandbox/"+hash+"/quantum.min.css", nil)
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("asset status=%d body=%q, want 200", w.Code, w.Body.String())
+	}
+	if w.Body.String() != "body{}" {
+		t.Fatalf("asset body=%q", w.Body.String())
+	}
+}
+
+func TestSandboxHandlerRedirectsDirWithoutSlash(t *testing.T) {
+	uploads := t.TempDir()
+	results := filepath.Join(uploads, "results")
+	hash := strings.Repeat("ef", 32)
+	dir := filepath.Join(results, hash[0:2], hash[2:4], hash[4:6], hash)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("<html>ok</html>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	handler := sandboxHandler(uploads, results)
+	req := httptest.NewRequest(http.MethodGet, "/sandbox/"+hash, nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusMovedPermanently {
+		t.Fatalf("status=%d body=%q, want 301", w.Code, w.Body.String())
+	}
+	want := "/sandbox/" + hash + "/"
+	if loc := w.Header().Get("Location"); loc != want {
+		t.Fatalf("Location=%q, want %q", loc, want)
 	}
 }

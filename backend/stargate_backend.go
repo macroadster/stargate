@@ -1102,6 +1102,12 @@ func sandboxHandler(uploadsDir, resultsDir string) http.HandlerFunc {
 			return
 		}
 		if info.IsDir() {
+			// Keep the URL as /sandbox/<hash>/ so relative assets
+			// (quantum.min.css, vendor/…) resolve under the hash, not /sandbox/.
+			if !strings.HasSuffix(r.URL.Path, "/") {
+				http.Redirect(w, r, pathWithSlash(r), http.StatusMovedPermanently)
+				return
+			}
 			index := filepath.Join(resolved, "index.html")
 			if _, err := os.Stat(index); err == nil {
 				http.ServeFile(w, r, index)
@@ -1134,6 +1140,14 @@ code{font-family:ui-monospace,monospace;font-size:.9em}
 func htmlEscape(s string) string {
 	r := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", `"`, "&quot;")
 	return r.Replace(s)
+}
+
+func pathWithSlash(r *http.Request) string {
+	url := r.URL.Path + "/"
+	if q := r.URL.RawQuery; q != "" {
+		url += "?" + q
+	}
+	return url
 }
 
 // diagnosticsEnabled is the opt-in gate for /metrics and /debug/pprof.

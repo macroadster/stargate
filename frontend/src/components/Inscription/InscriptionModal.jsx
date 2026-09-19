@@ -43,7 +43,7 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
             <div className="flex-shrink-0">
               {pixelHash ? (
                 <a 
-                  href={`/sandbox/${pixelHash}`}
+                  href={`/sandbox/${pixelHash}/`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="block hover:opacity-80 transition-opacity cursor-pointer"
