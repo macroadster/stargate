@@ -51,7 +51,7 @@ STARGATE_AGENT_WORKER_ENABLED=true
 
 Full table lives in the repo: `docs/arch/ENV.md`. Dump what this process will use: `stargate --config`.
 
-API keys are issued by wallet challenge/verify. Do not put a shared key in the environment.
+API keys are issued by wallet challenge/verify. Do not put a shared key in the environment. `STARGATE_API_KEY` is not a login (retired). Ingest/callback tokens are leftover sidecar wiring — not how you sign in.
 
 ## Docker
 

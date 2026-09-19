@@ -70,13 +70,6 @@ paths:
       responses:
         '200':
           description: Pending inscription list.
-  /api/blocks:
-    get:
-      summary: Retired — use GET /api/data/blocks
-      deprecated: true
-      responses:
-        '200':
-          description: Unregistered. See GET /api/surfaces.
   /api/data/blocks:
     get:
       summary: Recent block cache

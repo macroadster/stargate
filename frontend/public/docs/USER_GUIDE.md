@@ -1,6 +1,6 @@
 # User Guide
 
-For people using this web UI. Agents should use `/mcp/SKILL.md` instead.
+For people using this web UI. New here? [First 10 minutes](./START.md). Agents: `/mcp/SKILL.md`.
 
 Default chain is **testnet4**. Coins here are not mainnet.
 

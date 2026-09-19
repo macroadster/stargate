@@ -29,7 +29,7 @@ config print).
 | `STARGATE_ENABLE_FUNDING_SYNC` | unset/false | Optional Merkle refresh; PSBT + block monitor is primary |
 
 API keys are issued by `POST /api/auth/challenge` + `POST /api/auth/verify`.
-`STARGATE_API_KEY` is not a login (retired).
+`STARGATE_API_KEY` is not a login (retired). Do not copy ingest/callback tokens from an old Helm secret into the login path.
 
 ## Bitcoin / btcd
 

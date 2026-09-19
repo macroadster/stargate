@@ -779,22 +779,7 @@ func setupRoutes(ctx context.Context, mux *http.ServeMux, container *container.C
 	// results/ab/cd/ef/<hash>/file on disk.
 	resultsDir := filepath.Join(uploadsDir, "results")
 	_ = os.MkdirAll(resultsDir, 0755)
-	mux.HandleFunc("/sandbox/", func(w http.ResponseWriter, r *http.Request) {
-		rel := strings.TrimPrefix(r.URL.Path, "/sandbox/")
-		if rel == "" || rel == "." {
-			http.NotFound(w, r)
-			return
-		}
-		// Resolve through the uploads root so results/<hash>/file still maps
-		// onto the partitioned tree, then confine to resultsDir so a sibling
-		// of that directory cannot be served (stargate-irl.5).
-		resolved, err := confinedResolvedPath(resultsDir, datadir.ResolveUploadRelPath(uploadsDir, "results/"+rel))
-		if err != nil {
-			http.Error(w, "Forbidden", http.StatusForbidden)
-			return
-		}
-		http.ServeFile(w, r, resolved)
-	})
+	mux.HandleFunc("/sandbox/", sandboxHandler(uploadsDir, resultsDir))
 
 	// Serve frontend files from embedded FS
 	frontendFS, _ := fs.Sub(frontendAssets, "assets/frontend")
@@ -1091,6 +1076,64 @@ func confinedResolvedPath(baseDir, resolved string) (string, error) {
 		return baseDir, nil
 	}
 	return security.SanitizePath(baseDir, rel)
+}
+
+// sandboxHandler serves /sandbox/<hash>/… from results/. A missing tree
+// (this node has not confirmed / unpacked yet) returns a short HTML note
+// instead of a blank 404 so the UI tab matches the docs.
+func sandboxHandler(uploadsDir, resultsDir string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		rel := strings.TrimPrefix(r.URL.Path, "/sandbox/")
+		if rel == "" || rel == "." {
+			http.NotFound(w, r)
+			return
+		}
+		resolved, err := confinedResolvedPath(resultsDir, datadir.ResolveUploadRelPath(uploadsDir, "results/"+rel))
+		if err != nil {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+		info, err := os.Stat(resolved)
+		if os.IsNotExist(err) {
+			writeSandboxEmpty(w, r.URL.Path)
+			return
+		} else if err != nil {
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+		if info.IsDir() {
+			index := filepath.Join(resolved, "index.html")
+			if _, err := os.Stat(index); err == nil {
+				http.ServeFile(w, r, index)
+				return
+			}
+			writeSandboxEmpty(w, r.URL.Path)
+			return
+		}
+		http.ServeFile(w, r, resolved)
+	}
+}
+
+func writeSandboxEmpty(w http.ResponseWriter, requestPath string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusNotFound)
+	_, _ = fmt.Fprintf(w, `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Sandbox empty</title>
+<style>
+body{font:16px/1.5 system-ui,sans-serif;max-width:40rem;margin:3rem auto;padding:0 1.25rem;color:#e5e7eb;background:#0f172a}
+code{font-family:ui-monospace,monospace;font-size:.9em}
+</style></head><body>
+<h1>Sandbox not unpacked yet</h1>
+<p>Nothing is at <code>%s</code> on this node.</p>
+<p>Deliverables unpack when <strong>this node</strong> confirms the funding transaction on-chain. Gossip and stego metadata do not extract. If the tx is already confirmed here, retry <code>POST /api/smart_contract/contracts/{id}/sandbox/pull</code>.</p>
+</body></html>`, htmlEscape(requestPath))
+}
+
+func htmlEscape(s string) string {
+	r := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", `"`, "&quot;")
+	return r.Replace(s)
 }
 
 // diagnosticsEnabled is the opt-in gate for /metrics and /debug/pprof.

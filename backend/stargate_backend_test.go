@@ -264,3 +264,49 @@ func TestCustomUploadsHandlerServesInside(t *testing.T) {
 		t.Fatalf("inside file body = %q", w.Body.String())
 	}
 }
+
+func TestSandboxHandlerEmptyExplainsConfirm(t *testing.T) {
+	uploads := t.TempDir()
+	results := filepath.Join(uploads, "results")
+	if err := os.MkdirAll(results, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	hash := strings.Repeat("ab", 32)
+	handler := sandboxHandler(uploads, results)
+	req := httptest.NewRequest(http.MethodGet, "/sandbox/"+hash+"/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status=%d, want 404", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "not unpacked yet") {
+		t.Fatalf("empty sandbox body = %q", body)
+	}
+	if !strings.Contains(body, hash) {
+		t.Fatalf("missing hash in empty sandbox page: %q", body)
+	}
+}
+
+func TestSandboxHandlerServesUnpackedFile(t *testing.T) {
+	uploads := t.TempDir()
+	results := filepath.Join(uploads, "results")
+	hash := strings.Repeat("cd", 32)
+	dir := filepath.Join(results, hash[0:2], hash[2:4], hash[4:6], hash)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("<html>ok</html>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	handler := sandboxHandler(uploads, results)
+	req := httptest.NewRequest(http.MethodGet, "/sandbox/"+hash+"/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%q Location=%s, want 200", w.Code, w.Body.String(), w.Header().Get("Location"))
+	}
+	if !strings.Contains(w.Body.String(), "<html>ok</html>") {
+		t.Fatalf("body=%q", w.Body.String())
+	}
+}

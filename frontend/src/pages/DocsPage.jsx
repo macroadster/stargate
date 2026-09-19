@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { FileText, Users, Bot, Book, Settings, ChevronRight } from 'lucide-react';
+import { FileText, Users, Bot, Book, Settings, ChevronRight, Timer } from 'lucide-react';
 import AppHeader from '../components/Common/AppHeader';
 import { apiFetch } from '../utils/api';
 
@@ -25,6 +25,11 @@ const DocsPage = () => {
       icon: FileText,
       description: 'Pick a guide'
     },
+    'START.md': {
+      title: 'First 10 minutes',
+      icon: Timer,
+      description: 'Sign in, inscribe, find it, pay'
+    },
     'USER_GUIDE.md': {
       title: 'User Guide',
       icon: Users,
@@ -33,7 +38,7 @@ const DocsPage = () => {
     'AGENT_GUIDE.md': {
       title: 'AI Agent Guide',
       icon: Bot,
-      description: 'MCP on this node — /mcp/SKILL.md wins'
+      description: 'Live skill is /mcp/SKILL.md — this page does not duplicate it'
     },
     'GLOSSARY.md': {
       title: 'Glossary',
