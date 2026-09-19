@@ -48,7 +48,7 @@ export default function McpDocsPage() {
         <div className="mb-8 min-w-0">
           <h1 className="text-2xl sm:text-3xl font-bold mb-2">MCP API Documentation</h1>
           <p className="text-gray-600 dark:text-gray-400">
-            Complete API documentation for the Starlight Model Context Protocol (MCP) interface.
+            Live MCP surface on this node. Agent workflow: /mcp/SKILL.md (testnet4, 1h claims).
           </p>
           <div className="mt-4 flex flex-wrap gap-3">
             <a

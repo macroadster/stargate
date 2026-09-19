@@ -47,7 +47,7 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
                   target="_blank"
                   rel="noopener noreferrer"
                   className="block hover:opacity-80 transition-opacity cursor-pointer"
-                  title="View details in separate page"
+                  title="Sandbox files (empty until this node confirms the funding tx)"
                 >
                   {modalImageSource ? (
                     <div className="relative">

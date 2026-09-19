@@ -3,24 +3,21 @@ info:
   title: Stargate Backend API
   version: "1.0.0"
   description: |
-    Comprehensive API for Stargate Backend system, including:
-    - Core API functionality
-    - Bitcoin steganography operations  
-    - MCP (Machine Control Protocol) for task management
-    - Data operations and analytics
-    
-    This API enables AI agents to discover tasks, claim work, submit results, and interact with Bitcoin steganography features.
+    Stargate REST + MCP on one process (default testnet4, SQLite).
+
+    Prefer GET /api/surfaces and GET /mcp/tools over memorizing this file.
+    /api/blocks is retired — use /api/data/blocks. MCP namespace is /mcp
+    (not /mcp/v1). Claim TTL is 1 hour. Funding PSBTs always include
+    OP_RETURN wish_hash||stego_hash.
   contact:
-    name: Stargate Backend Team
-    url: https://github.com/stargate
+    name: Stargate
+    url: https://github.com/macroadster/stargate
   license:
     name: MIT
     url: https://opensource.org/licenses/MIT
 servers:
   - url: http://localhost:3001
-    description: Development server
-  - url: https://api.stargate.io
-    description: Production server
+    description: Unified binary (default)
 paths:
   /api/health:
     get:
@@ -75,10 +72,11 @@ paths:
           description: Pending inscription list.
   /api/blocks:
     get:
-      summary: Recent blocks with inscription counts
+      summary: Retired — use GET /api/data/blocks
+      deprecated: true
       responses:
         '200':
-          description: Block summaries.
+          description: Unregistered. See GET /api/surfaces.
   /api/data/blocks:
     get:
       summary: Recent block cache
