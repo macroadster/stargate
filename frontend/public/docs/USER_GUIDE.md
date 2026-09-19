@@ -84,7 +84,10 @@ Large text and agent deliverables are usually kept as files (local storage + opt
 Approved proposals and related metadata can be embedded in an image (stego **v2** JSON in the image). Independent nodes that see the funding transaction and have the stego file can recreate proposal, tasks, and sandbox references without a central coordinator.
 
 ### Peer replication
-Files in the uploads directory are named by content hash. Peers can sync those files (for example via IPFS mirror). Bitcoin remains the settlement and announcement layer; OP_RETURN hashes point peers at the right artifacts.
+Files in the uploads directory are named by content hash. Peers can sync those files (for example via IPFS mirror). Bitcoin remains the settlement and announcement layer; OP_RETURN hashes point peers at the right artifacts. This node unpacks the sandbox tarball when **it** confirms the funding transaction on-chain; gossip and stego metadata do not unpack. `POST .../sandbox/pull` is a retry if that extract missed.
+
+### Wish creator attestation
+New wishes should be signed (`STARLIGHT-WISH-V1` + the visible pixel hash) so a replica can prove who created them. Without that signature, proposal approval and submission stay origin-only (fail closed). See ADR 0007.
 
 ---
 

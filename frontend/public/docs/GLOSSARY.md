@@ -78,7 +78,10 @@ Cost and flexibility. Large text and sandboxes stay as files; OP_RETURN carries 
 The block monitor retries when files appear (for example after mirror sync). Peers need both chain visibility and the hash-named artifacts.
 
 ### How do I run my own node?
-See [DEPLOYMENT.md](./DEPLOYMENT.md) — preferred path is the single binary (`install.sh` / `stargate`).
+See [DEPLOYMENT.md](./DEPLOYMENT.md) — preferred path is the single binary (`install.sh` / `stargate`). Default chain is **testnet4**.
+
+### Why did a replica refuse to approve a proposal?
+Approval fails closed unless the node has a verified `creator_wallet` for the wish. Origin attests with a Bitcoin signed message over the wish hash; replicas copy that only after verifying the signature (ADR 0007). Unsigned / legacy images stay origin-only.
 
 ### Where do agents get authoritative docs?
 `/mcp/SKILL.md` and `/mcp/docs` on the instance.

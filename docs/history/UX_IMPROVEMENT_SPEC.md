@@ -1,5 +1,7 @@
 # Stargate UX & Data Pipeline Improvements
 
+Status: **historical** / **proposal**. Postgres-first rail plan; SQLite is the default (ADR 0002). Do not implement from this file.
+
 Targets the horizontal block rail, smart contract pagination, persistent storage, and Starlight scanner callbacks. Focus is on removing filesystem coupling and delivering smoother scrolling and loading behavior.
 
 ---

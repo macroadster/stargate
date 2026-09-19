@@ -1,5 +1,7 @@
 # Enhanced Wallet Authentication for AI Agents
 
+Status: **implemented** (challenge `ai_mode`, detailed verify errors, address validation). Auth ownership: ADR 0005. Operator env: [arch/ENV.md](./arch/ENV.md).
+
 ## Overview
 
 The wallet authentication system has been enhanced to provide better support for AI agents with:

@@ -1,5 +1,7 @@
 # Starlight Scanner Optimization Implementation Summary
 
+Status: **historical**. Live scanner: `docs/arch/TRIN_STARLIGHT_SCANNER.md`. See [README.md](./README.md).
+
 ## ✅ Completed Optimizations
 
 ### 1. Removed Deprecated StarlightScanner

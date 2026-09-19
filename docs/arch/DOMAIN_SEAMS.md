@@ -1,7 +1,7 @@
 # Domain seams: stego · ingestion · bitcoin · contracts
 
-Status: **canonical** (stargate-3bk.7)  
-Related: [PACKAGE_BOUNDARIES.md](./PACKAGE_BOUNDARIES.md)
+Status: **canonical** (stargate-3bk.7, amended osv.5 / ADR 0008)  
+Related: [PACKAGE_BOUNDARIES.md](./PACKAGE_BOUNDARIES.md), ADR 0004, ADR 0008
 
 ## Problem
 
@@ -63,4 +63,4 @@ When touching confirmation or publish flows:
 
 ## ADRs
 
-Decision records: [../adr/README.md](../adr/README.md) (especially ADR 0003–0004).
+Decision records: [../adr/README.md](../adr/README.md) (especially ADR 0003, 0004, 0008).

@@ -1,5 +1,7 @@
 # GORM storage unification (stargate-e4z)
 
+Status: **historical** (landed). Living storage decision: ADR 0002.
+
 **Branch:** `dev`  
 **Date:** 2026-07-25  
 **ADR:** 0002 (keep SQLite + Postgres; reduce drift)

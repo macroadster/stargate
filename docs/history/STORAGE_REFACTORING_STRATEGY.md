@@ -1,7 +1,7 @@
 # Stargate Backend Storage Refactoring Strategy
 
 **Date**: 2026-04 (analysis performed by Grok 4.3)  
-**Status**: Proposed  
+**Status**: **historical** / proposed. Living decision: ADR 0002.  
 **Related**: STARGATE_STORAGE env, backend/storage/, MCP + API Gateway + Middleware fragmentation  
 **Goal**: Consolidate all storage initialization, selection, interfaces, and domain logic into the `backend/storage` package for consistency, maintainability, and single source of truth.
 

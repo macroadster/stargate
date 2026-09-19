@@ -1,5 +1,7 @@
 # Trin / GGUF Starlight Scanner (Go)
 
+Status: **canonical** (Path A live)
+
 Workstream 3 wires a **Trin/GGUF-backed** Starlight detector behind the existing
 `core.StarlightScannerInterface` in the Stargate Go backend (`backend/starlight`).
 

@@ -1,5 +1,7 @@
 # Zero-Cost Funding Reliability Plan
 
+Status: **historical** / **rejected**. Live PSBTs always emit OP_RETURN `wish_hash || stego_hash` (`commitment_sats` default 1000). Skipping the commitment because donation is off was the payout scar. See `docs/arch/starlight_contracts.md` §12.8.
+
 ## Objective
 Enable a highly reliable "No Donation" funding workflow without requiring users to pay for an extra "dust" commitment output.
 

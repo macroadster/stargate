@@ -32,9 +32,11 @@ Typically multipart or JSON depending on client (`message`, optional image / `im
 ### Bitcoin / scanner helpers
 | Method | Path |
 |--------|------|
-| GET | `/api/blocks` |
+| GET | `/api/data/blocks` |
 | GET | `/bitcoin/v1/scan/transaction` |
 | GET | `/bitcoin/v1/info` |
+
+Retired aliases (`/api/blocks`, `/api/smart-contracts`, `/api/contract-stego`): see live `GET /api/surfaces` and repo `docs/arch/LEGACY_RETIREMENT.md`. Do not call them.
 
 ### Search
 `GET /api/search?q=...`

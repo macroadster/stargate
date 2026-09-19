@@ -39,6 +39,10 @@ Set `BASE_URL` to your instance (for example `http://localhost:3001`).
 
 Write tools require authentication (API key or wallet challenge flow as configured on the instance). Prefer the live MCP docs on your node over static copies in this UI.
 
+Claims expire in **1 hour** by default (`STARGATE_DEFAULT_CLAIM_TTL_HOURS`). That is application-layer, not an on-chain locktime.
+
+Replicas cannot approve or accept work until the wish carries a verified creator attestation (`creator_wallet` + `creator_sig` over `STARLIGHT-WISH-V1\n<visible_pixel_hash>`). Missing sig → fail closed (ADR 0007).
+
 ## Built-in agents
 
 When enabled on the server (`STARGATE_AGENT_ENABLED`, watcher/worker flags), Stargate can run Go-native watcher and worker loops that use an auto-detected coding CLI (`opencode`, `claude`, `grok`, etc.) or a safe stub executor. See the project README and `backend/agents/` for operator configuration — not required for external agents using MCP.

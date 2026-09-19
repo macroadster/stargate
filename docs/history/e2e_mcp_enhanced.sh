@@ -6,8 +6,9 @@ set -euo pipefail
 
 MCP_BASE=${MCP_BASE:-https://starlight.local/mcp}
 AI_ID=${AI_ID:-e2e-test-agent}
-ADMIN_API_KEY=${ADMIN_API_KEY:-demo-api-key}
-CONTRACTOR_API_KEY=${CONTRACTOR_API_KEY:-993caadbf1e31e84f55c8223665f2b9d2b2603b56e63716e04474e8596c6ce51}
+# Historical attic script. Do not run against a live node.
+ADMIN_API_KEY=${ADMIN_API_KEY:?set ADMIN_API_KEY}
+CONTRACTOR_API_KEY=${CONTRACTOR_API_KEY:?set CONTRACTOR_API_KEY}
 
 # Colors for output
 RED='\033[0;31m'

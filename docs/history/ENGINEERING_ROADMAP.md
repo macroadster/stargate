@@ -1,5 +1,7 @@
 # **1. INTERNAL ENGINEERING ROADMAP DOC**
 
+Status: **historical**. 2025 GPS/delivery marketplace sketch — not the product. Living map: [../README.md](../README.md).
+
 *raw markdown, no fluff*
 
 ---

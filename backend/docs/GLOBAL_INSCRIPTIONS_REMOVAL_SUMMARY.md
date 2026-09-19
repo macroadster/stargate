@@ -1,5 +1,7 @@
 # Global Inscriptions JSON Removal - Implementation Summary
 
+Status: **historical**. See [README.md](./README.md).
+
 ## 🎯 **Task Completed Successfully**
 
 The inefficient `global_inscriptions.json` file has been successfully removed and replaced with a scalable per-block data management system.

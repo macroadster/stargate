@@ -1,5 +1,7 @@
 # Block Monitor Integration Summary
 
+Status: **historical**. See [README.md](./README.md).
+
 ## ✅ Successfully Integrated Block Monitor with /scan/block API
 
 ### Changes Made:

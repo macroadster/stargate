@@ -1,5 +1,7 @@
 # Block Monitor Implementation
 
+Status: **historical**. Early blockchain.info / directory-layout notes. Live monitor: `backend/bitcoin/block_monitor*.go`, seams in `docs/arch/DOMAIN_SEAMS.md` (ADR 0004 / 0008). See [README.md](./README.md).
+
 ## Overview
 
 The block monitor has been successfully implemented with the following features:

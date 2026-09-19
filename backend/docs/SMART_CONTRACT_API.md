@@ -1,5 +1,7 @@
 # Bitcoin Smart Contract System API Documentation
 
+Status: **historical**. Escrow / dispute writeup is not the live funding path. Live: `docs/arch/starlight_contracts.md` §12 and `GET /api/surfaces`. See [README.md](./README.md).
+
 ## Overview
 
 The Stargate Bitcoin Smart Contract System provides a complete Bitcoin-backed smart contract platform with escrow services, transaction monitoring, and dispute resolution. This system transforms Stargate from a basic task platform into a true Bitcoin smart contract ecosystem.

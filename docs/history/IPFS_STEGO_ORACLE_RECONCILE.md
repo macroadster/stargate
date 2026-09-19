@@ -1,5 +1,7 @@
 # IPFS Stego Oracle Reconciliation (YAML Manifest) — SUPERSEDED
 
+Status: **historical**. Live path: `docs/arch/starlight_contracts.md` §12.
+
 > **Note**: This document describes the v1 YAML manifest design. The current
 > implementation uses **stego v2 JSON payloads** embedded directly in the image's
 > alpha channel. The v2 payload includes the full proposal, tasks, metadata, and

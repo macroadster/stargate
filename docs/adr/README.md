@@ -14,6 +14,7 @@ Agents and humans should treat this directory as the source of truth for *why* t
 | [0005](./0005-rest-vs-mcp-ownership.md) | REST vs MCP ownership | Accepted |
 | [0006](./0006-embedded-btcd-node.md) | Embedded btcd full node (no mining) | Accepted |
 | [0007](./0007-wish-creator-attestation.md) | Wish creator attestation | Accepted |
+| [0008](./0008-sandbox-extract-on-confirm.md) | Extract sandbox on this node's on-chain confirm | Accepted |
 
 ## Format
 
@@ -21,6 +22,8 @@ Each ADR uses a short MADR-inspired template: **Context → Decision → Consequ
 
 ## Related living docs
 
+- Docs map: [../README.md](../README.md)
 - Package layers: [../arch/PACKAGE_BOUNDARIES.md](../arch/PACKAGE_BOUNDARIES.md)
 - Domain seams: [../arch/DOMAIN_SEAMS.md](../arch/DOMAIN_SEAMS.md)
+- Operator env: [../arch/ENV.md](../arch/ENV.md)
 - API surfaces: [../arch/MCP_UNIFIED_PLAN.md](../arch/MCP_UNIFIED_PLAN.md), `GET /api/surfaces`

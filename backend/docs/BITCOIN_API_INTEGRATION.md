@@ -1,5 +1,7 @@
 # Bitcoin Steganography API Integration
 
+Status: **historical**. Scan path is in-process Trin/GGUF, not a Python sidecar. Live: `docs/arch/TRIN_STARLIGHT_SCANNER.md`. See [README.md](./README.md).
+
 This document describes the integration of the Starlight Bitcoin Steganography Scanning API into the Stargate project.
 
 ## Overview

@@ -1,5 +1,7 @@
 # Docker Build Optimization Summary
 
+Status: **historical**. Split `stargate-frontend` / `stargate-backend` images are retired (ADR 0001). Use `make docker` → `stargate:latest`.
+
 ## Overview
 Optimized Docker image builds for Stargate frontend and backend to ensure workspace cached libraries are not copied again, improving build times and reducing image sizes.
 

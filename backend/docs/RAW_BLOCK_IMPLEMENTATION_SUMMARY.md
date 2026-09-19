@@ -1,5 +1,7 @@
 # Raw Block Hex Implementation - Production Ready
 
+Status: **historical**. See [README.md](./README.md).
+
 ## Summary
 
 Successfully implemented a highly efficient Bitcoin block processing system that reduces API calls from **3000+ to just 1 per block** - a **3800x efficiency improvement**.

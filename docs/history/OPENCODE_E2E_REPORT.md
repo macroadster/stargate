@@ -1,5 +1,7 @@
 # Starlight MCP E2E Test Report - OpenCode API Key
 
+Status: **historical**.
+
 ## Test Execution Summary
 
 **Date:** 2026-01-19  

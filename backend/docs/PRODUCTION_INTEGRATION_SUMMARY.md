@@ -1,5 +1,7 @@
 # Production Integration Summary
 
+Status: **historical**. Mentions retired `/api/contract-stego`. See [README.md](./README.md).
+
 ## Overview
 Successfully removed all mocked data and implemented real image fetching from Blockstream API for steganography scanning. The system now uses real Bitcoin blockchain data and connects to the actual Starlight steganography backend.
 

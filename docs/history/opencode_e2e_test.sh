@@ -5,7 +5,8 @@ set -euo pipefail
 # This script validates the complete MCP workflow with production API key
 
 MCP_BASE=${MCP_BASE:-https://starlight.local/mcp}
-OPENCODE_API_KEY=${OPENCODE_API_KEY:-d506b49e9e0b633b8a9ebf8d681a2731702cb407bd63c4cf296e655a9063f249}
+# Historical attic script. Do not run against a live node.
+OPENCODE_API_KEY=${OPENCODE_API_KEY:?set OPENCODE_API_KEY}
 AI_ID=${AI_ID:-opencode-e2e-agent}
 
 # Colors

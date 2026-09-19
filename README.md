@@ -6,7 +6,7 @@ Stargate is a Bitcoin-native coordination layer for turning human wishes and ide
 
 Bitcoin is the settlement and historical witness layer. Independent nodes scan blocks, reconcile steganographic inscriptions with local files, optionally mirror artifacts (for example via IPFS), and may receive optional direct donations. The main value of running a node is the local collection of approved creative work and the full Starlight toolkit (scanner, stego, Bitcoin coordination) — not micro-donations.
 
-Stargate ships as a **single binary** (embedded UI + Go backend, SQLite by default) so home operators do not need a full microservices stack.
+Stargate ships as a **single binary** (embedded UI + Go backend, SQLite by default) so home operators do not need a full microservices stack. Default chain is **Bitcoin testnet4**.
 
 ## How it works (high level)
 
@@ -179,7 +179,7 @@ curl -fsSL https://raw.githubusercontent.com/macroadster/stargate/main/install.s
 stargate
 ```
 
-Server: `http://localhost:3001` with SQLite. Linux/macOS amd64 and arm64. Installs to `~/.local/bin`. If that directory is not on your PATH, the script appends it to your shell profile (`.zshrc` / `.bashrc` / etc.). Set `INSTALL_DIR` to override the install path.
+Server: `http://localhost:3001` with SQLite on **testnet4**. Linux/macOS amd64 and arm64. Installs to `~/.local/bin`. If that directory is not on your PATH, the script appends it to your shell profile (`.zshrc` / `.bashrc` / etc.). Set `INSTALL_DIR` to override the install path. Operator env: [`docs/arch/ENV.md`](docs/arch/ENV.md).
 
 ### Development prerequisites
 
@@ -248,7 +248,7 @@ stargate/
 │   ├── stego/                # Payload + sandbox helpers
 │   ├── storage/              # SQLite / Postgres / IPFS mirror
 │   └── …
-├── docs/                     # Architecture & history (developers)
+├── docs/                     # Map: docs/README.md (ADRs, arch, history attic)
 ├── Dockerfile
 ├── Makefile
 ├── install.sh
@@ -269,6 +269,7 @@ stargate/
 3. Open a pull request  
 
 Issue tracking for this repo uses **bd (beads)** — see `AGENTS.md`.
+Developer docs start at [`docs/README.md`](docs/README.md). Commit locally when work is ready; the maintainer pulls and deploys — do not treat `git push` as mandatory for agents.
 
 ## License
 

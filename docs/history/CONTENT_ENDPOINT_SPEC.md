@@ -1,5 +1,7 @@
 # Content Endpoint Spec and Migration Plan
 
+Status: **historical** / **proposal**. `/content/{txid}` was not the live surface. Use `/api/data/*` and `GET /api/surfaces`.
+
 ## Goals
 - Provide a `/content` API compatible with existing ordinals explorers (simple raw fetch).
 - Add safer, explicit access to inscription content when multiple witnesses/parts exist.

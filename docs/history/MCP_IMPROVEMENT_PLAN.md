@@ -1,5 +1,7 @@
 # MCP Server & Frontend Improvement Plan
 
+Status: **historical**. Superseded by `docs/arch/MCP_UNIFIED_PLAN.md`.
+
 ## Executive Summary
 
 This document outlines critical improvements needed for the Stargate MCP server and frontend to enable autonomous agent workflows and enhance user experience. Based on testing with the lunar mission proposal, several key issues have been identified that prevent seamless agent-human collaboration.

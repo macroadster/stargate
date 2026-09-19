@@ -18,17 +18,23 @@ stargate
 - Installs to `~/.local/bin` by default; adds that directory to your shell PATH if missing
 - Override install location with `INSTALL_DIR`
 
+Default Bitcoin network is **testnet4** (`BITCOIN_NETWORK`). There is no
+`STARGATE_BITCOIN_NETWORK`. Mainnet needs `BTCD_ALLOW_MAINNET=true` (ADR 0006).
+Full table: repo `docs/arch/ENV.md`.
+
 Useful environment variables:
 
 ```bash
-# Network
-STARGATE_BITCOIN_NETWORK=testnet   # or mainnet
+# Network (default testnet4 — not "testnet")
+BITCOIN_NETWORK=testnet4
+# BTCD_ALLOW_MAINNET=true          # required to run mainnet
 
 # Optional Starlight scanner (legacy Python sidecar; default is in-process GGUF)
 STARGATE_PROXY_BASE=http://127.0.0.1:8080
 
-# Optional donation address (direct P2WPKH in funding PSBTs)
-STARLIGHT_DONATION_ADDRESS=bc1q...
+# Optional donation address (direct P2WPKH in funding PSBTs).
+# Unset skips the donation output only — OP_RETURN commitment still ships.
+STARLIGHT_DONATION_ADDRESS=tb1q...
 
 # Built-in agents (optional)
 STARGATE_AGENT_ENABLED=true

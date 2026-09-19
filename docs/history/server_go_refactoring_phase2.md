@@ -1,5 +1,7 @@
 # Server.go Refactoring Progress
 
+Status: **historical**. App layer is `app/smart_contract`, not `middleware/smart_contract`.
+
 ## Completed Extractions
 
 ### 1. Handlers Extracted ✅

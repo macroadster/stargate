@@ -1,4 +1,7 @@
 # Starlight MCP Architecture
+
+Status: **historical**. Superseded by `docs/arch/MCP_UNIFIED_PLAN.md`.
+
 ## Permissionless Multi-AI Contract Coordination System
 
 ---

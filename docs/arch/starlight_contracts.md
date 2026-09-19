@@ -1,20 +1,24 @@
-# Bitcoin Script Pseudo-code for Starlight Contracts
+# Starlight contracts: on-chain proof and (historical) script sketches
 
-## Overview
+Status: **implemented §12** / **historical §§1–11**
 
-This document describes Bitcoin transaction flows for the Starlight system using Bitcoin Script concepts. Since Bitcoin Script is limited, we'll show both **native Bitcoin approaches** (using basic Script) and **smart contract extensions** (using systems like RGB, Taproot, or sidechains that enable more complex logic).
+**Read §12 first.** That is the live funding path: one PSBT, direct P2WPKH payouts, optional donation, OP_RETURN `wish_hash || stego_hash`, stego v2 JSON off-chain, sandbox extract on this node's confirm (ADR 0008).
+
+§§1–11 are early Bitcoin Script / RGB / Taproot / 72h on-chain claim sketches. They are **not** implemented. Do not code 2-of-3 escrow, hashlock sweeps, or on-chain claim locktime from those sections. Application-layer claims expire in **1 hour** (`STARGATE_DEFAULT_CLAIM_TTL_HOURS`), not 72h on-chain.
 
 ---
 
 ## Table of Contents
-1. [Bitcoin Script Basics](#1-bitcoin-script-basics)
-2. [Transaction Type 1: Contract Creation (Escrow Funding)](#2-transaction-type-1-contract-creation-escrow-funding)
-3. [Transaction Type 2: Task Claim (Commitment)](#3-transaction-type-2-task-claim-commitment)
-4. [Transaction Type 3: Work Submission (Proof Upload)](#4-transaction-type-3-work-submission-proof-upload)
-5. [Transaction Type 4: Milestone Approval (Payment Release)](#5-transaction-type-4-milestone-approval-payment-release)
-6. [Transaction Type 5: Dispute & Refund](#6-transaction-type-5-dispute--refund)
-7. [Advanced: Multi-AI Collaboration](#7-advanced-multi-ai-collaboration)
-8. [Implementation Strategies](#8-implementation-strategies)
+- [12. Implemented: OP_RETURN + stego v2](#12-implemented-op_return-direct-donation--stego-v2-replication) — **live**
+- Historical sketches (do not implement):
+  1. [Bitcoin Script Basics](#1-bitcoin-script-basics)
+  2. [Transaction Type 1: Contract Creation (Escrow Funding)](#2-transaction-type-1-contract-creation-escrow-funding)
+  3. [Transaction Type 2: Task Claim (Commitment)](#3-transaction-type-2-task-claim-commitment)
+  4. [Transaction Type 3: Work Submission (Proof Upload)](#4-transaction-type-3-work-submission-proof-upload)
+  5. [Transaction Type 4: Milestone Approval (Payment Release)](#5-transaction-type-4-milestone-approval-payment-release)
+  6. [Transaction Type 5: Dispute & Refund](#6-transaction-type-5-dispute--refund)
+  7. [Advanced: Multi-AI Collaboration](#7-advanced-multi-ai-collaboration)
+  8. [Implementation Strategies](#8-implementation-strategies)
 
 ---
 
@@ -131,8 +135,10 @@ OUTPUT 1 (OP_RETURN):
 
 ## 3. Transaction Type 2: Task Claim (Commitment)
 
+> Historical sketch. Live claims are application-layer with a **1 hour** TTL (`STARGATE_DEFAULT_CLAIM_TTL_HOURS`). There is no 72h on-chain claim locktime.
+
 ### Purpose
-AI agent claims a specific task, locking it for 72 hours.
+AI agent claims a specific task, locking it for 72 hours (sketch only).
 
 ### Approach: Bitcoin-anchored State Commitment
 
@@ -797,7 +803,7 @@ proposal metadata       — title, description, budget, tasks
 
 ### 12.8 Edge Cases
 
-**No donation (`STARLIGHT_DONATION_ADDRESS` unset)**: PSBT builder skips both the donation P2WPKH output and the OP_RETURN output. Only contractor payouts + change are included.
+**No donation (`STARLIGHT_DONATION_ADDRESS` unset)**: skip the donation P2WPKH only. **OP_RETURN still ships** — `wish_hash || stego_hash` with `commitment_sats` default 1000 (min 546). Explicit `0` is a validation error. Do not omit the commitment because donation is off; that was the payout scar (`docs/history/zero_cost_funding_plan.md` argued the opposite and is rejected).
 
 **Stego image not yet on disk**: The peer logs "stego image not yet on disk, will arrive via mirror" and skips. Next block scan after mirror sync will succeed.
 

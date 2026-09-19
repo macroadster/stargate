@@ -1,5 +1,7 @@
 # Bitcoin Block Monitor Implementation Summary
 
+Status: **historical**. See [README.md](./README.md).
+
 ## 🎯 Mission Accomplished
 
 I have successfully implemented a comprehensive background monitoring system for Bitcoin blocks that meets all the specified requirements. The system provides real-time data extraction, steganography analysis, and persistent storage with a robust architecture.

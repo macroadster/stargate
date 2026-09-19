@@ -47,7 +47,7 @@ curl -fsSL https://raw.githubusercontent.com/macroadster/stargate/main/install.s
 stargate
 ```
 
-Server listens on `http://localhost:3001` (SQLite by default).
+Server listens on `http://localhost:3001` (SQLite by default, Bitcoin **testnet4**).
 
 ---
 

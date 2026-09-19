@@ -1,5 +1,7 @@
 # MCP Improvement Phase 1 Implementation Summary
 
+Status: **historical**. Mentions `/mcp/v1` which is not the live namespace (`/mcp/*`). Current surfaces: `docs/arch/MCP_UNIFIED_PLAN.md`.
+
 ## 🎯 Overview
 
 Successfully implemented Phase 1 high-priority improvements for the Stargate MCP server and frontend. These changes address the critical issues identified during lunar mission proposal testing.

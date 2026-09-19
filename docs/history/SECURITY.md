@@ -1,5 +1,7 @@
 # Security Documentation
 
+Status: **historical** (2026-08 path-traversal fixes). Living authz: ADR 0005, ADR 0007.
+
 ## Path Traversal Vulnerability Fixes
 
 ### Summary

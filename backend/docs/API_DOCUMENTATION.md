@@ -1,5 +1,9 @@
 # Stargate Backend API Documentation
 
+Status: **historical**. This file still lists retired routes (`/mcp/v1`, `/api/smart-contracts`, `/api/contract-stego`, `/api/blocks`). Do not implement from it.
+
+Live catalog: `GET /api/surfaces`. REST vs MCP: `docs/arch/MCP_UNIFIED_PLAN.md`. Retired aliases: `docs/arch/LEGACY_RETIREMENT.md`. Agent tools: `/mcp/SKILL.md` on a running node. See [README.md](./README.md) in this folder.
+
 This document provides comprehensive API documentation for the Stargate Backend, designed to help agents discover and interact with available endpoints.
 
 ## Base URL

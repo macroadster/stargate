@@ -23,11 +23,12 @@ Funding confirmation and product replication required reading four areas at once
 **Seams**
 
 1. **PSBT → StegoPublishPort** — `PreparePublishArtifacts` before PSBT; `FinalizePublishArtifacts` after (async IPFS/pubsub optional)
-2. **Block monitor → StegoReconciler** — on match, `ReconcileStego(cid, expectedHash)` only (injected implementation on `Server`)
-3. **Reconcile → ContractFromStegoPort** — `UpsertContractFromStegoPayload(manifest, payload)`
-4. **Identity** — all domains resolve IDs via `core/identity` / VPH (ADR 0003)
+2. **Block monitor → StegoReconciler** — on match, `ReconcileStego(cid, expectedHash)` only (injected implementation on `Server`). Metadata only; does not unpack the sandbox.
+3. **Block monitor → SandboxExtractor** — after this node's on-chain `ConfirmContract` succeeds, `ExtractSandbox(contractID)` → `DownloadSandboxArtifacts`. Gossip, `processEvent`, and stego reconcile must not extract. `POST .../sandbox/pull` is a manual retry. See ADR 0008.
+4. **Reconcile → ContractFromStegoPort** — `UpsertContractFromStegoPayload(manifest, payload)`
+5. **Identity** — all domains resolve IDs via `core/identity` / VPH (ADR 0003)
 
-Dependency direction: `bitcoin` injects reconciler; `app` uses `stego` + `storage`; `stego` / `core` never import `app`.
+Dependency direction: `bitcoin` injects `StegoReconciler` and `SandboxExtractor`; `app` uses `stego` + `storage`; `stego` / `core` never import `app`.
 
 ## Consequences
 
@@ -45,4 +46,5 @@ Dependency direction: `bitcoin` injects reconciler; `app` uses `stego` + `storag
 ## Related
 
 - ADR 0003 — pixel-hash identity
-- `app/smart_contract/ports.go`, `bitcoin.StegoReconciler`
+- ADR 0008 — extract sandbox on this node's on-chain confirm
+- `app/smart_contract/ports.go`, `bitcoin.StegoReconciler`, `bitcoin.SandboxExtractor`
