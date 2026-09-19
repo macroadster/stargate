@@ -187,6 +187,15 @@ const DocsPage = () => {
                       code: ({ className, children, ...props }) => (
                         <code className={`docs-code-inline ${className || ''}`} {...props}>{children}</code>
                       ),
+                      ul: ({ children, ...props }) => (
+                        <ul className="docs-ul" {...props}>{children}</ul>
+                      ),
+                      ol: ({ children, ...props }) => (
+                        <ol className="docs-ol" {...props}>{children}</ol>
+                      ),
+                      li: ({ children, ...props }) => (
+                        <li className="docs-li" {...props}>{children}</li>
+                      ),
                       table: ({ children, ...props }) => (
                         <div className="docs-table-wrap">
                           <table {...props}>{children}</table>
