@@ -325,6 +325,40 @@ func TestSandboxHandlerServesUnpackedFile(t *testing.T) {
 	}
 }
 
+func TestSandboxHandlerListsUnpackedDirWithoutIndex(t *testing.T) {
+	uploads := t.TempDir()
+	results := filepath.Join(uploads, "results")
+	hash := strings.Repeat("11", 32)
+	dir := filepath.Join(results, hash[0:2], hash[2:4], hash[4:6], hash)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "The_Empty_Shape.mp4"), []byte("mp4"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	handler := sandboxHandler(uploads, results)
+	req := httptest.NewRequest(http.MethodGet, "/sandbox/"+hash+"/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%q, want 200 listing", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	if strings.Contains(body, "not unpacked yet") {
+		t.Fatalf("listed sandbox claimed empty: %q", body)
+	}
+	if !strings.Contains(body, "The_Empty_Shape.mp4") {
+		t.Fatalf("listing missing file: %q", body)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/sandbox/"+hash+"/The_Empty_Shape.mp4", nil)
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("file status=%d body=%q, want 200", w.Code, w.Body.String())
+	}
+}
+
 func TestSandboxHandlerRedirectsDirWithoutSlash(t *testing.T) {
 	uploads := t.TempDir()
 	results := filepath.Join(uploads, "results")

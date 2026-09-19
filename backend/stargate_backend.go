@@ -11,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	_ "net/http/pprof" // registers on DefaultServeMux; only mounted when STARGATE_PPROF=true
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -1113,7 +1114,11 @@ func sandboxHandler(uploadsDir, resultsDir string) http.HandlerFunc {
 				http.ServeFile(w, r, index)
 				return
 			}
-			writeSandboxEmpty(w, r.URL.Path)
+			// Music / artifact contracts unpack files without an index.
+			// List them instead of claiming the sandbox is empty.
+			if err := writeSandboxListing(w, r.URL.Path, resolved); err != nil {
+				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			}
 			return
 		}
 		http.ServeFile(w, r, resolved)
@@ -1140,6 +1145,55 @@ code{font-family:ui-monospace,monospace;font-size:.9em}
 func htmlEscape(s string) string {
 	r := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", `"`, "&quot;")
 	return r.Replace(s)
+}
+
+func writeSandboxListing(w http.ResponseWriter, requestPath, dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "no-store")
+	var b strings.Builder
+	b.WriteString(`<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Sandbox files</title>
+<style>
+body{font:16px/1.5 system-ui,sans-serif;max-width:44rem;margin:3rem auto;padding:0 1.25rem;color:#e5e7eb;background:#0f172a}
+code,a{font-family:ui-monospace,monospace;font-size:.9em}
+a{color:#93c5fd}
+ul{padding-left:1.2rem}
+</style></head><body>
+<h1>Sandbox files</h1>
+<p>Unpacked at <code>`)
+	b.WriteString(htmlEscape(requestPath))
+	b.WriteString(`</code>. No <code>index.html</code>.</p>
+<ul>
+`)
+	n := 0
+	for _, e := range entries {
+		name := e.Name()
+		if name == "" || strings.HasPrefix(name, ".") {
+			continue
+		}
+		href := "./" + pathEscape(name)
+		if e.IsDir() {
+			href += "/"
+			name += "/"
+		}
+		fmt.Fprintf(&b, "<li><a href=\"%s\">%s</a></li>\n", htmlEscape(href), htmlEscape(name))
+		n++
+	}
+	if n == 0 {
+		b.WriteString("<li><em>empty directory</em></li>\n")
+	}
+	b.WriteString("</ul></body></html>")
+	_, err = io.WriteString(w, b.String())
+	return err
+}
+
+func pathEscape(name string) string {
+	return strings.ReplaceAll(url.PathEscape(name), "+", "%2B")
 }
 
 func pathWithSlash(r *http.Request) string {
