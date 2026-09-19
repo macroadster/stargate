@@ -1,88 +1,92 @@
-# Starlight Deployment Guide
+# Run a node
 
-How to run your own Starlight / Stargate node. **Start with the single binary** unless you already operate Kubernetes.
+Start with the **single binary**. Kubernetes is optional.
 
----
-
-## Recommended: single binary
+Default: SQLite, listen `:3001`, Bitcoin **testnet4**.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/macroadster/stargate/main/install.sh | bash
 stargate
 ```
 
-- Listens on **`http://localhost:3001`**
-- Default storage: **SQLite** (no Postgres required)
-- Embedded frontend in the unified binary
-- Platforms: Linux and macOS (amd64, arm64)
-- Installs to `~/.local/bin` by default; adds that directory to your shell PATH if missing
-- Override install location with `INSTALL_DIR`
-
-Default Bitcoin network is **testnet4** (`BITCOIN_NETWORK`). There is no
-`STARGATE_BITCOIN_NETWORK`. Mainnet needs `BTCD_ALLOW_MAINNET=true` (ADR 0006).
-Full table: repo `docs/arch/ENV.md`.
-
-Useful environment variables:
+- Linux / macOS, amd64 and arm64
+- Installs to `~/.local/bin` (added to PATH if missing)
+- Override with `INSTALL_DIR`
 
 ```bash
-# Network (default testnet4 — not "testnet")
-BITCOIN_NETWORK=testnet4
-# BTCD_ALLOW_MAINNET=true          # required to run mainnet
+curl -s http://localhost:3001/api/health
+# UI:  http://localhost:3001
+# MCP: http://localhost:3001/mcp/docs
+```
 
-# Optional Starlight scanner (legacy Python sidecar; default is in-process GGUF)
-STARGATE_PROXY_BASE=http://127.0.0.1:8080
+## Network
 
-# Optional donation address (direct P2WPKH in funding PSBTs).
-# Unset skips the donation output only — OP_RETURN commitment still ships.
+There is **no** `STARGATE_BITCOIN_NETWORK`. Use:
+
+```bash
+BITCOIN_NETWORK=testnet4          # default
+# BTCD_ALLOW_MAINNET=true         # required to run mainnet (ADR 0006)
+```
+
+Managed btcd is the default (`BTCD_MODE=managed`). Do not CONNECT random peers.
+
+## Env you actually change
+
+```bash
+# Optional donation (P2WPKH). Unset skips donation only — OP_RETURN still ships.
 STARLIGHT_DONATION_ADDRESS=tb1q...
 
-# Built-in agents (optional)
+# Storage
+# STARGATE_STORAGE=sqlite
+# STARGATE_PG_DSN=...             # only if using Postgres
+
+# Optional in-process agents
 STARGATE_AGENT_ENABLED=true
 STARGATE_AGENT_WATCHER_ENABLED=true
 STARGATE_AGENT_WORKER_ENABLED=true
 
-# Storage (defaults to sqlite in single-binary mode)
-# STARGATE_STORAGE=sqlite
-# STARGATE_PG_DSN=...              # only if using Postgres
-
-# IPFS mirror (optional peer file sync)
-# IPFS_API_URL=http://127.0.0.1:5001
-# IPFS_MIRROR_ENABLED=true
-#
-# IPFS bootstrap (default when unset: starlight-ai.freemyip.com).
-# This node's PeerID is persisted at $STARGATE_DATA_DIR/ipfs_identity.key
-# (override with IPFS_IDENTITY_FILE) so identity is stable across restarts.
-# Remote bootstrap Peer IDs are still discovered over HTTP when the
-# multiaddr does not include /p2p/<PeerID>.
-# IPFS_EMBEDDED_BOOTSTRAP=starlight-ai.freemyip.com   # default if unset
-# IPFS_EMBEDDED_BOOTSTRAP=none                        # private mesh only (mDNS)
-# IPFS_EMBEDDED_BOOTSTRAP=public                      # Protocol Labs DHT (CPU-heavy)
-# IPFS_EMBEDDED_BOOTSTRAP=/dns4/host/tcp/4001/p2p/12D3KooW…  # fixed multiaddr
-#
-# Inscribed wishes (no PSBT yet) are file-mirrored on IPFS_WISH_TOPIC
-# (default stargate-wishes), separate from the durable uploads mirror
-# (IPFS_MIRROR_TOPIC, default stargate-uploads). Both publish a periodic
-# manifest so NAT/relay peers can pull files. Unengaged wishes are
-# unpinned and deleted after IPFS_WISH_TTL (default 168h / 7 days).
-# GET /api/ipfs-mirror/status reports topic (uploads), wish_topic,
-# topics (both), and wish-mirror inventory. Peers use that JSON to
-# discover this node's Peer ID.
-# IPFS_WISH_TOPIC=stargate-wishes
-# IPFS_WISH_TTL=168h
-# IPFS_WISH_GC_INTERVAL_SEC=3600
+# Scanner: default is in-process GGUF (auto-download). Python sidecar is leftover.
+# STARGATE_PROXY_BASE=http://127.0.0.1:8080
 ```
 
-Verify:
+Full table lives in the repo: `docs/arch/ENV.md`. Dump what this process will use: `stargate --config`.
+
+API keys are issued by wallet challenge/verify. Do not put a shared key in the environment.
+
+## Docker
 
 ```bash
-curl -s http://localhost:3001/api/health
-# Open http://localhost:3001 in a browser
-# Agents: http://localhost:3001/mcp/docs
+make docker
+docker run --rm -p 3001:3001 stargate:latest
 ```
 
-### Migrating from Postgres
+One image, frontend embedded. Split `stargate-frontend` / `stargate-backend` images are retired.
 
-If you previously used `STARGATE_PG_DSN`:
+## Helm (if you already have a cluster)
+
+Chart names live in your helm repo. Pattern:
+
+```bash
+helm upgrade --install starlight-stack . \
+  --set stargate.image.repository=stargate \
+  --set stargate.image.tag=latest \
+  --set stargate.image.pullPolicy=Never
+```
+
+Verify the **pod image id**, not just the tag. Selector is often `app=stargate`.
+
+## Funding behavior (so you do not fight the node)
+
+On **Build PSBT** the node:
+
+1. Tars `uploads/results/<hash>/` → `sandbox_hash`
+2. Embeds stego v2 JSON (proposal, tasks, sandbox_hash, attestation fields) → `stego_hash`
+3. Builds outputs: payouts, optional donation, **OP_RETURN 64 bytes**
+4. After you broadcast, the block monitor matches the tx; **this node** unpacks the sandbox on confirm
+
+Peers need the chain + the hash-named files (optional IPFS mirror). `POST .../sandbox/pull` is a retry, not the replica door.
+
+## Postgres → SQLite
 
 ```bash
 cd backend
@@ -91,107 +95,18 @@ make build-migrate
 ./bin/migrate-pg-to-sqlite --pg-dsn "$STARGATE_PG_DSN" --target-dir ./data/sqlite
 ```
 
-Then run with SQLite (`STARGATE_STORAGE=sqlite` or omit PG DSN per your setup).
+Then run with `STARGATE_STORAGE=sqlite`.
 
----
-
-## Docker (unified image)
-
-From the repo:
-
-```bash
-make docker    # builds stargate:latest (frontend embedded)
-docker run --rm -p 3001:3001 stargate:latest
-```
-
-For cluster installs, point your Helm values at `stargate` with tag `latest` and `pullPolicy: Never` when using a local image. Prefer one **stargate** container over legacy split frontend/backend deployments.
-
----
-
-## What the node does at funding time (v2)
-
-When a funding PSBT is built, the node typically:
-
-1. Prepares publish artifacts: sandbox tarball (`sandbox_hash`) + stego **v2** image (`stego_hash`) under `UPLOADS_DIR`
-2. Builds PSBT outputs: contractor payouts, optional **direct donation** (P2WPKH), **OP_RETURN** with `wish_hash || stego_hash` (64 bytes)
-3. After broadcast and confirmation, the **block monitor** reconciles contracts from the chain + local/mirrored files
-4. Peers with the same files (e.g. IPFS mirror) can reconstruct proposal, tasks, and sandbox without special pubsub flags
-
-There is **no** donation hashlock sweep in the current default path.
-
----
-
-## Optional: Kubernetes / Helm (operators)
-
-Use this only if you already run a cluster. Chart and secret names depend on your **starlight-helm** (or equivalent) checkout — treat examples as templates.
-
-Typical flow:
-
-```bash
-git clone <your-starlight-helm-repo>
-cd starlight-helm
-
-# Create shared secrets (ingest/callback tokens only — API keys are issued by wallet challenge/verify)
-kubectl create secret generic stargate-stack-secrets \
-  --from-literal=starlight-ingest-token='...' \
-  --from-literal=stargate-ingest-token='...' \
-  --from-literal=starlight-stego-callback-secret='...'
-
-helm upgrade --install starlight-stack . \
-  --set stargate.image.repository=stargate \
-  --set stargate.image.tag=latest \
-  --set stargate.image.pullPolicy=Never \
-  --set secrets.name=stargate-stack-secrets
-  # plus chart-specific keys for network, ingress, IPFS, etc.
-```
-
-Verify with your chart’s labels, for example:
-
-```bash
-kubectl get pods -l app.kubernetes.io/instance=starlight-stack
-kubectl describe pod <pod> | grep -E 'Image:|Image ID:'
-curl -s http://localhost:3001/api/health   # after port-forward or ingress
-```
-
-**Notes for operators:**
-- Prefer the **unified stargate image** over separate frontend/backend Deployments
-- Default storage for new single-binary installs is **SQLite**; Postgres remains optional for larger shared deployments
-- Matching ingest / callback tokens between Stargate and a leftover Starlight sidecar avoids 401/403 on those optional endpoints. API login is wallet challenge/verify, not a shared env key.
-- Ingress, HPA, Prometheus scrape targets, and multi-replica Postgres are chart-specific — keep those details in the Helm repo, not in end-user manuals
-
----
-
-## Optional IPFS mirroring
-
-Enable only if you want peer file distribution:
-
-- Set `IPFS_API_URL` (and mirror enable flags per your build/env)
-- Files under `UPLOADS_DIR` are addressed by **SHA256 filename**, not by embedding IPFS CIDs in OP_RETURN
-- Bitcoin OP_RETURN still carries `wish_hash` + `stego_hash`
-
----
-
-## Troubleshooting (short)
+## When it looks broken
 
 | Symptom | Check |
 |---------|--------|
-| Nothing on :3001 | Process running? Port free? Firewall? |
-| UI loads, API fails | Same origin vs `API_BASE`; reverse proxy paths |
-| Scanner / inscribe errors | `STARGATE_PROXY_BASE`, scanner health; default path is in-process GGUF |
-| Contracts not replicating on peer | Peer has block visibility + hash-named files under uploads; wait for mirror |
-| Auth 401/403 | Wallet challenge/verify issued key; leftover ingest/callback tokens if using those endpoints |
+| Nothing on :3001 | Process, port, firewall |
+| UI loads, API 404 | Same origin; do not call retired `/api/blocks` |
+| Inscribe 401 | Sign in (`/auth`) |
+| Approve 403 on a peer | Origin skipped creator attestation |
+| `/sandbox/…` empty | Wait for this node’s confirm; then pull |
+| Auth 401 | Challenge/verify key, not an env seed |
+| Scanner errors | In-process GGUF is default; `STARGATE_PROXY_BASE` is leftover |
 
-Logs: run in foreground or check container/pod logs. Metrics often at `/metrics` when enabled.
-
----
-
-## Related
-
-- [USER_GUIDE.md](./USER_GUIDE.md) — using the UI  
-- [AGENT_GUIDE.md](./AGENT_GUIDE.md) / `/mcp/SKILL.md` — agents  
-- [GLOSSARY.md](./GLOSSARY.md) — OP_RETURN, stego v2, sandbox  
-- Project root [README.md](https://github.com/macroadster/stargate) — architecture and agent env vars  
-
----
-
-*Binary-first deployment; aligned with stego v2 + OP_RETURN 2-hash model.*
+[User Guide](./USER_GUIDE.md) · [Agent Guide](./AGENT_GUIDE.md) · [Glossary](./GLOSSARY.md)

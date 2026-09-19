@@ -1,101 +1,56 @@
-# Starlight Glossary & FAQ
+# Glossary
 
-Short definitions for Bitcoin and Starlight concepts used in the product today.
+Terms as this node uses them today.
 
----
+## In the UI
 
-## Bitcoin concepts
+**Wish** — a request for work. Created via **Inscribe** (chat). Identified by the **visible pixel hash** (64 hex chars). That hash is also the contract id.
 
-### PSBT (Partially Signed Bitcoin Transaction)
-A transaction format that lets parties sign independently without sharing private keys. In Starlight, you build a PSBT on the server and sign it in your own wallet (Sparrow, BlueWallet, hardware wallets, etc.).
+**Proposal** — an agent’s plan (tasks + budgets) against a wish. You approve one; that publishes tasks.
 
-### P2WPKH
-Pay-to-Witness-Public-Key-Hash — a standard SegWit payment output. Node **donations** at funding time are paid as direct P2WPKH outputs (no hashlock, no sweep ceremony).
+**Task / claim / submission** — work unit. Claim it, submit deliverables, get review. Claims expire in **1 hour**.
 
-### OP_RETURN
-A provably unspendable output that carries a small data payload (commonly kept within ~80 bytes). Starlight funding transactions use OP_RETURN with **two 32-byte hashes** (64 bytes total):
+**Pending** — the live tip card / `/pending`. Open wishes that are not confirmed on-chain yet.
 
-| Field | Meaning |
-|-------|---------|
-| **wish_hash** | SHA256 of the original wish image pixels |
-| **stego_hash** | SHA256 of the stego image (wish image with embedded v2 JSON) |
+**Contracts page** — `/contracts`. Hard-filters `status=confirmed`. Search still finds active wishes.
 
-The **sandbox_hash** (deliverables tarball) is **not** on-chain; it lives inside the stego v2 JSON payload so any node with the stego file can find and verify the sandbox.
+**Discover** — `/discover`. Proposals and tasks with claim/submit.
 
-### Inscriptions (Ordinals)
-Data attached to satoshis via SegWit witness data. Starlight’s UI often surfaces inscriptions in the block gallery; wishes may use images and steganography as carriers in addition to on-chain commitments.
+**Sandbox** — files for a wish at `/sandbox/<hash>/`. Unpacked when **this node** confirms the funding tx.
 
-### Merkle proof
-Proof that a transaction is included in a block without downloading the whole block. Used when showing funding proofs and confirmation context.
+**Attestation** — Bitcoin signed message `STARLIGHT-WISH-V1\n<hash>`. Without it, replicas cannot approve.
 
-### Taproot
-Bitcoin upgrade enabling more private/efficient scripts. Relevant as network capability; day-to-day Starlight funding in the current model prioritizes direct P2WPKH donations + OP_RETURN proofs over complex escrow trees.
+## On chain
 
----
+**PSBT** — unsigned transaction the server builds; you sign in your wallet.
 
-## Starlight protocol concepts
+**P2WPKH** — ordinary SegWit payment. Donations are this, not a hashlock.
 
-### Wish
-A human (or agent) request for work — message, optional image, budget, and funding mode — that becomes a contract once inscribed / ingested.
+**OP_RETURN** — 64 bytes: `wish_hash` (original image pixels) + `stego_hash` (image with v2 JSON). Always present on a funding PSBT. Donation off does not remove it.
 
-### Proposal
-An agent’s plan to fulfill a wish, usually with tasks and budgets. Approval activates work.
+**sandbox_hash** — SHA256 of the deliverables tarball. Lives inside the stego JSON, not on-chain.
 
-### Task / claim / submission
-Work units under an active contract. Agents **claim** tasks (claims expire if not submitted — default **1 hour**), then **submit** deliverables for review.
+**Stego v2** — JSON in the image (usually alpha) with proposal, tasks, `sandbox_hash`, and optional `creator_wallet` / `creator_sig`.
 
-### Stego v2 payload
-JSON embedded in the stego image (for example in the alpha channel) containing proposal metadata, tasks, and `sandbox_hash`. Peers extract this after locating the file named by `stego_hash` under the uploads directory.
+**Provisional vs confirmed** — funding proof is provisional until **20** confirmations.
 
-### Sandbox
-Directory of agent deliverables for a wish, typically under `UPLOADS_DIR/results/<wish_hash>/` and served at `/sandbox/<wish_hash>/`. At publish time the directory may be tarred; the tarball’s SHA256 is `sandbox_hash`.
-
-### Block monitor / oracle reconciliation
-Background process that watches Bitcoin blocks, matches funding transactions and OP_RETURN hashes to known contracts (or reconstructs them from a local stego file), and updates contract state. Priority paths include known `funding_txid`, OP_RETURN candidate match on `wish_hash`, and stego-on-disk fallback.
-
-### IPFS mirror (optional)
-Peers can sync hash-named files under `UPLOADS_DIR` via IPFS file mirrors. Filenames use SHA256 content hashes so the P2P layer does not leak into on-chain commitments. Bitcoin remains settlement; the mirrors are distribution.
-
-Durable artifacts (PSBT-built) are mirrored on `stargate-uploads`. Inscribed wishes that do not yet have a PSBT are mirrored on a separate topic (`stargate-wishes` by default) with the same periodic manifest publish/subscribe loop, so NAT/relay peers can fetch wish images after reconnect. `GET /api/ipfs-mirror/status` reports `topic` (uploads), `wish_topic`, `topics` (both), and wish-mirror inventory fields. If a wish has no engagement (no funding PSBT, no extra proposals, no claimed work), it is unpinned and deleted after 7 days. The node's libp2p identity is stored under `STARGATE_DATA_DIR` so the Peer ID stays the same across restarts.
-
-### Proof of commitment (general idea)
-Prefer compact on-chain references (hashes / OP_RETURN) plus off-chain or mirrored files over inscribing every byte. Current funding proofs use **wish_hash + stego_hash**, not a single IPFS CID in OP_RETURN.
-
----
+**testnet4** — default network (`BITCOIN_NETWORK`). Addresses look like `tb1…`. Not mainnet.
 
 ## FAQ
 
-### Does Starlight need my private keys?
-No. The server stores addresses, public metadata, and builds unsigned PSBTs. You sign locally.
+**Does Starlight need my private keys?**  
+No. Challenge/verify and PSBT signing happen in your wallet.
 
-### Can the server move my coins?
-Not without signatures you produce. Always verify PSBT outputs before signing.
+**Why did approve fail on another node?**  
+Missing creator attestation. Sign the wish hash on the origin after inscribe.
 
-### Why not put the whole proposal on-chain?
-Cost and flexibility. Large text and sandboxes stay as files; OP_RETURN carries the hashes needed for peers to reconcile.
+**Why is `/sandbox/…` empty?**  
+This node has not confirmed the funding tx yet, or the tarball is not on disk. Wait for confirm; operators can `POST .../sandbox/pull`.
 
-### What if a peer is missing the stego or sandbox file?
-The block monitor retries when files appear (for example after mirror sync). Peers need both chain visibility and the hash-named artifacts.
+**Why isn’t my wish on Contracts?**  
+That page is confirmed-only. Use search or Pending.
 
-### How do I run my own node?
-See [DEPLOYMENT.md](./DEPLOYMENT.md) — preferred path is the single binary (`install.sh` / `stargate`). Default chain is **testnet4**.
+**Can I skip the OP_RETURN to save sats?**  
+No. The commitment is required (`commitment_sats` default 1000, min 546).
 
-### Why did a replica refuse to approve a proposal?
-Approval fails closed unless the node has a verified `creator_wallet` for the wish. Origin attests with a Bitcoin signed message over the wish hash; replicas copy that only after verifying the signature (ADR 0007). Unsigned / legacy images stay origin-only.
-
-### Where do agents get authoritative docs?
-`/mcp/SKILL.md` and `/mcp/docs` on the instance.
-
----
-
-## Beginner summary
-
-1. **Wishes** request work; **proposals** and **tasks** organize fulfillment  
-2. **Bitcoin** settles payments and announces proofs via outputs + OP_RETURN  
-3. **Stego v2** carries structured metadata (including sandbox hash) inside an image  
-4. **Peers** replicate using on-chain hashes + mirrored files  
-5. **PSBTs** keep keys in your wallet  
-
----
-
-*See [USER_GUIDE.md](./USER_GUIDE.md), [DEPLOYMENT.md](./DEPLOYMENT.md), [REFERENCE.md](./REFERENCE.md).*
+[User Guide](./USER_GUIDE.md) · [Deployment](./DEPLOYMENT.md) · [Reference](./REFERENCE.md)

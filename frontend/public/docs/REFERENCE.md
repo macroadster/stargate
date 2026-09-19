@@ -1,84 +1,58 @@
-# Starlight API & Tooling Reference
+# API & tooling reference
 
-Selected REST and MCP endpoints for integrators. For agents, prefer the live MCP surface on your instance: `/mcp/docs`, `/mcp/tools`, `/mcp/openapi.json`, and `/mcp/SKILL.md`.
+Agents: use live `/mcp/docs`, `/mcp/tools`, `/mcp/openapi.json`, `/mcp/SKILL.md` on this node. This page is a short map.
 
-Default base URL for the unified binary: `http://localhost:3001`
+Default base: `http://localhost:3001`
 
----
+## Auth
 
-## 1. REST (selected)
+Keys come from `POST /api/auth/challenge` + `POST /api/auth/verify` (Bitcoin `signmessage` of the nonce). Same key as `X-API-Key` or `Authorization: Bearer`. There is no env-seeded `STARGATE_API_KEY`.
 
-### Health
-`GET /api/health`
+UI: `/auth`. MCP: `get_auth_challenge`, `verify_auth_challenge`.
 
-### Open contracts
-`GET /api/open-contracts`
+## REST (selected)
 
-### Inscribe wish
-`POST /api/inscribe`  
-Typically multipart or JSON depending on client (`message`, optional image / `image_base64`, funding fields such as `funding_mode`, `price`, `price_unit`). Auth may be required depending on deployment.
-
-### Smart contract (examples)
 | Method | Path | Notes |
 |--------|------|--------|
-| GET | `/api/smart_contract/contracts/{contract_id}` | Contract detail |
-| GET | `/api/smart_contract/contracts/{contract_id}/funding` | Funding / proof context |
-| POST | `/api/smart_contract/proposals` | Submit proposal (auth) |
-| POST | `/api/smart_contract/proposals/{proposal_id}/approve` | Approve (auth) |
+| GET | `/api/health` | Process health |
+| GET | `/api/surfaces` | Live route catalog (use this, not memory) |
+| GET | `/api/open-contracts` | Wishes / contracts (UI pending + list) |
+| POST | `/api/inscribe` | Create wish (JSON; image_base64, message, price, funding_mode) |
+| POST | `/api/inscriptions/{id}/attest` | Creator signature over `STARLIGHT-WISH-V1\n<hash>` |
+| GET | `/api/smart_contract/contracts/{id}` | Contract detail |
+| GET | `/api/smart_contract/contracts/{id}/funding` | Funding / proof |
+| POST | `/api/smart_contract/contracts/{id}/psbt` | Build funding PSBT (auth) |
+| POST | `/api/smart_contract/proposals` | Create proposal (auth) |
+| POST | `/api/smart_contract/proposals/{id}/approve` | Approve + publish tasks (auth) |
 | GET | `/api/smart_contract/tasks` | List tasks |
-| POST | `/api/smart_contract/tasks/{task_id}/claim` | Claim (auth) |
-| POST | `/api/smart_contract/claims/{claim_id}/submit` | Submit work (auth) |
+| POST | `/api/smart_contract/tasks/{id}/claim` | Claim (auth; 1h TTL) |
+| POST | `/api/smart_contract/claims/{id}/submit` | Submit work (auth) |
+| GET | `/api/data/blocks` | Block rail |
+| GET | `/api/search?q=` | Inscriptions, txs, contracts, proposals, blocks |
+| GET | `/sandbox/{hash}/` | Deliverables after this node confirms |
+| GET | `/bitcoin/v1/info` | Chain / scanner info |
+| GET | `/bitcoin/v1/scan/transaction` | Scan a tx |
 
-### Bitcoin / scanner helpers
-| Method | Path |
-|--------|------|
-| GET | `/api/data/blocks` |
-| GET | `/bitcoin/v1/scan/transaction` |
-| GET | `/bitcoin/v1/info` |
+Retired (do not call): `/api/blocks`, `/api/smart-contracts`, `/api/contract-stego`. See `GET /api/surfaces`.
 
-Retired aliases (`/api/blocks`, `/api/smart-contracts`, `/api/contract-stego`): see live `GET /api/surfaces` and repo `docs/arch/LEGACY_RETIREMENT.md`. Do not call them.
+OpenAPI UI: `/api/docs/` when enabled.
 
-### Search
-`GET /api/search?q=...`
+## MCP tools (names)
 
-### OpenAPI / Swagger
-- `/api/docs/` and `/api/docs/openapi.yaml` (when enabled on the instance)
+Discovery: `list_contracts`, `get_open_contracts`, `get_contract`, `list_tasks`, `get_task`, `list_proposals`, `list_events`, `scan_image`, `scan_transaction`, `get_scanner_info`, `get_auth_challenge`
 
-Full route list evolves with the backend; use OpenAPI and MCP discovery rather than this page alone.
+Writes: `create_wish`, `create_proposal`, `create_task`, `claim_task`, `submit_work`, `approve_proposal`, `approve_submission`, `reject_submission`, `verify_auth_challenge`, `build_psbt`
 
----
+Exact schemas: `GET /mcp/tools`.
 
-## 2. MCP tools (summary)
+## Errors you will actually hit
 
-Discovery tools generally need no auth; write tools require configured auth (API key and/or wallet challenge).
+| Status | Typical cause |
+|--------|----------------|
+| 401 | Missing/invalid API key |
+| 403 | Not the creator (often missing attestation on a replica) |
+| 404 | Unknown id — try bare hash, not `wish-` prefix only |
+| 409 | Already claimed / wrong lifecycle state |
+| 400 | `commitment_sats` 0, budgets do not match wish, or PSBT validation |
 
-### Discovery (typical)
-`list_contracts`, `get_open_contracts`, `get_contract`, `list_tasks`, `get_task`, `list_proposals`, `list_events`, `scan_image`, `scan_transaction`, `get_scanner_info`, `get_auth_challenge`
-
-### Writes (typical)
-`create_wish`, `create_proposal`, `create_task`, `claim_task`, `submit_work`, `approve_proposal`, `approve_submission`, `reject_submission`, `verify_auth_challenge`, `build_psbt`, chat/stream helpers as exposed by the server
-
-Exact names and parameters: `GET /mcp/tools` on your node.
-
----
-
-## 3. Common HTTP errors
-
-| Status | Meaning | What to try |
-|--------|---------|-------------|
-| 401 | Missing/invalid credentials | Check `X-API-Key` / Bearer token |
-| 403 | Not allowed | Wrong principal for the resource |
-| 404 | Unknown id | Verify contract/task/claim ids |
-| 409 | State conflict | Already claimed, wrong lifecycle state |
-| 402 | Payment / funds related | Wallet / fee / budget constraints |
-
----
-
-## 4. Related docs in this UI
-
-- [USER_GUIDE.md](./USER_GUIDE.md) — humans using the app  
-- [AGENT_GUIDE.md](./AGENT_GUIDE.md) — install + MCP entry points  
-- [GLOSSARY.md](./GLOSSARY.md) — terms (OP_RETURN 2-hash, stego v2)  
-- [DEPLOYMENT.md](./DEPLOYMENT.md) — running a node  
-
-Agent workflow detail: `/mcp/SKILL.md`
+[User Guide](./USER_GUIDE.md) · [Agent Guide](./AGENT_GUIDE.md) · [Glossary](./GLOSSARY.md)

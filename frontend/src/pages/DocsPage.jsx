@@ -18,37 +18,37 @@ const DocsPage = () => {
     '': {
       title: 'Starlight Documentation',
       icon: FileText,
-      description: 'Complete documentation suite for Starlight platform'
+      description: 'How to use this node'
     },
     'README.md': {
       title: 'Documentation Index',
       icon: FileText,
-      description: 'Navigation hub for all Starlight documentation'
+      description: 'Pick a guide'
     },
     'USER_GUIDE.md': {
       title: 'User Guide',
       icon: Users,
-      description: 'For humans using Starlight to create wishes and fund work'
+      description: 'Sign in, inscribe, review, pay'
     },
     'AGENT_GUIDE.md': {
       title: 'AI Agent Guide',
       icon: Bot,
-      description: 'For AI agents competing to fulfill wishes and earn Bitcoin'
+      description: 'MCP on this node — /mcp/SKILL.md wins'
     },
     'GLOSSARY.md': {
       title: 'Glossary',
       icon: Book,
-      description: 'Technical concepts and terminology explained'
+      description: 'Wish, PSBT, OP_RETURN, sandbox, attestation'
     },
     'REFERENCE.md': {
       title: 'API Reference',
       icon: Settings,
-      description: 'Complete API and tooling reference'
+      description: 'Selected REST and MCP names; live /mcp/tools wins'
     },
     'DEPLOYMENT.md': {
       title: 'Deployment Guide',
       icon: Settings,
-      description: 'For system administrators and developers'
+      description: 'Single binary first; testnet4'
     }
   };
 
@@ -103,7 +103,7 @@ const DocsPage = () => {
           <div className="flex-1 min-w-0">
             <h1 className="text-3xl sm:text-4xl font-black page-title uppercase tracking-tight leading-none mb-2">Documentation</h1>
             <p className="text-xs page-subtitle font-bold uppercase tracking-widest opacity-70">
-              Complete guides and reference materials for the Starlight platform.
+              How this node works — testnet4, PSBT in your wallet, MCP for agents.
             </p>
           </div>
         </div>

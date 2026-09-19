@@ -19,4 +19,6 @@ npm install
 npm start
 ```
 
-Point the UI at a backend with the usual Vite/proxy or `API_BASE` configuration for your environment. User-facing manuals live in [`public/docs/`](./public/docs/) and are served under `/docs` in the app.
+Point the UI at a backend with the usual Vite/proxy or `API_BASE` configuration for your environment.
+
+In-app manuals (`/docs`, **Documents** in the header) are [`public/docs/`](./public/docs/). Keep those pages about the live UI (Inscribe chat, Pending vs Contracts, Discover, PSBT, attestation) — not repo architecture. Developer map is the repo `docs/README.md`.
