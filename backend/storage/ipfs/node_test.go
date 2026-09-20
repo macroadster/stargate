@@ -100,4 +100,29 @@ func TestNewEmbeddedNodePrivateMesh(t *testing.T) {
 	if n := len(node.host.Network().Peers()); n > 2 {
 		t.Fatalf("private mesh should not dial public peers; connected peers=%d", n)
 	}
+	if node.dht == nil {
+		t.Fatal("expected DHT client even on a private mesh")
+	}
+}
+
+func TestEmbeddedNodeCloseStopsDHT(t *testing.T) {
+	tmp := t.TempDir()
+	node, err := NewEmbeddedNode(context.Background(), NodeConfig{
+		RepoPath:                 filepath.Join(tmp, "repo"),
+		ListenAddrs:              []string{"/ip4/127.0.0.1/tcp/0"},
+		Bootstrap:                nil,
+		DHTMode:                  DHTModeClient,
+		ForcePrivateReachability: true,
+		IdentityPath:             filepath.Join(tmp, "ipfs_identity.key"),
+	})
+	if err != nil {
+		t.Fatalf("NewEmbeddedNode: %v", err)
+	}
+	if err := node.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	// Second close must not panic; host/DHT already torn down.
+	if err := node.Close(); err != nil {
+		t.Fatalf("second Close: %v", err)
+	}
 }

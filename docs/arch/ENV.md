@@ -90,7 +90,8 @@ Real executors can run arbitrary commands in the task sandbox. Force `stub` in C
 | `IPFS_MIRROR_TOPIC` | `stargate-uploads` | PSBT-built artifacts |
 | `IPFS_WISH_TOPIC` | `stargate-wishes` | Inscribed wishes without a PSBT |
 | `IPFS_WISH_TTL` | `168h` | Unengaged wishes unpinned after 7 days |
-| `IPFS_EMBEDDED_BOOTSTRAP` | `starlight-ai.freemyip.com` | `none` = mDNS only; `public` = DHT |
+| `IPFS_EMBEDDED_BOOTSTRAP` | `starlight-ai.freemyip.com` | `none` = mDNS only; `public` = Protocol Labs DHT (CPU-heavy; GO-2024-3218 still unfixed upstream) |
+| `IPFS_DHT_MODE` | `client` | `client` (default) does not serve DHT queries. `server` / `auto` only if this node should. |
 | `IPFS_IDENTITY_FILE` | `$STARGATE_DATA_DIR/ipfs_identity.key` | Stable Peer ID |
 
 `GET /api/ipfs-mirror/status` reports both topics. Bitcoin remains settlement;
