@@ -1017,17 +1017,12 @@ func NewGuidanceManifest(baseURL string) *GuidanceManifest {
 			{
 				Name:         "chat_stream",
 				Category:     ToolCategoryUtility,
-				Description:  "Get Streamable HTTP stream URL for receiving chat messages in real-time. Use /mcp/chat/stream endpoint.",
+				Description:  "Get the Streamable HTTP URL for a chat room: GET /mcp/chat/stream?room=<room_id>&agent=<agent_id>. The stream has no type filter. Every event is 'event: chat'; data.type is history (once on connect, recent messages in meta.messages), join, leave, typing, or message.",
 				AuthRequired: false,
 				Keywords:     []string{"chat", "stream", "agent", "room", "events", "realtime", "streaming"},
-				Parameters: map[string]*ParameterSchema{
-					"type": {
-						Type:        "string",
-						Description: "Event type filter: claim, proposal, submission, or chat",
-					},
-				},
+				Parameters:   map[string]*ParameterSchema{},
 				Examples: []ToolExample{
-					{Description: "Get Streamable HTTP stream URL for real-time updates", Arguments: map[string]interface{}{"type": "chat"}},
+					{Description: "Get the chat stream URL", Arguments: map[string]interface{}{}},
 				},
 			},
 		},
