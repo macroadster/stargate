@@ -84,12 +84,14 @@ type ChatHub struct {
 }
 
 type ChatMessage struct {
-	Type      string                 `json:"type"`           // "message", "join", "leave", "typing"
-	RoomID    string                 `json:"room_id"`        // Room identifier (e.g., "contract_123", "agent_abc")
-	AgentID   string                 `json:"agent_id"`       // Sender agent ID
-	Content   string                 `json:"content"`        // Message content
-	Timestamp int64                  `json:"timestamp"`      // Unix timestamp in milliseconds
-	Meta      map[string]interface{} `json:"meta,omitempty"` // Optional metadata
+	Type      string                 `json:"type"`             // "message", "join", "leave", "typing"
+	RoomID    string                 `json:"room_id"`          // Room identifier (e.g., "contract_123", "agent_abc")
+	AgentID   string                 `json:"agent_id"`         // Sender agent ID
+	Content   string                 `json:"content"`          // Message content
+	Timestamp int64                  `json:"timestamp"`        // Unix timestamp in milliseconds
+	Meta      map[string]interface{} `json:"meta,omitempty"`   // Optional metadata
+	Verified  bool                   `json:"verified"`         // Sender presented a valid API key; agent_id is self-declared either way
+	Wallet    string                 `json:"wallet,omitempty"` // Wallet bound to that API key, only when Verified
 }
 
 func NewChatHub() *ChatHub {
@@ -778,7 +780,7 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 	case "build_psbt":
 		return h.handleBuildPSBT(ctx, args, apiKey)
 	case "chat_send":
-		return h.handleChatSendTool(ctx, args)
+		return h.handleChatSendTool(ctx, args, apiKey)
 	case "chat_stream":
 		return h.handleChatStreamTool(ctx, args, r)
 	case "chat_members":
@@ -1763,7 +1765,7 @@ func (h *HTTPMCPServer) handleChatStreamTool(ctx context.Context, args map[strin
 	}, nil
 }
 
-func (h *HTTPMCPServer) handleChatSendTool(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+func (h *HTTPMCPServer) handleChatSendTool(ctx context.Context, args map[string]interface{}, apiKey string) (interface{}, error) {
 	validation := NewValidationError("chat_send", "Invalid request parameters")
 
 	roomID, _ := args["room_id"].(string)
@@ -1785,6 +1787,11 @@ func (h *HTTPMCPServer) handleChatSendTool(ctx context.Context, args map[string]
 		return nil, validation
 	}
 
+	verified, wallet, ok := h.chatSender(apiKey)
+	if !ok {
+		return nil, NewUnauthorizedError("chat_send", "Invalid API key. Omit the key to post anonymously.")
+	}
+
 	msgType, _ := args["type"].(string)
 	if msgType == "" {
 		msgType = "message"
@@ -1796,6 +1803,8 @@ func (h *HTTPMCPServer) handleChatSendTool(ctx context.Context, args map[string]
 		AgentID:   agentID,
 		Content:   content,
 		Timestamp: time.Now().UnixMilli(),
+		Verified:  verified,
+		Wallet:    wallet,
 	}
 
 	if meta, ok := args["meta"].(map[string]interface{}); ok {
@@ -1808,6 +1817,7 @@ func (h *HTTPMCPServer) handleChatSendTool(ctx context.Context, args map[string]
 		"success":    true,
 		"timestamp":  msg.Timestamp,
 		"message_id": msg.Timestamp, // Use timestamp as a simple ID
+		"verified":   verified,
 	}, nil
 }
 

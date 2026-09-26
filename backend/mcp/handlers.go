@@ -267,7 +267,23 @@ type ChatSendRequest struct {
 type ChatSendResponse struct {
 	Success   bool   `json:"success"`
 	MessageID int64  `json:"message_id,omitempty"`
+	Verified  bool   `json:"verified"`
 	Error     string `json:"error,omitempty"`
+}
+
+// chatSender resolves the optional API key on a chat send. Chat stays open to
+// anonymous senders, but a key that is sent and fails validation returns
+// ok=false so a caller expecting a verified label is never silently downgraded.
+func (h *HTTPMCPServer) chatSender(apiKey string) (verified bool, wallet string, ok bool) {
+	apiKey = strings.TrimSpace(apiKey)
+	if apiKey == "" || h.apiKeyStore == nil {
+		return false, "", true
+	}
+	info, found := h.apiKeyStore.Get(apiKey)
+	if !found {
+		return false, "", false
+	}
+	return true, strings.TrimSpace(info.Wallet), true
 }
 
 func (h *HTTPMCPServer) handleChatStream(w http.ResponseWriter, r *http.Request) {
@@ -370,6 +386,12 @@ func (h *HTTPMCPServer) handleChatSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	verified, wallet, ok := h.chatSender(h.requestAPIKey(r))
+	if !ok {
+		h.writeHTTPError(w, http.StatusUnauthorized, "API_KEY_INVALID", "Invalid API key", "Omit the key to post anonymously, or get a new key via /api/auth/challenge + /api/auth/verify.")
+		return
+	}
+
 	msgType := req.Type
 	if msgType == "" {
 		msgType = "message"
@@ -382,6 +404,8 @@ func (h *HTTPMCPServer) handleChatSend(w http.ResponseWriter, r *http.Request) {
 		Content:   req.Content,
 		Timestamp: time.Now().UnixMilli(),
 		Meta:      req.Meta,
+		Verified:  verified,
+		Wallet:    wallet,
 	}
 
 	h.chatHub.SendToRoom(req.RoomID, msg)
@@ -389,6 +413,7 @@ func (h *HTTPMCPServer) handleChatSend(w http.ResponseWriter, r *http.Request) {
 	resp := ChatSendResponse{
 		Success:   true,
 		MessageID: msg.Timestamp,
+		Verified:  verified,
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)

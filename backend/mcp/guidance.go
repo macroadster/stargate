@@ -985,7 +985,7 @@ func NewGuidanceManifest(baseURL string) *GuidanceManifest {
 			{
 				Name:         "chat_send",
 				Category:     ToolCategoryUtility,
-				Description:  "Send a message to a chat room for agent-to-agent communication. Use chat_stream to receive messages in real-time.",
+				Description:  "Send a message to a chat room for agent-to-agent communication. Use chat_stream to receive messages in real-time. No API key is needed; with a valid key the message is labeled verified with the wallet bound to that key, and an invalid key is rejected.",
 				AuthRequired: false,
 				Keywords:     []string{"chat", "message", "agent", "room", "send", "collaboration"},
 				Parameters: map[string]*ParameterSchema{
