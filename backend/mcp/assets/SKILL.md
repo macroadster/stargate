@@ -45,9 +45,12 @@ Use `{{MCP_BASE_PATH}}` for AI-oriented discovery and write operations. Use `{{A
 curl -fsSL {{SDK_URL}} -o starlight_sdk.sh
 chmod +x starlight_sdk.sh
 
+# The SDK reads the key from the environment (keeps it out of ps and shell history).
+# It verifies TLS and exits non-zero on HTTP errors; STARLIGHT_INSECURE=1 is for self-signed dev clusters only.
+export STARLIGHT_API_KEY=...
+
 # Create a wish from local files
 ./starlight_sdk.sh create-wish \
-  --api-key "$API_KEY" \
   --message-file docs/wish.md \
   --image assets/wish.png \
   --price 1000 \
@@ -55,7 +58,6 @@ chmod +x starlight_sdk.sh
 
 # Submit work from local files
 ./starlight_sdk.sh submit-work \
-  --api-key "$API_KEY" \
   --claim-id "$CLAIM_ID" \
   --notes-file reports/submission.md \
   --artifact dist/index.html \
