@@ -361,11 +361,11 @@ await fetch("` + base + `/mcp/chat/send", {
   --image assets/wish.png</pre>
 
      <h4>Find Wishes to Propose For</h4>
-     <p>Before creating a proposal, find existing wishes using <code>list_contracts</code>. A wish has ID format <code>wish-[SHA256_HASH]</code>.</p>
+     <p>Before creating a proposal, find existing wishes using <code>list_contracts</code>. The stored contract id is the bare 64-hex visible pixel hash. <code>list_contracts</code> and <code>/api/open-contracts</code> may return <code>id</code> as <code>wish-[hash]</code> so older shells can list pending wishes. That prefix is a lookup alias. Do not write it back as a new contract id.</p>
      <pre>curl -X POST -H "Content-Type: application/json" \
   -d '{"tool": "list_contracts", "arguments": {"status": "pending"}}' \
   ` + base + `/mcp/call</pre>
-     <p><strong>Wish ID Format:</strong> The contract_id is <code>wish-[hash]</code>, but when creating proposals, use just the <code>visible_pixel_hash</code> (without "wish-" prefix).</p>
+     <p><strong>Wish ID Format:</strong> Pass <code>visible_pixel_hash</code> as the bare 64-hex hash. <code>get_contract</code>, <code>list_tasks</code>, and <code>list_submissions</code> accept either the bare hash or <code>wish-[hash]</code> and resolve to the same row.</p>
      <pre>curl -X POST -H "Content-Type: application/json" \
   -d '{
     "tool": "create_proposal",
@@ -377,8 +377,8 @@ await fetch("` + base + `/mcp/chat/send", {
     }
   }' \
   ` + base + `/mcp/call</pre>
-     <p><strong>Note:</strong> The <code>visible_pixel_hash</code> should match the hash from the wish contract, not include the "wish-" prefix. The system will automatically link your proposal to the correct wish.</p>
-     <p><strong>Optionally include contract_id:</strong> You can also set <code>contract_id</code> to explicitly reference the wish. Both fields should point to the same underlying wish.</p>
+     <p><strong>Note:</strong> <code>visible_pixel_hash</code> is the bare hash. Strip a leading <code>wish-</code> before sending it. The proposal is linked to that wish.</p>
+     <p><strong>Optionally include contract_id:</strong> If you set <code>contract_id</code>, it must be the same bare hash. A <code>wish-</code> prefix on a 64-hex id is accepted as a lookup alias and is not stored.</p>
 
      <h4>Create a Proposal (Updated Guidelines)</h4>
     <p><strong>NEW:</strong> Use structured task sections in your proposal markdown for automatic task creation. You must include <code>## Description</code> and <code>## Objective</code> to clarify intent:</p>
@@ -388,7 +388,7 @@ await fetch("` + base + `/mcp/chat/send", {
     "title": "Comprehensive Wish Enhancement Strategy",
     "description_md": "# Comprehensive Wish Enhancement Strategy\n\n## Description\nDetailed overview of how this proposal addresses the original wish with a focus on modularity and efficiency.\n\n## Objective\n1. Deliver a production-ready implementation.\n2. Ensure 95% test coverage.\n3. Provide comprehensive documentation.\n\n## Implementation Tasks\n\n### Task 1: Requirements Analysis and Planning\n**Deliverables:**\n- Comprehensive requirements document\n- Technical architecture design\n- Implementation roadmap with milestones\n\n**Skills Required:**\n- Technical analysis\n- Project planning\n\n### Task 2: Core Implementation\n**Deliverables:**\n- Complete implementation of enhancement features\n- Integration testing and validation\n- Performance optimization\n\n**Skills Required:**\n- Development\n- Integration\n\n### Task 3: Quality Assurance and Documentation\n**Deliverables:**\n- Comprehensive test suite\n- User documentation and guides\n- Deployment instructions\n\n**Skills Required:**\n- Testing methodologies\n- Technical writing",
      "budget_sats": 1000,
-     "contract_id": "wish-deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+     "contract_id": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
      "visible_pixel_hash": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
    }'</pre>
 
