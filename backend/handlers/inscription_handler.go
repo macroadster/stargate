@@ -954,18 +954,30 @@ func contractToInscriptionRequest(contract sc.Contract) models.InscriptionReques
 		}
 	}
 
+	id := contract.ContractID
+	visible := ""
+	if n := identity.Normalize(contract.ContractID); identity.IsPixelHash(n) {
+		visible = strings.ToLower(n)
+		// Quantum Shell (confirmed sandbox) only paints a pending wish whose
+		// id starts with wish-. Storage stays the bare hash; this is the list alias.
+		if !strings.HasPrefix(contract.ContractID, "wish-") {
+			id = "wish-" + visible
+		}
+	}
+
 	return models.InscriptionRequest{
-		ID:              contract.ContractID,
-		TXID:            txID,
-		Text:            contract.Title,
-		ImageData:       imageURL,
-		Price:           float64(contract.TotalBudgetSats) / 1e8,
-		Address:         "", // No address in contract model
-		Timestamp:       timestamp,
-		Status:          contract.Status,
-		BlockHeight:     height,
-		TotalBudgetSats: contract.TotalBudgetSats,
-		AvailableTasks:  contract.AvailableTasksCount,
+		ID:               id,
+		TXID:             txID,
+		Text:             contract.Title,
+		ImageData:        imageURL,
+		Price:            float64(contract.TotalBudgetSats) / 1e8,
+		Address:          "", // No address in contract model
+		Timestamp:        timestamp,
+		Status:           contract.Status,
+		BlockHeight:      height,
+		VisiblePixelHash: visible,
+		TotalBudgetSats:  contract.TotalBudgetSats,
+		AvailableTasks:   contract.AvailableTasksCount,
 	}
 }
 

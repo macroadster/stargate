@@ -40,6 +40,12 @@ describe('inscriptionUtils', () => {
     expect(ids).toContain('wish-abc');
   });
 
+  it('does not invent a wish- twin for a 64-hex pixel hash', () => {
+    const hash = '2d89e6ebfd09604938416481cb69cee2a63ceadab93541b3fbf4a26293274bf7';
+    const ids = expandContractCandidates({ id: hash, metadata: { visible_pixel_hash: hash } });
+    expect(ids).toEqual([hash]);
+  });
+
   it('flags placeholder addresses', () => {
     expect(isPlaceholderAddress('')).toBe(true);
     expect(isPlaceholderAddress('bc1qreal')).toBe(false);

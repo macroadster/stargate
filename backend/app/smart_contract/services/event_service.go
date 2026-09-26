@@ -92,7 +92,8 @@ func (s *EventService) PublishProposalTasks(ctx context.Context, proposalID stri
 		if strings.TrimSpace(task.TaskID) == "" {
 			task.TaskID = proposalID + "-task-" + strconv.Itoa(i+1)
 		}
-		if task.ContractID == "" || task.ContractID == p.ID {
+		// A stored wish-<64-hex> is the old primary key. Republish onto the bare hash.
+		if task.ContractID == "" || task.ContractID == p.ID || identity.CanonicalContractID(task.ContractID) == contractID {
 			task.ContractID = contractID
 		}
 		task.BudgetSats = amounts[i]

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"unicode"
 
+	"stargate-backend/core/identity"
 	"stargate-backend/core/smart_contract"
 )
 
@@ -15,11 +16,10 @@ func BuildTasksFromMarkdown(proposalID, markdown string, visibleHash string, bud
 	md := strings.TrimSpace(markdown)
 	lines := strings.Split(md, "\n")
 
-	// Determine the canonical contract ID for these tasks
-	// Priority: wish-prefix hash > visible hash > proposal ID
+	// Pixel-hash wishes store the bare hash. wish-<hash> is a lookup alias only.
 	canonicalContractID := proposalID
 	if visibleHash != "" {
-		canonicalContractID = "wish-" + strings.TrimPrefix(visibleHash, "wish-")
+		canonicalContractID = identity.CanonicalContractID(visibleHash)
 	}
 
 	// Extract structured tasks from proper task sections, then allocate

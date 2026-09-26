@@ -106,3 +106,18 @@ func TestBuildTasksFromMarkdownSingleTaskKeepsFullBudget(t *testing.T) {
 		t.Fatalf("single task budget %d", tasks[0].BudgetSats)
 	}
 }
+
+func TestBuildTasksFromMarkdownUsesBarePixelHash(t *testing.T) {
+	hash := "2d89e6ebfd09604938416481cb69cee2a63ceadab93541b3fbf4a26293274bf7"
+	tasks := BuildTasksFromMarkdown("proposal-loops", "### Task 1: Library shelf\none", hash, 1000, "")
+	if len(tasks) != 1 {
+		t.Fatalf("got %d tasks", len(tasks))
+	}
+	if tasks[0].ContractID != hash {
+		t.Fatalf("contract id %q, want bare hash", tasks[0].ContractID)
+	}
+	prefixed := BuildTasksFromMarkdown("proposal-loops", "### Task 1: Library shelf\none", "wish-"+hash, 1000, "")
+	if prefixed[0].ContractID != hash {
+		t.Fatalf("prefixed input stored %q", prefixed[0].ContractID)
+	}
+}

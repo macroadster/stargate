@@ -5,7 +5,7 @@ import MarkdownContent from '../Common/MarkdownContent';
 import SafeQrCodeCanvas from '../Common/SafeQrCodeCanvas';
 import DeliverablesReview from '../Review/DeliverablesReview';
 import { apiFetch } from '../../utils/api';
-import { QR_BYTE_LIMIT } from './inscriptionUtils';
+import { QR_BYTE_LIMIT, isPlaceholderAddress, normalizeAddress } from './inscriptionUtils';
 import { useInscriptionModalState } from './useInscriptionModalState';
 
 const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {

@@ -121,6 +121,45 @@ func TestPublishProposalTasksAdoptsWishPrefixOntoBareHash(t *testing.T) {
 	}
 }
 
+func TestPublishProposalTasksRewritesWishPrefixTaskOntoBareHash(t *testing.T) {
+	hash := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	mem := scstore.NewMemoryStore(time.Hour)
+	ctx := context.Background()
+	if err := mem.UpsertContractWithTasks(ctx, smart_contract.Contract{
+		ContractID: hash, Title: "Live wish", Status: "active", TotalBudgetSats: 1000, CreatedAt: time.Now(),
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	store := &hookStore{
+		MemoryStore: mem,
+		p: smart_contract.Proposal{
+			ID:               "prop-rewrite",
+			Title:            "Published",
+			BudgetSats:       1000,
+			VisiblePixelHash: hash,
+			Tasks: []smart_contract.Task{{
+				TaskID:     "prop-rewrite-task-1",
+				ContractID: "wish-" + hash,
+				Title:      "Shelf",
+				BudgetSats: 1000,
+				Status:     "available",
+			}},
+			Metadata: map[string]interface{}{"contract_id": hash},
+		},
+	}
+	svc := NewEventService(store, nil)
+	if err := svc.PublishProposalTasks(ctx, "prop-rewrite"); err != nil {
+		t.Fatal(err)
+	}
+	tasks, err := mem.ListTasks(smart_contract.TaskFilter{ContractID: hash})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tasks) != 1 || tasks[0].ContractID != hash {
+		t.Fatalf("task contract id: %+v", tasks)
+	}
+}
+
 func TestPublishProposalTasksScalesExplicitOverflow(t *testing.T) {
 	mem := scstore.NewMemoryStore(time.Hour)
 	store := &hookStore{

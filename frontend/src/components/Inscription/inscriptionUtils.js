@@ -26,6 +26,20 @@ export const looksLikeRaiseFund = (value) => {
   );
 };
 
+const PIXEL_HASH_RE = /^[0-9a-fA-F]{64}$/;
+
+/** 64-hex wishes match on the bare hash. Other ids still try the wish- alias. */
+export const sameContractId = (stored, candidate) => {
+  const a = String(stored || '').trim();
+  const b = String(candidate || '').trim();
+  if (!a || !b) return false;
+  if (a === b) return true;
+  const bare = (id) => (id.startsWith('wish-') ? id.slice(5) : id);
+  const aBare = bare(a);
+  const bBare = bare(b);
+  return aBare === bBare && PIXEL_HASH_RE.test(aBare);
+};
+
 export const expandContractCandidates = (inscription) => {
   const rawIds = [
     inscription?.contract_id,
@@ -36,15 +50,18 @@ export const expandContractCandidates = (inscription) => {
   ].filter(Boolean);
   const expanded = new Set();
   rawIds.forEach((id) => {
-    expanded.add(id);
-    if (String(id).startsWith('wish-')) {
-      expanded.add(String(id).replace(/^wish-/, ''));
-    } else {
-      expanded.add(`wish-${id}`);
+    const value = String(id);
+    expanded.add(value);
+    if (value.startsWith('wish-')) {
+      expanded.add(value.replace(/^wish-/, ''));
+    } else if (!PIXEL_HASH_RE.test(value)) {
+      expanded.add(`wish-${value}`);
     }
   });
   return Array.from(expanded);
 };
+
+export const normalizeAddress = (value) => (value || '').trim().toLowerCase();
 
 export const isPlaceholderAddress = (value) => {
   const cleaned = (value || '').trim().toLowerCase();
