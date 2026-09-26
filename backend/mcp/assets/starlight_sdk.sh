@@ -50,7 +50,9 @@ Environment:
   STARLIGHT_TIMEOUT    max seconds per request (default 120)
   STARLIGHT_INSECURE=1 skip TLS certificate checks (self-signed dev clusters only)
 
-Exit status is non-zero when the server returns an HTTP error; the response body is still printed.
+The response body is always printed. Exit status is 1 when the response has "success": false
+(tool errors, including a bad API key, come back as HTTP 200), and curl's code on HTTP or
+network errors.
 
 Examples:
   ./scripts/starlight_sdk.sh create-wish \
@@ -131,13 +133,28 @@ call_mcp() {
 
   # Use a pipe and curl -d @- to avoid ARG_MAX issues with large payloads.
   # The key goes through a header file so it never appears in curl's argv.
-  jq -n --arg tool "$tool" --slurpfile args <(printf "%s" "$args_json") \
+  local resp rc=0
+  resp=$(jq -n --arg tool "$tool" --slurpfile args <(printf "%s" "$args_json") \
     '{tool: $tool, arguments: $args[0]}' | \
   curl "${curl_opts[@]}" \
     -H @<(printf 'X-API-Key: %s\n' "$api_key") \
     -H "Content-Type: application/json" \
     "${MCP_BASE}/call" \
-    -d @-
+    -d @-) || rc=$?
+  [[ -z "$resp" ]] || printf '%s\n' "$resp"
+  [[ $rc -eq 0 ]] || return "$rc"
+
+  if ! jq -e 'type == "object"' >/dev/null 2>&1 <<<"$resp"; then
+    echo "ERROR: ${tool} returned a non-JSON response" >&2
+    return 1
+  fi
+  # /mcp/call reports tool failures (including a bad API key) as HTTP 200 with success=false.
+  if jq -e '.success == false' >/dev/null <<<"$resp"; then
+    local code
+    code=$(jq -r '.error_code // .code // "unknown"' <<<"$resp" 2>/dev/null || true)
+    echo "ERROR: ${tool} failed (${code})" >&2
+    return 1
+  fi
 }
 
 create_wish() {

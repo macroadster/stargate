@@ -46,7 +46,8 @@ curl -fsSL {{SDK_URL}} -o starlight_sdk.sh
 chmod +x starlight_sdk.sh
 
 # The SDK reads the key from the environment (keeps it out of ps and shell history).
-# It verifies TLS and exits non-zero on HTTP errors; STARLIGHT_INSECURE=1 is for self-signed dev clusters only.
+# It verifies TLS and exits non-zero when a call fails, including "success": false replies that
+# arrive as HTTP 200. STARLIGHT_INSECURE=1 is for self-signed dev clusters only.
 export STARLIGHT_API_KEY=...
 
 # Create a wish from local files
