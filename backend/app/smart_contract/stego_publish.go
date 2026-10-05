@@ -209,7 +209,7 @@ func (s *Server) PreparePublishArtifacts(ctx context.Context, proposalID string)
 	// Hash the sandbox directory first, then write directly to UPLOADS_DIR/<hash>.
 	// The reconcile process and IPFS mirror both use hash-based filenames,
 	// so there is no need for an intermediate sandbox-<vph>.tar file.
-	sandboxDir := datadir.PartResolve(filepath.Join(uploadsDir, "results"), visibleHash)
+	sandboxDir := datadir.PartResolve(filepath.Join(uploadsDir, "results"), resultsPartitionKey(visibleHash))
 	if sandboxDirHash, err := stego.HashSandboxDir(sandboxDir); err == nil {
 		hashPath := datadir.PartPath(uploadsDir, sandboxDirHash)
 		if _, statErr := os.Stat(hashPath); os.IsNotExist(statErr) {
@@ -491,7 +491,7 @@ func (s *Server) publishStegoForProposal(ctx context.Context, proposalID string,
 	// file is needed.
 	sandboxHash := ""
 	uploadsDir := strings.TrimSpace(os.Getenv("UPLOADS_DIR"))
-	sandboxDir := datadir.PartResolve(filepath.Join(uploadsDir, "results"), visibleHash)
+	sandboxDir := datadir.PartResolve(filepath.Join(uploadsDir, "results"), resultsPartitionKey(visibleHash))
 	if h, err := stego.HashSandboxDir(sandboxDir); err == nil {
 		sandboxHash = h
 		hashPath := datadir.PartPath(uploadsDir, sandboxHash)

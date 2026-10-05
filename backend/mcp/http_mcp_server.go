@@ -833,7 +833,8 @@ func (h *HTTPMCPServer) handleListContracts(ctx context.Context, args map[string
 		return nil, err
 	}
 
-	// Check if there are more results by requesting one more item
+	// Check if there are more results by requesting one more item.
+	// Use the pre-collapse page so a dropped alias cannot hide the next page.
 	hasMore := false
 	if len(contracts) == filter.Limit {
 		checkFilter := filter
@@ -844,6 +845,9 @@ func (h *HTTPMCPServer) handleListContracts(ctx context.Context, args map[string
 			hasMore = true
 		}
 	}
+	// One row per pixel hash. A superseded contract-<hash> alias must not
+	// appear next to the live bare-hash wish.
+	contracts = scstore.CollapsePixelHashTwins(contracts)
 
 	return map[string]interface{}{
 		"contracts": contracts,
@@ -860,7 +864,7 @@ func (h *HTTPMCPServer) handleListProposals(ctx context.Context, args map[string
 		filter.Status = status
 	}
 	if contractID, ok := args["contract_id"].(string); ok {
-		filter.ContractID = contractID
+		filter.ContractID = canonicalPixelContractID(contractID)
 	}
 	if proposalID, ok := args["proposal_id"].(string); ok {
 		filter.ProposalID = proposalID
@@ -1467,7 +1471,7 @@ func (h *HTTPMCPServer) handleGetScannerInfo(ctx context.Context, args map[strin
 func (h *HTTPMCPServer) handleListTasks(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	filter := smart_contract.TaskFilter{}
 	if contractID, ok := args["contract_id"].(string); ok {
-		filter.ContractID = contractID
+		filter.ContractID = canonicalPixelContractID(contractID)
 	}
 	if status, ok := args["status"].(string); ok {
 		filter.Status = status
@@ -1518,6 +1522,34 @@ func (h *HTTPMCPServer) handleListSubmissions(ctx context.Context, args map[stri
 	return h.submissionSvc.List(ctx, scservices.SubmissionFilterFromArgs(args))
 }
 
+// canonicalPixelContractID returns the bare hash for a pixel-hash wish.
+// wish-<hash> and contract-<64-hex> collapse to that hash. Other ids,
+// including contract-001, are returned trimmed and unchanged.
+func canonicalPixelContractID(id string) string {
+	id = strings.TrimSpace(id)
+	if n := identity.CanonicalContractID(id); identity.IsPixelHash(n) {
+		return n
+	}
+	return id
+}
+
+// storedContractID is the primary key of the live row for a pixel-hash wish.
+// A wish that is still stored as wish-<hash> keeps that key. After
+// FoldContractPrefixTwins, contract-<64-hex> resolves to the bare hash.
+func storedContractID(store scstore.Store, id string) string {
+	id = strings.TrimSpace(id)
+	canon := identity.CanonicalContractID(id)
+	if store == nil || !identity.IsPixelHash(canon) {
+		return id
+	}
+	if c, err := scstore.LookupContract(store, id); err == nil {
+		if live := strings.TrimSpace(c.ContractID); live != "" {
+			return live
+		}
+	}
+	return canon
+}
+
 func (h *HTTPMCPServer) handleGetContract(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	validation := NewValidationError("get_contract", "Invalid request parameters")
 
@@ -1529,6 +1561,21 @@ func (h *HTTPMCPServer) handleGetContract(ctx context.Context, args map[string]i
 	// Return validation errors if any
 	if validation.HasErrors() {
 		return nil, validation
+	}
+
+	// A 64-hex wish is stored as the bare hash. wish-<hash> and contract-<hash>
+	// are lookup aliases; return the live row (the bare hash once it has been
+	// folded) rather than a superseded alias.
+	if identity.IsPixelHash(identity.CanonicalContractID(contractID)) {
+		contract, err := scstore.LookupContract(h.store, contractID)
+		if err != nil {
+			if strings.Contains(err.Error(), "not found") {
+				return nil, NewNotFoundError("get_contract", "contract", contractID)
+			}
+			return nil, NewInternalError("get_contract", fmt.Sprintf("Failed to get contract: %v", err))
+		}
+		h.enrichContractFromProposal(ctx, &contract)
+		return contract, nil
 	}
 
 	contract, err := h.store.GetContract(contractID)
@@ -1635,6 +1682,7 @@ func (h *HTTPMCPServer) handleGetContractReworkRequests(ctx context.Context, arg
 	if validation.HasErrors() {
 		return nil, validation
 	}
+	contractID = storedContractID(h.store, contractID)
 
 	reworkReqs, err := h.store.GetContractReworkRequests(ctx, contractID)
 	if err != nil {
@@ -1665,6 +1713,7 @@ func (h *HTTPMCPServer) handleCreateContractReworkRequest(ctx context.Context, a
 	if validation.HasErrors() {
 		return nil, validation
 	}
+	contractID = storedContractID(h.store, contractID)
 
 	if h.reworkReqSvc == nil {
 		return nil, NewServiceUnavailableError("create_contract_rework_request", "rework request service")
@@ -2033,13 +2082,27 @@ func (h *HTTPMCPServer) handleSubmitWork(ctx context.Context, args map[string]in
 		return nil, validation
 	}
 
-	// Compute subDir (contract_id/visible_pixel_hash) for sandbox URL
-	// This is used for both file storage and the sandbox_url response
-	subDir := claimID
-	if claim, err := h.store.GetClaim(claimID); err == nil {
-		if task, err := h.store.GetTask(claim.TaskID); err == nil {
-			subDir = scstore.NormalizeContractID(task.ContractID)
-		}
+	// Results live at uploads/results/ab/cd/ef/<64-hex visible pixel hash>.
+	// Shard that hash only. contract-<hash> is a legacy alias of the same key;
+	// sharding the alias writes co/nt/ra, which /uploads and /sandbox cannot read.
+	if h.store == nil {
+		return nil, NewInternalError("submit_work", "contract store is not configured")
+	}
+	claim, err := h.store.GetClaim(claimID)
+	if err != nil {
+		return nil, NewNotFoundError("submit_work", "claim", claimID)
+	}
+	task, err := h.store.GetTask(claim.TaskID)
+	if err != nil {
+		return nil, NewNotFoundError("submit_work", "task", claim.TaskID)
+	}
+	visible := ""
+	if task.MerkleProof != nil {
+		visible = task.MerkleProof.VisiblePixelHash
+	}
+	subDir, ok := identity.ResultsDirKey(visible, task.ContractID)
+	if !ok {
+		return nil, NewSubmitWorkError("INVALID_CONTRACT", "cannot store artifacts: task is not tied to a 64-character visible pixel hash", "claim_id")
 	}
 
 	// Process file artifacts if present
@@ -2050,8 +2113,7 @@ func (h *HTTPMCPServer) handleSubmitWork(ctx context.Context, args map[string]in
 			// Get uploads directory
 			uploadsDir := os.Getenv("UPLOADS_DIR")
 
-			// Create results directory: UPLOADS_DIR/results/ab/cd/ef/[contract_id]
-			// Look up the contract/task relationship to get contract_id for file organization
+			// Create results directory: UPLOADS_DIR/results/ab/cd/ef/<visible pixel hash>
 			resultsDir, err := datadir.PartMkdirAll(filepath.Join(uploadsDir, "results"), subDir, 0755)
 			if err != nil {
 				return nil, NewInternalError("submit_work", fmt.Sprintf("Failed to create results directory: %v", err))
@@ -2220,6 +2282,7 @@ func (h *HTTPMCPServer) handleGetOpenContracts(ctx context.Context, args map[str
 	if err != nil {
 		return nil, fmt.Errorf("failed to list contracts: %w", err)
 	}
+	contracts = scstore.CollapsePixelHashTwins(contracts)
 
 	// Apply limit if specified
 	if len(contracts) > limit {
@@ -2520,6 +2583,10 @@ func (h *HTTPMCPServer) handleCreateTask(ctx context.Context, args map[string]in
 	if h.store == nil {
 		return nil, NewServiceUnavailableError("create_task", "task store")
 	}
+	// Attach new tasks to the live row. contract-<64-hex> follows the bare
+	// hash once that alias has been folded; a wish still stored as wish-<hash>
+	// keeps that primary key.
+	contractID = storedContractID(h.store, contractID)
 
 	// Verify contract exists and the new budget fits the original wish price
 	if _, err := h.store.GetContract(contractID); err != nil {
@@ -2610,7 +2677,7 @@ func (h *HTTPMCPServer) handleRebalanceContractBudget(ctx context.Context, args 
 	allOver := mcpArgBool(args, "all_over_budget")
 	includeSuperseded := mcpArgBool(args, "include_superseded")
 	contractID, _ := args["contract_id"].(string)
-	contractID = strings.TrimSpace(contractID)
+	contractID = storedContractID(h.store, contractID)
 
 	if contractID == "" && !allOver {
 		return nil, NewValidationError("rebalance_contract_budget", "contract_id or all_over_budget is required")

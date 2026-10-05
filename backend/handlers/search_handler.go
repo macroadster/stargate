@@ -396,12 +396,18 @@ func (h *SearchHandler) searchData(query string) models.SearchResult {
 						blockHeight = int64(*c.ConfirmedBlockHeight)
 					}
 					visibleHash := ""
-					if n := identity.Normalize(c.ContractID); identity.IsPixelHash(n) {
+					displayID := c.ContractID
+					if n := identity.CanonicalContractID(c.ContractID); identity.IsPixelHash(n) {
 						visibleHash = n
+						// Search cards show the stored id. contract-<hash> is the
+						// same wish as the bare hash; wish- stays a list alias.
+						if len(c.ContractID) > len("contract-") && strings.EqualFold(c.ContractID[:len("contract-")], "contract-") {
+							displayID = n
+						}
 					} else if strings.HasPrefix(c.ContractID, "wish-") {
 						visibleHash = strings.TrimPrefix(c.ContractID, "wish-")
 					}
-					addContract(c.ContractID, blockHeight, c.StegoImageURL, "Smart Contract", visibleHash, c.Metadata, c.Title, c.TotalBudgetSats, c.Status, c.ConfirmedBlockHeight)
+					addContract(displayID, blockHeight, c.StegoImageURL, "Smart Contract", visibleHash, c.Metadata, c.Title, c.TotalBudgetSats, c.Status, c.ConfirmedBlockHeight)
 				}
 			}
 		}

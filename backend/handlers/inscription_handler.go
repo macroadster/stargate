@@ -661,10 +661,12 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 				Status:           "pending",
 				CreatedAt:        time.Now(),
 				Metadata: map[string]any{
-					"funding_mode":   fundingMode,
-					"address":        address,
-					"price_unit":     priceUnit,
-					"creator_wallet": creatorWallet,
+					"funding_mode":       fundingMode,
+					"address":            address,
+					"price_unit":         priceUnit,
+					"creator_wallet":     creatorWallet,
+					"contract_id":        ingestionID,
+					"visible_pixel_hash": ingestionID,
 				},
 			}
 
@@ -900,10 +902,10 @@ func normalizeBlockImageURL(imageURL string) string {
 		return imageURL
 	}
 	height, file := parts[0], parts[1]
-	// Strip a single wish- prefix from the file key.
-	if strings.HasPrefix(file, "wish-") {
-		file = strings.TrimPrefix(file, "wish-")
-		return prefix + height + "/" + file
+	// On-disk keys are the bare visible pixel hash. wish-<hash> and
+	// contract-<hash> are aliases of that file.
+	if n := identity.CanonicalContractID(file); identity.IsPixelHash(n) && n != file {
+		return prefix + height + "/" + n
 	}
 	return imageURL
 }
@@ -956,10 +958,11 @@ func contractToInscriptionRequest(contract sc.Contract) models.InscriptionReques
 
 	id := contract.ContractID
 	visible := ""
-	if n := identity.Normalize(contract.ContractID); identity.IsPixelHash(n) {
-		visible = strings.ToLower(n)
+	if n := identity.CanonicalContractID(contract.ContractID); identity.IsPixelHash(n) {
+		visible = n
 		// Quantum Shell (confirmed sandbox) only paints a pending wish whose
 		// id starts with wish-. Storage stays the bare hash; this is the list alias.
+		// contract-<64-hex> is the same wish, so it uses that alias too.
 		if !strings.HasPrefix(contract.ContractID, "wish-") {
 			id = "wish-" + visible
 		}

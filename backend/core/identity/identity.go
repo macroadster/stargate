@@ -42,14 +42,40 @@ func ToWishID(hash string) string {
 
 // CanonicalContractID is the stored contract primary key.
 // For a 64-hex visible pixel hash (with or without a wish- prefix) this is the
-// bare lowercase hash. Other ids are returned trimmed, unchanged.
+// bare lowercase hash. The legacy publish alias contract-<64-hex> is the same
+// key: ContractIDFromMeta used to mint it when a wish proposal had no
+// contract_id. Other ids, including contract-001, are returned trimmed and
+// unchanged. Normalize does not strip contract-; doing so would rename
+// non-hash contract ids.
 func CanonicalContractID(id string) string {
 	id = strings.TrimSpace(id)
 	n := Normalize(id)
 	if IsPixelHash(n) {
 		return strings.ToLower(n)
 	}
+	const legacy = "contract-"
+	if strings.HasPrefix(strings.ToLower(n), legacy) {
+		rest := n[len(legacy):]
+		if IsPixelHash(rest) {
+			return strings.ToLower(rest)
+		}
+	}
 	return id
+}
+
+// ResultsDirKey is the on-disk results directory name for a wish.
+// It prefers visiblePixelHash, then contractID. wish-<hash> and
+// contract-<hash> both resolve to the bare lowercase hash. The second
+// result is false when neither value is a 64-char pixel hash, so callers
+// do not shard an arbitrary string into a path the HTTP reader cannot serve.
+func ResultsDirKey(visiblePixelHash, contractID string) (string, bool) {
+	if n := CanonicalContractID(visiblePixelHash); IsPixelHash(n) {
+		return n, true
+	}
+	if n := CanonicalContractID(contractID); IsPixelHash(n) {
+		return n, true
+	}
+	return "", false
 }
 
 // IsPixelHash reports whether s looks like a 64-char hex pixel/stego hash.

@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"stargate-backend/storage/datadir"
 )
 
 func TestMain(m *testing.M) {
@@ -167,9 +169,9 @@ func TestStubExecutor_ExecuteNoHash(t *testing.T) {
 	e := NewStubExecutor(dir)
 
 	req := ExecutionRequest{
-		TaskID:   "task-no-hash",
-		Title:    "No hash task",
-		Workdir:  dir,
+		TaskID:  "task-no-hash",
+		Title:   "No hash task",
+		Workdir: dir,
 	}
 
 	result, err := e.Execute(context.Background(), req)
@@ -188,8 +190,8 @@ func TestStubExecutor_ExecuteEmptyUploadsDir(t *testing.T) {
 	}
 
 	result, err := e.Execute(context.Background(), ExecutionRequest{
-		TaskID:  "task-empty-uploads",
-		Title:   "Empty uploads test",
+		TaskID: "task-empty-uploads",
+		Title:  "Empty uploads test",
 	})
 	if err != nil {
 		t.Fatalf("Execute with empty dir failed: %v", err)
@@ -336,9 +338,9 @@ func TestBuildPrompt_WithProposalContext(t *testing.T) {
 func TestBuildPrompt_ContinuationWork(t *testing.T) {
 	e := &AutoDetectExecutor{}
 	req := ExecutionRequest{
-		Description:   "Continue work",
-		Title:         "Continue Z",
-		PreviousWork:  "Done some work already",
+		Description:  "Continue work",
+		Title:        "Continue Z",
+		PreviousWork: "Done some work already",
 	}
 	prompt := e.buildPrompt(req)
 	if !strings.Contains(prompt, "CONTINUATION") {
@@ -392,5 +394,26 @@ func TestStubExecutor_ResultFile(t *testing.T) {
 	}
 	if !strings.HasPrefix(result.CompletionProof, "stub-") {
 		t.Errorf("expected CompletionProof to start with 'stub-', got %s", result.CompletionProof)
+	}
+}
+
+func TestStubExecutor_ContractPrefixLandsOnBareHash(t *testing.T) {
+	hash := "41a974b813b024a3817c9c99b5406cc5131a00406c76a4e01fd7519974ccfb40"
+	dir := t.TempDir()
+	e := NewStubExecutor(dir)
+	_, err := e.Execute(context.Background(), ExecutionRequest{
+		VisiblePixelHash: "contract-" + hash,
+		TaskID:           "task-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(datadir.PartPath(filepath.Join(dir, "results"), hash), "task-1.md")
+	if _, err := os.Stat(want); err != nil {
+		t.Fatalf("report missing at %s: %v", want, err)
+	}
+	bad := datadir.PartPath(filepath.Join(dir, "results"), "contract-"+hash)
+	if _, err := os.Stat(bad); err == nil {
+		t.Fatalf("wrote contract-prefixed tree %s", bad)
 	}
 }

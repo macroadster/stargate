@@ -130,6 +130,23 @@ func TestResolveUploadRelPath_Results(t *testing.T) {
 	}
 }
 
+func TestResolveUploadRelPath_ContractPrefixAlias(t *testing.T) {
+	base := t.TempDir()
+	hash := "41a974b813b024a3817c9c99b5406cc5131a00406c76a4e01fd7519974ccfb40"
+	partDir := PartPath(filepath.Join(base, "results"), hash)
+	if err := os.MkdirAll(partDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(partDir, "index.html"), []byte("<html>"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	got := ResolveUploadRelPath(base, "results/contract-"+hash+"/index.html")
+	want := filepath.Join(partDir, "index.html")
+	if got != want {
+		t.Fatalf("alias path: got %q want %q", got, want)
+	}
+}
+
 func TestResolveUploadRelPath_NonHash(t *testing.T) {
 	base := t.TempDir()
 
@@ -197,6 +214,45 @@ func TestMigrateUploads(t *testing.T) {
 	// Second call should be a no-op.
 	if err := MigrateUploads(base); err != nil {
 		t.Fatalf("second MigrateUploads: %v", err)
+	}
+}
+
+func TestMigrateContractPrefixResults(t *testing.T) {
+	base := t.TempDir()
+	hash := "41a974b813b024a3817c9c99b5406cc5131a00406c76a4e01fd7519974ccfb40"
+	src := filepath.Join(base, "results", "co", "nt", "ra", "contract-"+hash)
+	if err := os.MkdirAll(src, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "index.html"), []byte("<h1>hi</h1>"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	legacy := filepath.Join(base, "results", "co", "nt", "ra", "contract-osv1-local")
+	if err := os.MkdirAll(legacy, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(legacy, "keep.txt"), []byte("stay"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := MigrateContractPrefixResults(base); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(PartPath(filepath.Join(base, "results"), hash), "index.html"))
+	if err != nil {
+		t.Fatalf("moved file: %v", err)
+	}
+	if string(got) != "<h1>hi</h1>" {
+		t.Fatalf("contents %q", got)
+	}
+	if _, err := os.Stat(src); !os.IsNotExist(err) {
+		t.Fatalf("source still present: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(legacy, "keep.txt")); err != nil {
+		t.Fatalf("non-hash contract dir moved: %v", err)
+	}
+	if err := MigrateContractPrefixResults(base); err != nil {
+		t.Fatalf("second call: %v", err)
 	}
 }
 

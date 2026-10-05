@@ -301,6 +301,14 @@ func initializeMCPComponents() *storage.AllStores {
 		log.Printf("Components initialized with memory store")
 	}
 
+	// contract-<64-hex> is a legacy primary key for the same wish. Fold it onto
+	// the bare hash before the HTTP server reads the catalog.
+	if n, err := scstore.FoldContractPrefixTwins(context.Background(), mcpStore); err != nil {
+		log.Printf("WARNING: contract-prefix twin fold failed: %v", err)
+	} else if n > 0 {
+		log.Printf("Folded %d contract-<hash> twin(s) onto the bare pixel hash", n)
+	}
+
 	// Returned whole rather than unpacked into pieces. Unpacking is how a second
 	// data layer got built alongside this one: with only the pieces in hand,
 	// runHTTPServer had no ingestion service or data storage to hand the
@@ -420,6 +428,9 @@ func main() {
 	if uDir := os.Getenv("UPLOADS_DIR"); uDir != "" {
 		if err := datadir.MigrateUploads(uDir); err != nil {
 			log.Printf("WARNING: uploads partition migration failed: %v", err)
+		}
+		if err := datadir.MigrateContractPrefixResults(uDir); err != nil {
+			log.Printf("WARNING: contract-prefix results migration failed: %v", err)
 		}
 	}
 

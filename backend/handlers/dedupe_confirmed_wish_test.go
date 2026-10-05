@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"strings"
 	"testing"
 
 	sc "stargate-backend/core/smart_contract"
@@ -46,5 +47,27 @@ func TestDedupeConfirmedWishTwins(t *testing.T) {
 	}
 	if !sawBare || !sawOther {
 		t.Fatalf("missing expected rows: %+v", out)
+	}
+}
+
+func TestContractPrefixInscriptionUsesWishAlias(t *testing.T) {
+	hash := strings.Repeat("ab", 32)
+	ins := contractToInscriptionRequest(sc.Contract{
+		ContractID: "contract-" + hash,
+		Title:      "Game",
+		Status:     "active",
+	})
+	if ins.ID != "wish-"+hash {
+		t.Fatalf("id=%q", ins.ID)
+	}
+	if ins.VisiblePixelHash != hash {
+		t.Fatalf("visible=%q", ins.VisiblePixelHash)
+	}
+	if ins.ImageData != "/uploads/"+hash {
+		t.Fatalf("image=%q", ins.ImageData)
+	}
+	other := contractToInscriptionRequest(sc.Contract{ContractID: "contract-001", Title: "Keep", Status: "active"})
+	if other.ID != "contract-001" {
+		t.Fatalf("non-hash id=%q", other.ID)
 	}
 }

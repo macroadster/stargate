@@ -60,12 +60,12 @@ func BlockImageFileKey(contractID string) string {
 	if id == "" {
 		return ""
 	}
+	// Pixel-hash files are the bare hash, including wish- and contract- aliases.
+	if n := identity.CanonicalContractID(id); identity.IsPixelHash(n) {
+		return n
+	}
 	// Prefer identity normalize so wish-/proposal-/task- prefixes drop once.
 	if n := identity.Normalize(id); n != "" {
-		// For pure pixel hashes keep lowercase hex for path stability.
-		if identity.IsPixelHash(n) {
-			return strings.ToLower(n)
-		}
 		return n
 	}
 	return strings.TrimPrefix(id, "wish-")

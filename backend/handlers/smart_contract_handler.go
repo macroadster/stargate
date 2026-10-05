@@ -16,6 +16,7 @@ import (
 	_ "golang.org/x/image/webp"
 
 	scmiddleware "stargate-backend/app/smart_contract"
+	"stargate-backend/core/identity"
 	sc "stargate-backend/core/smart_contract"
 	"stargate-backend/models"
 	"stargate-backend/services"
@@ -81,12 +82,15 @@ func proofConfirmed(proof *sc.MerkleProof) bool {
 	return false
 }
 
-// computeStegoImageURL generates the stego image URL for a contract
+// computeStegoImageURL generates the stego image URL for a contract.
+// Pixel-hash wishes are stored as /uploads/<64-hex>, including when the
+// contract id is still the legacy contract-<hash> alias.
 func computeStegoImageURL(contractID string) string {
-	// Strip "wish-" prefix to match actual filename
-	hash := contractID
-	if strings.HasPrefix(contractID, "wish-") {
-		hash = strings.TrimPrefix(contractID, "wish-")
+	hash := strings.TrimSpace(contractID)
+	if n := identity.CanonicalContractID(hash); identity.IsPixelHash(n) {
+		hash = n
+	} else if strings.HasPrefix(hash, "wish-") {
+		hash = strings.TrimPrefix(hash, "wish-")
 	}
 	return fmt.Sprintf("/uploads/%s", hash)
 }
@@ -300,10 +304,9 @@ func (h *SmartContractHandler) HandleGetContracts(w http.ResponseWriter, r *http
 		// Pre-dedupe length: twin collapse must not flip has_more to false.
 		fetchedCount = len(contracts)
 
-		// Safety net for pre-fix DBs: bare-hash + wish- twins both confirmed.
-		if status == "confirmed" || strings.EqualFold(status, "confirmed") {
-			contracts = dedupeConfirmedWishTwins(contracts)
-		}
+		// bare hash, wish-<hash>, and contract-<64-hex> are one wish. Collapse
+		// on every status so an active legacy alias is not a second open card.
+		contracts = dedupeConfirmedWishTwins(contracts)
 
 		// === Enrichment (ListByIDs + conversion) ===
 		var inscriptionsList []models.InscriptionRequest

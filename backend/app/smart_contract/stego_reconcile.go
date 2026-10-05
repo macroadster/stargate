@@ -783,6 +783,16 @@ func (s *Server) DownloadSandboxArtifacts(ctx context.Context, contractID string
 	return s.downloadSandboxArtifacts(ctx, contractID)
 }
 
+// resultsPartitionKey is the on-disk results directory name.
+// A 64-char pixel hash, wish-<hash>, or contract-<hash> maps to the bare hash.
+// Any other id is returned unchanged so legacy non-hash trees stay where they are.
+func resultsPartitionKey(id string) string {
+	if key, ok := identity.ResultsDirKey(id, ""); ok {
+		return key
+	}
+	return strings.TrimSpace(id)
+}
+
 func (s *Server) downloadSandboxArtifacts(ctx context.Context, contractID string) error {
 	if s.store == nil || strings.TrimSpace(contractID) == "" {
 		return errSandboxContractNotFound
@@ -808,7 +818,7 @@ func (s *Server) downloadSandboxArtifacts(ctx context.Context, contractID string
 	}
 
 	uploadsDir := strings.TrimSpace(os.Getenv("UPLOADS_DIR"))
-	resultsDir := datadir.PartResolve(filepath.Join(uploadsDir, "results"), normalizedID)
+	resultsDir := datadir.PartResolve(filepath.Join(uploadsDir, "results"), resultsPartitionKey(normalizedID))
 
 	// If results already exist and match the expected hash, skip extraction.
 	if info, err := os.Stat(resultsDir); err == nil && info.IsDir() {
