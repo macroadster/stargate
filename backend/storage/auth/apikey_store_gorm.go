@@ -241,29 +241,9 @@ func (s *GORMAPIKeyStore) Seed(key, email, source string) {
 	_ = s.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&row).Error
 }
 
-// SeedEnvironmentVariables seeds STARGATE_API_KEY and STARLIGHT_DONATION_ADDRESS.
+// SeedEnvironmentVariables no longer inserts a key. See APIKeyStore.SeedEnvironmentVariables.
 func (s *GORMAPIKeyStore) SeedEnvironmentVariables() {
-	plan := PlanEnvSeed()
-	if plan.BindKey != "" {
-		row := APIKeyRow{
-			KeyHash:       hashAPIKey(plan.BindKey),
-			WalletAddress: plan.BindWallet,
-			Source:        "seed",
-			CreatedAt:     gormdb.NewSQLTime(time.Now().UTC()),
-		}
-		// Re-seed must attach the donation wallet even if the key row already exists.
-		_ = s.db.Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "key_hash"}},
-			DoUpdates: clause.AssignmentColumns([]string{"wallet_address", "source"}),
-		}).Create(&row).Error
-		return
-	}
-	if plan.SeedKeyOnly != "" {
-		s.Seed(plan.SeedKeyOnly, "", "seed")
-	}
-	if plan.SeedDonationAsKey != "" {
-		s.Seed(plan.SeedDonationAsKey, "donation@starlight", "donation_seed")
-	}
+	warnIgnoredAPIKeyEnv()
 }
 
 // Compile-time interface checks.

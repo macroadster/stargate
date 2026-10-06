@@ -2,74 +2,17 @@ package smart_contract
 
 import (
 	"encoding/json"
-	"fmt"
+	"errors"
 	"log"
 	"net/http"
 	"os"
 	"strings"
 
+	scservices "stargate-backend/app/smart_contract/services"
 	"stargate-backend/core/smart_contract"
 	auth "stargate-backend/storage/auth"
 	"stargate-backend/storage/ipfs"
 )
-
-func (s *Server) enforceCreatorApproval(r *http.Request, proposal smart_contract.Proposal) error {
-	apiKey := auth.RequestAPIKey(r)
-
-	// Get approver's wallet from API key
-	var approverWallet string
-	if s.apiKeys != nil {
-		if approverRec, ok := s.apiKeys.Get(apiKey); ok {
-			approverWallet = strings.TrimSpace(approverRec.Wallet)
-		}
-	}
-	if approverWallet == "" {
-		return fmt.Errorf("api key with wallet binding required for approval")
-	}
-
-	// 0. GLOBAL AUDITOR: Check if the bound wallet is the donation address
-	donationAddr := strings.TrimSpace(os.Getenv("STARLIGHT_DONATION_ADDRESS"))
-	if donationAddr != "" && strings.EqualFold(approverWallet, donationAddr) {
-		log.Printf("AUTHORIZATION: Allowing approval for proposal %s based on Global Auditor status (%s)", proposal.ID, approverWallet)
-		return nil
-	}
-
-	// 1. Check if matches Wish Creator by wallet
-	visibleHash := proposalVisibleHash(proposal)
-	if visibleHash != "" && s.ingestionSvc != nil {
-		// Try both hash and wish-hash
-		rec, err := s.ingestionSvc.Get(visibleHash)
-		if err != nil {
-			rec, _ = s.ingestionSvc.Get("wish-" + visibleHash)
-		}
-
-		if rec != nil && rec.Metadata != nil {
-			if wishCreatorWallet, ok := rec.Metadata["creator_wallet"].(string); ok {
-				if strings.EqualFold(strings.TrimSpace(wishCreatorWallet), approverWallet) {
-					return nil
-				}
-			}
-		}
-	}
-
-	// 2. Fallback: if no wish creator info exists at all, allow for now to prevent deadlock on old data
-	hasWishCreatorInfo := false
-	if visibleHash != "" && s.ingestionSvc != nil {
-		rec, _ := s.ingestionSvc.Get(visibleHash)
-		if rec != nil && rec.Metadata != nil {
-			if _, ok := rec.Metadata["creator_wallet"].(string); ok {
-				hasWishCreatorInfo = true
-			}
-		}
-	}
-
-	if !hasWishCreatorInfo {
-		log.Printf("WARNING: allowing approval for proposal %s with NO wish creator info via REST", proposal.ID)
-		return nil
-	}
-
-	return fmt.Errorf("approver wallet %s does not match wish creator", approverWallet)
-}
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, map[string]string{"status": "ok"})
@@ -211,6 +154,10 @@ func (s *Server) handleContracts(w http.ResponseWriter, r *http.Request) {
 			s.handleContractRework(w, r, contractID)
 			return
 		}
+		if len(parts) > 2 && parts[1] == "sandbox" && parts[2] == "pull" {
+			s.handleSandboxPull(w, r, parts[0])
+			return
+		}
 		Error(w, http.StatusNotFound, "unknown contract action")
 	case http.MethodPatch:
 		if len(parts) > 1 && parts[1] == "rework" && len(parts) > 2 && parts[2] != "" {
@@ -223,6 +170,36 @@ func (s *Server) handleContracts(w http.ResponseWriter, r *http.Request) {
 	default:
 		Error(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
+}
+
+// handleSandboxPull is the manual replica extract / origin no-op. Confirm is
+// the gate: unconfirmed or missing contracts are refused. On-chain confirm
+// already extracts; this is a retry if that pull missed.
+func (s *Server) handleSandboxPull(w http.ResponseWriter, r *http.Request, contractID string) {
+	if r.Method != http.MethodPost {
+		Error(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	contractID = strings.TrimSpace(contractID)
+	if contractID == "" {
+		Error(w, http.StatusBadRequest, "contract id required")
+		return
+	}
+	if err := s.downloadSandboxArtifacts(r.Context(), contractID); err != nil {
+		switch {
+		case errors.Is(err, errSandboxContractNotFound):
+			Error(w, http.StatusNotFound, err.Error())
+		case errors.Is(err, errSandboxNotConfirmed):
+			Error(w, http.StatusConflict, err.Error())
+		default:
+			Error(w, http.StatusBadRequest, err.Error())
+		}
+		return
+	}
+	JSON(w, http.StatusOK, map[string]string{
+		"status":      "ok",
+		"contract_id": contractID,
+	})
 }
 
 // handleGetContractReworkRequests returns all rework requests for a contract.
@@ -247,21 +224,18 @@ func (s *Server) handleContractRework(w http.ResponseWriter, r *http.Request, co
 		return
 	}
 
-	apiKey := auth.RequestAPIKey(r)
-	var requester string
-	if apiKey != "" && s.apiKeys != nil {
-		if rec, ok := s.apiKeys.Get(apiKey); ok {
-			requester = strings.TrimSpace(rec.Wallet)
-		}
-	}
-
-	if requester == "" {
-		Error(w, http.StatusForbidden, "authenticated user required")
-		return
-	}
-
-	reworkReq, err := s.store.CreateContractReworkRequest(r.Context(), contractID, requester, body.Notes)
+	// Being bound to a wallet is not being the wish creator. This resolved the
+	// caller's own wallet and stored it as the requester, so any self-issued key
+	// could file a request against any contract and be recorded as its creator
+	// (stargate-irl.8). Authorization and the recorded identity both live in the
+	// service now, so this surface cannot disagree with the MCP one.
+	reworkReq, err := s.reworkReqSvc.CreateRequest(r.Context(), contractID, body.Notes,
+		scservices.ReworkRequestActor{APIKey: auth.RequestAPIKey(r)})
 	if err != nil {
+		if se := scservices.AsStatus(err); se != nil {
+			Error(w, se.Status, se.Message)
+			return
+		}
 		Error(w, http.StatusInternalServerError, err.Error())
 		return
 	}

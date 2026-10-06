@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/btcsuite/btcd/txscript"
 
+	"stargate-backend/core/identity"
 	"stargate-backend/core/smart_contract"
 	"stargate-backend/services"
 )
@@ -63,6 +65,9 @@ type fullMockSweepStore struct {
 	tasks     []smart_contract.Task
 	proofs    map[string]*smart_contract.MerkleProof
 	contracts []smart_contract.Contract
+	// confirmErr makes ConfirmContract fail, so the caller's handling of a
+	// failed confirm is reachable (stargate-22a).
+	confirmErr error
 }
 
 func (m *fullMockSweepStore) UpdateTaskProof(_ context.Context, taskID string, proof *smart_contract.MerkleProof) error {
@@ -72,10 +77,22 @@ func (m *fullMockSweepStore) UpdateTaskProof(_ context.Context, taskID string, p
 	m.proofs[taskID] = proof
 	return nil
 }
+func mockContractIDMatches(stored, filter string) bool {
+	if filter == "" || stored == filter {
+		return true
+	}
+	for _, v := range identity.CandidateIDs(filter, "") {
+		if stored == v {
+			return true
+		}
+	}
+	return identity.Normalize(stored) == identity.Normalize(filter)
+}
+
 func (m *fullMockSweepStore) ListTasks(filter smart_contract.TaskFilter) ([]smart_contract.Task, error) {
 	var out []smart_contract.Task
 	for _, t := range m.tasks {
-		if filter.ContractID != "" && t.ContractID != filter.ContractID {
+		if filter.ContractID != "" && !mockContractIDMatches(t.ContractID, filter.ContractID) {
 			continue
 		}
 		out = append(out, t)
@@ -92,12 +109,38 @@ func (m *fullMockSweepStore) ListTasks(filter smart_contract.TaskFilter) ([]smar
 	return out, nil
 }
 func (m *fullMockSweepStore) UpdateContractStatus(_ context.Context, _, _ string) error { return nil }
+
+// GetContract satisfies the optional contractGetter used by
+// ensureMatchedContract. Absent rows error, as the real stores do.
+func (m *fullMockSweepStore) GetContract(id string) (smart_contract.Contract, error) {
+	for _, c := range m.contracts {
+		if c.ContractID == id {
+			return c, nil
+		}
+	}
+	return smart_contract.Contract{}, fmt.Errorf("contract %s not found", id)
+}
+
 func (m *fullMockSweepStore) ConfirmContract(_ context.Context, contractID string, _ int, _ string) error {
+	if m.confirmErr != nil {
+		return m.confirmErr
+	}
 	for i := range m.contracts {
 		if m.contracts[i].ContractID == contractID {
 			m.contracts[i].Status = "confirmed"
 		}
 	}
+	return nil
+}
+
+func (m *fullMockSweepStore) UpsertContractWithTasks(_ context.Context, c smart_contract.Contract, _ []smart_contract.Task) error {
+	for i := range m.contracts {
+		if m.contracts[i].ContractID == c.ContractID {
+			m.contracts[i] = c
+			return nil
+		}
+	}
+	m.contracts = append(m.contracts, c)
 	return nil
 }
 func (m *fullMockSweepStore) ListContracts(filter smart_contract.ContractFilter) ([]smart_contract.Contract, error) {
@@ -338,6 +381,81 @@ func TestReconcileFundingTxIDPathStillWorks(t *testing.T) {
 	}
 	if matched == nil {
 		t.Fatalf("expected funding_txid match, contracts=%+v", got)
+	}
+}
+
+func TestConfirmContractTasks_BareHashFindsWishPrefixedTask(t *testing.T) {
+	wishHex := strings.Repeat("ab", 32)
+	fakeTxID := strings.Repeat("41", 32)
+	store := &fullMockSweepStore{
+		proofs: make(map[string]*smart_contract.MerkleProof),
+		tasks: []smart_contract.Task{{
+			TaskID:     "probe-task",
+			ContractID: "wish-" + wishHex,
+			MerkleProof: &smart_contract.MerkleProof{
+				ConfirmationStatus: "provisional",
+				// Zero SeenAt: first-time proof must still be listed and written.
+			},
+		}},
+	}
+	t.Setenv("CHAIN_SETTLEMENT_CONFIRMATIONS", "20")
+	t.Setenv("BITCOIN_NETWORK", "testnet4")
+	resetTipLagStateForTest()
+	bm := NewBlockMonitor(NewBitcoinNodeClient("http://localhost:0"))
+	bm.SetSweepDependencies(store, NewMempoolClient())
+	bm.SetChainBackend(&mockChain{height: 150969})
+
+	// Oracle OP_RETURN path often passes the bare pixel hash, not wish-.
+	bm.confirmContractTasks(wishHex, fakeTxID, 150969)
+
+	proof := store.proofs["probe-task"]
+	if proof == nil {
+		t.Fatal("expected proof write for wish-prefixed task listed by bare hash")
+	}
+	if proof.TxID != fakeTxID {
+		t.Fatalf("tx_id=%q want %s", proof.TxID, fakeTxID)
+	}
+	if proof.BlockHeight != 150969 {
+		t.Fatalf("height=%d", proof.BlockHeight)
+	}
+	if proof.ConfirmationStatus != "provisional" {
+		t.Fatalf("1-conf must stay provisional, got %q", proof.ConfirmationStatus)
+	}
+	if proof.SeenAt.IsZero() {
+		t.Fatal("SeenAt should be stamped on first write")
+	}
+}
+
+func TestConfirmContractTasks_CatchupHeightStaysProvisional(t *testing.T) {
+	t.Setenv("CHAIN_SETTLEMENT_CONFIRMATIONS", "20")
+	t.Setenv("BITCOIN_NETWORK", "testnet4")
+	resetTipLagStateForTest()
+
+	fakeTxID := strings.Repeat("ca", 32)
+	store := &fullMockSweepStore{
+		proofs: make(map[string]*smart_contract.MerkleProof),
+		tasks: []smart_contract.Task{{
+			TaskID:     "task-catchup",
+			ContractID: "contract-catchup",
+			MerkleProof: &smart_contract.MerkleProof{
+				ConfirmationStatus: "provisional",
+			},
+		}},
+	}
+	bm := NewBlockMonitor(NewBitcoinNodeClient("http://localhost:0"))
+	bm.SetSweepDependencies(store, NewMempoolClient())
+	bm.SetChainBackend(&mockChain{height: 152464})
+
+	bm.confirmContractTasks("contract-catchup", fakeTxID, 145884)
+	proof := store.proofs["task-catchup"]
+	if proof == nil {
+		t.Fatal("expected proof write")
+	}
+	if proof.ConfirmationStatus != "provisional" {
+		t.Fatalf("catch-up scan must not confirm, got %q", proof.ConfirmationStatus)
+	}
+	if proof.BlockHeight != 145884 {
+		t.Fatalf("height=%d", proof.BlockHeight)
 	}
 }
 

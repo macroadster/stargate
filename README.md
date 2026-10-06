@@ -6,7 +6,7 @@ Stargate is a Bitcoin-native coordination layer for turning human wishes and ide
 
 Bitcoin is the settlement and historical witness layer. Independent nodes scan blocks, reconcile steganographic inscriptions with local files, optionally mirror artifacts (for example via IPFS), and may receive optional direct donations. The main value of running a node is the local collection of approved creative work and the full Starlight toolkit (scanner, stego, Bitcoin coordination) — not micro-donations.
 
-Stargate ships as a **single binary** (embedded UI + Go backend, SQLite by default) so home operators do not need a full microservices stack.
+Stargate ships as a **single binary** (embedded UI + Go backend, SQLite by default) so home operators do not need a full microservices stack. Default chain is **Bitcoin testnet4**.
 
 ## How it works (high level)
 
@@ -58,7 +58,7 @@ At funding time, the PSBT may carry an OP_RETURN with exactly **two** hashes (64
 - **wish_hash** (32 bytes): SHA256 of the original wish image pixels
 - **stego_hash** (32 bytes): SHA256 of the stego image (v2 JSON payload embedded in the image)
 
-The stego v2 JSON includes proposal/tasks metadata and **sandbox_hash** (SHA256 of the deliverables tarball). That keeps the sandbox reference off-chain while remaining discoverable to any node that has the stego file.
+The stego v2 JSON includes proposal/tasks metadata and **sandbox_hash** (SHA256 of the deliverables tarball). That keeps the sandbox reference off-chain while remaining discoverable to any node that has the stego file. Optional first-class fields `creator_wallet` + `creator_sig` are a Bitcoin signed message over `STARLIGHT-WISH-V1\n<wish_hash>` so a replica can verify authorship without trusting payload metadata (ADR 0007).
 
 Donations (when configured via `STARLIGHT_DONATION_ADDRESS`) are **direct P2WPKH** outputs — no hashlocks, no sweeps, no recommitment. One funding transaction, minimal ceremony.
 
@@ -179,7 +179,7 @@ curl -fsSL https://raw.githubusercontent.com/macroadster/stargate/main/install.s
 stargate
 ```
 
-Server: `http://localhost:3001` with SQLite. Linux/macOS amd64 and arm64. Installs to `~/.local/bin`. If that directory is not on your PATH, the script appends it to your shell profile (`.zshrc` / `.bashrc` / etc.). Set `INSTALL_DIR` to override the install path.
+Server: `http://localhost:3001` with SQLite on **testnet4**. Linux/macOS amd64 and arm64. Installs to `~/.local/bin`. If that directory is not on your PATH, the script appends it to your shell profile (`.zshrc` / `.bashrc` / etc.). Set `INSTALL_DIR` to override the install path. Operator env: [`docs/arch/ENV.md`](docs/arch/ENV.md).
 
 ### Development prerequisites
 
@@ -210,7 +210,7 @@ npm start      # http://localhost:3000
 - MCP: `/mcp/docs`, `/mcp/SKILL.md`, `/mcp/openapi.json`
 - In-app manuals: `/docs` (from `frontend/public/docs/`)
 
-Optional Starlight scanner integration (stego approval pipeline) uses env such as `STARGATE_STEGO_APPROVAL_ENABLED`, `STARGATE_PROXY_BASE`, `STARGATE_API_KEY`, and optional `IPFS_API_URL`. For the native Trin/GGUF path use `STARLIGHT_GGUF` / `STARLIGHT_TRIN_MODEL`, or rely on auto-download into `$STARGATE_DATA_DIR/models/starlight.gguf` (`STARLIGHT_HF_*`). See deployment docs and `docs/arch/TRIN_STARLIGHT_SCANNER.md`.
+Optional Starlight scanner integration (stego approval pipeline) uses env such as `STARGATE_STEGO_APPROVAL_ENABLED`, `STARGATE_PROXY_BASE`, and optional `IPFS_API_URL`. For the native Trin/GGUF path use `STARLIGHT_GGUF` / `STARLIGHT_TRIN_MODEL`, or rely on auto-download into `$STARGATE_DATA_DIR/models/starlight.gguf` (`STARLIGHT_HF_*`). See deployment docs and `docs/arch/TRIN_STARLIGHT_SCANNER.md`. API keys are issued only by `POST /api/auth/challenge` + `POST /api/auth/verify`; `STARGATE_API_KEY` is ignored.
 
 ## Usage (UI)
 
@@ -248,7 +248,7 @@ stargate/
 │   ├── stego/                # Payload + sandbox helpers
 │   ├── storage/              # SQLite / Postgres / IPFS mirror
 │   └── …
-├── docs/                     # Architecture & history (developers)
+├── docs/                     # Map: docs/README.md (ADRs, arch, history attic)
 ├── Dockerfile
 ├── Makefile
 ├── install.sh
@@ -269,6 +269,7 @@ stargate/
 3. Open a pull request  
 
 Issue tracking for this repo uses **bd (beads)** — see `AGENTS.md`.
+Developer docs start at [`docs/README.md`](docs/README.md). Commit locally when work is ready; the maintainer pulls and deploys — do not treat `git push` as mandatory for agents.
 
 ## License
 

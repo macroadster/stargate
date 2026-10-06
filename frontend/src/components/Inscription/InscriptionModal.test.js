@@ -24,6 +24,8 @@ import {
   isPlaceholderAddress,
   isConfirmedContract,
   parseStegoManifest,
+  shouldShowInscription,
+  shouldShowBlockThumbnailImage,
 } from './inscriptionUtils';
 
 describe('inscriptionUtils', () => {
@@ -36,6 +38,12 @@ describe('inscriptionUtils', () => {
     const ids = expandContractCandidates({ id: 'abc', metadata: {} });
     expect(ids).toContain('abc');
     expect(ids).toContain('wish-abc');
+  });
+
+  it('does not invent a wish- twin for a 64-hex pixel hash', () => {
+    const hash = '2d89e6ebfd09604938416481cb69cee2a63ceadab93541b3fbf4a26293274bf7';
+    const ids = expandContractCandidates({ id: hash, metadata: { visible_pixel_hash: hash } });
+    expect(ids).toEqual([hash]);
   });
 
   it('flags placeholder addresses', () => {
@@ -53,5 +61,73 @@ describe('inscriptionUtils', () => {
   it('parses stego manifest lines', () => {
     const m = parseStegoManifest('schema_version: 1\npayload_cid: xyz');
     expect(m.payload_cid).toBe('xyz');
+  });
+});
+
+describe('shouldShowInscription', () => {
+  const textInscription = { mime_type: 'text/plain', file_name: 'note.txt', text: 'hello' };
+  const imageInscription = { mime_type: 'image/png', file_name: 'pic.png', image_url: '/content/abc' };
+  const contractImage = {
+    mime_type: 'image/png',
+    file_name: 'stego.png',
+    image_url: '/api/block-image/100/stego.png',
+    metadata: { contract_id: 'wish-1', is_stego: true },
+    contract_id: 'wish-1',
+  };
+  const stegoWithMessage = {
+    mime_type: 'image/jpeg',
+    file_name: 'hidden.jpg',
+    image_url: '/content/def',
+    metadata: { extracted_message: 'secret', is_stego: true },
+  };
+
+  it('hides text and regular images by default, keeps contracts', () => {
+    expect(shouldShowInscription(textInscription)).toBe(false);
+    expect(shouldShowInscription(imageInscription)).toBe(false);
+    expect(shouldShowInscription(contractImage)).toBe(true);
+    expect(shouldShowInscription(stegoWithMessage)).toBe(true);
+  });
+
+  it('shows regular images when hideImages is off', () => {
+    const opts = { hideText: true, hideImages: false };
+    expect(shouldShowInscription(textInscription, opts)).toBe(false);
+    expect(shouldShowInscription(imageInscription, opts)).toBe(true);
+    expect(shouldShowInscription(contractImage, opts)).toBe(true);
+  });
+
+  it('shows text when hideText is off', () => {
+    const opts = { hideText: false, hideImages: true };
+    expect(shouldShowInscription(textInscription, opts)).toBe(true);
+    expect(shouldShowInscription(imageInscription, opts)).toBe(false);
+    expect(shouldShowInscription(contractImage, opts)).toBe(true);
+  });
+
+  it('shows everything when both hides are off', () => {
+    const opts = { hideText: false, hideImages: false };
+    expect(shouldShowInscription(textInscription, opts)).toBe(true);
+    expect(shouldShowInscription(imageInscription, opts)).toBe(true);
+    expect(shouldShowInscription(contractImage, opts)).toBe(true);
+  });
+});
+
+describe('shouldShowBlockThumbnailImage', () => {
+  const spamThumb = { thumbnail: '/content/abc?witness=0', thumbnailIsContract: false };
+  const contractThumb = { thumbnail: '/api/block-image/100/stego.png', thumbnailIsContract: true };
+  const diskFallback = { thumbnail: '/api/block-image/152151/spam.avif', thumbnailIsContract: false };
+
+  it('hides ordinary inscription thumbs when hideImages is on', () => {
+    expect(shouldShowBlockThumbnailImage(spamThumb, true)).toBe(false);
+    expect(shouldShowBlockThumbnailImage(diskFallback, true)).toBe(false);
+    expect(shouldShowBlockThumbnailImage(contractThumb, true)).toBe(true);
+  });
+
+  it('shows every image thumb when hideImages is off', () => {
+    expect(shouldShowBlockThumbnailImage(spamThumb, false)).toBe(true);
+    expect(shouldShowBlockThumbnailImage(diskFallback, false)).toBe(true);
+    expect(shouldShowBlockThumbnailImage(contractThumb, false)).toBe(true);
+  });
+
+  it('does not treat a /block-image URL as a contract without the flag', () => {
+    expect(shouldShowBlockThumbnailImage({ thumbnail: '/api/block-image/1/x.png' }, true)).toBe(false);
   });
 });

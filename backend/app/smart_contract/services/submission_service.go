@@ -26,15 +26,67 @@ type SubmissionReworkInput struct {
 	Notes        string
 }
 
+// SubmissionReviewAuthorizer decides whether the holder of an API key may review
+// a submission, returning the wallet it authorized so the caller records the
+// identity that was actually accepted.
+//
+// Defined here rather than alongside its implementation because services cannot
+// import app/smart_contract.
+type SubmissionReviewAuthorizer interface {
+	AuthorizeSubmissionReview(ctx context.Context, apiKey, submissionID string) (string, error)
+}
+
+// ReviewActor identifies who is performing a review. Only the API key is taken:
+// the wallet is whatever the authorizer resolves from it, so a caller cannot
+// name one identity while being authorized as another.
+type ReviewActor struct {
+	APIKey string
+}
+
+// SubmissionReworkAuthorizer decides whether the holder of an API key may rework
+// a submission, returning the wallet it authorized.
+//
+// Separate from SubmissionReviewAuthorizer because the rule is the mirror image:
+// review belongs to the wish creator, rework belongs to the claimant who did the
+// work. Sharing one interface would invite passing the creator's gate here.
+type SubmissionReworkAuthorizer interface {
+	AuthorizeSubmissionRework(ctx context.Context, apiKey, submissionID string) (string, error)
+}
+
+// ReworkActor identifies who is reworking a submission. Only the API key is
+// taken, for the same reason as ReviewActor.
+type ReworkActor struct {
+	APIKey string
+}
+
+// reworkableStatuses are the submission states a rework may start from.
+//
+// Rejected is excluded deliberately: a rejected claim is finished and the
+// claimant resubmits through submit_work rather than editing the old artifact.
+// Approved is excluded because approval is final; reopening it would undo a
+// completed review, which is the decision irl.1 and ugs hardened (stargate-hs2).
+var reworkableStatuses = map[string]bool{
+	"pending_review": true,
+	"reviewed":       true,
+}
+
 // SubmissionService encapsulates submission review/rework domain logic.
 type SubmissionService struct {
-	store  scstore.Store
-	record EventRecorder
+	store      scstore.Store
+	record     EventRecorder
+	authz      SubmissionReviewAuthorizer
+	reworkAuth SubmissionReworkAuthorizer
 }
 
 // NewSubmissionService constructs a SubmissionService.
-func NewSubmissionService(store scstore.Store, record EventRecorder) *SubmissionService {
-	return &SubmissionService{store: store, record: record}
+//
+// Both authorizers are required: Review and Rework each refuse outright without
+// theirs rather than falling back to trusting the caller. They are separate
+// parameters so that wiring one cannot silently be taken as wiring the other.
+// Pass nil only where that operation is unreachable, or in tests asserting the
+// refusal.
+func NewSubmissionService(store scstore.Store, record EventRecorder, authz SubmissionReviewAuthorizer, reworkAuth SubmissionReworkAuthorizer) *SubmissionService {
+	return &SubmissionService{store: store, record: record, authz: authz, reworkAuth: reworkAuth}
 }
 
 // SetRecorder updates the event sink.
@@ -166,7 +218,21 @@ func (s *SubmissionService) Get(ctx context.Context, submissionID string) (smart
 }
 
 // Review updates submission status and may auto-resolve rework requests.
-func (s *SubmissionService) Review(ctx context.Context, submissionID string, body SubmissionReviewInput) (map[string]interface{}, error) {
+//
+// Authorization happens here, not in the handlers. Review is the payout gate, so
+// the check belongs with the state change it guards: handlers were each
+// enforcing it separately, which left the rule optional for any new caller.
+func (s *SubmissionService) Review(ctx context.Context, submissionID string, body SubmissionReviewInput, actor ReviewActor) (map[string]interface{}, error) {
+	if s.authz == nil {
+		// Refuse rather than proceed unauthorized: an unwired service must not be
+		// the difference between a guarded payout and an open one.
+		return nil, Fail(http.StatusInternalServerError, "submission review authorizer not configured")
+	}
+	wallet, err := s.authz.AuthorizeSubmissionReview(ctx, actor.APIKey, submissionID)
+	if err != nil {
+		return nil, Fail(http.StatusForbidden, err.Error())
+	}
+
 	if body.Action == "" {
 		return nil, Fail(http.StatusBadRequest, "action is required")
 	}
@@ -197,8 +263,10 @@ func (s *SubmissionService) Review(ctx context.Context, submissionID string, bod
 	if newStatus == "approved" {
 		s.maybeResolveRework(ctx, submissionID)
 	}
+	// The authorized wallet, not a literal "reviewer": approving a submission
+	// releases funds, so the record has to say which key did it.
 	s.emit(smart_contract.Event{
-		Type: "review", EntityID: submissionID, Actor: "reviewer",
+		Type: "review", EntityID: submissionID, Actor: wallet,
 		Message: fmt.Sprintf("submission %s", body.Action), CreatedAt: time.Now(),
 	})
 	return map[string]interface{}{
@@ -208,12 +276,43 @@ func (s *SubmissionService) Review(ctx context.Context, submissionID string, bod
 	}, nil
 }
 
+// SubmissionTaskID returns the task a submission belongs to, walking its claim
+// when TaskID is unset.
+//
+// Submission.TaskID is omitempty while ClaimID is not, so a submission can
+// legitimately arrive identifying its task only through its claim.
+// UpdateSubmissionStatus cascades the task via the claim, but callers that
+// re-read the submission afterwards still see an empty TaskID, so they need
+// this to reach the task.
+func SubmissionTaskID(store scstore.Store, sub smart_contract.Submission) (string, error) {
+	if taskID := strings.TrimSpace(sub.TaskID); taskID != "" {
+		return taskID, nil
+	}
+	claimID := strings.TrimSpace(sub.ClaimID)
+	if claimID == "" {
+		return "", fmt.Errorf("submission %s has neither task nor claim", sub.SubmissionID)
+	}
+	claim, err := store.GetClaim(claimID)
+	if err != nil {
+		return "", fmt.Errorf("cannot resolve claim %s for submission %s: %w", claimID, sub.SubmissionID, err)
+	}
+	taskID := strings.TrimSpace(claim.TaskID)
+	if taskID == "" {
+		return "", fmt.Errorf("claim %s has no task", claimID)
+	}
+	return taskID, nil
+}
+
 func (s *SubmissionService) maybeResolveRework(ctx context.Context, submissionID string) {
 	submission, err := s.store.GetSubmission(ctx, submissionID)
-	if err != nil || submission.TaskID == "" {
+	if err != nil {
 		return
 	}
-	task, err := s.store.GetTask(submission.TaskID)
+	taskID, err := SubmissionTaskID(s.store, submission)
+	if err != nil {
+		return
+	}
+	task, err := s.store.GetTask(taskID)
 	if err != nil || task.ContractID == "" {
 		return
 	}
@@ -238,7 +337,25 @@ func (s *SubmissionService) maybeResolveRework(ctx context.Context, submissionID
 }
 
 // Rework updates deliverables and resets status to pending_review.
-func (s *SubmissionService) Rework(ctx context.Context, submissionID string, body SubmissionReworkInput) (map[string]interface{}, error) {
+//
+// Authorization and the source-state gate both live here. Previously neither
+// existed: any self-serve key could overwrite another claimant's deliverables,
+// and status was reset unconditionally, so an already approved or rejected
+// submission returned to pending_review and could be reviewed again
+// (stargate-hs2). Only the claimant may rework, and only from a state where the
+// work is still in play.
+func (s *SubmissionService) Rework(ctx context.Context, submissionID string, body SubmissionReworkInput, actor ReworkActor) (map[string]interface{}, error) {
+	if s.reworkAuth == nil {
+		// Refuse rather than proceed unauthorized, as Review does: an unwired
+		// service must not be the difference between a guarded artifact and an
+		// editable one.
+		return nil, Fail(http.StatusInternalServerError, "submission rework authorizer not configured")
+	}
+	wallet, err := s.reworkAuth.AuthorizeSubmissionRework(ctx, actor.APIKey, submissionID)
+	if err != nil {
+		return nil, Fail(http.StatusForbidden, err.Error())
+	}
+
 	if body.Deliverables == nil && body.Notes == "" {
 		return nil, Fail(http.StatusBadRequest, "deliverables or notes must be provided")
 	}
@@ -249,6 +366,18 @@ func (s *SubmissionService) Rework(ctx context.Context, submissionID string, bod
 	}
 	if originalSubmission.SubmissionID == "" {
 		return nil, Fail(http.StatusNotFound, "submission not found")
+	}
+	if status := strings.ToLower(strings.TrimSpace(originalSubmission.Status)); !reworkableStatuses[status] {
+		// Naming the route back is the difference between a usable refusal and a
+		// dead end, since rejected work is expected to continue somewhere.
+		switch status {
+		case "rejected":
+			return nil, Fail(http.StatusConflict, "submission was rejected; submit new work for the task instead of reworking this submission")
+		case "approved", "accepted":
+			return nil, Fail(http.StatusConflict, "submission is already approved and cannot be reopened")
+		default:
+			return nil, Fail(http.StatusConflict, fmt.Sprintf("submission %s cannot be reworked from status %q", submissionID, originalSubmission.Status))
+		}
 	}
 	if body.Deliverables != nil {
 		originalSubmission.Deliverables = body.Deliverables
@@ -265,7 +394,7 @@ func (s *SubmissionService) Rework(ctx context.Context, submissionID string, bod
 		return nil, Fail(http.StatusInternalServerError, err.Error())
 	}
 	s.emit(smart_contract.Event{
-		Type: "rework", EntityID: submissionID, Actor: "claimant",
+		Type: "rework", EntityID: submissionID, Actor: wallet,
 		Message: "submission reworked", CreatedAt: time.Now(),
 	})
 	return map[string]interface{}{

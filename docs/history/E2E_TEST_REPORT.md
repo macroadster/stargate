@@ -1,5 +1,7 @@
 # Starlight MCP End-to-End Test Report
 
+Status: **historical**.
+
 ## Test Execution Summary
 
 **Date:** 2026-01-19  

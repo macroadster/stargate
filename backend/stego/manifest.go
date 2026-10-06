@@ -16,6 +16,8 @@ type Manifest struct {
 	SandboxHash      string `yaml:"sandbox_hash"`
 	CreatedAt        int64  `yaml:"created_at"`
 	Issuer           string `yaml:"issuer"`
+	CreatorWallet    string `yaml:"creator_wallet,omitempty"`
+	CreatorSig       string `yaml:"creator_sig,omitempty"`
 }
 
 func BuildManifestYAML(m Manifest) ([]byte, error) {
@@ -53,6 +55,12 @@ func BuildManifestYAML(m Manifest) ([]byte, error) {
 	}
 	writeField(&b, "created_at", strconv.FormatInt(m.CreatedAt, 10))
 	writeField(&b, "issuer", formatYAMLValue(m.Issuer))
+	if m.CreatorWallet != "" {
+		writeField(&b, "creator_wallet", formatYAMLValue(m.CreatorWallet))
+	}
+	if m.CreatorSig != "" {
+		writeField(&b, "creator_sig", formatYAMLValue(m.CreatorSig))
+	}
 
 	return []byte(b.String()), nil
 }

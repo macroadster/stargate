@@ -3,9 +3,11 @@ package mcp
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -15,6 +17,7 @@ import (
 	"stargate-backend/services"
 	"stargate-backend/starlight"
 	"stargate-backend/storage/auth"
+	"stargate-backend/storage/datadir"
 	scstore "stargate-backend/storage/smart_contract"
 
 	"github.com/btcsuite/btcd/chaincfg"
@@ -74,6 +77,83 @@ func TestNewHTTPMCPServerUsesConfiguredNetwork(t *testing.T) {
 				t.Fatalf("params=%q want %q", server.chainParams().Name, tc.net)
 			}
 		})
+	}
+}
+
+func TestGetContractResolvesFoldedContractPrefix(t *testing.T) {
+	hash := strings.Repeat("ab", 32)
+	alias := "contract-" + hash
+	store := scstore.NewMemoryStore(time.Hour)
+	ctx := context.Background()
+	created := time.Date(2026, 10, 4, 23, 58, 22, 0, time.UTC)
+	if err := store.UpsertContractWithTasks(ctx, smart_contract.Contract{
+		ContractID: hash, Title: "Shell", Status: "pending", TotalBudgetSats: 1000, CreatedAt: created,
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertContractWithTasks(ctx, smart_contract.Contract{
+		ContractID: alias, Title: "Game", Status: "active", TotalBudgetSats: 1000, GoalsCount: 1,
+		CreatedAt: created.Add(time.Hour),
+	}, []smart_contract.Task{{
+		TaskID: hash + "-task-1", ContractID: alias, Title: "Shelf", Status: "submitted", BudgetSats: 1000,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertContractWithTasks(ctx, smart_contract.Contract{
+		ContractID: "contract-001", Title: "Keep", Status: "active", CreatedAt: created,
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := scstore.FoldContractPrefixTwins(ctx, store); err != nil {
+		t.Fatal(err)
+	}
+
+	server := NewHTTPMCPServer(store, allowAllValidator{}, nil, &services.IngestionService{}, nil, nil, auth.NewChallengeStore(time.Minute))
+	got, err := server.handleGetContract(ctx, map[string]interface{}{"contract_id": alias})
+	if err != nil {
+		t.Fatal(err)
+	}
+	contract, ok := got.(smart_contract.Contract)
+	if !ok {
+		t.Fatalf("got %T", got)
+	}
+	if contract.ContractID != hash || contract.Status != "active" || contract.Title != "Game" {
+		t.Fatalf("get_contract(alias)=%#v", contract)
+	}
+	bare, err := server.handleGetContract(ctx, map[string]interface{}{"contract_id": hash})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := bare.(smart_contract.Contract); c.ContractID != hash || c.Status != "active" {
+		t.Fatalf("get_contract(bare)=%#v", c)
+	}
+	other, err := server.handleGetContract(ctx, map[string]interface{}{"contract_id": "contract-001"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := other.(smart_contract.Contract); c.ContractID != "contract-001" {
+		t.Fatalf("get_contract(contract-001)=%#v", c)
+	}
+
+	listed, err := server.handleListContracts(ctx, map[string]interface{}{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := listed.(map[string]interface{})
+	rows := body["contracts"].([]smart_contract.Contract)
+	var sawBare, sawAlias, sawOther bool
+	for _, row := range rows {
+		switch row.ContractID {
+		case hash:
+			sawBare = row.Status == "active"
+		case alias:
+			sawAlias = true
+		case "contract-001":
+			sawOther = true
+		}
+	}
+	if !sawBare || sawAlias || !sawOther {
+		t.Fatalf("list bare=%v alias=%v other=%v rows=%+v", sawBare, sawAlias, sawOther, rows)
 	}
 }
 
@@ -500,12 +580,104 @@ func TestProposalCreationRequiresWish(t *testing.T) {
 		}
 	})
 
+	t.Run("create_proposal_multi_task_budgets_sum_to_wish", func(t *testing.T) {
+		visibleHash := strings.Repeat("2", 64)
+		wishID := "wish-" + visibleHash
+		if err := store.UpsertContractWithTasks(context.Background(), smart_contract.Contract{
+			ContractID:      wishID,
+			Title:           "Wish",
+			TotalBudgetSats: 1000,
+			Status:          "pending",
+		}, nil); err != nil {
+			t.Fatalf("seed wish: %v", err)
+		}
+
+		md := strings.Join([]string{
+			"### Task 1: First slice of work",
+			"one",
+			"### Task 2: Second slice of work",
+			"two",
+			"### Task 3: Third slice of work",
+			"three",
+		}, "\n")
+		req := MCPRequest{
+			Tool: "create_proposal",
+			Arguments: map[string]interface{}{
+				"title":              "Three tasks",
+				"description_md":     md,
+				"budget_sats":        1000,
+				"visible_pixel_hash": visibleHash,
+			},
+		}
+		body, _ := json.Marshal(req)
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("POST", "/mcp/call", bytes.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("X-API-Key", "test-key")
+		server.handleToolCall(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+		var resp MCPResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if !resp.Success {
+			t.Fatalf("expected success, got %s", resp.Error)
+		}
+		data, _ := json.Marshal(resp.Result)
+		var payload struct {
+			Proposal struct {
+				ID    string `json:"id"`
+				Tasks []struct {
+					BudgetSats int64 `json:"budget_sats"`
+				} `json:"tasks"`
+			} `json:"proposal"`
+			AllocatedSats int64 `json:"allocated_sats"`
+			TaskCount     int   `json:"task_count"`
+		}
+		if err := json.Unmarshal(data, &payload); err != nil {
+			t.Fatalf("payload: %v body=%s", err, string(data))
+		}
+		if payload.TaskCount != 3 || len(payload.Proposal.Tasks) != 3 {
+			t.Fatalf("tasks=%d count=%d", len(payload.Proposal.Tasks), payload.TaskCount)
+		}
+		var sum int64
+		for _, task := range payload.Proposal.Tasks {
+			sum += task.BudgetSats
+		}
+		if sum != 1000 || payload.AllocatedSats != 1000 {
+			t.Fatalf("allocated=%d sum=%d want 1000 (old scar 1833)", payload.AllocatedSats, sum)
+		}
+	})
+
 	t.Run("approve_proposal_requires_wish", func(t *testing.T) {
 		apiKey := "approve-test-key"
 		creatorWallet := "tb1qcreatorwallet000000000000000000000000000"
-		// Use walletValidator so the API key has a wallet binding
-		walletServer := NewHTTPMCPServer(store, walletValidator{wallet: creatorWallet}, nil, ingestionSvc, scannerManager, nil, auth.NewChallengeStore(10*time.Minute))
 		visibleHash := strings.Repeat("a", 64)
+
+		// Since irl.2 an unidentifiable wish creator denies approval, so this
+		// subtest needs a real ingestion record naming the key's wallet as
+		// creator. Without it the request is refused before reaching the
+		// missing-wish check that this subtest exists to cover. It previously
+		// relied on the fail-open allowance to get that far.
+		testDB := filepath.Join(t.TempDir(), "requires-wish.db")
+		testIngestionSvc, err := services.NewIngestionService(testDB)
+		if err != nil {
+			t.Fatalf("failed to create ingestion service: %v", err)
+		}
+		if err := testIngestionSvc.Create(services.IngestionRecord{
+			ID:       visibleHash,
+			Filename: "test.png",
+			Method:   "test",
+			Status:   "completed",
+			Metadata: map[string]interface{}{"creator_wallet": creatorWallet},
+		}); err != nil {
+			t.Fatalf("failed to seed ingestion record: %v", err)
+		}
+
+		// Use walletValidator so the API key has a wallet binding
+		walletServer := NewHTTPMCPServer(store, walletValidator{wallet: creatorWallet}, nil, testIngestionSvc, scannerManager, nil, auth.NewChallengeStore(10*time.Minute))
 		proposal := smart_contract.Proposal{
 			ID:               "proposal-approve-test",
 			Title:            "Approve proposal",
@@ -908,4 +1080,147 @@ func TestSubmitWorkRequiresArtifactsForRemoteAgents(t *testing.T) {
 			t.Fatalf("expected deliverables.artifacts validation error, got: %#v", validationErrors)
 		}
 	})
+}
+
+func TestSubmitWorkWritesArtifactsUnderBarePixelHash(t *testing.T) {
+	hash := "41a974b813b024a3817c9c99b5406cc5131a00406c76a4e01fd7519974ccfb40"
+	uploads := t.TempDir()
+	t.Setenv("UPLOADS_DIR", uploads)
+
+	store := scstore.NewMemoryStore(72 * time.Hour)
+	taskID := hash + "-task-1"
+	ctx := context.Background()
+	if err := store.UpsertContractWithTasks(ctx, smart_contract.Contract{
+		ContractID: "contract-" + hash,
+		Status:     "active",
+		Title:      "HelloKitty vs Kaiju",
+	}, []smart_contract.Task{{
+		TaskID:     taskID,
+		ContractID: "contract-" + hash,
+		Title:      "Comprehensive Implementation",
+		Status:     "available",
+		BudgetSats: 1000,
+		MerkleProof: &smart_contract.MerkleProof{
+			VisiblePixelHash:   hash,
+			ConfirmationStatus: "provisional",
+		},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	claim, err := store.ClaimTask(taskID, "tb1qac6yu5th5rqwndcnfp79mc939e6du92nep5kwv", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	server := NewHTTPMCPServer(store, allowAllValidator{}, nil, &services.IngestionService{}, &starlight.ScannerManager{}, nil, auth.NewChallengeStore(10*time.Minute))
+	req := MCPRequest{
+		Tool: "submit_work",
+		Arguments: map[string]interface{}{
+			"claim_id": claim.ClaimID,
+			"deliverables": map[string]interface{}{
+				"notes": "shipped the game",
+				"artifacts": []interface{}{
+					map[string]interface{}{
+						"filename": "index.html",
+						"content":  base64.StdEncoding.EncodeToString([]byte("<h1>hi</h1>")),
+					},
+				},
+			},
+		},
+	}
+	body, _ := json.Marshal(req)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/mcp/call", bytes.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("X-API-Key", "test-key")
+	server.handleToolCall(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp MCPResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.Success {
+		t.Fatalf("submit failed: %s %s", resp.ErrorCode, resp.Error)
+	}
+	data, ok := resp.Result.(map[string]interface{})
+	if !ok {
+		t.Fatalf("result type %T", resp.Result)
+	}
+	if data["sandbox_url"] != "/sandbox/"+hash {
+		t.Fatalf("sandbox_url=%v", data["sandbox_url"])
+	}
+
+	want := filepath.Join(datadir.PartPath(filepath.Join(uploads, "results"), hash), "index.html")
+	got, err := os.ReadFile(want)
+	if err != nil {
+		t.Fatalf("artifact missing at %s: %v", want, err)
+	}
+	if string(got) != "<h1>hi</h1>" {
+		t.Fatalf("artifact contents %q", got)
+	}
+	bad := datadir.PartPath(filepath.Join(uploads, "results"), "contract-"+hash)
+	if _, err := os.Stat(bad); err == nil {
+		t.Fatalf("wrote contract-prefixed tree %s", bad)
+	}
+}
+
+func TestSubmitWorkRejectsNonPixelContractID(t *testing.T) {
+	uploads := t.TempDir()
+	t.Setenv("UPLOADS_DIR", uploads)
+
+	store := scstore.NewMemoryStore(72 * time.Hour)
+	if err := store.UpsertContractWithTasks(context.Background(), smart_contract.Contract{
+		ContractID: "contract-001",
+		Status:     "active",
+	}, []smart_contract.Task{{
+		TaskID:     "task-1",
+		ContractID: "contract-001",
+		Title:      "Loose task",
+		Status:     "available",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	claim, err := store.ClaimTask("task-1", "tb1qac6yu5th5rqwndcnfp79mc939e6du92nep5kwv", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	server := NewHTTPMCPServer(store, allowAllValidator{}, nil, &services.IngestionService{}, &starlight.ScannerManager{}, nil, auth.NewChallengeStore(10*time.Minute))
+	req := MCPRequest{
+		Tool: "submit_work",
+		Arguments: map[string]interface{}{
+			"claim_id": claim.ClaimID,
+			"deliverables": map[string]interface{}{
+				"notes": "no hash",
+				"artifacts": []interface{}{
+					map[string]interface{}{
+						"filename": "index.html",
+						"content":  base64.StdEncoding.EncodeToString([]byte("x")),
+					},
+				},
+			},
+		},
+	}
+	body, _ := json.Marshal(req)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/mcp/call", bytes.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("X-API-Key", "test-key")
+	server.handleToolCall(w, r)
+	var resp MCPResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Success {
+		t.Fatal("expected submit to fail without a pixel hash")
+	}
+	if resp.ErrorCode != "SUBMIT_WORK_INVALID_CONTRACT" {
+		t.Fatalf("error_code=%s body=%s", resp.ErrorCode, w.Body.String())
+	}
+	bad := datadir.PartPath(filepath.Join(uploads, "results"), "contract-001")
+	if _, err := os.Stat(bad); err == nil {
+		t.Fatalf("wrote non-hash results tree %s", bad)
+	}
 }

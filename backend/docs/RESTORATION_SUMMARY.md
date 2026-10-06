@@ -1,5 +1,7 @@
 # Bitcoin Transaction and Inscription Functionality Restoration Summary
 
+Status: **historical**. Lists retired `/api/blocks`. See [README.md](./README.md).
+
 ## Overview
 Successfully restored the missing Bitcoin transaction and inscription functionality that was removed during cleanup. The backend now has full Bitcoin block processing capabilities while maintaining the clean, organized codebase structure.
 

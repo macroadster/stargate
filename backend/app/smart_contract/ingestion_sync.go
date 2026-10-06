@@ -23,7 +23,7 @@ import (
 // publishProposalEvent publishes a proposal creation event via IPFS for cross-instance sync
 func publishProposalEvent(ctx context.Context, proposal smart_contract.Proposal) error {
 	// Check if sync is enabled
-	if os.Getenv("STARGATE_SYNC_ENABLE") == "false" {
+	if !syncEnabled() {
 		return nil
 	}
 
@@ -67,10 +67,19 @@ func publishProposalEvent(ctx context.Context, proposal smart_contract.Proposal)
 // StartIngestionSync polls starlight_ingestions for pending records, validates embedded payloads,
 // and upserts contracts/tasks into the MCP store using the generic Store interface.
 // It now works with any backend (memory, sqlite, postgres) that implements Store.
-func StartIngestionSync(ctx context.Context, dsn string, store Store, interval time.Duration) error {
-	ingest, err := services.NewIngestionService(dsn)
-	if err != nil {
-		return fmt.Errorf("init ingestion service: %w", err)
+// StartIngestionSync takes the process's ingestion service rather than a DSN.
+//
+// It used to build its own from a DSN the caller derived, which made it a third
+// independent handle after the two stargate-a49 consolidated, and its derivation
+// was a third spelling of the decision: it read STARGATE_PG_DSN but never
+// DATABASE_URL and never the configured storage type. With DATABASE_URL set and
+// STARGATE_PG_DSN unset -- the Heroku shape, and DATABASE_URL is the documented
+// fallback name -- AllStores was on Postgres while this loop opened sqlite, so it
+// polled an empty database and reported nothing, since the pending-rows log is
+// gated on a non-zero count (stargate-t04).
+func StartIngestionSync(ctx context.Context, ingest *services.IngestionService, store Store, interval time.Duration) error {
+	if ingest == nil {
+		return fmt.Errorf("init ingestion service: no ingestion service configured")
 	}
 
 	go func() {
@@ -399,11 +408,10 @@ func parseMarkdownProposal(ingestionID, markdown string, meta map[string]interfa
 	}
 	contractID := contractIDBase
 	if contractID == "" {
-		contractID = fmt.Sprintf("wish-%s", ingestionID)
+		contractID = ingestionID
 	}
-	// Always use wish- prefix for contract ID when visible hash is available
-	if visibleHash != "" && !strings.HasPrefix(contractID, "wish-") {
-		contractID = fmt.Sprintf("wish-%s", visibleHash)
+	if n := identity.CanonicalContractID(contractID); n != "" {
+		contractID = n
 	}
 	budget := budgetFromMeta(meta)
 	fundingAddr := scstore.FundingAddressFromMeta(meta)
@@ -473,8 +481,8 @@ func buildProposalFromReplicatedTasks(ingestionID, tasksJSON string, meta map[st
 		contractIDBase = strings.TrimSpace(ingestionID)
 	}
 	contractID := contractIDBase
-	if contractID != "" && !strings.HasPrefix(contractID, "wish-") {
-		contractID = fmt.Sprintf("wish-%s", contractID)
+	if n := identity.CanonicalContractID(contractID); n != "" {
+		contractID = n
 	}
 
 	title := strings.TrimSpace(metaString(meta["proposal_title"]))

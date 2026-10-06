@@ -275,7 +275,7 @@ func (s *MemoryStore) ListTasks(filter smart_contract.TaskFilter) ([]smart_contr
 		if filter.Status != "" && !strings.EqualFold(filter.Status, t.Status) {
 			continue
 		}
-		if filter.ContractID != "" && !strings.EqualFold(filter.ContractID, t.ContractID) {
+		if filter.ContractID != "" && !contractIDMatches(t.ContractID, filter.ContractID) {
 			continue
 		}
 		if filter.ClaimedBy != "" && !strings.EqualFold(filter.ClaimedBy, t.ClaimedBy) {
@@ -348,6 +348,26 @@ func (s *MemoryStore) GetContract(id string) (smart_contract.Contract, error) {
 		return smart_contract.Contract{}, fmt.Errorf("contract %s not found", id)
 	}
 	return c, nil
+}
+
+// ForceSupersedeContract marks a row superseded even when it is confirmed.
+func (s *MemoryStore) ForceSupersedeContract(_ context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil
+	}
+	c, ok := s.contracts[id]
+	if !ok {
+		return nil
+	}
+	if strings.EqualFold(strings.TrimSpace(c.Status), "superseded") {
+		return nil
+	}
+	c.Status = "superseded"
+	s.contracts[id] = c
+	return nil
 }
 
 // GetClaim returns a claim by ID.
@@ -688,11 +708,19 @@ func (s *MemoryStore) ConfirmContract(ctx context.Context, contractID string, bl
 	}
 	targetID := foundID
 	if plan.IsPixelHash {
-		targetID = wishID
+		targetID = plan.Canonical
 	}
 
 	ApplyConfirmToContract(&contract, targetID, blockHeight, txid, apply.StegoImageURL, time.Now())
 	s.contracts[targetID] = contract
+	if foundID != targetID {
+		for tid, task := range s.tasks {
+			if task.ContractID == foundID {
+				task.ContractID = targetID
+				s.tasks[tid] = task
+			}
+		}
+	}
 
 	if plan.IsPixelHash {
 		for _, alias := range apply.AliasesToForceSupersede {
@@ -702,6 +730,12 @@ func (s *MemoryStore) ConfirmContract(ctx context.Context, contractID string, bl
 			if c, ok := s.contracts[alias]; ok && !strings.EqualFold(c.Status, "superseded") {
 				c.Status = "superseded"
 				s.contracts[alias] = c
+			}
+		}
+		if foundID != targetID {
+			if c, ok := s.contracts[foundID]; ok && !strings.EqualFold(c.Status, "superseded") {
+				c.Status = "superseded"
+				s.contracts[foundID] = c
 			}
 		}
 	} else if apply.SupersedeWishIfNonPixel {
@@ -750,7 +784,7 @@ func (s *MemoryStore) CreateProposal(ctx context.Context, p smart_contract.Propo
 
 	// Comprehensive security validation
 	if err := ValidateProposalInput(&p); err != nil {
-		return fmt.Errorf("proposal validation failed: %v", err)
+		return fmt.Errorf("proposal validation failed: %w", err)
 	}
 
 	// Validate status field
@@ -772,13 +806,16 @@ func (s *MemoryStore) CreateProposal(ctx context.Context, p smart_contract.Propo
 		for _, prop := range s.proposals {
 			if prop.VisiblePixelHash == visibleHash && prop.ID != p.ID {
 				if strings.EqualFold(prop.Status, "approved") || strings.EqualFold(prop.Status, "published") {
-					return fmt.Errorf("a proposal with visible_pixel_hash=%s is already approved/published (id=%s)", visibleHash, prop.ID)
+					// Was an inline copy of this text, so the "shared" constructors
+					// were shared by one store. Calling them keeps both dialects on
+					// one message and one sentinel.
+					return ProposalConflictApprovedMsg(visibleHash, prop.ID)
 				}
 				count++
 			}
 		}
-		if count >= 5 {
-			return fmt.Errorf("maximum of 5 proposals reached for wish %s", visibleHash)
+		if count >= MaxProposalsPerWish {
+			return ProposalMaxPerWishMsg(visibleHash)
 		}
 	}
 
@@ -831,16 +868,23 @@ func (s *MemoryStore) createMissingTasks() {
 			continue
 		}
 
-		// Create default tasks for the contract
-		for i := 0; i < contract.AvailableTasksCount; i++ {
+		// Split the wish across the missing tasks. Last task eats remainder
+		// so integer division cannot leave dust (or invent extra sats).
+		n := contract.AvailableTasksCount
+		titles := make([]string, n)
+		for i := 0; i < n; i++ {
+			titles[i] = fmt.Sprintf("Task %d for %s", i+1, contract.Title)
+		}
+		amounts := AllocateTaskBudgets(titles, nil, contract.TotalBudgetSats)
+		for i := 0; i < n; i++ {
 			taskID := fmt.Sprintf("%s-task-%d", contractID, i+1)
 			task := smart_contract.Task{
 				TaskID:         taskID,
 				ContractID:     contractID,
 				GoalID:         fmt.Sprintf("goal-%d", i+1),
-				Title:          fmt.Sprintf("Task %d for %s", i+1, contract.Title),
+				Title:          titles[i],
 				Description:    fmt.Sprintf("Default task %d for contract %s", i+1, contract.Title),
-				BudgetSats:     contract.TotalBudgetSats / int64(contract.AvailableTasksCount),
+				BudgetSats:     amounts[i],
 				Status:         "available",
 				Difficulty:     "medium",
 				EstimatedHours: 8,
@@ -1000,7 +1044,7 @@ func (s *MemoryStore) UpdateProposal(ctx context.Context, p smart_contract.Propo
 	}
 
 	if err := ValidateProposalInput(&p); err != nil {
-		return fmt.Errorf("proposal validation failed: %v", err)
+		return fmt.Errorf("proposal validation failed: %w", err)
 	}
 
 	s.proposals[p.ID] = p
@@ -1314,9 +1358,13 @@ func (s *MemoryStore) DeleteWish(ctx context.Context, visiblePixelHash string) e
 		}
 	}
 
+	wanted := map[string]struct{}{}
+	for _, id := range plan.ContractIDs {
+		wanted[id] = struct{}{}
+	}
 	taskIDs := make(map[string]bool)
 	for id, t := range s.tasks {
-		if t.ContractID == plan.WishID {
+		if _, ok := wanted[t.ContractID]; ok {
 			taskIDs[id] = true
 			delete(s.tasks, id)
 		}
@@ -1333,7 +1381,9 @@ func (s *MemoryStore) DeleteWish(ctx context.Context, visiblePixelHash string) e
 		}
 	}
 
-	delete(s.contracts, plan.WishID)
+	for _, id := range plan.ContractIDs {
+		delete(s.contracts, id)
+	}
 	return nil
 }
 

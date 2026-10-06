@@ -132,7 +132,7 @@ func BuildApprovePlan(proposalID, currentStatus string, proposal *smart_contract
 		return ApprovePlan{}, err
 	}
 	if err := ValidateProposalForApproval(proposal); err != nil {
-		return ApprovePlan{}, fmt.Errorf("proposal validation failed: %v", err)
+		return ApprovePlan{}, fmt.Errorf("proposal validation failed: %w", err)
 	}
 	if len(proposal.Tasks) == 0 && contractTaskCount == 0 {
 		return ApprovePlan{}, ErrApproveNoTasks()

@@ -16,6 +16,7 @@ import (
 	_ "golang.org/x/image/webp"
 
 	scmiddleware "stargate-backend/app/smart_contract"
+	"stargate-backend/core/identity"
 	sc "stargate-backend/core/smart_contract"
 	"stargate-backend/models"
 	"stargate-backend/services"
@@ -62,64 +63,10 @@ func openStatuses() []string {
 	return []string{"pending", "created", "funded", "active"}
 }
 
-// dedupeConfirmedWishTwins collapses bare-hash + wish-<hash> pairs that both
-// appear as confirmed (legacy ConfirmContract bootstrap race). Prefer the
-// canonical wish- id so /contracts does not list the same wish twice.
+// dedupeConfirmedWishTwins collapses bare-hash + wish-<hash> pairs.
+// Prefer the live row (status rank, then the bare stored PK).
 func dedupeConfirmedWishTwins(contracts []sc.Contract) []sc.Contract {
-	if len(contracts) < 2 {
-		return contracts
-	}
-	type pick struct {
-		idx        int
-		preferWish bool
-	}
-	best := make(map[string]pick) // normalized hash → chosen index
-	drop := make(map[int]struct{})
-	for i, c := range contracts {
-		if !strings.EqualFold(strings.TrimSpace(c.Status), "confirmed") {
-			continue
-		}
-		id := strings.TrimSpace(c.ContractID)
-		bare := strings.TrimPrefix(id, "wish-")
-		if len(bare) != 64 {
-			continue
-		}
-		// Only collapse true 64-hex pixel hashes.
-		okHex := true
-		for _, r := range bare {
-			if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
-				okHex = false
-				break
-			}
-		}
-		if !okHex {
-			continue
-		}
-		key := strings.ToLower(bare)
-		isWish := strings.HasPrefix(id, "wish-")
-		if prev, exists := best[key]; exists {
-			// Prefer wish- form; drop the other.
-			if isWish && !prev.preferWish {
-				drop[prev.idx] = struct{}{}
-				best[key] = pick{idx: i, preferWish: true}
-			} else {
-				drop[i] = struct{}{}
-			}
-			continue
-		}
-		best[key] = pick{idx: i, preferWish: isWish}
-	}
-	if len(drop) == 0 {
-		return contracts
-	}
-	out := make([]sc.Contract, 0, len(contracts)-len(drop))
-	for i, c := range contracts {
-		if _, skip := drop[i]; skip {
-			continue
-		}
-		out = append(out, c)
-	}
-	return out
+	return storageSC.CollapsePixelHashTwins(contracts)
 }
 
 func proofConfirmed(proof *sc.MerkleProof) bool {
@@ -135,12 +82,15 @@ func proofConfirmed(proof *sc.MerkleProof) bool {
 	return false
 }
 
-// computeStegoImageURL generates the stego image URL for a contract
+// computeStegoImageURL generates the stego image URL for a contract.
+// Pixel-hash wishes are stored as /uploads/<64-hex>, including when the
+// contract id is still the legacy contract-<hash> alias.
 func computeStegoImageURL(contractID string) string {
-	// Strip "wish-" prefix to match actual filename
-	hash := contractID
-	if strings.HasPrefix(contractID, "wish-") {
-		hash = strings.TrimPrefix(contractID, "wish-")
+	hash := strings.TrimSpace(contractID)
+	if n := identity.CanonicalContractID(hash); identity.IsPixelHash(n) {
+		hash = n
+	} else if strings.HasPrefix(hash, "wish-") {
+		hash = strings.TrimPrefix(hash, "wish-")
 	}
 	return fmt.Sprintf("/uploads/%s", hash)
 }
@@ -354,10 +304,9 @@ func (h *SmartContractHandler) HandleGetContracts(w http.ResponseWriter, r *http
 		// Pre-dedupe length: twin collapse must not flip has_more to false.
 		fetchedCount = len(contracts)
 
-		// Safety net for pre-fix DBs: bare-hash + wish- twins both confirmed.
-		if status == "confirmed" || strings.EqualFold(status, "confirmed") {
-			contracts = dedupeConfirmedWishTwins(contracts)
-		}
+		// bare hash, wish-<hash>, and contract-<64-hex> are one wish. Collapse
+		// on every status so an active legacy alias is not a second open card.
+		contracts = dedupeConfirmedWishTwins(contracts)
 
 		// === Enrichment (ListByIDs + conversion) ===
 		var inscriptionsList []models.InscriptionRequest

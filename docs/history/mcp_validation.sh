@@ -5,7 +5,8 @@ set -euo pipefail
 # Tests core functionality with minimal dependencies
 
 MCP_BASE=${MCP_BASE:-https://starlight.local/mcp}
-API_KEY=${API_KEY:-demo-api-key}
+# Historical attic script. Do not run against a live node.
+API_KEY=${API_KEY:?set API_KEY}
 
 # Colors
 GREEN='\033[0;32m'

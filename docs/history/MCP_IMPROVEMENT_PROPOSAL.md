@@ -1,5 +1,7 @@
 # Improving the Starlight MCP Server: A Post-mortem and Recommendations
 
+Status: **historical**. Living surfaces: `docs/arch/MCP_UNIFIED_PLAN.md`.
+
 ## 1. Introduction
 
 This document summarizes the findings from a collaborative session with an AI agent to interact with the Starlight MCP (Model-Contract-Protocol) server. While the core workflow of the server (Wish > Proposal > Tasks > Submission) was successfully navigated, the process was hindered by several undocumented requirements and API behaviors.

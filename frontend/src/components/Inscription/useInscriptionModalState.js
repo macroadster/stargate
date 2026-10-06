@@ -7,7 +7,9 @@ import { useInscriptionNetwork } from './useInscriptionNetwork';
 import {
   looksLikeRaiseFund,
   expandContractCandidates,
+  sameContractId,
   isPlaceholderAddress,
+  normalizeAddress,
   isConfirmedContract as checkConfirmedContract,
   resolveModalImage,
   parseStegoManifest,
@@ -358,8 +360,6 @@ export function useInscriptionModalState(inscription, initialTab = 'content') {
   }, [allTasks, psbtTasks]);
   const hasFundingTxId = Boolean(inscription.metadata?.funding_txid);
   const isContractLocked = isConfirmedContract || isFundingConfirmed || hasFundingTxId;
-  const normalizeAddress = (value) => (value || '').trim().toLowerCase();
-  
   const {
     modalImageSource,
     scanImageSource,
@@ -536,10 +536,12 @@ export function useInscriptionModalState(inscription, initialTab = 'content') {
       let items = Array.from(uniqueProposals.values()).filter((p) => {
         const tasks = Array.isArray(p.tasks) ? p.tasks : [];
         const suggested = Array.isArray(p.metadata?.suggested_tasks) ? p.metadata.suggested_tasks : [];
-        const hasMatchingTasks = [...tasks, ...suggested].some((t) => contractCandidates.includes(t.contract_id));
-        const idMatch = contractCandidates.includes(p.id);
-        const metaContract = p.metadata?.contract_id && contractCandidates.includes(p.metadata.contract_id);
-        const ingestMatch = p.metadata?.ingestion_id && contractCandidates.includes(p.metadata.ingestion_id);
+        const hasMatchingTasks = [...tasks, ...suggested].some((t) =>
+          contractCandidates.some((id) => sameContractId(t.contract_id, id)),
+        );
+        const idMatch = contractCandidates.some((id) => sameContractId(p.id, id));
+        const metaContract = p.metadata?.contract_id && contractCandidates.some((id) => sameContractId(p.metadata.contract_id, id));
+        const ingestMatch = p.metadata?.ingestion_id && contractCandidates.some((id) => sameContractId(p.metadata.ingestion_id, id));
         return idMatch || hasMatchingTasks || metaContract || ingestMatch;
       });
 

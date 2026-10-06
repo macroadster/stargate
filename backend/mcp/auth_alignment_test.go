@@ -18,15 +18,16 @@ import (
 )
 
 // Register/login, REST authWrap, MCP tool call, and MCP session must share one
-// bearer path and the same api_keys store (including STARGATE_API_KEY seed).
+// bearer path and the same api_keys store (keys issued, not env-seeded).
 func TestOneBearerPathAPIAndMCP(t *testing.T) {
-	t.Setenv("STARGATE_API_KEY", "seed-bearer-key")
-	t.Setenv("STARLIGHT_DONATION_ADDRESS", "tb1qseedwallet")
-
 	keys := auth.NewAPIKeyStore()
-	keys.SeedEnvironmentVariables()
-	if !keys.Validate("seed-bearer-key") {
-		t.Fatal("seed must land in the shared store")
+	issued, err := keys.Issue("", "tb1qseedwallet", "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bearer := issued.Key
+	if !keys.Validate(bearer) {
+		t.Fatal("issued key must land in the shared store")
 	}
 
 	store := scstore.NewMemoryStore(72 * time.Hour)
@@ -44,9 +45,9 @@ func TestOneBearerPathAPIAndMCP(t *testing.T) {
 	mcpServer.RegisterRoutes(mux)
 	handler := mux
 
-	// REST: Bearer seed key
+	// REST: Bearer issued key
 	req := httptest.NewRequest(http.MethodGet, "/api/smart_contract/contracts", nil)
-	req.Header.Set("Authorization", "Bearer seed-bearer-key")
+	req.Header.Set("Authorization", "Bearer "+bearer)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
@@ -65,7 +66,7 @@ func TestOneBearerPathAPIAndMCP(t *testing.T) {
 		"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": map[string]interface{}{},
 	})
 	initReq := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewReader(initBody))
-	initReq.Header.Set("Authorization", "Bearer seed-bearer-key")
+	initReq.Header.Set("Authorization", "Bearer "+bearer)
 	initReq.Header.Set("Content-Type", "application/json")
 	initW := httptest.NewRecorder()
 	handler.ServeHTTP(initW, initReq)
@@ -77,7 +78,7 @@ func TestOneBearerPathAPIAndMCP(t *testing.T) {
 		t.Fatal("expected MCP-Session-Id")
 	}
 
-	// Follow-up tool call with session only (no Authorization) must use bound seed key
+	// Follow-up tool call with session only (no Authorization) must use bound issued key
 	callBody, _ := json.Marshal(MCPRequest{Tool: "create_proposal", Arguments: map[string]interface{}{
 		"title": "from-session",
 	}})
@@ -89,13 +90,13 @@ func TestOneBearerPathAPIAndMCP(t *testing.T) {
 	if callW.Code == http.StatusUnauthorized ||
 		bytes.Contains(callW.Body.Bytes(), []byte("API_KEY_REQUIRED")) ||
 		bytes.Contains(callW.Body.Bytes(), []byte("UNAUTHORIZED")) {
-		t.Fatalf("session-bound seed key rejected: %d %s", callW.Code, callW.Body.String())
+		t.Fatalf("session-bound issued key rejected: %d %s", callW.Code, callW.Body.String())
 	}
 
 	// Direct MCP Bearer (no session) also works
 	direct, _ := json.Marshal(MCPRequest{Tool: "list_contracts"})
 	dreq := httptest.NewRequest(http.MethodPost, "/mcp/call", bytes.NewReader(direct))
-	dreq.Header.Set("Authorization", "Bearer seed-bearer-key")
+	dreq.Header.Set("Authorization", "Bearer "+bearer)
 	dreq.Header.Set("Content-Type", "application/json")
 	dw := httptest.NewRecorder()
 	handler.ServeHTTP(dw, dreq)

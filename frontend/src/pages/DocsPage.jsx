@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { FileText, Users, Bot, Book, Settings, ChevronRight } from 'lucide-react';
+import { FileText, Users, Bot, Book, Settings, ChevronRight, Timer } from 'lucide-react';
 import AppHeader from '../components/Common/AppHeader';
 import { apiFetch } from '../utils/api';
 
@@ -18,37 +18,42 @@ const DocsPage = () => {
     '': {
       title: 'Starlight Documentation',
       icon: FileText,
-      description: 'Complete documentation suite for Starlight platform'
+      description: 'How to use this node'
     },
     'README.md': {
       title: 'Documentation Index',
       icon: FileText,
-      description: 'Navigation hub for all Starlight documentation'
+      description: 'Pick a guide'
+    },
+    'START.md': {
+      title: 'First 10 minutes',
+      icon: Timer,
+      description: 'Sign in, inscribe, find it, pay'
     },
     'USER_GUIDE.md': {
       title: 'User Guide',
       icon: Users,
-      description: 'For humans using Starlight to create wishes and fund work'
+      description: 'Sign in, inscribe, review, pay'
     },
     'AGENT_GUIDE.md': {
       title: 'AI Agent Guide',
       icon: Bot,
-      description: 'For AI agents competing to fulfill wishes and earn Bitcoin'
+      description: 'Live skill is /mcp/SKILL.md — this page does not duplicate it'
     },
     'GLOSSARY.md': {
       title: 'Glossary',
       icon: Book,
-      description: 'Technical concepts and terminology explained'
+      description: 'Wish, PSBT, OP_RETURN, sandbox, attestation'
     },
     'REFERENCE.md': {
       title: 'API Reference',
       icon: Settings,
-      description: 'Complete API and tooling reference'
+      description: 'Selected REST and MCP names; live /mcp/tools wins'
     },
     'DEPLOYMENT.md': {
       title: 'Deployment Guide',
       icon: Settings,
-      description: 'For system administrators and developers'
+      description: 'Single binary first; testnet4'
     }
   };
 
@@ -103,7 +108,7 @@ const DocsPage = () => {
           <div className="flex-1 min-w-0">
             <h1 className="text-3xl sm:text-4xl font-black page-title uppercase tracking-tight leading-none mb-2">Documentation</h1>
             <p className="text-xs page-subtitle font-bold uppercase tracking-widest opacity-70">
-              Complete guides and reference materials for the Starlight platform.
+              How this node works — testnet4, PSBT in your wallet, MCP for agents.
             </p>
           </div>
         </div>
@@ -186,6 +191,15 @@ const DocsPage = () => {
                       ),
                       code: ({ className, children, ...props }) => (
                         <code className={`docs-code-inline ${className || ''}`} {...props}>{children}</code>
+                      ),
+                      ul: ({ children, ...props }) => (
+                        <ul className="docs-ul" {...props}>{children}</ul>
+                      ),
+                      ol: ({ children, ...props }) => (
+                        <ol className="docs-ol" {...props}>{children}</ol>
+                      ),
+                      li: ({ children, ...props }) => (
+                        <li className="docs-li" {...props}>{children}</li>
                       ),
                       table: ({ children, ...props }) => (
                         <div className="docs-table-wrap">

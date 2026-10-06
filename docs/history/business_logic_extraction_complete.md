@@ -1,5 +1,7 @@
 # Business Logic Extraction Complete
 
+Status: **historical**. Package layout: `docs/arch/PACKAGE_BOUNDARIES.md`.
+
 ## ✅ Successfully Extracted Business Logic Services
 
 ### 1. EventService (`services/event_service.go`)

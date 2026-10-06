@@ -23,11 +23,14 @@ const AppHeader = ({
   showTextToggle = false,
   hideText = true,
   onToggleText,
+  hideImages = true,
+  onToggleImages,
   showThemeToggle = true,
   isDarkMode: propIsDarkMode,
 }) => {
   const navigate = useNavigate();
   const { auth, signOut } = useAuth();
+  const isSignedIn = Boolean(auth?.apiKey);
   const themeContext = useTheme();
 
   const isDarkMode = themeContext
@@ -65,6 +68,19 @@ const AppHeader = ({
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const dropdownRef = useRef(null);
+
+  const requestFilterToggle = (onToggle) => {
+    if (!isSignedIn) {
+      navigate("/auth");
+      setIsDropdownOpen(false);
+      setIsMenuOpen(false);
+      return;
+    }
+    onToggle?.();
+    setIsDropdownOpen(false);
+    setIsMenuOpen(false);
+  };
+  const filterToggleTitle = isSignedIn ? undefined : "Sign in to change";
 
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -201,18 +217,28 @@ const AppHeader = ({
                       style={{ right: 0, left: "auto" }}
                     >
                       {showTextToggle && (
-                        <button
-                          onClick={() => {
-                            onToggleText?.();
-                            setIsDropdownOpen(false);
-                          }}
-                          className="dropdown-item flex flex-row items-center justify-between"
-                        >
-                          <span>Hide text</span>
-                          {hideText && (
-                            <Check className="w-4 h-4 text-primary" />
-                          )}
-                        </button>
+                        <>
+                          <button
+                            onClick={() => requestFilterToggle(onToggleText)}
+                            className="dropdown-item flex flex-row items-center justify-between"
+                            title={filterToggleTitle}
+                          >
+                            <span>Hide text</span>
+                            {hideText && (
+                              <Check className="w-4 h-4 text-primary" />
+                            )}
+                          </button>
+                          <button
+                            onClick={() => requestFilterToggle(onToggleImages)}
+                            className="dropdown-item flex flex-row items-center justify-between"
+                            title={filterToggleTitle}
+                          >
+                            <span>Hide images</span>
+                            {hideImages && (
+                              <Check className="w-4 h-4 text-primary" />
+                            )}
+                          </button>
+                        </>
                       )}
                       {auth?.apiKey ? (
                         <>
@@ -352,18 +378,28 @@ const AppHeader = ({
               </button>
             </li>
             {showTextToggle && (
-              <li>
-                <button
-                  onClick={() => {
-                    onToggleText?.();
-                    setIsMenuOpen(false);
-                  }}
-                  className="nav-link flex flex-row items-center justify-between"
-                >
-                  <span>Hide text</span>
-                  {hideText && <Check className="w-4 h-4 text-primary" />}
-                </button>
-              </li>
+              <>
+                <li>
+                  <button
+                    onClick={() => requestFilterToggle(onToggleText)}
+                    className="nav-link flex flex-row items-center justify-between"
+                    title={filterToggleTitle}
+                  >
+                    <span>Hide text</span>
+                    {hideText && <Check className="w-4 h-4 text-primary" />}
+                  </button>
+                </li>
+                <li>
+                  <button
+                    onClick={() => requestFilterToggle(onToggleImages)}
+                    className="nav-link flex flex-row items-center justify-between"
+                    title={filterToggleTitle}
+                  >
+                    <span>Hide images</span>
+                    {hideImages && <Check className="w-4 h-4 text-primary" />}
+                  </button>
+                </li>
+              </>
             )}
           </ul>
 

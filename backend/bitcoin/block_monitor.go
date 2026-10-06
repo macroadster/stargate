@@ -16,23 +16,29 @@ import (
 
 // BlockMonitor handles comprehensive Bitcoin block monitoring and data extraction
 type BlockMonitor struct {
-	bitcoinClient   *BitcoinNodeClient
-	rawClient       *RawBlockClient
-	chain           ChainBackend
-	bitcoinAPI      *BitcoinAPI
-	currentHeight   int64
-	lastChecked     time.Time
-	isRunning       bool
-	stopChan        chan bool
-	mu              sync.RWMutex
-	dataStorage     DataStorageInterface
-	ingestion       *services.IngestionService
-	sweepStore      SweepTaskStore
-	sweepMempool    UTXOClient
-	stegoReconciler StegoReconciler
-	unpinPath       func(context.Context, string) error
-	ipfsClient      *ipfs.Client
-	reconcileMu     sync.Mutex
+	bitcoinClient    *BitcoinNodeClient
+	rawClient        *RawBlockClient
+	chain            ChainBackend
+	bitcoinAPI       *BitcoinAPI
+	currentHeight    int64
+	lastChecked      time.Time
+	isRunning        bool
+	isStopping       bool
+	stopChan         chan struct{}
+	wg               sync.WaitGroup
+	mu               sync.RWMutex
+	dataStorage      DataStorageInterface
+	ingestion        *services.IngestionService
+	sweepStore       SweepTaskStore
+	sweepMempool     UTXOClient
+	stegoReconciler  StegoReconciler
+	sandboxExtractor SandboxExtractor
+	unpinPath        func(context.Context, string) error
+	ipfsClient       *ipfs.Client
+	reconcileMu      sync.Mutex
+	oracleMetaMu     sync.Mutex
+	oracleMetaRecs   []services.IngestionRecord
+	oracleMetaAt     time.Time
 
 	// Configuration
 	checkInterval time.Duration
@@ -127,6 +133,16 @@ type StegoReconciler interface {
 
 // StegoReconcilerFunc adapts a function to the StegoReconciler interface.
 type StegoReconcilerFunc func(ctx context.Context, stegoCID, expectedHash string) error
+
+// SandboxExtractor is the seam from this node's on-chain confirm into sandbox
+// extract. Implemented by app/smart_contract.Server.DownloadSandboxArtifacts.
+// Gossip, processEvent, and stego reconcile must not call this.
+type SandboxExtractor interface {
+	ExtractSandbox(ctx context.Context, contractID string) error
+}
+
+// SandboxExtractorFunc adapts a function to the SandboxExtractor interface.
+type SandboxExtractorFunc func(ctx context.Context, contractID string) error
 
 // BlockMetadata contains processing metadata
 type BlockMetadata struct {
@@ -273,6 +289,12 @@ func (bm *BlockMonitor) SetStegoReconciler(reconciler StegoReconciler) {
 	bm.stegoReconciler = reconciler
 }
 
+// SetSandboxExtractor wires sandbox extract to run after this node confirms
+// a contract on-chain. ConfirmContract on the store is status-only.
+func (bm *BlockMonitor) SetSandboxExtractor(extractor SandboxExtractor) {
+	bm.sandboxExtractor = extractor
+}
+
 func (bm *BlockMonitor) SetIPFSUnpin(unpin func(context.Context, string) error) {
 	bm.unpinPath = unpin
 }
@@ -287,12 +309,9 @@ func (bm *BlockMonitor) Start() error {
 	bm.mu.Lock()
 	defer bm.mu.Unlock()
 
-	if bm.isRunning {
+	if bm.isRunning || bm.isStopping {
 		return fmt.Errorf("block monitor is already running")
 	}
-
-	bm.isRunning = true
-	bm.stopChan = make(chan bool)
 
 	// Create blocks directory
 	if err := os.MkdirAll(bm.blocksDir, 0755); err != nil {
@@ -311,12 +330,17 @@ func (bm *BlockMonitor) Start() error {
 	}
 	log.Printf("Starting block monitor (%s mode) with %s interval, bitcoinAPI set: %v", mode, bm.checkInterval, bm.bitcoinAPI != nil)
 
-	go bm.monitorLoop()
+	bm.isRunning = true
+	bm.stopChan = make(chan struct{})
+	stopChan := bm.stopChan
+	bm.wg.Add(1)
+	go bm.monitorLoop(stopChan)
 	// Only start the reconcile sweep goroutine when we actually use periodic
 	// recent-block healing (disabled in the default tip-only mode to avoid
 	// parking an idle goroutine forever on stopChan).
 	if !monitorTrackTipOnly() && monitorRecentReconcileWindow() > 0 {
-		go bm.reconcileSweepLoop()
+		bm.wg.Add(1)
+		go bm.reconcileSweepLoop(stopChan)
 	} else {
 		log.Printf("block monitor: periodic reconcile sweep disabled (tip-only tracking)")
 	}
@@ -325,8 +349,31 @@ func (bm *BlockMonitor) Start() error {
 }
 
 // Stop stops the block monitoring process
+func (bm *BlockMonitor) Stop() {
+	bm.mu.Lock()
+	if !bm.isRunning {
+		bm.mu.Unlock()
+		return
+	}
+	bm.isRunning = false
+	bm.isStopping = true
+	close(bm.stopChan)
+	bm.mu.Unlock()
+
+	bm.wg.Wait()
+
+	bm.mu.Lock()
+	bm.isStopping = false
+	bm.stopChan = nil
+	bm.mu.Unlock()
+}
 
 // IsRunning returns whether the monitor is currently running
+func (bm *BlockMonitor) IsRunning() bool {
+	bm.mu.RLock()
+	defer bm.mu.RUnlock()
+	return bm.isRunning
+}
 
 // GetStatistics returns current monitoring statistics
 func (bm *BlockMonitor) GetStatistics() map[string]any {

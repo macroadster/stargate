@@ -1,5 +1,7 @@
 # Epic: Fix Ingestion Duplication and Visible Pixel Hash Mismatch
 
+Status: **historical**. Identity is ADR 0003 (`core/identity`). See [README.md](./README.md).
+
 ## Context
 The project supports multiple ingestion methods (MCP, REST, IPFS). Currently, these methods can create feedback loops where the same contract/image is ingested multiple times as different entities. This leads to:
 1.  **Duplicate Proposals:** Clones of the same contract.

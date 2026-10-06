@@ -1,5 +1,7 @@
 # Stargate MCP Server — Build Plan & MVP Spec
 
+Status: **historical**. Superseded by `docs/arch/MCP_UNIFIED_PLAN.md`. `/mcp/v1` is not the live namespace.
+
 ## Why & Alignment
 - Implements the coordination layer from `ENGINEERING_ROADMAP.md`: task registry, claim coordination, submission intake, and Merkle-proof surfacing for Starlight evidence flows.
 - Serves Model Context Protocol (MCP) clients so AIs can discover, verify, claim, and submit tasks without trusting the server (clients must re-verify on-chain).

@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"stargate-backend/core/smart_contract"
-       "stargate-backend/storage/datadir"
+	"stargate-backend/storage/datadir"
 	scstore "stargate-backend/storage/smart_contract"
 )
 
@@ -194,7 +194,7 @@ func TestWorkerPerformWork_Basic(t *testing.T) {
 		t.Error("expected notes to contain task title")
 	}
 
-       dir := datadir.PartPath(filepath.Join(tmp, "results"), "test-hash")
+	dir := datadir.PartPath(filepath.Join(tmp, "results"), "test-hash")
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
 		t.Errorf("results directory not created: %s", dir)
 	}
@@ -202,6 +202,38 @@ func TestWorkerPerformWork_Basic(t *testing.T) {
 	reportPath := filepath.Join(dir, "task-perform-1.md")
 	if _, err := os.Stat(reportPath); os.IsNotExist(err) {
 		t.Errorf("report file not found: %s", reportPath)
+	}
+}
+
+func TestWorkerPerformWork_ContractPrefixUsesBareHash(t *testing.T) {
+	hash := "41a974b813b024a3817c9c99b5406cc5131a00406c76a4e01fd7519974ccfb40"
+	store := scstore.NewMemoryStore(0)
+	cfg := DefaultConfig()
+	tmp := t.TempDir()
+	cfg.UploadsDir = tmp
+
+	w := NewWorker(cfg, store, NewStubExecutor(tmp))
+	w.state = NewFileState("")
+
+	task := smart_contract.Task{
+		TaskID:     hash + "-task-1",
+		ContractID: "contract-" + hash,
+		Title:      "Comprehensive Implementation",
+		Status:     "available",
+		MerkleProof: &smart_contract.MerkleProof{
+			VisiblePixelHash: hash,
+		},
+	}
+	if result := w.performWork(task); result == nil {
+		t.Fatal("performWork returned nil")
+	}
+	dir := datadir.PartPath(filepath.Join(tmp, "results"), hash)
+	if _, err := os.Stat(filepath.Join(dir, task.TaskID+".md")); err != nil {
+		t.Fatalf("report not at bare hash path %s: %v", dir, err)
+	}
+	bad := datadir.PartPath(filepath.Join(tmp, "results"), "contract-"+hash)
+	if _, err := os.Stat(bad); err == nil {
+		t.Fatalf("wrote contract-prefixed tree %s", bad)
 	}
 }
 

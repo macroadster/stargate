@@ -1,5 +1,7 @@
 # Image decode security audit (2026-08-03)
 
+Status: **historical**.
+
 ## Context
 
 `POST /bitcoin/v1/extract` returned HTTP 500 for an inscription image in block

@@ -24,7 +24,7 @@ type Orchestrator struct {
 	mu      sync.Mutex
 	running bool
 	cancel  context.CancelFunc
-	wg      sync.WaitGroup
+	done    chan struct{}
 }
 
 // NewOrchestrator constructs an orchestrator. If executor is nil, a StubExecutor is used.
@@ -57,18 +57,39 @@ func (o *Orchestrator) Start(ctx context.Context) {
 	o.running = true
 	ctx, cancel := context.WithCancel(ctx)
 	o.cancel = cancel
+	done := make(chan struct{})
+	o.done = done
 	o.mu.Unlock()
 
-	o.wg.Add(1)
-	go o.run(ctx)
+	go o.run(ctx, done)
 	log.Printf("agents: orchestrator started (watcher=%v worker=%v ai=%s poll=%s)",
 		o.cfg.WatcherEnabled, o.cfg.WorkerEnabled, o.cfg.AIIdentifier, o.cfg.PollInterval)
 }
 
 // Stop requests graceful shutdown and waits for the loop to exit.
+func (o *Orchestrator) Stop() {
+	o.mu.Lock()
+	cancel := o.cancel
+	done := o.done
+	o.mu.Unlock()
 
-func (o *Orchestrator) run(ctx context.Context) {
-	defer o.wg.Done()
+	if cancel != nil {
+		cancel()
+	}
+	if done != nil {
+		<-done
+	}
+}
+
+func (o *Orchestrator) run(ctx context.Context, done chan struct{}) {
+	defer func() {
+		o.mu.Lock()
+		o.running = false
+		o.cancel = nil
+		o.done = nil
+		close(done)
+		o.mu.Unlock()
+	}()
 
 	cycle := 0
 	maxCycles := o.cfg.MaxCycles
@@ -134,3 +155,8 @@ func (o *Orchestrator) run(ctx context.Context) {
 }
 
 // IsRunning reports whether the loop is active.
+func (o *Orchestrator) IsRunning() bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.running
+}

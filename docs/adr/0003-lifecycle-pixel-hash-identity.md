@@ -13,17 +13,17 @@ Starlight maps human wishes (inscriptions / stego images) to AI proposals and on
 
 ### Identity
 
-**The 64-character hex *visible pixel hash* (VPH) is the stable join key** across domains.
+**The 64-character hex *visible pixel hash* (VPH) is the stable join key and the stored contract primary key.** Open vs confirmed is `status`, not an ID rename. `wish-<vph>` is accepted on input as a lookup alias only (`core/identity.CandidateIDs`).
 
 | Object | Canonical ID / fields |
 | --- | --- |
-| Wish (open contract) | `ContractID = wish-<vph>` via `core/identity.ToWishID` |
+| Wish / contract | `ContractID = <vph>` via `core/identity.CanonicalContractID` |
 | Proposal | `id` (opaque) + required `VisiblePixelHash` / metadata |
 | Ingestion | record id and/or `metadata.visible_pixel_hash` |
 | Stego manifest | `visible_pixel_hash`, `proposal_id` |
 | Task funding proof | `VisiblePixelHash` (wish/commitment), optional `ProductPixelHash` (delivery stego) |
 
-Helpers: package **`stargate-backend/core/identity`** (`CandidateIDs`, `Normalize`, `IsPixelHash`). Prefer them over ad-hoc `wish-` string rules.
+Helpers: package **`stargate-backend/core/identity`** (`CanonicalContractID`, `CandidateIDs`, `Normalize`, `IsPixelHash`). Prefer them over ad-hoc `wish-` string rules. `ToWishID` remains for alias generation.
 
 ### Lifecycle (happy path)
 
@@ -45,7 +45,8 @@ Statuses are stringly typed in storage today (`pending`, `approved`, `published`
 
 **Negative / trade-offs**
 
-- Legacy rows may use non-wish contract IDs; resolvers must try `identity.CandidateIDs`
+- Legacy rows may still use `wish-<vph>`; resolvers must try `identity.CandidateIDs` and pick the live row
+- A later publish/confirm that finds only `wish-<vph>` adopts that row onto the bare PK
 - Renaming VPH after creation is unsupported (identity immutable)
 
 ## Related

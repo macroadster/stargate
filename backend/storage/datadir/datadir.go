@@ -52,6 +52,25 @@ func IsHexHash(s string) bool {
 // isHexHash is kept as an unexported alias for call sites inside this package.
 func isHexHash(s string) bool { return IsHexHash(s) }
 
+// canonicalResultsKey maps a results directory name to a 64-hex hash.
+// The bare hash, wish-<hash>, and contract-<hash> are the same key.
+// Other names are not results keys.
+func canonicalResultsKey(key string) (string, bool) {
+	key = strings.TrimSpace(key)
+	if isHexHash(key) {
+		return strings.ToLower(key), true
+	}
+	for _, prefix := range []string{"wish-", "contract-"} {
+		if len(key) > len(prefix) && strings.EqualFold(key[:len(prefix)], prefix) {
+			rest := key[len(prefix):]
+			if isHexHash(rest) {
+				return strings.ToLower(rest), true
+			}
+		}
+	}
+	return "", false
+}
+
 // PartPrefix returns the three-level directory prefix for a key,
 // e.g. "ab/cd/ef" for key "abcdef…". Returns ("", false) when key
 // is shorter than 6 characters.
@@ -117,8 +136,8 @@ func ResolveUploadRelPath(uploadsDir, relPath string) string {
 		} else {
 			key = after
 		}
-		if isHexHash(key) {
-			resolved := PartResolve(filepath.Join(uploadsDir, "results"), key)
+		if canon, ok := canonicalResultsKey(key); ok {
+			resolved := PartResolve(filepath.Join(uploadsDir, "results"), canon)
 			if rest != "" {
 				return filepath.Join(resolved, rest)
 			}
@@ -215,4 +234,57 @@ func MigrateUploads(base string) error {
 
 	log.Printf("partition: migrated %d entries under %s", moved, base)
 	return os.WriteFile(marker, []byte("migrated\n"), 0644)
+}
+
+// MigrateContractPrefixResults moves results/co/nt/ra/contract-<64-hex>/ to
+// results/ab/cd/ef/<hash>/. Publish used to store the wish id as
+// "contract-"+pixel hash, and submit_work sharded that string, so the first
+// six characters were always co/nt/ra. The HTTP reader only partitions a
+// 64-hex key, so those files were unreachable at /sandbox/<hash>/.
+//
+// Directories whose names are not contract- plus a pixel hash stay put.
+// A destination that already exists is left alone. Safe to call on every start.
+func MigrateContractPrefixResults(base string) error {
+	base = filepath.Clean(base)
+	if base == "" {
+		return nil
+	}
+	badRoot := filepath.Join(base, "results", "co", "nt", "ra")
+	entries, err := os.ReadDir(badRoot)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read contract-prefix results: %w", err)
+	}
+	const prefix = "contract-"
+	moved := 0
+	for _, e := range entries {
+		name := e.Name()
+		if !e.IsDir() || !strings.HasPrefix(name, prefix) {
+			continue
+		}
+		hash := strings.ToLower(name[len(prefix):])
+		if !isHexHash(hash) {
+			continue
+		}
+		src := filepath.Join(badRoot, name)
+		dst := PartPath(filepath.Join(base, "results"), hash)
+		if _, err := os.Stat(dst); err == nil {
+			log.Printf("partition: left %s in place; %s already exists", src, dst)
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+			return fmt.Errorf("mkdir partition for %s: %w", hash, err)
+		}
+		if err := os.Rename(src, dst); err != nil {
+			return fmt.Errorf("rename %s: %w", src, err)
+		}
+		log.Printf("partition: moved results/%s to %s", name, dst)
+		moved++
+	}
+	if moved > 0 {
+		log.Printf("partition: relocated %d contract-prefixed result directories under %s", moved, base)
+	}
+	return nil
 }

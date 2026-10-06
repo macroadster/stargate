@@ -24,6 +24,7 @@ import (
 	_ "golang.org/x/image/webp"
 
 	scmiddleware "stargate-backend/app/smart_contract"
+	"stargate-backend/core/identity"
 	sc "stargate-backend/core/smart_contract"
 	"stargate-backend/models"
 	"stargate-backend/security"
@@ -32,6 +33,7 @@ import (
 	auth "stargate-backend/storage/auth"
 	"stargate-backend/storage/datadir"
 	"stargate-backend/storage/ipfs"
+	storageSC "stargate-backend/storage/smart_contract"
 )
 
 // InscriptionHandler handles inscription-related requests
@@ -230,11 +232,7 @@ func stripWishTimestamp(message string) string {
 }
 
 func wishContractID(visibleHash string) string {
-	visibleHash = strings.TrimSpace(visibleHash)
-	if visibleHash == "" {
-		return ""
-	}
-	return "wish-" + visibleHash
+	return identity.CanonicalContractID(visibleHash)
 }
 
 func baseContractID(contractID string) string {
@@ -478,9 +476,6 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 		proxyURL := fmt.Sprintf("%s/inscribe", strings.TrimRight(h.proxyBase, "/"))
 		proxyReq, _ := http.NewRequest(http.MethodPost, proxyURL, &buf)
 		proxyReq.Header.Set("Content-Type", writer.FormDataContentType())
-		if apiKey := os.Getenv("STARGATE_API_KEY"); apiKey != "" {
-			proxyReq.Header.Set("Authorization", "Bearer "+apiKey)
-		}
 
 		resp, err := http.DefaultClient.Do(proxyReq)
 		if err != nil {
@@ -666,10 +661,12 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 				Status:           "pending",
 				CreatedAt:        time.Now(),
 				Metadata: map[string]any{
-					"funding_mode":   fundingMode,
-					"address":        address,
-					"price_unit":     priceUnit,
-					"creator_wallet": creatorWallet,
+					"funding_mode":       fundingMode,
+					"address":            address,
+					"price_unit":         priceUnit,
+					"creator_wallet":     creatorWallet,
+					"contract_id":        ingestionID,
+					"visible_pixel_hash": ingestionID,
 				},
 			}
 
@@ -679,7 +676,7 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 		}
 
 		wishContract := sc.Contract{
-			ContractID:      "wish-" + ingestionID,
+			ContractID:      identity.CanonicalContractID(ingestionID),
 			Title:           proposalTitle,
 			TotalBudgetSats: parsePriceSats(price),
 			GoalsCount:      0,
@@ -701,8 +698,106 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 		"id":                 ingestionID,
 		"ingestion_id":       ingestionID,
 		"visible_pixel_hash": ingestionID,
+		"creator_message":    stego.WishCreatorMessage(ingestionID),
 	})
 	return
+}
+
+// HandleInscription dispatches authenticated /api/inscriptions/{id} routes.
+func (h *InscriptionHandler) HandleInscription(w http.ResponseWriter, r *http.Request) {
+	rest := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/inscriptions/"), "/")
+	if rest == "" {
+		h.sendError(w, http.StatusNotFound, "Missing ID")
+		return
+	}
+	if strings.HasSuffix(rest, "/attest") {
+		if r.Method != http.MethodPost {
+			h.sendError(w, http.StatusMethodNotAllowed, "Method not allowed")
+			return
+		}
+		id := strings.Trim(strings.TrimSuffix(rest, "/attest"), "/")
+		h.HandleCreatorAttest(w, r, id)
+		return
+	}
+	if r.Method == http.MethodDelete {
+		h.HandleDeleteInscription(w, r)
+		return
+	}
+	h.sendError(w, http.StatusMethodNotAllowed, "Method not allowed")
+}
+
+// HandleCreatorAttest records a Bitcoin signature over the wish hash by the
+// API key's bound wallet. The signature is stored locally and later embedded
+// as first-class stego fields so replicas can verify authorship.
+func (h *InscriptionHandler) HandleCreatorAttest(w http.ResponseWriter, r *http.Request, id string) {
+	visibleHash := strings.TrimPrefix(strings.TrimSpace(id), "wish-")
+	if visibleHash == "" {
+		h.sendError(w, http.StatusBadRequest, "Missing ID")
+		return
+	}
+	if h.ingestionService == nil {
+		h.sendError(w, http.StatusServiceUnavailable, "ingestion service unavailable")
+		return
+	}
+
+	var body struct {
+		Signature string `json:"signature"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		h.sendError(w, http.StatusBadRequest, "Invalid JSON")
+		return
+	}
+	sig := strings.TrimSpace(body.Signature)
+	if sig == "" {
+		h.sendError(w, http.StatusBadRequest, "signature is required")
+		return
+	}
+
+	apiKey := auth.RequestAPIKey(r)
+	var wallet string
+	if apiKey != "" && h.apiKeyValidator != nil {
+		if rec, ok := h.apiKeyValidator.Get(apiKey); ok {
+			wallet = strings.TrimSpace(rec.Wallet)
+		}
+	}
+	if wallet == "" {
+		h.sendError(w, http.StatusForbidden, "api key with wallet binding required")
+		return
+	}
+
+	rec, err := h.ingestionService.Get(visibleHash)
+	if err != nil || rec == nil {
+		h.sendError(w, http.StatusNotFound, "Inscription not found")
+		return
+	}
+	if existing, ok := rec.Metadata["creator_wallet"].(string); ok {
+		if existing = strings.TrimSpace(existing); existing != "" && !strings.EqualFold(existing, wallet) {
+			h.sendError(w, http.StatusForbidden, "only the wish creator can attest this wish")
+			return
+		}
+	}
+
+	if err := scmiddleware.VerifyCreatorAttestation(wallet, sig, visibleHash); err != nil {
+		h.sendError(w, http.StatusForbidden, "invalid creator signature")
+		return
+	}
+
+	if err := h.ingestionService.UpdateMetadata(visibleHash, map[string]interface{}{
+		"creator_sig": sig,
+	}); err != nil {
+		h.sendError(w, http.StatusInternalServerError, "failed to store creator signature")
+		return
+	}
+	if err := h.ingestionService.SetCreatorWalletIfAbsent(visibleHash, wallet); err != nil {
+		h.sendError(w, http.StatusInternalServerError, "failed to record creator wallet")
+		return
+	}
+
+	h.sendSuccess(w, map[string]string{
+		"status":             "attested",
+		"visible_pixel_hash": visibleHash,
+		"creator_wallet":     wallet,
+	})
 }
 
 // HandleDeleteInscription handles deleting an inscription and its associated wish
@@ -742,7 +837,7 @@ func (h *InscriptionHandler) HandleDeleteInscription(w http.ResponseWriter, r *h
 		// Verify ownership
 		if creatorWallet, ok := rec.Metadata["creator_wallet"].(string); ok && creatorWallet != "" {
 			if requesterWallet == "" || !strings.EqualFold(strings.TrimSpace(creatorWallet), requesterWallet) {
-				// Special case: check global auditor status (donation address)
+				// Donation-wallet settlement: same rule as WishCreatorAuthorizer.isDonationWallet.
 				donationAddr := strings.TrimSpace(os.Getenv("STARLIGHT_DONATION_ADDRESS"))
 				if donationAddr == "" || !strings.EqualFold(requesterWallet, donationAddr) {
 					h.sendError(w, http.StatusForbidden, "Only the wish creator or an authorized auditor can delete this wish")
@@ -770,8 +865,7 @@ func (h *InscriptionHandler) HandleDeleteInscription(w http.ResponseWriter, r *h
 	// 2. Delete from MCP store (cascading delete)
 	if h.store != nil {
 		// Double check status in contract store
-		wishID := wishContractID(visibleHash)
-		if contract, err := h.store.GetContract(wishID); err == nil {
+		if contract, err := storageSC.LookupContract(h.store, visibleHash); err == nil {
 			if !isPendingContractStatus(contract.Status) {
 				h.sendError(w, http.StatusForbidden, fmt.Sprintf("Cannot delete a contract with status '%s'", contract.Status))
 				return
@@ -808,10 +902,10 @@ func normalizeBlockImageURL(imageURL string) string {
 		return imageURL
 	}
 	height, file := parts[0], parts[1]
-	// Strip a single wish- prefix from the file key.
-	if strings.HasPrefix(file, "wish-") {
-		file = strings.TrimPrefix(file, "wish-")
-		return prefix + height + "/" + file
+	// On-disk keys are the bare visible pixel hash. wish-<hash> and
+	// contract-<hash> are aliases of that file.
+	if n := identity.CanonicalContractID(file); identity.IsPixelHash(n) && n != file {
+		return prefix + height + "/" + n
 	}
 	return imageURL
 }
@@ -862,18 +956,31 @@ func contractToInscriptionRequest(contract sc.Contract) models.InscriptionReques
 		}
 	}
 
+	id := contract.ContractID
+	visible := ""
+	if n := identity.CanonicalContractID(contract.ContractID); identity.IsPixelHash(n) {
+		visible = n
+		// Quantum Shell (confirmed sandbox) only paints a pending wish whose
+		// id starts with wish-. Storage stays the bare hash; this is the list alias.
+		// contract-<64-hex> is the same wish, so it uses that alias too.
+		if !strings.HasPrefix(contract.ContractID, "wish-") {
+			id = "wish-" + visible
+		}
+	}
+
 	return models.InscriptionRequest{
-		ID:              contract.ContractID,
-		TXID:            txID,
-		Text:            contract.Title,
-		ImageData:       imageURL,
-		Price:           float64(contract.TotalBudgetSats) / 1e8,
-		Address:         "", // No address in contract model
-		Timestamp:       timestamp,
-		Status:          contract.Status,
-		BlockHeight:     height,
-		TotalBudgetSats: contract.TotalBudgetSats,
-		AvailableTasks:  contract.AvailableTasksCount,
+		ID:               id,
+		TXID:             txID,
+		Text:             contract.Title,
+		ImageData:        imageURL,
+		Price:            float64(contract.TotalBudgetSats) / 1e8,
+		Address:          "", // No address in contract model
+		Timestamp:        timestamp,
+		Status:           contract.Status,
+		BlockHeight:      height,
+		VisiblePixelHash: visible,
+		TotalBudgetSats:  contract.TotalBudgetSats,
+		AvailableTasks:   contract.AvailableTasksCount,
 	}
 }
 

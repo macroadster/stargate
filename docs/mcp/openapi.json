@@ -3,7 +3,7 @@
   "info": {
     "title": "Starlight MCP API",
     "version": "1.0.0",
-    "description": "HTTP surface shared by UI and MCP tools"
+    "description": "HTTP surface shared by UI and MCP tools. Default network testnet4. Claim TTL 1 hour. Live tool list: GET /mcp/tools. Retired aliases (/api/blocks, /api/smart-contracts, /api/contract-stego) are not in this spec — see GET /api/surfaces."
   },
   "servers": [{"url": "/api"}],
   "paths": {

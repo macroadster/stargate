@@ -5,7 +5,7 @@ import MarkdownContent from '../Common/MarkdownContent';
 import SafeQrCodeCanvas from '../Common/SafeQrCodeCanvas';
 import DeliverablesReview from '../Review/DeliverablesReview';
 import { apiFetch } from '../../utils/api';
-import { QR_BYTE_LIMIT } from './inscriptionUtils';
+import { QR_BYTE_LIMIT, isPlaceholderAddress, normalizeAddress } from './inscriptionUtils';
 import { useInscriptionModalState } from './useInscriptionModalState';
 
 const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
@@ -43,11 +43,11 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
             <div className="flex-shrink-0">
               {pixelHash ? (
                 <a 
-                  href={`/sandbox/${pixelHash}`}
+                  href={`/sandbox/${pixelHash}/`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="block hover:opacity-80 transition-opacity cursor-pointer"
-                  title="View details in separate page"
+                  title="Sandbox files (empty until this node confirms the funding tx)"
                 >
                   {modalImageSource ? (
                     <div className="relative">

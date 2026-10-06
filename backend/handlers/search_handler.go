@@ -14,11 +14,13 @@ import (
 	_ "golang.org/x/image/bmp"
 	_ "golang.org/x/image/webp"
 
-	sc "stargate-backend/core/smart_contract"
 	scmiddleware "stargate-backend/app/smart_contract"
+	"stargate-backend/core/identity"
+	sc "stargate-backend/core/smart_contract"
 	"stargate-backend/models"
 	"stargate-backend/services"
 	"stargate-backend/storage"
+	storageSC "stargate-backend/storage/smart_contract"
 )
 
 // SearchHandler handles search requests
@@ -380,22 +382,32 @@ func (h *SearchHandler) searchData(query string) models.SearchResult {
 		}
 	}
 
-	// Search contracts from Store
+	// Search contracts from Store. Include settlement txids so a paste of
+	// confirmed_txid / funding_txid (e.g. f3549ce6…) finds the wish, not just
+	// title / contract_id. Prefix match lets a short explorer prefix work.
 	if h.store != nil {
 		contractList, err := h.store.ListContracts(sc.ContractFilter{})
 		if err == nil {
+			contractList = storageSC.CollapsePixelHashTwins(contractList)
 			for _, c := range contractList {
-				if matchesQuery(c.ContractID, c.Title, strings.Join(c.Skills, " ")) {
+				if contractMatchesQuery(q, c) {
 					blockHeight := int64(0)
 					if c.ConfirmedBlockHeight != nil {
 						blockHeight = int64(*c.ConfirmedBlockHeight)
 					}
-					// Extract visible_pixel_hash from contract_id (format: wish-{hash})
 					visibleHash := ""
-					if strings.HasPrefix(c.ContractID, "wish-") {
+					displayID := c.ContractID
+					if n := identity.CanonicalContractID(c.ContractID); identity.IsPixelHash(n) {
+						visibleHash = n
+						// Search cards show the stored id. contract-<hash> is the
+						// same wish as the bare hash; wish- stays a list alias.
+						if len(c.ContractID) > len("contract-") && strings.EqualFold(c.ContractID[:len("contract-")], "contract-") {
+							displayID = n
+						}
+					} else if strings.HasPrefix(c.ContractID, "wish-") {
 						visibleHash = strings.TrimPrefix(c.ContractID, "wish-")
 					}
-					addContract(c.ContractID, blockHeight, c.StegoImageURL, "Smart Contract", visibleHash, c.Metadata, c.Title, c.TotalBudgetSats, c.Status, c.ConfirmedBlockHeight)
+					addContract(displayID, blockHeight, c.StegoImageURL, "Smart Contract", visibleHash, c.Metadata, c.Title, c.TotalBudgetSats, c.Status, c.ConfirmedBlockHeight)
 				}
 			}
 		}
@@ -417,4 +429,47 @@ func (h *SearchHandler) searchData(query string) models.SearchResult {
 		Contracts:    contracts,
 		Proposals:    proposals,
 	}
+}
+
+// contractMatchesQuery reports whether a store contract should appear for q.
+// Confirmed settlement lives on metadata.confirmed_txid (and funding_txid);
+// title/id-only search misses a paste from the explorer.
+func contractMatchesQuery(q string, c sc.Contract) bool {
+	if strings.TrimSpace(q) == "" {
+		return true
+	}
+	values := []string{c.ContractID, c.Title, strings.Join(c.Skills, " ")}
+	if strings.HasPrefix(c.ContractID, "wish-") {
+		values = append(values, strings.TrimPrefix(c.ContractID, "wish-"))
+	}
+	if c.Metadata != nil {
+		for _, key := range []string{"confirmed_txid", "funding_txid", "tx_id", "visible_pixel_hash"} {
+			if v, ok := c.Metadata[key]; ok && v != nil {
+				values = append(values, strings.TrimSpace(fmt.Sprintf("%v", v)))
+			}
+		}
+		switch v := c.Metadata["funding_txids"].(type) {
+		case []string:
+			values = append(values, v...)
+		case []any:
+			for _, item := range v {
+				if s, ok := item.(string); ok {
+					values = append(values, s)
+				}
+			}
+		case string:
+			values = append(values, v)
+		}
+	}
+	ql := strings.ToLower(strings.TrimSpace(q))
+	for _, v := range values {
+		if v == "" {
+			continue
+		}
+		vl := strings.ToLower(v)
+		if strings.Contains(vl, ql) || strings.HasPrefix(vl, ql) {
+			return true
+		}
+	}
+	return false
 }

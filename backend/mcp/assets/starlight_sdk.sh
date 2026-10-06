@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-MCP_BASE=${MCP_BASE:-{{MCP_BASE}}}
-STARGATE_BASE=${STARGATE_BASE:-{{BASE_URL}}}
+MCP_BASE=${MCP_BASE:-"{{MCP_BASE}}"}
+STARGATE_BASE=${STARGATE_BASE:-"{{BASE_URL}}"}
+STARLIGHT_TIMEOUT=${STARLIGHT_TIMEOUT:-120}
+STARLIGHT_INSECURE=${STARLIGHT_INSECURE:-0}
 
 usage() {
   cat <<'EOF'
 Usage:
-  starlight_sdk.sh create-wish --api-key KEY --message TEXT [options]
-  starlight_sdk.sh submit-work --api-key KEY --claim-id ID --notes TEXT [options]
-  starlight_sdk.sh call --api-key KEY --tool TOOL [--args-json JSON]
+  starlight_sdk.sh create-wish [--api-key KEY] --message TEXT [options]
+  starlight_sdk.sh submit-work [--api-key KEY] --claim-id ID --notes TEXT [options]
+  starlight_sdk.sh call [--api-key KEY] --tool TOOL [--args-json JSON]
 
 Commands:
   create-wish
@@ -44,6 +46,13 @@ Commands:
 Environment:
   MCP_BASE={{MCP_BASE}}
   STARGATE_BASE={{BASE_URL}}
+  STARLIGHT_API_KEY    used when --api-key is omitted (keeps the key out of ps and shell history)
+  STARLIGHT_TIMEOUT    max seconds per request (default 120)
+  STARLIGHT_INSECURE=1 skip TLS certificate checks (self-signed dev clusters only)
+
+The response body is always printed. Exit status is 1 when the response has "success": false
+(tool errors, including a bad API key, come back as HTTP 200), and curl's code on HTTP or
+network errors.
 
 Examples:
   ./scripts/starlight_sdk.sh create-wish \
@@ -116,18 +125,40 @@ call_mcp() {
   local tool=$2
   local args_json=$3
 
-  # Use a pipe and curl -d @- to avoid ARG_MAX issues with large payloads
-  jq -n --arg tool "$tool" --slurpfile args <(printf "%s" "$args_json") \
+  local -a curl_opts=(-sS --fail-with-body --max-time "$STARLIGHT_TIMEOUT")
+  if [[ "$STARLIGHT_INSECURE" == "1" ]]; then
+    echo "WARNING: STARLIGHT_INSECURE=1, TLS certificate checks are disabled" >&2
+    curl_opts+=(-k)
+  fi
+
+  # Use a pipe and curl -d @- to avoid ARG_MAX issues with large payloads.
+  # The key goes through a header file so it never appears in curl's argv.
+  local resp rc=0
+  resp=$(jq -n --arg tool "$tool" --slurpfile args <(printf "%s" "$args_json") \
     '{tool: $tool, arguments: $args[0]}' | \
-  curl -sk \
-    -H "X-API-Key: ${api_key}" \
+  curl "${curl_opts[@]}" \
+    -H @<(printf 'X-API-Key: %s\n' "$api_key") \
     -H "Content-Type: application/json" \
     "${MCP_BASE}/call" \
-    -d @-
+    -d @-) || rc=$?
+  [[ -z "$resp" ]] || printf '%s\n' "$resp"
+  [[ $rc -eq 0 ]] || return "$rc"
+
+  if ! jq -e 'type == "object"' >/dev/null 2>&1 <<<"$resp"; then
+    echo "ERROR: ${tool} returned a non-JSON response" >&2
+    return 1
+  fi
+  # /mcp/call reports tool failures (including a bad API key) as HTTP 200 with success=false.
+  if jq -e '.success == false' >/dev/null <<<"$resp"; then
+    local code
+    code=$(jq -r '.error_code // .code // "unknown"' <<<"$resp" 2>/dev/null || true)
+    echo "ERROR: ${tool} failed (${code})" >&2
+    return 1
+  fi
 }
 
 create_wish() {
-  local api_key="" message="" message_file="" image="" price="" price_unit="" funding_mode="" address=""
+  local api_key="${STARLIGHT_API_KEY:-}" message="" message_file="" image="" price="" price_unit="" funding_mode="" address=""
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -144,7 +175,7 @@ create_wish() {
     esac
   done
 
-  [[ -n "$api_key" ]] || fail "--api-key is required"
+  [[ -n "$api_key" ]] || fail "--api-key or STARLIGHT_API_KEY is required"
   
   local args_json
   if [[ -n "$message_file" ]]; then
@@ -175,7 +206,7 @@ create_wish() {
 }
 
 submit_work() {
-  local api_key="" claim_id="" notes="" notes_file="" artifact_root=""
+  local api_key="${STARLIGHT_API_KEY:-}" claim_id="" notes="" notes_file="" artifact_root=""
   local -a artifacts=()
 
   while [[ $# -gt 0 ]]; do
@@ -191,7 +222,7 @@ submit_work() {
     esac
   done
 
-  [[ -n "$api_key" ]] || fail "--api-key is required"
+  [[ -n "$api_key" ]] || fail "--api-key or STARLIGHT_API_KEY is required"
   [[ -n "$claim_id" ]] || fail "--claim-id is required"
   
   local deliverables_json
@@ -227,7 +258,7 @@ submit_work() {
 }
 
 generic_call() {
-  local api_key="" tool="" args_json="{}"
+  local api_key="${STARLIGHT_API_KEY:-}" tool="" args_json="{}"
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -239,7 +270,7 @@ generic_call() {
     esac
   done
 
-  [[ -n "$api_key" ]] || fail "--api-key is required"
+  [[ -n "$api_key" ]] || fail "--api-key or STARLIGHT_API_KEY is required"
   [[ -n "$tool" ]] || fail "--tool is required"
   call_mcp "$api_key" "$tool" "$args_json"
 }
@@ -248,6 +279,8 @@ main() {
   require_cmd curl
   require_cmd jq
   require_cmd base64
+  # Placeholders are only filled in when the server serves this file; the repo copy needs MCP_BASE.
+  [[ "$MCP_BASE" != *"{{"* ]] || fail "MCP_BASE is not set (e.g. export MCP_BASE=https://starlight.local/mcp)"
 
   local cmd=${1:-}
   [[ -n "$cmd" ]] || { usage; exit 1; }

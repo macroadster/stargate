@@ -1,5 +1,7 @@
 # MCP Documentation Endpoint Public Access
 
+Status: **implemented**. Discovery docs (`/mcp/docs`, `/mcp/SKILL.md`, `/mcp/tools`, `/mcp/openapi.json`) stay unauthenticated; write tools on `/mcp/call` still require a key. See ADR 0005 and [arch/MCP_UNIFIED_PLAN.md](./arch/MCP_UNIFIED_PLAN.md).
+
 ## Changes Made
 
 The `/mcp/docs` and `/mcp/openapi.json` endpoints are now publicly accessible without requiring an API key.

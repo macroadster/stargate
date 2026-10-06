@@ -50,6 +50,8 @@ const defaultStarlightBootstrap = "starlight-ai.freemyip.com"
 // They are ONLY used when explicitly requested via IPFS_EMBEDDED_BOOTSTRAP=public
 // (or IPFS_JOIN_PUBLIC_IPFS=true). Joining the public DHT by default burns
 // multi-core CPU on continuous peer discovery, dialing, bitswap queues, and GC.
+// Public Amino is also the GO-2024-3218 (CVE-2023-26248) surface: kad-dht still
+// has no patched release. Default mesh stays client-mode + Starlight bootstrap.
 //
 // Note: the full AllKeysChan reprovider is intentionally kept disabled
 // because at 20k+ data blocks the periodic blockstore scan causes heavy
@@ -77,6 +79,7 @@ type EmbeddedNode struct {
 	reprovider provider.System
 	topics     map[string]*pubsub.Topic
 	topicsMu   sync.RWMutex
+	closeOnce  sync.Once
 }
 
 // DHT mode strings accepted by NodeConfig.DHTMode / IPFS_DHT_MODE.
@@ -248,7 +251,14 @@ func NewEmbeddedNode(ctx context.Context, cfg NodeConfig) (*EmbeddedNode, error)
 		libp2p.ListenAddrStrings(cfg.ListenAddrs...),
 		libp2p.ConnectionManager(cm),
 		libp2p.Routing(func(h host.Host) (routing.PeerRouting, error) {
-			idht, err = dht.New(nodeCtx, h, dht.Mode(dhtMode))
+			// v0.42 dropped the constructor context: the DHT runs until Close().
+			// Diversity filter is the available Sybil crowding mitigation
+			// (GO-2024-3218 still has no patched kad-dht release).
+			idht, err = dht.New(h,
+				dht.Mode(dhtMode),
+				dht.Datastore(dstore),
+				dht.RoutingTablePeerDiversityFilter(dht.NewRTPeerDiversityFilter(h, 2, 3)),
+			)
 			return idht, err
 		}),
 	}
@@ -610,21 +620,27 @@ func (n *EmbeddedNode) JoinedTopics() []string {
 	return out
 }
 
-// Close shuts down the embedded node
+// Close shuts down the embedded node. Safe to call more than once.
 func (n *EmbeddedNode) Close() error {
-	n.cancel()
-	if n.reprovider != nil {
-		n.reprovider.Close()
-	}
-	n.topicsMu.Lock()
-	for _, t := range n.topics {
-		t.Close()
-	}
-	n.topicsMu.Unlock()
-	n.host.Close()
-	if n.dstore != nil {
-		n.dstore.Close()
-	}
+	n.closeOnce.Do(func() {
+		n.cancel()
+		if n.reprovider != nil {
+			n.reprovider.Close()
+		}
+		n.topicsMu.Lock()
+		for _, t := range n.topics {
+			t.Close()
+		}
+		n.topicsMu.Unlock()
+		// v0.42 DHT lives until Close(); cancelling nodeCtx is not enough.
+		if n.dht != nil {
+			_ = n.dht.Close()
+		}
+		n.host.Close()
+		if n.dstore != nil {
+			n.dstore.Close()
+		}
+	})
 	return nil
 }
 

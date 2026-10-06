@@ -96,7 +96,7 @@ func (h *HTTPMCPServer) handleJSONRPCInitialize(w http.ResponseWriter, r *http.R
 			"name":    "starlight",
 			"version": "1.0.0",
 		},
-		"instructions": "Use tools/list to discover available tools and tools/call to invoke them. Provide Authorization: Bearer <key> or X-API-Key (same key as /api/auth/login and STARGATE_API_KEY).",
+		"instructions": "Use tools/list to discover available tools and tools/call to invoke them. Provide Authorization: Bearer <key> or X-API-Key (same key issued by POST /api/auth/challenge + /api/auth/verify).",
 	}
 	if sessionID != "" {
 		result["sessionId"] = sessionID // helpful for some clients

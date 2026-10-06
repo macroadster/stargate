@@ -44,7 +44,7 @@ type parsedPendingWish struct {
 	Schema    string // starlight-wish-v1 | plain
 }
 
-// ingestPendingWishFromImage writes pending ingestion + proposal + wish-<hash>
+// ingestPendingWishFromImage writes pending ingestion + proposal + bare-hash contract
 // when the staged image is a human wish. v2 product stego and YAML manifests
 // are left on disk only (block monitor applies those after on-chain confirm).
 //
@@ -153,7 +153,10 @@ func applyPendingWish(ctx context.Context, hash, cid string, blob []byte, wish p
 	if body == "" {
 		body = title
 	}
-	wishID := identity.ToWishID(hash)
+	wishID := identity.CanonicalContractID(hash)
+	if wishID == "" {
+		wishID = hash
+	}
 	createdAt := time.Now()
 	if rec, ok := ipfs.LookupWish(hash); ok && rec.CreatedAt > 0 {
 		createdAt = time.Unix(rec.CreatedAt, 0)

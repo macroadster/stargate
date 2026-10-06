@@ -73,6 +73,7 @@ var DefaultToolREST = map[string]string{
 	"reject_submission":     "POST /api/smart_contract/submissions/{id}/review",
 	"list_events":           "GET /api/smart_contract/events",
 	"build_psbt":            "POST /api/smart_contract/contracts/{id}/psbt",
+	"pull_sandbox":          "POST /api/smart_contract/contracts/{id}/sandbox/pull",
 	"scan_image":            "POST /bitcoin/v1/scan/image",
 	"scan_transaction":      "POST /bitcoin/v1/scan/transaction",
 	"get_scanner_info":      "GET /bitcoin/v1/info",

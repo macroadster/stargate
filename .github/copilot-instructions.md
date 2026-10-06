@@ -30,8 +30,8 @@ bd close <id> --reason "Done" --json
 bd list --status open --priority 1 --json
 bd show <id> --json
 
-# Sync (CRITICAL at end of session!)
-bd sync  # Force immediate export/commit/push
+# Export tracker state for git (do not bd sync — that command is not in bd 1.2.2)
+bd export -o .beads/issues.jsonl
 ```
 
 ### Workflow
@@ -41,7 +41,7 @@ bd sync  # Force immediate export/commit/push
 3. **Work on it**: Implement, test, document
 4. **Discover new work?** `bd create "Found bug" -p 1 --deps discovered-from:<parent-id> --json`
 5. **Complete**: `bd close <id> --reason "Done" --json`
-6. **Sync**: `bd sync` (flushes changes to git immediately)
+6. **Export**: `bd export -o .beads/issues.jsonl` and commit locally. Do not push unless asked.
 
 ### Priorities
 
@@ -54,8 +54,9 @@ bd sync  # Force immediate export/commit/push
 ### Git Workflow
 
 - Always commit `.beads/issues.jsonl` with code changes
-- Run `bd sync` at end of work sessions
-- Install git hooks: `bd hooks install` (ensures DB ↔ JSONL consistency)
+- Run `bd export -o .beads/issues.jsonl` at end of work sessions
+- Do not `git push` unless the maintainer asked; they pull and deploy
+- `bd sync` does not exist in bd 1.2.2
 
 ### MCP Server (Recommended)
 
@@ -72,7 +73,8 @@ For example: `bd create --help` shows `--parent`, `--deps`, `--assignee`, etc.
 
 - ✅ Use bd for ALL task tracking
 - ✅ Always use `--json` flag for programmatic use
-- ✅ Run `bd sync` at end of sessions
+- ✅ Run `bd export -o .beads/issues.jsonl` at end of sessions
 - ✅ Run `bd <cmd> --help` to discover available flags
 - ❌ Do NOT create markdown TODO lists
 - ❌ Do NOT commit `.beads/beads.db` (JSONL only)
+- ❌ Do NOT treat `git push` or `bd sync` as mandatory

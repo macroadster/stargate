@@ -89,4 +89,47 @@ describe('WishChatModal', () => {
     });
     expect(screen.getByRole('button', { name: /create another/i })).toBeInTheDocument();
   });
+
+  it('records a creator signature after inscribe', async () => {
+    apiFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          data: {
+            id: 'abcd',
+            visible_pixel_hash: 'abcd',
+            creator_message: 'STARLIGHT-WISH-V1\nabcd',
+          },
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ data: { status: 'attested' } }),
+      });
+
+    render(<WishChatModal onClose={() => {}} />);
+
+    const composer = screen.getByPlaceholderText(/describe your wish/i);
+    fireEvent.change(composer, { target: { value: 'Paint a mural, price 1000 sats' } });
+    fireEvent.click(screen.getByLabelText(/^send$/i));
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /inscribe wish/i })).not.toBeDisabled();
+    });
+    fireEvent.click(screen.getByRole('button', { name: /inscribe wish/i }));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/creator signature/i)).toBeInTheDocument();
+    });
+    fireEvent.change(screen.getByLabelText(/creator signature/i), {
+      target: { value: 'c2lnbmF0dXJl' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /record signature/i }));
+
+    await waitFor(() => {
+      expect(apiFetch).toHaveBeenCalledWith(
+        '/api/inscriptions/abcd/attest',
+        expect.objectContaining({ method: 'POST' }),
+      );
+    });
+  });
 });

@@ -145,6 +145,9 @@ func (api *DataAPI) listAvailableBlockHeights() []int64 {
 		if err != nil || !d.IsDir() {
 			return nil
 		}
+		if bitcoin.IsArchivedBlockPath(baseDir, path) {
+			return filepath.SkipDir
+		}
 		name := d.Name()
 		if idx := strings.Index(name, "_"); idx > 0 {
 			if h, err := strconv.ParseInt(name[:idx], 10, 64); err == nil && h > 0 {
@@ -435,34 +438,9 @@ func (api *DataAPI) HandleGetBlockSummaries(w http.ResponseWriter, r *http.Reque
 
 		// Compute a representative thumbnail URL for the block card.
 		// Prefer the first real smart contract image (served via block-image), else first inscription.
-		thumbnailURL := ""
-		for _, c := range smartContracts {
-			if isSyntheticStegoContract(c) {
-				continue
-			}
-			meta := c.Metadata
-			fileName := strings.TrimSpace(stringFromAny(meta["image_file"]))
-			if fileName == "" {
-				fileName = filepath.Base(strings.TrimSpace(c.ImagePath))
-			}
-			if fileName != "" {
-				thumbnailURL = fmt.Sprintf("/api/block-image/%d/%s", block.BlockHeight, fileName)
-				break
-			}
-		}
-		if thumbnailURL == "" && len(inscriptions) > 0 {
-			// Prefer an actual image inscription for the card thumbnail (by content_type
-			// or filename). Many blocks mix text + images; always taking [0] often
-			// picked a .txt and caused the <img> to error → fallback pickaxe emoji.
-			if chosen := pickImageLikeInscription(inscriptions); chosen != nil {
-				thumbnailURL = fmt.Sprintf("/content/%s%s", chosen.TxID, func() string {
-					if chosen.InputIndex >= 0 {
-						return fmt.Sprintf("?witness=%d", chosen.InputIndex)
-					}
-					return ""
-				}())
-			}
-		}
+		// thumbnail_is_contract is only true for a real contract cover so Hide images
+		// can suppress ordinary inscription JPEGs in the block rail.
+		thumbnailURL, thumbnailIsContract := pickBlockCardThumbnail(block)
 
 		// Fallback for blocks where the persisted Inscriptions list is (currently) empty
 		// but we know via the tx index (from prior content access or startup scan) that
@@ -500,6 +478,7 @@ func (api *DataAPI) HandleGetBlockSummaries(w http.ResponseWriter, r *http.Reque
 			"preview_inscriptions":  preview,
 			"has_images":            hasImages,
 			"thumbnail_url":         thumbnailURL,
+			"thumbnail_is_contract": thumbnailIsContract,
 		})
 	}
 
@@ -840,8 +819,22 @@ func (api *DataAPI) HandleGetBlockInscriptionsPaginated(w http.ResponseWriter, r
 	inscriptions := block.Inscriptions
 	imageURLOverrides := map[int]string{}
 	metadataOverrides := map[int]map[string]any{}
+	var contractInscriptions []bitcoin.InscriptionData
+	var contractImageOverrides map[int]string
+	var contractMetadataOverrides map[int]map[string]any
 	if len(block.SmartContracts) > 0 {
-		contractInscriptions, contractImageOverrides, contractMetadataOverrides := buildContractInscriptions(filterSmartContractsForUI(block.SmartContracts), height)
+		contractInscriptions, contractImageOverrides, contractMetadataOverrides = buildContractInscriptions(filterSmartContractsForUI(block.SmartContracts), height)
+	}
+	if filter == "contract" {
+		// Smart-contract / stego images only — used when the UI hides both text and regular image inscriptions.
+		inscriptions = contractInscriptions
+		if contractImageOverrides != nil {
+			imageURLOverrides = contractImageOverrides
+		}
+		if contractMetadataOverrides != nil {
+			metadataOverrides = contractMetadataOverrides
+		}
+	} else if len(contractInscriptions) > 0 {
 		if len(inscriptions) == 0 {
 			inscriptions = contractInscriptions
 			imageURLOverrides = contractImageOverrides
@@ -1108,10 +1101,41 @@ func (api *DataAPI) IndexBlock(height int64) {
 	}
 	api.txMu.Unlock()
 
-	// New block arrived → drop the heights cache so block-summaries sees it promptly.
+	// Insert into the cached height list. Do not wipe on every backfill
+	// height — that forced a full WalkDir per UI poll during catch-up
+	// (stargate-3p2.2).
+	api.rememberHeight(height)
+}
+
+// rememberHeight inserts height into the desc-sorted heights cache.
+// An empty cache is left alone so the next listAvailableBlockHeights rebuilds.
+func (api *DataAPI) rememberHeight(height int64) {
+	if height <= 0 {
+		return
+	}
 	api.heightsMu.Lock()
-	api.heightsCache = nil
-	api.heightsMu.Unlock()
+	defer api.heightsMu.Unlock()
+	if len(api.heightsCache) == 0 {
+		return
+	}
+	for _, h := range api.heightsCache {
+		if h == height {
+			return
+		}
+	}
+	out := make([]int64, 0, len(api.heightsCache)+1)
+	inserted := false
+	for _, h := range api.heightsCache {
+		if !inserted && height > h {
+			out = append(out, height)
+			inserted = true
+		}
+		out = append(out, h)
+	}
+	if !inserted {
+		out = append(out, height)
+	}
+	api.heightsCache = out
 }
 
 func (api *DataAPI) lookupTxHeight(txid string) (int64, bool) {

@@ -21,7 +21,7 @@ Duplicate handlers and schema lists (`getToolSchemasLegacy`) caused drift.
 
 **REST under `/api/smart_contract/*` is the primary lifecycle API. MCP is a thin tool shim over the same store/application layer, not a second business stack.**
 
-Authentication is one flow: a single API key accepted as `Authorization: Bearer <key>`, `X-API-Key`, or the `X-API-Key` cookie. Login, wallet challenge/verify, HTTP middleware, MCP sessions, and the `STARGATE_API_KEY` seed all resolve against the same `api_keys` table (sqlite, postgres, or the in-memory map). There is no second key table. Keys are issued by verify or env seed — not by an open register endpoint.
+Authentication is one flow: a single API key accepted as `Authorization: Bearer <key>`, `X-API-Key`, or the `X-API-Key` cookie. Login, wallet challenge/verify, HTTP middleware, and MCP sessions all resolve against the same `api_keys` table (sqlite, postgres, or the in-memory map). There is no second key table. Keys are issued by `POST /api/auth/challenge` + `POST /api/auth/verify` (signed Bitcoin nonce) — not by an open register endpoint and not by a `STARGATE_API_KEY` environment seed.
 
 | Audience | Primary surface |
 | --- | --- |

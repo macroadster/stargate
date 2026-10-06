@@ -1,5 +1,7 @@
 # Refactoring Progress: server.go Split
 
+Status: **historical**. App layer is `app/smart_contract`, not `middleware/smart_contract`.
+
 ## Overview
 Refactoring the massive `backend/middleware/smart_contract/server.go` (3,442 lines) into a clean, maintainable architecture.
 

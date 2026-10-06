@@ -1,6 +1,7 @@
-# Starlight MCP + Smart Contract Unified API (Dec 12, 2025)
+# Starlight MCP + Smart Contract Unified API
 
-**Supersedes:** `MCP_IMPROVEMENT_PLAN.md`, `stargate_mcp_server_plan.md`, `starlight_mcp.md`  
+Status: **canonical** (surfaces) / living backlog at the bottom  
+**Supersedes:** `docs/history/MCP_IMPROVEMENT_PLAN.md`, `docs/history/stargate_mcp_server_plan.md`, `docs/history/starlight_mcp.md`  
 **Goal:** Single source of truth so the UI and MCP clients exercise the same backend functions via `/api/*`, with HTTP MCP tooling acting as a thin shim instead of a divergent stack (single namespace `/mcp` for tools).
 
 ## Objectives
@@ -11,10 +12,10 @@
 
 ## Current Implementation Snapshot
 - **Runtime:** `stargate_backend.go` starts the REST API, HTTP MCP tool bridge, UI assets, metrics, and Bitcoin scanners in a single binary.
-- **Storage:** Pluggable store (`MCP_STORE_DRIVER` = memory | postgres) with claim TTL (`MCP_DEFAULT_CLAIM_TTL_HOURS`) and optional seeding (`MCP_SEED_FIXTURES`). PG path enables ingestion sync and funding-proof refresh services.
+- **Storage:** `STARGATE_STORAGE` = `sqlite` (default) | `postgres` | `memory` (ADR 0002). Claim TTL is **1 hour** (`STARGATE_DEFAULT_CLAIM_TTL_HOURS`; `sql_store.go` falls back to `time.Hour`). Optional seeding: `STARGATE_SEED_FIXTURES`. Postgres enables ingestion sync and optional funding-proof refresh.
 - **Smart contract services:** Integrated `SmartContractService` to create witness records (visible pixel hash, funding address) when proposals are created from stego ingestions.
 - **Evidence refresh:** Background funding sync (provider selectable; **opt-in** via `STARGATE_ENABLE_FUNDING_SYNC=true`) keeps Merkle/funding proofs current when Postgres is enabled. Disabled by default (direct PSBT + block monitor is the primary confirmation path).
-- **Auth:** One API key / Bearer flow for `/api` and `/mcp` (ADR 0005). Extractor: `Authorization: Bearer <key>`, `X-API-Key`, or `X-API-Key` cookie (`storage/auth.APIKeyFromRequest`). Register/login, REST `authWrap`, middleware `APIAuth`, MCP tool/session, and `STARGATE_API_KEY` seed all use the same `api_keys` store (sqlite / postgres / memory — no second key table).
+- **Auth:** One API key / Bearer flow for `/api` and `/mcp` (ADR 0005). Extractor: `Authorization: Bearer <key>`, `X-API-Key`, or `X-API-Key` cookie (`storage/auth.APIKeyFromRequest`). Challenge/verify, login, REST `authWrap`, middleware `APIAuth`, and MCP tool/session all use the same `api_keys` store (sqlite / postgres / memory — no second key table). `STARGATE_API_KEY` is not a login.
 
 ## Implemented API Surface (shared, stable)
 ### REST (primary) — `/api/smart_contract/*`
@@ -27,7 +28,7 @@
   - `GET /tasks/{task_id}` → task detail
   - `GET /tasks/{task_id}/merkle-proof` → payment proof
   - `GET /tasks/{task_id}/status` → claim/submission status
-  - `POST /tasks/{task_id}/claim` `{ai_identifier, estimated_completion?}` → reserves task (72h default TTL, configurable)
+  - `POST /tasks/{task_id}/claim` `{ai_identifier, estimated_completion?}` → reserves task (**1 hour** default TTL, `STARGATE_DEFAULT_CLAIM_TTL_HOURS`)
 - **Claims**
   - `POST /claims/{claim_id}/submit` `{deliverables, completion_proof}` → creates submission + event
 - **Skills**
@@ -63,7 +64,7 @@ Tool names map to the same store used by REST. Where possible they already reuse
 - `/api/health`, `/metrics`, `/api/docs` (Swagger for general backend; MCP-specific OpenAPI planned).
 - `/api/docs/mcp/openapi.json` serves the MCP/Smart Contract surface (stub, keep updated).
 - `/api/smart_contract/discover` and `/mcp/discover` advertise base URLs, endpoints, tools, and auth expectations.
-- `/api/auth/login` validates a key from the shared `api_keys` store (sqlite / postgres / memory). Keys are issued by `POST /api/auth/challenge` + `POST /api/auth/verify` (signed Bitcoin nonce) or seeded from `STARGATE_API_KEY` (optionally bound to `STARLIGHT_DONATION_ADDRESS`). MCP initialize binds a valid bearer onto `MCP-Session-Id` so later tool calls share that key.
+- `/api/auth/login` validates a key from the shared `api_keys` store (sqlite / postgres / memory). Keys are issued by `POST /api/auth/challenge` + `POST /api/auth/verify` (signed Bitcoin nonce). MCP initialize binds a valid bearer onto `MCP-Session-Id` so later tool calls share that key.
 
 ## Data Shapes (canonical)
 - **Contract:** `contract_id`, `title`, `total_budget_sats`, `goals_count`, `available_tasks_count`, `status`.
@@ -118,7 +119,7 @@ Machine-readable catalog: **`GET /api/surfaces`** (`backend/api/surfaces.go`).
 2) ~~**Complete `list_submissions` tool**~~ — MCP `list_submissions` and `GET /api/smart_contract/submissions` share `SubmissionFilter` (contract_id, task_id/task_ids, status, limit/offset).  
 3) **OpenAPI & discovery:** (In progress) MCP OpenAPI available at `/api/docs/mcp/openapi.json`; add `/api/smart_contract/discover` plus `/mcp/discover` for capability advertisement.  
 4) **Pagination + sorting consistency:** Ensure list endpoints honor `limit/offset/sort` across contracts/tasks/proposals/submissions; surface defaults in responses.  
-5) ~~**Auth alignment:**~~ Same API key / Bearer flow across `/api` and `/mcp` (`auth.APIKeyFromRequest`, shared `api_keys` store, MCP session bind, `STARGATE_API_KEY` seed).  
+5) ~~**Auth alignment:**~~ Same API key / Bearer flow across `/api` and `/mcp` (`auth.APIKeyFromRequest`, shared `api_keys` store, MCP session bind).  
 6) ~~**Rate limiting & abuse controls:**~~ Shared claim/submit/review limiter (`middleware.ActionLimiter`) on `/api/smart_contract/*` and `/mcp/call` (and JSON-RPC `tools/call`). Same key (API key, then wallet, then tool). Count once at the HTTP edge so in-process MCP → store calls do not double-count. Defaults: 10 rps claim (burst 100), 5 rps submit/review (burst 50). Disable with `STARGATE_ACTION_RATE_LIMIT=off`.  
 7) **Indexer fidelity:** Replace mock funding provider defaults with production provider configs (per env), and persist block header + Merkle path provenance on every proof update.  
 8) **Event delivery:** Expose SSE on `/mcp/events` as alias to `/api/smart_contract/events`; add minimal retry guidance in responses.  
@@ -127,7 +128,7 @@ Machine-readable catalog: **`GET /api/surfaces`** (`backend/api/surfaces.go`).
 ## How to Use (current)
 - **UI:** Prefer `/api/smart_contract/*` for contracts, tasks, claims, proposals, submissions, events.  
 - **Agents (MCP clients):** Call `/mcp/tools` to enumerate tools, then POST `/mcp/call` with tool names above; base URL matches backend port (`STARGATE_HTTP_PORT`, default `3001`).  
-- **Testing locally:** `MCP_SEED_FIXTURES=true go run stargate_backend.go` then hit `http://localhost:3001/api/smart_contract/tasks`.
+- **Testing locally:** `STARGATE_SEED_FIXTURES=true go run stargate_backend.go` then hit `http://localhost:3001/api/smart_contract/tasks`.
 
 ## Ownership & Change Control
 - Code: `backend/mcp`, `backend/app/smart_contract` (application layer; formerly `middleware/smart_contract`), `backend/stargate_backend.go`. See [PACKAGE_BOUNDARIES.md](./PACKAGE_BOUNDARIES.md).

@@ -33,7 +33,7 @@ const generateInscriptions = (inscriptions) => {
   }));
 };
 
-export const useInscriptions = (selectedBlock, hideText = false) => {
+export const useInscriptions = (selectedBlock, hideText = false, hideImages = false) => {
   const [inscriptions, setInscriptions] = useState([]);
   const [currentInscriptions, setCurrentInscriptions] = useState([]);
   const [allInscriptions, setAllInscriptions] = useState([]);
@@ -43,6 +43,7 @@ export const useInscriptions = (selectedBlock, hideText = false) => {
   const [filterMode, setFilterMode] = useState('all'); // 'all' or 'text'
   const [lastFetchedHeight, setLastFetchedHeight] = useState(null);
   const [lastHideText, setLastHideText] = useState(null);
+  const [lastHideImages, setLastHideImages] = useState(null);
   const [nextCursor, setNextCursor] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -70,13 +71,14 @@ export const useInscriptions = (selectedBlock, hideText = false) => {
       setTotalImages(0);
       setLastFetchedHeight(selectedBlock.height);
       setLastHideText(hideText);
+      setLastHideImages(hideImages);
       setNextCursor(null);
       setError(null);
       return;
     }
     if (isLoading) return;
-    if (!cursor && lastFetchedHeight === selectedBlock.height && lastHideText === hideText) return;
-    if (!cursor && (lastFetchedHeight !== selectedBlock.height || lastHideText !== hideText)) {
+    if (!cursor && lastFetchedHeight === selectedBlock.height && lastHideText === hideText && lastHideImages === hideImages) return;
+    if (!cursor && (lastFetchedHeight !== selectedBlock.height || lastHideText !== hideText || lastHideImages !== hideImages)) {
       allInscriptionsRef.current = [];
       setAllInscriptions([]);
       setInscriptions([]);
@@ -91,6 +93,9 @@ export const useInscriptions = (selectedBlock, hideText = false) => {
       url.searchParams.set('fields', 'summary');
       if (filterMode === 'text') {
         url.searchParams.set('filter', 'text');
+      } else if (hideText && hideImages) {
+        // Default: skip ordinals text/image spam; page only smart-contract / stego images.
+        url.searchParams.set('filter', 'contract');
       } else if (hideText) {
         url.searchParams.set('filter', 'image');
       }
@@ -192,6 +197,7 @@ export const useInscriptions = (selectedBlock, hideText = false) => {
       setInscriptions(filteredInscriptions);
       setLastFetchedHeight(selectedBlock.height);
       setLastHideText(hideText);
+      setLastHideImages(hideImages);
       setNextCursor(data.next_cursor || null);
       setError(null);
     } catch (error) {
@@ -205,6 +211,7 @@ export const useInscriptions = (selectedBlock, hideText = false) => {
         setHasMoreImages(false);
         setLastFetchedHeight(selectedBlock.height);
         setLastHideText(hideText);
+        setLastHideImages(hideImages);
         setNextCursor(null);
         setIsLoading(false);
         setError(null);
@@ -219,7 +226,7 @@ export const useInscriptions = (selectedBlock, hideText = false) => {
     } finally {
       setIsLoading(false);
     }
-  }, [selectedBlock, filterMode, hideText, lastFetchedHeight, isLoading]);
+  }, [selectedBlock, filterMode, hideText, hideImages, lastFetchedHeight, isLoading]);
 
   const loadMoreInscriptions = () => {
     if (!hasMoreImages || !nextCursor) return;

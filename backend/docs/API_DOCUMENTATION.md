@@ -1,5 +1,9 @@
 # Stargate Backend API Documentation
 
+Status: **historical**. This file still lists retired routes (`/mcp/v1`, `/api/smart-contracts`, `/api/contract-stego`, `/api/blocks`). Do not implement from it.
+
+Live catalog: `GET /api/surfaces`. REST vs MCP: `docs/arch/MCP_UNIFIED_PLAN.md`. Retired aliases: `docs/arch/LEGACY_RETIREMENT.md`. Agent tools: `/mcp/SKILL.md` on a running node. See [README.md](./README.md) in this folder.
+
 This document provides comprehensive API documentation for the Stargate Backend, designed to help agents discover and interact with available endpoints.
 
 ## Base URL
@@ -22,7 +26,7 @@ The MCP API requires an API key sent via the `X-API-Key` header:
 X-API-Key: your-api-key-here
 ```
 
-Set the `STARGATE_API_KEY` environment variable to configure the required key.
+Issue a key with `POST /api/auth/challenge` + `POST /api/auth/verify` (signed Bitcoin nonce). There is no environment-seeded API key.
 
 ### Other APIs
 Most other endpoints do not require authentication, but this may change in future versions.
@@ -653,7 +657,6 @@ Key environment variables for configuration:
 
 ```bash
 # MCP / Smart Contract Configuration (STARGATE_ prefix)
-STARGATE_API_KEY=your-api-key                    # API key for MCP authentication
 STARGATE_PG_DSN=postgresql://user:pass@localhost/db  # PostgreSQL connection string
 STARGATE_STORE_DRIVER=sqlite                   # Store type: sqlite (default for single-binary), memory, postgres
 STARGATE_DEFAULT_CLAIM_TTL_HOURS=72            # Task claim expiration time

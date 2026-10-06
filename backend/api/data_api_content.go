@@ -17,6 +17,7 @@ import (
 
 	"stargate-backend/bitcoin"
 	"stargate-backend/security"
+	"stargate-backend/storage"
 )
 
 func (api *DataAPI) sniffContentType(height int64, filePath string) string {
@@ -799,6 +800,39 @@ func stripNonPrintablePrefix(b []byte) []byte {
 		return b[i:]
 	}
 	return b
+}
+
+// pickBlockCardThumbnail chooses the block-scroller preview image.
+// A true isContract means the URL is a real smart-contract / stego cover
+// (not ordinals JPEG spam or an on-disk /block-image fallback). The UI
+// uses that flag so "Hide images" can suppress regular inscription thumbs.
+func pickBlockCardThumbnail(block *storage.BlockDataCache) (url string, isContract bool) {
+	if block == nil {
+		return "", false
+	}
+	for _, c := range filterSmartContractsForUI(block.SmartContracts) {
+		if isSyntheticStegoContract(c) {
+			continue
+		}
+		fileName := ""
+		if c.Metadata != nil {
+			fileName = strings.TrimSpace(stringFromAny(c.Metadata["image_file"]))
+		}
+		if fileName == "" {
+			fileName = filepath.Base(strings.TrimSpace(c.ImagePath))
+		}
+		if fileName != "" {
+			return fmt.Sprintf("/api/block-image/%d/%s", block.BlockHeight, fileName), true
+		}
+	}
+	if chosen := pickImageLikeInscription(block.Inscriptions); chosen != nil && chosen.TxID != "" {
+		q := ""
+		if chosen.InputIndex >= 0 {
+			q = fmt.Sprintf("?witness=%d", chosen.InputIndex)
+		}
+		return fmt.Sprintf("/content/%s%s", chosen.TxID, q), false
+	}
+	return "", false
 }
 
 // pickImageLikeInscription returns the first inscription in the list that looks

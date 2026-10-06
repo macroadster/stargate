@@ -22,6 +22,7 @@ import (
 	scservices "stargate-backend/app/smart_contract/services"
 	"stargate-backend/bitcoin"
 	"stargate-backend/core"
+	"stargate-backend/core/identity"
 	"stargate-backend/core/smart_contract"
 	"stargate-backend/handlers"
 	"stargate-backend/middleware"
@@ -32,6 +33,7 @@ import (
 	"stargate-backend/storage/datadir"
 	scstore "stargate-backend/storage/smart_contract"
 
+	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
 )
 
@@ -82,12 +84,14 @@ type ChatHub struct {
 }
 
 type ChatMessage struct {
-	Type      string                 `json:"type"`           // "message", "join", "leave", "typing"
-	RoomID    string                 `json:"room_id"`        // Room identifier (e.g., "contract_123", "agent_abc")
-	AgentID   string                 `json:"agent_id"`       // Sender agent ID
-	Content   string                 `json:"content"`        // Message content
-	Timestamp int64                  `json:"timestamp"`      // Unix timestamp in milliseconds
-	Meta      map[string]interface{} `json:"meta,omitempty"` // Optional metadata
+	Type      string                 `json:"type"`             // "message", "join", "leave", "typing"
+	RoomID    string                 `json:"room_id"`          // Room identifier (e.g., "contract_123", "agent_abc")
+	AgentID   string                 `json:"agent_id"`         // Sender agent ID
+	Content   string                 `json:"content"`          // Message content
+	Timestamp int64                  `json:"timestamp"`        // Unix timestamp in milliseconds
+	Meta      map[string]interface{} `json:"meta,omitempty"`   // Optional metadata
+	Verified  bool                   `json:"verified"`         // Sender presented a valid API key; agent_id is self-declared either way
+	Wallet    string                 `json:"wallet,omitempty"` // Wallet bound to that API key, only when Verified
 }
 
 func NewChatHub() *ChatHub {
@@ -204,6 +208,8 @@ type HTTPMCPServer struct {
 	store            scmiddleware.Store
 	claimSvc         *scservices.ClaimService
 	submissionSvc    *scservices.SubmissionService
+	proposalSvc      *scservices.ProposalService
+	reworkReqSvc     *scservices.ContractReworkService
 	apiKeyStore      auth.APIKeyValidator
 	apiKeyIssuer     auth.APIKeyIssuer
 	ingestionSvc     *services.IngestionService
@@ -237,10 +243,30 @@ func NewHTTPMCPServer(store scmiddleware.Store, apiKeyStore auth.APIKeyValidator
 	}
 	baseURL = strings.TrimSuffix(baseURL, "/")
 
-	return &HTTPMCPServer{
+	// PublishEvent fans out to the sinks the REST server registers, so review
+	// events reach the same place from either surface. A nil recorder here
+	// silently dropped them, which routing through Review alone would not fix.
+	reviewEvents := scmiddleware.PublishEvent
+
+	// The same gate the REST server builds, so both surfaces authorize review
+	// through one implementation rather than two call sites of the same rule.
+	reviewGate := scmiddleware.SubmissionReviewGate{Store: store, Keys: apiKeyStore, Ingestion: ingestionSvc}
+	// This surface exposes no rework tool today. The gate is still wired rather
+	// than left nil so that adding one is not silently a 500, or worse a reason
+	// to reach for the caller-trusting shortcut.
+	reworkGate := scmiddleware.SubmissionReworkGate{Store: store, Keys: apiKeyStore}
+
+	// Approving a proposal is one operation and now has one implementation. This
+	// surface called store.ApproveProposal directly, so it skipped the approve
+	// event, the raise_fund payout-address binding, task building from the
+	// description and wish archiving (stargate-fhz). Authorization was never the
+	// gap; the drift was in everything the service does after it.
+	proposalGate := scmiddleware.ProposalEditGate{Store: store, Keys: apiKeyStore, Ingestion: ingestionSvc}
+
+	h := &HTTPMCPServer{
 		store:            store,
 		claimSvc:         scservices.NewClaimService(store),
-		submissionSvc:    scservices.NewSubmissionService(store, nil),
+		submissionSvc:    scservices.NewSubmissionService(store, reviewEvents, reviewGate, reworkGate),
 		apiKeyStore:      apiKeyStore,
 		apiKeyIssuer:     apiKeyIssuer,
 		ingestionSvc:     ingestionSvc,
@@ -258,6 +284,29 @@ func NewHTTPMCPServer(store scmiddleware.Store, apiKeyStore auth.APIKeyValidator
 		chatHub:          NewChatHub(),
 		sessions:         make(map[string]*MCPSession),
 	}
+	// publishProposalTasks and archiveWish route through h.server, which is set
+	// later by SetServer, so they are methods rather than values captured here.
+	h.reworkReqSvc = scservices.NewContractReworkService(store, scmiddleware.ReworkRequestGate{Keys: apiKeyStore, Ingestion: ingestionSvc}, scmiddleware.PublishEvent)
+	h.proposalSvc = scservices.NewProposalService(store, ingestionSvc, apiKeyStore, scmiddleware.PublishEvent, proposalGate, h.publishProposalTasks, h.archiveWish)
+	return h
+}
+
+// publishProposalTasks and archiveWish forward the service's post-approval steps
+// to the REST server once one is attached. Both are no-ops until then, which is
+// what this surface already did with task publishing: h.server is nil in tests
+// and set in production, so neither is made a hard dependency of approving.
+func (h *HTTPMCPServer) publishProposalTasks(ctx context.Context, proposalID string) error {
+	if h.server == nil {
+		return nil
+	}
+	return h.server.PublishProposalTasks(ctx, proposalID)
+}
+
+func (h *HTTPMCPServer) archiveWish(ctx context.Context, visibleHash string) {
+	if h.server == nil {
+		return
+	}
+	h.server.ArchiveWishContract(ctx, visibleHash)
 }
 
 // SetChainBackend wires the local btcd (or fallback) chain source for tools.
@@ -351,7 +400,7 @@ func (h *HTTPMCPServer) extractSessionID(r *http.Request) string {
 
 // ensureSession returns an existing valid session from the request or creates a new one.
 // A valid request bearer/cookie is bound onto the session so later MCP-Session-Id
-// calls share the same api_keys validator as /api (including STARGATE_API_KEY seed).
+// calls share the same api_keys validator as /api.
 func (h *HTTPMCPServer) ensureSession(r *http.Request) string {
 	sid := h.extractSessionID(r)
 	if sid == "" {
@@ -731,7 +780,7 @@ func (h *HTTPMCPServer) callToolDirect(ctx context.Context, toolName string, arg
 	case "build_psbt":
 		return h.handleBuildPSBT(ctx, args, apiKey)
 	case "chat_send":
-		return h.handleChatSendTool(ctx, args)
+		return h.handleChatSendTool(ctx, args, apiKey)
 	case "chat_stream":
 		return h.handleChatStreamTool(ctx, args, r)
 	case "chat_members":
@@ -784,7 +833,8 @@ func (h *HTTPMCPServer) handleListContracts(ctx context.Context, args map[string
 		return nil, err
 	}
 
-	// Check if there are more results by requesting one more item
+	// Check if there are more results by requesting one more item.
+	// Use the pre-collapse page so a dropped alias cannot hide the next page.
 	hasMore := false
 	if len(contracts) == filter.Limit {
 		checkFilter := filter
@@ -795,6 +845,9 @@ func (h *HTTPMCPServer) handleListContracts(ctx context.Context, args map[string
 			hasMore = true
 		}
 	}
+	// One row per pixel hash. A superseded contract-<hash> alias must not
+	// appear next to the live bare-hash wish.
+	contracts = scstore.CollapsePixelHashTwins(contracts)
 
 	return map[string]interface{}{
 		"contracts": contracts,
@@ -811,7 +864,7 @@ func (h *HTTPMCPServer) handleListProposals(ctx context.Context, args map[string
 		filter.Status = status
 	}
 	if contractID, ok := args["contract_id"].(string); ok {
-		filter.ContractID = contractID
+		filter.ContractID = canonicalPixelContractID(contractID)
 	}
 	if proposalID, ok := args["proposal_id"].(string); ok {
 		filter.ProposalID = proposalID
@@ -950,60 +1003,103 @@ func (h *HTTPMCPServer) handleCreateProposal(ctx context.Context, args map[strin
 		return nil, validation
 	}
 
-	// Check if wish contract exists and cap proposal budget to the original wish price
-	wishID := "wish-" + visiblePixelHash
-	wish, wishErr := scstore.LookupContract(h.store, wishID)
-	if wishErr != nil || strings.TrimSpace(wish.ContractID) == "" {
-		return nil, NewNotFoundError("create_proposal", "wish", visiblePixelHash)
-	}
-	wishBudget := scstore.WishBudgetFromContract(wish)
-	if wishBudget > 0 {
-		if budgetSats == 0 {
-			budgetSats = wishBudget
-		} else if budgetSats > wishBudget {
-			return nil, NewCreateProposalError("BUDGET_EXCEEDED", fmt.Sprintf("proposal budget_sats %d exceeds original wish budget %d", budgetSats, wishBudget), "budget_sats")
-		}
+	if h.proposalSvc == nil {
+		return nil, NewServiceUnavailableError("create_proposal", "proposal service")
 	}
 
-	// Get creator wallet from API key
-	var creatorWallet string
-	if apiKeyRec, ok := h.apiKeyStore.Get(apiKey); ok {
-		creatorWallet = strings.TrimSpace(apiKeyRec.Wallet)
+	// wish_budget_sats is part of this surface's response, so the wish is still
+	// read here. The budget cap itself is not re-applied: Create enforces it and
+	// answers KindBudgetExceeded, which is mapped below.
+	wishBudget := int64(0)
+	if wish, wishErr := scstore.LookupContract(h.store, "wish-"+visiblePixelHash); wishErr == nil {
+		wishBudget = scstore.WishBudgetFromContract(wish)
 	}
 
-	proposalID := fmt.Sprintf("proposal-%d", time.Now().UnixNano())
-	contractID := "wish-" + visiblePixelHash
-	proposal := smart_contract.Proposal{
-		ID:               proposalID,
+	// funding_address is metadata this surface writes and REST does not, so it is
+	// passed in rather than reproduced inside the service. creator_wallet is set
+	// by Create from the same API key.
+	fundingAddr := scstore.FundingAddressFromMeta(map[string]interface{}{})
+	if apiKeyRec, ok := h.apiKeyStore.Get(apiKey); ok && strings.TrimSpace(apiKeyRec.Wallet) != "" {
+		fundingAddr = strings.TrimSpace(apiKeyRec.Wallet)
+	}
+
+	// ContractID is deliberately omitted. This surface used to store
+	// "wish-"+hash, which the service rejects as unequal to visible_pixel_hash,
+	// so the two surfaces disagreed on the shape of one metadata field for the
+	// same object. Create defaults it to the bare hash; the "wish-" prefix stays
+	// where it belongs, on the contract row id. Rows written before this keep
+	// their prefixed value (stargate-fhz).
+	resp, _, err := h.proposalSvc.Create(ctx, scservices.ProposalCreateInput{
 		Title:            title,
 		DescriptionMD:    descriptionMD,
 		VisiblePixelHash: visiblePixelHash,
 		BudgetSats:       budgetSats,
-		Status:           "pending",
-		CreatedAt:        time.Now(),
+		APIKey:           apiKey,
 		Metadata: map[string]interface{}{
-			"creator_wallet":     creatorWallet,
-			"contract_id":        contractID,
-			"visible_pixel_hash": visiblePixelHash,
+			"funding_address":  fundingAddr,
+			"embedded_message": descriptionMD,
 		},
+	})
+	if err != nil {
+		return nil, h.createProposalError(visiblePixelHash, err)
 	}
 
-	log.Printf("MCP CREATE PROPOSAL DEBUG: ID=%s, metadata=%+v", proposal.ID, proposal.Metadata)
-	err := h.store.CreateProposal(ctx, proposal)
-	if err != nil {
-		errMsg := err.Error()
-		if strings.Contains(errMsg, "maximum of 5 proposals reached") {
-			return nil, NewCreateProposalError("LIMIT_REACHED", "Maximum of 5 proposals reached for this wish to prevent spam", "visible_pixel_hash")
-		}
-		if strings.Contains(errMsg, "already approved/published") {
-			return nil, NewCreateProposalError("ALREADY_FINALIZED", "This wish already has an approved or published proposal and is no longer accepting new proposals", "visible_pixel_hash")
-		}
-		return nil, NewInternalError("create_proposal", fmt.Sprintf("Failed to create proposal: %v", err))
+	// This surface answers with the stored proposal and its allocation totals,
+	// while the service answers with counts. Read the row back rather than
+	// rebuilding it, so what is reported is what was written.
+	proposalID, _ := resp["proposal_id"].(string)
+	stored, getErr := h.store.GetProposal(ctx, proposalID)
+	if getErr != nil {
+		return nil, NewInternalError("create_proposal", fmt.Sprintf("Failed to read back proposal %s: %v", proposalID, getErr))
+	}
+	var allocated int64
+	for _, t := range stored.Tasks {
+		allocated += t.BudgetSats
 	}
 
 	return map[string]interface{}{
-		"proposal": proposal,
+		"proposal":         stored,
+		"task_count":       len(stored.Tasks),
+		"allocated_sats":   allocated,
+		"wish_budget_sats": wishBudget,
 	}, nil
+}
+
+// createProposalError keeps this surface's create_proposal error codes while the
+// refusals themselves are decided by the service. Each is matched on Kind: the
+// codes used to be recovered by searching the store's message text, so any
+// rewording downstream would have silently turned a specific code into a generic
+// internal error.
+func (h *HTTPMCPServer) createProposalError(visiblePixelHash string, err error) error {
+	se := scservices.AsStatus(err)
+	if se == nil {
+		return NewInternalError("create_proposal", fmt.Sprintf("Failed to create proposal: %v", err))
+	}
+	switch se.Kind {
+	case scservices.KindWishNotFound:
+		return NewNotFoundError("create_proposal", "wish", visiblePixelHash)
+	case scservices.KindBudgetExceeded:
+		return NewCreateProposalError("BUDGET_EXCEEDED", se.Message, "budget_sats")
+	case scservices.KindBudgetMismatch:
+		return NewCreateProposalError("BUDGET_MISMATCH", se.Message, "budget_sats")
+	case scservices.KindProposalLimitReached:
+		// The cap is the store's to define. Spelling the number out here meant
+		// raising MaxProposalsPerWish would leave this surface telling callers a
+		// different limit than the one being enforced.
+		return NewCreateProposalError("LIMIT_REACHED", fmt.Sprintf("Maximum of %d proposals reached for this wish to prevent spam", scstore.MaxProposalsPerWish), "visible_pixel_hash")
+	case scservices.KindProposalAlreadyFinalized:
+		return NewCreateProposalError("ALREADY_FINALIZED", "This wish already has an approved or published proposal and is no longer accepting new proposals", "visible_pixel_hash")
+	}
+	switch se.Status {
+	case http.StatusNotFound:
+		// Only the wish and the ingestion record can be absent here, and the wish
+		// carries a Kind. Mapping on status too means a future absent-thing
+		// failure is not reported as an internal error.
+		return NewNotFoundError("create_proposal", "wish", visiblePixelHash)
+	case http.StatusBadRequest:
+		return NewValidationError("create_proposal", se.Message)
+	}
+	return NewInternalError("create_proposal", se.Message)
 }
 
 func (h *HTTPMCPServer) handleApproveProposal(ctx context.Context, args map[string]interface{}, apiKey string) (interface{}, error) {
@@ -1019,59 +1115,48 @@ func (h *HTTPMCPServer) handleApproveProposal(ctx context.Context, args map[stri
 		return nil, validation
 	}
 
-	// Get the proposal to check if wish exists
-	proposals, err := h.store.ListProposals(ctx, smart_contract.ProposalFilter{})
+	if h.proposalSvc == nil {
+		return nil, NewServiceUnavailableError("approve_proposal", "proposal service")
+	}
+
+	// Authorization, the wish check, the raise_fund payout binding, task
+	// building, wish archiving and the approve event all live in Approve. Doing
+	// any of it here again is how the two surfaces drifted apart.
+	resp, err := h.proposalSvc.Approve(ctx, proposalID, scservices.ProposalActor{APIKey: apiKey})
 	if err != nil {
-		return nil, NewInternalError("approve_proposal", fmt.Sprintf("Failed to list proposals: %v", err))
+		return nil, h.proposalError("approve_proposal", proposalID, err)
 	}
+	return resp, nil
+}
 
-	var proposal *smart_contract.Proposal
-	for i := range proposals {
-		if proposals[i].ID == proposalID {
-			proposal = &proposals[i]
-			break
-		}
+// proposalError translates a ProposalService failure into this surface's error
+// taxonomy. Status alone cannot distinguish a missing wish from a malformed
+// request, since REST answers 400 to both, so the absent-resource cases carry a
+// Kind and are matched on that rather than on message text.
+func (h *HTTPMCPServer) proposalError(tool, proposalID string, err error) error {
+	se := scservices.AsStatus(err)
+	if se == nil {
+		return NewInternalError(tool, fmt.Sprintf("Failed to %s: %v", strings.TrimSuffix(tool, "_proposal"), err))
 	}
-	if proposal == nil {
-		return nil, NewNotFoundError("approve_proposal", "proposal", proposalID)
+	switch se.Kind {
+	case scservices.KindProposalNotFound:
+		// Rarely reached: the gate loads the proposal to authorize against it, so
+		// an unknown ID is refused as UNAUTHORIZED before this point rather than
+		// confirming to a non-creator that the ID exists. This covers the proposal
+		// disappearing between that load and the service's own.
+		return NewNotFoundError(tool, "proposal", proposalID)
+	case scservices.KindWishNotFound:
+		return NewNotFoundError(tool, "wish", se.Message)
 	}
-
-	if err := h.requireAuthorizedApprover(apiKey, *proposal); err != nil {
-		return nil, NewUnauthorizedError("approve_proposal", fmt.Sprintf("Not authorized to approve this proposal: %v", err))
+	switch se.Status {
+	case http.StatusNotFound:
+		return NewNotFoundError(tool, "proposal", proposalID)
+	case http.StatusForbidden:
+		return NewUnauthorizedError(tool, se.Message)
+	case http.StatusBadRequest:
+		return NewValidationError(tool, se.Message)
 	}
-
-	// Check if wish contract exists
-	wishID := "wish-" + proposal.VisiblePixelHash
-	contracts, err := h.store.ListContracts(smart_contract.ContractFilter{})
-	if err != nil {
-		return nil, NewInternalError("approve_proposal", fmt.Sprintf("Failed to check wish existence: %v", err))
-	}
-	wishExists := false
-	for _, contract := range contracts {
-		if contract.ContractID == wishID {
-			wishExists = true
-			break
-		}
-	}
-	if !wishExists {
-		return nil, NewNotFoundError("approve_proposal", "wish", proposal.VisiblePixelHash)
-	}
-
-	err = h.store.ApproveProposal(ctx, proposalID)
-	if err != nil {
-		return nil, NewInternalError("approve_proposal", fmt.Sprintf("Failed to approve proposal: %v", err))
-	}
-
-	if h.server != nil {
-		if publishErr := h.server.PublishProposalTasks(ctx, proposalID); publishErr != nil {
-			log.Printf("failed to publish tasks for proposal %s: %v", proposalID, publishErr)
-		}
-	}
-
-	return map[string]interface{}{
-		"message":     "proposal approved",
-		"proposal_id": proposalID,
-	}, nil
+	return NewInternalError(tool, se.Message)
 }
 
 func (h *HTTPMCPServer) handleRejectSubmission(ctx context.Context, args map[string]interface{}, apiKey string) (interface{}, error) {
@@ -1098,9 +1183,10 @@ func (h *HTTPMCPServer) handleRejectSubmission(ctx context.Context, args map[str
 		return nil, NewNotFoundError("reject_submission", "submission", submissionID)
 	}
 
-	err = h.store.UpdateSubmissionStatus(ctx, submissionID, "rejected", notes, rejectionType)
-	if err != nil {
-		return nil, NewInternalError("reject_submission", fmt.Sprintf("Failed to reject submission: %v", err))
+	if _, err := h.reviewSubmission(ctx, "reject_submission", submissionID, scservices.SubmissionReviewInput{
+		Action: "reject", Notes: notes, RejectionType: rejectionType,
+	}, apiKey); err != nil {
+		return nil, err
 	}
 
 	return map[string]interface{}{
@@ -1131,9 +1217,10 @@ func (h *HTTPMCPServer) handleApproveSubmission(ctx context.Context, args map[st
 		return nil, NewNotFoundError("approve_submission", "submission", submissionID)
 	}
 
-	err = h.store.UpdateSubmissionStatus(ctx, submissionID, "approved", "", "")
-	if err != nil {
-		return nil, NewInternalError("approve_submission", fmt.Sprintf("Failed to approve submission: %v", err))
+	if _, err := h.reviewSubmission(ctx, "approve_submission", submissionID, scservices.SubmissionReviewInput{
+		Action: "approve",
+	}, apiKey); err != nil {
+		return nil, err
 	}
 
 	return map[string]interface{}{
@@ -1142,71 +1229,34 @@ func (h *HTTPMCPServer) handleApproveSubmission(ctx context.Context, args map[st
 	}, nil
 }
 
-func (h *HTTPMCPServer) requireAuthorizedApprover(apiKey string, proposal smart_contract.Proposal) error {
-	// Get approver's wallet from API key
-	var approverWallet string
-	if h.apiKeyStore != nil {
-		if approverRec, ok := h.apiKeyStore.Get(apiKey); ok {
-			approverWallet = strings.TrimSpace(approverRec.Wallet)
+// reviewSubmission applies a review through SubmissionService so the MCP tools
+// get the same side effects as the REST route: rework resolution on approve and
+// a review event. Calling store.UpdateSubmissionStatus directly skipped both.
+//
+// Review also authorizes apiKey, which is why the tools no longer pre-check.
+func (h *HTTPMCPServer) reviewSubmission(ctx context.Context, tool, submissionID string, in scservices.SubmissionReviewInput, apiKey string) (map[string]interface{}, error) {
+	if h.submissionSvc == nil {
+		return nil, NewServiceUnavailableError(tool, "submission service")
+	}
+	resp, err := h.submissionSvc.Review(ctx, submissionID, in, scservices.ReviewActor{APIKey: apiKey})
+	if err == nil {
+		return resp, nil
+	}
+	if se := scservices.AsStatus(err); se != nil {
+		switch se.Status {
+		case http.StatusNotFound:
+			return nil, NewNotFoundError(tool, "submission", submissionID)
+		case http.StatusBadRequest:
+			return nil, NewValidationError(tool, se.Message)
+		case http.StatusForbidden:
+			return nil, NewUnauthorizedError(tool, se.Message)
 		}
 	}
-	if approverWallet == "" {
-		return fmt.Errorf("api key with wallet binding required for approval")
-	}
+	return nil, NewInternalError(tool, fmt.Sprintf("Failed to %s: %v", strings.TrimSuffix(tool, "_submission"), err))
+}
 
-	// 0. GLOBAL AUDITOR: Check if the bound wallet is the donation address
-	donationAddr := strings.TrimSpace(os.Getenv("STARLIGHT_DONATION_ADDRESS"))
-	if donationAddr != "" && strings.EqualFold(approverWallet, donationAddr) {
-		log.Printf("AUTHORIZATION: Allowing approval for proposal %s based on Global Auditor status (%s)", proposal.ID, approverWallet)
-		return nil
-	}
-
-	// 1. Check if matches Wish Creator by wallet
-	visibleHash := strings.TrimSpace(proposal.VisiblePixelHash)
-	if visibleHash == "" {
-		if v, ok := proposal.Metadata["visible_pixel_hash"].(string); ok {
-			visibleHash = strings.TrimSpace(v)
-		}
-	}
-
-	// 1. Check if matches Wish Creator by wallet (from ingestion record)
-	if visibleHash != "" && h.ingestionSvc != nil {
-		// Try both hash and wish-hash
-		rec, err := h.ingestionSvc.Get(visibleHash)
-		if err != nil {
-			rec, _ = h.ingestionSvc.Get("wish-" + visibleHash)
-		}
-
-		if rec != nil && rec.Metadata != nil {
-			if wishCreatorWallet, ok := rec.Metadata["creator_wallet"].(string); ok {
-				if strings.EqualFold(strings.TrimSpace(wishCreatorWallet), approverWallet) {
-					return nil
-				}
-			}
-		}
-	}
-
-	// 2. Self-approval guard: the proposal's creator_wallet is the agent that
-	// *created the proposal*, NOT the wish owner. Never use it to authorize
-	// approval — that would let the proposer approve their own proposal.
-
-	// 3. If no wish creator info exists at all, allow for now to prevent deadlock on old data
-	hasWishCreatorInfo := false
-	if visibleHash != "" && h.ingestionSvc != nil {
-		rec, _ := h.ingestionSvc.Get(visibleHash)
-		if rec != nil && rec.Metadata != nil {
-			if _, ok := rec.Metadata["creator_wallet"].(string); ok {
-				hasWishCreatorInfo = true
-			}
-		}
-	}
-
-	if !hasWishCreatorInfo {
-		log.Printf("WARNING: allowing approval for proposal %s with NO wish creator info", proposal.ID)
-		return nil
-	}
-
-	return fmt.Errorf("approver wallet %s does not match wish creator", approverWallet)
+func (h *HTTPMCPServer) authorizer() scmiddleware.WishCreatorAuthorizer {
+	return scmiddleware.WishCreatorAuthorizer{Keys: h.apiKeyStore, Ingestion: h.ingestionSvc}
 }
 
 func (h *HTTPMCPServer) handleScanImage(ctx context.Context, args map[string]interface{}) (interface{}, error) {
@@ -1421,7 +1471,7 @@ func (h *HTTPMCPServer) handleGetScannerInfo(ctx context.Context, args map[strin
 func (h *HTTPMCPServer) handleListTasks(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	filter := smart_contract.TaskFilter{}
 	if contractID, ok := args["contract_id"].(string); ok {
-		filter.ContractID = contractID
+		filter.ContractID = canonicalPixelContractID(contractID)
 	}
 	if status, ok := args["status"].(string); ok {
 		filter.Status = status
@@ -1472,6 +1522,34 @@ func (h *HTTPMCPServer) handleListSubmissions(ctx context.Context, args map[stri
 	return h.submissionSvc.List(ctx, scservices.SubmissionFilterFromArgs(args))
 }
 
+// canonicalPixelContractID returns the bare hash for a pixel-hash wish.
+// wish-<hash> and contract-<64-hex> collapse to that hash. Other ids,
+// including contract-001, are returned trimmed and unchanged.
+func canonicalPixelContractID(id string) string {
+	id = strings.TrimSpace(id)
+	if n := identity.CanonicalContractID(id); identity.IsPixelHash(n) {
+		return n
+	}
+	return id
+}
+
+// storedContractID is the primary key of the live row for a pixel-hash wish.
+// A wish that is still stored as wish-<hash> keeps that key. After
+// FoldContractPrefixTwins, contract-<64-hex> resolves to the bare hash.
+func storedContractID(store scstore.Store, id string) string {
+	id = strings.TrimSpace(id)
+	canon := identity.CanonicalContractID(id)
+	if store == nil || !identity.IsPixelHash(canon) {
+		return id
+	}
+	if c, err := scstore.LookupContract(store, id); err == nil {
+		if live := strings.TrimSpace(c.ContractID); live != "" {
+			return live
+		}
+	}
+	return canon
+}
+
 func (h *HTTPMCPServer) handleGetContract(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	validation := NewValidationError("get_contract", "Invalid request parameters")
 
@@ -1483,6 +1561,21 @@ func (h *HTTPMCPServer) handleGetContract(ctx context.Context, args map[string]i
 	// Return validation errors if any
 	if validation.HasErrors() {
 		return nil, validation
+	}
+
+	// A 64-hex wish is stored as the bare hash. wish-<hash> and contract-<hash>
+	// are lookup aliases; return the live row (the bare hash once it has been
+	// folded) rather than a superseded alias.
+	if identity.IsPixelHash(identity.CanonicalContractID(contractID)) {
+		contract, err := scstore.LookupContract(h.store, contractID)
+		if err != nil {
+			if strings.Contains(err.Error(), "not found") {
+				return nil, NewNotFoundError("get_contract", "contract", contractID)
+			}
+			return nil, NewInternalError("get_contract", fmt.Sprintf("Failed to get contract: %v", err))
+		}
+		h.enrichContractFromProposal(ctx, &contract)
+		return contract, nil
 	}
 
 	contract, err := h.store.GetContract(contractID)
@@ -1589,6 +1682,7 @@ func (h *HTTPMCPServer) handleGetContractReworkRequests(ctx context.Context, arg
 	if validation.HasErrors() {
 		return nil, validation
 	}
+	contractID = storedContractID(h.store, contractID)
 
 	reworkReqs, err := h.store.GetContractReworkRequests(ctx, contractID)
 	if err != nil {
@@ -1619,27 +1713,33 @@ func (h *HTTPMCPServer) handleCreateContractReworkRequest(ctx context.Context, a
 	if validation.HasErrors() {
 		return nil, validation
 	}
+	contractID = storedContractID(h.store, contractID)
 
-	if apiKey == "" {
-		return nil, NewUnauthorizedError("create_contract_rework_request", "API key required to create rework request")
+	if h.reworkReqSvc == nil {
+		return nil, NewServiceUnavailableError("create_contract_rework_request", "rework request service")
 	}
 
-	var requester string
-	if h.apiKeyStore != nil {
-		if keyInfo, ok := h.apiKeyStore.Get(apiKey); ok {
-			requester = strings.TrimSpace(keyInfo.Wallet)
-		}
-	}
-	if requester == "" {
-		return nil, NewUnauthorizedError("create_contract_rework_request", "API key must have an associated wallet address")
-	}
-
-	reworkReq, err := h.store.CreateContractReworkRequest(ctx, contractID, requester, notes)
+	// A wallet-bound key was required here, but never checked against the wish
+	// creator, so the requester recorded on the request was simply whoever asked
+	// (stargate-irl.8). The service authorizes and records the wallet it
+	// accepted.
+	reworkReq, err := h.reworkReqSvc.CreateRequest(ctx, contractID, notes,
+		scservices.ReworkRequestActor{APIKey: apiKey})
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		se := scservices.AsStatus(err)
+		if se == nil {
+			return nil, NewInternalError("create_contract_rework_request", fmt.Sprintf("Failed to create rework request: %v", err))
+		}
+		if se.Kind == scservices.KindContractNotFound {
 			return nil, NewNotFoundError("create_contract_rework_request", "contract", contractID)
 		}
-		return nil, NewInternalError("create_contract_rework_request", fmt.Sprintf("Failed to create rework request: %v", err))
+		switch se.Status {
+		case http.StatusForbidden:
+			return nil, NewUnauthorizedError("create_contract_rework_request", se.Message)
+		case http.StatusBadRequest:
+			return nil, NewValidationError("create_contract_rework_request", se.Message)
+		}
+		return nil, NewInternalError("create_contract_rework_request", se.Message)
 	}
 
 	return reworkReq, nil
@@ -1714,7 +1814,7 @@ func (h *HTTPMCPServer) handleChatStreamTool(ctx context.Context, args map[strin
 	}, nil
 }
 
-func (h *HTTPMCPServer) handleChatSendTool(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+func (h *HTTPMCPServer) handleChatSendTool(ctx context.Context, args map[string]interface{}, apiKey string) (interface{}, error) {
 	validation := NewValidationError("chat_send", "Invalid request parameters")
 
 	roomID, _ := args["room_id"].(string)
@@ -1736,6 +1836,11 @@ func (h *HTTPMCPServer) handleChatSendTool(ctx context.Context, args map[string]
 		return nil, validation
 	}
 
+	verified, wallet, ok := h.chatSender(apiKey)
+	if !ok {
+		return nil, NewUnauthorizedError("chat_send", "Invalid API key. Omit the key to post anonymously.")
+	}
+
 	msgType, _ := args["type"].(string)
 	if msgType == "" {
 		msgType = "message"
@@ -1747,6 +1852,8 @@ func (h *HTTPMCPServer) handleChatSendTool(ctx context.Context, args map[string]
 		AgentID:   agentID,
 		Content:   content,
 		Timestamp: time.Now().UnixMilli(),
+		Verified:  verified,
+		Wallet:    wallet,
 	}
 
 	if meta, ok := args["meta"].(map[string]interface{}); ok {
@@ -1759,6 +1866,7 @@ func (h *HTTPMCPServer) handleChatSendTool(ctx context.Context, args map[string]
 		"success":    true,
 		"timestamp":  msg.Timestamp,
 		"message_id": msg.Timestamp, // Use timestamp as a simple ID
+		"verified":   verified,
 	}, nil
 }
 
@@ -1974,13 +2082,27 @@ func (h *HTTPMCPServer) handleSubmitWork(ctx context.Context, args map[string]in
 		return nil, validation
 	}
 
-	// Compute subDir (contract_id/visible_pixel_hash) for sandbox URL
-	// This is used for both file storage and the sandbox_url response
-	subDir := claimID
-	if claim, err := h.store.GetClaim(claimID); err == nil {
-		if task, err := h.store.GetTask(claim.TaskID); err == nil {
-			subDir = scstore.NormalizeContractID(task.ContractID)
-		}
+	// Results live at uploads/results/ab/cd/ef/<64-hex visible pixel hash>.
+	// Shard that hash only. contract-<hash> is a legacy alias of the same key;
+	// sharding the alias writes co/nt/ra, which /uploads and /sandbox cannot read.
+	if h.store == nil {
+		return nil, NewInternalError("submit_work", "contract store is not configured")
+	}
+	claim, err := h.store.GetClaim(claimID)
+	if err != nil {
+		return nil, NewNotFoundError("submit_work", "claim", claimID)
+	}
+	task, err := h.store.GetTask(claim.TaskID)
+	if err != nil {
+		return nil, NewNotFoundError("submit_work", "task", claim.TaskID)
+	}
+	visible := ""
+	if task.MerkleProof != nil {
+		visible = task.MerkleProof.VisiblePixelHash
+	}
+	subDir, ok := identity.ResultsDirKey(visible, task.ContractID)
+	if !ok {
+		return nil, NewSubmitWorkError("INVALID_CONTRACT", "cannot store artifacts: task is not tied to a 64-character visible pixel hash", "claim_id")
 	}
 
 	// Process file artifacts if present
@@ -1991,8 +2113,7 @@ func (h *HTTPMCPServer) handleSubmitWork(ctx context.Context, args map[string]in
 			// Get uploads directory
 			uploadsDir := os.Getenv("UPLOADS_DIR")
 
-			// Create results directory: UPLOADS_DIR/results/ab/cd/ef/[contract_id]
-			// Look up the contract/task relationship to get contract_id for file organization
+			// Create results directory: UPLOADS_DIR/results/ab/cd/ef/<visible pixel hash>
 			resultsDir, err := datadir.PartMkdirAll(filepath.Join(uploadsDir, "results"), subDir, 0755)
 			if err != nil {
 				return nil, NewInternalError("submit_work", fmt.Sprintf("Failed to create results directory: %v", err))
@@ -2161,6 +2282,7 @@ func (h *HTTPMCPServer) handleGetOpenContracts(ctx context.Context, args map[str
 	if err != nil {
 		return nil, fmt.Errorf("failed to list contracts: %w", err)
 	}
+	contracts = scstore.CollapsePixelHashTwins(contracts)
 
 	// Apply limit if specified
 	if len(contracts) > limit {
@@ -2461,10 +2583,21 @@ func (h *HTTPMCPServer) handleCreateTask(ctx context.Context, args map[string]in
 	if h.store == nil {
 		return nil, NewServiceUnavailableError("create_task", "task store")
 	}
+	// Attach new tasks to the live row. contract-<64-hex> follows the bare
+	// hash once that alias has been folded; a wish still stored as wish-<hash>
+	// keeps that primary key.
+	contractID = storedContractID(h.store, contractID)
 
 	// Verify contract exists and the new budget fits the original wish price
 	if _, err := h.store.GetContract(contractID); err != nil {
 		return nil, NewValidationError("create_task", fmt.Sprintf("Contract not found: %s", contractID))
+	}
+
+	// Only the wish creator may add work to their contract. API keys are
+	// self-serve, so without this any key could spam tasks onto anyone's
+	// contract and draw down its budget (stargate-irl.7).
+	if _, err := scmiddleware.AuthorizeContractOwner(h.apiKeyStore, h.ingestionSvc, apiKey, contractID); err != nil {
+		return nil, NewUnauthorizedError("create_task", err.Error())
 	}
 	if snap, snapErr := scstore.LoadBudgetSnapshotForContract(h.store, contractID); snapErr == nil {
 		if err := snap.ValidateNewTaskBudget(budgetSats); err != nil {
@@ -2544,7 +2677,7 @@ func (h *HTTPMCPServer) handleRebalanceContractBudget(ctx context.Context, args 
 	allOver := mcpArgBool(args, "all_over_budget")
 	includeSuperseded := mcpArgBool(args, "include_superseded")
 	contractID, _ := args["contract_id"].(string)
-	contractID = strings.TrimSpace(contractID)
+	contractID = storedContractID(h.store, contractID)
 
 	if contractID == "" && !allOver {
 		return nil, NewValidationError("rebalance_contract_budget", "contract_id or all_over_budget is required")
@@ -2565,11 +2698,11 @@ func (h *HTTPMCPServer) handleRebalanceContractBudget(ctx context.Context, args 
 			}
 		}
 		return map[string]interface{}{
-			"dry_run":             dryRun,
-			"include_superseded":  includeSuperseded,
-			"contracts":           results,
-			"over_budget_count":   len(results),
-			"rebalanced_count":    changed,
+			"dry_run":            dryRun,
+			"include_superseded": includeSuperseded,
+			"contracts":          results,
+			"over_budget_count":  len(results),
+			"rebalanced_count":   changed,
 		}, nil
 	}
 
@@ -2581,13 +2714,13 @@ func (h *HTTPMCPServer) handleRebalanceContractBudget(ctx context.Context, args 
 		return nil, NewInternalError("rebalance_contract_budget", err.Error())
 	}
 	return map[string]interface{}{
-		"dry_run":            dryRun,
-		"contract":           res,
-		"wish_budget_sats":   res.WishBudgetSats,
-		"allocated_before":   res.AllocatedBefore,
-		"allocated_after":    res.AllocatedAfter,
-		"changed":            res.Changed,
-		"changes":            res.Changes,
+		"dry_run":          dryRun,
+		"contract":         res,
+		"wish_budget_sats": res.WishBudgetSats,
+		"allocated_before": res.AllocatedBefore,
+		"allocated_after":  res.AllocatedAfter,
+		"changed":          res.Changed,
+		"changes":          res.Changes,
 	}, nil
 }
 
@@ -2622,14 +2755,16 @@ func (h *HTTPMCPServer) handleBuildPSBT(ctx context.Context, args map[string]int
 	}
 
 	normalizedHash := strings.TrimSpace(pixelHash)
-	contractID := "wish-" + normalizedHash
-
-	_, err := h.store.GetContract(contractID)
+	contract, err := scstore.LookupContract(h.store, normalizedHash)
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
-			return nil, NewNotFoundError("build_psbt", "contract", contractID)
+			return nil, NewNotFoundError("build_psbt", "contract", normalizedHash)
 		}
 		return nil, NewInternalError("build_psbt", fmt.Sprintf("Failed to get contract: %v", err))
+	}
+	contractID := contract.ContractID
+	if contractID == "" {
+		contractID = identity.CanonicalContractID(normalizedHash)
 	}
 
 	params := h.chainParams()
@@ -2644,6 +2779,31 @@ func (h *HTTPMCPServer) handleBuildPSBT(ctx context.Context, args map[string]int
 		return nil, NewValidationError("build_psbt", fmt.Sprintf("invalid payer address: %v", err))
 	}
 
+	// Same coin-selection surface as REST handleContractPSBT: optional
+	// payer_addresses replace the single API-key wallet. Needed when that
+	// wallet only holds the leftover payout UTXO (probe 44f7844c: need 1546,
+	// selected 1000) and the extra coin lives on the P2PKH change address.
+	payerAddresses := []btcutil.Address{payerAddress}
+	if rawPayers, exists := args["payer_addresses"]; exists && rawPayers != nil {
+		strs, ok := mcpStringSlice(rawPayers)
+		if !ok {
+			return nil, NewValidationError("build_psbt", "payer_addresses must be an array of address strings")
+		}
+		if len(strs) > 0 {
+			payerAddresses = payerAddresses[:0]
+			for _, addr := range strs {
+				if strings.TrimSpace(addr) == "" {
+					return nil, NewValidationError("build_psbt", "payer address required")
+				}
+				decoded, decErr := bitcoin.DecodeAddressForNetwork(strings.TrimSpace(addr), params)
+				if decErr != nil {
+					return nil, NewValidationError("build_psbt", fmt.Sprintf("invalid payer address: %v", decErr))
+				}
+				payerAddresses = append(payerAddresses, decoded)
+			}
+		}
+	}
+
 	changeAddress := payerAddress
 	if changeAddrStr, ok := args["change_address"].(string); ok && strings.TrimSpace(changeAddrStr) != "" {
 		changeAddr, err := bitcoin.DecodeAddressForNetwork(strings.TrimSpace(changeAddrStr), params)
@@ -2651,6 +2811,8 @@ func (h *HTTPMCPServer) handleBuildPSBT(ctx context.Context, args map[string]int
 			return nil, NewValidationError("build_psbt", fmt.Sprintf("invalid change address: %v", err))
 		}
 		changeAddress = changeAddr
+	} else if len(payerAddresses) > 0 {
+		changeAddress = payerAddresses[0]
 	}
 
 	tasks, err := h.store.ListTasks(smart_contract.TaskFilter{
@@ -2687,42 +2849,60 @@ func (h *HTTPMCPServer) handleBuildPSBT(ctx context.Context, args map[string]int
 		return nil, NewValidationError("build_psbt", "no approved tasks with contractor wallets found")
 	}
 
-	feeRate := int64(10)
-	if fr, ok := args["fee_rate_sat_per_vb"].(float64); ok && fr > 0 {
-		feeRate = int64(fr)
+	feeRate := int64(1)
+	if fr, ok := mcpInt64(args["fee_rate_sat_per_vb"]); ok && fr > 0 {
+		feeRate = fr
 	}
 
-	commitmentSats := int64(0)
-	if cs, ok := args["commitment_sats"].(float64); ok && cs > 0 {
-		commitmentSats = int64(cs)
-	}
-
-	var pixelHashBytes []byte
-	if commitmentSats > 0 {
-		pixelHashBytes, err = hex.DecodeString(normalizedHash)
-		if err != nil {
-			validation.AddFieldError("pixel_hash", normalizedHash, "must be a valid hex string", false)
-		} else if len(pixelHashBytes) != 32 {
-			validation.AddFieldError("pixel_hash", normalizedHash, "must be exactly 32 bytes (64 hex characters)", false)
+	// Pixel commitment is required for payout recognition. Official
+	// build_psbt used to emit payout+change only when commitment_sats
+	// was omitted or arrived as a JSON integer (not float64).
+	commitmentSats := int64(1000)
+	if cs, ok := mcpInt64(args["commitment_sats"]); ok {
+		if cs <= 0 {
+			return nil, NewValidationError("build_psbt", "commitment_sats must be at least 546 sats so the OP_RETURN pixel commitment is funded")
 		}
-		if validation.HasErrors() {
-			return nil, validation
+		commitmentSats = cs
+	}
+	if commitmentSats < 546 {
+		commitmentSats = 546
+	}
+
+	pixelHashBytes, err := hex.DecodeString(normalizedHash)
+	if err != nil {
+		validation.AddFieldError("pixel_hash", normalizedHash, "must be a valid hex string", false)
+	} else if len(pixelHashBytes) != 32 {
+		validation.AddFieldError("pixel_hash", normalizedHash, "must be exactly 32 bytes (64 hex characters)", false)
+	}
+	if validation.HasErrors() {
+		return nil, validation
+	}
+
+	donationAddr := payerAddress
+	if raw := strings.TrimSpace(os.Getenv("STARLIGHT_DONATION_ADDRESS")); raw != "" {
+		if decoded, decErr := bitcoin.DecodeAddressForNetwork(raw, params); decErr == nil {
+			donationAddr = decoded
 		}
 	}
 
 	req := bitcoin.PSBTRequest{
 		PayerAddress:      payerAddress,
+		PayerAddresses:    payerAddresses,
 		Payouts:           payouts,
 		FeeRateSatPerVB:   feeRate,
 		ChangeAddress:     changeAddress,
 		PixelHash:         pixelHashBytes,
 		CommitmentSats:    commitmentSats,
-		CommitmentAddress: payerAddress,
+		DonationAddress:   donationAddr,
+		CommitmentAddress: donationAddr,
 	}
 
 	result, err := bitcoin.BuildFundingPSBT(mempoolClient, params, req)
 	if err != nil {
 		return nil, NewInternalError("build_psbt", fmt.Sprintf("Failed to build PSBT: %v", err))
+	}
+	if len(result.OPReturnScript) == 0 || result.OPReturnScript[0] != 0x6a {
+		return nil, NewInternalError("build_psbt", "PSBT missing OP_RETURN pixel commitment")
 	}
 
 	return map[string]interface{}{
@@ -2736,12 +2916,69 @@ func (h *HTTPMCPServer) handleBuildPSBT(ctx context.Context, args map[string]int
 		"payout_amounts":     result.PayoutAmounts,
 		"commitment_sats":    result.CommitmentSats,
 		"commitment_address": result.CommitmentAddr,
+		"donation_address":   result.DonationAddr,
+		"op_return_script":   hex.EncodeToString(result.OPReturnScript),
+		"op_return_vout":     result.OPReturnVout,
 		"funding_txid":       result.FundingTxID,
 		"contract_id":        contractID,
 		"payout_count":       len(payouts),
+		"payer_address":      payerAddress.EncodeAddress(),
+		"payer_addresses":    encodeAddresses(payerAddresses),
 		"network":            h.network,
 		"network_params":     params.Name,
 	}, nil
+}
+
+func encodeAddresses(addrs []btcutil.Address) []string {
+	out := make([]string, 0, len(addrs))
+	for _, addr := range addrs {
+		if addr == nil {
+			continue
+		}
+		out = append(out, addr.EncodeAddress())
+	}
+	return out
+}
+
+// mcpStringSlice accepts JSON arrays as []interface{} or []string.
+func mcpStringSlice(v interface{}) ([]string, bool) {
+	switch s := v.(type) {
+	case []string:
+		return s, true
+	case []interface{}:
+		out := make([]string, 0, len(s))
+		for _, item := range s {
+			str, ok := item.(string)
+			if !ok {
+				return nil, false
+			}
+			out = append(out, str)
+		}
+		return out, true
+	default:
+		return nil, false
+	}
+}
+
+// mcpInt64 accepts JSON numbers as float64 or int (MCP args arrive both ways).
+func mcpInt64(v interface{}) (int64, bool) {
+	switch n := v.(type) {
+	case int:
+		return int64(n), true
+	case int32:
+		return int64(n), true
+	case int64:
+		return n, true
+	case float64:
+		return int64(n), true
+	case float32:
+		return int64(n), true
+	case json.Number:
+		i, err := n.Int64()
+		return i, err == nil
+	default:
+		return 0, false
+	}
 }
 
 func (h *HTTPMCPServer) chainParams() *chaincfg.Params {

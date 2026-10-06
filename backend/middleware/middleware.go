@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -322,4 +323,22 @@ func APIAuth(validator auth.APIKeyValidator) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r.WithContext(auth.WithAPIKey(r.Context(), apiKey)))
 		})
 	}
+}
+
+// LoopbackOnly rejects requests whose remote address is not a loopback
+// address. Used for /metrics and /debug/pprof so a 0.0.0.0 bind does not
+// expose heap dumps or node topology to the network.
+func LoopbackOnly(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err != nil {
+			host = r.RemoteAddr
+		}
+		ip := net.ParseIP(host)
+		if ip == nil || !ip.IsLoopback() {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }

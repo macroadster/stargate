@@ -18,6 +18,7 @@ import (
 	"stargate-backend/core/smart_contract"
 	"stargate-backend/stego"
 	"stargate-backend/storage/ipfs"
+	scstore "stargate-backend/storage/smart_contract"
 )
 
 func wishCoverPNG(t *testing.T, w, h int) []byte {
@@ -128,7 +129,7 @@ func TestIngestDownloadedFile_WishV1CreatesPendingContract(t *testing.T) {
 
 	IngestDownloadedFile(context.Background(), src, "bafy-wish-cid", ingest, store)
 
-	c, err := store.GetContract("wish-" + hash)
+	c, err := store.GetContract(hash)
 	if err != nil {
 		t.Fatalf("expected pending wish contract: %v", err)
 	}
@@ -212,7 +213,7 @@ func TestIngestDownloadedFile_WishV1Idempotent(t *testing.T) {
 	if len(list) != 1 {
 		t.Fatalf("expected 1 contract, got %d", len(list))
 	}
-	if list[0].ContractID != "wish-"+hash {
+	if list[0].ContractID != hash {
 		t.Fatalf("id=%s", list[0].ContractID)
 	}
 }
@@ -276,12 +277,15 @@ func TestIngestDownloadedFile_DoesNotOverwriteProtectedContract(t *testing.T) {
 	}
 	IngestDownloadedFile(context.Background(), src, "bafy-atk", newTestIngestionService(t), store)
 
-	c, err := store.GetContract("wish-" + hash)
+	c, err := scstore.LookupContract(store, hash)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if c.Title != "Legitimate funded wish" || c.Status != "active" || c.TotalBudgetSats != 50_000 {
 		t.Fatalf("protected contract mutated: %+v", c)
+	}
+	if _, err := store.GetContract(hash); err == nil && c.ContractID != hash {
+		t.Fatal("ingest must not mint a bare twin beside the existing wish- row")
 	}
 }
 
@@ -300,7 +304,7 @@ func TestIngestDownloadedFile_PlainTextTrackedCreatesContract(t *testing.T) {
 	}
 	IngestDownloadedFile(context.Background(), src, "bafy-plain", ingest, store)
 
-	c, err := store.GetContract("wish-" + hash)
+	c, err := store.GetContract(hash)
 	if err != nil {
 		t.Fatalf("expected contract for tracked plain wish: %v", err)
 	}

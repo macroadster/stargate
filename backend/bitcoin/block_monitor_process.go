@@ -16,7 +16,8 @@ import (
 )
 
 // monitorLoop runs the main monitoring loop
-func (bm *BlockMonitor) monitorLoop() {
+func (bm *BlockMonitor) monitorLoop(stop <-chan struct{}) {
+	defer bm.wg.Done()
 	ticker := time.NewTicker(bm.checkInterval)
 	defer ticker.Stop()
 
@@ -31,14 +32,15 @@ func (bm *BlockMonitor) monitorLoop() {
 				log.Printf("Error checking for new blocks: %v", err)
 			}
 			log.Printf("block monitor: checkForNewBlocks completed in %v", time.Since(start))
-		case <-bm.stopChan:
+		case <-stop:
 			log.Println("Block monitor stopped")
 			return
 		}
 	}
 }
 
-func (bm *BlockMonitor) reconcileSweepLoop() {
+func (bm *BlockMonitor) reconcileSweepLoop(stop <-chan struct{}) {
+	defer bm.wg.Done()
 	window := monitorRecentReconcileWindow()
 	interval := monitorReconcileInterval()
 
@@ -49,7 +51,14 @@ func (bm *BlockMonitor) reconcileSweepLoop() {
 	defer ticker.Stop()
 
 	// Initial small delay so startup forward scan + first reconcileCanonicalTip settle first
-	time.Sleep(15 * time.Second)
+	startupDelay := time.NewTimer(15 * time.Second)
+	select {
+	case <-stop:
+		startupDelay.Stop()
+		log.Println("reconcile sweep loop stopped during startup delay")
+		return
+	case <-startupDelay.C:
+	}
 
 	for {
 		select {
@@ -62,7 +71,7 @@ func (bm *BlockMonitor) reconcileSweepLoop() {
 			}
 			cancel()
 			log.Printf("block monitor: ReconcileRecentBlocks (sweep) took %v", time.Since(start))
-		case <-bm.stopChan:
+		case <-stop:
 			log.Println("reconcile sweep loop stopped")
 			return
 		}
@@ -154,7 +163,7 @@ func (bm *BlockMonitor) updateRecentBlocksSummary() error {
 // reprocessing of the last N blocks, no background catch-up crawls.
 func (bm *BlockMonitor) checkForNewBlocks() error {
 	// Get current blockchain height from the configured source
-	tip, err := bm.getCurrentHeightFromBlockchainInfo()
+	tip, err := bm.getChainTipHeight()
 	if err != nil {
 		return fmt.Errorf("failed to get current height: %w", err)
 	}
@@ -284,6 +293,17 @@ func (bm *BlockMonitor) trackTip(tip int64) error {
 			bm.currentHeight, tip, tip-bm.currentHeight)
 	}
 
+	// Sequential backfill must not skip the gap, but the UI reads stored
+	// heights desc. Process the live tip without advancing currentHeight so
+	// new blocks show up while 145k..tip still crawls (stargate-3p2.2).
+	if live := liveTipWhileBackfill(last, tip); live > 0 {
+		if err := bm.ProcessBlock(live); err != nil {
+			log.Printf("Error processing live tip %d during catch-up: %v", live, err)
+		} else {
+			log.Printf("block monitor: stored live tip %d while backfill is at %d", live, bm.currentHeight)
+		}
+	}
+
 	bm.lastChecked = time.Now()
 	bm.promoteProvisionalProofs(tip)
 	bm.promoteFundedContracts(tip)
@@ -322,8 +342,8 @@ func (bm *BlockMonitor) reconcileCanonicalTip(currentHeight int64, depth int) er
 	return nil
 }
 
-// getCurrentHeightFromBlockchainInfo gets current height from the configured Bitcoin network
-func (bm *BlockMonitor) getCurrentHeightFromBlockchainInfo() (int64, error) {
+// getChainTipHeight returns the local chain tip (btcd / configured backend).
+func (bm *BlockMonitor) getChainTipHeight() (int64, error) {
 	if bm.chain != nil {
 		return bm.chain.GetTipHeight(context.Background())
 	}
@@ -333,13 +353,14 @@ func (bm *BlockMonitor) getCurrentHeightFromBlockchainInfo() (int64, error) {
 	return bm.bitcoinClient.GetCurrentHeight()
 }
 
-// ProcessBlock downloads and processes a single block using raw block parser (exported for external use)
+// ProcessBlock loads and processes a single block via the configured chain backend
+// (local btcd by default). Exported for on-demand scans.
 func (bm *BlockMonitor) ProcessBlock(height int64) error {
 	startTime := time.Now()
 
 	log.Printf("Processing block %d, bitcoinAPI set: %v", height, bm.bitcoinAPI != nil)
 
-	// Get raw block hex from blockchain.info
+	// Raw hex from local btcd (ChainBackend). Public explorers are fallback only.
 	hexData, err := bm.rawClient.GetRawBlockHex(height)
 	if err != nil {
 		return fmt.Errorf("failed to get raw block hex: %w", err)
@@ -473,7 +494,7 @@ func (bm *BlockMonitor) ReconcileRecentBlocks(ctx context.Context, count int) er
 	defer bm.reconcileMu.Unlock()
 
 	start := time.Now()
-	height, err := bm.getCurrentHeightFromBlockchainInfo()
+	height, err := bm.getChainTipHeight()
 	if err != nil {
 		return fmt.Errorf("get current height: %w", err)
 	}

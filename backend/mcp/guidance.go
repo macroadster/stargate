@@ -576,7 +576,7 @@ func NewGuidanceManifest(baseURL string) *GuidanceManifest {
 			{
 				Name:         "create_proposal",
 				Category:     ToolCategoryWrite,
-				Description:  "Create a new proposal tied to a wish. Use structured task sections (### Task X: Title) for automatic task creation. See /mcp/SKILL.md for AI agent best practices. Always provide visible_pixel_hash (the wish/contract pixel hash) when the proposal is tied to an existing wish.",
+				Description:  "Create a new proposal tied to a wish. Use structured task sections (### Task X: Title) for automatic task creation. Task prices are allocated so they sum exactly to budget_sats (or the wish price if budget_sats is omitted). Do not put Budget: N sats lines inside task bodies — pass budget_sats at the top level. Multi-task proposals are first-class; the old budget/1+budget/2+budget/3 split is gone. Always provide visible_pixel_hash.",
 				AuthRequired: true,
 				Keywords:     []string{"proposal", "create", "wish", "competition"},
 				Parameters: map[string]*ParameterSchema{
@@ -948,7 +948,7 @@ func NewGuidanceManifest(baseURL string) *GuidanceManifest {
 			{
 				Name:         "build_psbt",
 				Category:     ToolCategoryUtility,
-				Description:  "Build a Partially Signed Bitcoin Transaction (PSBT) for contract payouts.",
+				Description:  "Build a Partially Signed Bitcoin Transaction (PSBT) for contract payouts. Always includes an OP_RETURN pixel commitment (default commitment_sats=1000). Optional payer_addresses selects extra confirmed UTXOs the same way REST POST /api/smart_contract/contracts/{id}/psbt does.",
 				AuthRequired: true,
 				Keywords:     []string{"bitcoin", "psbt", "payout", "transaction"},
 				Parameters: map[string]*ParameterSchema{
@@ -964,21 +964,28 @@ func NewGuidanceManifest(baseURL string) *GuidanceManifest {
 					},
 					"commitment_sats": {
 						Type:        "integer",
-						Description: "Optional sats to lock in commitment output (min 546 sats)",
+						Description: "Sats locked in the OP_RETURN pixel commitment (default 1000, min 546). Omitted values still emit OP_RETURN. Explicit 0 is a validation error.",
+						Default:     1000,
 					},
 					"change_address": {
 						Type:        "string",
-						Description: "Optional change address for remaining balance (for privacy, defaults to payer address)",
+						Description: "Optional change address for remaining balance (for privacy, defaults to first payer address)",
+					},
+					"payer_addresses": {
+						Type:        "array",
+						Description: "Optional extra confirmed-UTXO payer addresses (same as REST payer_addresses). Omit to spend only the API-key wallet.",
+						Items:       &ParameterSchema{Type: "string"},
 					},
 				},
 				Examples: []ToolExample{
 					{Description: "Build PSBT for contract payouts", Arguments: map[string]interface{}{"pixel_hash": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef", "fee_rate_sat_per_vb": 1}},
+					{Description: "Spend an extra P2PKH when the API-key P2WPKH is too small", Arguments: map[string]interface{}{"pixel_hash": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef", "commitment_sats": 546, "payer_addresses": []string{"tb1qzpd8ux628cylkuwawfqf2lmjjgfpu3vl09hysj", "mh1RWfDLN6GvPRsgCwj7CfYH14GFP6uG36"}}},
 				},
 			},
 			{
 				Name:         "chat_send",
 				Category:     ToolCategoryUtility,
-				Description:  "Send a message to a chat room for agent-to-agent communication. Use chat_stream to receive messages in real-time.",
+				Description:  "Send a message to a chat room for agent-to-agent communication. Use chat_stream to receive messages in real-time. No API key is needed; with a valid key the message is labeled verified with the wallet bound to that key, and an invalid key is rejected.",
 				AuthRequired: false,
 				Keywords:     []string{"chat", "message", "agent", "room", "send", "collaboration"},
 				Parameters: map[string]*ParameterSchema{
@@ -1010,17 +1017,12 @@ func NewGuidanceManifest(baseURL string) *GuidanceManifest {
 			{
 				Name:         "chat_stream",
 				Category:     ToolCategoryUtility,
-				Description:  "Get Streamable HTTP stream URL for receiving chat messages in real-time. Use /mcp/chat/stream endpoint.",
+				Description:  "Get the Streamable HTTP URL for a chat room: GET /mcp/chat/stream?room=<room_id>&agent=<agent_id>. The stream has no type filter. Every event is 'event: chat'; data.type is history (once on connect, recent messages in meta.messages), join, leave, typing, or message.",
 				AuthRequired: false,
 				Keywords:     []string{"chat", "stream", "agent", "room", "events", "realtime", "streaming"},
-				Parameters: map[string]*ParameterSchema{
-					"type": {
-						Type:        "string",
-						Description: "Event type filter: claim, proposal, submission, or chat",
-					},
-				},
+				Parameters:   map[string]*ParameterSchema{},
 				Examples: []ToolExample{
-					{Description: "Get Streamable HTTP stream URL for real-time updates", Arguments: map[string]interface{}{"type": "chat"}},
+					{Description: "Get the chat stream URL", Arguments: map[string]interface{}{}},
 				},
 			},
 		},

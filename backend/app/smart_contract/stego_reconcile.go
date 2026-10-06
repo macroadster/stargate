@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -25,11 +26,26 @@ import (
 
 	"stargate-backend/core/identity"
 	"stargate-backend/core/smart_contract"
+	"stargate-backend/security"
 	"stargate-backend/services"
 	"stargate-backend/stego"
 	"stargate-backend/storage/datadir"
 	"stargate-backend/storage/ipfs"
 	scstore "stargate-backend/storage/smart_contract"
+)
+
+// Caps on peer-supplied sandbox tarballs. A small on-chain stego payload can
+// point at a tarball that would otherwise exhaust memory or fill the disk.
+// Vars rather than consts so tests can lower them; production values stay here.
+var (
+	sandboxMaxEntries          = 4096
+	sandboxMaxFileBytes  int64 = 32 << 20  // 32 MiB per regular file
+	sandboxMaxTotalBytes int64 = 256 << 20 // 256 MiB extracted
+)
+
+var (
+	errSandboxNotConfirmed     = errors.New("sandbox pull requires a confirmed contract")
+	errSandboxContractNotFound = errors.New("contract not found")
 )
 
 type stegoReconcileRequest struct {
@@ -47,7 +63,6 @@ type stegoReconcileResponse struct {
 
 type stegoReconcileConfig struct {
 	ProxyBase   string
-	APIKey      string
 	ScanTimeout time.Duration
 }
 
@@ -110,7 +125,6 @@ func loadStegoReconcileConfig() stegoReconcileConfig {
 	}
 	return stegoReconcileConfig{
 		ProxyBase:   proxyBase,
-		APIKey:      strings.TrimSpace(os.Getenv("STARGATE_API_KEY")),
 		ScanTimeout: timeout,
 	}
 }
@@ -213,13 +227,6 @@ func (s *Server) reconcileStegoFromLocalFile(ctx context.Context, stegoHash stri
 		return err
 	}
 	s.ensureStegoIngestion(ctx, contractID, stegoHash, stegoHash, stegoBytes, manifest)
-
-	// If the contract is already confirmed, kick off sandbox extraction.
-	if c, err := s.store.GetContract(contractID); err == nil {
-		if strings.EqualFold(strings.TrimSpace(c.Status), "confirmed") {
-			go s.downloadSandboxArtifacts(context.Background(), contractID)
-		}
-	}
 	log.Printf("stego: applied from local file: contract_id=%s, hash=%s", contractID, stegoHash)
 	return nil
 }
@@ -364,9 +371,6 @@ func extractStegoManifest(ctx context.Context, imageData []byte, cfg stegoReconc
 		return nil, err
 	}
 	req.Header.Set("Content-Type", writer.FormDataContentType())
-	if cfg.APIKey != "" {
-		req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
-	}
 	client := &http.Client{Timeout: cfg.ScanTimeout}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -437,11 +441,42 @@ func (s *Server) ensureStegoIngestion(ctx context.Context, contractID, stegoCID,
 		Status:        "verified",
 	}
 	if existing, err := s.ingestionSvc.Get(contractID); err == nil && existing != nil {
+		// Deliberately without stego_replicated: UpdateFromIngest merges with
+		// incoming precedence, so stamping it here would mark a locally created
+		// wish as replicated the next time its stego image is reconciled.
 		_ = s.ingestionSvc.UpdateFromIngest(contractID, rec)
+		s.applyVerifiedCreator(contractID, manifest)
 		return
 	}
+	// Set only on create, where the record genuinely originates from a peer.
+	// creator_wallet is not copied from the wire; applyVerifiedCreator writes
+	// it only after a signature check, and never overwrites an existing value.
+	// stego_replicated lets authorization report "replicated" instead of
+	// "creator data missing". It must not be read as a deny signal on its own.
+	meta["stego_replicated"] = true
 	if err := s.ingestionSvc.Create(rec); err != nil {
 		log.Printf("stego reconcile: failed to create ingestion %s: %v", contractID, err)
+		return
+	}
+	s.applyVerifiedCreator(contractID, manifest)
+}
+
+// applyVerifiedCreator records creator_wallet from a first-class attestation
+// only after the signature verifies. It never writes an unverified wallet and
+// never overwrites a wallet already on the row.
+func (s *Server) applyVerifiedCreator(contractID string, manifest stego.Manifest) {
+	if s.ingestionSvc == nil {
+		return
+	}
+	hash := strings.TrimSpace(manifest.VisiblePixelHash)
+	if hash == "" {
+		hash = strings.TrimSpace(contractID)
+	}
+	if err := VerifyCreatorAttestation(manifest.CreatorWallet, manifest.CreatorSig, hash); err != nil {
+		return
+	}
+	if err := s.ingestionSvc.SetCreatorWalletIfAbsent(contractID, strings.TrimSpace(manifest.CreatorWallet)); err != nil {
+		log.Printf("stego reconcile: failed to record verified creator for %s: %v", contractID, err)
 	}
 }
 
@@ -739,38 +774,57 @@ func looksLikeHash(s string) bool {
 	return true
 }
 
-// downloadSandboxArtifacts fetches and extracts the sandbox tarball for a
-// confirmed contract.  It looks up sandbox_hash from the associated proposal
-// or contract metadata, then searches for the tarball on the local filesystem
-// (UPLOADS_DIR/<sandbox_hash>) first — the IPFS mirror syncs tarballs between
-// peers using hash-based filenames.  Falls back to IPFS Cat if the file isn't
-// available locally yet.
-//
-// The function is idempotent — if the results directory already exists and
-// passes hash verification, the extraction is skipped.
-func (s *Server) downloadSandboxArtifacts(ctx context.Context, contractID string) {
-	if s.store == nil || contractID == "" {
-		return
+// DownloadSandboxArtifacts finds the hash-named tarball (disk, then IPFS),
+// verifies it, and unpacks to results/<id>. Confirm is the gate: unconfirmed
+// contracts are refused. This node's on-chain confirm path and POST
+// .../sandbox/pull both call this. processEvent, sync gossip, and stego
+// reconcile must not. Idempotent if the tree is already there and matches.
+func (s *Server) DownloadSandboxArtifacts(ctx context.Context, contractID string) error {
+	return s.downloadSandboxArtifacts(ctx, contractID)
+}
+
+// resultsPartitionKey is the on-disk results directory name.
+// A 64-char pixel hash, wish-<hash>, or contract-<hash> maps to the bare hash.
+// Any other id is returned unchanged so legacy non-hash trees stay where they are.
+func resultsPartitionKey(id string) string {
+	if key, ok := identity.ResultsDirKey(id, ""); ok {
+		return key
+	}
+	return strings.TrimSpace(id)
+}
+
+func (s *Server) downloadSandboxArtifacts(ctx context.Context, contractID string) error {
+	if s.store == nil || strings.TrimSpace(contractID) == "" {
+		return errSandboxContractNotFound
 	}
 	normalizedID := scstore.NormalizeContractID(contractID)
 	if normalizedID == "" {
-		return
+		return errSandboxContractNotFound
+	}
+
+	status, err := s.lookupContractStatus(contractID, normalizedID)
+	if err != nil {
+		return err
+	}
+	if !strings.EqualFold(status, "confirmed") {
+		log.Printf("sandbox: refusing pull for %s: status=%s", contractID, status)
+		return errSandboxNotConfirmed
 	}
 
 	sandboxHash := s.findSandboxHash(ctx, contractID, normalizedID)
 	if sandboxHash == "" {
 		log.Printf("sandbox: no sandbox_hash found for contract %s, skipping", contractID)
-		return
+		return fmt.Errorf("sandbox_hash not found for contract %s", contractID)
 	}
 
 	uploadsDir := strings.TrimSpace(os.Getenv("UPLOADS_DIR"))
-	resultsDir := datadir.PartResolve(filepath.Join(uploadsDir, "results"), normalizedID)
+	resultsDir := datadir.PartResolve(filepath.Join(uploadsDir, "results"), resultsPartitionKey(normalizedID))
 
 	// If results already exist and match the expected hash, skip extraction.
 	if info, err := os.Stat(resultsDir); err == nil && info.IsDir() {
 		if err := stego.VerifySandboxHash(resultsDir, sandboxHash); err == nil {
 			log.Printf("sandbox: artifacts already present and verified for %s", contractID)
-			return
+			return nil
 		}
 		log.Printf("sandbox: artifacts present but hash mismatch for %s, re-extracting", contractID)
 	}
@@ -790,12 +844,12 @@ func (s *Server) downloadSandboxArtifacts(ctx context.Context, contractID string
 		ipfsClient := ipfs.NewClientFromEnv()
 		if ipfsClient == nil {
 			log.Printf("sandbox: tarball not on disk and IPFS disabled for %s", contractID)
-			return
+			return fmt.Errorf("sandbox tarball not on disk and IPFS disabled")
 		}
 		tarballBytes, err = ipfsClient.Cat(ctx, fetchKey)
 		if err != nil {
 			log.Printf("sandbox: tarball %s not on disk and IPFS fetch failed for %s: %v", fetchKey, contractID, err)
-			return
+			return fmt.Errorf("sandbox tarball fetch failed: %w", err)
 		}
 		log.Printf("sandbox: fetched tarball from IPFS for %s (%d bytes)", contractID, len(tarballBytes))
 	} else {
@@ -807,10 +861,31 @@ func (s *Server) downloadSandboxArtifacts(ctx context.Context, contractID string
 	actual := hex.EncodeToString(sum[:])
 	if !strings.EqualFold(actual, sandboxHash) {
 		log.Printf("sandbox: hash mismatch for %s: expected %s got %s", contractID, sandboxHash, actual)
-		return
+		return fmt.Errorf("sandbox tarball hash mismatch")
 	}
 
-	s.extractSandboxTarball(contractID, tarballBytes, resultsDir)
+	if err := s.extractSandboxTarball(contractID, tarballBytes, resultsDir); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *Server) lookupContractStatus(contractID, normalizedID string) (string, error) {
+	ids := []string{contractID, normalizedID, "wish-" + strings.TrimPrefix(normalizedID, "wish-")}
+	seen := map[string]bool{}
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		c, err := s.store.GetContract(id)
+		if err != nil {
+			continue
+		}
+		return strings.TrimSpace(c.Status), nil
+	}
+	return "", errSandboxContractNotFound
 }
 
 // findSandboxHash searches proposal and contract metadata for sandbox_hash.
@@ -886,19 +961,24 @@ func (s *Server) findSandboxCID(ctx context.Context, contractID, normalizedID st
 }
 
 // extractSandboxTarball extracts a tar archive to the results directory.
-func (s *Server) extractSandboxTarball(contractID string, tarballBytes []byte, resultsDir string) {
+// Hard stops (mkdir, gzip, tar read, entry/total caps) return an error so
+// the explicit pull does not report success after a failed unpack. Skipped
+// entries (traversal, oversized file) stay non-fatal.
+func (s *Server) extractSandboxTarball(contractID string, tarballBytes []byte, resultsDir string) error {
 	if err := os.MkdirAll(resultsDir, 0755); err != nil {
 		log.Printf("sandbox: failed to create results dir %s: %v", resultsDir, err)
-		return
+		return fmt.Errorf("create results dir: %w", err)
 	}
 	gr, err := gzip.NewReader(bytes.NewReader(tarballBytes))
 	if err != nil {
 		log.Printf("sandbox: gzip open failed for %s: %v", contractID, err)
-		return
+		return fmt.Errorf("gzip open: %w", err)
 	}
 	defer gr.Close()
 	tr := tar.NewReader(gr)
 	fileCount := 0
+	headerCount := 0
+	var totalBytes int64
 	for {
 		hdr, err := tr.Next()
 		if err == io.EOF {
@@ -906,32 +986,53 @@ func (s *Server) extractSandboxTarball(contractID string, tarballBytes []byte, r
 		}
 		if err != nil {
 			log.Printf("sandbox: tar read error for %s: %v", contractID, err)
-			return
+			return fmt.Errorf("tar read: %w", err)
+		}
+		// Count every header, including ones we later skip. Counting only
+		// successful writes left traversal / oversized / non-regular entries
+		// unbounded and let a valid file land after the cap.
+		headerCount++
+		if headerCount > sandboxMaxEntries {
+			log.Printf("sandbox: entry cap %d reached for %s, stopping", sandboxMaxEntries, contractID)
+			return fmt.Errorf("sandbox entry cap %d reached", sandboxMaxEntries)
 		}
 		if hdr.Typeflag != tar.TypeReg {
 			continue
 		}
-		outPath := filepath.Join(resultsDir, filepath.FromSlash(hdr.Name))
-		// Guard against path traversal.
-		if !strings.HasPrefix(filepath.Clean(outPath), filepath.Clean(resultsDir)) {
-			log.Printf("sandbox: skipping path traversal in tarball: %s", hdr.Name)
+		if hdr.Size < 0 || hdr.Size > sandboxMaxFileBytes {
+			log.Printf("sandbox: skipping oversized entry %s (%d bytes) for %s", hdr.Name, hdr.Size, contractID)
+			continue
+		}
+		if totalBytes+hdr.Size > sandboxMaxTotalBytes {
+			log.Printf("sandbox: total-size cap %d reached for %s, stopping", sandboxMaxTotalBytes, contractID)
+			return fmt.Errorf("sandbox total-size cap %d reached", sandboxMaxTotalBytes)
+		}
+		outPath, err := security.SanitizePath(resultsDir, filepath.FromSlash(hdr.Name))
+		if err != nil {
+			log.Printf("sandbox: skipping path traversal in tarball: %s (%v)", hdr.Name, err)
 			continue
 		}
 		if err := os.MkdirAll(filepath.Dir(outPath), 0755); err != nil {
 			log.Printf("sandbox: mkdir failed for %s: %v", outPath, err)
 			continue
 		}
-		data, err := io.ReadAll(tr)
+		data, err := io.ReadAll(io.LimitReader(tr, sandboxMaxFileBytes+1))
 		if err != nil {
 			log.Printf("sandbox: read entry %s failed: %v", hdr.Name, err)
+			continue
+		}
+		if int64(len(data)) > sandboxMaxFileBytes {
+			log.Printf("sandbox: skipping oversized entry body %s for %s", hdr.Name, contractID)
 			continue
 		}
 		if err := os.WriteFile(outPath, data, 0644); err != nil {
 			log.Printf("sandbox: write %s failed: %v", outPath, err)
 			continue
 		}
+		totalBytes += int64(len(data))
 		fileCount++
 	}
 
 	log.Printf("sandbox: extracted %d files for contract %s to %s", fileCount, contractID, resultsDir)
+	return nil
 }

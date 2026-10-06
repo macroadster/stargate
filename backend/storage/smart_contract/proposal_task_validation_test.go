@@ -124,6 +124,30 @@ func TestProposalTaskValidation(t *testing.T) {
 		}
 	})
 
+	t.Run("Proposal tasks under-allocate proposal budget", func(t *testing.T) {
+		proposal := smart_contract.Proposal{
+			ID:            "test-proposal-under-budget",
+			Title:         "Under Budget Proposal",
+			DescriptionMD: "Brief text",
+			BudgetSats:    1000,
+			Status:        "pending",
+			Tasks: []smart_contract.Task{
+				{TaskID: "task-1", Title: "Task One", Description: "A", BudgetSats: 400, Status: "available"},
+				{TaskID: "task-2", Title: "Task Two", Description: "B", BudgetSats: 400, Status: "available"},
+			},
+			Metadata: map[string]any{
+				"visible_pixel_hash": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+			},
+		}
+		err := store.CreateProposal(ctx, proposal)
+		if err == nil {
+			t.Fatal("expected validation error when task budgets under-allocate proposal budget")
+		}
+		if !containsString(err.Error(), "under-allocate proposal budget") {
+			t.Errorf("expected under-allocate proposal budget error, got: %v", err)
+		}
+	})
+
 	t.Run("Pending proposal with no tasks (allowed)", func(t *testing.T) {
 		proposal := smart_contract.Proposal{
 			ID:            "test-proposal-4",

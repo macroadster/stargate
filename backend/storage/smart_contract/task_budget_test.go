@@ -21,6 +21,49 @@ func TestAllocateTaskBudgetsNeverExceedsTotal(t *testing.T) {
 	}
 }
 
+func TestAllocateTaskBudgetsEqualSplitNotKeywordWeights(t *testing.T) {
+	// Three generic tasks on a 1000-sat wish must be 334/333/333 (last eats
+	// remainder), never the old budget/1 + budget/2 + budget/3 = 1833, and
+	// never title-keyword weights (implement=50, test=20, …).
+	titles := []string{"First slice of work", "Second slice of work", "Third slice of work"}
+	got := AllocateTaskBudgets(titles, nil, 1000)
+	var sum int64
+	for _, n := range got {
+		if n <= 0 {
+			t.Fatalf("expected positive shares, got %v", got)
+		}
+		sum += n
+	}
+	if sum != 1000 {
+		t.Fatalf("sum=%d want 1000 amounts=%v", sum, got)
+	}
+	if got[0] != 333 || got[1] != 333 || got[2] != 334 {
+		t.Fatalf("equal split want first-two 333 last 334, got %v", got)
+	}
+}
+
+func TestAllocateTaskBudgetsOldCurrentIndexScar(t *testing.T) {
+	old := int64(0)
+	const total int64 = 1000
+	for i := 1; i <= 3; i++ {
+		old += total / int64(i)
+	}
+	if old != 1833 {
+		t.Fatalf("sanity: old scar should be 1833, got %d", old)
+	}
+	got := AllocateTaskBudgets([]string{"A", "B", "C"}, nil, total)
+	var sum int64
+	for _, n := range got {
+		sum += n
+	}
+	if sum == old {
+		t.Fatalf("allocator reproduced budget/currentIndex scar: %v", got)
+	}
+	if sum != total {
+		t.Fatalf("sum=%d want %d amounts=%v", sum, total, got)
+	}
+}
+
 func TestAllocateTaskBudgetsHonorsExplicitAndScalesOverflow(t *testing.T) {
 	titles := []string{"Implement A", "Implement B"}
 	got := AllocateTaskBudgets(titles, []int64{800, 800}, 1000)
@@ -233,6 +276,37 @@ func TestRebalanceOpenOverBudgetSkipsSuperseded(t *testing.T) {
 	}
 	if old.BudgetSats != 2000 {
 		t.Fatalf("superseded rewritten: %d", old.BudgetSats)
+	}
+}
+
+func TestCreateMissingTasksLastEatsRemainder(t *testing.T) {
+	store := NewMemoryStore(time.Hour)
+	ctx := context.Background()
+	if err := store.UpsertContractWithTasks(ctx, smart_contract.Contract{
+		ContractID:          "wish-missing",
+		Title:               "Missing",
+		TotalBudgetSats:     1000,
+		AvailableTasksCount: 3,
+		Status:              "active",
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	tasks, err := store.ListTasks(smart_contract.TaskFilter{ContractID: "wish-missing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tasks) != 3 {
+		t.Fatalf("got %d tasks, want 3", len(tasks))
+	}
+	var sum int64
+	for _, task := range tasks {
+		if task.BudgetSats <= 0 {
+			t.Fatalf("task %q budget %d", task.Title, task.BudgetSats)
+		}
+		sum += task.BudgetSats
+	}
+	if sum != 1000 {
+		t.Fatalf("missing-task split sum=%d want 1000 (old TotalBudgetSats/N dropped remainder)", sum)
 	}
 }
 

@@ -84,7 +84,7 @@ func TestGORMAPIKeyStoreMemory(t *testing.T) {
 	}
 }
 
-func TestGORMAPIKeyStoreEnvSeed(t *testing.T) {
+func TestGORMAPIKeyStoreIgnoresEnvSeed(t *testing.T) {
 	t.Setenv("STARGATE_API_KEY", "env-test-key-abcdef")
 	t.Setenv("STARLIGHT_DONATION_ADDRESS", "bc1qdonation")
 
@@ -95,20 +95,10 @@ func TestGORMAPIKeyStoreEnvSeed(t *testing.T) {
 	defer store.Close()
 	store.SeedEnvironmentVariables()
 
-	if !store.Validate("env-test-key-abcdef") {
-		t.Fatal("env-seeded key should validate")
+	if store.Validate("env-test-key-abcdef") {
+		t.Fatal("STARGATE_API_KEY must not seed a login")
 	}
-	got, ok := store.Get("env-test-key-abcdef")
-	if !ok || got.Wallet != "bc1qdonation" {
-		t.Fatalf("expected donation wallet bind, got %+v ok=%v", got, ok)
-	}
-}
-
-func TestPlanEnvSeed(t *testing.T) {
-	t.Setenv("STARGATE_API_KEY", "k")
-	t.Setenv("STARLIGHT_DONATION_ADDRESS", "w")
-	plan := PlanEnvSeed()
-	if plan.BindKey != "k" || plan.BindWallet != "w" {
-		t.Fatalf("bind plan: %+v", plan)
+	if _, ok := store.Get("env-test-key-abcdef"); ok {
+		t.Fatal("STARGATE_API_KEY must not bind a wallet")
 	}
 }

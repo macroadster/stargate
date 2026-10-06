@@ -19,6 +19,12 @@ type Payload struct {
 	CreatedAt        int64  `json:"created_at,omitempty"`
 	SandboxHash      string `json:"sandbox_hash,omitempty"`
 	ContractID       string `json:"contract_id,omitempty"`
+
+	// Creator attestation. First-class so it is not merged via payload.Metadata
+	// (stargate-6ds). Optional: unsigned images stay valid and stay
+	// unapprovable on replicas.
+	CreatorWallet string `json:"creator_wallet,omitempty"`
+	CreatorSig    string `json:"creator_sig,omitempty"`
 }
 
 type PayloadProposal struct {

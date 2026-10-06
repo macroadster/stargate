@@ -12,8 +12,9 @@ import (
 	"time"
 
 	scmiddleware "stargate-backend/app/smart_contract"
-       "stargate-backend/core/smart_contract"
-       "stargate-backend/storage/datadir"
+	"stargate-backend/core/identity"
+	"stargate-backend/core/smart_contract"
+	"stargate-backend/storage/datadir"
 )
 
 // Worker is responsible for discovering open wishes (contracts), creating proposals,
@@ -501,10 +502,14 @@ func (w *Worker) performWork(task smart_contract.Task) map[string]interface{} {
 	if task.MerkleProof != nil {
 		visible = task.MerkleProof.VisiblePixelHash
 	}
-	if visible == "" {
-		visible = contractID
+	if key, ok := identity.ResultsDirKey(visible, contractID); ok {
+		visible = key
+	} else {
+		if visible == "" {
+			visible = contractID
+		}
+		visible = strings.TrimPrefix(visible, "wish-")
 	}
-	visible = strings.TrimPrefix(visible, "wish-")
 
 	title := task.Title
 	desc := task.Description
@@ -541,12 +546,12 @@ func (w *Worker) performWork(task smart_contract.Task) map[string]interface{} {
 		}
 	}
 
-       // Build workdir (partitioned: results/ab/cd/ef/<hash>)
+	// Build workdir (partitioned: results/ab/cd/ef/<hash>)
 	base := w.cfg.UploadsDir
 	if base == "" {
 		base = os.Getenv("UPLOADS_DIR")
 	}
-       workdir, _ := datadir.PartMkdirAll(filepath.Join(base, "results"), visible, 0755)
+	workdir, _ := datadir.PartMkdirAll(filepath.Join(base, "results"), visible, 0755)
 
 	// Copy/inject AGENTS.md guide
 	w.ensureAgentsGuide(workdir)

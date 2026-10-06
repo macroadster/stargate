@@ -33,16 +33,11 @@ func (s *Server) processEvent(evt smart_contract.Event, shouldPublish bool) {
 	if shouldPublish {
 		go s.publishSyncEvent(evt)
 	}
-
-	// When the local oracle confirms a contract, download sandbox artifacts.
-	if evt.Type == "contract_confirmed" && evt.EntityID != "" {
-		go s.downloadSandboxArtifacts(context.Background(), evt.EntityID)
-	}
 }
 
 // mergeSandboxMetadata propagates sandbox_hash (and sandbox_tarball_cid for
 // backward compat) from a synced contract into the local proposal and contract
-// metadata so downloadSandboxArtifacts can find the tarball by hash.
+// metadata so a later explicit pull can find the tarball by hash.
 func (s *Server) mergeSandboxMetadata(ctx context.Context, c *smart_contract.Contract) {
 	if c == nil || c.Metadata == nil {
 		return
@@ -250,11 +245,9 @@ func (s *Server) ReconcileSyncAnnouncement(ctx context.Context, ann *syncAnnounc
 	case "contract_confirmed":
 		if ann.Contract != nil {
 			err = s.store.UpdateContractStatus(ctx, ann.Contract.ContractID, "confirmed")
-			// Merge sandbox_hash from the synced contract metadata so the
-			// local node can locate the tarball by hash in UPLOADS_DIR.
+			// Merge sandbox_hash from the synced contract metadata so a later
+			// explicit pull can locate the tarball by hash in UPLOADS_DIR.
 			s.mergeSandboxMetadata(ctx, ann.Contract)
-			// Download sandbox artifacts now that the contract is confirmed.
-			go s.downloadSandboxArtifacts(context.Background(), ann.Contract.ContractID)
 		}
 	case "submit":
 		if ann.Submission != nil {

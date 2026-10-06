@@ -1,5 +1,7 @@
 # Block Monitor API Rate Limiting Implementation
 
+Status: **historical**. See [README.md](./README.md).
+
 ## Summary
 
 Successfully implemented comprehensive rate limiting and intelligent request management for Blockstream API to stay within the 700 requests/hour limit while maintaining full functionality.

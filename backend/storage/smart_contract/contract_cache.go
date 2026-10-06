@@ -13,6 +13,7 @@ type ContractCache struct {
 	ttl     time.Duration
 	maxSize int
 	done    chan struct{}
+	stopped sync.Once
 }
 
 // ContractCacheEntry represents a cached contract response
@@ -101,12 +102,14 @@ func (c *ContractCache) startCleanup() {
 }
 
 // Stop requests the cleanup goroutine to exit (for clean shutdown).
+//
+// Safe to call more than once, including concurrently. It used to be a select
+// on done with a default that closed it, which is check-then-act without a
+// lock: two callers both saw done open, both took the default and the second
+// close panicked with "close of closed channel" (stargate-ard). Nothing outside
+// tests called Stop, so the panic was latent rather than observed.
 func (c *ContractCache) Stop() {
-	select {
-	case <-c.done:
-	default:
-		close(c.done)
-	}
+	c.stopped.Do(func() { close(c.done) })
 }
 
 // cleanupExpired removes expired entries

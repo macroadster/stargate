@@ -53,8 +53,14 @@ func TestStaticMCPAssets(t *testing.T) {
 		if !strings.Contains(w.Body.String(), "starlight_sdk.sh create-wish") {
 			t.Fatalf("expected sdk script body")
 		}
-		if !strings.Contains(w.Body.String(), "MCP_BASE=${MCP_BASE:-http://example.com/mcp}") {
+		if !strings.Contains(w.Body.String(), `MCP_BASE=${MCP_BASE:-"http://example.com/mcp"}`) {
 			t.Fatalf("expected request-aware mcp base in sdk script")
+		}
+		if strings.Contains(w.Body.String(), "curl -sk") || !strings.Contains(w.Body.String(), "--fail-with-body") {
+			t.Fatalf("sdk script must verify TLS by default and fail on HTTP errors")
+		}
+		if !strings.Contains(w.Body.String(), ".success == false") {
+			t.Fatalf("sdk script must fail on success=false replies, which /mcp/call sends as HTTP 200")
 		}
 	})
 }

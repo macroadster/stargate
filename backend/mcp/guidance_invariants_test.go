@@ -165,6 +165,37 @@ func TestMCPGuidanceInvariants(t *testing.T) {
 		}
 	})
 
+	t.Run("docs advertise default OP_RETURN commitment", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("GET", "/mcp/docs", nil)
+		r.Host = "api.starlight.local"
+		server.handleDocs(w, r)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		body := w.Body.String()
+		if strings.Contains(body, `"commitment_sats": 0`) {
+			t.Error("docs still show commitment_sats: 0 — omitted commitment defaults to 1000 with OP_RETURN")
+		}
+		if !strings.Contains(body, `"commitment_sats": 1000`) {
+			t.Error("docs should show default commitment_sats: 1000")
+		}
+		if !strings.Contains(body, `"op_return_script"`) {
+			t.Error("docs should advertise op_return_script")
+		}
+		if !strings.Contains(body, `"op_return_vout"`) {
+			t.Error("docs should advertise op_return_vout")
+		}
+		if !strings.Contains(body, `"donation_address"`) {
+			t.Error("docs should advertise donation_address")
+		}
+		if !strings.Contains(body, `"payer_addresses"`) {
+			t.Error("docs should keep payer_addresses on the build_psbt surface")
+		}
+	})
+
 	t.Run("skill references search and tools", func(t *testing.T) {
 		w := httptest.NewRecorder()
 		r := httptest.NewRequest("GET", "/mcp/SKILL.md", nil)

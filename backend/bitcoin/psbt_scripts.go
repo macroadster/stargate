@@ -46,17 +46,20 @@ func allPayerSelectionsAreSegWit(selections []payerSelection, client UTXOClient,
 	return true
 }
 
+// DustLimitP2PKH is the standard Bitcoin dust threshold for a P2PKH output.
+// P2WPKH is lower (~294), but we use the P2PKH floor so a merged payout is
+// relayable no matter which contractor script type we emit.
+const DustLimitP2PKH int64 = 546
+
 func buildPayoutScripts(req PSBTRequest) ([][]byte, []int64, error) {
 	if len(req.Payouts) > 0 {
+		merged, err := mergePayoutsByAddress(req.Payouts)
+		if err != nil {
+			return nil, nil, err
+		}
 		var scripts [][]byte
 		var amounts []int64
-		for _, payout := range req.Payouts {
-			if payout.Address == nil {
-				return nil, nil, fmt.Errorf("payout address required")
-			}
-			if payout.ValueSats <= 0 {
-				return nil, nil, fmt.Errorf("payout amount must be positive")
-			}
+		for _, payout := range merged {
 			script, err := txscript.PayToAddrScript(payout.Address)
 			if err != nil {
 				return nil, nil, fmt.Errorf("payout script: %w", err)
@@ -80,6 +83,44 @@ func buildPayoutScripts(req PSBTRequest) ([][]byte, []int64, error) {
 		return nil, nil, fmt.Errorf("contractor script: %w", err)
 	}
 	return [][]byte{script}, []int64{req.TargetValueSats}, nil
+}
+
+// mergePayoutsByAddress collapses same-address payouts so one contractor
+// with three approved tasks (181+272+547) becomes one 1000-sat output.
+// A 181-sat P2PKH output is dust and mempool.space rejects it (-26 dust).
+// Order follows first appearance of each address. Combined amount must be
+// at least DustLimitP2PKH or the builder refuses instead of emitting dust.
+func mergePayoutsByAddress(payouts []PayoutOutput) ([]PayoutOutput, error) {
+	type bucket struct {
+		addr  btcutil.Address
+		total int64
+	}
+	var order []string
+	byKey := make(map[string]*bucket)
+	for _, payout := range payouts {
+		if payout.Address == nil {
+			return nil, fmt.Errorf("payout address required")
+		}
+		if payout.ValueSats <= 0 {
+			return nil, fmt.Errorf("payout amount must be positive")
+		}
+		key := payout.Address.EncodeAddress()
+		if existing, ok := byKey[key]; ok {
+			existing.total += payout.ValueSats
+			continue
+		}
+		order = append(order, key)
+		byKey[key] = &bucket{addr: payout.Address, total: payout.ValueSats}
+	}
+	out := make([]PayoutOutput, 0, len(order))
+	for _, key := range order {
+		b := byKey[key]
+		if b.total < DustLimitP2PKH {
+			return nil, fmt.Errorf("payout to %s is %d sats, below dust limit %d; merge more approved tasks or raise the budget", key, b.total, DustLimitP2PKH)
+		}
+		out = append(out, PayoutOutput{Address: b.addr, ValueSats: b.total})
+	}
+	return out, nil
 }
 
 // buildDonationOutputs builds a direct P2WPKH donation output and an OP_RETURN

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"unicode"
 
+	"stargate-backend/core/identity"
 	"stargate-backend/core/smart_contract"
 )
 
@@ -15,11 +16,10 @@ func BuildTasksFromMarkdown(proposalID, markdown string, visibleHash string, bud
 	md := strings.TrimSpace(markdown)
 	lines := strings.Split(md, "\n")
 
-	// Determine the canonical contract ID for these tasks
-	// Priority: wish-prefix hash > visible hash > proposal ID
+	// Pixel-hash wishes store the bare hash. wish-<hash> is a lookup alias only.
 	canonicalContractID := proposalID
 	if visibleHash != "" {
-		canonicalContractID = "wish-" + strings.TrimPrefix(visibleHash, "wish-")
+		canonicalContractID = identity.CanonicalContractID(visibleHash)
 	}
 
 	// Extract structured tasks from proper task sections, then allocate
@@ -231,15 +231,19 @@ func extractTaskSkills(title string) []string {
 	return []string{"planning", "development", "testing"}
 }
 
-// calculateTaskBudget assigns a share of totalBudget. Prefer AllocateTaskBudgets
-// when splitting a wish across several tasks so the sum cannot exceed the cap.
+// calculateTaskBudget is a leftover single-title helper. New code must call
+// AllocateTaskBudgets on the full task list so the sum equals the wish.
 func calculateTaskBudget(title string, totalBudget int64, taskCount int) int64 {
 	if totalBudget <= 0 || taskCount <= 0 {
 		return totalBudget
 	}
-	amounts := AllocateTaskBudgets([]string{title}, nil, totalBudget)
+	titles := make([]string, taskCount)
+	for i := range titles {
+		titles[i] = title
+	}
+	amounts := AllocateTaskBudgets(titles, nil, totalBudget)
 	if len(amounts) == 0 {
-		return totalBudget / int64(taskCount)
+		return 0
 	}
 	return amounts[0]
 }

@@ -4,35 +4,40 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"log"
 	"net/http"
-	_ "net/http/pprof" // registers pprof handlers on http.DefaultServeMux for CPU/memory profiling
+	_ "net/http/pprof" // registers on DefaultServeMux; only mounted when STARGATE_PPROF=true
+	"net/url"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
-	"stargate-backend/api"
 	"stargate-backend/agents"
+	"stargate-backend/api"
+	scmiddleware "stargate-backend/app/smart_contract"
 	"stargate-backend/bitcoin"
 	"stargate-backend/container"
 	"stargate-backend/core/smart_contract"
 	"stargate-backend/handlers"
-	"stargate-backend/storage/ipfs"
 	"stargate-backend/mcp"
 	"stargate-backend/middleware"
-	scmiddleware "stargate-backend/app/smart_contract"
+	"stargate-backend/security"
 	"stargate-backend/services"
 	"stargate-backend/starlight"
 	"stargate-backend/storage"
 	auth "stargate-backend/storage/auth"
-       "stargate-backend/storage/datadir"
+	"stargate-backend/storage/datadir"
+	"stargate-backend/storage/ipfs"
 	scstore "stargate-backend/storage/smart_contract"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -145,12 +150,12 @@ func customUploadsHandler(uploadsDir string) http.HandlerFunc {
 			return
 		}
 
-               // Resolve path through the partition layout (tries
-               // partitioned ab/cd/ef/<key> first, then flat fallback).
-               filePath := datadir.ResolveUploadRelPath(uploadsDir, relPath)
-
-		// Security check: ensure the cleaned path is still within uploads directory
-		if !strings.HasPrefix(filepath.Clean(filePath), uploadsDir) {
+		// Resolve path through the partition layout (tries
+		// partitioned ab/cd/ef/<key> first, then flat fallback), then confine
+		// it with the separator-aware helper. A bare HasPrefix check treats
+		// uploadsDir + "-sibling" as inside uploadsDir (stargate-irl.5).
+		filePath, err := confinedUploadPath(uploadsDir, relPath)
+		if err != nil {
 			http.Error(w, "Forbidden", http.StatusForbidden)
 			return
 		}
@@ -281,7 +286,7 @@ func findImagePath(heightStr string, filename string) (string, bool) {
 // debugging business logic and unit tests.
 // sqlite mode: durable embedded single-binary (recommended default).
 // No hybrid (filesystem JSON + sqlite) is supported — it would duplicate data.
-func initializeMCPComponents() (scmiddleware.Store, auth.APIKeyIssuer, auth.APIKeyValidator, *services.IngestionService, *auth.ChallengeStore) {
+func initializeMCPComponents() *storage.AllStores {
 	cfg := storage.LoadStorageConfigFromEnv()
 
 	allStores, err := storage.NewAllStores(cfg)
@@ -296,40 +301,33 @@ func initializeMCPComponents() (scmiddleware.Store, auth.APIKeyIssuer, auth.APIK
 		log.Printf("Components initialized with memory store")
 	}
 
-	// For backward compatibility with the old return signature we still return
-	// the pieces that the rest of main expects.
-	// DataStorage and ContractCache are also available on allStores if needed.
-	return mcpStore,
-		allStores.APIKeyIssuer,
-		allStores.APIKeyValidator,
-		allStores.IngestionService,
-		allStores.ChallengeStore
+	// contract-<64-hex> is a legacy primary key for the same wish. Fold it onto
+	// the bare hash before the HTTP server reads the catalog.
+	if n, err := scstore.FoldContractPrefixTwins(context.Background(), mcpStore); err != nil {
+		log.Printf("WARNING: contract-prefix twin fold failed: %v", err)
+	} else if n > 0 {
+		log.Printf("Folded %d contract-<hash> twin(s) onto the bare pixel hash", n)
+	}
+
+	// Returned whole rather than unpacked into pieces. Unpacking is how a second
+	// data layer got built alongside this one: with only the pieces in hand,
+	// runHTTPServer had no ingestion service or data storage to hand the
+	// container, so the container made its own (stargate-a49).
+	return allStores
 }
 
 // startMCPServices starts background services for sync (works with PostgreSQL or embedded SQLite).
-func startMCPServices(escort *smart_contract.EscortService, store scmiddleware.Store) {
-	pgDsn := os.Getenv("STARGATE_PG_DSN")
-
+func startMCPServices(ctx context.Context, escort *smart_contract.EscortService, store scmiddleware.Store, ingest *services.IngestionService) {
 	if store == nil {
 		log.Printf("no valid store available, skipping background services")
 		return
 	}
 
-	// Build ingestion DSN for sync
-	var ingestDsn string
-	if pgDsn != "" {
-		ingestDsn = pgDsn
-	} else {
-		// Use embedded SQLite for ingestion
-		ingestDsn = os.Getenv("STARGATE_INGESTIONS_DB")
-		if ingestDsn == "" {
-			dataDir := os.Getenv("STARGATE_DATA_DIR")
-			if dataDir == "" {
-				dataDir = "data"
-			}
-			ingestDsn = filepath.Join(dataDir, "ingestions.db")
-		}
-	}
+	// The ingestion service is passed in, not derived. This used to build a DSN
+	// here and hand it to StartIngestionSync, which constructed a third ingestion
+	// service of its own; the derivation read STARGATE_PG_DSN but never
+	// DATABASE_URL and never the configured storage type, so it could address a
+	// different database than AllStores (stargate-t04).
 
 	// Start ingestion -> MCP sync
 	if os.Getenv("STARGATE_ENABLE_INGEST_SYNC") != "false" {
@@ -340,7 +338,7 @@ func startMCPServices(escort *smart_contract.EscortService, store scmiddleware.S
 			}
 		}
 
-		if err := scmiddleware.StartIngestionSync(context.Background(), ingestDsn, store, syncInterval); err != nil {
+		if err := scmiddleware.StartIngestionSync(ctx, ingest, store, syncInterval); err != nil {
 			log.Printf("ingestion sync disabled (init error): %v", err)
 		} else {
 			log.Printf("ingestion sync enabled (interval=%s)", syncInterval)
@@ -368,7 +366,7 @@ func startMCPServices(escort *smart_contract.EscortService, store scmiddleware.S
 		}
 
 		provider := scmiddleware.NewFundingProvider(fundingProvider, fundingAPIBase)
-		if err := scmiddleware.StartFundingSync(context.Background(), store, provider, escort, fundingInterval); err != nil {
+		if err := scmiddleware.StartFundingSync(ctx, store, provider, escort, fundingInterval); err != nil {
 			log.Printf("funding sync disabled (init error): %v", err)
 		} else {
 			log.Printf("funding sync enabled (interval=%s, provider=%s)", fundingInterval, fundingProvider)
@@ -426,15 +424,18 @@ func main() {
 	// Ensure consistent data paths
 	consolidateEnvironmentPaths()
 
-       // Migrate flat uploads into three-level partitioned layout (idempotent).
-       if uDir := os.Getenv("UPLOADS_DIR"); uDir != "" {
-               if err := datadir.MigrateUploads(uDir); err != nil {
-                       log.Printf("WARNING: uploads partition migration failed: %v", err)
-               }
-       }
+	// Migrate flat uploads into three-level partitioned layout (idempotent).
+	if uDir := os.Getenv("UPLOADS_DIR"); uDir != "" {
+		if err := datadir.MigrateUploads(uDir); err != nil {
+			log.Printf("WARNING: uploads partition migration failed: %v", err)
+		}
+		if err := datadir.MigrateContractPrefixResults(uDir); err != nil {
+			log.Printf("WARNING: contract-prefix results migration failed: %v", err)
+		}
+	}
 
 	// Initialize MCP components (needed for both server and background)
-	store, apiKeyIssuer, apiKeyValidator, ingestionSvc, challengeStore := initializeMCPComponents()
+	allStores := initializeMCPComponents()
 
 	// Initialize IPFS client (includes embedded node if enabled)
 	ipfsClient := ipfs.NewClientFromEnv()
@@ -445,15 +446,26 @@ func main() {
 		}
 	}()
 
-	// Start HTTP server (includes MCP endpoints)
-	go runHTTPServer(store, apiKeyIssuer, apiKeyValidator, ingestionSvc, challengeStore, ipfsClient)
+	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
 
-	// Wait indefinitely
-	select {} // Block forever
+	// runHTTPServer owns the server-scoped background services and returns only
+	// after they have stopped, so process-level defers (including IPFS close)
+	// are guaranteed to run on SIGINT/SIGTERM.
+	if err := runHTTPServer(ctx, allStores, ipfsClient); err != nil {
+		log.Printf("HTTP server exited: %v", err)
+	}
 }
 
-func runHTTPServer(store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, apiKeyValidator auth.APIKeyValidator, ingestionSvc *services.IngestionService, challengeStore *auth.ChallengeStore, ipfsClient *ipfs.Client) {
+func runHTTPServer(ctx context.Context, allStores *storage.AllStores, ipfsClient *ipfs.Client) error {
 	log.Println("=== STARTING STARGATE HTTP SERVER ===")
+
+	// One data layer, unpacked here for readability rather than rebuilt.
+	var store scmiddleware.Store = allStores.SmartContractStore
+	apiKeyIssuer := allStores.APIKeyIssuer
+	apiKeyValidator := allStores.APIKeyValidator
+	ingestionSvc := allStores.IngestionService
+	challengeStore := allStores.ChallengeStore
 
 	// Wrap the MCP store so ConfirmContract / status updates / upserts invalidate
 	// /api/open-contracts list caches (prevents stale /contracts first pages).
@@ -493,22 +505,25 @@ func runHTTPServer(store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, api
 	wishCfg := ipfs.LoadWishMirrorConfig()
 	wishCfg.OnFileDownloaded = onMirroredFile
 	if ipfsCfg.Enabled {
-		go mirror.startWithRetry(context.Background(), ipfsCfg, false)
+		go mirror.startWithRetry(ctx, ipfsCfg, false)
 	}
 	if wishCfg.Enabled {
-		go mirror.startWithRetry(context.Background(), wishCfg, true)
+		go mirror.startWithRetry(ctx, wishCfg, true)
 	}
 
 	// Initialize dependency container
-	container := container.NewContainer(apiKeyIssuer, apiKeyValidator)
+	container := container.NewContainer(allStores)
+	// Stops the peer-cleanup and contract-cache goroutines on the way out, which
+	// the Container comment claimed for a while without a method to back it.
+	defer container.Close()
 
 	// Start Bitcoin full node (btcd, no mining) or external/off chain backend.
 	// This replaces unreliable public mempool.space polling for block data.
-	chainCtx, chainCancel := context.WithCancel(context.Background())
+	chainCtx, chainCancel := context.WithCancel(ctx)
 	chainRuntime, err := bitcoin.StartChainFromEnv(chainCtx)
 	if err != nil {
 		chainCancel()
-		log.Fatalf("bitcoin chain backend failed to start: %v", err)
+		return fmt.Errorf("bitcoin chain backend failed to start: %w", err)
 	}
 	defer func() {
 		chainCancel()
@@ -547,7 +562,7 @@ func runHTTPServer(store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, api
 
 	// Start MCP background services if using PostgreSQL AND MCP server is not running separately
 	if os.Getenv("STARGATE_MODE") != "mcp-only" && os.Getenv("STARGATE_MODE") != "both" {
-		startMCPServices(escort, store)
+		startMCPServices(ctx, escort, store, ingestionSvc)
 	} else {
 		log.Println("MCP background services skipped (will be handled by separate MCP process)")
 	}
@@ -565,9 +580,8 @@ func runHTTPServer(store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, api
 		}
 
 		agentOrch := agents.NewOrchestrator(agentCfg, store, nil)
-		agentOrch.Start(context.Background())
-		// Note: orchestrator runs until process exit for now (matches other background services).
-		// If a full shutdown path is added later, call agentOrch.Stop() on termination.
+		agentOrch.Start(ctx)
+		defer agentOrch.Stop()
 		log.Printf("Built-in agents enabled (watcher=%v, worker=%v, tool=%s, model=%s)",
 			agentCfg.WatcherEnabled, agentCfg.WorkerEnabled, agentCfg.ExecutorTool, agentCfg.ExecutorModel)
 	} else {
@@ -581,7 +595,8 @@ func runHTTPServer(store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, api
 	httpMCPServer.RegisterRoutes(mux)
 
 	// Apply middleware to all routes
-	routes, mcpRestServer := setupRoutes(mux, container, store, apiKeyIssuer, apiKeyValidator, challengeStore, ingestionSvc, &mirror, escort, chainRuntime.Backend)
+	routes, mcpRestServer, blockMonitor := setupRoutes(ctx, mux, container, store, apiKeyIssuer, apiKeyValidator, challengeStore, ingestionSvc, &mirror, escort, chainRuntime.Backend)
+	defer blockMonitor.Stop()
 
 	// Set smart_contract server reference on MCP server (must be done after mcpRestServer is created)
 	httpMCPServer.SetServer(mcpRestServer)
@@ -614,8 +629,12 @@ func runHTTPServer(store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, api
 	log.Printf("MCP HTTP tools at: http://localhost:%s/mcp/tools", httpPort)
 	log.Printf("MCP HTTP calls at: http://localhost:%s/mcp/call", httpPort)
 	log.Printf("Proxy to steganography API (port 8080) at: http://localhost:%s/stego/", httpPort)
-	log.Printf("Metrics at: http://localhost:%s/metrics", httpPort)
-	log.Printf("pprof (CPU/heap/goroutine profiling) at: http://localhost:%s/debug/pprof/", httpPort)
+	if diagnosticsEnabled("STARGATE_METRICS") {
+		log.Printf("Metrics (loopback only) at: http://localhost:%s/metrics", httpPort)
+	}
+	if diagnosticsEnabled("STARGATE_PPROF") {
+		log.Printf("pprof (loopback only) at: http://localhost:%s/debug/pprof/", httpPort)
+	}
 	log.Printf("Runtime info: GOMAXPROCS=%d numCPU=%d", runtime.GOMAXPROCS(0), runtime.NumCPU())
 
 	// Lightweight periodic diagnostic heartbeat to correlate CPU with activity.
@@ -624,6 +643,8 @@ func runHTTPServer(store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, api
 		defer t.Stop()
 		for {
 			select {
+			case <-ctx.Done():
+				return
 			case <-t.C:
 				g := runtime.NumGoroutine()
 				log.Printf("DIAG heartbeat: goroutines=%d", g)
@@ -631,13 +652,35 @@ func runHTTPServer(store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, api
 		}
 	}()
 
-	// Do not use log.Fatal here — it skips defers (would orphan managed btcd).
-	if err := http.ListenAndServe(":"+httpPort, handler); err != nil {
-		log.Printf("HTTP server exited: %v", err)
+	server := &http.Server{Addr: ":" + httpPort, Handler: handler}
+	serverErr := make(chan error, 1)
+	go func() {
+		serverErr <- server.ListenAndServe()
+	}()
+
+	select {
+	case err := <-serverErr:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	case <-ctx.Done():
+		log.Printf("Shutdown requested; draining HTTP requests")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			_ = server.Close()
+			<-serverErr
+			return fmt.Errorf("HTTP shutdown: %w", err)
+		}
+		if err := <-serverErr; err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return err
+		}
+		return nil
 	}
 }
 
-func setupRoutes(mux *http.ServeMux, container *container.Container, store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, apiKeyValidator auth.APIKeyValidator, challengeStore *auth.ChallengeStore, ingestionSvc *services.IngestionService, mirror *mirrorState, escort *smart_contract.EscortService, chainBackend bitcoin.ChainBackend) (http.Handler, *scmiddleware.Server) {
+func setupRoutes(ctx context.Context, mux *http.ServeMux, container *container.Container, store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, apiKeyValidator auth.APIKeyValidator, challengeStore *auth.ChallengeStore, ingestionSvc *services.IngestionService, mirror *mirrorState, escort *smart_contract.EscortService, chainBackend bitcoin.ChainBackend) (http.Handler, *scmiddleware.Server, *bitcoin.BlockMonitor) {
 	// Initialize MCP REST server for HTTP routes
 	mcpRestServer := scmiddleware.NewServer(store, apiKeyValidator, ingestionSvc)
 	if escort != nil {
@@ -647,10 +690,10 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 		mcpRestServer.SetUTXOClient(chainBackend)
 	}
 	mcpRestServer.RegisterRoutes(mux)
-	if err := scmiddleware.StartStegoPubsubSync(context.Background(), mcpRestServer); err != nil {
+	if err := scmiddleware.StartStegoPubsubSync(ctx, mcpRestServer); err != nil {
 		log.Printf("stego pubsub sync disabled: %v", err)
 	}
-	if err := scmiddleware.StartSyncPubsubSync(context.Background(), mcpRestServer); err != nil {
+	if err := scmiddleware.StartSyncPubsubSync(ctx, mcpRestServer); err != nil {
 		log.Printf("mcp event sync disabled: %v", err)
 	}
 	// Health endpoints
@@ -675,7 +718,7 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 		}
 	})
 
-	// Auth: login/challenge/verify + STARGATE_API_KEY seed share one api_keys store with middleware and MCP.
+	// Auth: login/challenge/verify share one api_keys store with middleware and MCP.
 	keyHandler := handlers.NewAPIKeyHandler(apiKeyIssuer, apiKeyValidator, challengeStore)
 	mux.HandleFunc("/api/auth/login", keyHandler.HandleLogin)
 	mux.HandleFunc("/api/auth/logout", keyHandler.HandleLogout)
@@ -701,17 +744,11 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 		http.Redirect(w, r, "/api/docs/swagger.html", http.StatusFound)
 	})
 
-	mux.Handle("/metrics", promhttp.Handler())
-
-	// pprof for runtime profiling (CPU, heap, goroutines, etc). Use:
-	//   go tool pprof http://localhost:PORT/debug/pprof/profile?seconds=30
-	//   go tool pprof http://localhost:PORT/debug/pprof/heap
-	//   curl http://localhost:PORT/debug/pprof/goroutine?debug=1
-	mux.Handle("/debug/pprof/", http.DefaultServeMux)
+	registerDiagnosticRoutes(mux)
 
 	// Inscription endpoints
 	mux.HandleFunc("/api/inscriptions", container.InscriptionHandler.HandleGetInscriptions)
-	mux.Handle("/api/inscriptions/", wrapWithAuth(container.InscriptionHandler.HandleDeleteInscription))
+	mux.Handle("/api/inscriptions/", wrapWithAuth(container.InscriptionHandler.HandleInscription))
 	mux.Handle("/api/inscribe", wrapWithAuth(container.InscriptionHandler.HandleCreateInscription))
 
 	// Surface ownership catalog (primary vs legacy aliases) — see api/surfaces.go and docs/arch/MCP_UNIFIED_PLAN.md
@@ -749,24 +786,12 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 	_ = os.MkdirAll(uploadsDir, 0755)
 	mux.HandleFunc("/uploads/", customUploadsHandler(uploadsDir))
 
-       // Serve sandbox files (alias for /uploads/results).
-       // Uses partition-aware resolution so /sandbox/<hash>/file resolves to
-       // results/ab/cd/ef/<hash>/file on disk.
+	// Serve sandbox files (alias for /uploads/results).
+	// Uses partition-aware resolution so /sandbox/<hash>/file resolves to
+	// results/ab/cd/ef/<hash>/file on disk.
 	resultsDir := filepath.Join(uploadsDir, "results")
 	_ = os.MkdirAll(resultsDir, 0755)
-       mux.HandleFunc("/sandbox/", func(w http.ResponseWriter, r *http.Request) {
-               rel := strings.TrimPrefix(r.URL.Path, "/sandbox/")
-               if rel == "" || rel == "." {
-                       http.NotFound(w, r)
-                       return
-               }
-               resolved := datadir.ResolveUploadRelPath(uploadsDir, "results/"+rel)
-               if !strings.HasPrefix(filepath.Clean(resolved), filepath.Clean(resultsDir)) {
-                       http.Error(w, "Forbidden", http.StatusForbidden)
-                       return
-               }
-               http.ServeFile(w, r, resolved)
-       })
+	mux.HandleFunc("/sandbox/", sandboxHandler(uploadsDir, resultsDir))
 
 	// Serve frontend files from embedded FS
 	frontendFS, _ := fs.Sub(frontendAssets, "assets/frontend")
@@ -838,9 +863,16 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 		blockMonitor.SetChainBackend(chainBackend)
 	}
 	log.Printf("DIAG: block monitor created (effective intervals logged at start)")
-	blockMonitor.SetIngestionService(container.IngestionService)
+	// The same handle StartIPFSIngestionSync and StartWishGC are given below.
+	// This read container.IngestionService while they read ingestionSvc, and the
+	// two were separately constructed services over what was not necessarily even
+	// the same database (stargate-a49).
+	blockMonitor.SetIngestionService(ingestionSvc)
 	blockMonitor.SetStegoReconciler(bitcoin.StegoReconcilerFunc(func(ctx context.Context, stegoCID, expectedHash string) error {
 		return mcpRestServer.ReconcileStego(ctx, stegoCID, expectedHash)
+	}))
+	blockMonitor.SetSandboxExtractor(bitcoin.SandboxExtractorFunc(func(ctx context.Context, contractID string) error {
+		return mcpRestServer.DownloadSandboxArtifacts(ctx, contractID)
 	}))
 	blockMonitor.SetIPFSUnpin(func(ctx context.Context, path string) error {
 		return mirror.UnpinPath(ctx, path)
@@ -854,12 +886,12 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 	blockMonitor.SetSweepDependencies(store, sweepClient)
 	// OP_RETURN-based matching: block monitor discovers contracts during normal
 	// block processing — no event-driven reconciliation needed.
-	if err := scmiddleware.StartIPFSIngestionSync(context.Background(), ingestionSvc, store, func(ctx context.Context, recent int) error {
+	if err := scmiddleware.StartIPFSIngestionSync(ctx, ingestionSvc, store, func(ctx context.Context, recent int) error {
 		return blockMonitor.ReconcileRecentBlocks(ctx, recent)
 	}); err != nil {
 		log.Printf("ipfs ingestion sync disabled: %v", err)
 	}
-	scmiddleware.StartWishGC(context.Background(), ingestionSvc, store, func(ctx context.Context, path string) error {
+	scmiddleware.StartWishGC(ctx, ingestionSvc, store, func(ctx context.Context, path string) error {
 		return mirror.UnpinPath(ctx, path)
 	})
 
@@ -876,36 +908,37 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 
 		// Cache priority blocks immediately
 		for _, height := range priorityBlocks {
+			if ctx.Err() != nil {
+				return
+			}
 			log.Printf("Caching priority historical block %d...", height)
 			if err := blockMonitor.ProcessBlock(height); err != nil {
 				log.Printf("Failed to cache block %d: %v", height, err)
 			} else {
 				log.Printf("Successfully cached block %d", height)
 			}
-			time.Sleep(2 * time.Second) // Longer delay for priority blocks
+			if !waitForContext(ctx, 2*time.Second) {
+				return
+			}
 		}
 
 		// Cache other blocks with longer delays
 		for _, height := range otherBlocks {
+			if ctx.Err() != nil {
+				return
+			}
 			log.Printf("Caching historical block %d...", height)
 			if err := blockMonitor.ProcessBlock(height); err != nil {
 				log.Printf("Failed to cache block %d: %v", height, err)
 			} else {
 				log.Printf("Successfully cached block %d", height)
 			}
-			time.Sleep(5 * time.Second) // Much longer delay to avoid rate limits
+			if !waitForContext(ctx, 5*time.Second) {
+				return
+			}
 		}
 
 		log.Println("Historical blocks caching completed")
-	}()
-
-	// Start the block monitor in background
-	go func() {
-		if err := blockMonitor.Start(); err != nil {
-			log.Printf("Failed to start block monitor: %v", err)
-		} else {
-			log.Println("Block monitor started successfully")
-		}
 	}()
 
 	dataAPI := api.NewDataAPI(
@@ -918,6 +951,11 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 	if blockMonitor != nil {
 		blockMonitor.OnBlockProcessed(dataAPI.IndexBlock)
 	}
+	if err := blockMonitor.Start(); err != nil {
+		log.Printf("Failed to start block monitor: %v", err)
+	} else {
+		log.Println("Block monitor started successfully")
+	}
 
 	mux.HandleFunc("/api/data/block/", dataAPI.HandleGetBlockData)
 	mux.HandleFunc("/api/data/blocks", dataAPI.HandleGetRecentBlocks)
@@ -928,6 +966,9 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 	mux.HandleFunc("/api/data/scan", dataAPI.HandleScanBlockOnDemand)
 	mux.HandleFunc("/api/data/block-images", dataAPI.HandleGetBlockImages)
 	// /api/block-images retired (3bk.8); use /api/data/block-images
+	if os.Getenv("STARLIGHT_CALLBACK_SECRET") == "" {
+		log.Printf("SECURITY: /api/stego/callback is disabled until STARLIGHT_CALLBACK_SECRET is configured")
+	}
 	mux.HandleFunc("/api/stego/callback", dataAPI.HandleStegoCallback)
 	mux.HandleFunc("/content/", dataAPI.HandleContent)
 
@@ -964,8 +1005,8 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 
 		// Fallback: check UPLOADS_DIR (images received via IPFS or local creation)
 		if uDir := os.Getenv("UPLOADS_DIR"); uDir != "" {
-                       uploadPath := datadir.PartResolve(uDir, filename)
-			if !strings.HasPrefix(filepath.Clean(uploadPath), filepath.Clean(uDir)) {
+			uploadPath, err := confinedResolvedPath(uDir, datadir.PartResolve(uDir, filename))
+			if err != nil {
 				http.Error(w, "Invalid filename", http.StatusBadRequest)
 				return
 			}
@@ -1011,7 +1052,190 @@ func setupRoutes(mux *http.ServeMux, container *container.Container, store scmid
 	// MCP tools are available via HTTP endpoints at /mcp/
 
 	log.Printf("All routes registered, returning handler")
-	return mux, mcpRestServer
+	return mux, mcpRestServer, blockMonitor
+}
+
+func waitForContext(ctx context.Context, delay time.Duration) bool {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
+// confinedUploadPath resolves a URL-relative upload path through the partition
+// layout and refuses anything that escapes baseDir. SanitizePath is the check;
+// ResolveUploadRelPath is only the layout mapping.
+func confinedUploadPath(baseDir, relPath string) (string, error) {
+	return confinedResolvedPath(baseDir, datadir.ResolveUploadRelPath(baseDir, relPath))
+}
+
+// confinedResolvedPath accepts an already-resolved filesystem path and refuses
+// it unless it stays inside baseDir, including the base itself. Relativizing
+// first lets SanitizePath run on a join of two cleaned paths instead of a
+// hand-rolled HasPrefix that treats baseDir+"-sibling" as inside baseDir.
+func confinedResolvedPath(baseDir, resolved string) (string, error) {
+	baseDir = filepath.Clean(baseDir)
+	resolved = filepath.Clean(resolved)
+	rel, err := filepath.Rel(baseDir, resolved)
+	if err != nil {
+		return "", err
+	}
+	if rel == "." {
+		return baseDir, nil
+	}
+	return security.SanitizePath(baseDir, rel)
+}
+
+// sandboxHandler serves /sandbox/<hash>/… from results/. A missing tree
+// (this node has not confirmed / unpacked yet) returns a short HTML note
+// instead of a blank 404 so the UI tab matches the docs.
+func sandboxHandler(uploadsDir, resultsDir string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		rel := strings.TrimPrefix(r.URL.Path, "/sandbox/")
+		if rel == "" || rel == "." {
+			http.NotFound(w, r)
+			return
+		}
+		resolved, err := confinedResolvedPath(resultsDir, datadir.ResolveUploadRelPath(uploadsDir, "results/"+rel))
+		if err != nil {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+		info, err := os.Stat(resolved)
+		if os.IsNotExist(err) {
+			writeSandboxEmpty(w, r.URL.Path)
+			return
+		} else if err != nil {
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+		if info.IsDir() {
+			// Keep the URL as /sandbox/<hash>/ so relative assets
+			// (quantum.min.css, vendor/…) resolve under the hash, not /sandbox/.
+			if !strings.HasSuffix(r.URL.Path, "/") {
+				http.Redirect(w, r, pathWithSlash(r), http.StatusMovedPermanently)
+				return
+			}
+			index := filepath.Join(resolved, "index.html")
+			if _, err := os.Stat(index); err == nil {
+				http.ServeFile(w, r, index)
+				return
+			}
+			// Music / artifact contracts unpack files without an index.
+			// List them instead of claiming the sandbox is empty.
+			if err := writeSandboxListing(w, r.URL.Path, resolved); err != nil {
+				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			}
+			return
+		}
+		http.ServeFile(w, r, resolved)
+	}
+}
+
+func writeSandboxEmpty(w http.ResponseWriter, requestPath string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusNotFound)
+	_, _ = fmt.Fprintf(w, `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Sandbox empty</title>
+<style>
+body{font:16px/1.5 system-ui,sans-serif;max-width:40rem;margin:3rem auto;padding:0 1.25rem;color:#e5e7eb;background:#0f172a}
+code{font-family:ui-monospace,monospace;font-size:.9em}
+</style></head><body>
+<h1>Sandbox not unpacked yet</h1>
+<p>Nothing is at <code>%s</code> on this node.</p>
+<p>Deliverables unpack when <strong>this node</strong> confirms the funding transaction on-chain. Gossip and stego metadata do not extract. If the tx is already confirmed here, retry <code>POST /api/smart_contract/contracts/{id}/sandbox/pull</code>.</p>
+</body></html>`, htmlEscape(requestPath))
+}
+
+func htmlEscape(s string) string {
+	r := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", `"`, "&quot;")
+	return r.Replace(s)
+}
+
+func writeSandboxListing(w http.ResponseWriter, requestPath, dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "no-store")
+	var b strings.Builder
+	b.WriteString(`<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Sandbox files</title>
+<style>
+body{font:16px/1.5 system-ui,sans-serif;max-width:44rem;margin:3rem auto;padding:0 1.25rem;color:#e5e7eb;background:#0f172a}
+code,a{font-family:ui-monospace,monospace;font-size:.9em}
+a{color:#93c5fd}
+ul{padding-left:1.2rem}
+</style></head><body>
+<h1>Sandbox files</h1>
+<p>Unpacked at <code>`)
+	b.WriteString(htmlEscape(requestPath))
+	b.WriteString(`</code>. No <code>index.html</code>.</p>
+<ul>
+`)
+	n := 0
+	for _, e := range entries {
+		name := e.Name()
+		if name == "" || strings.HasPrefix(name, ".") {
+			continue
+		}
+		href := "./" + pathEscape(name)
+		if e.IsDir() {
+			href += "/"
+			name += "/"
+		}
+		fmt.Fprintf(&b, "<li><a href=\"%s\">%s</a></li>\n", htmlEscape(href), htmlEscape(name))
+		n++
+	}
+	if n == 0 {
+		b.WriteString("<li><em>empty directory</em></li>\n")
+	}
+	b.WriteString("</ul></body></html>")
+	_, err = io.WriteString(w, b.String())
+	return err
+}
+
+func pathEscape(name string) string {
+	return strings.ReplaceAll(url.PathEscape(name), "+", "%2B")
+}
+
+func pathWithSlash(r *http.Request) string {
+	url := r.URL.Path + "/"
+	if q := r.URL.RawQuery; q != "" {
+		url += "?" + q
+	}
+	return url
+}
+
+// diagnosticsEnabled is the opt-in gate for /metrics and /debug/pprof.
+// Unset or anything other than 1/true/yes/on leaves the route unregistered.
+func diagnosticsEnabled(key string) bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
+	return v == "1" || v == "true" || v == "yes" || v == "on"
+}
+
+// registerDiagnosticRoutes mounts /metrics and /debug/pprof only when the
+// matching env is set. Both stay loopback-only even then: the process binds
+// 0.0.0.0, and heap dumps / node topology must not be reachable from the
+// network. Off by default (irl.4).
+func registerDiagnosticRoutes(mux *http.ServeMux) {
+	if diagnosticsEnabled("STARGATE_METRICS") {
+		mux.Handle("/metrics", middleware.LoopbackOnly(promhttp.Handler()))
+	}
+	if diagnosticsEnabled("STARGATE_PPROF") {
+		// pprof for runtime profiling (CPU, heap, goroutines). Use:
+		//   go tool pprof http://localhost:PORT/debug/pprof/profile?seconds=30
+		//   go tool pprof http://localhost:PORT/debug/pprof/heap
+		mux.Handle("/debug/pprof/", middleware.LoopbackOnly(http.DefaultServeMux))
+	}
 }
 
 type mirrorState struct {

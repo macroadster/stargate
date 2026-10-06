@@ -14,12 +14,44 @@ import (
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/txscript"
 
+	"stargate-backend/core/identity"
 	"stargate-backend/core/smart_contract"
 	"stargate-backend/services"
 )
 
 func (fn StegoReconcilerFunc) ReconcileStego(ctx context.Context, stegoCID, expectedHash string) error {
 	return fn(ctx, stegoCID, expectedHash)
+}
+
+func (fn SandboxExtractorFunc) ExtractSandbox(ctx context.Context, contractID string) error {
+	return fn(ctx, contractID)
+}
+
+// confirmContractOnChain marks the row confirmed and unpacks the sandbox on
+// this node. Store ConfirmContract is status-only; extract is the injected
+// SandboxExtractor (Server.DownloadSandboxArtifacts).
+func (bm *BlockMonitor) confirmContractOnChain(ctx context.Context, contractID string, height int, txid string) error {
+	if bm.sweepStore == nil {
+		return fmt.Errorf("no sweep store")
+	}
+	if err := bm.sweepStore.ConfirmContract(ctx, contractID, height, txid); err != nil {
+		return err
+	}
+	bm.extractSandboxAfterConfirm(contractID)
+	return nil
+}
+
+func (bm *BlockMonitor) extractSandboxAfterConfirm(contractID string) {
+	if bm.sandboxExtractor == nil {
+		return
+	}
+	id := strings.TrimSpace(contractID)
+	if id == "" {
+		return
+	}
+	if err := bm.sandboxExtractor.ExtractSandbox(context.Background(), id); err != nil {
+		log.Printf("oracle reconcile: extract sandbox %s: %v", id, err)
+	}
 }
 
 // countStegoImagesFromAPIResponse counts stego detections from API response
@@ -150,14 +182,7 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 		return smartContracts
 	}
 
-	var recs []services.IngestionRecord
-	if bm.ingestion != nil {
-		var err error
-		recs, err = bm.ingestion.ListRecent("", 500)
-		if err != nil {
-			log.Printf("oracle reconcile: failed to list ingestions: %v", err)
-		}
-	}
+	recs := bm.cachedIngestionMeta(500)
 
 	primaryCandidates := make(map[string]*services.IngestionRecord, len(recs))
 	fallbackCandidates := make(map[string]*services.IngestionRecord, len(recs))
@@ -243,10 +268,8 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 			bm.markIngestionConfirmed(match, tx.TxID, blockHeight, imageFile, imagePath)
 			bm.updateTaskFundingProofsFromTx(match.ID, tx, blockHeight)
 			bm.confirmContractTasks(match.ID, tx.TxID, blockHeight)
-			// Scan OP_RETURN outputs for stego hash so we can reconcile
-			// the stego image (extract proposal/tasks) and sandbox tarball.
-			// The funding_txid path confirms the contract but doesn't
-			// trigger stego reconcile or sandbox extraction on its own.
+			// Scan OP_RETURN outputs for stego hash so we can apply the
+			// on-chain image (proposal/tasks/sandbox_hash). Metadata only.
 			for _, output := range tx.Outputs {
 				_, stegoHash, opOk := parseOPReturnHashes(output.ScriptPubKey)
 				if opOk && stegoHash != "" {
@@ -318,10 +341,8 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 				bm.markIngestionConfirmed(match, tx.TxID, blockHeight, imageFile, imagePath)
 				bm.updateTaskFundingProofsFromTx(match.ID, tx, blockHeight)
 				bm.confirmContractTasks(match.ID, tx.TxID, blockHeight)
-				// Trigger stego reconciliation and sandbox extraction using
-				// the on-chain stego hash.  sandbox_hash is inside the stego
-				// v2 JSON payload — reconcileOnChainArtifacts reads it from
-				// there after extracting the stego image.
+				// Apply the on-chain stego image (proposal/tasks/sandbox_hash).
+				// This is metadata only; it does not unpack the sandbox tarball.
 				bm.reconcileOnChainArtifacts(match.ID, stegoHash)
 				for _, candidate := range candidatesByID[match.ID] {
 					delete(primaryCandidates, candidate)
@@ -337,22 +358,18 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 				if stegoHash != "" {
 					log.Printf("oracle reconcile: block %d tx %s: OP_RETURN wish=%s stego=%s has no candidate, attempting stego reconcile from disk", blockHeight, tx.TxID, wishHash, stegoHash)
 					bm.reconcileOnChainArtifacts(wishHash, stegoHash)
-					// After reconciliation, confirm the newly-created contract
-					// and trigger sandbox extraction.
-					normalizedWish := wishHash
-					if len(normalizedWish) == 64 {
-						if _, decErr := hex.DecodeString(normalizedWish); decErr == nil {
-							normalizedWish = "wish-" + normalizedWish
-						}
+					// After reconciliation, confirm the newly-created contract.
+					// maybeConfirmContract extracts the sandbox on this node.
+					normalizedWish := identity.CanonicalContractID(wishHash)
+					if normalizedWish == "" {
+						normalizedWish = wishHash
 					}
 					if bm.sweepStore != nil {
-						bm.maybeConfirmContract(normalizedWish, tx.TxID, blockHeight)
+						if bm.scanMayConfirm(blockHeight) {
+							bm.maybeConfirmContract(normalizedWish, tx.TxID, blockHeight)
+						}
 						bm.updateTaskFundingProofsFromTx(normalizedWish, tx, blockHeight)
 						bm.confirmContractTasks(normalizedWish, tx.TxID, blockHeight)
-						// Now that the contract is confirmed, reconcile again
-						// so downloadSandboxArtifacts fires (it checks for
-						// confirmed status before extracting).
-						bm.reconcileOnChainArtifacts(normalizedWish, stegoHash)
 					}
 				} else {
 					log.Printf("oracle reconcile: block %d tx %s: OP_RETURN wish=%s (no stego hash), skipping", blockHeight, tx.TxID, wishHash)
@@ -474,10 +491,10 @@ func (bm *BlockMonitor) confirmContractTasks(contractID, txid string, blockHeigh
 	if bm.sweepStore == nil || strings.TrimSpace(contractID) == "" || strings.TrimSpace(txid) == "" {
 		return
 	}
-	twentyFourHoursAgo := time.Now().Add(-24 * time.Hour)
+	// Do not filter LastActivitySince here. First-time proofs have zero SeenAt,
+	// so a 24h activity window would skip the write of tx_id / height.
 	tasks, err := bm.sweepStore.ListTasks(smart_contract.TaskFilter{
-		ContractID:        contractID,
-		LastActivitySince: &twentyFourHoursAgo,
+		ContractID: contractID,
 	})
 	if err != nil {
 		log.Printf("oracle reconcile: failed to list tasks for %s: %v", contractID, err)
@@ -505,7 +522,7 @@ func (bm *BlockMonitor) confirmContractTasks(contractID, txid string, blockHeigh
 		if proof.ConfirmationStatus == "confirmed" {
 			continue
 		}
-		if bm.settlementReady(proof.BlockHeight) {
+		if bm.scanMayConfirm(proof.BlockHeight) {
 			proof.ConfirmationStatus = "confirmed"
 			proof.ConfirmedAt = &now
 			if err := bm.sweepStore.UpdateTaskProof(context.Background(), task.TaskID, proof); err != nil {
@@ -530,11 +547,10 @@ func (bm *BlockMonitor) updateTaskFundingProofsFromTx(contractID string, tx Tran
 	if bm.sweepStore == nil || strings.TrimSpace(contractID) == "" {
 		return
 	}
-	// Also filter by recent activity for efficiency, even though we're already filtering by contract
-	twentyFourHoursAgo := time.Now().Add(-24 * time.Hour)
+	// Match every task on this contract (wish-/bare variants via ListTasks).
+	// LastActivitySince would drop first-time proofs with zero SeenAt.
 	tasks, err := bm.sweepStore.ListTasks(smart_contract.TaskFilter{
-		ContractID:        contractID,
-		LastActivitySince: &twentyFourHoursAgo,
+		ContractID: contractID,
 	})
 	if err != nil {
 		log.Printf("oracle reconcile: failed to list tasks for funding update %s: %v", contractID, err)
@@ -585,14 +601,18 @@ func (bm *BlockMonitor) updateTaskFundingProofsFromTx(contractID string, tx Tran
 			if proof == nil {
 				proof = &smart_contract.MerkleProof{}
 			}
-			proof.TxID = tx.TxID
-			proof.BlockHeight = blockHeight
+			if strings.TrimSpace(proof.TxID) == "" {
+				proof.TxID = tx.TxID
+			}
+			if proof.BlockHeight == 0 || blockHeight > proof.BlockHeight {
+				proof.BlockHeight = blockHeight
+			}
 			proof.FundingAddress = addr
 			proof.FundedAmountSats = output.Value
 			if proof.SeenAt.IsZero() {
 				proof.SeenAt = now
 			}
-			if bm.settlementReady(blockHeight) {
+			if bm.scanMayConfirm(blockHeight) {
 				proof.ConfirmationStatus = "confirmed"
 				if proof.ConfirmedAt == nil {
 					proof.ConfirmedAt = &now
@@ -665,32 +685,31 @@ func (bm *BlockMonitor) ensureMatchedContract(contractID string, match *services
 	}
 	ctx := context.Background()
 
-	// Build contract ID with wish- prefix for consistency.
 	visibleHash := stringFromAny(match.Metadata["visible_pixel_hash"])
 	if visibleHash == "" {
 		visibleHash = contractID
 	}
-	normalizedID := contractID
-	if len(normalizedID) == 64 {
-		if _, err := hex.DecodeString(normalizedID); err == nil {
-			normalizedID = "wish-" + normalizedID
-		}
+	// Stored PK is the bare VPH. wish- is a lookup alias only (stargate-3p2.4).
+	normalizedID := identity.CanonicalContractID(contractID)
+	if vph := identity.CanonicalContractID(visibleHash); vph != "" && identity.IsPixelHash(vph) {
+		normalizedID = vph
+	}
+	if normalizedID == "" {
+		normalizedID = strings.TrimSpace(contractID)
 	}
 
-	// Confirm only after settlement depth. If the row already exists,
-	// ConfirmContract will update it; otherwise we upsert below.
-	if bm.settlementReady(blockHeight) {
-		_ = bm.sweepStore.ConfirmContract(ctx, normalizedID, int(blockHeight), txID)
+	// Confirm only on a near-tip scan. Deep catch-up records provisional only.
+	if bm.scanMayConfirm(blockHeight) {
+		if err := bm.confirmContractOnChain(ctx, normalizedID, int(blockHeight), txID); err != nil {
+			log.Printf("oracle reconcile: ConfirmContract %s: %v", normalizedID, err)
+		}
 	}
 
 	// Check if the row actually exists now — ConfirmContract doesn't return
 	// "not found" explicitly, it just updates 0 rows.
-	type contractGetter interface {
-		GetContract(id string) (smart_contract.Contract, error)
-	}
 	if cg, ok := bm.sweepStore.(contractGetter); ok {
 		if _, err := cg.GetContract(normalizedID); err == nil {
-			return // already exists
+			return // already exists (extract ran above if we confirmed)
 		}
 	}
 
@@ -740,7 +759,7 @@ func (bm *BlockMonitor) ensureMatchedContract(contractID string, match *services
 	status := "funded"
 	var confirmedAt *time.Time
 	var confirmedHeight *int
-	if bm.settlementReady(blockHeight) {
+	if bm.scanMayConfirm(blockHeight) {
 		status = "confirmed"
 		confirmedAt = &now
 		confirmedHeight = &bh
@@ -759,6 +778,11 @@ func (bm *BlockMonitor) ensureMatchedContract(contractID string, match *services
 		log.Printf("oracle reconcile: ensureMatchedContract %s: %v", normalizedID, err)
 	} else {
 		log.Printf("oracle reconcile: ensured matched contract %s in MCP store", normalizedID)
+		// SQL ConfirmContract can return nil on a missing row. Extract after
+		// the confirmed upsert so the tree lands once the row exists.
+		if strings.EqualFold(status, "confirmed") {
+			bm.extractSandboxAfterConfirm(normalizedID)
+		}
 	}
 }
 
@@ -766,23 +790,74 @@ func (bm *BlockMonitor) settlementReady(blockHeight int64) bool {
 	if blockHeight <= 0 {
 		return false
 	}
-	tip, err := bm.getCurrentHeightFromBlockchainInfo()
+	tip, err := bm.getChainTipHeight()
 	if err != nil || tip <= 0 {
 		return false
 	}
 	return SettlementReady(tip, blockHeight)
 }
 
-func (bm *BlockMonitor) maybeConfirmContract(contractID, txid string, blockHeight int64) {
+func (bm *BlockMonitor) scanMayConfirm(blockHeight int64) bool {
+	if blockHeight <= 0 {
+		return false
+	}
+	tip, err := bm.getChainTipHeight()
+	if err != nil || tip <= 0 {
+		return false
+	}
+	return ScanMayConfirm(tip, blockHeight)
+}
+
+const oracleMetaCacheTTL = 30 * time.Second
+
+func (bm *BlockMonitor) cachedIngestionMeta(limit int) []services.IngestionRecord {
+	if bm.ingestion == nil {
+		return nil
+	}
+	bm.oracleMetaMu.Lock()
+	defer bm.oracleMetaMu.Unlock()
+	if len(bm.oracleMetaRecs) > 0 && time.Since(bm.oracleMetaAt) < oracleMetaCacheTTL {
+		return bm.oracleMetaRecs
+	}
+	recs, err := bm.ingestion.ListRecentMeta("", limit)
+	if err != nil {
+		log.Printf("oracle reconcile: failed to list ingestions: %v", err)
+		return bm.oracleMetaRecs
+	}
+	bm.oracleMetaRecs = recs
+	bm.oracleMetaAt = time.Now()
+	return recs
+}
+
+// maybeConfirmContract confirms a contract once its funding height is settled
+// and unpacks the sandbox on this node.
+//
+// It reports whether the confirm was attempted and did not error. True is not
+// proof a row changed, and what it means depends on the store. For an absent
+// contract MemoryStore returns "contract not found", while SQLStore updates
+// zero rows, finds nothing to bootstrap, and returns nil — the gap
+// ensureMatchedContract notes above, where it re-reads with GetContract rather
+// than trust the error. Production runs SQLStore, so treat true as "no error"
+// and re-read if it matters.
+func (bm *BlockMonitor) maybeConfirmContract(contractID, txid string, blockHeight int64) bool {
 	if bm.sweepStore == nil || strings.TrimSpace(contractID) == "" {
-		return
+		return false
 	}
 	if !bm.settlementReady(blockHeight) {
-		return
+		return false
 	}
-	if err := bm.sweepStore.ConfirmContract(context.Background(), contractID, int(blockHeight), txid); err != nil {
+	if err := bm.confirmContractOnChain(context.Background(), contractID, int(blockHeight), txid); err != nil {
 		log.Printf("oracle reconcile: ConfirmContract %s: %v", contractID, err)
+		return false
 	}
+	return true
+}
+
+// contractGetter is the optional single-contract read used to recover a stego
+// hash from a contract row. SweepTaskStore does not carry it, so it is asserted
+// the same way promoteFundedContracts asserts contractLister.
+type contractGetter interface {
+	GetContract(id string) (smart_contract.Contract, error)
 }
 
 // promoteProvisionalProofs upgrades provisional task proofs once they have
@@ -873,20 +948,9 @@ func contractFundingTxID(c smart_contract.Contract) string {
 	return strings.TrimSpace(stringFromAny(c.Metadata["confirmed_txid"]))
 }
 
-func contractStegoHash(c smart_contract.Contract) string {
-	if c.Metadata == nil {
-		return ""
-	}
-	for _, k := range []string{"stego_contract_id", "stego_hash", "stego_image_cid"} {
-		if s := strings.TrimSpace(stringFromAny(c.Metadata[k])); s != "" {
-			return s
-		}
-	}
-	return ""
-}
-
 // promoteFundedContracts confirms funded rows once their funding height has
-// N confirmations, then re-runs stego/sandbox reconcile.
+// N confirmations, then extracts the sandbox on this node. It does not re-run
+// stego reconcile.
 func (bm *BlockMonitor) promoteFundedContracts(tip int64) {
 	if tip <= 0 || SettlementBlocked() {
 		return
@@ -920,14 +984,11 @@ func (bm *BlockMonitor) promoteFundedContracts(tip int64) {
 				continue
 			}
 			txid := contractFundingTxID(c)
-			if err := bm.sweepStore.ConfirmContract(context.Background(), c.ContractID, int(h), txid); err != nil {
+			if err := bm.confirmContractOnChain(context.Background(), c.ContractID, int(h), txid); err != nil {
 				log.Printf("oracle reconcile: promote funded ConfirmContract %s: %v", c.ContractID, err)
 				continue
 			}
 			confirmed++
-			if stego := contractStegoHash(c); stego != "" {
-				bm.reconcileOnChainArtifacts(c.ContractID, stego)
-			}
 			log.Printf("oracle reconcile: promoted funded contract %s to confirmed (height=%d tip=%d)",
 				c.ContractID, h, tip)
 		}

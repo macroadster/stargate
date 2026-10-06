@@ -1,0 +1,290 @@
+package services
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"stargate-backend/core/smart_contract"
+	scstore "stargate-backend/storage/smart_contract"
+)
+
+// hookStore overrides GetProposal so we can publish tasks that would fail
+// CreateProposal validation (BudgetSats <= 0) — the leftover wish/N path.
+type hookStore struct {
+	*scstore.MemoryStore
+	p smart_contract.Proposal
+}
+
+func (s *hookStore) GetProposal(ctx context.Context, id string) (smart_contract.Proposal, error) {
+	return s.p, nil
+}
+
+func TestPublishProposalTasksDoesNotSplitWishByN(t *testing.T) {
+	mem := scstore.NewMemoryStore(time.Hour)
+	store := &hookStore{
+		MemoryStore: mem,
+		p: smart_contract.Proposal{
+			ID:               "prop-zero",
+			Title:            "Zero leftover",
+			BudgetSats:       3000,
+			VisiblePixelHash: "aa",
+			Tasks: []smart_contract.Task{
+				{Title: "Implement API", BudgetSats: 2000},
+				{Title: "Write tests", BudgetSats: 0},
+				{Title: "Write the guide", BudgetSats: 0},
+			},
+			Metadata: map[string]interface{}{"contract_id": "wish-aa"},
+		},
+	}
+	svc := NewEventService(store, nil)
+	if err := svc.PublishProposalTasks(context.Background(), "prop-zero"); err != nil {
+		t.Fatal(err)
+	}
+	tasks, err := mem.ListTasks(smart_contract.TaskFilter{ContractID: "wish-aa"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tasks) != 3 {
+		t.Fatalf("got %d tasks, want 3", len(tasks))
+	}
+	var sum, funded int64
+	for _, task := range tasks {
+		if task.BudgetSats <= 0 {
+			t.Fatalf("task %q still has budget %d", task.Title, task.BudgetSats)
+		}
+		if task.MerkleProof == nil {
+			t.Fatalf("task %q missing merkle proof", task.Title)
+		}
+		if task.MerkleProof.FundedAmountSats != task.BudgetSats {
+			t.Fatalf("task %q funded %d != budget %d", task.Title, task.MerkleProof.FundedAmountSats, task.BudgetSats)
+		}
+		sum += task.BudgetSats
+		funded += task.MerkleProof.FundedAmountSats
+	}
+	// Old scar: explicit 2000 + wish/3 + wish/3 = 4000 on a 3000 wish.
+	if sum != 3000 {
+		t.Fatalf("published budgets sum to %d, want 3000 (old wish/N leftover was 4000)", sum)
+	}
+	if funded != 3000 {
+		t.Fatalf("merkle funded sum %d, want 3000", funded)
+	}
+}
+
+func TestPublishProposalTasksAdoptsWishPrefixOntoBareHash(t *testing.T) {
+	hash := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	wishID := "wish-" + hash
+	mem := scstore.NewMemoryStore(time.Hour)
+	ctx := context.Background()
+	if err := mem.UpsertContractWithTasks(ctx, smart_contract.Contract{
+		ContractID: wishID, Title: "Open wish", Status: "pending", CreatedAt: time.Now(),
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	store := &hookStore{
+		MemoryStore: mem,
+		p: smart_contract.Proposal{
+			ID:               "prop-adopt",
+			Title:            "Published",
+			BudgetSats:       1000,
+			VisiblePixelHash: hash,
+			Tasks:            []smart_contract.Task{{Title: "Do it"}},
+			Metadata:         map[string]interface{}{"contract_id": hash},
+		},
+	}
+	svc := NewEventService(store, nil)
+	if err := svc.PublishProposalTasks(ctx, "prop-adopt"); err != nil {
+		t.Fatal(err)
+	}
+	live, err := scstore.LookupContract(mem, wishID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if live.ContractID != hash || live.Status != "active" {
+		t.Fatalf("lookup by wish id: %#v", live)
+	}
+	if leftover, err := mem.GetContract(wishID); err == nil && leftover.Status != "superseded" {
+		t.Fatalf("wish- leftover status=%q", leftover.Status)
+	}
+	list, err := mem.ListContracts(smart_contract.ContractFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	liveCount := 0
+	for _, c := range scstore.CollapsePixelHashTwins(list) {
+		if scstore.NormalizeContractID(c.ContractID) == hash && c.Status != "superseded" {
+			liveCount++
+		}
+	}
+	if liveCount != 1 {
+		t.Fatalf("expected 1 live row after collapse, got %d from %+v", liveCount, list)
+	}
+}
+
+func TestPublishProposalTasksRewritesWishPrefixTaskOntoBareHash(t *testing.T) {
+	hash := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	mem := scstore.NewMemoryStore(time.Hour)
+	ctx := context.Background()
+	if err := mem.UpsertContractWithTasks(ctx, smart_contract.Contract{
+		ContractID: hash, Title: "Live wish", Status: "active", TotalBudgetSats: 1000, CreatedAt: time.Now(),
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	store := &hookStore{
+		MemoryStore: mem,
+		p: smart_contract.Proposal{
+			ID:               "prop-rewrite",
+			Title:            "Published",
+			BudgetSats:       1000,
+			VisiblePixelHash: hash,
+			Tasks: []smart_contract.Task{{
+				TaskID:     "prop-rewrite-task-1",
+				ContractID: "wish-" + hash,
+				Title:      "Shelf",
+				BudgetSats: 1000,
+				Status:     "available",
+			}},
+			Metadata: map[string]interface{}{"contract_id": hash},
+		},
+	}
+	svc := NewEventService(store, nil)
+	if err := svc.PublishProposalTasks(ctx, "prop-rewrite"); err != nil {
+		t.Fatal(err)
+	}
+	tasks, err := mem.ListTasks(smart_contract.TaskFilter{ContractID: hash})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tasks) != 1 || tasks[0].ContractID != hash {
+		t.Fatalf("task contract id: %+v", tasks)
+	}
+}
+
+func TestPublishProposalTasksKeepsPixelHashWishOnBareID(t *testing.T) {
+	hash := "41a974b813b024a3817c9c99b5406cc5131a00406c76a4e01fd7519974ccfb40"
+	mem := scstore.NewMemoryStore(time.Hour)
+	ctx := context.Background()
+	if err := mem.UpsertContractWithTasks(ctx, smart_contract.Contract{
+		ContractID: hash, Title: "HelloKitty vs Kaiju", Status: "pending", TotalBudgetSats: 1000, CreatedAt: time.Now(),
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	store := &hookStore{
+		MemoryStore: mem,
+		p: smart_contract.Proposal{
+			ID:               hash,
+			Title:            "HelloKitty vs Kaiju",
+			BudgetSats:       1000,
+			VisiblePixelHash: hash,
+			Tasks: []smart_contract.Task{{
+				TaskID:     hash + "-task-1",
+				ContractID: hash,
+				Title:      "Comprehensive Implementation",
+				BudgetSats: 1000,
+				Status:     "available",
+				MerkleProof: &smart_contract.MerkleProof{
+					VisiblePixelHash: hash,
+				},
+			}},
+			// Wish inscription stores the hash on the proposal and omits contract_id.
+			Metadata: map[string]interface{}{"visible_pixel_hash": hash, "funding_mode": "payout"},
+		},
+	}
+	svc := NewEventService(store, nil)
+	if err := svc.PublishProposalTasks(ctx, hash); err != nil {
+		t.Fatal(err)
+	}
+	tasks, err := mem.ListTasks(smart_contract.TaskFilter{ContractID: hash})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tasks) != 1 || tasks[0].ContractID != hash {
+		t.Fatalf("task contract id: %+v", tasks)
+	}
+	if _, err := mem.GetContract("contract-" + hash); err == nil {
+		t.Fatal("publish created a contract- prefixed twin")
+	}
+	live, err := mem.GetContract(hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if live.Status != "active" {
+		t.Fatalf("wish status=%q, want active", live.Status)
+	}
+}
+
+func TestPublishProposalTasksRewritesContractPrefixOntoBareHash(t *testing.T) {
+	hash := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	mem := scstore.NewMemoryStore(time.Hour)
+	ctx := context.Background()
+	store := &hookStore{
+		MemoryStore: mem,
+		p: smart_contract.Proposal{
+			ID:               hash,
+			Title:            "Republish",
+			BudgetSats:       1000,
+			VisiblePixelHash: hash,
+			Tasks: []smart_contract.Task{{
+				TaskID:     hash + "-task-1",
+				ContractID: "contract-" + hash,
+				Title:      "Shelf",
+				BudgetSats: 1000,
+				Status:     "available",
+			}},
+			Metadata: map[string]interface{}{"visible_pixel_hash": hash},
+		},
+	}
+	svc := NewEventService(store, nil)
+	if err := svc.PublishProposalTasks(ctx, hash); err != nil {
+		t.Fatal(err)
+	}
+	tasks, err := mem.ListTasks(smart_contract.TaskFilter{ContractID: hash})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tasks) != 1 || tasks[0].ContractID != hash {
+		t.Fatalf("task contract id: %+v", tasks)
+	}
+}
+
+func TestPublishProposalTasksScalesExplicitOverflow(t *testing.T) {
+	mem := scstore.NewMemoryStore(time.Hour)
+	store := &hookStore{
+		MemoryStore: mem,
+		p: smart_contract.Proposal{
+			ID:               "prop-overflow",
+			Title:            "Overflow",
+			BudgetSats:       1000,
+			VisiblePixelHash: "bb",
+			Tasks: []smart_contract.Task{
+				{Title: "Core", BudgetSats: 1000},
+				{Title: "Ship", BudgetSats: 500},
+				{Title: "Audio", BudgetSats: 250},
+			},
+			Metadata: map[string]interface{}{"contract_id": "wish-bb"},
+		},
+	}
+	svc := NewEventService(store, nil)
+	if err := svc.PublishProposalTasks(context.Background(), "prop-overflow"); err != nil {
+		t.Fatal(err)
+	}
+	tasks, err := mem.ListTasks(smart_contract.TaskFilter{ContractID: "wish-bb"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tasks) != 3 {
+		t.Fatalf("got %d tasks", len(tasks))
+	}
+	var sum int64
+	for _, task := range tasks {
+		if task.BudgetSats <= 0 {
+			t.Fatalf("task %q budget %d", task.Title, task.BudgetSats)
+		}
+		sum += task.BudgetSats
+	}
+	// Old publish path kept the explicit 1000+500+250=1750 because it only
+	// filled unset budgets. Allocator must now scale the set to 1000.
+	if sum != 1000 {
+		t.Fatalf("published sum=%d want 1000 (old leftover was 1750)", sum)
+	}
+}

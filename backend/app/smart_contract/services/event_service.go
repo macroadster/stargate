@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"stargate-backend/core/identity"
 	"stargate-backend/core/smart_contract"
 	scstore "stargate-backend/storage/smart_contract"
 )
@@ -54,7 +55,14 @@ func (s *EventService) PublishProposalTasks(ctx context.Context, proposalID stri
 		}
 	}
 
-	contractID := ContractIDFromMeta(p.Metadata, p.ID)
+	contractID := ContractIDFromMeta(proposalContractMeta(p), p.ID)
+	if n := identity.CanonicalContractID(contractID); identity.IsPixelHash(n) {
+		adopted, adoptErr := scstore.AdoptPixelHashToCanonical(ctx, s.store, n)
+		if adoptErr != nil {
+			return adoptErr
+		}
+		contractID = adopted
+	}
 	contract := smart_contract.Contract{
 		ContractID:          contractID,
 		Title:               p.Title,
@@ -64,6 +72,19 @@ func (s *EventService) PublishProposalTasks(ctx context.Context, proposalID stri
 		Status:              "active",
 	}
 
+	// Always run the allocator. Explicit amounts are honored when they fit;
+	// overflow is scaled so the published sum equals the wish. Never leave a
+	// pre-set BudgetSats alone if the set overshoots (old wish/N leftover).
+	titles := make([]string, len(p.Tasks))
+	explicit := make([]int64, len(p.Tasks))
+	for i, t := range p.Tasks {
+		titles[i] = t.Title
+		if t.BudgetSats > 0 {
+			explicit[i] = t.BudgetSats
+		}
+	}
+	amounts := scstore.AllocateTaskBudgets(titles, explicit, p.BudgetSats)
+
 	fundingAddr := scstore.FundingAddressFromMeta(p.Metadata)
 	tasks := make([]smart_contract.Task, 0, len(p.Tasks))
 	for i, t := range p.Tasks {
@@ -71,19 +92,24 @@ func (s *EventService) PublishProposalTasks(ctx context.Context, proposalID stri
 		if strings.TrimSpace(task.TaskID) == "" {
 			task.TaskID = proposalID + "-task-" + strconv.Itoa(i+1)
 		}
-		if task.ContractID == "" || task.ContractID == p.ID {
+		// A stored wish-<64-hex> is the old primary key. Republish onto the bare hash.
+		if task.ContractID == "" || task.ContractID == p.ID || identity.CanonicalContractID(task.ContractID) == contractID {
 			task.ContractID = contractID
 		}
+		task.BudgetSats = amounts[i]
 		if task.MerkleProof == nil && p.VisiblePixelHash != "" {
 			task.MerkleProof = &smart_contract.MerkleProof{
 				VisiblePixelHash:   p.VisiblePixelHash,
-				FundedAmountSats:   p.BudgetSats / int64(len(p.Tasks)),
+				FundedAmountSats:   task.BudgetSats,
 				FundingAddress:     fundingAddr,
 				ConfirmationStatus: "provisional",
 			}
 		}
-		if task.MerkleProof != nil && task.MerkleProof.FundingAddress == "" {
-			task.MerkleProof.FundingAddress = fundingAddr
+		if task.MerkleProof != nil {
+			if task.MerkleProof.FundingAddress == "" {
+				task.MerkleProof.FundingAddress = fundingAddr
+			}
+			task.MerkleProof.FundedAmountSats = task.BudgetSats
 		}
 		tasks = append(tasks, task)
 	}
@@ -112,10 +138,52 @@ func (s *EventService) PublishProposalTasks(ctx context.Context, proposalID stri
 	return nil
 }
 
-// ContractIDFromMeta returns contract_id from metadata or a derived id.
+// proposalContractMeta returns proposal metadata with visible_pixel_hash
+// filled from the proposal field when metadata does not already carry it.
+// Wish inscription stores the hash on the proposal and only sometimes in metadata.
+func proposalContractMeta(p smart_contract.Proposal) map[string]interface{} {
+	visible := strings.TrimSpace(p.VisiblePixelHash)
+	if visible == "" {
+		return p.Metadata
+	}
+	if p.Metadata != nil {
+		if v, ok := p.Metadata["visible_pixel_hash"].(string); ok && strings.TrimSpace(v) != "" {
+			return p.Metadata
+		}
+	}
+	out := make(map[string]interface{}, len(p.Metadata)+1)
+	for k, v := range p.Metadata {
+		out[k] = v
+	}
+	out["visible_pixel_hash"] = visible
+	return out
+}
+
+// ContractIDFromMeta returns the contract id to publish tasks under.
+// A 64-char visible pixel hash wins, whether it is stored as the bare hash,
+// wish-<hash>, or the legacy contract-<hash> alias. The contract-<id> prefix
+// is reserved for proposal ids that are not pixel hashes.
 func ContractIDFromMeta(meta map[string]interface{}, proposalID string) string {
-	if v, ok := meta["contract_id"].(string); ok && strings.TrimSpace(v) != "" {
-		return strings.TrimSpace(v)
+	if n := pixelContractID(metaString(meta, "visible_pixel_hash")); n != "" {
+		return n
+	}
+	if v := strings.TrimSpace(metaString(meta, "contract_id")); v != "" {
+		return identity.CanonicalContractID(v)
+	}
+	if n := pixelContractID(proposalID); n != "" {
+		return n
+	}
+	proposalID = strings.TrimSpace(proposalID)
+	if proposalID == "" {
+		return ""
 	}
 	return "contract-" + proposalID
+}
+
+func pixelContractID(id string) string {
+	n := identity.CanonicalContractID(id)
+	if identity.IsPixelHash(n) {
+		return n
+	}
+	return ""
 }

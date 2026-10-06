@@ -13,8 +13,26 @@ import (
 	"strings"
 	"time"
 
-       "stargate-backend/storage/datadir"
+	"stargate-backend/core/identity"
+	"stargate-backend/storage/datadir"
 )
+
+// resultsHash is the results-directory key for an execution request.
+// A pixel hash, including the contract-<hash> alias, is the bare hash.
+// Other ids are left unchanged so non-hash workdirs keep their current path.
+func resultsHash(req ExecutionRequest) string {
+	if key, ok := identity.ResultsDirKey(req.VisiblePixelHash, req.ContractID); ok {
+		return key
+	}
+	hash := req.VisiblePixelHash
+	if hash == "" {
+		hash = req.ContractID
+	}
+	if hash == "" {
+		return "unknown"
+	}
+	return hash
+}
 
 // ExecutionRequest describes a unit of work the worker wants performed.
 type ExecutionRequest struct {
@@ -31,10 +49,10 @@ type ExecutionRequest struct {
 
 // ExecutionResult is the deliverable returned to be submitted.
 type ExecutionResult struct {
-	Notes             string
-	ResultFile        string // public URL under /uploads/...
-	ArtifactsDir      string
-	CompletionProof   string
+	Notes           string
+	ResultFile      string // public URL under /uploads/...
+	ArtifactsDir    string
+	CompletionProof string
 }
 
 // Executor performs the actual "thinking + implementation" for a task.
@@ -63,22 +81,16 @@ func NewStubExecutor(uploadsDir string) *StubExecutor {
 }
 
 func (e *StubExecutor) Execute(ctx context.Context, req ExecutionRequest) (ExecutionResult, error) {
-	hash := req.VisiblePixelHash
-	if hash == "" {
-		hash = req.ContractID
-	}
-	if hash == "" {
-		hash = "unknown"
-	}
+	hash := resultsHash(req)
 
 	workdir := req.Workdir
 	if workdir == "" {
-               var err error
-               workdir, err = datadir.PartMkdirAll(filepath.Join(e.uploadsDir, "results"), hash, 0755)
-               if err != nil {
-                       return ExecutionResult{}, fmt.Errorf("failed to create workdir: %w", err)
-               }
-       } else if err := os.MkdirAll(workdir, 0755); err != nil {
+		var err error
+		workdir, err = datadir.PartMkdirAll(filepath.Join(e.uploadsDir, "results"), hash, 0755)
+		if err != nil {
+			return ExecutionResult{}, fmt.Errorf("failed to create workdir: %w", err)
+		}
+	} else if err := os.MkdirAll(workdir, 0755); err != nil {
 		return ExecutionResult{}, fmt.Errorf("failed to create workdir: %w", err)
 	}
 
@@ -318,22 +330,16 @@ func (e *AutoDetectExecutor) Execute(ctx context.Context, req ExecutionRequest) 
 		return stub.Execute(ctx, req)
 	}
 
-	hash := req.VisiblePixelHash
-	if hash == "" {
-		hash = req.ContractID
-	}
-	if hash == "" {
-		hash = "unknown"
-	}
+	hash := resultsHash(req)
 
 	workdir := req.Workdir
 	if workdir == "" {
-               var err error
-               workdir, err = datadir.PartMkdirAll(filepath.Join(e.uploadsDir, "results"), hash, 0755)
-               if err != nil {
-                       return ExecutionResult{}, fmt.Errorf("failed to create workdir: %w", err)
-               }
-       } else if err := os.MkdirAll(workdir, 0755); err != nil {
+		var err error
+		workdir, err = datadir.PartMkdirAll(filepath.Join(e.uploadsDir, "results"), hash, 0755)
+		if err != nil {
+			return ExecutionResult{}, fmt.Errorf("failed to create workdir: %w", err)
+		}
+	} else if err := os.MkdirAll(workdir, 0755); err != nil {
 		return ExecutionResult{}, fmt.Errorf("failed to create workdir: %w", err)
 	}
 

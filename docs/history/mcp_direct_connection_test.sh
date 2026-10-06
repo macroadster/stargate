@@ -5,7 +5,8 @@ set -euo pipefail
 # Demonstrates working JSON-RPC connection to Starlight MCP server
 
 MCP_URL="https://starlight.local/mcp"
-OPENCODE_API_KEY="d506b49e9e0b633b8a9ebf8d681a2731702cb407bd63c4cf296e655a9063f249"
+# Historical attic script. Do not run against a live node.
+OPENCODE_API_KEY=${OPENCODE_API_KEY:?set OPENCODE_API_KEY}
 
 # Colors
 GREEN='\033[0;32m'

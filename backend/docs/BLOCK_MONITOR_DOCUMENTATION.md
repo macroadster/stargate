@@ -1,5 +1,7 @@
 # Bitcoin Block Monitor - Comprehensive Data Extraction System
 
+Status: **historical**. See [README.md](./README.md). Live seams: `docs/arch/DOMAIN_SEAMS.md`.
+
 ## Overview
 
 The Bitcoin Block Monitor is a comprehensive background monitoring system that continuously watches for new Bitcoin blocks and performs extensive data extraction and analysis. It creates persistent, searchable records of blockchain data with a focus on steganographic content detection.

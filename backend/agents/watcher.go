@@ -8,6 +8,7 @@ import (
 	"time"
 
 	scmiddleware "stargate-backend/app/smart_contract"
+	"stargate-backend/core/identity"
 	"stargate-backend/core/smart_contract"
 	scstore "stargate-backend/storage/smart_contract"
 )
@@ -96,7 +97,7 @@ func (w *Watcher) RunOnce(ctx context.Context) []smart_contract.Task {
 }
 
 // processPendingProposals audits pending proposals and rejects obviously bad ones.
-// Good proposals are left pending (or auto-approved if we are configured as global auditor).
+// Good proposals are left pending (or auto-approved if a donation address is configured).
 func (w *Watcher) processPendingProposals(ctx context.Context) {
 	proposals, err := w.store.ListProposals(ctx, smart_contract.ProposalFilter{Status: "pending"})
 	if err != nil {
@@ -115,7 +116,7 @@ func (w *Watcher) processPendingProposals(ctx context.Context) {
 		// Also index by visible hash variants
 		if c.Metadata != nil {
 			if vph, ok := c.Metadata["visible_pixel_hash"].(string); ok && vph != "" {
-				contractMap["wish-"+strings.TrimPrefix(vph, "wish-")] = c
+				contractMap[identity.CanonicalContractID(vph)] = c
 			}
 		}
 	}
@@ -163,7 +164,7 @@ func (w *Watcher) processPendingProposals(ctx context.Context) {
 		log.Printf("agents/watcher: proposal %s passed audit", pid)
 		w.seenProposals[pid] = true
 
-		// Auto-approve if we are acting as global auditor (donation address configured)
+		// Auto-approve if this node has a donation address (in-process settlement).
 		if w.shouldAutoApprove() {
 			if err := w.approveProposal(ctx, pid); err != nil {
 				log.Printf("agents/watcher: auto-approve failed for %s: %v", pid, err)
@@ -222,7 +223,7 @@ func (w *Watcher) approveProposal(ctx context.Context, proposalID string) error 
 	if len(p.Tasks) > 0 {
 		contractID := p.ID
 		if p.VisiblePixelHash != "" {
-			contractID = "wish-" + strings.TrimPrefix(p.VisiblePixelHash, "wish-")
+			contractID = identity.CanonicalContractID(p.VisiblePixelHash)
 		}
 		contract := smart_contract.Contract{
 			ContractID:          contractID,
@@ -453,7 +454,7 @@ func (w *Watcher) findAvailableTasks(ctx context.Context) []smart_contract.Task 
 		if contractID == "" {
 			contractID = p.ID
 		}
-		canonicalID := "wish-" + strings.TrimPrefix(contractID, "wish-")
+		canonicalID := identity.CanonicalContractID(contractID)
 		tasks, err := w.store.ListTasks(smart_contract.TaskFilter{ContractID: contractID})
 		if err != nil || len(tasks) == 0 {
 			tasks, _ = w.store.ListTasks(smart_contract.TaskFilter{ContractID: canonicalID})

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"stargate-backend/core/identity"
 	"stargate-backend/core/smart_contract"
 )
 
@@ -14,13 +15,13 @@ type ConfirmApply struct {
 	Plan ConfirmContractIDPlan
 	// Normalized bare / stripped id.
 	Normalized string
-	// Canonical wish id (or wish- prefix for non-pixel).
+	// WishID is the historical wish-<hash> alias (proposal matching / collapse).
 	WishID string
 	// StegoImageURL for block-image API path.
 	StegoImageURL string
 	// ImageFileKey used in the URL (bare hash).
 	ImageFileKey string
-	// AliasesToForceSupersede after pixel confirm (bare hash twins).
+	// AliasesToForceSupersede after pixel confirm (wish- twins).
 	AliasesToForceSupersede []string
 	// SupersedeWishIfNonPixel when confirming a non-pixel id, supersede wish- form if eligible.
 	SupersedeWishIfNonPixel bool
@@ -34,11 +35,9 @@ func BuildConfirmApply(contractID string, blockHeight int, imageFileOverride str
 	contractID = strings.TrimSpace(contractID)
 	plan := PlanConfirmContractIDs(contractID)
 	normalized := plan.Normalized
-	wishID := plan.Canonical
-	if !plan.IsPixelHash {
-		if normalized != "" {
-			wishID = "wish-" + normalized
-		}
+	wishID := identity.ToWishID(normalized)
+	if !plan.IsPixelHash && normalized != "" {
+		wishID = "wish-" + normalized
 	}
 
 	imageFile := strings.TrimSpace(imageFileOverride)

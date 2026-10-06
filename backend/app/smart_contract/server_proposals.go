@@ -88,16 +88,7 @@ func (s *Server) writeServiceErr(w http.ResponseWriter, err error) {
 }
 
 func (s *Server) handleProposalApprove(w http.ResponseWriter, r *http.Request, id string) {
-	proposal, err := s.store.GetProposal(r.Context(), id)
-	if err != nil {
-		Error(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if err := s.enforceCreatorApproval(r, proposal); err != nil {
-		Error(w, http.StatusForbidden, err.Error())
-		return
-	}
-	resp, err := s.proposalSvc.Approve(r.Context(), id, auth.RequestAPIKey(r), true)
+	resp, err := s.proposalSvc.Approve(r.Context(), id, scservices.ProposalActor{APIKey: auth.RequestAPIKey(r)})
 	if err != nil {
 		s.writeServiceErr(w, err)
 		return
@@ -106,7 +97,7 @@ func (s *Server) handleProposalApprove(w http.ResponseWriter, r *http.Request, i
 }
 
 func (s *Server) handleProposalPublish(w http.ResponseWriter, r *http.Request, id string) {
-	resp, err := s.proposalSvc.Publish(r.Context(), id)
+	resp, err := s.proposalSvc.Publish(r.Context(), id, scservices.ProposalActor{APIKey: auth.RequestAPIKey(r)})
 	if err != nil {
 		s.writeServiceErr(w, err)
 		return
@@ -151,7 +142,7 @@ func (s *Server) handleProposalUpdate(w http.ResponseWriter, r *http.Request, id
 	resp, err := s.proposalSvc.Update(r.Context(), id, scservices.ProposalUpdateInput{
 		Title: body.Title, DescriptionMD: body.DescriptionMD, VisiblePixelHash: body.VisiblePixelHash,
 		BudgetSats: body.BudgetSats, ContractID: body.ContractID, Metadata: body.Metadata, Tasks: body.Tasks,
-	})
+	}, scservices.ProposalActor{APIKey: auth.RequestAPIKey(r)})
 	if err != nil {
 		s.writeServiceErr(w, err)
 		return
@@ -280,9 +271,10 @@ func (s *Server) handleSubmissionReview(w http.ResponseWriter, r *http.Request, 
 		Error(w, http.StatusBadRequest, "invalid json")
 		return
 	}
+	// No pre-check: Review authorizes the key itself and returns 403 on refusal.
 	resp, err := s.submissionSvc.Review(r.Context(), id, scservices.SubmissionReviewInput{
 		Action: body.Action, Notes: body.Notes, RejectionType: body.RejectionType,
-	})
+	}, scservices.ReviewActor{APIKey: auth.RequestAPIKey(r)})
 	if err != nil {
 		s.writeServiceErr(w, err)
 		return
@@ -298,7 +290,7 @@ func (s *Server) handleSubmissionRework(w http.ResponseWriter, r *http.Request, 
 	}
 	resp, err := s.submissionSvc.Rework(r.Context(), id, scservices.SubmissionReworkInput{
 		Deliverables: body.Deliverables, Notes: body.Notes,
-	})
+	}, scservices.ReworkActor{APIKey: auth.RequestAPIKey(r)})
 	if err != nil {
 		s.writeServiceErr(w, err)
 		return

@@ -168,16 +168,32 @@ func wishHasEngagement(ctx context.Context, hash string, ingest *services.Ingest
 		return false
 	}
 
-	wishID := identity.ToWishID(hash)
-	if c, err := store.GetContract(wishID); err == nil {
-		st := strings.ToLower(strings.TrimSpace(c.Status))
-		if st != "" && st != "pending" {
-			return true
+	for _, id := range identity.CandidateIDs(hash, hash) {
+		if c, err := store.GetContract(id); err == nil {
+			st := strings.ToLower(strings.TrimSpace(c.Status))
+			if st != "" && st != "pending" {
+				return true
+			}
 		}
 	}
 
-	props, err := store.ListProposals(ctx, smart_contract.ProposalFilter{ContractID: wishID, Limit: 50})
-	if err == nil {
+	wishID := identity.ToWishID(hash)
+	var props []smart_contract.Proposal
+	seenProp := map[string]struct{}{}
+	for _, cid := range []string{wishID, hash, identity.CanonicalContractID(hash)} {
+		listed, err := store.ListProposals(ctx, smart_contract.ProposalFilter{ContractID: cid, Limit: 50})
+		if err != nil {
+			continue
+		}
+		for _, p := range listed {
+			if _, ok := seenProp[p.ID]; ok {
+				continue
+			}
+			seenProp[p.ID] = struct{}{}
+			props = append(props, p)
+		}
+	}
+	if len(props) > 0 {
 		extra := 0
 		for _, p := range props {
 			st := strings.ToLower(strings.TrimSpace(p.Status))
@@ -199,7 +215,7 @@ func wishHasEngagement(ctx context.Context, hash string, ingest *services.Ingest
 		}
 	}
 
-	tasks, err := store.ListTasks(smart_contract.TaskFilter{ContractID: wishID, Limit: 50})
+	tasks, err := store.ListTasks(smart_contract.TaskFilter{ContractID: hash, Limit: 50})
 	if err == nil {
 		for _, t := range tasks {
 			if taskShowsEngagement(t) {

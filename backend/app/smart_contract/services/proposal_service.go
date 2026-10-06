@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"stargate-backend/core/identity"
 	"stargate-backend/core/smart_contract"
 	appservices "stargate-backend/services"
 	auth "stargate-backend/storage/auth"
@@ -65,22 +67,46 @@ type ProposalListResult struct {
 	smart_contract.Page
 }
 
+// ProposalEditAuthorizer decides whether the holder of an API key may edit or
+// publish a proposal, returning the wallet it authorized so the caller records
+// the identity that was actually accepted.
+//
+// Defined here rather than alongside its implementation because services cannot
+// import app/smart_contract.
+type ProposalEditAuthorizer interface {
+	AuthorizeProposalEdit(ctx context.Context, apiKey, proposalID string) (string, error)
+}
+
+// ProposalActor identifies who is editing or publishing a proposal. Only the API
+// key is taken, for the same reason as ReviewActor: the wallet is whatever the
+// authorizer resolves, so a caller cannot name one identity while being
+// authorized as another.
+type ProposalActor struct {
+	APIKey string
+}
+
 // ProposalService encapsulates proposal domain operations.
 type ProposalService struct {
 	store        scstore.Store
 	ingestionSvc *appservices.IngestionService
 	apiKeys      auth.APIKeyValidator
 	record       EventRecorder
+	authz        ProposalEditAuthorizer
 	publishTasks func(ctx context.Context, proposalID string) error
 	archiveWish  func(ctx context.Context, visibleHash string)
 }
 
 // NewProposalService constructs a ProposalService.
+//
+// authz is required by Update and Publish, which refuse without it rather than
+// trusting their caller. Pass nil only where neither is reachable, or in tests
+// asserting that refusal.
 func NewProposalService(
 	store scstore.Store,
 	ingestionSvc *appservices.IngestionService,
 	apiKeys auth.APIKeyValidator,
 	record EventRecorder,
+	authz ProposalEditAuthorizer,
 	publishTasks func(ctx context.Context, proposalID string) error,
 	archiveWish func(ctx context.Context, visibleHash string),
 ) *ProposalService {
@@ -89,9 +115,25 @@ func NewProposalService(
 		ingestionSvc: ingestionSvc,
 		apiKeys:      apiKeys,
 		record:       record,
+		authz:        authz,
 		publishTasks: publishTasks,
 		archiveWish:  archiveWish,
 	}
+}
+
+// authorizeEdit resolves the wallet allowed to change proposalID, or an error
+// describing the refusal. Update and Publish share it so the two cannot drift.
+func (s *ProposalService) authorizeEdit(ctx context.Context, actor ProposalActor, proposalID, action string) (string, error) {
+	if s.authz == nil {
+		// Refuse rather than proceed unauthorized: an unwired service must not be
+		// the difference between a guarded proposal and an open one.
+		return "", Fail(http.StatusInternalServerError, "proposal edit authorizer not configured")
+	}
+	wallet, err := s.authz.AuthorizeProposalEdit(ctx, actor.APIKey, proposalID)
+	if err != nil {
+		return "", Fail(http.StatusForbidden, fmt.Sprintf("cannot %s proposal %s: %v", action, proposalID, err))
+	}
+	return wallet, nil
 }
 
 // SetRecorder updates the event sink.
@@ -107,22 +149,30 @@ func (s *ProposalService) emit(evt smart_contract.Event) {
 }
 
 // Approve approves a proposal and publishes tasks.
-func (s *ProposalService) Approve(ctx context.Context, id, apiKey string, creatorOK bool) (map[string]interface{}, error) {
+//
+// Authorization runs here rather than being asserted by the caller. This used to
+// take a creatorOK bool: its one caller checked the creator and then passed true,
+// so authorization was an argument, and a second caller passing true would have
+// been authorized by saying so (stargate-az6). That reads as though a check
+// happened, which is worse than an obviously absent one.
+func (s *ProposalService) Approve(ctx context.Context, id string, actor ProposalActor) (map[string]interface{}, error) {
 	if s.store == nil {
 		return nil, Fail(http.StatusBadRequest, "store unavailable")
 	}
+	wallet, err := s.authorizeEdit(ctx, actor, id, "approve")
+	if err != nil {
+		return nil, err
+	}
+	apiKey := actor.APIKey
 	proposal, err := s.store.GetProposal(ctx, id)
 	if err != nil {
-		return nil, Fail(http.StatusBadRequest, err.Error())
+		return nil, FailKind(http.StatusBadRequest, KindProposalNotFound, err.Error())
 	}
 	if proposal.Metadata == nil {
 		proposal.Metadata = map[string]interface{}{}
 	}
-	if !creatorOK {
-		return nil, Fail(http.StatusForbidden, "creator approval required")
-	}
 	if err := s.requireWishForApproval(ctx, proposal); err != nil {
-		return nil, Fail(http.StatusBadRequest, err.Error())
+		return nil, FailKind(http.StatusBadRequest, KindWishNotFound, err.Error())
 	}
 	meta := proposal.Metadata
 	if meta == nil {
@@ -187,7 +237,7 @@ func (s *ProposalService) Approve(ctx context.Context, id, apiKey string, creato
 		s.archiveWish(ctx, visibleHash)
 	}
 	s.emit(smart_contract.Event{
-		Type: "approve", EntityID: id, Actor: "approver",
+		Type: "approve", EntityID: id, Actor: wallet,
 		Message: "proposal approved", CreatedAt: time.Now(),
 	})
 	return map[string]interface{}{
@@ -198,12 +248,20 @@ func (s *ProposalService) Approve(ctx context.Context, id, apiKey string, creato
 }
 
 // Publish marks a proposal published.
-func (s *ProposalService) Publish(ctx context.Context, id string) (map[string]interface{}, error) {
+//
+// Authorization runs here rather than in the handler: publish sat next to an
+// approve path that did check the creator, and the asymmetry was invisible from
+// the route table (stargate-irl.7).
+func (s *ProposalService) Publish(ctx context.Context, id string, actor ProposalActor) (map[string]interface{}, error) {
+	wallet, err := s.authorizeEdit(ctx, actor, id, "publish")
+	if err != nil {
+		return nil, err
+	}
 	if err := s.store.PublishProposal(ctx, id); err != nil {
 		return nil, Fail(http.StatusBadRequest, err.Error())
 	}
 	s.emit(smart_contract.Event{
-		Type: "publish", EntityID: id, Actor: "approver",
+		Type: "publish", EntityID: id, Actor: wallet,
 		Message: "proposal published", CreatedAt: time.Now(),
 	})
 	return map[string]interface{}{
@@ -234,10 +292,10 @@ func (s *ProposalService) Create(ctx context.Context, body ProposalCreateInput) 
 		}
 		applyCreatorWallet(proposal.Metadata, body.APIKey, s.apiKeys)
 		if err := s.store.CreateProposal(ctx, proposal); err != nil {
-			return nil, 0, Fail(http.StatusBadRequest, err.Error())
+			return nil, 0, createStoreError(err)
 		}
 		s.emit(smart_contract.Event{
-			Type: "proposal_create", EntityID: proposal.ID, Actor: "creator",
+			Type: "proposal_create", EntityID: proposal.ID, Actor: s.eventActor(body.APIKey),
 			Message: "proposal created from ingestion", CreatedAt: time.Now(),
 		})
 		return map[string]interface{}{
@@ -289,19 +347,37 @@ func (s *ProposalService) Create(ctx context.Context, body ProposalCreateInput) 
 		contractID = visiblePixelHash
 		body.Metadata["contract_id"] = contractID
 	}
-	if contractID != visiblePixelHash {
+	if identity.Normalize(contractID) != identity.Normalize(visiblePixelHash) {
 		return nil, 0, Fail(http.StatusBadRequest, "contract_id must match visible_pixel_hash for wish proposals")
 	}
-	wishID := "wish-" + visiblePixelHash
-	wish, err := scstore.LookupContract(s.store, wishID)
+	if n := identity.CanonicalContractID(visiblePixelHash); identity.IsPixelHash(n) {
+		body.Metadata["contract_id"] = n
+	}
+	wish, err := scstore.LookupContract(s.store, visiblePixelHash)
 	if err != nil {
-		return nil, 0, Fail(http.StatusNotFound, "wish not found for visible_pixel_hash")
+		return nil, 0, FailKind(http.StatusNotFound, KindWishNotFound, "wish not found for visible_pixel_hash")
 	}
 	if wishBudget := scstore.WishBudgetFromContract(wish); wishBudget > 0 {
 		if omittedBudget {
 			body.BudgetSats = wishBudget
 		} else if body.BudgetSats > wishBudget {
-			return nil, 0, Fail(http.StatusBadRequest, fmt.Sprintf("proposal budget_sats %d exceeds original wish budget %d", body.BudgetSats, wishBudget))
+			return nil, 0, FailKind(http.StatusBadRequest, KindBudgetExceeded, fmt.Sprintf("proposal budget_sats %d exceeds original wish budget %d", body.BudgetSats, wishBudget))
+		}
+	}
+	if len(body.Tasks) == 0 && strings.TrimSpace(body.DescriptionMD) != "" {
+		body.Tasks = scstore.BuildTasksFromMarkdown(body.ID, body.DescriptionMD, visiblePixelHash, body.BudgetSats, scstore.FundingAddressFromMeta(body.Metadata))
+	} else if len(body.Tasks) > 0 {
+		titles := make([]string, len(body.Tasks))
+		explicit := make([]int64, len(body.Tasks))
+		for i, t := range body.Tasks {
+			titles[i] = t.Title
+			if t.BudgetSats > 0 {
+				explicit[i] = t.BudgetSats
+			}
+		}
+		amounts := scstore.AllocateTaskBudgets(titles, explicit, body.BudgetSats)
+		for i := range body.Tasks {
+			body.Tasks[i].BudgetSats = amounts[i]
 		}
 	}
 	for i := range body.Tasks {
@@ -321,10 +397,10 @@ func (s *ProposalService) Create(ctx context.Context, body ProposalCreateInput) 
 		Status: body.Status, CreatedAt: time.Now(), Tasks: body.Tasks, Metadata: body.Metadata,
 	}
 	if err := s.store.CreateProposal(ctx, p); err != nil {
-		return nil, 0, Fail(http.StatusBadRequest, err.Error())
+		return nil, 0, createStoreError(err)
 	}
 	s.emit(smart_contract.Event{
-		Type: "proposal_create", EntityID: p.ID, Actor: "creator",
+		Type: "proposal_create", EntityID: p.ID, Actor: s.eventActor(body.APIKey),
 		Message: fmt.Sprintf("proposal created with %d tasks", len(p.Tasks)), CreatedAt: time.Now(),
 	})
 	return map[string]interface{}{
@@ -333,7 +409,16 @@ func (s *ProposalService) Create(ctx context.Context, body ProposalCreateInput) 
 }
 
 // Update applies a partial update to a pending proposal.
-func (s *ProposalService) Update(ctx context.Context, id string, body ProposalUpdateInput) (map[string]interface{}, error) {
+//
+// Being pending is not permission to edit: the status gate was the only check
+// here, so any wallet-bound key could rewrite another creator's budget_sats,
+// contract_id and tasks (stargate-irl.7). Ingest and sync paths do not reach
+// this method; they write through the store metadata helpers.
+func (s *ProposalService) Update(ctx context.Context, id string, body ProposalUpdateInput, actor ProposalActor) (map[string]interface{}, error) {
+	wallet, err := s.authorizeEdit(ctx, actor, id, "update")
+	if err != nil {
+		return nil, err
+	}
 	existing, err := s.store.GetProposal(ctx, id)
 	if err != nil {
 		return nil, Fail(http.StatusNotFound, err.Error())
@@ -415,7 +500,7 @@ func (s *ProposalService) Update(ctx context.Context, id string, body ProposalUp
 		return nil, Fail(http.StatusBadRequest, err.Error())
 	}
 	s.emit(smart_contract.Event{
-		Type: "update", EntityID: updated.ID, Actor: "editor",
+		Type: "update", EntityID: updated.ID, Actor: wallet,
 		Message: "proposal updated", CreatedAt: time.Now(),
 	})
 	return map[string]interface{}{
@@ -650,6 +735,42 @@ func budgetFromMetaLocal(meta map[string]interface{}) int64 {
 		}
 	}
 	return scstore.DefaultBudgetSats()
+}
+
+// eventActor resolves the wallet bound to apiKey, for use as an event actor.
+//
+// Proposal creation is not restricted to wallet-bound keys, so this can come back
+// empty, and empty is the honest answer: the events filter already treats a blank
+// actor as "no identity to match on" (server_events.go). The literal "creator" it
+// replaces was indistinguishable from a real identity while never being one
+// (stargate-az6).
+func (s *ProposalService) eventActor(apiKey string) string {
+	if s.apiKeys == nil {
+		return ""
+	}
+	rec, ok := s.apiKeys.Get(strings.TrimSpace(apiKey))
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(rec.Wallet)
+}
+
+// createStoreError attaches a Kind to the store's create refusals so a caller
+// can tell them apart. All three are 400 to REST, so status cannot separate
+// them; the MCP surface used to match on message substrings, which meant
+// rewording a store error silently downgraded a specific error code to a generic
+// internal one. Classification is by sentinel, and it lives here rather than in
+// each surface so the surfaces cannot drift on it.
+func createStoreError(err error) error {
+	switch {
+	case errors.Is(err, scstore.ErrProposalLimitReached):
+		return FailKind(http.StatusBadRequest, KindProposalLimitReached, err.Error())
+	case errors.Is(err, scstore.ErrProposalAlreadyFinalized):
+		return FailKind(http.StatusBadRequest, KindProposalAlreadyFinalized, err.Error())
+	case errors.Is(err, scstore.ErrTaskBudgetMismatch):
+		return FailKind(http.StatusBadRequest, KindBudgetMismatch, err.Error())
+	}
+	return Fail(http.StatusBadRequest, err.Error())
 }
 
 func applyCreatorWallet(meta map[string]interface{}, apiKey string, apiKeys auth.APIKeyValidator) {

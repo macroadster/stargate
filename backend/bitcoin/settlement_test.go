@@ -47,6 +47,43 @@ func TestBlockConfirmationsAndSettlementReady(t *testing.T) {
 	}
 }
 
+func TestScanMayConfirmRejectsHistoricalCatchup(t *testing.T) {
+	resetTipLagStateForTest()
+	t.Setenv("CHAIN_SETTLEMENT_CONFIRMATIONS", "20")
+	t.Setenv("BITCOIN_NETWORK", "testnet4")
+
+	// 6500-deep catch-up height is settlement-ready but must not confirm on scan.
+	if !SettlementReady(152464, 145884) {
+		t.Fatal("historical height is buried, SettlementReady should be true")
+	}
+	if ScanMayConfirm(152464, 145884) {
+		t.Fatal("catch-up scan must not confirm a 6500-deep height")
+	}
+
+	// Just at settlement depth (20 confs: tip-height+1=20 => tip-height=19).
+	if !ScanMayConfirm(119, 100) {
+		t.Fatal("near-tip height at exactly 20 confs should confirm")
+	}
+	if ScanMayConfirm(121, 100) {
+		t.Fatal("tip-height=21 is past the live confirm window")
+	}
+	if ScanMayConfirm(118, 100) {
+		t.Fatal("not yet settlement-ready")
+	}
+}
+
+func TestLiveTipWhileBackfill(t *testing.T) {
+	if got := liveTipWhileBackfill(146099, 152464); got != 152464 {
+		t.Fatalf("got %d want 152464", got)
+	}
+	if got := liveTipWhileBackfill(152464, 152464); got != 0 {
+		t.Fatalf("backfill already at tip, got %d", got)
+	}
+	if got := liveTipWhileBackfill(0, 100); got != 100 {
+		t.Fatalf("got %d want 100", got)
+	}
+}
+
 func TestSettlementBlockedOnHashMismatch(t *testing.T) {
 	resetTipLagStateForTest()
 	now := time.Now()

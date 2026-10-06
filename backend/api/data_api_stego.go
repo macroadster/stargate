@@ -41,6 +41,13 @@ func (api *DataAPI) HandleStegoCallback(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	secret := os.Getenv("STARLIGHT_CALLBACK_SECRET")
+	if secret == "" {
+		log.Printf("SECURITY: stego callback rejected because STARLIGHT_CALLBACK_SECRET is unset")
+		http.Error(w, "stego callback is not configured", http.StatusServiceUnavailable)
+		return
+	}
+
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		log.Printf("stego-callback: read body error: %v", err)
@@ -48,13 +55,10 @@ func (api *DataAPI) HandleStegoCallback(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	secret := os.Getenv("STARLIGHT_CALLBACK_SECRET")
-	if secret != "" {
-		if !api.verifySignature(secret, body, r.Header.Get("X-Starlight-Signature")) {
-			log.Printf("stego-callback: signature verification failed")
-			http.Error(w, "invalid signature", http.StatusUnauthorized)
-			return
-		}
+	if !api.verifySignature(secret, body, r.Header.Get("X-Starlight-Signature")) {
+		log.Printf("stego-callback: signature verification failed")
+		http.Error(w, "invalid signature", http.StatusUnauthorized)
+		return
 	}
 
 	// Detect batch payload (block-level with inscriptions array)

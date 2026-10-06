@@ -641,7 +641,7 @@ func TestSQLiteConfirmContractStegoURLUsesBareHash(t *testing.T) {
 	if err := store.ConfirmContract(ctx, wishID, height, txid); err != nil {
 		t.Fatalf("confirm: %v", err)
 	}
-	got, err := store.GetContract(wishID)
+	got, err := store.GetContract(hash)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -651,6 +651,9 @@ func TestSQLiteConfirmContractStegoURLUsesBareHash(t *testing.T) {
 	}
 	if strings.Contains(got.StegoImageURL, "wish-") {
 		t.Fatalf("stego_image_url must not contain wish- prefix: %q", got.StegoImageURL)
+	}
+	if got.Status != "confirmed" {
+		t.Fatalf("canonical bare status=%q want confirmed", got.Status)
 	}
 }
 
@@ -677,12 +680,12 @@ func TestSQLiteConfirmContractBootstrapsFromWishWithNullMetadata(t *testing.T) {
 
 	const txid = "6df5d5c0ec58aa3b000000000000000000000000000000000000000000000001"
 	const height = 143438
-	// Confirm via bare hash: must land on canonical wish- row (no bare twin).
+	// Confirm via bare hash: must land on canonical bare row (wish- not confirmed).
 	if err := store.ConfirmContract(ctx, hash, height, txid); err != nil {
 		t.Fatalf("ConfirmContract bootstrap: %v", err)
 	}
 
-	got, err := store.GetContract(wishID)
+	got, err := store.GetContract(hash)
 	if err != nil {
 		t.Fatalf("GetContract confirmed: %v", err)
 	}
@@ -692,9 +695,8 @@ func TestSQLiteConfirmContractBootstrapsFromWishWithNullMetadata(t *testing.T) {
 	if got.Metadata == nil || got.Metadata["confirmed_txid"] != txid {
 		t.Fatalf("expected confirmed_txid in metadata, got %#v", got.Metadata)
 	}
-	// Bare-hash twin must not be a second confirmed listing.
-	if bare, err := store.GetContract(hash); err == nil && bare.Status == "confirmed" {
-		t.Fatalf("bare hash must not stay confirmed when wish- is canonical; got %#v", bare)
+	if wish, err := store.GetContract(wishID); err == nil && wish.Status == "confirmed" {
+		t.Fatalf("wish- must not stay confirmed when bare is canonical; got %#v", wish)
 	}
 }
 
@@ -745,12 +747,12 @@ func TestSQLiteConfirmContractNoDuplicateWishAndBare(t *testing.T) {
 	if confirmedForWish != 1 {
 		t.Fatalf("expected exactly 1 confirmed row for wish, got %d: %+v", confirmedForWish, list)
 	}
-	wish, err := store.GetContract(wishID)
+	bare, err := store.GetContract(hash)
 	if err != nil {
-		t.Fatalf("get wish: %v", err)
+		t.Fatalf("get bare: %v", err)
 	}
-	if wish.Status != "confirmed" {
-		t.Fatalf("canonical wish status=%q want confirmed", wish.Status)
+	if bare.Status != "confirmed" {
+		t.Fatalf("canonical bare status=%q want confirmed", bare.Status)
 	}
 }
 

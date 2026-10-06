@@ -9,6 +9,25 @@ func TestContractIDFromMeta(t *testing.T) {
 	if got := ContractIDFromMeta(nil, "p"); got != "contract-p" {
 		t.Fatalf("got %q", got)
 	}
+	hash := "41a974b813b024a3817c9c99b5406cc5131a00406c76a4e01fd7519974ccfb40"
+	if got := ContractIDFromMeta(nil, hash); got != hash {
+		t.Fatalf("pixel proposal id: got %q", got)
+	}
+	if got := ContractIDFromMeta(map[string]interface{}{"visible_pixel_hash": hash}, "proposal-1"); got != hash {
+		t.Fatalf("visible pixel hash: got %q", got)
+	}
+	if got := ContractIDFromMeta(map[string]interface{}{"contract_id": "contract-" + hash}, "proposal-1"); got != hash {
+		t.Fatalf("contract- alias: got %q", got)
+	}
+	if got := ContractIDFromMeta(map[string]interface{}{
+		"visible_pixel_hash": hash,
+		"contract_id":        "contract-" + hash,
+	}, hash); got != hash {
+		t.Fatalf("visible hash beats contract- alias: got %q", got)
+	}
+	if got := ContractIDFromMeta(map[string]interface{}{"contract_id": "contract-001"}, "p"); got != "contract-001" {
+		t.Fatalf("non-pixel contract id: got %q", got)
+	}
 }
 
 func TestLooksLikeRaiseFund(t *testing.T) {

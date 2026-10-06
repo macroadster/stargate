@@ -738,10 +738,10 @@ func (bm *BlockMonitor) maybeReconcileStego(rec *services.IngestionRecord) {
 }
 
 // reconcileOnChainArtifacts uses the stego_hash from the OP_RETURN to find
-// the stego image in UPLOADS_DIR and trigger stego reconciliation + sandbox
-// extraction.  sandbox_hash is inside the stego v2 JSON payload — the stego
-// reconciler extracts it automatically.  This is the primary replication
-// path — no pubsub or STARGATE_STEGO_APPROVAL_ENABLED needed.
+// the stego image in UPLOADS_DIR and apply the v2 payload (proposal, tasks,
+// sandbox_hash). Metadata only — it does not unpack the sandbox tarball.
+// This is the primary replication path — no pubsub or
+// STARGATE_STEGO_APPROVAL_ENABLED needed.
 func (bm *BlockMonitor) reconcileOnChainArtifacts(contractID, stegoHash string) {
 	if contractID == "" {
 		return
@@ -870,11 +870,20 @@ func (bm *BlockMonitor) markIngestionConfirmed(rec *services.IngestionRecord, tx
 		"image_path":       imagePath,
 	}
 	if meta := rec.Metadata; meta != nil {
-		if prevHeight, ok := meta["confirmed_height"].(float64); ok && int64(prevHeight) != height {
-			updates["reorg_from_height"] = int64(prevHeight)
+		if prevHeight, ok := meta["confirmed_height"].(float64); ok && int64(prevHeight) > 0 {
+			if int64(prevHeight) > height {
+				// Do not rewrite a newer confirm down to a historical catch-up height.
+				delete(updates, "confirmed_height")
+			} else if int64(prevHeight) != height {
+				updates["reorg_from_height"] = int64(prevHeight)
+			}
 		} else if prevHeightStr, ok := meta["confirmed_height"].(string); ok {
-			if prevHeightInt, err := strconv.ParseInt(strings.TrimSpace(prevHeightStr), 10, 64); err == nil && prevHeightInt != height {
-				updates["reorg_from_height"] = prevHeightInt
+			if prevHeightInt, err := strconv.ParseInt(strings.TrimSpace(prevHeightStr), 10, 64); err == nil && prevHeightInt > 0 {
+				if prevHeightInt > height {
+					delete(updates, "confirmed_height")
+				} else if prevHeightInt != height {
+					updates["reorg_from_height"] = prevHeightInt
+				}
 			}
 		}
 		if prevTxid, ok := meta["confirmed_txid"].(string); ok && strings.TrimSpace(prevTxid) != "" && strings.TrimSpace(prevTxid) != txid {
@@ -889,20 +898,20 @@ func (bm *BlockMonitor) markIngestionConfirmed(rec *services.IngestionRecord, tx
 	}
 
 	if bm.sweepStore != nil {
-		// Canonical wish-<hash> for pixel-hash ingestions so ConfirmContract does not
-		// mint a bare-hash twin next to an already-confirmed wish- row.
+		// Canonical stored id is the bare VPH. Confirm adopts a leftover wish-
+		// row onto that PK rather than minting a prefix twin.
 		contractID := strings.TrimSpace(rec.ID)
 		if vph := strings.TrimSpace(stringFromAny(rec.Metadata["visible_pixel_hash"])); vph != "" {
 			contractID = vph
 		}
 		if contractID != "" {
 			if identity.IsPixelHash(identity.Normalize(contractID)) {
-				contractID = identity.ToWishID(contractID)
+				contractID = identity.CanonicalContractID(contractID)
 			}
-			if !bm.settlementReady(height) {
+			if !bm.scanMayConfirm(height) {
 				log.Printf("oracle reconcile: contract %s seen in block %d — waiting for %d confirmations before ConfirmContract",
 					contractID, height, SettlementConfirmations())
-			} else if err := bm.sweepStore.ConfirmContract(context.Background(), contractID, int(height), txid); err != nil {
+			} else if err := bm.confirmContractOnChain(context.Background(), contractID, int(height), txid); err != nil {
 				log.Printf("oracle reconcile: failed to confirm contract %s: %v", contractID, err)
 			} else {
 				log.Printf("oracle reconcile: successfully confirmed contract %s with stego_image_url calculated by storage layer", contractID)
