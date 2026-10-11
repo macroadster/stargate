@@ -583,14 +583,17 @@ func (s *Server) UpsertContractFromStegoPayload(ctx context.Context, contractID,
 	}
 	desc, _ = scstore.SanitizeInput(desc)
 
-	// For wish-style contracts (identified by 64-hex visible pixel hash), normalize
-	// the stored ContractID to "wish-<hash>" for consistency with wish creation.
+	// A 64-hex wish is stored as the bare hash. wish-<hash> is a lookup alias,
+	// so rewriting the id back to that prefix misses the live row and lets
+	// stego overwrite its title and budget.
 	vh := strings.TrimSpace(manifest.VisiblePixelHash)
 	if vh == "" {
 		vh = strings.TrimSpace(payload.Proposal.VisiblePixelHash)
 	}
-	if vh != "" && identity.IsPixelHash(contractID) {
-		contractID = "wish-" + strings.TrimPrefix(vh, "wish-")
+	if n := identity.CanonicalContractID(vh); identity.IsPixelHash(n) {
+		contractID = n
+	} else if n := identity.CanonicalContractID(contractID); identity.IsPixelHash(n) {
+		contractID = n
 	}
 
 	// Load existing rows before write so we never demote trust or overwrite protected fields.

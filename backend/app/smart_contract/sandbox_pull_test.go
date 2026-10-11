@@ -214,7 +214,7 @@ func TestReconcileStegoDoesNotExtractWhenConfirmed(t *testing.T) {
 		t.Fatalf("ReconcileStego: %v", err)
 	}
 
-	got, err := store.GetContract(wishID)
+	got, err := store.GetContract(vph)
 	if err != nil {
 		t.Fatalf("GetContract: %v", err)
 	}

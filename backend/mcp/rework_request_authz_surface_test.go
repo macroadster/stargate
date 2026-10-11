@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"stargate-backend/core/identity"
 	"stargate-backend/core/smart_contract"
 	scstore "stargate-backend/storage/smart_contract"
 )
@@ -91,8 +92,8 @@ func TestMCPReworkRequestEmitsEventNamingTheWallet(t *testing.T) {
 		t.Fatalf("the wish creator must be allowed to file: %s", resp.Error)
 	}
 
-	// Filing left no audit trail on either surface before this.
-	evt := awaitEvent(t, events, "contract_rework_requested", contractID)
+	// The event names the stored row. wish-<hash> is an alias of the bare hash.
+	evt := awaitEvent(t, events, "contract_rework_requested", identity.CanonicalContractID(contractID))
 	if evt.Actor != surfaceCreatorWlt {
 		t.Fatalf("event actor = %q, want the authorized wallet %q", evt.Actor, surfaceCreatorWlt)
 	}

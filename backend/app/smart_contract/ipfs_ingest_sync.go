@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"stargate-backend/core/identity"
 	"stargate-backend/core/smart_contract"
 	"stargate-backend/services"
 	"stargate-backend/stego"
@@ -475,6 +476,11 @@ func ensureProposalFromStegoPayload(ctx context.Context, store Store, stegoCID s
 		contractID = "wish-" + strings.TrimPrefix(visibleHash, "wish-")
 	} else if looksLikeHash(contractID) && visibleHash != "" {
 		contractID = "wish-" + strings.TrimPrefix(visibleHash, "wish-")
+	}
+	// wish-<64-hex> is a lookup alias. The stored row is the bare hash, so a
+	// stego write has to find that row before it decides the title and budget.
+	if n := identity.CanonicalContractID(contractID); identity.IsPixelHash(n) {
+		contractID = n
 	}
 	tasks := make([]smart_contract.Task, 0, len(payload.Tasks))
 	for _, raw := range payload.Tasks {

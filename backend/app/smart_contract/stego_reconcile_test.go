@@ -56,7 +56,8 @@ func TestUpsertContractFromStegoPayload(t *testing.T) {
 		t.Fatalf("UpsertContractFromStegoPayload error: %v", err)
 	}
 
-	contract, err := store.GetContract(contractID)
+	storedID := payload.Proposal.VisiblePixelHash
+	contract, err := store.GetContract(storedID)
 	if err != nil {
 		t.Fatalf("contract not created: %v", err)
 	}
@@ -75,7 +76,7 @@ func TestUpsertContractFromStegoPayload(t *testing.T) {
 		t.Fatalf("stego metadata missing from proposal")
 	}
 
-	tasks, err := store.ListTasks(core.TaskFilter{ContractID: contractID})
+	tasks, err := store.ListTasks(core.TaskFilter{ContractID: storedID})
 	if err != nil {
 		t.Fatalf("list tasks failed: %v", err)
 	}
@@ -127,7 +128,7 @@ func TestUpsertStegoSetsProductPixelHash(t *testing.T) {
 		t.Fatalf("UpsertContractFromStegoPayload: %v", err)
 	}
 
-	tasks, err := store.ListTasks(core.TaskFilter{ContractID: "contract-product"})
+	tasks, err := store.ListTasks(core.TaskFilter{ContractID: visibleHash})
 	if err != nil || len(tasks) == 0 {
 		t.Fatalf("no tasks created: %v", err)
 	}
@@ -176,14 +177,14 @@ func TestUpsertStegoPreservesWishHashWhenDonationExists(t *testing.T) {
 		CreatedAt:        time.Now(),
 	})
 	store.UpsertContractWithTasks(ctx, core.Contract{
-		ContractID: contractID,
+		ContractID: visibleHash,
 		Title:      "Donation Test",
 		Status:     "active",
 	}, []core.Task{
 		{
 			TaskID:           "task-donation-1",
-			ContractID:       contractID,
-			GoalID:           contractID,
+			ContractID:       visibleHash,
+			GoalID:           visibleHash,
 			Title:            "Funded Task",
 			Status:           "available",
 			ContractorWallet: "tb1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
@@ -228,7 +229,7 @@ func TestUpsertStegoPreservesWishHashWhenDonationExists(t *testing.T) {
 		t.Fatalf("UpsertContractFromStegoPayload: %v", err)
 	}
 
-	tasks, _ := store.ListTasks(core.TaskFilter{ContractID: contractID})
+	tasks, _ := store.ListTasks(core.TaskFilter{ContractID: visibleHash})
 	if len(tasks) == 0 {
 		t.Fatalf("no tasks found")
 	}
