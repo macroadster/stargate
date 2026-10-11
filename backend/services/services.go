@@ -16,6 +16,7 @@ import (
 
 	"stargate-backend/core"
 	"stargate-backend/models"
+	"stargate-backend/starlight"
 
 	"github.com/skip2/go-qrcode"
 )
@@ -288,24 +289,81 @@ func (s *QRCodeService) GenerateQRCode(address, amount string) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// HealthService handles health check business logic
-type HealthService struct{}
+// NodeHealth is the Bitcoin slice of /api/health. Implemented by *bitcoin.BitcoinNodeClient.
+type NodeHealth interface {
+	TestConnection() bool
+	GetNodeURL() string
+	GetBlockHeight() (int, error)
+}
 
-// NewHealthService creates a new health service
+// HealthService handles health check business logic.
+// Scanner and node are optional. When unset, those fields stay empty
+// (tests and early startup). When set, /api/health reports the same
+// scanner and chain the process is actually using.
+type HealthService struct {
+	scanner starlight.ScannerInfoSource
+	node    NodeHealth
+}
+
+// NewHealthService creates a health service with no scanner or node yet.
 func NewHealthService() *HealthService {
 	return &HealthService{}
 }
 
+// SetScanner records the process scanner. Nil clears it.
+func (s *HealthService) SetScanner(scanner starlight.ScannerInfoSource) {
+	if s == nil {
+		return
+	}
+	s.scanner = scanner
+}
+
+// SetNode records the Bitcoin node client. Nil clears it.
+func (s *HealthService) SetNode(node NodeHealth) {
+	if s == nil {
+		return
+	}
+	s.node = node
+}
+
 // GetHealthStatus returns current health status using the canonical core type.
+// Status is degraded when a wired node is down or a wired scanner never initialized.
+// An unwired service stays "healthy" so a handler built before the chain is ready
+// does not start reporting a fake outage.
 func (s *HealthService) GetHealthStatus() *core.HealthResponse {
 	now := time.Now().UTC().Format(time.RFC3339)
-	return &core.HealthResponse{
+	resp := &core.HealthResponse{
 		Status:    "healthy",
 		Timestamp: now,
 		Version:   "1.0.0",
-		// Scanner and Bitcoin info can be enriched by callers that have the data
-		// (see core.NewHealthResponse for the rich constructor used by scanner paths).
 	}
+	if s == nil {
+		return resp
+	}
+
+	if s.scanner != nil {
+		resp.Scanner = s.scanner.GetScannerInfo()
+		if !s.scanner.IsInitialized() {
+			resp.Status = "degraded"
+		}
+	}
+	if s.node != nil {
+		connected := s.node.TestConnection()
+		height := 0
+		if connected {
+			if h, err := s.node.GetBlockHeight(); err == nil {
+				height = h
+			}
+		} else {
+			resp.Status = "degraded"
+		}
+		resp.Bitcoin = core.BitcoinInfo{
+			NodeConnected: connected,
+			NodeURL:       s.node.GetNodeURL(),
+			BlockHeight:   height,
+		}
+	}
+	return resp
 }
 
 // PeerService handles peer discovery and registration for WebRTC

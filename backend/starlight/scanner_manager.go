@@ -174,6 +174,14 @@ func (sm *ScannerManager) GetHealthStatus() map[string]interface{} {
 	return status
 }
 
+// ScannerInfoSource is the scanner slice /api/health needs.
+// *ScannerManager implements it. Kept here so services can depend on
+// the method set without importing the manager's circuit breaker.
+type ScannerInfoSource interface {
+	GetScannerInfo() core.ScannerInfo
+	IsInitialized() bool
+}
+
 // GetScannerInfo returns scanner info from underlying scanner
 func (sm *ScannerManager) GetScannerInfo() core.ScannerInfo {
 	sm.mutex.RLock()

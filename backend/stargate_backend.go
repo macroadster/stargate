@@ -851,6 +851,12 @@ func setupRoutes(ctx context.Context, mux *http.ServeMux, container *container.C
 		bitcoinClient.SetChainBackend(chainBackend)
 	}
 	bitcoinAPI := bitcoin.NewBitcoinAPIWithClient(bitcoinClient)
+	// /api/health is registered earlier, while the chain client does not exist yet.
+	// Fill it now so it reports this scanner and node instead of empty zeros.
+	if container.HealthService != nil {
+		container.HealthService.SetScanner(starlight.GetScannerManager())
+		container.HealthService.SetNode(bitcoinClient)
+	}
 
 	// Enhanced data API endpoints (keep existing functionality)
 	dataStorage := container.DataStorage
