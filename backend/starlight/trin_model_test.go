@@ -22,6 +22,7 @@ func TestResolveTrinModelPath(t *testing.T) {
 	// Isolate data dir so default path cannot leak from the machine.
 	dataDir := t.TempDir()
 	t.Setenv("STARGATE_DATA_DIR", dataDir)
+	t.Setenv("STARLIGHT_LLM_GGUF", "")
 	t.Setenv("STARLIGHT_GGUF", "")
 	t.Setenv("STARLIGHT_TRIN_MODEL", "")
 
@@ -42,7 +43,7 @@ func TestResolveTrinModelPath(t *testing.T) {
 		t.Errorf("alias: got %q want %q", p, alias)
 	}
 
-	// STARLIGHT_GGUF wins when both exist
+	// STARLIGHT_GGUF wins over the alias when both exist
 	preferred := writeTempGGUF(t, dataDir, "preferred.gguf")
 	t.Setenv("STARLIGHT_GGUF", preferred)
 	if p := ResolveTrinModelPath(); p != preferred {
@@ -57,6 +58,7 @@ func TestResolveTrinModelPath(t *testing.T) {
 
 	// Default path under STARGATE_DATA_DIR when envs cleared
 	t.Setenv("STARLIGHT_GGUF", "")
+	t.Setenv("STARLIGHT_LLM_GGUF", "")
 	t.Setenv("STARLIGHT_TRIN_MODEL", "")
 	def := DefaultTrinModelPath()
 	if err := os.MkdirAll(filepath.Dir(def), 0o755); err != nil {
@@ -68,6 +70,14 @@ func TestResolveTrinModelPath(t *testing.T) {
 	if p := ResolveTrinModelPath(); p != def {
 		t.Errorf("default path: got %q want %q", p, def)
 	}
+
+	// STARLIGHT_LLM_GGUF wins over the CNN path when the file exists.
+	llm := writeTempGGUF(t, dataDir, "qwen.gguf")
+	t.Setenv("STARLIGHT_LLM_GGUF", llm)
+	if p := ResolveTrinModelPath(); p != llm {
+		t.Errorf("llm override: got %q want %q", p, llm)
+	}
+	t.Setenv("STARLIGHT_LLM_GGUF", "")
 
 	// Missing preferred + missing alias, but default exists → default
 	t.Setenv("STARLIGHT_GGUF", filepath.Join(dataDir, "nope.gguf"))
@@ -164,6 +174,7 @@ func TestEnsureTrinModel_usesExisting(t *testing.T) {
 	dataDir := t.TempDir()
 	t.Setenv("STARGATE_DATA_DIR", dataDir)
 	t.Setenv("STARLIGHT_GGUF", "")
+	t.Setenv("STARLIGHT_LLM_GGUF", "")
 	t.Setenv("STARLIGHT_TRIN_MODEL", "")
 	t.Setenv("STARLIGHT_GGUF_FORCE_DOWNLOAD", "")
 
@@ -190,6 +201,7 @@ func TestEnsureTrinModel_downloadsWhenMissing(t *testing.T) {
 	dataDir := t.TempDir()
 	t.Setenv("STARGATE_DATA_DIR", dataDir)
 	t.Setenv("STARLIGHT_GGUF", "")
+	t.Setenv("STARLIGHT_LLM_GGUF", "")
 	t.Setenv("STARLIGHT_TRIN_MODEL", "")
 	t.Setenv("STARLIGHT_GGUF_FORCE_DOWNLOAD", "")
 	t.Setenv("STARLIGHT_HF_REPO", "test/repo")
@@ -236,6 +248,7 @@ func TestEnsureTrinModel_downloadFailReturnsEmpty(t *testing.T) {
 	dataDir := t.TempDir()
 	t.Setenv("STARGATE_DATA_DIR", dataDir)
 	t.Setenv("STARLIGHT_GGUF", "")
+	t.Setenv("STARLIGHT_LLM_GGUF", "")
 	t.Setenv("STARLIGHT_TRIN_MODEL", "")
 	t.Setenv("STARLIGHT_GGUF_FORCE_DOWNLOAD", "")
 
@@ -265,6 +278,7 @@ func TestEnsureTrinModel_forceRedownload(t *testing.T) {
 	dataDir := t.TempDir()
 	t.Setenv("STARGATE_DATA_DIR", dataDir)
 	t.Setenv("STARLIGHT_GGUF", "")
+	t.Setenv("STARLIGHT_LLM_GGUF", "")
 	t.Setenv("STARLIGHT_TRIN_MODEL", "")
 	t.Setenv("STARLIGHT_GGUF_FORCE_DOWNLOAD", "1")
 

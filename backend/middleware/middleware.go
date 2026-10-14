@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -151,7 +152,13 @@ func Timeout(timeout time.Duration) func(http.Handler) http.Handler {
 				return
 			}
 
-			ctx, cancel := context.WithTimeout(r.Context(), timeout)
+			limit := timeout
+			// Qwen2 scan prefill in Trin can take longer than the default 30s.
+			if (r.URL.Path == "/bitcoin/v1/scan/image" || r.URL.Path == "/bitcoin/v1/extract") &&
+				strings.TrimSpace(os.Getenv("STARLIGHT_LLM_GGUF")) != "" && limit < 3*time.Minute {
+				limit = 3 * time.Minute
+			}
+			ctx, cancel := context.WithTimeout(r.Context(), limit)
 			defer cancel()
 
 			r = r.WithContext(ctx)

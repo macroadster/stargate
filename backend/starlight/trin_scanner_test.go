@@ -351,6 +351,7 @@ func blockHFDownload(t *testing.T) {
 func TestTryInitScannersDefaultAlpha(t *testing.T) {
 	t.Setenv("STARGATE_DATA_DIR", t.TempDir())
 	t.Setenv("STARLIGHT_GGUF", "")
+	t.Setenv("STARLIGHT_LLM_GGUF", "")
 	t.Setenv("STARLIGHT_TRIN_MODEL", "")
 	t.Setenv("STARLIGHT_GGUF_FORCE_DOWNLOAD", "")
 	blockHFDownload(t)
@@ -374,6 +375,7 @@ func TestTryInitScannersTrinSuccess(t *testing.T) {
 	}
 	t.Setenv("STARGATE_DATA_DIR", t.TempDir())
 	t.Setenv("STARLIGHT_GGUF", path)
+	t.Setenv("STARLIGHT_LLM_GGUF", "")
 	t.Setenv("STARLIGHT_TRIN_MODEL", "")
 	t.Setenv("STARLIGHT_GGUF_FORCE_DOWNLOAD", "")
 	// Existing env path must win; still block HF in case resolve fails unexpectedly.
@@ -398,6 +400,7 @@ func TestTryInitScannersTrinFailFallsToAlpha(t *testing.T) {
 	// Missing env path is skipped; download blocked → no model → Alpha.
 	t.Setenv("STARGATE_DATA_DIR", t.TempDir())
 	t.Setenv("STARLIGHT_GGUF", filepath.Join(t.TempDir(), "missing.gguf"))
+	t.Setenv("STARLIGHT_LLM_GGUF", "")
 	t.Setenv("STARLIGHT_TRIN_MODEL", "")
 	t.Setenv("STARLIGHT_GGUF_FORCE_DOWNLOAD", "")
 	blockHFDownload(t)
@@ -421,6 +424,7 @@ func TestTryInitScannersEmptyGGUFFallsToAlpha(t *testing.T) {
 	}
 	t.Setenv("STARGATE_DATA_DIR", t.TempDir())
 	t.Setenv("STARLIGHT_GGUF", path)
+	t.Setenv("STARLIGHT_LLM_GGUF", "")
 	t.Setenv("STARLIGHT_TRIN_MODEL", "")
 	t.Setenv("STARLIGHT_GGUF_FORCE_DOWNLOAD", "")
 	blockHFDownload(t)

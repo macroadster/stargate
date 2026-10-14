@@ -46,13 +46,18 @@ func fileExistsRegular(path string) bool {
 }
 
 // ResolveTrinModelPath returns an existing GGUF path using existence-checked order:
-//  1. STARLIGHT_GGUF if set and file exists
-//  2. STARLIGHT_TRIN_MODEL if set and file exists
-//  3. DefaultTrinModelPath() if it exists
+//  1. STARLIGHT_LLM_GGUF if set and file exists (Opus Qwen2 scan model)
+//  2. STARLIGHT_GGUF if set and file exists
+//  3. STARLIGHT_TRIN_MODEL if set and file exists
+//  4. DefaultTrinModelPath() if it exists
 //
 // Pure: no network. Returns "" when none of the candidates exist.
 // Env values that point at missing paths are skipped (do not fail hard).
+// A qwen2 file selected here makes ScannerManager run that language model.
 func ResolveTrinModelPath() string {
+	if p := os.Getenv("STARLIGHT_LLM_GGUF"); p != "" && fileExistsRegular(p) {
+		return p
+	}
 	if p := os.Getenv("STARLIGHT_GGUF"); p != "" && fileExistsRegular(p) {
 		return p
 	}

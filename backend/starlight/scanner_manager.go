@@ -82,14 +82,25 @@ func (sm *ScannerManager) InitializeScanner() error {
 // Extracted for unit tests (avoids fighting GetScannerManager sync.Once).
 // Always returns a non-nil scanner; error is non-nil only if even mock fails (never).
 func tryInitScanners() (core.StarlightScannerInterface, string, error) {
-	// 1. Optional Trin/GGUF when a model path can be resolved or auto-downloaded
+	// 1. Optional GGUF. A qwen2 file (the Opus 0.5B model) is run by Trin as a
+	// language model. Any other GGUF stays on the Starlight CNN.
 	if modelPath := EnsureTrinModel(); modelPath != "" {
-		trin := NewTrinScanner(modelPath)
-		if err := trin.Initialize(); err != nil {
-			log.Printf("TrinScanner initialization failed (path=%s): %v; falling through to Alpha", modelPath, err)
+		if ggufArchitecture(modelPath) == "qwen2" {
+			qwenScanner := NewQwenScanner(modelPath)
+			if err := qwenScanner.Initialize(); err != nil {
+				log.Printf("QwenScanner initialization failed (path=%s): %v; falling through to Alpha", modelPath, err)
+			} else {
+				log.Printf("Initialized QwenScanner (qwen2) path=%s", modelPath)
+				return qwenScanner, "qwen2", nil
+			}
 		} else {
-			log.Printf("Initialized TrinScanner (trin-gguf) path=%s", modelPath)
-			return trin, "trin-gguf", nil
+			trin := NewTrinScanner(modelPath)
+			if err := trin.Initialize(); err != nil {
+				log.Printf("TrinScanner initialization failed (path=%s): %v; falling through to Alpha", modelPath, err)
+			} else {
+				log.Printf("Initialized TrinScanner (trin-gguf) path=%s", modelPath)
+				return trin, "trin-gguf", nil
+			}
 		}
 	}
 

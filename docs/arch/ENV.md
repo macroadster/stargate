@@ -53,7 +53,8 @@ error. Donation address only adds/omits the donation output.
 
 | Variable | Default | Notes |
 | --- | --- | --- |
-| `STARLIGHT_GGUF` | unset | Pin a local GGUF if the file exists |
+| `STARLIGHT_LLM_GGUF` | unset | Opus Qwen2.5-0.5B GGUF. When this file exists it wins, and image scans run that model inside Trin |
+| `STARLIGHT_GGUF` | unset | Pin a local GGUF if the file exists. A `qwen2` file is the language-model scanner; anything else is the CNN |
 | `STARLIGHT_TRIN_MODEL` | unset | Alias if `STARLIGHT_GGUF` is missing |
 | `STARLIGHT_HF_REPO` | `macroadster/starlight-prod` | Auto-download target |
 | `STARLIGHT_HF_FILE` | `starlight.gguf` | |
@@ -62,7 +63,7 @@ error. Donation address only adds/omits the donation output.
 | `STARGATE_PROXY_BASE` | unset | Legacy Python sidecar only |
 | `STARGATE_STEGO_APPROVAL_ENABLED` | unset | Optional sidecar approval; not required for replication |
 
-Selection: Trin → Alpha → Mock. Missing GGUF / download failure falls through.
+Selection: Qwen2 language model when the resolved GGUF says `general.architecture=qwen2`, otherwise Trin CNN → Alpha → Mock. Missing GGUF / download failure falls through. The Qwen2 path is the Opus 0.5B model running inside Trin. It is much slower than the CNN, so leave `STARLIGHT_LLM_GGUF` unset for block scanning.
 Detail: [TRIN_STARLIGHT_SCANNER.md](./TRIN_STARLIGHT_SCANNER.md).
 
 ## Built-in agents (optional)
