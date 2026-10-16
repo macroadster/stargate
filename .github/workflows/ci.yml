@@ -34,6 +34,7 @@ jobs:
       - name: Run tests
         run: |
           test -f backend/assets/frontend/EMBED_PLACEHOLDER
+          sh scripts/install_test.sh
           cd backend
           go test ./...
 
@@ -95,3 +96,5 @@ jobs:
             -o ../stargate .
           ./../stargate --version
           ./../stargate --help >/dev/null
+          ../scripts/build-btcd.sh ../btcd
+          test -x ../btcd

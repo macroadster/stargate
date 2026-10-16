@@ -7,6 +7,7 @@ backend/.gomodcache/
 
 # Compiled Go binaries (never commit build output)
 /stargate
+/btcd
 backend/stargate
 backend/stargate-backend
 backend/stargate_backend

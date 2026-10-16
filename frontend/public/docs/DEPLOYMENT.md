@@ -10,7 +10,7 @@ stargate
 ```
 
 - Linux / macOS, amd64 and arm64
-- Installs to `~/.local/bin` (added to PATH if missing)
+- Installs `stargate` and bundled `btcd` to `~/.local/bin` (added to PATH if missing)
 - Override with `INSTALL_DIR`
 
 ```bash

@@ -20,6 +20,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
     -ldflags='-w -s' \
     -o /out/stargate . && \
+    # Keep this version equal to BTCD_VERSION in scripts/build-btcd.sh.
     CGO_ENABLED=0 go install -trimpath github.com/btcsuite/btcd@v0.25.0 && \
     cp "$(go env GOPATH)/bin/btcd" /out/btcd && \
     # Clean up build caches to reduce image size (correct command)

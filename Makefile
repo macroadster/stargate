@@ -33,7 +33,9 @@ single-binary:
 	 cd backend && CGO_ENABLED=0 go build -tags gms_pure_go \
 	   -ldflags="-w -s -X main.version=$${VERSION} -X main.gitCommit=$${COMMIT}" \
 	   -o ../stargate .
-	@echo "Done! Binary produced as ./stargate"
+	@echo "4. Building managed btcd next to ./stargate..."
+	@./scripts/build-btcd.sh btcd
+	@echo "Done! Binaries produced as ./stargate and ./btcd"
 
 # Retired split-image targets (stargate-3bk.8). Use `make docker` or `make single-binary`.
 backend frontend backend-legacy frontend-legacy:

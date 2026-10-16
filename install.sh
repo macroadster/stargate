@@ -23,19 +23,11 @@ fi
 BINARY="stargate-${OS}-${ARCH}"
 URL="https://github.com/${REPO}/releases/latest/download/${BINARY}"
 DEST="${INSTALL_DIR}/${BINARY_NAME}"
+BTCD_NAME="btcd"
+BTCD_URL="https://github.com/${REPO}/releases/latest/download/btcd-${OS}-${ARCH}"
+BTCD_DEST="${INSTALL_DIR}/${BTCD_NAME}"
 
-echo "Downloading stargate for ${OS}/${ARCH}..."
-TMP=$(mktemp)
-trap 'rm -f "$TMP"' EXIT
-
-if ! curl -fsSL -o "$TMP" "$URL"; then
-  echo "Download failed. Check https://github.com/${REPO}/releases for available binaries." >&2
-  exit 1
-fi
-
-chmod +x "$TMP"
-
-# Ensure install directory exists.
+# Ensure install directory exists before downloading.
 if [ ! -d "$INSTALL_DIR" ]; then
   echo "Creating install directory: $INSTALL_DIR"
   mkdir -p "$INSTALL_DIR"
@@ -48,10 +40,47 @@ if [ ! -w "$INSTALL_DIR" ]; then
   exit 1
 fi
 
-mv "$TMP" "$DEST"
-trap - EXIT
+download_exe() {
+  url=$1
+  dest=$2
+  label=$3
+  tmp=$(mktemp)
+  if ! curl -fsSL -o "$tmp" "$url"; then
+    rm -f "$tmp"
+    echo "Download failed for ${label}. Check https://github.com/${REPO}/releases for available binaries." >&2
+    echo "URL: ${url}" >&2
+    exit 1
+  fi
+  chmod +x "$tmp"
+  mv "$tmp" "$dest"
+  echo "Installed ${label} to ${dest}"
+}
 
-echo "Installed stargate to ${DEST}"
+echo "Downloading stargate for ${OS}/${ARCH}..."
+download_exe "$URL" "$DEST" "stargate"
+
+# Releases cut before bundled btcd return 404. Keep installing stargate and
+# say so. Any other failure is a broken download, not an old release.
+echo "Downloading btcd for ${OS}/${ARCH}..."
+BTCD_TMP=$(mktemp)
+BTCD_CODE=$(curl -sSL -o "$BTCD_TMP" -w "%{http_code}" "$BTCD_URL" || true)
+case "$BTCD_CODE" in
+  200)
+    chmod +x "$BTCD_TMP"
+    mv "$BTCD_TMP" "$BTCD_DEST"
+    echo "Installed btcd to ${BTCD_DEST}"
+    ;;
+  404)
+    rm -f "$BTCD_TMP"
+    echo "warning: ${BTCD_URL} was not in this release." >&2
+    echo "Managed mode needs btcd next to stargate. Use a release that publishes btcd-${OS}-${ARCH}, or build both with: make single-binary" >&2
+    ;;
+  *)
+    rm -f "$BTCD_TMP"
+    echo "btcd download failed (${BTCD_CODE:-none}): ${BTCD_URL}" >&2
+    exit 1
+    ;;
+esac
 
 # --- PATH setup ----------------------------------------------------------------
 # Strip trailing slash for consistent PATH matching.

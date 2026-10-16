@@ -261,10 +261,10 @@ Package layout (see `docs/adr/`, `docs/arch/PACKAGE_BOUNDARIES.md`):
 
 | Goal | Command |
 | --- | --- |
-| Local binary with embedded UI | `make single-binary` → `./stargate` |
+| Local binary with embedded UI and bundled btcd | `make single-binary` → `./stargate` and `./btcd` |
 | Cluster / Helm image | `make docker` → `stargate:latest` |
 
-`make single-binary` builds the frontend (`frontend/`), copies assets into `backend/assets/frontend/`, then compiles the Go binary with CGO disabled (`gms_pure_go`).
+`make single-binary` builds the frontend (`frontend/`), copies assets into `backend/assets/frontend/`, compiles the Go binary with CGO disabled (`gms_pure_go`), and builds `btcd` beside it (`scripts/build-btcd.sh`).
 
 Storage defaults to **SQLite** for single-node; **Postgres** remains first-class (`STARGATE_STORAGE=postgres` + `STARGATE_PG_DSN` / `DATABASE_URL`). See ADR 0002.
 
@@ -312,7 +312,7 @@ Stargate runs a **local btcd full node** by default (ADR 0006) instead of pollin
 
 2. **Build the unified artifact** (pick one):
    ```bash
-   make single-binary   # ./stargate — run locally: ./stargate
+   make single-binary   # ./stargate and ./btcd — run locally: ./stargate
    # or
    make docker          # stargate:latest — for Kubernetes / Helm
    ```

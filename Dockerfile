@@ -33,8 +33,9 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
     -ldflags="-w -s -X main.version=${VERSION} -X main.gitCommit=${GIT_COMMIT}" \
     -o /out/stargate .
 # Bundle btcd full node (no mining) alongside stargate — same container, managed process.
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go install -trimpath github.com/btcsuite/btcd@v0.25.0 \
-    && cp "$(go env GOPATH)/bin/btcd" /out/btcd
+# Version pin lives in scripts/build-btcd.sh, shared with make single-binary and releases.
+COPY scripts/build-btcd.sh /tmp/build-btcd.sh
+RUN GOOS=linux GOARCH=amd64 /tmp/build-btcd.sh /out/btcd
 
 # Stage 3: Final lightweight image
 FROM debian:bookworm-slim
