@@ -1,7 +1,8 @@
 #!/bin/sh
-# Build the managed btcd child (ADR 0006) next to stargate.
+# Build the managed btcd child (ADR 0006) so it can be embedded in stargate.
 # The Docker image, make single-binary, and GitHub releases all call this
-# script so they ship the same btcd version.
+# script so they ship the same btcd version. Pass GOOS and GOARCH to
+# cross-compile. The output path is the go:embed input (bitcoin/btcd.embed).
 set -eu
 
 BTCD_VERSION=v0.25.0

@@ -16,14 +16,14 @@ RUN go mod download && go mod verify
 # Copy all source code (but excluded large directories via .dockerignore)
 COPY . .
 
-# Build the application
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+# Build btcd, embed it, then build stargate. Keep this version equal to
+# BTCD_VERSION in scripts/build-btcd.sh.
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go install -trimpath github.com/btcsuite/btcd@v0.25.0 && \
+    cp "$(go env GOPATH)/bin/btcd" ./bitcoin/btcd.embed && \
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags embedbtcd \
     -ldflags='-w -s' \
     -o /out/stargate . && \
-    # Keep this version equal to BTCD_VERSION in scripts/build-btcd.sh.
-    CGO_ENABLED=0 go install -trimpath github.com/btcsuite/btcd@v0.25.0 && \
-    cp "$(go env GOPATH)/bin/btcd" /out/btcd && \
-    # Clean up build caches to reduce image size (correct command)
+    rm -f ./bitcoin/btcd.embed && \
     go clean -cache && \
     go clean -modcache && \
     rm -rf /root/.cache /root/go/pkg/mod /tmp/go-build*
@@ -42,7 +42,6 @@ WORKDIR /app
 
 # Copy binary from builder
 COPY --from=builder /out/stargate /usr/local/bin/stargate
-COPY --from=builder /out/btcd /usr/local/bin/btcd
 
 # Copy documentation and assets
 COPY --from=builder /app/docs ./docs

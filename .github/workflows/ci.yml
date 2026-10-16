@@ -87,14 +87,20 @@ jobs:
         run: |
           mkdir -p backend/assets/frontend
           cp -r frontend/build/* backend/assets/frontend/
+          ./scripts/build-btcd.sh backend/bitcoin/btcd.embed
           cd backend
           VERSION="${GITHUB_REF_NAME:-dev}"
           COMMIT="${GITHUB_SHA:-unknown}"
           COMMIT="${COMMIT:0:7}"
-          CGO_ENABLED=0 go build -trimpath \
+          CGO_ENABLED=0 go build -trimpath -tags embedbtcd \
             -ldflags="-w -s -X main.version=${VERSION} -X main.gitCommit=${COMMIT}" \
             -o ../stargate .
+          rm -f bitcoin/btcd.embed
           ./../stargate --version
           ./../stargate --help >/dev/null
-          ../scripts/build-btcd.sh ../btcd
-          test -x ../btcd
+          tmp=$(mktemp -d)
+          cp ../stargate "${tmp}/stargate"
+          STARGATE_DATA_DIR="${tmp}/data" PATH="${tmp}" BTCD_BIN= BTCD_MODE=managed \
+            "${tmp}/stargate" doctor
+          test -x "${tmp}/data/bin/btcd"
+          "${tmp}/data/bin/btcd" --version

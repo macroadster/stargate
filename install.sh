@@ -23,9 +23,6 @@ fi
 BINARY="stargate-${OS}-${ARCH}"
 URL="https://github.com/${REPO}/releases/latest/download/${BINARY}"
 DEST="${INSTALL_DIR}/${BINARY_NAME}"
-BTCD_NAME="btcd"
-BTCD_URL="https://github.com/${REPO}/releases/latest/download/btcd-${OS}-${ARCH}"
-BTCD_DEST="${INSTALL_DIR}/${BTCD_NAME}"
 
 # Ensure install directory exists before downloading.
 if [ ! -d "$INSTALL_DIR" ]; then
@@ -58,29 +55,6 @@ download_exe() {
 
 echo "Downloading stargate for ${OS}/${ARCH}..."
 download_exe "$URL" "$DEST" "stargate"
-
-# Releases cut before bundled btcd return 404. Keep installing stargate and
-# say so. Any other failure is a broken download, not an old release.
-echo "Downloading btcd for ${OS}/${ARCH}..."
-BTCD_TMP=$(mktemp)
-BTCD_CODE=$(curl -sSL -o "$BTCD_TMP" -w "%{http_code}" "$BTCD_URL" || true)
-case "$BTCD_CODE" in
-  200)
-    chmod +x "$BTCD_TMP"
-    mv "$BTCD_TMP" "$BTCD_DEST"
-    echo "Installed btcd to ${BTCD_DEST}"
-    ;;
-  404)
-    rm -f "$BTCD_TMP"
-    echo "warning: ${BTCD_URL} was not in this release." >&2
-    echo "Managed mode needs btcd next to stargate. Use a release that publishes btcd-${OS}-${ARCH}, or build both with: make single-binary" >&2
-    ;;
-  *)
-    rm -f "$BTCD_TMP"
-    echo "btcd download failed (${BTCD_CODE:-none}): ${BTCD_URL}" >&2
-    exit 1
-    ;;
-esac
 
 # --- PATH setup ----------------------------------------------------------------
 # Strip trailing slash for consistent PATH matching.

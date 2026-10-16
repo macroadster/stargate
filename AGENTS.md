@@ -261,10 +261,10 @@ Package layout (see `docs/adr/`, `docs/arch/PACKAGE_BOUNDARIES.md`):
 
 | Goal | Command |
 | --- | --- |
-| Local binary with embedded UI and bundled btcd | `make single-binary` → `./stargate` and `./btcd` |
+| Local binary with embedded UI and btcd | `make single-binary` → `./stargate` |
 | Cluster / Helm image | `make docker` → `stargate:latest` |
 
-`make single-binary` builds the frontend (`frontend/`), copies assets into `backend/assets/frontend/`, compiles the Go binary with CGO disabled (`gms_pure_go`), and builds `btcd` beside it (`scripts/build-btcd.sh`).
+`make single-binary` builds the frontend (`frontend/`), copies assets into `backend/assets/frontend/`, builds `btcd` with `scripts/build-btcd.sh`, and compiles the Go binary with CGO disabled (`gms_pure_go embedbtcd`) so that `btcd` is packed inside `./stargate`. Plain `go test` / `go build` omit that tag and do not embed btcd.
 
 Storage defaults to **SQLite** for single-node; **Postgres** remains first-class (`STARGATE_STORAGE=postgres` + `STARGATE_PG_DSN` / `DATABASE_URL`). See ADR 0002.
 
@@ -276,7 +276,7 @@ Stargate runs a **local btcd full node** by default (ADR 0006) instead of pollin
 | --- | --- | --- |
 | `BITCOIN_NETWORK` | `testnet4` | Network (`testnet4` / `signet` / `testnet` / `mainnet`) |
 | `BTCD_MODE` | `managed` | `managed` (spawn btcd), `external` (RPC only), `off` (Esplora fallback) |
-| `BTCD_BIN` | `btcd` | Bare name: sibling of the stargate executable, then `PATH`. A path is used as given. The image sets `/usr/local/bin/btcd`. |
+| `BTCD_BIN` | `btcd` | Bare name `btcd`: extract the embedded executable to `$STARGATE_DATA_DIR/bin/btcd`. A path is used as given. Without `-tags embedbtcd`, fall back to a sibling `btcd`, then `PATH`. |
 | `BTCD_DATADIR` | `$STARGATE_DATA_DIR/btcd` | Chainstate — **must be on a persistent volume** |
 | `BTCD_RPC_HOST` | network default (e.g. `127.0.0.1:48334`) | RPC host:port |
 | `BTCD_ALLOW_MAINNET` | `false` | Set `true` to allow mainnet (large disk) |
@@ -312,7 +312,7 @@ Stargate runs a **local btcd full node** by default (ADR 0006) instead of pollin
 
 2. **Build the unified artifact** (pick one):
    ```bash
-   make single-binary   # ./stargate and ./btcd — run locally: ./stargate
+   make single-binary   # ./stargate with btcd embedded — run locally: ./stargate
    # or
    make docker          # stargate:latest — for Kubernetes / Helm
    ```

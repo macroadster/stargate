@@ -22,7 +22,7 @@ Requirements:
 
 | Mode (`BTCD_MODE`) | Behavior |
 | --- | --- |
-| `managed` (default) | Stargate spawns bundled `btcd` (no `--generate`), localhost RPC |
+| `managed` (default) | Stargate extracts the embedded `btcd` and spawns it (no `--generate`), localhost RPC |
 | `external` | Connect to operator-provided `BTCD_RPC_HOST` |
 | `off` | Esplora HTTP fallback for tests/dev only |
 
@@ -31,7 +31,7 @@ Requirements:
 - `ChainBackend` interface is the single seam for tip, raw blocks, UTXO, and broadcast
 - Keep local `ParseBlock` for inscription/image extraction; only the hex source changes
 
-btcd’s server is `package main`, so “embedded” means **managed child process in the same container**, not an in-process library server — same operational unit as ADR 0001.
+btcd’s server is `package main`, so “embedded” means the **btcd executable is packed into the stargate binary** (`go:embed`, `-tags embedbtcd`) and run as a managed child process, not an in-process library server. Managed mode extracts it to `$STARGATE_DATA_DIR/bin/btcd` when the file is missing or its bytes differ. `BTCD_BIN` set to a path selects another executable. Same operational unit as ADR 0001.
 
 ## Consequences
 

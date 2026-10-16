@@ -179,7 +179,7 @@ curl -fsSL https://raw.githubusercontent.com/macroadster/stargate/main/install.s
 stargate
 ```
 
-Server: `http://localhost:3001` with SQLite on **testnet4**. Linux/macOS amd64 and arm64. Installs `stargate` and bundled `btcd` to `~/.local/bin` (managed mode spawns that `btcd`). If that directory is not on your PATH, the script appends it to your shell profile (`.zshrc` / `.bashrc` / etc.). Set `INSTALL_DIR` to override the install path. Operator env: [`docs/arch/ENV.md`](docs/arch/ENV.md).
+Server: `http://localhost:3001` with SQLite on **testnet4**. Linux/macOS amd64 and arm64. Installs `stargate` to `~/.local/bin`. The binary embeds btcd and extracts it on startup for managed mode. If that directory is not on your PATH, the script appends it to your shell profile (`.zshrc` / `.bashrc` / etc.). Set `INSTALL_DIR` to override the install path. Operator env: [`docs/arch/ENV.md`](docs/arch/ENV.md).
 
 ### Development prerequisites
 

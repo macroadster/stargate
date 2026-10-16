@@ -27,15 +27,15 @@ single-binary:
 	@# Remove prior build output but keep EMBED_PLACEHOLDER (tracked for go:embed on clean checkouts)
 	@find backend/assets/frontend -mindepth 1 ! -name 'EMBED_PLACEHOLDER' -exec rm -rf {} + 2>/dev/null || true
 	@cp -rv frontend/build/* backend/assets/frontend/
-	@echo "3. Building backend binary..."
+	@echo "3. Building managed btcd and embedding it..."
+	@./scripts/build-btcd.sh backend/bitcoin/btcd.embed
+	@echo "4. Building backend binary..."
 	@VERSION=$$(git describe --tags --always --dirty 2>/dev/null || echo dev); \
 	 COMMIT=$$(git rev-parse --short HEAD 2>/dev/null || echo unknown); \
-	 cd backend && CGO_ENABLED=0 go build -tags gms_pure_go \
+	 cd backend && CGO_ENABLED=0 go build -tags "gms_pure_go embedbtcd" \
 	   -ldflags="-w -s -X main.version=$${VERSION} -X main.gitCommit=$${COMMIT}" \
-	   -o ../stargate .
-	@echo "4. Building managed btcd next to ./stargate..."
-	@./scripts/build-btcd.sh btcd
-	@echo "Done! Binaries produced as ./stargate and ./btcd"
+	   -o ../stargate . && rm -f bitcoin/btcd.embed
+	@echo "Done! Binary produced as ./stargate (btcd embedded)"
 
 # Retired split-image targets (stargate-3bk.8). Use `make docker` or `make single-binary`.
 backend frontend backend-legacy frontend-legacy:

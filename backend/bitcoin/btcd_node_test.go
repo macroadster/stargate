@@ -39,14 +39,77 @@ func TestResolveBtcdBinaryOrder(t *testing.T) {
 	}
 }
 
+func TestResolveEmbeddedBtcdPrefersPackedBytes(t *testing.T) {
+	prev := embeddedBtcd
+	t.Cleanup(func() { embeddedBtcd = prev })
+	embeddedBtcd = []byte("#!/bin/sh\necho embedded\n")
+
+	data := t.TempDir()
+	t.Setenv("STARGATE_DATA_DIR", data)
+	siblingDir := t.TempDir()
+	pathDir := t.TempDir()
+	writeFakeBtcd(t, filepath.Join(siblingDir, "btcd"))
+	writeFakeBtcd(t, filepath.Join(pathDir, "btcd"))
+	writeFakeBtcd(t, filepath.Join(siblingDir, "other-btcd"))
+	t.Setenv("PATH", pathDir)
+
+	got, err := resolveBtcdBinary("btcd", siblingDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(data, "bin", "btcd")
+	if got != want {
+		t.Fatalf("embedded btcd: got %q want %q", got, want)
+	}
+	body, err := os.ReadFile(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != string(embeddedBtcd) {
+		t.Fatalf("extracted bytes = %q", body)
+	}
+
+	// Same bytes are left in place.
+	got, err = resolveBtcdBinary("btcd", siblingDir)
+	if err != nil || got != want {
+		t.Fatalf("reuse: got %q err %v", got, err)
+	}
+
+	embeddedBtcd = []byte("#!/bin/sh\necho replaced\n")
+	got, err = resolveBtcdBinary("btcd", siblingDir)
+	if err != nil || got != want {
+		t.Fatalf("rewrite: got %q err %v", got, err)
+	}
+	body, err = os.ReadFile(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != "#!/bin/sh\necho replaced\n" {
+		t.Fatalf("rewritten bytes = %q", body)
+	}
+
+	got, err = resolveBtcdBinary("other-btcd", siblingDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != filepath.Join(siblingDir, "other-btcd") {
+		t.Fatalf("custom bare name should not use the embedded btcd: %q", got)
+	}
+}
+
 func TestResolveBtcdBinaryExplicitPathDoesNotSearch(t *testing.T) {
 	pathDir := t.TempDir()
 	writeFakeBtcd(t, filepath.Join(pathDir, "btcd"))
 	t.Setenv("PATH", pathDir)
 
+	prev := embeddedBtcd
+	t.Cleanup(func() { embeddedBtcd = prev })
+	embeddedBtcd = []byte("#!/bin/sh\necho embedded\n")
+	t.Setenv("STARGATE_DATA_DIR", t.TempDir())
+
 	missing := filepath.Join(t.TempDir(), "btcd")
 	if _, err := resolveBtcdBinary(missing, pathDir); err == nil {
-		t.Fatal("missing explicit path should fail even when PATH has btcd")
+		t.Fatal("missing explicit path should fail even when btcd is embedded and on PATH")
 	}
 
 	relDir := t.TempDir()
@@ -61,6 +124,7 @@ func TestResolveBtcdBinaryExplicitPathDoesNotSearch(t *testing.T) {
 		t.Fatalf("relative path: got %q want %q", got, rel)
 	}
 
+	embeddedBtcd = nil
 	notExec := filepath.Join(t.TempDir(), "btcd")
 	if err := os.WriteFile(notExec, []byte("no"), 0o644); err != nil {
 		t.Fatal(err)

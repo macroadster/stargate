@@ -29,13 +29,13 @@ COPY backend/ ./
 COPY --from=frontend-builder /app/frontend/build ./assets/frontend
 ARG VERSION=dev
 ARG GIT_COMMIT=unknown
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
-    -ldflags="-w -s -X main.version=${VERSION} -X main.gitCommit=${GIT_COMMIT}" \
-    -o /out/stargate .
-# Bundle btcd full node (no mining) alongside stargate — same container, managed process.
-# Version pin lives in scripts/build-btcd.sh, shared with make single-binary and releases.
+# Pack btcd into the stargate binary. Version pin lives in scripts/build-btcd.sh.
 COPY scripts/build-btcd.sh /tmp/build-btcd.sh
-RUN GOOS=linux GOARCH=amd64 /tmp/build-btcd.sh /out/btcd
+RUN GOOS=linux GOARCH=amd64 /tmp/build-btcd.sh ./bitcoin/btcd.embed \
+    && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags embedbtcd \
+    -ldflags="-w -s -X main.version=${VERSION} -X main.gitCommit=${GIT_COMMIT}" \
+    -o /out/stargate . \
+    && rm -f ./bitcoin/btcd.embed
 
 # Stage 3: Final lightweight image
 FROM debian:bookworm-slim
@@ -69,7 +69,6 @@ WORKDIR /app
 
 # Copy binary from builder
 COPY --from=backend-builder /out/stargate /usr/local/bin/stargate
-COPY --from=backend-builder /out/btcd /usr/local/bin/btcd
 
 # Copy documentation and assets
 COPY --from=backend-builder /app/backend/docs ./docs
@@ -86,10 +85,11 @@ RUN mkdir -p /app/uploads /app/logs /app/ipfs_objects /app/ipfs_repo /app/data/b
 ENV STARGATE_STORAGE=sqlite
 # HOME is set so opencode (and similar tools) can locate user config and state if needed.
 ENV HOME=/home/stargate
-# Default: managed btcd full node (testnet4), no mining. Override with BTCD_MODE=external|off.
+# Default: managed btcd full node (testnet4), no mining. The executable is
+# embedded in stargate and extracted under STARGATE_DATA_DIR/bin.
+# Override with BTCD_MODE=external|off or BTCD_BIN=/path/to/btcd.
 ENV BITCOIN_NETWORK=testnet4
 ENV BTCD_MODE=managed
-ENV BTCD_BIN=/usr/local/bin/btcd
 ENV BTCD_DATADIR=/app/data/btcd
 # GIN_MODE removed: the project uses net/http + http.ServeMux (no Gin framework)
 

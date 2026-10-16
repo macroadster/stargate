@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -274,8 +275,9 @@ func DisallowedMainnet(cfg NodeConfig) error {
 // ResolveBtcdBinary locates the managed btcd child.
 //
 // A path — absolute, or any name containing a separator — is used as given
-// and is not searched elsewhere. A bare name (the default "btcd") is
-// resolved in order: a sibling of this stargate executable, then PATH.
+// and is not searched elsewhere. The bare name "btcd" uses an embedded
+// executable when this binary was built with -tags embedbtcd. Otherwise a
+// bare name is resolved as a sibling of this stargate executable, then PATH.
 func ResolveBtcdBinary(name string) (string, error) {
 	return resolveBtcdBinary(name, executableDir())
 }
@@ -299,6 +301,9 @@ func resolveBtcdBinary(name, exeDir string) (string, error) {
 		}
 		return "", btcdNotFoundError(name)
 	}
+	if name == "btcd" && len(embeddedBtcd) > 0 {
+		return extractEmbeddedBtcd(defaultEmbeddedBtcdDir())
+	}
 	if exeDir != "" {
 		sibling := filepath.Join(exeDir, name)
 		if executableFile(sibling) {
@@ -309,6 +314,76 @@ func resolveBtcdBinary(name, exeDir string) (string, error) {
 		return p, nil
 	}
 	return "", btcdNotFoundError(name)
+}
+
+// defaultEmbeddedBtcdDir is where managed mode materializes the packed btcd.
+// It stays outside BTCD_DATADIR so the chainstate directory holds blocks only.
+func defaultEmbeddedBtcdDir() string {
+	base := strings.TrimSpace(os.Getenv("STARGATE_DATA_DIR"))
+	if base == "" {
+		base = "data"
+	}
+	return filepath.Join(base, "bin")
+}
+
+// extractEmbeddedBtcd writes the packed btcd when the file is missing or its
+// bytes differ. The copy is unchanged, so a signature inside the blob stays valid.
+func extractEmbeddedBtcd(dir string) (string, error) {
+	if len(embeddedBtcd) == 0 {
+		return "", fmt.Errorf("btcd is not embedded in this stargate build")
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	dest := filepath.Join(dir, "btcd")
+	sum := sha256.Sum256(embeddedBtcd)
+	if got, ok := fileSHA256(dest); ok && got == sum && executableFile(dest) {
+		return dest, nil
+	}
+
+	tmp, err := os.CreateTemp(dir, ".btcd-*")
+	if err != nil {
+		return "", err
+	}
+	tmpName := tmp.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = tmp.Close()
+			_ = os.Remove(tmpName)
+		}
+	}()
+	if _, err := tmp.Write(embeddedBtcd); err != nil {
+		return "", err
+	}
+	if err := tmp.Chmod(0o755); err != nil {
+		return "", err
+	}
+	if err := tmp.Close(); err != nil {
+		return "", err
+	}
+	if err := os.Rename(tmpName, dest); err != nil {
+		return "", err
+	}
+	cleanup = false
+	log.Printf("btcd: extracted embedded binary to %s", dest)
+	return dest, nil
+}
+
+func fileSHA256(path string) ([32]byte, bool) {
+	var zero [32]byte
+	f, err := os.Open(path)
+	if err != nil {
+		return zero, false
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return zero, false
+	}
+	var sum [32]byte
+	copy(sum[:], h.Sum(nil))
+	return sum, true
 }
 
 func explicitBtcdPath(name string) bool {
@@ -324,7 +399,7 @@ func executableFile(path string) bool {
 }
 
 func btcdNotFoundError(name string) error {
-	return fmt.Errorf("btcd binary not found (%s) — install btcd next to the stargate binary or set BTCD_BIN, use BTCD_MODE=external with BTCD_RPC_HOST, or set BTCD_MODE=off for dev-only Esplora", name)
+	return fmt.Errorf("btcd binary not found (%s) — this stargate build has no embedded btcd; set BTCD_BIN to a btcd executable, use BTCD_MODE=external with BTCD_RPC_HOST, or set BTCD_MODE=off for dev-only Esplora", name)
 }
 
 // Start launches btcd when mode=managed. No-op for external.
