@@ -39,6 +39,7 @@ import (
 	"stargate-backend/storage/datadir"
 	"stargate-backend/storage/ipfs"
 	scstore "stargate-backend/storage/smart_contract"
+	"stargate-backend/tui"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -412,17 +413,75 @@ func consolidateEnvironmentPaths() {
 }
 
 func main() {
-	// CLI dispatch (serve/version/env/doctor/health/completion/help) before any
-	// server setup. Bare `stargate` and `stargate serve` fall through and start
-	// the HTTP server. install.sh uses `stargate --version`.
+	// CLI dispatch (serve/version/env/doctor/health/console/completion/help)
+	// before any server setup. Bare `stargate` and `stargate serve` fall
+	// through and start the HTTP server. install.sh uses `stargate --version`.
 	if handleCLI(os.Args[1:]) {
 		return
 	}
+
+	console := newConsoleControl()
+	// Logs always land in the status sample. While the console owns the
+	// terminal, extra is cleared so lines do not tear the screen. A non-TTY
+	// (Docker, systemd) keeps writing to stderr.
+	fan := &logFan{hub: console.hub, extra: os.Stderr}
+	log.SetOutput(fan)
+
+	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	console.Start(ctx)
+
+	interactive := tui.ShouldRun(os.Stdout, os.Stdin)
+	tuiDone := make(chan struct{})
+	if interactive {
+		go func() {
+			defer close(tuiDone)
+			err := tui.Run(ctx, console.hub, os.Stdout, os.Stdin, tui.Options{
+				View:    tui.ViewFromEnv(os.Getenv("STARGATE_TUI_VIEW")),
+				Color:   tui.ColorEnabled(),
+				ASCII:   tui.ASCIIRequested(),
+				OnQuit:  cancel,
+				OnReady: func() { fan.setExtra(nil) },
+				OnExit:  func() { fan.setExtra(os.Stderr) },
+			})
+			if err != nil && !errors.Is(err, context.Canceled) {
+				fan.setExtra(os.Stderr)
+				fmt.Fprintf(os.Stderr, "status console unavailable (%v); logging here instead\n", err)
+			}
+		}()
+	} else {
+		close(tuiDone)
+	}
+
+	var serveErr error
+	var ipfsClient *ipfs.Client
+	// One exit path: put the terminal back, then close IPFS. Early returns
+	// (quit during startup) hit this too.
+	defer func() {
+		console.SetPhase(tui.PhaseStopping, "shutting down")
+		cancel()
+		select {
+		case <-tuiDone:
+		case <-time.After(2 * time.Second):
+		}
+		log.SetOutput(os.Stderr)
+		if serveErr != nil && !errors.Is(serveErr, context.Canceled) {
+			fmt.Fprintf(os.Stderr, "stargate stopped: %v\n", serveErr)
+		}
+		if ipfsClient != nil {
+			log.Println("Shutting down IPFS client...")
+			_ = ipfsClient.Close()
+		}
+	}()
 
 	log.Println("=== STARTING STARGATE BACKEND ===")
 
 	// Ensure consistent data paths
 	consolidateEnvironmentPaths()
+	console.SetPhase(tui.PhaseStarting, "checking uploads")
 
 	// Migrate flat uploads into three-level partitioned layout (idempotent).
 	if uDir := os.Getenv("UPLOADS_DIR"); uDir != "" {
@@ -434,31 +493,39 @@ func main() {
 		}
 	}
 
+	if ctx.Err() != nil {
+		return
+	}
+
+	console.SetPhase(tui.PhaseStarting, "opening storage")
 	// Initialize MCP components (needed for both server and background)
 	allStores := initializeMCPComponents()
 
-	// Initialize IPFS client (includes embedded node if enabled)
-	ipfsClient := ipfs.NewClientFromEnv()
-	defer func() {
-		if ipfsClient != nil {
-			log.Println("Shutting down IPFS client...")
-			_ = ipfsClient.Close()
-		}
-	}()
+	if ctx.Err() != nil {
+		return
+	}
 
-	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stopSignals()
+	console.SetPhase(tui.PhaseStarting, "starting IPFS")
+	// Initialize IPFS client (includes embedded node if enabled).
+	// Closed by the defer registered above, after the console releases the terminal.
+	ipfsClient = ipfs.NewClientFromEnv()
+
+	if ctx.Err() != nil {
+		return
+	}
 
 	// runHTTPServer owns the server-scoped background services and returns only
 	// after they have stopped, so process-level defers (including IPFS close)
 	// are guaranteed to run on SIGINT/SIGTERM.
-	if err := runHTTPServer(ctx, allStores, ipfsClient); err != nil {
-		log.Printf("HTTP server exited: %v", err)
-	}
+	console.SetPhase(tui.PhaseStarting, "starting services")
+	serveErr = runHTTPServer(ctx, allStores, ipfsClient, console)
 }
 
-func runHTTPServer(ctx context.Context, allStores *storage.AllStores, ipfsClient *ipfs.Client) error {
+func runHTTPServer(ctx context.Context, allStores *storage.AllStores, ipfsClient *ipfs.Client, console *consoleControl) error {
 	log.Println("=== STARTING STARGATE HTTP SERVER ===")
+	if console != nil {
+		console.SetPhase(tui.PhaseStarting, "starting services")
+	}
 
 	// One data layer, unpacked here for readability rather than rebuilt.
 	var store scmiddleware.Store = allStores.SmartContractStore
@@ -510,6 +577,9 @@ func runHTTPServer(ctx context.Context, allStores *storage.AllStores, ipfsClient
 	if wishCfg.Enabled {
 		go mirror.startWithRetry(ctx, wishCfg, true)
 	}
+	if console != nil {
+		console.SetMirror(&mirror)
+	}
 
 	// Initialize dependency container
 	container := container.NewContainer(allStores)
@@ -519,11 +589,20 @@ func runHTTPServer(ctx context.Context, allStores *storage.AllStores, ipfsClient
 
 	// Start Bitcoin full node (btcd, no mining) or external/off chain backend.
 	// This replaces unreliable public mempool.space polling for block data.
+	if console != nil {
+		console.SetPhase(tui.PhaseStarting, "starting Bitcoin node")
+	}
 	chainCtx, chainCancel := context.WithCancel(ctx)
 	chainRuntime, err := bitcoin.StartChainFromEnv(chainCtx)
 	if err != nil {
 		chainCancel()
+		if console != nil {
+			console.SetPhase(tui.PhaseStopping, err.Error())
+		}
 		return fmt.Errorf("bitcoin chain backend failed to start: %w", err)
+	}
+	if console != nil {
+		console.SetChain(chainRuntime)
 	}
 	defer func() {
 		chainCancel()
@@ -595,7 +674,10 @@ func runHTTPServer(ctx context.Context, allStores *storage.AllStores, ipfsClient
 	httpMCPServer.RegisterRoutes(mux)
 
 	// Apply middleware to all routes
-	routes, mcpRestServer, blockMonitor := setupRoutes(ctx, mux, container, store, apiKeyIssuer, apiKeyValidator, challengeStore, ingestionSvc, &mirror, escort, chainRuntime.Backend)
+	if console != nil {
+		console.SetPhase(tui.PhaseStarting, "starting HTTP")
+	}
+	routes, mcpRestServer, blockMonitor := setupRoutes(ctx, mux, container, store, apiKeyIssuer, apiKeyValidator, challengeStore, ingestionSvc, &mirror, escort, chainRuntime.Backend, console)
 	defer blockMonitor.Stop()
 
 	// Set smart_contract server reference on MCP server (must be done after mcpRestServer is created)
@@ -658,29 +740,46 @@ func runHTTPServer(ctx context.Context, allStores *storage.AllStores, ipfsClient
 		serverErr <- server.ListenAndServe()
 	}()
 
-	select {
-	case err := <-serverErr:
-		if errors.Is(err, http.ErrServerClosed) {
+	// A refused bind reports within this window. After it passes, the console
+	// can tell the operator the browser URL is open.
+	readyTimer := time.NewTimer(80 * time.Millisecond)
+	defer readyTimer.Stop()
+	readyC := readyTimer.C
+
+	for {
+		select {
+		case err := <-serverErr:
+			if errors.Is(err, http.ErrServerClosed) {
+				return nil
+			}
+			if console != nil {
+				console.SetPhase(tui.PhaseStopping, err.Error())
+			}
+			return err
+		case <-readyC:
+			readyC = nil
+			if console != nil {
+				console.SetPhase(tui.PhaseReady, "listening on :"+httpPort)
+				console.publish()
+			}
+		case <-ctx.Done():
+			log.Printf("Shutdown requested; draining HTTP requests")
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if err := server.Shutdown(shutdownCtx); err != nil {
+				_ = server.Close()
+				<-serverErr
+				return fmt.Errorf("HTTP shutdown: %w", err)
+			}
+			if err := <-serverErr; err != nil && !errors.Is(err, http.ErrServerClosed) {
+				return err
+			}
 			return nil
 		}
-		return err
-	case <-ctx.Done():
-		log.Printf("Shutdown requested; draining HTTP requests")
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := server.Shutdown(shutdownCtx); err != nil {
-			_ = server.Close()
-			<-serverErr
-			return fmt.Errorf("HTTP shutdown: %w", err)
-		}
-		if err := <-serverErr; err != nil && !errors.Is(err, http.ErrServerClosed) {
-			return err
-		}
-		return nil
 	}
 }
 
-func setupRoutes(ctx context.Context, mux *http.ServeMux, container *container.Container, store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, apiKeyValidator auth.APIKeyValidator, challengeStore *auth.ChallengeStore, ingestionSvc *services.IngestionService, mirror *mirrorState, escort *smart_contract.EscortService, chainBackend bitcoin.ChainBackend) (http.Handler, *scmiddleware.Server, *bitcoin.BlockMonitor) {
+func setupRoutes(ctx context.Context, mux *http.ServeMux, container *container.Container, store scmiddleware.Store, apiKeyIssuer auth.APIKeyIssuer, apiKeyValidator auth.APIKeyValidator, challengeStore *auth.ChallengeStore, ingestionSvc *services.IngestionService, mirror *mirrorState, escort *smart_contract.EscortService, chainBackend bitcoin.ChainBackend, console *consoleControl) (http.Handler, *scmiddleware.Server, *bitcoin.BlockMonitor) {
 	// Initialize MCP REST server for HTTP routes
 	mcpRestServer := scmiddleware.NewServer(store, apiKeyValidator, ingestionSvc)
 	if escort != nil {
@@ -698,6 +797,9 @@ func setupRoutes(ctx context.Context, mux *http.ServeMux, container *container.C
 	}
 	// Health endpoints
 	mux.HandleFunc("/api/health", container.HealthHandler.HandleHealth)
+	if console != nil {
+		mux.HandleFunc("/api/console/status", console.handleStatus)
+	}
 
 	// Peer Discovery endpoints
 	mux.HandleFunc("/api/peers/register", container.DiscoveryHandler.HandleRegisterPeer)
@@ -869,6 +971,9 @@ func setupRoutes(ctx context.Context, mux *http.ServeMux, container *container.C
 		blockMonitor.SetChainBackend(chainBackend)
 	}
 	log.Printf("DIAG: block monitor created (effective intervals logged at start)")
+	if console != nil {
+		console.SetMonitor(blockMonitor)
+	}
 	// The same handle StartIPFSIngestionSync and StartWishGC are given below.
 	// This read container.IngestionService while they read ingestionSvc, and the
 	// two were separately constructed services over what was not necessarily even

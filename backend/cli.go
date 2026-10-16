@@ -87,6 +87,9 @@ func runCLI(args []string, stdout, stderr io.Writer) (handled bool, exitCode int
 	case "health":
 		return cmdHealth(rest, stdout, stderr)
 
+	case "console", "tui", "status":
+		return cmdConsole(rest, stdout, stderr)
+
 	case "completion":
 		return cmdCompletion(rest, stdout, stderr)
 
@@ -133,6 +136,8 @@ type serveOptions struct {
 	blocksDir  string
 	agent      bool
 	agentSet   bool
+	noTUI      bool
+	noTUISet   bool
 }
 
 func newServeFlagSet(opts *serveOptions, errOut io.Writer) *flag.FlagSet {
@@ -147,6 +152,7 @@ func newServeFlagSet(opts *serveOptions, errOut io.Writer) *flag.FlagSet {
 	fs.StringVar(&opts.uploadsDir, "uploads-dir", "", "uploads directory (env UPLOADS_DIR)")
 	fs.StringVar(&opts.blocksDir, "blocks-dir", "", "blocks directory (env BLOCKS_DIR)")
 	fs.BoolVar(&opts.agent, "agent", false, "enable built-in agents (env STARGATE_AGENT_ENABLED=true)")
+	fs.BoolVar(&opts.noTUI, "no-tui", false, "log to the terminal instead of the status console")
 	fs.Usage = func() {
 		printServeUsage(errOut)
 	}
@@ -169,6 +175,9 @@ func applyServeFlags(args []string, errOut io.Writer) error {
 	fs.Visit(func(f *flag.Flag) {
 		if f.Name == "agent" {
 			opts.agentSet = true
+		}
+		if f.Name == "no-tui" {
+			opts.noTUISet = true
 		}
 	})
 
@@ -195,6 +204,9 @@ func applyServeFlags(args []string, errOut io.Writer) error {
 	}
 	if opts.blocksDir != "" {
 		_ = os.Setenv("BLOCKS_DIR", opts.blocksDir)
+	}
+	if opts.noTUISet && opts.noTUI {
+		_ = os.Setenv("STARGATE_TUI", "off")
 	}
 	if opts.agentSet {
 		if opts.agent {
@@ -226,6 +238,8 @@ func cmdHelp(args []string, stdout, stderr io.Writer) (bool, int) {
 		printDoctorUsage(stdout)
 	case "health":
 		printHealthUsage(stdout)
+	case "console", "tui", "status":
+		printConsoleUsage(stdout)
 	case "completion":
 		printCompletionUsage(stdout)
 	case "help":
@@ -245,6 +259,7 @@ Stargate is a single-binary Bitcoin-native coordination server (UI + API + MCP).
 
 Commands:
   serve         Start the HTTP server (default if no command is given)
+  console       Attach a status console to a running node (alias: status, tui)
   version       Print version and exit
   env           Print effective configuration
   doctor        Check local data dirs and configuration
@@ -252,9 +267,16 @@ Commands:
   completion    Generate shell completion scripts (bash|zsh|fish)
   help          Show help for a command
 
+A terminal running "stargate" shows the status console: open the printed URL
+in a browser, or press m for the live monitor. Docker and other non-TTY
+runs keep the log stream. STARGATE_TUI=off or --no-tui does the same.
+
 Examples:
   stargate
   stargate serve --port 3001 --data-dir ./data
+  stargate --no-tui
+  stargate console
+  stargate status --once
   stargate --version
   stargate env
   stargate doctor
@@ -280,12 +302,19 @@ Flags:
       --uploads-dir string  Uploads directory (UPLOADS_DIR)
       --blocks-dir string   Blocks directory (BLOCKS_DIR)
       --agent               Enable built-in agents (STARGATE_AGENT_ENABLED=true)
+      --no-tui              Log to the terminal instead of the status console
   -h, --help                Show this help
+
+On a terminal the status console replaces the log stream. It prints the
+browser URL and a live chain / mirror / agent view. Quit with q or Ctrl-C.
+STARGATE_TUI=off or a non-TTY (Docker, systemd) keeps logs.
+STARGATE_TUI_VIEW=monitor opens the live view instead of the welcome.
 
 Environment (common):
   STARGATE_HTTP_PORT, STARGATE_DATA_DIR, STARGATE_STORAGE, STARGATE_PG_DSN,
   UPLOADS_DIR, BLOCKS_DIR, STARGATE_AGENT_ENABLED, STARLIGHT_DONATION_ADDRESS,
   IPFS_ENABLED, IPFS_API_URL
+  STARGATE_TUI, STARGATE_TUI_VIEW, STARGATE_TUI_COLOR, STARGATE_TUI_ASCII
   STARGATE_METRICS, STARGATE_PPROF  (opt-in, loopback-only; unset = off)
 
 Examples:
@@ -293,6 +322,7 @@ Examples:
   stargate serve -p 8080 -d /var/lib/stargate
   stargate serve --storage postgres --pg-dsn "$DATABASE_URL"
   stargate serve --agent
+  stargate serve --no-tui
 `)
 }
 
@@ -379,8 +409,8 @@ _stargate() {
   COMPREPLY=()
   cur="${COMP_WORDS[COMP_CWORD]}"
   prev="${COMP_WORDS[COMP_CWORD-1]}"
-  local cmds="serve start run version env config doctor health completion help"
-  local serve_flags="--port -p --data-dir -d --storage --pg-dsn --uploads-dir --blocks-dir --agent --help"
+  local cmds="serve start run console tui status version env config doctor health completion help"
+  local serve_flags="--port -p --data-dir -d --storage --pg-dsn --uploads-dir --blocks-dir --agent --no-tui --help"
 
   if [[ ${COMP_CWORD} -eq 1 ]]; then
     COMPREPLY=( $(compgen -W "${cmds} --version --help -v -h" -- "${cur}") )
@@ -396,6 +426,9 @@ _stargate() {
       ;;
     health)
       COMPREPLY=( $(compgen -W "--url --help" -- "${cur}") )
+      ;;
+    console|tui|status)
+      COMPREPLY=( $(compgen -W "--url --once --view --help" -- "${cur}") )
       ;;
     completion)
       COMPREPLY=( $(compgen -W "bash zsh fish" -- "${cur}") )
@@ -420,6 +453,9 @@ _stargate() {
     'config:Alias for env'
     'doctor:Check local data dirs and configuration'
     'health:Probe /api/health on a running server'
+    'console:Attach the status console to a running node'
+    'tui:Alias for console'
+    'status:Alias for console'
     'completion:Generate shell completion scripts'
     'help:Show help'
   )
@@ -432,6 +468,7 @@ _stargate() {
     '--uploads-dir[Uploads directory]:dir:_files -/'
     '--blocks-dir[Blocks directory]:dir:_files -/'
     '--agent[Enable built-in agents]'
+    '--no-tui[Log to the terminal instead of the status console]'
     '(-h --help)'{-h,--help}'[Show help]'
   )
 
@@ -449,6 +486,7 @@ _stargate() {
         serve|start|run) _arguments $serve_opts ;;
         env|config) _arguments '--json[JSON output]' '(-h --help)'{-h,--help}'[Show help]' ;;
         health) _arguments '--url[Base or health URL]:url' '(-h --help)'{-h,--help}'[Show help]' ;;
+        console|tui|status) _arguments '--url[Base URL]:url' '--once[Print one snapshot and exit]' '--view[welcome|monitor|logs]:view:(welcome monitor logs)' '(-h --help)'{-h,--help}'[Show help]' ;;
         completion) _arguments '1:shell:(bash zsh fish)' ;;
         help) _describe 'command' cmds ;;
       esac
@@ -468,6 +506,9 @@ complete -c stargate -n __fish_use_subcommand -a env -d 'Print effective configu
 complete -c stargate -n __fish_use_subcommand -a config -d 'Alias for env'
 complete -c stargate -n __fish_use_subcommand -a doctor -d 'Check local data dirs'
 complete -c stargate -n __fish_use_subcommand -a health -d 'Probe /api/health'
+complete -c stargate -n __fish_use_subcommand -a console -d 'Attach the status console'
+complete -c stargate -n __fish_use_subcommand -a tui -d 'Alias for console'
+complete -c stargate -n __fish_use_subcommand -a status -d 'Alias for console'
 complete -c stargate -n __fish_use_subcommand -a completion -d 'Shell completion scripts'
 complete -c stargate -n __fish_use_subcommand -a help -d 'Show help'
 complete -c stargate -n __fish_use_subcommand -l version -d 'Print version'
@@ -481,6 +522,10 @@ complete -c stargate -n '__fish_seen_subcommand_from serve start run' -l pg-dsn 
 complete -c stargate -n '__fish_seen_subcommand_from serve start run' -l uploads-dir -d 'Uploads directory'
 complete -c stargate -n '__fish_seen_subcommand_from serve start run' -l blocks-dir -d 'Blocks directory'
 complete -c stargate -n '__fish_seen_subcommand_from serve start run' -l agent -d 'Enable agents'
+complete -c stargate -n '__fish_seen_subcommand_from serve start run' -l no-tui -d 'Log instead of the status console'
+complete -c stargate -n '__fish_seen_subcommand_from console tui status' -l url -d 'Base URL'
+complete -c stargate -n '__fish_seen_subcommand_from console tui status' -l once -d 'Print one snapshot and exit'
+complete -c stargate -n '__fish_seen_subcommand_from console tui status' -l view -d 'welcome|monitor|logs'
 
 complete -c stargate -n '__fish_seen_subcommand_from env config' -l json -d 'JSON output'
 complete -c stargate -n '__fish_seen_subcommand_from health' -l url -d 'Base or health URL'
@@ -526,7 +571,7 @@ func cmdEnv(args []string, stdout, stderr io.Writer) (bool, int) {
 	// Stable key order for humans.
 	keys := []string{
 		"version", "git_commit",
-		"STARGATE_HTTP_PORT", "STARGATE_STORAGE", "STARGATE_DATA_DIR",
+		"STARGATE_HTTP_PORT", "STARGATE_TUI", "STARGATE_TUI_VIEW", "STARGATE_STORAGE", "STARGATE_DATA_DIR",
 		"STARGATE_PG_DSN", "DATABASE_URL",
 		"UPLOADS_DIR", "BLOCKS_DIR", "IPFS_STORAGE_DIR", "IPFS_EMBEDDED_REPO", "IPFS_IDENTITY_FILE", "IPFS_WISH_TOPIC",
 		"STARGATE_MCP_DB", "STARGATE_API_KEYS_DB", "STARGATE_INGESTIONS_DB",
@@ -564,6 +609,8 @@ func effectiveConfig() map[string]any {
 		"version":                    versionString(),
 		"git_commit":                 gitCommit,
 		"STARGATE_HTTP_PORT":         port,
+		"STARGATE_TUI":               envOr("STARGATE_TUI", "auto"),
+		"STARGATE_TUI_VIEW":          envOr("STARGATE_TUI_VIEW", "welcome"),
 		"STARGATE_STORAGE":           storage,
 		"STARGATE_DATA_DIR":          dataDir,
 		"STARGATE_AGENT_ENABLED":     envOr("STARGATE_AGENT_ENABLED", "false"),
@@ -692,6 +739,12 @@ func cmdDoctor(args []string, stdout, stderr io.Writer) (bool, int) {
 	fmt.Fprintf(stdout, "  INFO  STARGATE_STORAGE=%s\n", storage)
 	fmt.Fprintf(stdout, "  INFO  STARGATE_HTTP_PORT=%v\n", cfg["STARGATE_HTTP_PORT"])
 	fmt.Fprintf(stdout, "  INFO  STARGATE_AGENT_ENABLED=%v\n", cfg["STARGATE_AGENT_ENABLED"])
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("STARGATE_TUI"))) {
+	case "0", "false", "off", "no":
+		fmt.Fprintln(stdout, "  INFO  console: off (STARGATE_TUI)")
+	default:
+		fmt.Fprintln(stdout, "  INFO  console: on when stdout is a terminal (STARGATE_TUI=off to disable)")
+	}
 
 	if storage == "postgres" {
 		if os.Getenv("STARGATE_PG_DSN") == "" && os.Getenv("DATABASE_URL") == "" {

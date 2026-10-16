@@ -13,6 +13,10 @@ config print).
 | Variable | Default | Notes |
 | --- | --- | --- |
 | `STARGATE_HTTP_PORT` | `3001` | UI + `/api` + `/mcp` + `/bitcoin/v1` |
+| `STARGATE_TUI` | `auto` | Status console when stdout is a terminal. `off` keeps logs. See [CONSOLE.md](./CONSOLE.md) |
+| `STARGATE_TUI_VIEW` | `welcome` | `welcome` \| `monitor` \| `logs` |
+| `STARGATE_TUI_COLOR` | on | `off` disables color. `NO_COLOR` does too |
+| `STARGATE_TUI_ASCII` | off | `1` uses ASCII borders |
 | `STARGATE_STORAGE` | `sqlite` | `sqlite` \| `postgres` \| `memory` (ADR 0002) |
 | `STARGATE_DATA_DIR` | `data` | Root for sqlite, models, identity |
 | `STARGATE_PG_DSN` / `DATABASE_URL` | unset | Required when `STARGATE_STORAGE=postgres` |

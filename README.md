@@ -212,6 +212,22 @@ npm start      # http://localhost:3000
 
 Optional Starlight scanner integration (stego approval pipeline) uses env such as `STARGATE_STEGO_APPROVAL_ENABLED`, `STARGATE_PROXY_BASE`, and optional `IPFS_API_URL`. For the native Trin/GGUF path use `STARLIGHT_GGUF` / `STARLIGHT_TRIN_MODEL`, or rely on auto-download into `$STARGATE_DATA_DIR/models/starlight.gguf` (`STARLIGHT_HF_*`). See deployment docs and `docs/arch/TRIN_STARLIGHT_SCANNER.md`. API keys are issued only by `POST /api/auth/challenge` + `POST /api/auth/verify`; `STARGATE_API_KEY` is ignored.
 
+## Console
+
+`stargate` in a terminal draws a status console. The first screen tells you
+the browser URL (default `http://127.0.0.1:3001`). Press `m` for chain height,
+peers, the scanner, the block monitor, and the IPFS mirror. Press `q` to stop.
+
+```bash
+stargate                 # serve + console on a TTY
+stargate serve --no-tui  # logs only
+stargate console         # attach to a node that is already running
+stargate status --once   # one text snapshot
+```
+
+Docker and systemd are not a TTY, so they keep the log stream. Details:
+[`docs/arch/CONSOLE.md`](docs/arch/CONSOLE.md).
+
 ## Usage (UI)
 
 1. **Blocks** — scroll the block rail, open a block’s inscriptions  

@@ -281,6 +281,59 @@ func TestRunCLIHealth(t *testing.T) {
 	}
 }
 
+func TestRunCLINoTUIFlag(t *testing.T) {
+	t.Setenv("STARGATE_TUI", "auto")
+	var stdout, stderr bytes.Buffer
+	handled, code := runCLI([]string{"serve", "--no-tui"}, &stdout, &stderr)
+	if handled || code != 0 {
+		t.Fatalf("handled=%v code=%d stderr=%q", handled, code, stderr.String())
+	}
+	if os.Getenv("STARGATE_TUI") != "off" {
+		t.Fatalf("STARGATE_TUI=%q", os.Getenv("STARGATE_TUI"))
+	}
+}
+
+func TestRunCLIConsoleOnce(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/console/status" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"version":"stargate test","health_status":"healthy","ui_url":"http://127.0.0.1:3456","docs_url":"http://127.0.0.1:3456/docs","network":"testnet4","chain_mode":"managed","block_height":20,"bitcoin_connected":true,"synced":true}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	var stdout, stderr bytes.Buffer
+	handled, code := runCLI([]string{"console", "--once", "--url", srv.URL}, &stdout, &stderr)
+	if !handled || code != 0 {
+		t.Fatalf("handled=%v code=%d stderr=%q stdout=%q", handled, code, stderr.String(), stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "Open this in your browser: http://127.0.0.1:3456") {
+		t.Fatalf("stdout: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "testnet4") {
+		t.Fatalf("stdout: %q", stdout.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	handled, code = runCLI([]string{"status", "--help"}, &stdout, &stderr)
+	if !handled || code != 0 || !strings.Contains(stdout.String(), "stargate console") {
+		t.Fatalf("help handled=%v code=%d out=%q err=%q", handled, code, stdout.String(), stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	handled, code = runCLI([]string{"tui", "--once", "--url", "http://127.0.0.1:1"}, &stdout, &stderr)
+	if !handled || code != 1 {
+		t.Fatalf("unreachable handled=%v code=%d stderr=%q", handled, code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Open this in your browser") {
+		t.Fatalf("unreachable stdout: %q", stdout.String())
+	}
+}
+
 func TestRunCLICompletion(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	handled, code := runCLI([]string{"completion", "bash"}, &stdout, &stderr)
@@ -289,6 +342,9 @@ func TestRunCLICompletion(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "complete -F _stargate stargate") {
 		t.Fatalf("bash script missing: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "console") || !strings.Contains(stdout.String(), "--no-tui") {
+		t.Fatalf("bash script missing console: %q", stdout.String())
 	}
 
 	stdout.Reset()

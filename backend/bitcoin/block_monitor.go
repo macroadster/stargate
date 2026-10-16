@@ -375,6 +375,40 @@ func (bm *BlockMonitor) IsRunning() bool {
 	return bm.isRunning
 }
 
+// MonitorStats is the in-memory block-monitor counters for the status console.
+// It does not query storage.
+type MonitorStats struct {
+	Running             bool
+	CurrentHeight       int64
+	BlocksProcessed     int64
+	TotalTransactions   int64
+	TotalImages         int64
+	TotalInscriptions   int64
+	TotalStegoContracts int64
+	LastProcess         time.Duration
+	CheckInterval       time.Duration
+}
+
+// SnapshotStats copies the in-memory counters. A nil monitor returns the zero value.
+func (bm *BlockMonitor) SnapshotStats() MonitorStats {
+	if bm == nil {
+		return MonitorStats{}
+	}
+	bm.mu.RLock()
+	defer bm.mu.RUnlock()
+	return MonitorStats{
+		Running:             bm.isRunning,
+		CurrentHeight:       bm.currentHeight,
+		BlocksProcessed:     bm.blocksProcessed,
+		TotalTransactions:   bm.totalTransactions,
+		TotalImages:         bm.totalImages,
+		TotalInscriptions:   bm.totalInscriptions,
+		TotalStegoContracts: bm.totalStegoContracts,
+		LastProcess:         bm.lastProcessTime,
+		CheckInterval:       bm.checkInterval,
+	}
+}
+
 // GetStatistics returns current monitoring statistics
 func (bm *BlockMonitor) GetStatistics() map[string]any {
 	bm.mu.RLock()

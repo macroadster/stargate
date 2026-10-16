@@ -145,14 +145,17 @@ else
 fi
 
 if "${DEST}" --version 2>/dev/null; then
-  echo "Start the server:  stargate serve   # or just: stargate"
+  echo "Start the server:  stargate"
+  echo "Then open the URL the console prints (default http://127.0.0.1:3001)."
   echo "Help:              stargate help"
 elif command -v stargate >/dev/null 2>&1; then
   stargate --version 2>/dev/null || true
-  echo "Start the server:  stargate serve   # or just: stargate"
+  echo "Start the server:  stargate"
+  echo "Then open the URL the console prints (default http://127.0.0.1:3001)."
   echo "Help:              stargate help"
 else
-  echo "Run:  ${DEST} serve"
+  echo "Run:  ${DEST}"
+  echo "Then open the URL the console prints (default http://127.0.0.1:3001)."
   echo "Help: ${DEST} help"
   echo "(or open a new shell so PATH picks up ${INSTALL_DIR})"
 fi
