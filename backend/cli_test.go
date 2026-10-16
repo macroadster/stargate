@@ -237,6 +237,7 @@ func TestRunCLIDoctor(t *testing.T) {
 	t.Setenv("STARGATE_DATA_DIR", tmp)
 	t.Setenv("UPLOADS_DIR", filepath.Join(tmp, "uploads"))
 	t.Setenv("BLOCKS_DIR", filepath.Join(tmp, "blocks"))
+	btcd := fakeBtcdOnPath(t)
 	// Create one dir to exercise writable path.
 	if err := os.MkdirAll(filepath.Join(tmp, "uploads"), 0o755); err != nil {
 		t.Fatal(err)
@@ -247,9 +248,171 @@ func TestRunCLIDoctor(t *testing.T) {
 	if !handled || code != 0 {
 		t.Fatalf("handled=%v code=%d\nstdout=%s\nstderr=%s", handled, code, stdout.String(), stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "All checks passed") {
+	out := stdout.String()
+	if !strings.Contains(out, "All checks passed") {
+		t.Fatalf("stdout: %q", out)
+	}
+	if !strings.Contains(out, "INFO  BITCOIN_NETWORK=testnet4") {
+		t.Fatalf("stdout: %q", out)
+	}
+	if !strings.Contains(out, "INFO  BTCD_MODE=managed") {
+		t.Fatalf("stdout: %q", out)
+	}
+	if !strings.Contains(out, "OK    btcd: "+btcd) {
+		t.Fatalf("stdout: %q", out)
+	}
+}
+
+func TestRunCLIDoctorMissingBtcd(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("STARGATE_DATA_DIR", tmp)
+	t.Setenv("BTCD_MODE", "managed")
+	t.Setenv("BTCD_BIN", "stargate-btcd-test-missing")
+	t.Setenv("BITCOIN_NETWORK", "testnet4")
+	t.Setenv("BTCD_ALLOW_MAINNET", "")
+	t.Setenv("PATH", tmp)
+
+	var stdout, stderr bytes.Buffer
+	handled, code := runCLI([]string{"doctor"}, &stdout, &stderr)
+	if !handled || code != 1 {
+		t.Fatalf("handled=%v code=%d\nstdout=%s", handled, code, stdout.String())
+	}
+	out := stdout.String()
+	for _, want := range []string{
+		"btcd binary not found (stargate-btcd-test-missing)",
+		"BTCD_BIN",
+		"BTCD_MODE=external",
+		"BTCD_MODE=off",
+		"Doctor found 1 problem",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q in stdout: %q", want, out)
+		}
+	}
+}
+
+func TestRunCLIDoctorModeOffWarns(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("STARGATE_DATA_DIR", tmp)
+	t.Setenv("BTCD_MODE", "off")
+	t.Setenv("BITCOIN_NETWORK", "testnet4")
+	t.Setenv("PATH", tmp)
+
+	var stdout, stderr bytes.Buffer
+	handled, code := runCLI([]string{"doctor"}, &stdout, &stderr)
+	if !handled || code != 0 {
+		t.Fatalf("handled=%v code=%d\nstdout=%s", handled, code, stdout.String())
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "WARN  BTCD_MODE=off uses Esplora") {
+		t.Fatalf("stdout: %q", out)
+	}
+	if !strings.Contains(out, "All checks passed with 1 warning.") {
+		t.Fatalf("stdout: %q", out)
+	}
+}
+
+func TestRunCLIDoctorUnknownMode(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("STARGATE_DATA_DIR", tmp)
+	t.Setenv("BTCD_MODE", "sideways")
+	t.Setenv("PATH", tmp)
+
+	var stdout, stderr bytes.Buffer
+	handled, code := runCLI([]string{"doctor"}, &stdout, &stderr)
+	if !handled || code != 1 {
+		t.Fatalf("handled=%v code=%d\nstdout=%s", handled, code, stdout.String())
+	}
+	if !strings.Contains(stdout.String(), `unknown BTCD_MODE "sideways"`) {
 		t.Fatalf("stdout: %q", stdout.String())
 	}
+}
+
+func TestRunCLIDoctorMainnetRequiresOptIn(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("STARGATE_DATA_DIR", tmp)
+	btcd := fakeBtcdOnPath(t)
+	t.Setenv("BITCOIN_NETWORK", "mainnet")
+
+	var stdout, stderr bytes.Buffer
+	handled, code := runCLI([]string{"doctor"}, &stdout, &stderr)
+	if !handled || code != 1 {
+		t.Fatalf("handled=%v code=%d\nstdout=%s", handled, code, stdout.String())
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "BTCD_ALLOW_MAINNET=true") {
+		t.Fatalf("stdout: %q", out)
+	}
+	if !strings.Contains(out, "OK    btcd: "+btcd) {
+		t.Fatalf("stdout: %q", out)
+	}
+
+	t.Setenv("BTCD_ALLOW_MAINNET", "true")
+	stdout.Reset()
+	stderr.Reset()
+	handled, code = runCLI([]string{"doctor"}, &stdout, &stderr)
+	if !handled || code != 0 {
+		t.Fatalf("allowed: handled=%v code=%d\nstdout=%s", handled, code, stdout.String())
+	}
+}
+
+func TestRunCLIDoctorExternalMainnetRequiresOptIn(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("STARGATE_DATA_DIR", tmp)
+	t.Setenv("BTCD_MODE", "external")
+	t.Setenv("BTCD_BIN", "")
+	t.Setenv("BITCOIN_NETWORK", "mainnet")
+	t.Setenv("BTCD_ALLOW_MAINNET", "")
+	t.Setenv("PATH", tmp)
+
+	var stdout, stderr bytes.Buffer
+	handled, code := runCLI([]string{"doctor"}, &stdout, &stderr)
+	if !handled || code != 1 {
+		t.Fatalf("handled=%v code=%d\nstdout=%s", handled, code, stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "BTCD_ALLOW_MAINNET=true") {
+		t.Fatalf("stdout: %q", stdout.String())
+	}
+}
+
+func TestRunCLIDoctorExternalSkipsBinary(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("STARGATE_DATA_DIR", tmp)
+	t.Setenv("BTCD_MODE", "external")
+	t.Setenv("BTCD_BIN", "")
+	t.Setenv("BITCOIN_NETWORK", "testnet4")
+	t.Setenv("BTCD_ALLOW_MAINNET", "")
+	t.Setenv("PATH", tmp)
+
+	var stdout, stderr bytes.Buffer
+	handled, code := runCLI([]string{"doctor"}, &stdout, &stderr)
+	if !handled || code != 0 {
+		t.Fatalf("handled=%v code=%d\nstdout=%s", handled, code, stdout.String())
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "BTCD_MODE=external") || !strings.Contains(out, "not spawned") {
+		t.Fatalf("stdout: %q", out)
+	}
+	if strings.Contains(out, "FAIL") {
+		t.Fatalf("stdout: %q", out)
+	}
+}
+
+// fakeBtcdOnPath installs a non-functional executable named btcd and points
+// PATH at it. Doctor and startup only need to resolve the file.
+func fakeBtcdOnPath(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "btcd")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	t.Setenv("BTCD_BIN", "")
+	t.Setenv("BTCD_MODE", "managed")
+	t.Setenv("BTCD_ALLOW_MAINNET", "")
+	t.Setenv("BITCOIN_NETWORK", "testnet4")
+	return path
 }
 
 func TestRunCLIHealth(t *testing.T) {

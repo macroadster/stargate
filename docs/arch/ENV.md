@@ -43,7 +43,7 @@ API keys are issued by `POST /api/auth/challenge` + `POST /api/auth/verify`.
 | `BTCD_MODE` | `managed` | `managed` \| `external` \| `off` (Esplora fallback) |
 | `BTCD_RPC_HOST` | localhost when managed | Required for `external` |
 | `BTCD_DATADIR` | under data dir | Persist across restarts |
-| `BTCD_BIN` | `btcd` | |
+| `BTCD_BIN` | `btcd` | Bare name: sibling of the stargate executable, then `PATH`. A path is used as given. |
 | `BTCD_ALLOW_MAINNET` | `false` | Must be true to run mainnet |
 | `BTCD_CONNECT` / `BTCD_ADDPEER` | unset | Pin trusted peers only |
 | `CHAIN_SETTLEMENT_CONFIRMATIONS` | `20` | Proofs stay `provisional` until this depth |

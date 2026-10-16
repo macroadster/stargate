@@ -276,7 +276,7 @@ Stargate runs a **local btcd full node** by default (ADR 0006) instead of pollin
 | --- | --- | --- |
 | `BITCOIN_NETWORK` | `testnet4` | Network (`testnet4` / `signet` / `testnet` / `mainnet`) |
 | `BTCD_MODE` | `managed` | `managed` (spawn btcd), `external` (RPC only), `off` (Esplora fallback) |
-| `BTCD_BIN` | `btcd` | Path to btcd binary (image ships `/usr/local/bin/btcd`) |
+| `BTCD_BIN` | `btcd` | Bare name: sibling of the stargate executable, then `PATH`. A path is used as given. The image sets `/usr/local/bin/btcd`. |
 | `BTCD_DATADIR` | `$STARGATE_DATA_DIR/btcd` | Chainstate — **must be on a persistent volume** |
 | `BTCD_RPC_HOST` | network default (e.g. `127.0.0.1:48334`) | RPC host:port |
 | `BTCD_ALLOW_MAINNET` | `false` | Set `true` to allow mainnet (large disk) |

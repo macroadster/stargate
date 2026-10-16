@@ -1,11 +1,127 @@
 package bitcoin
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestResolveBtcdBinaryOrder(t *testing.T) {
+	siblingDir := t.TempDir()
+	pathDir := t.TempDir()
+	sibling := filepath.Join(siblingDir, "btcd")
+	onPath := filepath.Join(pathDir, "btcd")
+	writeFakeBtcd(t, sibling)
+	writeFakeBtcd(t, onPath)
+	t.Setenv("PATH", pathDir)
+
+	got, err := resolveBtcdBinary("btcd", siblingDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != sibling {
+		t.Fatalf("sibling should win over PATH: got %q want %q", got, sibling)
+	}
+
+	got, err = resolveBtcdBinary("btcd", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != onPath {
+		t.Fatalf("PATH fallback: got %q want %q", got, onPath)
+	}
+
+	got, err = resolveBtcdBinary("", siblingDir)
+	if err != nil || got != sibling {
+		t.Fatalf("empty name: got %q err %v", got, err)
+	}
+}
+
+func TestResolveBtcdBinaryExplicitPathDoesNotSearch(t *testing.T) {
+	pathDir := t.TempDir()
+	writeFakeBtcd(t, filepath.Join(pathDir, "btcd"))
+	t.Setenv("PATH", pathDir)
+
+	missing := filepath.Join(t.TempDir(), "btcd")
+	if _, err := resolveBtcdBinary(missing, pathDir); err == nil {
+		t.Fatal("missing explicit path should fail even when PATH has btcd")
+	}
+
+	relDir := t.TempDir()
+	writeFakeBtcd(t, filepath.Join(relDir, "btcd"))
+	t.Chdir(filepath.Dir(relDir))
+	rel := filepath.Join(filepath.Base(relDir), "btcd")
+	got, err := resolveBtcdBinary(rel, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != rel {
+		t.Fatalf("relative path: got %q want %q", got, rel)
+	}
+
+	notExec := filepath.Join(t.TempDir(), "btcd")
+	if err := os.WriteFile(notExec, []byte("no"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	siblingDir := filepath.Dir(notExec)
+	got, err = resolveBtcdBinary("btcd", siblingDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != filepath.Join(pathDir, "btcd") {
+		t.Fatalf("non-executable sibling should fall through to PATH: got %q", got)
+	}
+}
+
+func TestResolveBtcdBinaryMissingNamesExits(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	_, err := resolveBtcdBinary("btcd", t.TempDir())
+	if err == nil {
+		t.Fatal("expected missing binary")
+	}
+	msg := err.Error()
+	for _, want := range []string{"btcd binary not found (btcd)", "BTCD_BIN", "BTCD_MODE=external", "BTCD_MODE=off"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("missing %q in %q", want, msg)
+		}
+	}
+}
+
+func TestDisallowedMainnet(t *testing.T) {
+	if err := DisallowedMainnet(NodeConfig{Network: "testnet4"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := DisallowedMainnet(NodeConfig{Network: "Mainnet"}); err == nil {
+		t.Fatal("expected mixed-case mainnet to require opt-in")
+	}
+	if err := DisallowedMainnet(NodeConfig{Network: "main", AllowMainnet: true}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStartManagedMissingBtcd(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	node := &EmbeddedBtcd{cfg: NodeConfig{
+		Mode:    BtcdModeManaged,
+		Bin:     "stargate-btcd-test-missing",
+		DataDir: t.TempDir(),
+		Network: "testnet4",
+		RPCHost: "127.0.0.1:48334",
+	}}
+	err := node.Start(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "BTCD_MODE=off") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func writeFakeBtcd(t *testing.T, path string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestLoadNodeConfigFromEnvDefaults(t *testing.T) {
 	t.Setenv("BITCOIN_NETWORK", "testnet4")

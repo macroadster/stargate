@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"stargate-backend/bitcoin"
 )
 
 // Version metadata — overridden at link time via:
@@ -262,7 +264,7 @@ Commands:
   console       Attach a status console to a running node (alias: status, tui)
   version       Print version and exit
   env           Print effective configuration
-  doctor        Check local data dirs and configuration
+  doctor        Check data dirs, chain mode, and btcd
   health        Probe a running server's /api/health endpoint
   completion    Generate shell completion scripts (bash|zsh|fish)
   help          Show help for a command
@@ -341,8 +343,10 @@ Flags:
 func printDoctorUsage(w io.Writer) {
 	fmt.Fprintf(w, `Usage: stargate doctor
 
-Validate that data directories are usable and summarize configuration.
-Does not start the server. Exit 0 if checks pass, 1 if problems found.
+Validate data directories, Bitcoin chain mode, and the btcd binary that
+managed mode will spawn. Does not start the server or btcd.
+Exit 0 if checks pass, 1 if problems are found. BTCD_MODE=off is a warning
+and still exits 0.
 
 Flags:
   -h, --help   Show this help
@@ -451,7 +455,7 @@ _stargate() {
     'version:Print version'
     'env:Print effective configuration'
     'config:Alias for env'
-    'doctor:Check local data dirs and configuration'
+    'doctor:Check data dirs, chain mode, and btcd'
     'health:Probe /api/health on a running server'
     'console:Attach the status console to a running node'
     'tui:Alias for console'
@@ -504,7 +508,7 @@ complete -c stargate -n __fish_use_subcommand -a run -d 'Alias for serve'
 complete -c stargate -n __fish_use_subcommand -a version -d 'Print version'
 complete -c stargate -n __fish_use_subcommand -a env -d 'Print effective configuration'
 complete -c stargate -n __fish_use_subcommand -a config -d 'Alias for env'
-complete -c stargate -n __fish_use_subcommand -a doctor -d 'Check local data dirs'
+complete -c stargate -n __fish_use_subcommand -a doctor -d 'Check data dirs, chain mode, and btcd'
 complete -c stargate -n __fish_use_subcommand -a health -d 'Probe /api/health'
 complete -c stargate -n __fish_use_subcommand -a console -d 'Attach the status console'
 complete -c stargate -n __fish_use_subcommand -a tui -d 'Alias for console'
@@ -755,13 +759,70 @@ func cmdDoctor(args []string, stdout, stderr io.Writer) (bool, int) {
 		}
 	}
 
+	var warnings []string
+	checkChain(stdout, &problems, &warnings)
+
 	fmt.Fprintln(stdout)
 	if len(problems) > 0 {
-		fmt.Fprintf(stdout, "Doctor found %d problem(s).\n", len(problems))
+		fmt.Fprintf(stdout, "Doctor found %s.", counted(len(problems), "problem", "problems"))
+		if len(warnings) > 0 {
+			fmt.Fprintf(stdout, " %s.", counted(len(warnings), "warning", "warnings"))
+		}
+		fmt.Fprintln(stdout)
 		return true, 1
+	}
+	if len(warnings) > 0 {
+		fmt.Fprintf(stdout, "All checks passed with %s.\n", counted(len(warnings), "warning", "warnings"))
+		return true, 0
 	}
 	fmt.Fprintln(stdout, "All checks passed.")
 	return true, 0
+}
+
+func counted(n int, one, many string) string {
+	if n == 1 {
+		return "1 " + one
+	}
+	return fmt.Sprintf("%d %s", n, many)
+}
+
+// checkChain reports the Bitcoin mode serve will use. Managed mode must
+// resolve the same btcd binary Start spawns. BTCD_MODE=off is a warning:
+// the process can start, and chain reads use Esplora.
+func checkChain(stdout io.Writer, problems, warnings *[]string) {
+	cfg := bitcoin.LoadNodeConfigFromEnv()
+	fmt.Fprintf(stdout, "  INFO  BITCOIN_NETWORK=%s\n", cfg.Network)
+	fmt.Fprintf(stdout, "  INFO  BTCD_MODE=%s\n", cfg.Mode)
+	fmt.Fprintf(stdout, "  INFO  BTCD_DATADIR=%s\n", cfg.DataDir)
+
+	switch cfg.Mode {
+	case bitcoin.BtcdModeOff:
+		fmt.Fprintln(stdout, "  WARN  BTCD_MODE=off uses Esplora HTTP for chain data. Blocks can be missed under rate limits. Use managed or external for a full node.")
+		*warnings = append(*warnings, "BTCD_MODE=off")
+	case bitcoin.BtcdModeExternal:
+		if err := bitcoin.DisallowedMainnet(cfg); err != nil {
+			fmt.Fprintf(stdout, "  FAIL  %s\n", err.Error())
+			*problems = append(*problems, err.Error())
+		}
+		fmt.Fprintf(stdout, "  INFO  BTCD_RPC_HOST=%s\n", cfg.RPCHost)
+		fmt.Fprintln(stdout, "  INFO  btcd process is not spawned (BTCD_MODE=external)")
+	case bitcoin.BtcdModeManaged:
+		if err := bitcoin.DisallowedMainnet(cfg); err != nil {
+			fmt.Fprintf(stdout, "  FAIL  %s\n", err.Error())
+			*problems = append(*problems, err.Error())
+		}
+		bin, err := bitcoin.ResolveBtcdBinary(cfg.Bin)
+		if err != nil {
+			fmt.Fprintf(stdout, "  FAIL  %s\n", err.Error())
+			*problems = append(*problems, err.Error())
+			return
+		}
+		fmt.Fprintf(stdout, "  OK    btcd: %s\n", bin)
+	default:
+		msg := fmt.Sprintf("unknown BTCD_MODE %q (want managed|external|off)", cfg.Mode)
+		fmt.Fprintf(stdout, "  FAIL  %s\n", msg)
+		*problems = append(*problems, msg)
+	}
 }
 
 // ---------------------------------------------------------------------------

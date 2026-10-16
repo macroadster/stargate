@@ -259,6 +259,74 @@ func (cfg *NodeConfig) ensureRPCAuth() error {
 	return nil
 }
 
+// DisallowedMainnet reports when this config would open mainnet without
+// BTCD_ALLOW_MAINNET. Managed and external startup refuse that case.
+func DisallowedMainnet(cfg NodeConfig) error {
+	switch strings.ToLower(strings.TrimSpace(cfg.Network)) {
+	case "mainnet", "main":
+		if !cfg.AllowMainnet {
+			return fmt.Errorf("mainnet requires BTCD_ALLOW_MAINNET=true (large disk)")
+		}
+	}
+	return nil
+}
+
+// ResolveBtcdBinary locates the managed btcd child.
+//
+// A path — absolute, or any name containing a separator — is used as given
+// and is not searched elsewhere. A bare name (the default "btcd") is
+// resolved in order: a sibling of this stargate executable, then PATH.
+func ResolveBtcdBinary(name string) (string, error) {
+	return resolveBtcdBinary(name, executableDir())
+}
+
+func executableDir() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	return filepath.Dir(exe)
+}
+
+func resolveBtcdBinary(name, exeDir string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		name = "btcd"
+	}
+	if explicitBtcdPath(name) {
+		if executableFile(name) {
+			return name, nil
+		}
+		return "", btcdNotFoundError(name)
+	}
+	if exeDir != "" {
+		sibling := filepath.Join(exeDir, name)
+		if executableFile(sibling) {
+			return sibling, nil
+		}
+	}
+	if p, err := exec.LookPath(name); err == nil {
+		return p, nil
+	}
+	return "", btcdNotFoundError(name)
+}
+
+func explicitBtcdPath(name string) bool {
+	return filepath.IsAbs(name) || strings.ContainsAny(name, `/`+string(filepath.Separator))
+}
+
+func executableFile(path string) bool {
+	st, err := os.Stat(path)
+	if err != nil || !st.Mode().IsRegular() {
+		return false
+	}
+	return st.Mode().Perm()&0o111 != 0
+}
+
+func btcdNotFoundError(name string) error {
+	return fmt.Errorf("btcd binary not found (%s) — install btcd next to the stargate binary or set BTCD_BIN, use BTCD_MODE=external with BTCD_RPC_HOST, or set BTCD_MODE=off for dev-only Esplora", name)
+}
+
 // Start launches btcd when mode=managed. No-op for external.
 func (n *EmbeddedBtcd) Start(ctx context.Context) error {
 	n.mu.Lock()
@@ -268,10 +336,8 @@ func (n *EmbeddedBtcd) Start(ctx context.Context) error {
 	}
 	cfg := n.cfg
 
-	if cfg.Network == "mainnet" || cfg.Network == "main" {
-		if !cfg.AllowMainnet {
-			return fmt.Errorf("mainnet requires BTCD_ALLOW_MAINNET=true (large disk)")
-		}
+	if err := DisallowedMainnet(cfg); err != nil {
+		return err
 	}
 
 	if err := cfg.ensureRPCAuth(); err != nil {
@@ -297,9 +363,9 @@ func (n *EmbeddedBtcd) Start(ctx context.Context) error {
 		log.Printf("btcd: cleared %d known-invalid index flag(s) before start", n)
 	}
 
-	bin, err := exec.LookPath(cfg.Bin)
+	bin, err := ResolveBtcdBinary(cfg.Bin)
 	if err != nil {
-		return fmt.Errorf("btcd binary not found (%s): %w — install btcd or set BTCD_BIN / BTCD_MODE=external", cfg.Bin, err)
+		return err
 	}
 
 	netFlag, err := networkFlag(cfg.Network)
