@@ -138,6 +138,16 @@ func TestRenderDegradedHelpAndNarrow(t *testing.T) {
 	if !strings.Contains(frame, "\x1b[") {
 		t.Fatal("expected color")
 	}
+	if !strings.Contains(frame, "48;5;231") {
+		t.Fatal("help dialog has no solid background")
+	}
+	helpLine := dialogInterior(text, "Toggle this help")
+	if strings.TrimSpace(helpLine) != "? or h    Toggle this help" {
+		t.Fatalf("help line shows the console behind it: %q", helpLine)
+	}
+	if blank := solidDialogRow(text); strings.TrimSpace(blank) != "" {
+		t.Fatalf("blank help row is not solid: %q", blank)
+	}
 	assertWidth(t, frame, 100)
 
 	ascii := Render(snap, ViewState{ASCII: true, Now: snap.SampledAt}, 80, 30)
@@ -157,6 +167,47 @@ func TestRenderDegradedHelpAndNarrow(t *testing.T) {
 	if !strings.Contains(visible(small), "Stargate") {
 		t.Fatal(visible(small))
 	}
+}
+
+// dialogInterior returns the text between the vertical bars that enclose needle.
+func dialogInterior(frame, needle string) string {
+	for _, line := range strings.Split(frame, "\n") {
+		i := strings.Index(line, needle)
+		if i < 0 {
+			continue
+		}
+		left := strings.LastIndex(line[:i], "│")
+		right := strings.Index(line[i:], "│")
+		if left < 0 || right < 0 {
+			continue
+		}
+		return line[left+len("│") : i+right]
+	}
+	return ""
+}
+
+// solidDialogRow returns a wide run of spaces sitting between two vertical bars.
+func solidDialogRow(frame string) string {
+	for _, line := range strings.Split(frame, "\n") {
+		rest := line
+		for {
+			l := strings.Index(rest, "│")
+			if l < 0 {
+				break
+			}
+			rest = rest[l+len("│"):]
+			r := strings.Index(rest, "│")
+			if r < 0 {
+				break
+			}
+			interior := rest[:r]
+			if len(interior) >= 40 && strings.TrimSpace(interior) == "" {
+				return interior
+			}
+			rest = rest[r:]
+		}
+	}
+	return "missing"
 }
 
 func TestApplyKey(t *testing.T) {

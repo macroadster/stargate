@@ -18,13 +18,14 @@ const (
 
 type style struct {
 	fg        int
+	bg        int
 	bold      bool
 	dim       bool
 	underline bool
 }
 
 func (s style) seq() string {
-	if s.fg == 0 && !s.bold && !s.dim && !s.underline {
+	if s.fg == 0 && s.bg == 0 && !s.bold && !s.dim && !s.underline {
 		return "\x1b[0m"
 	}
 	parts := []string{"0"}
@@ -39,6 +40,9 @@ func (s style) seq() string {
 	}
 	if s.fg > 0 {
 		parts = append(parts, fmt.Sprintf("38;5;%d", s.fg))
+	}
+	if s.bg > 0 {
+		parts = append(parts, fmt.Sprintf("48;5;%d", s.bg))
 	}
 	return "\x1b[" + strings.Join(parts, ";") + "m"
 }
@@ -80,6 +84,14 @@ func (c *canvas) set(x, y int, r rune, st style) {
 		return
 	}
 	c.cells[y*c.w+x] = cell{r: r, st: st}
+}
+
+func (c *canvas) fill(x, y, w, h int, r rune, st style) {
+	for row := 0; row < h; row++ {
+		for col := 0; col < w; col++ {
+			c.set(x+col, y+row, r, st)
+		}
+	}
 }
 
 func (c *canvas) print(x, y int, st style, s string) {
@@ -681,8 +693,50 @@ func renderHelp(c *canvas, vs ViewState) {
 	if y < 1 {
 		y = 1
 	}
-	c.box(x, y, w, h, "Keys")
+	// Paint a solid light panel first. The border alone leaves the console
+	// text visible in every cell the help lines do not overwrite.
+	const bgHelp = 231
+	face := style{fg: 16, bg: bgHelp}
+	edge := style{fg: 94, bg: bgHelp}
+	c.fill(x, y, w, h, ' ', face)
+	c.frame(x, y, w, h, edge)
+	title := " Keys "
+	if runeLen(title) > w-2 {
+		title = shorten(title, w-2)
+	}
+	c.print(x+1, y, style{fg: 94, bold: true, bg: bgHelp}, title)
+	inner := w - 4
+	if inner < 1 {
+		inner = 1
+	}
 	for i, line := range lines {
-		c.print(x+2, y+1+i, style{fg: fgText}, shorten(line, w-4))
+		text := shorten(line, inner)
+		pad := inner - runeLen(text)
+		if pad > 0 {
+			text += strings.Repeat(" ", pad)
+		}
+		c.print(x+2, y+1+i, face, text)
+	}
+}
+
+func (c *canvas) frame(x, y, w, h int, st style) {
+	if w < 2 || h < 2 {
+		return
+	}
+	tl, tr, bl, br, hz, vt := c.glyphs()
+	for i := 0; i < w; i++ {
+		top, bot := hz, hz
+		switch i {
+		case 0:
+			top, bot = tl, bl
+		case w - 1:
+			top, bot = tr, br
+		}
+		c.set(x+i, y, top, st)
+		c.set(x+i, y+h-1, bot, st)
+	}
+	for i := 1; i < h-1; i++ {
+		c.set(x, y+i, vt, st)
+		c.set(x+w-1, y+i, vt, st)
 	}
 }
