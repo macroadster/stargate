@@ -16,7 +16,7 @@ require (
 	github.com/libp2p/go-libp2p v0.49.0
 	github.com/libp2p/go-libp2p-kad-dht v0.42.2
 	github.com/libp2p/go-libp2p-pubsub v0.15.0
-	github.com/macroadster/trin v0.0.0-20260718012041-62863b8a8883
+	github.com/macroadster/trin v0.0.0-20261014005134-20887b771dbe
 	github.com/multiformats/go-multiaddr v0.16.1
 	github.com/prometheus/client_golang v1.24.1
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
@@ -181,6 +181,3 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
-
-// Local Trin has pkg/qwen, which runs the Opus Qwen2.5-0.5B GGUF.
-replace github.com/macroadster/trin => ../../trin
