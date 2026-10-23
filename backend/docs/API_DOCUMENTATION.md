@@ -659,7 +659,7 @@ Key environment variables for configuration:
 # MCP / Smart Contract Configuration (STARGATE_ prefix)
 STARGATE_PG_DSN=postgresql://user:pass@localhost/db  # PostgreSQL connection string
 STARGATE_STORE_DRIVER=sqlite                   # Store type: sqlite (default for single-binary), memory, postgres
-STARGATE_DEFAULT_CLAIM_TTL_HOURS=72            # Task claim expiration time
+STARGATE_DEFAULT_CLAIM_TTL_HOURS=1             # Task claim expiration (unset defaults to 1 hour, not 72)
 STARGATE_SEED_FIXTURES=true                    # Whether to seed with test data
 STARGATE_ENABLE_INGEST_SYNC=true               # Enable ingestion sync
 STARGATE_INGEST_SYNC_INTERVAL_SEC=30           # Ingestion sync interval
