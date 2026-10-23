@@ -3,7 +3,7 @@ const globals = require('globals');
 const react = require('eslint-plugin-react');
 const reactHooks = require('eslint-plugin-react-hooks');
 const jsxA11y = require('eslint-plugin-jsx-a11y');
-const reactRefresh = require('eslint-plugin-react-refresh');
+const reactRefresh = require('eslint-plugin-react-refresh').default;
 
 module.exports = [
   {
@@ -37,7 +37,10 @@ module.exports = [
     },
     rules: {
       ...react.configs.recommended.rules,
-      ...reactHooks.configs.recommended.rules,
+      // hooks v7 recommended adds React Compiler rules that fail existing
+      // effects. Keep the previous rules-of-hooks and exhaustive-deps pair.
+      'react-hooks/rules-of-hooks': 'error',
+      'react-hooks/exhaustive-deps': 'warn',
       ...jsxA11y.configs.recommended.rules,
       'no-empty': 'warn',
       'no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_$' }],

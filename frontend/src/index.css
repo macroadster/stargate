@@ -1,4 +1,4 @@
-@import "@howssatoshi/quantumcss/dist/quantum.min.css";
+@import "@howssatoshi/quantumcss";
 
 @media (prefers-color-scheme: light) {
     html:not([data-theme="dark"]) .nav-glass {

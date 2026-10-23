@@ -33,8 +33,8 @@ import (
 	"stargate-backend/storage/datadir"
 	scstore "stargate-backend/storage/smart_contract"
 
-	"github.com/btcsuite/btcd/btcutil"
-	"github.com/btcsuite/btcd/chaincfg"
+	btcaddr "github.com/btcsuite/btcd/address/v2"
+	"github.com/btcsuite/btcd/chaincfg/v2"
 )
 
 const (
@@ -2783,7 +2783,7 @@ func (h *HTTPMCPServer) handleBuildPSBT(ctx context.Context, args map[string]int
 	// payer_addresses replace the single API-key wallet. Needed when that
 	// wallet only holds the leftover payout UTXO (probe 44f7844c: need 1546,
 	// selected 1000) and the extra coin lives on the P2PKH change address.
-	payerAddresses := []btcutil.Address{payerAddress}
+	payerAddresses := []btcaddr.Address{payerAddress}
 	if rawPayers, exists := args["payer_addresses"]; exists && rawPayers != nil {
 		strs, ok := mcpStringSlice(rawPayers)
 		if !ok {
@@ -2929,7 +2929,7 @@ func (h *HTTPMCPServer) handleBuildPSBT(ctx context.Context, args map[string]int
 	}, nil
 }
 
-func encodeAddresses(addrs []btcutil.Address) []string {
+func encodeAddresses(addrs []btcaddr.Address) []string {
 	out := make([]string, 0, len(addrs))
 	for _, addr := range addrs {
 		if addr == nil {

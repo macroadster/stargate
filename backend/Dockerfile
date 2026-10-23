@@ -1,7 +1,8 @@
 # CGO disabled; using modernc.org/sqlite (pure Go implementation).
 # No gcc or libc-dev needed in the builder.
-# Pin patch toolchain so stdlib security fixes (1.25.8–1.25.14) are included.
-FROM golang:1.25.14-alpine AS builder
+# Pin the patch toolchain. Go 1.27.3 includes the crypto/x509 root-store
+# fix for CVE-2026-111943 and matches the btcd v0.27.0 release toolchain.
+FROM golang:1.27.3-alpine AS builder
 WORKDIR /app
 
 # Install build dependencies (pure-Go SQLite, no CGO)
@@ -18,7 +19,7 @@ COPY . .
 
 # Build btcd, embed it, then build stargate. Keep this version equal to
 # BTCD_VERSION in scripts/build-btcd.sh.
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go install -trimpath github.com/btcsuite/btcd@v0.25.0 && \
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOTOOLCHAIN=go1.27.3 go install -trimpath github.com/btcsuite/btcd@v0.27.0 && \
     cp "$(go env GOPATH)/bin/btcd" ./bitcoin/btcd.embed && \
     CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags embedbtcd \
     -ldflags='-w -s' \

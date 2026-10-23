@@ -3,8 +3,8 @@ package bitcoin
 import (
 	"testing"
 
-	"github.com/btcsuite/btcd/btcutil"
-	"github.com/btcsuite/btcd/chaincfg"
+	btcaddr "github.com/btcsuite/btcd/address/v2"
+	"github.com/btcsuite/btcd/chaincfg/v2"
 )
 
 func TestResolveFundingCommitmentRequiresSats(t *testing.T) {
@@ -46,7 +46,7 @@ func TestFundingModeProducesOPReturn(t *testing.T) {
 	params := &chaincfg.TestNet4Params
 	// Use a valid testnet4 P2WPKH address as the "donation" (funding mode
 	// sets this to the payer's own address).
-	addr, err := btcutil.DecodeAddress("tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx", params)
+	addr, err := btcaddr.DecodeAddress("tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx", params)
 	if err != nil {
 		t.Fatalf("decode address: %v", err)
 	}
@@ -90,7 +90,7 @@ func TestFundingModeProducesOPReturn(t *testing.T) {
 // for funding mode and is now only the fallback.
 func TestFundingModeWithoutDonationAddrFallsToHashlock(t *testing.T) {
 	params := &chaincfg.TestNet4Params
-	addr, err := btcutil.DecodeAddress("tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx", params)
+	addr, err := btcaddr.DecodeAddress("tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx", params)
 	if err != nil {
 		t.Fatalf("decode address: %v", err)
 	}

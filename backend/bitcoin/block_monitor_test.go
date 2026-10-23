@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/btcsuite/btcd/txscript"
+	"github.com/btcsuite/btcd/txscript/v2"
 
 	"stargate-backend/core/identity"
 	"stargate-backend/core/smart_contract"

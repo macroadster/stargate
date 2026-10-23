@@ -7,11 +7,11 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/btcsuite/btcd/btcutil"
-	"github.com/btcsuite/btcd/chaincfg"
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcd/wire"
+	btcaddr "github.com/btcsuite/btcd/address/v2"
+	"github.com/btcsuite/btcd/chaincfg/v2"
+	"github.com/btcsuite/btcd/chainhash/v2"
+	"github.com/btcsuite/btcd/txscript/v2"
+	"github.com/btcsuite/btcd/wire/v2"
 )
 
 // CommitmentSweepResult summarizes the built sweep transaction.
@@ -23,7 +23,7 @@ type CommitmentSweepResult struct {
 }
 
 // BuildCommitmentSweepTx builds a signed-less hashlock sweep transaction with the preimage witness.
-func BuildCommitmentSweepTx(client UTXOClient, params *chaincfg.Params, txid string, vout uint32, redeemScript, preimage []byte, dest btcutil.Address, feeRate int64) (*CommitmentSweepResult, error) {
+func BuildCommitmentSweepTx(client UTXOClient, params *chaincfg.Params, txid string, vout uint32, redeemScript, preimage []byte, dest btcaddr.Address, feeRate int64) (*CommitmentSweepResult, error) {
 	if client == nil {
 		return nil, fmt.Errorf("mempool client required")
 	}
@@ -175,7 +175,7 @@ func BuildRecommitSweepTx(client UTXOClient, params *chaincfg.Params, txid strin
 		return nil, fmt.Errorf("build product redeem script: %w", err)
 	}
 	productScriptHash := sha256.Sum256(productRedeemScript)
-	productAddr, err := btcutil.NewAddressWitnessScriptHash(productScriptHash[:], params)
+	productAddr, err := btcaddr.NewAddressWitnessScriptHash(productScriptHash[:], params)
 	if err != nil {
 		return nil, fmt.Errorf("product P2WSH address: %w", err)
 	}

@@ -15,8 +15,9 @@ RUN npm run build
 # CGO disabled; we use modernc.org/sqlite (pure Go) so no C compiler or libc
 # dependencies are needed in the builder. This keeps the image small and
 # portable.
-# Pin patch toolchain so stdlib security fixes (1.25.8–1.25.14) are included.
-FROM golang:1.25.14-alpine AS backend-builder
+# Pin the patch toolchain. Go 1.27.3 includes the crypto/x509 root-store
+# fix for CVE-2026-111943 and matches the btcd v0.27.0 release toolchain.
+FROM golang:1.27.3-alpine AS backend-builder
 WORKDIR /app/backend
 # Install build dependencies (no CGO needed for modernc.org/sqlite)
 RUN apk add --no-cache git ca-certificates tzdata

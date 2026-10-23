@@ -5,17 +5,17 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/btcsuite/btcd/btcutil"
-	"github.com/btcsuite/btcd/chaincfg"
+	btcaddr "github.com/btcsuite/btcd/address/v2"
+	"github.com/btcsuite/btcd/chaincfg/v2"
 )
 
 func TestDecodeAddressForNetworkRejectsWrongHRP(t *testing.T) {
 	tbHash := bytes.Repeat([]byte{0x11}, 20)
-	tbAddr, err := btcutil.NewAddressWitnessPubKeyHash(tbHash, &chaincfg.TestNet4Params)
+	tbAddr, err := btcaddr.NewAddressWitnessPubKeyHash(tbHash, &chaincfg.TestNet4Params)
 	if err != nil {
 		t.Fatal(err)
 	}
-	bcAddr, err := btcutil.NewAddressWitnessPubKeyHash(tbHash, &chaincfg.MainNetParams)
+	bcAddr, err := btcaddr.NewAddressWitnessPubKeyHash(tbHash, &chaincfg.MainNetParams)
 	if err != nil {
 		t.Fatal(err)
 	}

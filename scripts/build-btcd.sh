@@ -5,7 +5,7 @@
 # cross-compile. The output path is the go:embed input (bitcoin/btcd.embed).
 set -eu
 
-BTCD_VERSION=v0.25.0
+BTCD_VERSION=v0.27.0
 OUT=${1:-btcd}
 
 mkdir -p "$(dirname "$OUT")"
@@ -14,7 +14,9 @@ trap 'rm -rf "$tmp"' EXIT
 
 # pkg@version ignores the current module and writes the program name into GOBIN.
 # GOOS and GOARCH, when set by the caller, select the target platform.
-CGO_ENABLED=0 GOBIN="$tmp" go install -trimpath "github.com/btcsuite/btcd@${BTCD_VERSION}"
+# Go 1.27.3 matches the v0.27.0 release toolchain and includes the
+# crypto/x509 root-store fix for CVE-2026-111943.
+GOTOOLCHAIN=go1.27.3 CGO_ENABLED=0 GOBIN="$tmp" go install -trimpath "github.com/btcsuite/btcd@${BTCD_VERSION}"
 
 if [ ! -x "$tmp/btcd" ]; then
 	echo "btcd build did not produce an executable at $tmp/btcd" >&2

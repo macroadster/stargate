@@ -9,28 +9,28 @@ import (
 	"crypto/sha256"
 	"math"
 
+	btcaddr "github.com/btcsuite/btcd/address/v2"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
-	"github.com/btcsuite/btcd/btcutil"
-	"github.com/btcsuite/btcd/chaincfg"
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btcd/chaincfg/v2"
+	"github.com/btcsuite/btcd/chainhash/v2"
+	"github.com/btcsuite/btcd/txscript/v2"
+	"github.com/btcsuite/btcd/wire/v2"
 )
 
 func TestChooseParamsPicksTestnet4ForTaproot(t *testing.T) {
 	prog := bytes.Repeat([]byte{0x01}, 32)
-	addr, err := btcutil.NewAddressTaproot(prog, &chaincfg.TestNet4Params)
+	addr, err := btcaddr.NewAddressTaproot(prog, &chaincfg.TestNet4Params)
 	if err != nil {
 		t.Fatalf("failed to build taproot address: %v", err)
 	}
 
 	encoded := addr.EncodeAddress()
 	t.Logf("taproot address: %s", encoded)
-	if _, err := btcutil.DecodeAddress(encoded, &chaincfg.TestNet4Params); err != nil {
+	if _, err := btcaddr.DecodeAddress(encoded, &chaincfg.TestNet4Params); err != nil {
 		t.Fatalf("expected decode with testnet4 params to succeed: %v", err)
 	}
-	if decoded, err := btcutil.DecodeAddress(encoded, &chaincfg.MainNetParams); err == nil && decoded.IsForNet(&chaincfg.MainNetParams) {
+	if decoded, err := btcaddr.DecodeAddress(encoded, &chaincfg.MainNetParams); err == nil && decoded.IsForNet(&chaincfg.MainNetParams) {
 		t.Fatalf("address %s should not belong to mainnet", encoded)
 	}
 
@@ -42,7 +42,7 @@ func TestChooseParamsPicksTestnet4ForTaproot(t *testing.T) {
 		t.Fatalf("expected %s params, got %s", chaincfg.TestNet4Params.Name, params.Name)
 	}
 
-	if decoded, err := btcutil.DecodeAddress(encoded, params); err != nil {
+	if decoded, err := btcaddr.DecodeAddress(encoded, params); err != nil {
 		t.Fatalf("decode failed with chosen params: %v", err)
 	} else if decoded.EncodeAddress() != encoded {
 		t.Fatalf("decoded address mismatch: %s", decoded.EncodeAddress())
@@ -51,13 +51,13 @@ func TestChooseParamsPicksTestnet4ForTaproot(t *testing.T) {
 
 func TestChooseParamsMainnet(t *testing.T) {
 	pkh := bytes.Repeat([]byte{0x02}, 20)
-	addr, err := btcutil.NewAddressWitnessPubKeyHash(pkh, &chaincfg.MainNetParams)
+	addr, err := btcaddr.NewAddressWitnessPubKeyHash(pkh, &chaincfg.MainNetParams)
 	if err != nil {
 		t.Fatalf("failed to build mainnet address: %v", err)
 	}
 	encoded := addr.EncodeAddress()
 	t.Logf("mainnet address: %s", encoded)
-	if _, err := btcutil.DecodeAddress(encoded, &chaincfg.MainNetParams); err != nil {
+	if _, err := btcaddr.DecodeAddress(encoded, &chaincfg.MainNetParams); err != nil {
 		t.Fatalf("expected decode with mainnet params to succeed: %v", err)
 	}
 	params := ChooseParams(encoded)
@@ -75,8 +75,8 @@ func TestVerifySignatureHexMessageFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create key: %v", err)
 	}
-	pubKeyHash := btcutil.Hash160(priv.PubKey().SerializeCompressed())
-	addr, err := btcutil.NewAddressWitnessPubKeyHash(pubKeyHash, &chaincfg.TestNet4Params)
+	pubKeyHash := btcaddr.Hash160(priv.PubKey().SerializeCompressed())
+	addr, err := btcaddr.NewAddressWitnessPubKeyHash(pubKeyHash, &chaincfg.TestNet4Params)
 	if err != nil {
 		t.Fatalf("failed to build address: %v", err)
 	}
@@ -109,9 +109,9 @@ func TestLegacySignatureAcceptsSegwitAddresses(t *testing.T) {
 		t.Fatalf("failed to create key: %v", err)
 	}
 	pubKey := priv.PubKey()
-	pubKeyHash := btcutil.Hash160(pubKey.SerializeCompressed())
+	pubKeyHash := btcaddr.Hash160(pubKey.SerializeCompressed())
 
-	addr, err := btcutil.NewAddressWitnessPubKeyHash(pubKeyHash, &chaincfg.TestNet4Params)
+	addr, err := btcaddr.NewAddressWitnessPubKeyHash(pubKeyHash, &chaincfg.TestNet4Params)
 	if err != nil {
 		t.Fatalf("failed to build address: %v", err)
 	}
@@ -135,8 +135,8 @@ func TestBIP322SimpleRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create key: %v", err)
 	}
-	pubKeyHash := btcutil.Hash160(priv.PubKey().SerializeCompressed())
-	addr, err := btcutil.NewAddressWitnessPubKeyHash(pubKeyHash, &chaincfg.TestNet4Params)
+	pubKeyHash := btcaddr.Hash160(priv.PubKey().SerializeCompressed())
+	addr, err := btcaddr.NewAddressWitnessPubKeyHash(pubKeyHash, &chaincfg.TestNet4Params)
 	if err != nil {
 		t.Fatalf("failed to build address: %v", err)
 	}

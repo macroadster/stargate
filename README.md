@@ -183,8 +183,8 @@ Server: `http://localhost:3001` with SQLite on **testnet4**. Linux/macOS amd64 a
 
 ### Development prerequisites
 
-- Node.js 18+ and npm
-- Go 1.25+
+- Node.js 22.12+ and npm
+- Go 1.27+
 - Git
 - Docker (optional, for `make docker`)
 

@@ -9,8 +9,8 @@ import (
 	"stargate-backend/bitcoin"
 	auth "stargate-backend/storage/auth"
 
-	"github.com/btcsuite/btcd/btcutil"
-	"github.com/btcsuite/btcd/chaincfg"
+	btcaddr "github.com/btcsuite/btcd/address/v2"
+	"github.com/btcsuite/btcd/chaincfg/v2"
 )
 
 // APIKeyHandler issues API keys via registration.
@@ -256,7 +256,7 @@ func DetectAddressInfo(address string) AddressInfo {
 		&chaincfg.TestNet3Params,
 		&chaincfg.RegressionNetParams,
 	} {
-		decoded, err := btcutil.DecodeAddress(addr, params)
+		decoded, err := btcaddr.DecodeAddress(addr, params)
 		if err == nil {
 			info.IsValid = true
 
@@ -274,20 +274,20 @@ func DetectAddressInfo(address string) AddressInfo {
 
 			// Detect address type
 			switch addr := decoded.(type) {
-			case *btcutil.AddressPubKeyHash:
+			case *btcaddr.AddressPubKeyHash:
 				if len(addr.ScriptAddress()) == 20 {
 					addrStr := addr.String()
 					if strings.HasPrefix(strings.ToLower(addrStr), "1") || strings.HasPrefix(strings.ToLower(addrStr), "m") || strings.HasPrefix(strings.ToLower(addrStr), "n") {
 						info.AddressType = "p2pkh"
 					}
 				}
-			case *btcutil.AddressScriptHash:
+			case *btcaddr.AddressScriptHash:
 				info.AddressType = "p2sh"
-			case *btcutil.AddressWitnessPubKeyHash:
+			case *btcaddr.AddressWitnessPubKeyHash:
 				info.AddressType = "p2wpkh"
-			case *btcutil.AddressWitnessScriptHash:
+			case *btcaddr.AddressWitnessScriptHash:
 				info.AddressType = "p2wsh"
-			case *btcutil.AddressTaproot:
+			case *btcaddr.AddressTaproot:
 				info.AddressType = "p2tr"
 			}
 

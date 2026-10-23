@@ -17,9 +17,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/btcsuite/btcd/btcutil"
-	"github.com/btcsuite/btcd/chaincfg"
-	"github.com/btcsuite/btcd/txscript"
+	btcaddr "github.com/btcsuite/btcd/address/v2"
+	"github.com/btcsuite/btcd/chaincfg/v2"
+	"github.com/btcsuite/btcd/txscript/v2"
 
 	"stargate-backend/core"
 	"stargate-backend/core/identity"
@@ -965,7 +965,7 @@ func scriptHash160Hex(script []byte) string {
 	if len(script) == 0 {
 		return ""
 	}
-	return hex.EncodeToString(btcutil.Hash160(script))
+	return hex.EncodeToString(btcaddr.Hash160(script))
 }
 
 func stringFromAny(value any) string {

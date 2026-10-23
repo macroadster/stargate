@@ -13,7 +13,7 @@ import (
 	"stargate-backend/services"
 	"strings"
 
-	"github.com/btcsuite/btcd/btcutil"
+	btcaddr "github.com/btcsuite/btcd/address/v2"
 )
 
 type IngestionHandler struct {
@@ -212,7 +212,7 @@ func (h *IngestionHandler) HandleHashImage(w http.ResponseWriter, r *http.Reques
 	}
 
 	sha := sha256.Sum256(imageData)
-	hash160 := btcutil.Hash160(imageData)
+	hash160 := btcaddr.Hash160(imageData)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{

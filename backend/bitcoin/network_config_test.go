@@ -3,7 +3,7 @@ package bitcoin
 import (
 	"testing"
 
-	"github.com/btcsuite/btcd/chaincfg"
+	"github.com/btcsuite/btcd/chaincfg/v2"
 )
 
 func TestNetworkParamsMatchesBtcdAndDoesNotConflateTestnets(t *testing.T) {

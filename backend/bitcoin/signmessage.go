@@ -9,13 +9,13 @@ import (
 	"math"
 	"strings"
 
+	btcaddr "github.com/btcsuite/btcd/address/v2"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
-	"github.com/btcsuite/btcd/btcutil"
-	"github.com/btcsuite/btcd/chaincfg"
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btcd/chaincfg/v2"
+	"github.com/btcsuite/btcd/chainhash/v2"
+	"github.com/btcsuite/btcd/txscript/v2"
+	"github.com/btcsuite/btcd/wire/v2"
 )
 
 // VerifyBTCSignature supports Bitcoin Core wallet "signmessage" (compact ECDSA)
@@ -98,7 +98,7 @@ func VerifyLegacySignMessage(address, signatureB64, message string) (bool, error
 	if params == nil {
 		return false, fmt.Errorf("unsupported address network")
 	}
-	if _, err := btcutil.DecodeAddress(address, params); err != nil {
+	if _, err := btcaddr.DecodeAddress(address, params); err != nil {
 		return false, err
 	}
 
@@ -119,13 +119,13 @@ func VerifyLegacySignMessage(address, signatureB64, message string) (bool, error
 
 	var derivedAddr string
 	if wasCompressed {
-		addr, err := btcutil.NewAddressPubKey(pubKey.SerializeCompressed(), params)
+		addr, err := btcaddr.NewAddressPubKey(pubKey.SerializeCompressed(), params)
 		if err != nil {
 			return false, err
 		}
 		derivedAddr = addr.AddressPubKeyHash().EncodeAddress()
 	} else {
-		addr, err := btcutil.NewAddressPubKey(pubKey.SerializeUncompressed(), params)
+		addr, err := btcaddr.NewAddressPubKey(pubKey.SerializeUncompressed(), params)
 		if err != nil {
 			return false, err
 		}
@@ -136,14 +136,14 @@ func VerifyLegacySignMessage(address, signatureB64, message string) (bool, error
 		return true, nil
 	}
 
-	pubKeyHash := btcutil.Hash160(pubKey.SerializeCompressed())
-	if wpkh, err := btcutil.NewAddressWitnessPubKeyHash(pubKeyHash, params); err == nil {
+	pubKeyHash := btcaddr.Hash160(pubKey.SerializeCompressed())
+	if wpkh, err := btcaddr.NewAddressWitnessPubKeyHash(pubKeyHash, params); err == nil {
 		if strings.EqualFold(wpkh.EncodeAddress(), address) {
 			return true, nil
 		}
 	}
 	if witScript, err := txscript.NewScriptBuilder().AddOp(txscript.OP_0).AddData(pubKeyHash).Script(); err == nil {
-		if sh, err := btcutil.NewAddressScriptHash(witScript, params); err == nil {
+		if sh, err := btcaddr.NewAddressScriptHash(witScript, params); err == nil {
 			if strings.EqualFold(sh.EncodeAddress(), address) {
 				return true, nil
 			}
@@ -171,7 +171,7 @@ func VerifyBIP322Simple(address, signature, message string) (bool, error) {
 	if params == nil {
 		return false, fmt.Errorf("unsupported address network")
 	}
-	addr, err := btcutil.DecodeAddress(address, params)
+	addr, err := btcaddr.DecodeAddress(address, params)
 	if err != nil {
 		return false, err
 	}
@@ -277,7 +277,7 @@ func ChooseParams(address string) *chaincfg.Params {
 		&chaincfg.TestNet3Params,
 		&chaincfg.MainNetParams,
 	} {
-		if decoded, err := btcutil.DecodeAddress(addr, params); err == nil && decoded.IsForNet(params) {
+		if decoded, err := btcaddr.DecodeAddress(addr, params); err == nil && decoded.IsForNet(params) {
 			return params
 		}
 	}
