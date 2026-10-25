@@ -53,7 +53,8 @@ import { blockHasSmartContract, shouldShowInscription } from './components/Inscr
 const HIDE_CLEAN_BLOCKS_KEY = 'stargate.hideCleanBlocks';
 
 const readHideCleanBlocks = (signedIn) => {
-  if (!signedIn) return false;
+  // Unsigned viewers only see blocks that contain smart contracts.
+  if (!signedIn) return true;
   try {
     return sessionStorage.getItem(HIDE_CLEAN_BLOCKS_KEY) === '1';
   } catch {
@@ -108,7 +109,7 @@ function MainContent() {
     if (!isSignedIn) {
       setHideText(true);
       setHideImages(true);
-      setHideCleanBlocks(false);
+      setHideCleanBlocks(true);
       try {
         sessionStorage.removeItem(HIDE_CLEAN_BLOCKS_KEY);
       } catch {

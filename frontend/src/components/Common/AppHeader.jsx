@@ -83,6 +83,8 @@ const AppHeader = ({
     setIsMenuOpen(false);
   };
   const filterToggleTitle = isSignedIn ? undefined : "Sign in to change";
+  // Unsigned viewers always hide clean blocks. Signing in is what unlocks the toggle.
+  const cleanBlocksHidden = !isSignedIn || hideCleanBlocks;
 
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -243,10 +245,10 @@ const AppHeader = ({
                           <button
                             onClick={() => requestFilterToggle(onToggleCleanBlocks)}
                             className="dropdown-item flex flex-row items-center justify-between"
-                            title={isSignedIn ? 'Show only blocks that contain smart contracts' : filterToggleTitle}
+                            title={isSignedIn ? 'Show only blocks that contain smart contracts' : 'Sign in to show clean blocks'}
                           >
                             <span>Hide clean blocks</span>
-                            {hideCleanBlocks && (
+                            {cleanBlocksHidden && (
                               <Check className="w-4 h-4 text-primary" />
                             )}
                           </button>
@@ -415,10 +417,10 @@ const AppHeader = ({
                   <button
                     onClick={() => requestFilterToggle(onToggleCleanBlocks)}
                     className="nav-link flex flex-row items-center justify-between"
-                    title={isSignedIn ? 'Show only blocks that contain smart contracts' : filterToggleTitle}
+                    title={isSignedIn ? 'Show only blocks that contain smart contracts' : 'Sign in to show clean blocks'}
                   >
                     <span>Hide clean blocks</span>
-                    {hideCleanBlocks && <Check className="w-4 h-4 text-primary" />}
+                    {cleanBlocksHidden && <Check className="w-4 h-4 text-primary" />}
                   </button>
                 </li>
               </>

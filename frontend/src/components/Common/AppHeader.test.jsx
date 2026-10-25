@@ -69,14 +69,14 @@ describe('AppHeader inscription filters', () => {
     expect(screen.queryByText('Auth page')).not.toBeInTheDocument();
   });
 
-  it('shows Hide clean blocks unchecked until a signed-in user enables it', () => {
+  it('keeps Hide clean blocks checked for unsigned viewers and sends them to sign in', () => {
     const onToggleCleanBlocks = vi.fn();
     renderHeader({ hideCleanBlocks: false, onToggleCleanBlocks });
     fireEvent.click(screen.getByTitle('More options'));
     const items = screen.getAllByText('Hide clean blocks');
     expect(items.length).toBeGreaterThanOrEqual(1);
     items.forEach((label) => {
-      expect(label.closest('button').querySelector('svg')).toBeFalsy();
+      expect(label.closest('button').querySelector('svg')).toBeTruthy();
     });
     fireEvent.click(items[0]);
     expect(onToggleCleanBlocks).not.toHaveBeenCalled();
