@@ -25,6 +25,8 @@ const AppHeader = ({
   onToggleText,
   hideImages = true,
   onToggleImages,
+  hideCleanBlocks = false,
+  onToggleCleanBlocks,
   showThemeToggle = true,
   isDarkMode: propIsDarkMode,
 }) => {
@@ -238,6 +240,16 @@ const AppHeader = ({
                               <Check className="w-4 h-4 text-primary" />
                             )}
                           </button>
+                          <button
+                            onClick={() => requestFilterToggle(onToggleCleanBlocks)}
+                            className="dropdown-item flex flex-row items-center justify-between"
+                            title={isSignedIn ? 'Show only blocks that contain smart contracts' : filterToggleTitle}
+                          >
+                            <span>Hide clean blocks</span>
+                            {hideCleanBlocks && (
+                              <Check className="w-4 h-4 text-primary" />
+                            )}
+                          </button>
                         </>
                       )}
                       {auth?.apiKey ? (
@@ -397,6 +409,16 @@ const AppHeader = ({
                   >
                     <span>Hide images</span>
                     {hideImages && <Check className="w-4 h-4 text-primary" />}
+                  </button>
+                </li>
+                <li>
+                  <button
+                    onClick={() => requestFilterToggle(onToggleCleanBlocks)}
+                    className="nav-link flex flex-row items-center justify-between"
+                    title={isSignedIn ? 'Show only blocks that contain smart contracts' : filterToggleTitle}
+                  >
+                    <span>Hide clean blocks</span>
+                    {hideCleanBlocks && <Check className="w-4 h-4 text-primary" />}
                   </button>
                 </li>
               </>

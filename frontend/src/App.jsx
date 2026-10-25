@@ -48,7 +48,26 @@ import { CONTENT_BASE } from './apiBase';
 import { apiFetch } from './utils/api';
 
 import { useHorizontalScroll } from './hooks/useHorizontalScroll';
-import { shouldShowInscription } from './components/Inscription/inscriptionUtils';
+import { blockHasSmartContract, shouldShowInscription } from './components/Inscription/inscriptionUtils';
+
+const HIDE_CLEAN_BLOCKS_KEY = 'stargate.hideCleanBlocks';
+
+const readHideCleanBlocks = (signedIn) => {
+  if (!signedIn) return false;
+  try {
+    return sessionStorage.getItem(HIDE_CLEAN_BLOCKS_KEY) === '1';
+  } catch {
+    return false;
+  }
+};
+
+const writeHideCleanBlocks = (value) => {
+  try {
+    sessionStorage.setItem(HIDE_CLEAN_BLOCKS_KEY, value ? '1' : '0');
+  } catch {
+    /* private mode */
+  }
+};
 
 const formatTimeAgo = (timestamp) => {
   const now = Date.now();
@@ -83,15 +102,23 @@ function MainContent() {
   const [hideImages, setHideImages] = useState(true);
   const [pendingRefreshKey, setPendingRefreshKey] = useState(0);
   const isSignedIn = Boolean(auth?.apiKey);
+  const [hideCleanBlocks, setHideCleanBlocks] = useState(() => readHideCleanBlocks(isSignedIn));
 
   useEffect(() => {
     if (!isSignedIn) {
       setHideText(true);
       setHideImages(true);
+      setHideCleanBlocks(false);
+      try {
+        sessionStorage.removeItem(HIDE_CLEAN_BLOCKS_KEY);
+      } catch {
+        /* private mode */
+      }
     }
   }, [isSignedIn]);
   const { elRef: scrollRef, isDragging } = useHorizontalScroll();
   const prevBlocksLengthRef = useRef(0);
+  const contractPageLoadsRef = useRef(0);
 
   const {
     blocks,
@@ -105,8 +132,10 @@ function MainContent() {
     setManualHeight,
     loadMoreBlocks,
     loadNewerBlocks,
-    refreshBlocks
-  } = useBlocks();
+    refreshBlocks,
+    hasMore: hasMoreBlocks,
+    nextCursor: blockPageCursor,
+  } = useBlocks(hideCleanBlocks);
 
   useEffect(() => {
     const newBlock = blocks.find(b => b.isNew);
@@ -118,6 +147,54 @@ function MainContent() {
     }
     prevBlocksLengthRef.current = blocks.length;
   }, [blocks, scrollRef]);
+
+  const visibleBlocks = hideCleanBlocks
+    ? blocks.filter((block) => block.isFuture || blockHasSmartContract(block))
+    : blocks;
+  const contractBlockCount = blocks.filter(blockHasSmartContract).length;
+
+  // A contracts-only page can be shorter than the rail. Keep asking for the
+  // next page of contract blocks until the scroller has something to drag.
+  useEffect(() => {
+    if (!hideCleanBlocks) {
+      contractPageLoadsRef.current = 0;
+      return;
+    }
+    if (isInitializing || !hasMoreBlocks || contractBlockCount >= 12) return;
+    // Each page already walks a bounded height span. Stop if contract blocks
+    // are so sparse that filling the rail would scan the whole chain.
+    if (contractPageLoadsRef.current >= 40) return;
+    contractPageLoadsRef.current += 1;
+    loadMoreBlocks();
+  }, [hideCleanBlocks, isInitializing, hasMoreBlocks, contractBlockCount, blockPageCursor, loadMoreBlocks]);
+
+  // Leave a clean /block/:height when the filter is on. Home and /pending
+  // stay on the tip; the rail just stops showing clean history.
+  // Judge the loaded summary in the rail. The selected object can stay a
+  // placeholder (has_images undefined) even after that summary arrives.
+  useEffect(() => {
+    if (!hideCleanBlocks || height === undefined) return;
+    if (location.pathname === '/pending') return;
+    if (wishId || contractId || proposalId) return;
+    const targetHeight = Number(height);
+    if (!Number.isFinite(targetHeight)) return;
+    const summary = blocks.find((block) => block.height === targetHeight);
+    if (!summary || summary.isFuture || blockHasSmartContract(summary)) return;
+    const next = blocks.find(blockHasSmartContract);
+    if (!next || next.height === summary.height) return;
+    originalHandleBlockSelect(next);
+    navigate(`/block/${next.height}`);
+  }, [
+    hideCleanBlocks,
+    height,
+    blocks,
+    location.pathname,
+    wishId,
+    contractId,
+    proposalId,
+    originalHandleBlockSelect,
+    navigate,
+  ]);
 
   const handleBlockSelect = (block) => {
     if (isDragging) return; // Prevent click if a drag occurred
@@ -730,6 +807,15 @@ function MainContent() {
           if (!isSignedIn) return;
           setHideImages((value) => !value);
         }}
+        hideCleanBlocks={hideCleanBlocks}
+        onToggleCleanBlocks={() => {
+          if (!isSignedIn) return;
+          setHideCleanBlocks((value) => {
+            const next = !value;
+            writeHideCleanBlocks(next);
+            return next;
+          });
+        }}
       />
 
       <div style={{ minHeight: 0, overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
@@ -750,7 +836,7 @@ function MainContent() {
             }
           }}
         >
-          {blocks.map((block, index) => (
+          {visibleBlocks.map((block, index) => (
             <BlockCard
               key={`${block.height}-${index}`}
               block={block}
@@ -759,6 +845,13 @@ function MainContent() {
               hideImages={hideImages}
             />
           ))}
+          {hideCleanBlocks && contractBlockCount === 0 && (
+            <div className="flex items-center text-sm text-secondary px-2">
+              {isInitializing || hasMoreBlocks
+                ? 'Looking for blocks with smart contracts…'
+                : 'No blocks with smart contracts yet.'}
+            </div>
+          )}
         </div>
 
         <div className="w-full px-4 sm:px-6 lg:px-8 xl:px-12 py-8 block-page-content" style={{ flex: 1, minWidth: 0, maxWidth: '100%', overflowX: 'hidden' }}>

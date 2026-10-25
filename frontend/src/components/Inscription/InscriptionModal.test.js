@@ -26,6 +26,7 @@ import {
   parseStegoManifest,
   shouldShowInscription,
   shouldShowBlockThumbnailImage,
+  blockHasSmartContract,
 } from './inscriptionUtils';
 
 describe('inscriptionUtils', () => {
@@ -129,5 +130,20 @@ describe('shouldShowBlockThumbnailImage', () => {
 
   it('does not treat a /block-image URL as a contract without the flag', () => {
     expect(shouldShowBlockThumbnailImage({ thumbnail: '/api/block-image/1/x.png' }, true)).toBe(false);
+  });
+});
+
+describe('blockHasSmartContract', () => {
+  it('hides the pending tip and clean blocks', () => {
+    expect(blockHasSmartContract({ isFuture: true, smart_contract_count: 3 })).toBe(false);
+    expect(blockHasSmartContract({ smart_contract_count: 0 })).toBe(false);
+    expect(blockHasSmartContract({ has_smart_contract: false, smart_contract_count: 4 })).toBe(false);
+  });
+
+  it('keeps blocks the server marked, or that the card would count', () => {
+    expect(blockHasSmartContract({ has_smart_contract: true, smart_contract_count: 0 })).toBe(true);
+    expect(blockHasSmartContract({ smart_contract_count: 2 })).toBe(true);
+    expect(blockHasSmartContract({ steganography_summary: { stego_count: 1 } })).toBe(true);
+    expect(blockHasSmartContract({ smart_contracts: [{ contract_id: 'wish' }] })).toBe(true);
   });
 });

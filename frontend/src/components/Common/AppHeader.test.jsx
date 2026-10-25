@@ -68,4 +68,31 @@ describe('AppHeader inscription filters', () => {
     expect(onToggleImages).toHaveBeenCalledTimes(1);
     expect(screen.queryByText('Auth page')).not.toBeInTheDocument();
   });
+
+  it('shows Hide clean blocks unchecked until a signed-in user enables it', () => {
+    const onToggleCleanBlocks = vi.fn();
+    renderHeader({ hideCleanBlocks: false, onToggleCleanBlocks });
+    fireEvent.click(screen.getByTitle('More options'));
+    const items = screen.getAllByText('Hide clean blocks');
+    expect(items.length).toBeGreaterThanOrEqual(1);
+    items.forEach((label) => {
+      expect(label.closest('button').querySelector('svg')).toBeFalsy();
+    });
+    fireEvent.click(items[0]);
+    expect(onToggleCleanBlocks).not.toHaveBeenCalled();
+    expect(screen.getByText('Auth page')).toBeInTheDocument();
+  });
+
+  it('lets a signed-in user hide clean blocks', () => {
+    mockAuth.auth = { apiKey: 'key', wallet: 'tb1qtest', email: '' };
+    const onToggleCleanBlocks = vi.fn();
+    renderHeader({ hideCleanBlocks: true, onToggleCleanBlocks });
+    fireEvent.click(screen.getByTitle('More options'));
+    const items = screen.getAllByText('Hide clean blocks');
+    items.forEach((label) => {
+      expect(label.closest('button').querySelector('svg')).toBeTruthy();
+    });
+    fireEvent.click(items[0]);
+    expect(onToggleCleanBlocks).toHaveBeenCalledTimes(1);
+  });
 });
