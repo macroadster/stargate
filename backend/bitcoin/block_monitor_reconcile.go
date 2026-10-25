@@ -271,9 +271,11 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 			// Scan OP_RETURN outputs for stego hash so we can apply the
 			// on-chain image (proposal/tasks/sandbox_hash). Metadata only.
 			for _, output := range tx.Outputs {
-				_, stegoHash, opOk := parseOPReturnHashes(output.ScriptPubKey)
+				wishFromOp, stegoHash, opOk := parseOPReturnHashes(output.ScriptPubKey)
 				if opOk && stegoHash != "" {
-					bm.reconcileOnChainArtifacts(match.ID, stegoHash)
+					if err := bm.reconcileOnChainArtifacts(match.ID, stegoHash); err != nil {
+						bm.queueMissingStego(err, blockHeight, tx.TxID, match, wishFromOp, stegoHash)
+					}
 					break
 				}
 			}
@@ -343,37 +345,52 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 				bm.confirmContractTasks(match.ID, tx.TxID, blockHeight)
 				// Apply the on-chain stego image (proposal/tasks/sandbox_hash).
 				// This is metadata only; it does not unpack the sandbox tarball.
-				bm.reconcileOnChainArtifacts(match.ID, stegoHash)
+				if err := bm.reconcileOnChainArtifacts(match.ID, stegoHash); err != nil {
+					bm.queueMissingStego(err, blockHeight, tx.TxID, match, wishHash, stegoHash)
+				}
 				for _, candidate := range candidatesByID[match.ID] {
 					delete(primaryCandidates, candidate)
 					delete(fallbackCandidates, candidate)
 				}
 				matchedTxIDs[tx.TxID] = match.ID
-			} else {
-				// No candidate match in ingestion/proposal/contract databases.
-				// If the stego image exists on disk, reconcile from it — the
-				// embedded v2 payload contains the full proposal, tasks, and
-				// sandbox_hash.  reconcileOnChainArtifacts will create the
-				// contract via the stego reconciler.
-				if stegoHash != "" {
-					log.Printf("oracle reconcile: block %d tx %s: OP_RETURN wish=%s stego=%s has no candidate, attempting stego reconcile from disk", blockHeight, tx.TxID, wishHash, stegoHash)
-					bm.reconcileOnChainArtifacts(wishHash, stegoHash)
-					// After reconciliation, confirm the newly-created contract.
-					// maybeConfirmContract extracts the sandbox on this node.
-					normalizedWish := identity.CanonicalContractID(wishHash)
-					if normalizedWish == "" {
-						normalizedWish = wishHash
-					}
-					if bm.sweepStore != nil {
-						if bm.scanMayConfirm(blockHeight) {
-							bm.maybeConfirmContract(normalizedWish, tx.TxID, blockHeight)
-						}
-						bm.updateTaskFundingProofsFromTx(normalizedWish, tx, blockHeight)
-						bm.confirmContractTasks(normalizedWish, tx.TxID, blockHeight)
-					}
-				} else {
-					log.Printf("oracle reconcile: block %d tx %s: OP_RETURN wish=%s (no stego hash), skipping", blockHeight, tx.TxID, wishHash)
+			} else if stegoHash != "" {
+				// No local ingestion/proposal/contract yet. A fresh node still
+				// records the block and queues the commitment. The stego file
+				// often arrives later via the IPFS mirror; applyChainCommitment
+				// writes the contract once both the file and the burial depth
+				// are present. Already-confirmed rows are not rewritten.
+				normalizedWish := identity.CanonicalContractID(wishHash)
+				if normalizedWish == "" {
+					normalizedWish = wishHash
 				}
+				log.Printf("oracle reconcile: block %d tx %s: OP_RETURN wish=%s stego=%s has no candidate, recording chain commitment", blockHeight, tx.TxID, wishHash, stegoHash)
+				smartContracts = upsertContractByID(smartContracts, SmartContractData{
+					ContractID:  normalizedWish,
+					BlockHeight: blockHeight,
+					ImagePath:   filepath.Join("images", stegoHash),
+					Metadata: map[string]any{
+						"tx_id":              tx.TxID,
+						"block_height":       blockHeight,
+						"match_type":         "op_return",
+						"wish_hash":          wishHash,
+						"stego_hash":         stegoHash,
+						"visible_pixel_hash": wishHash,
+						"image_file":         stegoHash,
+						"ingestion_id":       normalizedWish,
+					},
+				})
+				bm.noteChainCommitment(chainCommitment{
+					Height:    blockHeight,
+					TxID:      tx.TxID,
+					WishHash:  normalizedWish,
+					StegoHash: stegoHash,
+				})
+				if bm.sweepStore != nil {
+					bm.updateTaskFundingProofsFromTx(normalizedWish, tx, blockHeight)
+					bm.confirmContractTasks(normalizedWish, tx.TxID, blockHeight)
+				}
+			} else {
+				log.Printf("oracle reconcile: block %d tx %s: OP_RETURN wish=%s (no stego hash), skipping", blockHeight, tx.TxID, wishHash)
 			}
 			break // one OP_RETURN match per tx
 		}

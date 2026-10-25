@@ -16,29 +16,35 @@ import (
 
 // BlockMonitor handles comprehensive Bitcoin block monitoring and data extraction
 type BlockMonitor struct {
-	bitcoinClient    *BitcoinNodeClient
-	rawClient        *RawBlockClient
-	chain            ChainBackend
-	bitcoinAPI       *BitcoinAPI
-	currentHeight    int64
-	lastChecked      time.Time
-	isRunning        bool
-	isStopping       bool
-	stopChan         chan struct{}
-	wg               sync.WaitGroup
-	mu               sync.RWMutex
-	dataStorage      DataStorageInterface
-	ingestion        *services.IngestionService
-	sweepStore       SweepTaskStore
-	sweepMempool     UTXOClient
-	stegoReconciler  StegoReconciler
-	sandboxExtractor SandboxExtractor
-	unpinPath        func(context.Context, string) error
-	ipfsClient       *ipfs.Client
-	reconcileMu      sync.Mutex
-	oracleMetaMu     sync.Mutex
-	oracleMetaRecs   []services.IngestionRecord
-	oracleMetaAt     time.Time
+	bitcoinClient      *BitcoinNodeClient
+	rawClient          *RawBlockClient
+	chain              ChainBackend
+	bitcoinAPI         *BitcoinAPI
+	currentHeight      int64
+	lastChecked        time.Time
+	isRunning          bool
+	isStopping         bool
+	stopChan           chan struct{}
+	wg                 sync.WaitGroup
+	mu                 sync.RWMutex
+	dataStorage        DataStorageInterface
+	ingestion          *services.IngestionService
+	sweepStore         SweepTaskStore
+	sweepMempool       UTXOClient
+	stegoReconciler    StegoReconciler
+	sandboxExtractor   SandboxExtractor
+	unpinPath          func(context.Context, string) error
+	ipfsClient         *ipfs.Client
+	reconcileMu        sync.Mutex
+	processMu          sync.Mutex
+	discoverMu         sync.Mutex
+	discoverWaitLogged bool
+	replicationMu      sync.Mutex
+	replicationLoaded  bool
+	replication        chainReplicationState
+	oracleMetaMu       sync.Mutex
+	oracleMetaRecs     []services.IngestionRecord
+	oracleMetaAt       time.Time
 
 	// Configuration
 	checkInterval time.Duration
@@ -343,6 +349,12 @@ func (bm *BlockMonitor) Start() error {
 		go bm.reconcileSweepLoop(stopChan)
 	} else {
 		log.Printf("block monitor: periodic reconcile sweep disabled (tip-only tracking)")
+	}
+	if contractDiscoverEnabled() {
+		bm.wg.Add(1)
+		go bm.contractDiscoverLoop(stopChan)
+	} else {
+		log.Printf("contract discover: disabled (BLOCK_MONITOR_CONTRACT_DISCOVER=off)")
 	}
 
 	return nil

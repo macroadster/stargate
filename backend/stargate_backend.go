@@ -564,6 +564,7 @@ func runHTTPServer(ctx context.Context, allStores *storage.AllStores, ipfsClient
 	var mirror mirrorState
 	onMirroredFile := func(ctx context.Context, ev ipfs.FileDownloadedEvent) {
 		scmiddleware.IngestDownloadedFile(ctx, ev.FilePath, ev.CID, ingestionSvc, store)
+		mirror.noteStegoFile(filepath.Base(ev.FilePath))
 	}
 	ipfsCfg := ipfs.LoadMirrorConfig()
 	// When the mirror downloads a new file, trigger ingestion immediately
@@ -995,8 +996,13 @@ func setupRoutes(ctx context.Context, mux *http.ServeMux, container *container.C
 		sweepClient = bitcoin.NewMempoolClient()
 	}
 	blockMonitor.SetSweepDependencies(store, sweepClient)
+	// Mirror downloads can arrive before setupRoutes reaches this point.
+	// The closure above reads the pointer, so set it before Start.
+	if mirror != nil {
+		mirror.setBlockMonitor(blockMonitor)
+	}
 	// OP_RETURN-based matching: block monitor discovers contracts during normal
-	// block processing — no event-driven reconciliation needed.
+	// block processing. A background walk covers history the tip tracker skips.
 	if err := scmiddleware.StartIPFSIngestionSync(ctx, ingestionSvc, store, func(ctx context.Context, recent int) error {
 		return blockMonitor.ReconcileRecentBlocks(ctx, recent)
 	}); err != nil {
@@ -1353,6 +1359,28 @@ type mirrorState struct {
 	mu      sync.RWMutex
 	uploads *ipfs.Mirror
 	wishes  *ipfs.Mirror
+	monitor *bitcoin.BlockMonitor
+}
+
+func (m *mirrorState) setBlockMonitor(bm *bitcoin.BlockMonitor) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	m.monitor = bm
+	m.mu.Unlock()
+}
+
+func (m *mirrorState) noteStegoFile(name string) {
+	if m == nil {
+		return
+	}
+	m.mu.RLock()
+	bm := m.monitor
+	m.mu.RUnlock()
+	if bm != nil {
+		bm.NoteStegoFile(name)
+	}
 }
 
 func (m *mirrorState) Status() ipfs.MirrorStatus {

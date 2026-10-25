@@ -753,8 +753,9 @@ The block monitor (`block_monitor.go` → `reconcileOracleIngestions`) processes
 
 1. **funding_txid match**: If the tx matches a known `funding_txid` from ingestion metadata, confirm the contract, then scan OP_RETURN outputs for the stego hash and call `reconcileOnChainArtifacts`
 2. **OP_RETURN match**: Parse OP_RETURN → `parseOPReturnHashes(script)` → try matching `wish_hash` against candidates (ingestions, proposals, contracts)
-3. **No-candidate fallback**: If no candidate matches but `stego_hash` is present, call `reconcileOnChainArtifacts` directly — the stego reconciler reads the v2 payload from disk and creates the contract
-4. This node's on-chain `ConfirmContract` (`maybeConfirmContract`, `promoteFundedContracts`, `markIngestionConfirmed` / `ensureMatchedContract` when `scanMayConfirm`) then calls `downloadSandboxArtifacts`. Unconfirmed still refuses. `processEvent`, sync gossip, and stego reconcile still do not extract. `POST .../sandbox/pull` stays as a manual retry.
+3. **No-candidate fallback**: If no candidate matches but `stego_hash` is present, record the contract on that block and queue a chain commitment. When `UPLOADS_DIR/<stego_hash>` is on disk, reconcile the v2 payload and confirm the row once the funding block is buried. An already confirmed row is not rewritten.
+4. This node's on-chain `ConfirmContract` (`maybeConfirmContract`, `promoteFundedContracts`, `applyChainCommitment`, `markIngestionConfirmed` / `ensureMatchedContract` when `scanMayConfirm`) then calls `downloadSandboxArtifacts`. Unconfirmed still refuses. `processEvent`, sync gossip, and stego reconcile still do not extract. `POST .../sandbox/pull` stays as a manual retry.
+5. **Fresh node**: tip tracking does not inscription-scan history. `contractDiscoverLoop` walks locally available blocks for the 64-byte OP_RETURN and fully stores only the blocks that carry one, so the blocks and contracts pages fill in after btcd and the mirror sync.
 
 **No pubsub or STARGATE_STEGO_APPROVAL_ENABLED required**: Any node watching the blockchain + syncing files via IPFS mirror can replicate proposal/task metadata. Unpacking the tarball is this node's on-chain confirm, not gossip or first-pass stego.
 
@@ -805,7 +806,7 @@ proposal metadata       — title, description, budget, tasks
 
 **No donation (`STARLIGHT_DONATION_ADDRESS` unset)**: skip the donation P2WPKH only. **OP_RETURN still ships** — `wish_hash || stego_hash` with `commitment_sats` default 1000 (min 546). Explicit `0` is a validation error. Do not omit the commitment because donation is off; that was the payout scar (`docs/history/zero_cost_funding_plan.md` argued the opposite and is rejected).
 
-**Stego image not yet on disk**: The peer logs "stego image not yet on disk, will arrive via mirror" and skips. Next block scan after mirror sync will succeed.
+**Stego image not yet on disk**: The block still records the contract, and the commitment stays in `chain-contracts.json`. When the mirror writes `UPLOADS_DIR/<stego_hash>`, reconcile runs and the contract is confirmed once the funding block is buried. A later block rescan is not required.
 
 **Sandbox tarball not on disk**: Falls back to IPFS content-addressed fetch via `sandbox_tarball_cid` if available, otherwise waits for mirror sync.
 
@@ -828,6 +829,7 @@ proposal metadata       — title, description, budget, tasks
 |---|---|
 | `backend/bitcoin/psbt_builder.go` | PSBT construction, `buildDonationOutputs()` — 2 hashes only |
 | `backend/bitcoin/block_monitor.go` | OP_RETURN parsing (`parseOPReturnHashes`), `reconcileOnChainArtifacts()`, `confirmContractTasks()` |
+| `backend/bitcoin/block_monitor_discover.go` | Historical OP_RETURN walk and pending stego retry (`chain-contracts.json`) |
 | `backend/app/smart_contract/stego_publish.go` | `PreparePublishArtifacts()` — builds stego + sandbox BEFORE PSBT; `FinalizePublishArtifacts()` — optional IPFS upload after |
 | `backend/app/smart_contract/stego_reconcile.go` | `ReconcileStego()`, `reconcileStegoFromLocalFile()`, `downloadSandboxArtifacts()`, `upsertContractFromStegoPayload()` |
 | `backend/app/smart_contract/server.go` | `handleContractPSBT()` — calls PreparePublishArtifacts, passes stego hash to PSBT builder |

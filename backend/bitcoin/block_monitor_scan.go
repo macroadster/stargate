@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -737,40 +738,54 @@ func (bm *BlockMonitor) maybeReconcileStego(rec *services.IngestionRecord) {
 	}
 }
 
+// errStegoNotOnDisk means the OP_RETURN stego hash is not in UPLOADS_DIR yet.
+// The commitment stays pending until the IPFS mirror writes that file.
+var errStegoNotOnDisk = errors.New("stego image not on disk")
+
+func uploadsDirForStego() string {
+	uploadsDir := strings.TrimSpace(os.Getenv("UPLOADS_DIR"))
+	if uploadsDir == "" {
+		return "data/uploads"
+	}
+	return uploadsDir
+}
+
+func stegoFileOnDisk(stegoHash string) bool {
+	stegoHash = strings.ToLower(strings.TrimSpace(stegoHash))
+	if len(stegoHash) != 64 {
+		return false
+	}
+	_, err := os.Stat(datadir.PartResolve(uploadsDirForStego(), stegoHash))
+	return err == nil
+}
+
 // reconcileOnChainArtifacts uses the stego_hash from the OP_RETURN to find
 // the stego image in UPLOADS_DIR and apply the v2 payload (proposal, tasks,
 // sandbox_hash). Metadata only — it does not unpack the sandbox tarball.
 // This is the primary replication path — no pubsub or
 // STARGATE_STEGO_APPROVAL_ENABLED needed.
-func (bm *BlockMonitor) reconcileOnChainArtifacts(contractID, stegoHash string) {
-	if contractID == "" {
-		return
+func (bm *BlockMonitor) reconcileOnChainArtifacts(contractID, stegoHash string) error {
+	if contractID == "" || strings.TrimSpace(stegoHash) == "" {
+		return fmt.Errorf("missing contract or stego hash")
 	}
-	uploadsDir := strings.TrimSpace(os.Getenv("UPLOADS_DIR"))
-	if uploadsDir == "" {
-		uploadsDir = "data/uploads"
+	if !stegoFileOnDisk(stegoHash) {
+		log.Printf("oracle reconcile: stego image %s not yet on disk for %s (will retry when the mirror delivers it)", stegoHash, contractID)
+		return errStegoNotOnDisk
 	}
-
-	// Reconcile stego image: find UPLOADS_DIR/<stegoHash> and extract
-	// the embedded v2 payload (proposal + tasks + sandbox_hash + metadata).
-	if stegoHash != "" {
-		stegoPath := datadir.PartResolve(uploadsDir, stegoHash)
-		if _, err := os.Stat(stegoPath); err == nil {
-			log.Printf("oracle reconcile: found stego image on disk for %s at %s, reconciling", contractID, stegoPath)
-			if bm.stegoReconciler != nil {
-				ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
-				defer cancel()
-				// Pass stegoHash as both CID and expected hash — reconcileStegoFromIPFS
-				// will fail (no IPFS CID), so use the local-file reconcile path instead.
-				// The stego reconciler already knows how to read from UPLOADS_DIR.
-				if err := bm.stegoReconciler.ReconcileStego(ctx, stegoHash, stegoHash); err != nil {
-					log.Printf("oracle reconcile: stego reconcile from on-chain hash failed for %s: %v", contractID, err)
-				}
-			}
-		} else {
-			log.Printf("oracle reconcile: stego image %s not yet on disk for %s (will arrive via mirror)", stegoHash, contractID)
-		}
+	stegoPath := datadir.PartResolve(uploadsDirForStego(), stegoHash)
+	log.Printf("oracle reconcile: found stego image on disk for %s at %s, reconciling", contractID, stegoPath)
+	if bm.stegoReconciler == nil {
+		return fmt.Errorf("no stego reconciler")
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	// Pass stegoHash as both CID and expected hash. ReconcileStego treats a
+	// 64-hex id as UPLOADS_DIR/<hash>, which is where the mirror writes it.
+	if err := bm.stegoReconciler.ReconcileStego(ctx, stegoHash, stegoHash); err != nil {
+		log.Printf("oracle reconcile: stego reconcile from on-chain hash failed for %s: %v", contractID, err)
+		return err
+	}
+	return nil
 }
 
 func txidImageFilename(txid, fallback string) string {

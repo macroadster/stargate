@@ -2,17 +2,19 @@ package bitcoin
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/btcsuite/btcd/wire/v2"
 )
 
 type mockChain struct {
-	height  int64
-	hash    string
-	hex     string
-	hashes  map[int64]string
-	network string
+	height      int64
+	hash        string
+	hex         string
+	hexByHeight map[int64]string
+	hashes      map[int64]string
+	network     string
 }
 
 func (m *mockChain) Network() string {
@@ -33,6 +35,12 @@ func (m *mockChain) GetBlockHash(ctx context.Context, height int64) (string, err
 	return m.hash, nil
 }
 func (m *mockChain) GetRawBlockHex(ctx context.Context, height int64) (string, error) {
+	if m.hexByHeight != nil {
+		if h, ok := m.hexByHeight[height]; ok {
+			return h, nil
+		}
+		return "", fmt.Errorf("missing block %d", height)
+	}
 	return m.hex, nil
 }
 func (m *mockChain) GetRawTx(ctx context.Context, txid string) (*wire.MsgTx, error) {

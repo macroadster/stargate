@@ -48,6 +48,10 @@ API keys are issued by `POST /api/auth/challenge` + `POST /api/auth/verify`.
 | `BTCD_CONNECT` / `BTCD_ADDPEER` | unset | Pin trusted peers only |
 | `CHAIN_SETTLEMENT_CONFIRMATIONS` | `20` | Proofs stay `provisional` until this depth |
 | `STARLIGHT_DONATION_ADDRESS` | unset | Optional extra P2WPKH in the funding PSBT. **Does not gate OP_RETURN.** |
+| `BLOCK_MONITOR_CONTRACT_DISCOVER` | on | Walk local blocks for `wish_hash\|\|stego_hash`. `off` leaves history to on-demand scan |
+| `BLOCK_MONITOR_CONTRACT_DISCOVER_INTERVAL` | `5s` | Pause between walk batches |
+| `BLOCK_MONITOR_CONTRACT_DISCOVER_BATCH` | `100` | Blocks read per batch. Cap 500 |
+| `BLOCK_MONITOR_CONTRACT_DISCOVER_STORE_ATTEMPTS` | `5` | After this many store failures, skip that height and keep the pending commitment |
 
 Funding PSBTs always include the 64-byte OP_RETURN (`wish_hash \|\| stego_hash`)
 with `commitment_sats` default **1000** (min 546). Explicit `0` is a validation
