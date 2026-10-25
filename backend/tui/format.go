@@ -7,6 +7,43 @@ import (
 	"unicode/utf8"
 )
 
+// discoverLabel is the historical OP_RETURN walk for the status console.
+// The chain tip is the block height already on the snapshot.
+func discoverLabel(s Snapshot) string {
+	if !s.DiscoverEnabled {
+		return "off"
+	}
+	tip := s.BlockHeight
+	if tip <= 0 {
+		tip = s.TipLocal
+	}
+	cursor := s.DiscoverNext
+	if cursor < 0 {
+		cursor = 0
+	}
+	progress := formatInt(cursor)
+	if tip > 0 {
+		progress += " / " + formatInt(tip)
+	}
+	waiting := ""
+	if s.DiscoverPending > 0 {
+		waiting = " · " + formatInt(int64(s.DiscoverPending)) + " waiting"
+	}
+	if s.DiscoverWaiting {
+		if cursor > 0 || tip > 0 {
+			return "paused · " + progress + waiting
+		}
+		return "waiting for sync"
+	}
+	if tip > 0 && cursor > tip {
+		if s.DiscoverPending > 0 {
+			return "caught up" + waiting
+		}
+		return "caught up"
+	}
+	return progress + waiting
+}
+
 func formatInt(n int64) string {
 	neg := n < 0
 	if neg {
@@ -249,9 +286,9 @@ func FormatPlain(s Snapshot) string {
 		}
 		fmt.Fprintf(&b, "Uptime: %s\n", formatUptime(s.StartedAt, now))
 	}
-	if s.MonitorRunning || s.BlocksProcessed > 0 {
-		fmt.Fprintf(&b, "Block monitor: height %s, processed %s, inscriptions %s, contracts %s\n",
-			formatInt(s.MonitorHeight), formatInt(s.BlocksProcessed), formatInt(s.InscriptionsSeen), formatInt(s.ContractsSeen))
+	if s.MonitorRunning || s.BlocksProcessed > 0 || s.DiscoverEnabled {
+		fmt.Fprintf(&b, "Block monitor: height %s, processed %s, inscriptions %s, contracts %s, walk %s\n",
+			formatInt(s.MonitorHeight), formatInt(s.BlocksProcessed), formatInt(s.InscriptionsSeen), formatInt(s.ContractsSeen), discoverLabel(s))
 	}
 	return b.String()
 }

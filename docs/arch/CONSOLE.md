@@ -51,7 +51,7 @@ the port is open.
 | Chain height, headers, peers, IBD, hash | chain `NodeStatus` |
 | Lag / fork | external tip check (read-only) |
 | Scanner | process scanner manager |
-| Block monitor | in-memory counters (no storage read) |
+| Block monitor | in-memory counters (no storage read), including the historical contract walk |
 | IPFS mirror | uploads topic, wish topic, mesh peers |
 | Agents | the same `STARGATE_AGENT_*` switch the orchestrator uses |
 

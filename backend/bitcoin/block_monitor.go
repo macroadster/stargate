@@ -388,7 +388,7 @@ func (bm *BlockMonitor) IsRunning() bool {
 }
 
 // MonitorStats is the in-memory block-monitor counters for the status console.
-// It does not query storage.
+// It does not query storage. Discover fields are the historical OP_RETURN walk.
 type MonitorStats struct {
 	Running             bool
 	CurrentHeight       int64
@@ -399,6 +399,10 @@ type MonitorStats struct {
 	TotalStegoContracts int64
 	LastProcess         time.Duration
 	CheckInterval       time.Duration
+	DiscoverEnabled     bool
+	DiscoverNext        int64
+	DiscoverPending     int
+	DiscoverWaiting     bool
 }
 
 // SnapshotStats copies the in-memory counters. A nil monitor returns the zero value.
@@ -407,8 +411,7 @@ func (bm *BlockMonitor) SnapshotStats() MonitorStats {
 		return MonitorStats{}
 	}
 	bm.mu.RLock()
-	defer bm.mu.RUnlock()
-	return MonitorStats{
+	st := MonitorStats{
 		Running:             bm.isRunning,
 		CurrentHeight:       bm.currentHeight,
 		BlocksProcessed:     bm.blocksProcessed,
@@ -418,7 +421,17 @@ func (bm *BlockMonitor) SnapshotStats() MonitorStats {
 		TotalStegoContracts: bm.totalStegoContracts,
 		LastProcess:         bm.lastProcessTime,
 		CheckInterval:       bm.checkInterval,
+		DiscoverEnabled:     contractDiscoverEnabled(),
+		// Written by the discover loop. A torn read only lags the console by one sample.
+		DiscoverWaiting: bm.discoverWaitLogged,
 	}
+	bm.mu.RUnlock()
+	bm.replicationMu.Lock()
+	bm.loadReplicationLocked()
+	st.DiscoverNext = bm.replication.NextHeight
+	st.DiscoverPending = len(bm.replication.Pending)
+	bm.replicationMu.Unlock()
+	return st
 }
 
 // GetStatistics returns current monitoring statistics

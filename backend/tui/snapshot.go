@@ -79,6 +79,12 @@ type Snapshot struct {
 	ImagesSeen       int64 `json:"images_seen"`
 	LastProcessMS    int64 `json:"last_process_ms"`
 
+	// Historical OP_RETURN walk. DiscoverNext is the next height to read.
+	DiscoverEnabled bool  `json:"discover_enabled"`
+	DiscoverNext    int64 `json:"discover_next"`
+	DiscoverPending int   `json:"discover_pending"`
+	DiscoverWaiting bool  `json:"discover_waiting"`
+
 	MirrorEnabled bool   `json:"mirror_enabled"`
 	MirrorPeerID  string `json:"mirror_peer_id,omitempty"`
 	MirrorUploads int    `json:"mirror_uploads"`

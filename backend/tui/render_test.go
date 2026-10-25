@@ -42,6 +42,9 @@ func sampleSnap() Snapshot {
 		InscriptionsSeen: 18,
 		ContractsSeen:    6,
 		ImagesSeen:       40,
+		DiscoverEnabled:  true,
+		DiscoverNext:     62900,
+		DiscoverPending:  49,
 		MirrorEnabled:    true,
 		WishMirrorOn:     true,
 		MirrorUploads:    12,
@@ -107,10 +110,13 @@ func TestRenderWelcomeAndMonitor(t *testing.T) {
 
 	mon := Render(snap, ViewState{View: ViewMonitor, Now: snap.SampledAt}, 100, 40)
 	mtext := visible(mon)
-	for _, want := range []string{"Block monitor", "IPFS mirror", "102,441", "Peers", "12D3KooWpeer", "http://127.0.0.1:3001"} {
+	for _, want := range []string{"Block monitor", "IPFS mirror", "102,441", "Peers", "12D3KooWpeer", "http://127.0.0.1:3001", "62,900 / 102,441 · 49 waiting"} {
 		if !strings.Contains(mtext, want) {
 			t.Fatalf("monitor missing %q\n%s", want, mtext)
 		}
+	}
+	if !strings.Contains(mtext, "Inscriptions 18") {
+		t.Fatalf("inscriptions count is flush against its label:\n%s", mtext)
 	}
 	assertWidth(t, mon, 100)
 
@@ -229,5 +235,32 @@ func TestApplyKey(t *testing.T) {
 	}
 	if quit, _ := applyKey(&s, 'q'); !quit {
 		t.Fatal("quit")
+	}
+}
+
+func TestDiscoverLabel(t *testing.T) {
+	if got := discoverLabel(Snapshot{}); got != "off" {
+		t.Fatalf("disabled: %q", got)
+	}
+	if got := discoverLabel(Snapshot{DiscoverEnabled: true, DiscoverWaiting: true}); got != "waiting for sync" {
+		t.Fatalf("waiting: %q", got)
+	}
+	paused := discoverLabel(Snapshot{DiscoverEnabled: true, DiscoverWaiting: true, DiscoverNext: 1000, BlockHeight: 5000})
+	if paused != "paused · 1,000 / 5,000" {
+		t.Fatalf("paused: %q", paused)
+	}
+	caught := discoverLabel(Snapshot{DiscoverEnabled: true, DiscoverNext: 501, BlockHeight: 500, DiscoverPending: 2})
+	if caught != "caught up · 2 waiting" {
+		t.Fatalf("caught up: %q", caught)
+	}
+	plain := FormatPlain(Snapshot{
+		MonitorRunning:  true,
+		DiscoverEnabled: true,
+		DiscoverNext:    62900,
+		BlockHeight:     157595,
+		DiscoverPending: 49,
+	})
+	if !strings.Contains(plain, "walk 62,900 / 157,595 · 49 waiting") {
+		t.Fatalf("plain walk:\n%s", plain)
 	}
 }

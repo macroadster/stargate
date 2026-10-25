@@ -448,8 +448,16 @@ func (c *canvas) kv(x, y, width int, label, value string, vs style) {
 	if width < 28 {
 		labW = 10
 	}
+	if labW > width-2 {
+		labW = width - 2
+	}
+	if labW < 1 {
+		labW = 1
+	}
+	// One blank column after the label. "Inscriptions" is 12 runes, so without
+	// this the count is drawn in the next cell and reads as Inscriptions18.
 	c.print(x, y, style{fg: fgDim}, shorten(label, labW))
-	c.print(x+labW, y, vs, shorten(value, width-labW))
+	c.print(x+labW+1, y, vs, shorten(value, width-labW-1))
 }
 
 func (c *canvas) logLines(x, y, limit int, snap Snapshot) {
@@ -499,7 +507,7 @@ func renderMonitor(c *canvas, snap Snapshot, vs ViewState) {
 			c.nodeBox(1+leftW+gap, topY, rightW, topH, snap, now)
 		}
 		botY := topY + topH
-		botH := 8
+		botH := 9
 		if botY+botH > bottomLimit-2 {
 			botH = bottomLimit - botY - 1
 		}
@@ -576,6 +584,7 @@ func (c *canvas) monitorBox(x, y, w, h int, snap Snapshot) {
 	rows := [][2]string{
 		{"State", state},
 		{"Height", heightField(snap.MonitorHeight, snap.MonitorRunning || snap.MonitorHeight > 0)},
+		{"Walk", discoverLabel(snap)},
 		{"Processed", formatInt(snap.BlocksProcessed)},
 		{"Inscriptions", formatInt(snap.InscriptionsSeen)},
 		{"Contracts", formatInt(snap.ContractsSeen)},

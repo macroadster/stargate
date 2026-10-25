@@ -198,6 +198,10 @@ func buildConsoleSnapshot(chain *bitcoin.ChainRuntime, mon *bitcoin.BlockMonitor
 		s.ContractsSeen = st.TotalStegoContracts
 		s.ImagesSeen = st.TotalImages
 		s.LastProcessMS = st.LastProcess.Milliseconds()
+		s.DiscoverEnabled = st.DiscoverEnabled
+		s.DiscoverNext = st.DiscoverNext
+		s.DiscoverPending = st.DiscoverPending
+		s.DiscoverWaiting = st.DiscoverWaiting
 	}
 	if mirror != nil {
 		ms := mirror.Status()

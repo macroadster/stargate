@@ -182,6 +182,26 @@ type errString string
 
 func (e errString) Error() string { return string(e) }
 
+func TestSnapshotStatsReadsDiscoverCursor(t *testing.T) {
+	t.Setenv("BLOCKS_DIR", t.TempDir())
+	t.Setenv("BLOCK_MONITOR_CONTRACT_DISCOVER", "off")
+	bm := NewBlockMonitor(NewBitcoinNodeClient("http://127.0.0.1:1"))
+	bm.replicationLoaded = true
+	bm.replication.NextHeight = 62900
+	bm.replication.Pending = []chainCommitment{{
+		Height: 156928, TxID: strings.Repeat("ab", 32),
+		WishHash: strings.Repeat("11", 32), StegoHash: strings.Repeat("22", 32),
+	}}
+	bm.discoverWaitLogged = true
+	st := bm.SnapshotStats()
+	if st.DiscoverEnabled {
+		t.Fatal("discover reported enabled")
+	}
+	if st.DiscoverNext != 62900 || st.DiscoverPending != 1 || !st.DiscoverWaiting {
+		t.Fatalf("stats=%+v", st)
+	}
+}
+
 func TestDiscoverContractBlocksQueuesHistory(t *testing.T) {
 	t.Setenv("BLOCK_MONITOR_CONTRACT_DISCOVER_STORE_ATTEMPTS", "1")
 	_, stego, script := opReturnWishStego(t, 0x33, 0x44)
