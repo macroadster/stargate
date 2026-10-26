@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"math"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/btcsuite/btcd/chainhash/v2"
 	"github.com/btcsuite/btcd/txscript/v2"
@@ -95,7 +97,7 @@ func newReplicationMonitor(t *testing.T, tip int64) (*BlockMonitor, *fullMockSwe
 }
 
 func TestNoCandidateOPReturnWaitsForMirrorThenConfirms(t *testing.T) {
-	wish, stego, script := opReturnWishStego(t, 0x11, 0x22)
+	wish, stego, script := opReturnWishStego(t, 0x11, 0x81)
 	bm, store := newReplicationMonitor(t, 500)
 	uploads := os.Getenv("UPLOADS_DIR")
 	var calls int
@@ -167,7 +169,7 @@ func TestNoCandidateOPReturnWaitsForMirrorThenConfirms(t *testing.T) {
 	store.confirmErr = errConfirmRewrite
 	done, _ := bm.applyChainCommitment(chainCommitment{
 		Height: 100, TxID: tx.TxID, WishHash: wish, StegoHash: stego,
-	})
+	}, pendingClock{})
 	if !done {
 		t.Fatal("second apply rewrote or failed a confirmed contract")
 	}
@@ -204,7 +206,7 @@ func TestSnapshotStatsReadsDiscoverCursor(t *testing.T) {
 
 func TestDiscoverContractBlocksQueuesHistory(t *testing.T) {
 	t.Setenv("BLOCK_MONITOR_CONTRACT_DISCOVER_STORE_ATTEMPTS", "1")
-	_, stego, script := opReturnWishStego(t, 0x33, 0x44)
+	_, stego, script := opReturnWishStego(t, 0x91, 0xa2)
 	bm, _ := newReplicationMonitor(t, 2)
 	chain := &mockChain{
 		height: 2,
@@ -227,5 +229,189 @@ func TestDiscoverContractBlocksQueuesHistory(t *testing.T) {
 	}
 	if bm.replication.Pending[0].Height != 2 || bm.replication.Pending[0].StegoHash != stego {
 		t.Fatalf("pending=%+v", bm.replication.Pending[0])
+	}
+}
+
+func TestParseOPReturnHashesRejectsForeignPayloads(t *testing.T) {
+	wish, stego, script := opReturnWishStego(t, 0xab, 0xcd)
+	gotWish, gotStego, ok := parseOPReturnHashes(script)
+	if !ok || gotWish != wish || gotStego != stego {
+		t.Fatalf("real pair ok=%v wish=%s stego=%s", ok, gotWish, gotStego)
+	}
+
+	// The on-chain shape checked against block 157248.
+	realWish, _ := hex.DecodeString("41a974b813b024a3817c9c99b5406cc5131a00406c76a4e01fd7519974ccfb40")
+	realStego, _ := hex.DecodeString("693e48a65e37e6ca2d631ae43192e15448a691d0312648eafb14eea87c0bbe60")
+	realScript, err := txscript.NewScriptBuilder().AddOp(txscript.OP_RETURN).AddData(append(append([]byte{}, realWish...), realStego...)).Script()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok := parseOPReturnHashes(realScript); !ok {
+		t.Fatal("rejected a real wish||stego commitment")
+	}
+
+	crc := []byte(`{"p":"crc-20","op":"transfer","tick":"LEAF","amt":"10000000000"}`)
+	for len(crc) < 64 {
+		crc = append(crc, ' ')
+	}
+	crc = crc[:64]
+	crcScript, err := txscript.NewScriptBuilder().AddOp(txscript.OP_RETURN).AddData(crc).Script()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok := parseOPReturnHashes(crcScript); ok {
+		t.Fatal("accepted CRC-20 JSON as a commitment")
+	}
+
+	split, err := txscript.NewScriptBuilder().AddOp(txscript.OP_RETURN).AddData(bytes.Repeat([]byte{0xab}, 32)).AddData(bytes.Repeat([]byte{0xcd}, 32)).Script()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok := parseOPReturnHashes(split); ok {
+		t.Fatal("accepted two pushes concatenated to 64 bytes")
+	}
+
+	same := append(bytes.Repeat([]byte{0xab}, 32), bytes.Repeat([]byte{0xab}, 32)...)
+	sameScript, err := txscript.NewScriptBuilder().AddOp(txscript.OP_RETURN).AddData(same).Script()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok := parseOPReturnHashes(sameScript); ok {
+		t.Fatal("accepted wish==stego")
+	}
+
+	ascii := []byte("00000000c8b6799badf159a98a41b4a82a0585637e73b7a07432e8179006f242")
+	if len(ascii) != 64 {
+		t.Fatalf("ascii fixture len %d", len(ascii))
+	}
+	asciiScript, err := txscript.NewScriptBuilder().AddOp(txscript.OP_RETURN).AddData(ascii).Script()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok := parseOPReturnHashes(asciiScript); ok {
+		t.Fatal("accepted ASCII-hex payload")
+	}
+}
+
+func TestNoteChainCommitmentKeepsLatestWish(t *testing.T) {
+	bm, _ := newReplicationMonitor(t, 500)
+	wish := strings.Repeat("ab", 32)
+	older := chainCommitment{Height: 5, TxID: strings.Repeat("aa", 32), WishHash: wish, StegoHash: strings.Repeat("cd", 32)}
+	newer := chainCommitment{Height: 9, TxID: strings.Repeat("bb", 32), WishHash: wish, StegoHash: strings.Repeat("11", 32)}
+	bm.noteChainCommitment(older)
+	bm.noteChainCommitment(newer)
+	bm.noteChainCommitment(chainCommitment{Height: 3, TxID: strings.Repeat("cc", 32), WishHash: wish, StegoHash: strings.Repeat("ef", 32)})
+	bm.replicationMu.Lock()
+	defer bm.replicationMu.Unlock()
+	if len(bm.replication.Pending) != 1 {
+		t.Fatalf("pending=%d %+v", len(bm.replication.Pending), bm.replication.Pending)
+	}
+	got := bm.replication.Pending[0]
+	if got.Height != 9 || got.TxID != newer.TxID || got.StegoHash != newer.StegoHash {
+		t.Fatalf("kept=%+v", got)
+	}
+}
+
+func TestLoadReplicationCompactsForeignCopies(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("BLOCKS_DIR", dir)
+	t.Setenv("UPLOADS_DIR", t.TempDir())
+	t.Setenv("BITCOIN_NETWORK", "testnet4")
+	wish := strings.Repeat("ab", 32)
+	crc := bytes.Repeat([]byte{'{'}, 64)
+	state := map[string]any{
+		"next_height": 157681,
+		"pending": []map[string]any{
+			{"height": 100, "txid": strings.Repeat("aa", 32), "wish_hash": wish, "stego_hash": strings.Repeat("cd", 32)},
+			{"height": 110, "txid": strings.Repeat("bb", 32), "wish_hash": wish, "stego_hash": strings.Repeat("11", 32)},
+			{"height": 120, "txid": strings.Repeat("cc", 32), "wish_hash": hex.EncodeToString(crc[:32]), "stego_hash": hex.EncodeToString(crc[32:])},
+			{"height": 130, "txid": strings.Repeat("dd", 32), "wish_hash": wish, "stego_hash": wish},
+		},
+	}
+	blob, err := json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "chain-contracts.json"), blob, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bm := NewBlockMonitor(NewBitcoinNodeClient("http://127.0.0.1:1"))
+	bm.SetChainBackend(&mockChain{height: 100})
+	bm.replicationMu.Lock()
+	bm.loadReplicationLocked()
+	if bm.replication.PendingVersion != pendingQueueVersion {
+		t.Fatalf("version=%d", bm.replication.PendingVersion)
+	}
+	if len(bm.replication.Pending) != 1 || !bm.replication.Pending[0].Legacy || bm.replication.Pending[0].Height != 110 {
+		t.Fatalf("after compact=%+v", bm.replication.Pending)
+	}
+	bm.replicationMu.Unlock()
+
+	bm.retryPendingChainContracts("")
+	bm.replicationMu.Lock()
+	defer bm.replicationMu.Unlock()
+	if len(bm.replication.Pending) != 0 {
+		t.Fatalf("legacy miss still pending: %+v", bm.replication.Pending)
+	}
+}
+
+func TestPendingMissExpiresAfterGraceButNotWithContract(t *testing.T) {
+	bm, store := newReplicationMonitor(t, 500)
+	wish := strings.Repeat("ab", 32)
+	stego := strings.Repeat("cd", 32)
+	old := time.Now().Add(-7 * time.Hour).Unix()
+	row := chainCommitment{
+		Height: 10, TxID: strings.Repeat("aa", 32),
+		WishHash: wish, StegoHash: stego, MissingSince: old,
+	}
+	clock := pendingClock{now: time.Now().Unix(), grace: 6 * time.Hour, caught: old, pastTip: true}
+	done, _ := bm.applyChainCommitment(row, clock)
+	if !done {
+		t.Fatal("expected an old miss to expire once the walk is caught up")
+	}
+
+	store.contracts = []smart_contract.Contract{{
+		ContractID: wish,
+		Status:     "active",
+	}}
+	done, kept := bm.applyChainCommitment(row, clock)
+	if done {
+		t.Fatal("expired a wish that already has a contract row")
+	}
+	if kept.WishHash != wish {
+		t.Fatalf("kept=%+v", kept)
+	}
+
+	fresh := clock
+	fresh.caught = fresh.now
+	freshRow := row
+	freshRow.MissingSince = fresh.now
+	done, _ = bm.applyChainCommitment(freshRow, fresh)
+	if done {
+		t.Fatal("expired a miss before the grace elapsed")
+	}
+}
+
+func TestApplyGivesUpAfterReconcileLimit(t *testing.T) {
+	bm, _ := newReplicationMonitor(t, 500)
+	wish := strings.Repeat("ab", 32)
+	stego := strings.Repeat("cd", 32)
+	if err := os.WriteFile(filepath.Join(os.Getenv("UPLOADS_DIR"), stego), []byte("not-stego"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bm.SetStegoReconciler(StegoReconcilerFunc(func(context.Context, string, string) error {
+		return errString("stego payload rejected")
+	}))
+	row := chainCommitment{
+		Height: 500, TxID: strings.Repeat("aa", 32),
+		WishHash: wish, StegoHash: stego,
+		Attempts: contractDiscoverReconcileLimit - 1,
+	}
+	done, updated := bm.applyChainCommitment(row, pendingClock{})
+	if !done {
+		t.Fatal("kept retrying after the reconcile limit")
+	}
+	if updated.Attempts != contractDiscoverReconcileLimit {
+		t.Fatalf("attempts=%d", updated.Attempts)
 	}
 }

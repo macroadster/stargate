@@ -364,35 +364,126 @@ func (bm *BlockMonitor) createSmartContractsFromScanResults(scanResults []map[st
 
 // parseOPReturnHashes extracts wish_hash and stego_image_hash from an
 // OP_RETURN output.  Returns (wishHash, stegoHash, ok).
-// The expected formats are:
+// The expected formats are a single data push:
 //
 //	OP_RETURN <64 bytes: wish_hash(32) || stego_hash(32)>
 //	OP_RETURN <32 bytes: wish_hash only>
 //
+// Both halves must look like raw SHA-256 digests. Text protocols that also
+// use a 64-byte OP_RETURN (CRC-20 JSON, Omni, ASCII hex) are rejected, as
+// are concatenated pushes and a payload whose two halves are identical.
 // The sandbox_hash is not on-chain — it lives inside the stego v2 JSON
 // payload.  Peers find the stego image by its on-chain hash, extract the
 // payload, and read sandbox_hash from there.
 func parseOPReturnHashes(script []byte) (string, string, bool) {
-	if len(script) < 2 || script[0] != txscript.OP_RETURN {
+	payload, ok := opReturnSinglePush(script)
+	if !ok || !commitmentBytesOK(payload) {
 		return "", "", false
 	}
-	// Disassemble the script to get the data pushes.
-	tokenizer := txscript.MakeScriptTokenizer(0, script[1:])
-	var data []byte
-	for tokenizer.Next() {
-		data = append(data, tokenizer.Data()...)
-	}
-	if tokenizer.Err() != nil {
-		return "", "", false
-	}
-	switch len(data) {
+	switch len(payload) {
 	case 64: // wish_hash(32) || stego_hash(32)
-		return hex.EncodeToString(data[:32]), hex.EncodeToString(data[32:64]), true
+		return hex.EncodeToString(payload[:32]), hex.EncodeToString(payload[32:64]), true
 	case 32: // wish_hash only
-		return hex.EncodeToString(data[:32]), "", true
+		return hex.EncodeToString(payload), "", true
 	default:
 		return "", "", false
 	}
+}
+
+// opReturnSinglePush returns the data of an OP_RETURN that is exactly one
+// push. Extra pushes and non-push opcodes (Rune OP_13, for example) are
+// rejected so unrelated scripts cannot be glued into a 64-byte payload.
+func opReturnSinglePush(script []byte) ([]byte, bool) {
+	if len(script) < 2 || script[0] != txscript.OP_RETURN {
+		return nil, false
+	}
+	tokenizer := txscript.MakeScriptTokenizer(0, script[1:])
+	var data []byte
+	pushes := 0
+	for tokenizer.Next() {
+		if tokenizer.Opcode() > txscript.OP_PUSHDATA4 {
+			return nil, false
+		}
+		pushes++
+		data = append(data, tokenizer.Data()...)
+	}
+	if tokenizer.Err() != nil || pushes != 1 {
+		return nil, false
+	}
+	return data, true
+}
+
+// commitmentBytesOK reports whether payload is one or two raw digest halves.
+// A Stargate commitment is wish_hash||stego_hash, each a SHA-256 of image
+// bytes. Foreign 64-byte OP_RETURNs are usually text, ASCII-hex, zero-padded,
+// or the same 32 bytes twice.
+func commitmentBytesOK(payload []byte) bool {
+	switch len(payload) {
+	case 32:
+		return rawDigestHalf(payload)
+	case 64:
+		if bytes.Equal(payload[:32], payload[32:]) {
+			return false
+		}
+		if !rawDigestHalf(payload[:32]) || !rawDigestHalf(payload[32:]) {
+			return false
+		}
+		return printableRatio(payload) <= 0.60
+	default:
+		return false
+	}
+}
+
+func rawDigestHalf(b []byte) bool {
+	if len(b) != 32 {
+		return false
+	}
+	printable := 0
+	hexish := true
+	for i, c := range b {
+		if c >= 0x20 && c < 0x7f {
+			printable++
+		}
+		if !isASCIIHex(c) {
+			hexish = false
+		}
+		if i+4 <= len(b) && b[i] == 0 && b[i+1] == 0 && b[i+2] == 0 && b[i+3] == 0 {
+			return false
+		}
+	}
+	if hexish || printable*4 > len(b)*3 { // more than 3/4 printable
+		return false
+	}
+	for _, magic := range [][]byte{
+		[]byte("{"),
+		[]byte("omni"),
+		[]byte("ord"),
+		[]byte("BONO"),
+		[]byte("VIA_"),
+		[]byte("=:"),
+	} {
+		if bytes.HasPrefix(b, magic) {
+			return false
+		}
+	}
+	return true
+}
+
+func isASCIIHex(c byte) bool {
+	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
+}
+
+func printableRatio(b []byte) float64 {
+	if len(b) == 0 {
+		return 0
+	}
+	n := 0
+	for _, c := range b {
+		if c >= 0x20 && c < 0x7f {
+			n++
+		}
+	}
+	return float64(n) / float64(len(b))
 }
 
 func (bm *BlockMonitor) findImageForScanResult(images []ExtractedImageData, result map[string]any) *ExtractedImageData {

@@ -20,30 +20,45 @@ import (
 	"stargate-backend/services"
 )
 
+// pendingQueueVersion is the chain-contracts.json shape that stores one row
+// per wish and only raw hash pairs. Older files are compacted on load.
+const pendingQueueVersion = 2
+
+// contractDiscoverReconcileLimit is how many times a mirrored file may fail
+// to produce a contract row before the walk gives up on that wish.
+const contractDiscoverReconcileLimit = 20
+
 // chainReplicationState is the fresh-node cursor. Tip-only block monitoring
 // does not walk history. This file remembers how far the OP_RETURN walk got
 // and which commitments are still waiting on a mirrored stego image.
 type chainReplicationState struct {
-	NextHeight int64             `json:"next_height"`
-	FailHeight int64             `json:"fail_height,omitempty"`
-	FailCount  int               `json:"fail_count,omitempty"`
-	Pending    []chainCommitment `json:"pending,omitempty"`
+	NextHeight     int64             `json:"next_height"`
+	FailHeight     int64             `json:"fail_height,omitempty"`
+	FailCount      int               `json:"fail_count,omitempty"`
+	PendingVersion int               `json:"pending_version,omitempty"`
+	CaughtUpSince  int64             `json:"caught_up_since,omitempty"`
+	Pending        []chainCommitment `json:"pending,omitempty"`
 }
 
-// chainCommitment is one on-chain wish_hash||stego_hash. The contracts page
-// lists it only after the stego image is reconciled and the funding block is
-// buried. The blocks page lists it as soon as that block is stored.
+// chainCommitment is one on-chain wish. The contracts page lists it only
+// after the stego image is reconciled and the funding block is buried.
+// The blocks page lists it as soon as that block is stored.
+// A later transaction for the same wish replaces this row.
 type chainCommitment struct {
-	Height     int64  `json:"height"`
-	TxID       string `json:"txid"`
-	WishHash   string `json:"wish_hash"`
-	StegoHash  string `json:"stego_hash"`
-	Reconciled bool   `json:"reconciled,omitempty"`
-	Attempts   int    `json:"attempts,omitempty"`
+	Height       int64  `json:"height"`
+	TxID         string `json:"txid"`
+	WishHash     string `json:"wish_hash"`
+	StegoHash    string `json:"stego_hash"`
+	Reconciled   bool   `json:"reconciled,omitempty"`
+	Attempts     int    `json:"attempts,omitempty"`
+	MissingSince int64  `json:"missing_since,omitempty"`
+	Legacy       bool   `json:"legacy,omitempty"`
 }
 
+// key is the wish. Settlement is per wish, so a second transaction must not
+// become a second contract waiting for confirmation.
 func (c chainCommitment) key() string {
-	return c.TxID + "|" + c.WishHash + "|" + c.StegoHash
+	return c.WishHash
 }
 
 func (c chainCommitment) normalize() chainCommitment {
@@ -101,6 +116,19 @@ func contractDiscoverStoreAttempts() int {
 	return n
 }
 
+// contractDiscoverMissGrace is how long a new commitment may wait for its
+// stego file after the walk has caught up. Rows loaded from a pre-filter
+// queue are not held for this long; they drop on the first caught-up pass
+// when the file and the contract row are both still absent.
+func contractDiscoverMissGrace() time.Duration {
+	if v := strings.TrimSpace(os.Getenv("BLOCK_MONITOR_CONTRACT_DISCOVER_MISS_GRACE")); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d >= 0 {
+			return d
+		}
+	}
+	return 6 * time.Hour
+}
+
 func (bm *BlockMonitor) replicationPath() string {
 	if bm == nil || strings.TrimSpace(bm.blocksDir) == "" {
 		return ""
@@ -128,13 +156,33 @@ func (bm *BlockMonitor) loadReplicationLocked() {
 	for i := range st.Pending {
 		st.Pending[i] = st.Pending[i].normalize()
 	}
+	before := len(st.Pending)
+	pending, changed := compactPending(st.Pending)
+	st.Pending = pending
+	if st.PendingVersion < pendingQueueVersion {
+		for i := range st.Pending {
+			st.Pending[i].Legacy = true
+		}
+		st.PendingVersion = pendingQueueVersion
+		changed = true
+	}
 	bm.replication = st
+	if !changed {
+		return
+	}
+	if len(pending) != before {
+		log.Printf("contract discover: compacted pending queue from %d to %d", before, len(pending))
+	}
+	bm.saveReplicationLocked()
 }
 
 func (bm *BlockMonitor) saveReplicationLocked() {
 	path := bm.replicationPath()
 	if path == "" {
 		return
+	}
+	if bm.replication.PendingVersion < pendingQueueVersion {
+		bm.replication.PendingVersion = pendingQueueVersion
 	}
 	blob, err := json.MarshalIndent(bm.replication, "", "  ")
 	if err != nil {
@@ -216,7 +264,7 @@ func (bm *BlockMonitor) noteChainCommitment(c chainCommitment) {
 		return
 	}
 	c = c.normalize()
-	if c.Height < 0 || c.TxID == "" || c.WishHash == "" || len(c.StegoHash) != 64 {
+	if !pendingCommitmentOK(c) {
 		return
 	}
 	bm.replicationMu.Lock()
@@ -231,13 +279,84 @@ func (bm *BlockMonitor) noteChainCommitment(c chainCommitment) {
 }
 
 func (bm *BlockMonitor) upsertPendingLocked(c chainCommitment) bool {
+	if !pendingCommitmentOK(c) {
+		return false
+	}
 	for i := range bm.replication.Pending {
-		if bm.replication.Pending[i].key() == c.key() {
+		prev := &bm.replication.Pending[i]
+		if prev.WishHash != c.WishHash {
+			continue
+		}
+		if c.Height < prev.Height {
 			return false
 		}
+		if c.StegoHash == prev.StegoHash {
+			c.Reconciled = prev.Reconciled
+			c.Attempts = prev.Attempts
+			c.MissingSince = prev.MissingSince
+		}
+		c.Legacy = prev.Legacy
+		*prev = c
+		return false
 	}
 	bm.replication.Pending = append(bm.replication.Pending, c)
 	return true
+}
+
+// pendingCommitmentOK is the gate for the walk queue. One wish, two distinct
+// raw digests, and a real transaction.
+func pendingCommitmentOK(c chainCommitment) bool {
+	if c.Height < 0 || strings.TrimSpace(c.TxID) == "" {
+		return false
+	}
+	wish, errW := hex.DecodeString(c.WishHash)
+	stego, errS := hex.DecodeString(c.StegoHash)
+	if errW != nil || errS != nil || len(wish) != 32 || len(stego) != 32 {
+		return false
+	}
+	return commitmentBytesOK(append(append([]byte{}, wish...), stego...))
+}
+
+// compactPending drops payloads that are not a Stargate hash pair and keeps
+// the newest transaction for each wish.
+func compactPending(in []chainCommitment) ([]chainCommitment, bool) {
+	changed := false
+	byWish := make(map[string]chainCommitment, len(in))
+	order := make([]string, 0, len(in))
+	for _, c := range in {
+		c = c.normalize()
+		if !pendingCommitmentOK(c) {
+			changed = true
+			continue
+		}
+		prev, ok := byWish[c.WishHash]
+		if !ok {
+			byWish[c.WishHash] = c
+			order = append(order, c.WishHash)
+			continue
+		}
+		changed = true
+		if c.Height < prev.Height {
+			continue
+		}
+		if c.StegoHash == prev.StegoHash {
+			c.Reconciled = prev.Reconciled
+			c.Attempts = prev.Attempts
+			if c.MissingSince == 0 {
+				c.MissingSince = prev.MissingSince
+			}
+		}
+		c.Legacy = prev.Legacy || c.Legacy
+		byWish[c.WishHash] = c
+	}
+	if len(order) != len(in) {
+		changed = true
+	}
+	out := make([]chainCommitment, 0, len(order))
+	for _, wish := range order {
+		out = append(out, byWish[wish])
+	}
+	return out, changed
 }
 
 func (bm *BlockMonitor) retryPendingChainContracts(onlyStego string) {
@@ -248,26 +367,51 @@ func (bm *BlockMonitor) retryPendingChainContracts(onlyStego string) {
 	bm.replicationMu.Lock()
 	bm.loadReplicationLocked()
 	snapshot := append([]chainCommitment(nil), bm.replication.Pending...)
+	clock := pendingClock{
+		now:    time.Now().Unix(),
+		grace:  contractDiscoverMissGrace(),
+		caught: bm.replication.CaughtUpSince,
+		next:   bm.replication.NextHeight,
+	}
 	bm.replicationMu.Unlock()
 	if len(snapshot) == 0 {
 		return
 	}
+	if tip, err := bm.getChainTipHeight(); err == nil && tip >= 0 && clock.next > tip {
+		clock.pastTip = true
+	}
 	keep := make([]chainCommitment, 0, len(snapshot))
 	changed := false
+	expired := 0
+	gaveUp := 0
 	for _, c := range snapshot {
 		if onlyStego != "" && c.StegoHash != onlyStego && c.WishHash != onlyStego {
 			keep = append(keep, c)
 			continue
 		}
-		done, updated := bm.applyChainCommitment(c)
+		done, updated := bm.applyChainCommitment(c, clock)
 		if done {
 			changed = true
+			switch {
+			case updated.Legacy && clock.pastTip && !updated.Reconciled:
+				expired++
+			case !updated.Reconciled && updated.Attempts >= contractDiscoverReconcileLimit:
+				gaveUp++
+			case !updated.Reconciled && updated.MissingSince > 0 && clock.pastTip && !bm.contractRowExists(updated.WishHash):
+				expired++
+			}
 			continue
 		}
-		if updated.Reconciled != c.Reconciled || updated.Attempts != c.Attempts || updated.WishHash != c.WishHash {
+		if updated.Reconciled != c.Reconciled || updated.Attempts != c.Attempts || updated.WishHash != c.WishHash || updated.MissingSince != c.MissingSince || updated.Legacy != c.Legacy {
 			changed = true
 		}
 		keep = append(keep, updated)
+	}
+	if expired > 0 {
+		log.Printf("contract discover: dropped %d pending commitments with no stego image and no contract row", expired)
+	}
+	if gaveUp > 0 {
+		log.Printf("contract discover: dropped %d pending commitments after %d reconcile attempts", gaveUp, contractDiscoverReconcileLimit)
 	}
 	if !changed {
 		return
@@ -277,6 +421,23 @@ func (bm *BlockMonitor) retryPendingChainContracts(onlyStego string) {
 	bm.replication.Pending = mergePending(bm.replication.Pending, keep, snapshot)
 	bm.saveReplicationLocked()
 	bm.replicationMu.Unlock()
+}
+
+// pendingClock is one retry pass. now is unix seconds. pastTip is true when
+// the walk cursor is already above the chain tip.
+type pendingClock struct {
+	now     int64
+	grace   time.Duration
+	caught  int64
+	next    int64
+	pastTip bool
+}
+
+func (clock pendingClock) unixNow() int64 {
+	if clock.now > 0 {
+		return clock.now
+	}
+	return time.Now().Unix()
 }
 
 func mergePending(current, keep, snapshot []chainCommitment) []chainCommitment {
@@ -323,13 +484,26 @@ func mergePending(current, keep, snapshot []chainCommitment) []chainCommitment {
 // rewrite an already-confirmed height (stargate-3p2.3). A fresh node has no
 // row yet. Confirming here is the first write, and an existing confirmed or
 // completed row is left alone.
-func (bm *BlockMonitor) applyChainCommitment(c chainCommitment) (bool, chainCommitment) {
+func (bm *BlockMonitor) applyChainCommitment(c chainCommitment, clock pendingClock) (bool, chainCommitment) {
 	c = c.normalize()
-	if c.WishHash == "" || len(c.StegoHash) != 64 {
+	if !pendingCommitmentOK(c) {
 		return true, c
 	}
 	id := c.WishHash
+	if !c.Reconciled && c.Attempts >= contractDiscoverReconcileLimit {
+		return true, c
+	}
+	// Rows queued before the hash-pair filter have already been waiting.
+	// Once the walk is caught up, drop the ones that still have no image
+	// and no contract. A file or a row means this wish is real; keep it.
+	if c.Legacy && clock.pastTip && !stegoFileOnDisk(c.StegoHash) && !bm.contractRowExists(id) {
+		return true, c
+	}
+	if c.Legacy && (stegoFileOnDisk(c.StegoHash) || bm.contractRowExists(id)) {
+		c.Legacy = false
+	}
 	if !c.Reconciled && stegoFileOnDisk(c.StegoHash) {
+		c.MissingSince = 0
 		err := bm.reconcileOnChainArtifacts(id, c.StegoHash)
 		switch {
 		case err == nil && bm.contractRowExists(id):
@@ -340,12 +514,26 @@ func (bm *BlockMonitor) applyChainCommitment(c chainCommitment) (bool, chainComm
 			bm.logReconcileAttempt(c, fmt.Errorf("reconcile wrote no contract row"))
 		case errors.Is(err, errStegoNotOnDisk):
 			// Image disappeared between the stat and the read. Keep waiting.
+			if c.MissingSince == 0 {
+				c.MissingSince = clock.unixNow()
+			}
 		default:
 			c.Attempts++
 			bm.logReconcileAttempt(c, err)
 		}
 	}
+	if !c.Reconciled && c.Attempts >= contractDiscoverReconcileLimit {
+		return true, c
+	}
 	if !c.Reconciled {
+		if !stegoFileOnDisk(c.StegoHash) {
+			if c.MissingSince == 0 {
+				c.MissingSince = clock.unixNow()
+			}
+			if missExpired(c, clock, bm.contractRowExists(id)) {
+				return true, c
+			}
+		}
 		return false, c
 	}
 	if bm.chainContractSettled(id) {
@@ -367,6 +555,20 @@ func (bm *BlockMonitor) applyChainCommitment(c chainCommitment) (bool, chainComm
 	}
 	log.Printf("contract discover: confirmed %s at height %d tx %s", id, c.Height, c.TxID)
 	return true, c
+}
+
+func missExpired(c chainCommitment, clock pendingClock, hasContract bool) bool {
+	if hasContract || c.MissingSince <= 0 || !clock.pastTip || clock.caught <= 0 {
+		return false
+	}
+	grace := clock.grace
+	if grace < 0 {
+		grace = 0
+	}
+	now := clock.unixNow()
+	missed := time.Duration(now-c.MissingSince) * time.Second
+	caught := time.Duration(now-clock.caught) * time.Second
+	return missed >= grace && caught >= grace
 }
 
 func (bm *BlockMonitor) logReconcileAttempt(c chainCommitment, err error) {
@@ -407,7 +609,6 @@ func (bm *BlockMonitor) discoverContractBlocks(ctx context.Context) {
 	}
 	bm.discoverMu.Lock()
 	defer bm.discoverMu.Unlock()
-	bm.retryPendingChainContracts("")
 	if bm.chain != nil {
 		synced, syncErr := bm.chain.Synced(context.Background())
 		if syncErr == nil && !synced {
@@ -415,11 +616,16 @@ func (bm *BlockMonitor) discoverContractBlocks(ctx context.Context) {
 				log.Printf("contract discover: waiting until btcd finishes initial block download")
 				bm.discoverWaitLogged = true
 			}
+			bm.retryPendingChainContracts("")
 			return
 		}
 	}
 	bm.discoverWaitLogged = false
 	tip, err := bm.getChainTipHeight()
+	if err == nil && tip >= 0 {
+		bm.markDiscoverCaughtUp(tip)
+	}
+	bm.retryPendingChainContracts("")
 	if err != nil || tip < 0 {
 		return
 	}
@@ -497,9 +703,30 @@ func (bm *BlockMonitor) discoverContractBlocks(ctx context.Context) {
 		failCount = 0
 	}
 	bm.setDiscoverProgress(next, failHeight, failCount)
+	if next > tip {
+		bm.markDiscoverCaughtUp(tip)
+	}
 	if next > start {
 		bm.logDiscoverProgress(start, next-1, tip)
 	}
+}
+
+// markDiscoverCaughtUp records the first time the walk cursor passed the tip.
+// Miss expiry starts from this clock, not from block age, so a node still
+// walking history does not drop commitments the mirror has not fetched yet.
+func (bm *BlockMonitor) markDiscoverCaughtUp(tip int64) {
+	if bm == nil || tip < 0 {
+		return
+	}
+	bm.replicationMu.Lock()
+	defer bm.replicationMu.Unlock()
+	bm.loadReplicationLocked()
+	if bm.replication.NextHeight <= tip || bm.replication.CaughtUpSince > 0 {
+		return
+	}
+	bm.replication.CaughtUpSince = time.Now().Unix()
+	bm.saveReplicationLocked()
+	log.Printf("contract discover: walk caught up at tip %d; new unmatched commitments expire after %s", tip, contractDiscoverMissGrace())
 }
 
 func (bm *BlockMonitor) logDiscoverProgress(from, through, tip int64) {

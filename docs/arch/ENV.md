@@ -52,6 +52,7 @@ API keys are issued by `POST /api/auth/challenge` + `POST /api/auth/verify`.
 | `BLOCK_MONITOR_CONTRACT_DISCOVER_INTERVAL` | `5s` | Pause between walk batches |
 | `BLOCK_MONITOR_CONTRACT_DISCOVER_BATCH` | `100` | Blocks read per batch. Cap 500 |
 | `BLOCK_MONITOR_CONTRACT_DISCOVER_STORE_ATTEMPTS` | `5` | After this many store failures, skip that height and keep the pending commitment |
+| `BLOCK_MONITOR_CONTRACT_DISCOVER_MISS_GRACE` | `6h` | After the walk is caught up, drop a new commitment that still has no stego file and no contract row. `0s` drops it on the next caught-up pass |
 
 Funding PSBTs always include the 64-byte OP_RETURN (`wish_hash \|\| stego_hash`)
 with `commitment_sats` default **1000** (min 546). Explicit `0` is a validation
