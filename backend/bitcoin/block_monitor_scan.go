@@ -486,6 +486,88 @@ func printableRatio(b []byte) float64 {
 	return float64(n) / float64(len(b))
 }
 
+// DropForeignOPReturnContracts removes smart-contract rows whose stored
+// wish_hash||stego_hash is not a Stargate commitment. Blocks scanned before
+// that filter kept CRC-20 JSON and other text OP_RETURNs as contracts.
+// Rows matched by funding_txid or a witness hash are left alone.
+func DropForeignOPReturnContracts(contracts []SmartContractData) (kept []SmartContractData, dropped int) {
+	if len(contracts) == 0 {
+		return contracts, 0
+	}
+	kept = make([]SmartContractData, 0, len(contracts))
+	for _, contract := range contracts {
+		if foreignOPReturnContract(contract) {
+			dropped++
+			continue
+		}
+		kept = append(kept, contract)
+	}
+	if dropped == 0 {
+		return contracts, 0
+	}
+	return kept, dropped
+}
+
+func foreignOPReturnContract(contract SmartContractData) bool {
+	matchType := ""
+	if contract.Metadata != nil {
+		matchType = strings.ToLower(strings.TrimSpace(stringFromAny(contract.Metadata["match_type"])))
+	}
+	if matchType != "" && matchType != "op_return" {
+		return false
+	}
+	wish, stego, ok := storedCommitmentHalves(contract)
+	if !ok {
+		return false
+	}
+	payload := make([]byte, 0, len(wish)+len(stego))
+	payload = append(payload, wish...)
+	payload = append(payload, stego...)
+	return !commitmentBytesOK(payload)
+}
+
+func storedCommitmentHalves(contract SmartContractData) (wish, stego []byte, ok bool) {
+	var wishHex, stegoHex string
+	if contract.Metadata != nil {
+		wishHex = stringFromAny(contract.Metadata["wish_hash"])
+		if wishHex == "" {
+			wishHex = stringFromAny(contract.Metadata["visible_pixel_hash"])
+		}
+		stegoHex = stringFromAny(contract.Metadata["stego_hash"])
+		if stegoHex == "" {
+			stegoHex = stringFromAny(contract.Metadata["image_file"])
+		}
+	}
+	if wishHex == "" {
+		wishHex = contract.ContractID
+	}
+	if stegoHex == "" {
+		stegoHex = contract.ImagePath
+	}
+	wish, okW := digestHex(wishHex)
+	stego, okS := digestHex(filepath.Base(stegoHex))
+	if !okS {
+		stego, okS = digestHex(stegoHex)
+	}
+	if !okW || !okS {
+		return nil, nil, false
+	}
+	return wish, stego, true
+}
+
+func digestHex(s string) ([]byte, bool) {
+	s = strings.ToLower(strings.TrimSpace(s))
+	s = strings.TrimPrefix(s, "wish-")
+	if len(s) != 64 {
+		return nil, false
+	}
+	raw, err := hex.DecodeString(s)
+	if err != nil || len(raw) != 32 {
+		return nil, false
+	}
+	return raw, true
+}
+
 func (bm *BlockMonitor) findImageForScanResult(images []ExtractedImageData, result map[string]any) *ExtractedImageData {
 	fileName := stringFromAny(result["file_name"])
 	if fileName != "" {

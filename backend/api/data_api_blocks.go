@@ -669,18 +669,24 @@ func (api *DataAPI) HandleScanBlockOnDemand(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Check if we already have data for this block
+	// Stored rows from before the OP_RETURN filter still mark CRC-20 JSON and
+	// other text payloads as contracts. Repair those in place. An unforced
+	// range stops there so a wide repair does not re-download the chain.
+	repairedBlocks, repairedContracts := api.repairStoredContracts(startHeight, endHeight)
+
 	if !forceScan && startHeight == endHeight {
 		if existingData, err := api.dataStorage.GetBlockData(startHeight); err == nil {
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"success":    true,
-				"cached":     true,
-				"block_data": existingData,
-				"message":    "Returned cached data",
-			})
+			api.writeScanResult(w, true, startHeight, endHeight, existingData, repairedBlocks, repairedContracts, "Returned cached data")
 			return
 		}
+	}
+	if !forceScan && startHeight != endHeight {
+		var blockData interface{}
+		if existing, err := api.dataStorage.GetBlockData(endHeight); err == nil {
+			blockData = existing
+		}
+		api.writeScanResult(w, true, startHeight, endHeight, blockData, repairedBlocks, repairedContracts, "Repaired stored smart contracts")
+		return
 	}
 
 	// Process the block
@@ -693,6 +699,11 @@ func (api *DataAPI) HandleScanBlockOnDemand(w http.ResponseWriter, r *http.Reque
 		}
 	}
 	log.Printf("On-demand scan for %d-%d completed in %v", startHeight, endHeight, time.Since(scanStart))
+	// A chain rescan uses the current filter. Repair again so a row the
+	// rescan did not rewrite cannot keep a foreign payload.
+	againBlocks, againContracts := api.repairStoredContracts(startHeight, endHeight)
+	repairedBlocks += againBlocks
+	repairedContracts += againContracts
 
 	// Get the processed data
 	blockData, err := api.dataStorage.GetBlockData(endHeight)
@@ -701,17 +712,24 @@ func (api *DataAPI) HandleScanBlockOnDemand(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Create real-time update
-	update := api.dataStorage.CreateRealtimeUpdate("scan_complete", endHeight, blockData)
+	api.writeScanResult(w, false, startHeight, endHeight, blockData, repairedBlocks, repairedContracts, "Block scanned successfully")
+}
 
+func (api *DataAPI) writeScanResult(w http.ResponseWriter, cached bool, startHeight, endHeight int64, blockData interface{}, repairedBlocks, repairedContracts int, message string) {
+	var update *storage.RealtimeUpdate
+	if blockData != nil && api.dataStorage != nil {
+		update = api.dataStorage.CreateRealtimeUpdate("scan_complete", endHeight, blockData)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success":    true,
-		"cached":     false,
-		"block_data": blockData,
-		"message":    "Block scanned successfully",
-		"scanned":    []int64{startHeight, endHeight},
-		"update":     update,
+		"success":            true,
+		"cached":             cached,
+		"block_data":         blockData,
+		"message":            message,
+		"scanned":            []int64{startHeight, endHeight},
+		"repaired_blocks":    repairedBlocks,
+		"repaired_contracts": repairedContracts,
+		"update":             update,
 	})
 }
 

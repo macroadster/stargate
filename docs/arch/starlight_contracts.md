@@ -756,6 +756,7 @@ The block monitor (`block_monitor.go` → `reconcileOracleIngestions`) processes
 3. **No-candidate fallback**: If no candidate matches but the output is one 64-byte push of two distinct raw digests (`wish_hash||stego_hash`), record the contract on that block and queue one chain commitment for that wish. Text protocols, concatenated pushes, and a repeated half are not commitments. A later transaction for the same wish replaces the queued row. When `UPLOADS_DIR/<stego_hash>` is on disk, reconcile the v2 payload and confirm the row once the funding block is buried. An already confirmed row is not rewritten.
 4. This node's on-chain `ConfirmContract` (`maybeConfirmContract`, `promoteFundedContracts`, `applyChainCommitment`, `markIngestionConfirmed` / `ensureMatchedContract` when `scanMayConfirm`) then calls `downloadSandboxArtifacts`. Unconfirmed still refuses. `processEvent`, sync gossip, and stego reconcile still do not extract. `POST .../sandbox/pull` stays as a manual retry.
 5. **Fresh node**: tip tracking does not inscription-scan history. `contractDiscoverLoop` walks locally available blocks for a single-push `wish_hash||stego_hash` and fully stores only the blocks that carry one, so the blocks and contracts pages fill in after btcd and the mirror sync. The walk keeps one pending row per wish.
+6. **Stored false positives**: `POST /api/data/scan` rewrites blocks already on disk in the requested heights. A row whose `wish_hash||stego_hash` fails the commitment check (CRC-20 JSON, address JSON, other text OP_RETURNs recorded before the filter) is removed from `inscriptions.json` and from the block payload the rail reads. Real commitments and `funding_txid` matches stay. An unforced range only repairs stored rows. `force_scan` still reprocesses those heights from the chain.
 
 **No pubsub or STARGATE_STEGO_APPROVAL_ENABLED required**: Any node watching the blockchain + syncing files via IPFS mirror can replicate proposal/task metadata. Unpacking the tarball is this node's on-chain confirm, not gossip or first-pass stego.
 
@@ -830,6 +831,7 @@ proposal metadata       — title, description, budget, tasks
 | `backend/bitcoin/psbt_builder.go` | PSBT construction, `buildDonationOutputs()` — 2 hashes only |
 | `backend/bitcoin/block_monitor.go` | OP_RETURN parsing (`parseOPReturnHashes`), `reconcileOnChainArtifacts()`, `confirmContractTasks()` |
 | `backend/bitcoin/block_monitor_discover.go` | Historical OP_RETURN walk and pending stego retry (`chain-contracts.json`) |
+| `backend/api/data_api_repair.go` | `POST /api/data/scan` drops stored OP_RETURN rows that fail the commitment check |
 | `backend/app/smart_contract/stego_publish.go` | `PreparePublishArtifacts()` — builds stego + sandbox BEFORE PSBT; `FinalizePublishArtifacts()` — optional IPFS upload after |
 | `backend/app/smart_contract/stego_reconcile.go` | `ReconcileStego()`, `reconcileStegoFromLocalFile()`, `downloadSandboxArtifacts()`, `upsertContractFromStegoPayload()` |
 | `backend/app/smart_contract/server.go` | `handleContractPSBT()` — calls PreparePublishArtifacts, passes stego hash to PSBT builder |

@@ -293,6 +293,61 @@ func TestParseOPReturnHashesRejectsForeignPayloads(t *testing.T) {
 	}
 }
 
+func TestDropForeignOPReturnContracts(t *testing.T) {
+	// tx 1487d9245bfc4d9df97c96b2846426ffad3511cf599e850f9f8caa932aab64d9
+	// block 157665. The OP_RETURN is 64 bytes of CRC-20 JSON.
+	crcWish := "7b2270223a226372632d3230222c226f70223a227472616e73666572222c2274"
+	crcStego := "69636b223a224c454146222c22616d74223a223130363639303236393233227d"
+	raw, err := hex.DecodeString(crcWish + crcStego)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != `{"p":"crc-20","op":"transfer","tick":"LEAF","amt":"10669026923"}` {
+		t.Fatalf("fixture decoded to %q", raw)
+	}
+	realWish := "41a974b813b024a3817c9c99b5406cc5131a00406c76a4e01fd7519974ccfb40"
+	realStego := "693e48a65e37e6ca2d631ae43192e15448a691d0312648eafb14eea87c0bbe60"
+
+	contracts := []SmartContractData{
+		{
+			ContractID: realWish,
+			ImagePath:  "images/" + realStego,
+			Metadata: map[string]any{
+				"match_type": "op_return",
+				"wish_hash":  realWish,
+				"stego_hash": realStego,
+			},
+		},
+		{
+			ContractID: crcWish,
+			ImagePath:  "images/" + crcStego,
+			Metadata: map[string]any{
+				"match_type":         "op_return",
+				"wish_hash":          crcWish,
+				"stego_hash":         crcStego,
+				"visible_pixel_hash": crcWish,
+				"tx_id":              "1487d9245bfc4d9df97c96b2846426ffad3511cf599e850f9f8caa932aab64d9",
+			},
+		},
+		{
+			ContractID: "wish-contract-1",
+			ImagePath:  "images/stego.png",
+			Metadata:   map[string]any{"match_type": "funding_txid", "wish_hash": crcWish, "stego_hash": crcStego},
+		},
+	}
+	kept, dropped := DropForeignOPReturnContracts(contracts)
+	if dropped != 1 || len(kept) != 2 {
+		t.Fatalf("dropped=%d kept=%d %+v", dropped, len(kept), kept)
+	}
+	if kept[0].ContractID != realWish || kept[1].ContractID != "wish-contract-1" {
+		t.Fatalf("kept %+v", kept)
+	}
+	again, droppedAgain := DropForeignOPReturnContracts(kept)
+	if droppedAgain != 0 || len(again) != 2 {
+		t.Fatalf("second pass dropped=%d kept=%d", droppedAgain, len(again))
+	}
+}
+
 func TestNoteChainCommitmentKeepsLatestWish(t *testing.T) {
 	bm, _ := newReplicationMonitor(t, 500)
 	wish := strings.Repeat("ab", 32)
