@@ -377,9 +377,11 @@ func (api *DataAPI) HandleGetRecentBlocks(w http.ResponseWriter, r *http.Request
 }
 
 // contractsOnlyMaxScan bounds how many heights one contracts_only page inspects.
-// Contract blocks are sparse, and walking the whole chain inside one request
-// would stall the rail. Tests lower this.
-var contractsOnlyMaxScan = 500
+// Contract blocks are sparse. A cap of a few hundred returns an empty page when
+// the newest contract sits just below the tip, and the rail stays on
+// "Looking for blocks…". A few thousand sqlite reads is still one short request.
+// Tests lower this.
+var contractsOnlyMaxScan = 4000
 
 func wantsContractsOnly(r *http.Request) bool {
 	switch strings.ToLower(strings.TrimSpace(r.URL.Query().Get("contracts_only"))) {

@@ -464,6 +464,36 @@ func TestHandleGetBlockSummariesContractsOnlyAdvancesPastCleanGap(t *testing.T) 
 	}
 }
 
+func TestContractsOnlyWalksPastALongCleanTip(t *testing.T) {
+	blocks := map[int64]*storage.BlockDataCache{}
+	heights := make([]int64, 0, 601)
+	for h := int64(601); h >= 2; h-- {
+		blocks[h] = &storage.BlockDataCache{BlockHeight: h, BlockHash: "clean", TxCount: 1}
+		heights = append(heights, h)
+	}
+	blocks[1] = &storage.BlockDataCache{
+		BlockHeight: 1,
+		BlockHash:   "contract",
+		SmartContracts: []bitcoin.SmartContractData{{
+			ContractID:  "wish-1",
+			BlockHeight: 1,
+			ImagePath:   "images/stego.png",
+		}},
+	}
+	heights = append(heights, 1)
+	api := &DataAPI{
+		dataStorage:      &mockDataStorage{blocks: blocks},
+		heightsCache:     heights,
+		heightsCacheTime: time.Now(),
+		heightsCacheTTL:  time.Minute,
+	}
+
+	page := getBlockSummaries(t, api, "/api/data/block-summaries?contracts_only=1&limit=5")
+	if got := summaryHeights(t, page); len(got) != 1 || got[0] != 1 {
+		t.Fatalf("page = %v, want [1]", got)
+	}
+}
+
 func getBlockSummaries(t *testing.T, api *DataAPI, path string) map[string]interface{} {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, path, nil)

@@ -271,11 +271,12 @@ export const useBlocks = (contractsOnly = false) => {
       setBlocks(deduped);
       setIsInitializing(false);
 
-      // Only update the older-blocks cursor when this is the initial load
-      // (no cursor yet) or an explicit cursor-based fetch. Polling (isPolling
-      // with no cursor) must NOT overwrite it or the user loses their scroll
-      // position into history.
-      if (!isPolling || cursor) {
+      // Record the older-blocks cursor on the initial load and on an explicit
+      // cursor fetch. A tip poll must not overwrite a cursor the user already
+      // scrolled into. The first poll can still win the race before any cursor
+      // exists; without recording it, contracts-only never asks for the next
+      // page and the rail stays on "Looking for blocks…".
+      if (!isPolling || cursor || !olderCursorRef.current) {
         setNextCursor(data.next_cursor || null);
         setHasMore(Boolean(data.has_more));
         olderCursorRef.current = data.next_cursor || null;
