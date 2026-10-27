@@ -152,6 +152,32 @@ func (s *SQLDataStorage) StoreBlockData(blockResponse *bitcoin.BlockInscriptions
 	return nil
 }
 
+// SaveBlockPayload replaces the stored JSON for one height and refreshes the
+// stego_detected column from the payload summary. A missing height is ignored.
+func (s *SQLDataStorage) SaveBlockPayload(cache *BlockDataCache) error {
+	if cache == nil || cache.BlockHeight <= 0 {
+		return nil
+	}
+	payload, err := json.Marshal(cache)
+	if err != nil {
+		return fmt.Errorf("marshal block %d payload: %w", cache.BlockHeight, err)
+	}
+	stego := 0
+	if cache.SteganographySummary != nil && cache.SteganographySummary.StegoDetected {
+		stego = cache.SteganographySummary.StegoCount
+	}
+	res := s.db.Model(&BlockScanRow{}).Where("block_height = ?", cache.BlockHeight).Updates(map[string]any{
+		"payload":        payload,
+		"block_hash":     cache.BlockHash,
+		"stego_detected": stego,
+		"images_scanned": len(cache.Images),
+	})
+	if res.Error != nil {
+		return res.Error
+	}
+	return nil
+}
+
 // ReplaceSmartContracts rewrites only the smart_contracts list inside the
 // stored payload. Stego summaries and the stego_detected column stay as they
 // were, so repairing a false OP_RETURN row does not wipe a real scan.

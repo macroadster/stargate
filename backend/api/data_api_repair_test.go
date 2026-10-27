@@ -253,6 +253,99 @@ func TestScanRangeRepairsWithoutChain(t *testing.T) {
 	}
 }
 
+func TestScanClearsEmptyPaletteHit(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("BLOCKS_DIR", root)
+	height := int64(157526)
+	dir := bitcoin.BlockDir(root, height, "00000000")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	doc := map[string]any{
+		"block_hash":         "00000000000000008a64db1c6c4e255245a195289d1aa0b00cf56133eab47ca8",
+		"block_height":       height,
+		"total_transactions": 830,
+		"smart_contracts": []map[string]any{{
+			"contract_id":  "stego_0_1792956913",
+			"block_height": height,
+			"image_path":   "83e87417b73b8c1d_in0_w1_i0.png",
+			"confidence":   51.29,
+			"metadata": map[string]any{
+				"extracted_message": "",
+				"stego_type":        "palette",
+				"tx_id":             "83e87417b73b8c1d4cab6c6e7a00a258a0da6930f8507c8c177e579241d7604f",
+			},
+		}},
+		"steganography_scan": map[string]any{
+			"total_images":   5,
+			"stego_detected": true,
+			"stego_count":    1,
+			"stego_types":    []string{"palette"},
+		},
+		"success": true,
+	}
+	raw, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "inscriptions.json")
+	if err := os.WriteFile(path, append(raw, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store, err := storage.NewSQLiteDataStorage(filepath.Join(t.TempDir(), "blocks.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+	if err := store.StoreBlockData(&bitcoin.BlockInscriptionsResponse{
+		BlockHeight:       height,
+		BlockHash:         doc["block_hash"].(string),
+		TotalTransactions: 830,
+		Success:           true,
+		SmartContracts: []bitcoin.SmartContractData{{
+			ContractID:  "stego_0_1792956913",
+			BlockHeight: height,
+			Metadata:    map[string]any{"extracted_message": "", "stego_type": "palette"},
+		}},
+	}, []map[string]interface{}{{
+		"is_stego":          true,
+		"stego_type":        "palette",
+		"confidence":        51.29,
+		"extracted_message": "",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	api := &DataAPI{dataStorage: store}
+	body := postScan(t, api, `{"block_height":157526}`)
+	if body["repaired_contracts"].(float64) != 1 {
+		t.Fatalf("repair counts: %+v", body)
+	}
+	if body["cached"] != true {
+		t.Fatalf("stored block should repair in place, cached=%v", body["cached"])
+	}
+	block := body["block_data"].(map[string]any)
+	if contracts, ok := block["smart_contracts"].([]any); ok && len(contracts) != 0 {
+		t.Fatalf("response contracts=%v", contracts)
+	}
+	summary := block["steganography_summary"].(map[string]any)
+	if summary["stego_detected"] == true || summary["stego_count"].(float64) != 0 {
+		t.Fatalf("stego summary still flags the block: %+v", summary)
+	}
+	disk, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var file map[string]any
+	if err := json.Unmarshal(disk, &file); err != nil {
+		t.Fatal(err)
+	}
+	scan := file["steganography_scan"].(map[string]any)
+	if scan["stego_detected"] == true {
+		t.Fatalf("file still flags stego: %+v", scan)
+	}
+}
+
 func mustRead(t *testing.T, path string) []byte {
 	t.Helper()
 	b, err := os.ReadFile(path)

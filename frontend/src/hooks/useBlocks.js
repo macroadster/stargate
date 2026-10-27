@@ -14,12 +14,14 @@ const generateBlock = (block) => {
   const stegoCount = block.steganography_summary?.stego_count || 0;
   const txCount = block.tx_count ?? block.total_transactions ?? block.TotalTransactions ?? 0;
 
-  // The badge counts stego detections as contracts. has_smart_contract is the
-  // server's decision for "Hide clean blocks" and already includes that case.
+  // has_smart_contract is the server's decision. A classifier hit with no
+  // extracted payload is not a smart contract, even when stego_count is set.
   const hasSmartContract = typeof block.has_smart_contract === 'boolean'
     ? block.has_smart_contract
     : smartContractCount > 0 || stegoCount > 0;
-  const displayContractCount = Math.max(smartContractCount, stegoCount);
+  const displayContractCount = hasSmartContract
+    ? Math.max(smartContractCount, stegoCount, 1)
+    : 0;
 
   const resolvedHeight = Number(block.block_height ?? block.height ?? 0);
   const resolvedTimestamp =

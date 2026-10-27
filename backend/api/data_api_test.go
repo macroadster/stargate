@@ -312,8 +312,17 @@ func TestBlockContainsSmartContract(t *testing.T) {
 	stego := &storage.BlockDataCache{
 		SteganographySummary: &bitcoin.SteganographySummary{StegoDetected: true, StegoCount: 2},
 	}
-	if !blockContainsSmartContract(stego) {
-		t.Fatal("stego detection should count as a contract block")
+	if blockContainsSmartContract(stego) {
+		t.Fatal("a classifier hit with no extracted message is not a smart contract")
+	}
+	extracted := &storage.BlockDataCache{
+		ScanResults: []map[string]interface{}{
+			{"is_stego": true, "extracted_message": `{"v":2}`},
+		},
+		SteganographySummary: &bitcoin.SteganographySummary{StegoDetected: true, StegoCount: 1},
+	}
+	if !blockContainsSmartContract(extracted) {
+		t.Fatal("an extracted stego payload should count as a contract block")
 	}
 
 	clean := &storage.BlockDataCache{TxCount: 12}
@@ -347,8 +356,8 @@ func TestLoadBlockFromDiskIncludesStegoScan(t *testing.T) {
 	if block.SteganographySummary == nil || block.SteganographySummary.StegoCount != 1 {
 		t.Fatalf("stego summary = %#v", block.SteganographySummary)
 	}
-	if !blockContainsSmartContract(block) {
-		t.Fatal("disk block with a stego scan should be kept")
+	if blockContainsSmartContract(block) {
+		t.Fatal("synthetic stego row with no extracted message is not a smart contract")
 	}
 }
 
@@ -376,6 +385,9 @@ func TestHandleGetBlockSummariesContractsOnly(t *testing.T) {
 		20: {
 			BlockHeight: 20,
 			BlockHash:   "stego",
+			ScanResults: []map[string]interface{}{
+				{"is_stego": true, "extracted_message": `{"v":2}`},
+			},
 			SteganographySummary: &bitcoin.SteganographySummary{
 				StegoDetected: true,
 				StegoCount:    1,

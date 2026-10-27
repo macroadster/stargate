@@ -13,10 +13,9 @@ import (
 	"stargate-backend/storage"
 )
 
-// smartContractReplacer updates a stored block's contract list without
-// rewriting the stego summary or the rest of the payload.
-type smartContractReplacer interface {
-	ReplaceSmartContracts(height int64, contracts []bitcoin.SmartContractData) error
+// blockPayloadWriter replaces one stored block payload, including its stego summary.
+type blockPayloadWriter interface {
+	SaveBlockPayload(cache *storage.BlockDataCache) error
 }
 
 // blockHeightLister enumerates heights that have a stored block payload.
@@ -72,15 +71,15 @@ func (api *DataAPI) repairStoredContracts(start, end int64) (blocks, dropped int
 		if n > 0 {
 			blocks++
 			dropped += n
-			log.Printf("scan repair: block %d dropped %d foreign OP_RETURN contract(s)", height, n)
+			log.Printf("scan repair: block %d dropped %d false contract row(s)", height, n)
 		}
 	}
 	return blocks, dropped
 }
 
 // repairStoredHeight rewrites one stored block. The count is the number of
-// contract rows removed from the file or the storage payload, whichever is
-// larger. The same row living in both places is not counted twice.
+// false contract rows removed from the file or the storage payload, whichever
+// is larger. The same row living in both places is not counted twice.
 func (api *DataAPI) repairStoredHeight(height int64) (int, error) {
 	fileDropped := 0
 	if dir, err := bitcoin.FindBlockDir(api.resolveBlocksDir(), height); err == nil {
@@ -99,19 +98,17 @@ func (api *DataAPI) repairStoredHeight(height int64) (int, error) {
 	}
 
 	storeDropped := 0
-	var storeKept []bitcoin.SmartContractData
 	if api.dataStorage != nil {
 		if existing, err := api.dataStorage.GetBlockData(height); err == nil {
 			if cache, ok := existing.(*storage.BlockDataCache); ok && cache != nil {
-				storeKept, storeDropped = bitcoin.DropForeignOPReturnContracts(cache.SmartContracts)
+				n, changed := scrubBlockCache(cache)
+				if changed {
+					storeDropped = n
+					if err := api.saveBlockPayload(cache); err != nil {
+						return 0, err
+					}
+				}
 			}
-		}
-	}
-	// Only rewrite storage when that payload itself had a foreign row.
-	// A clean database row must not be replaced by the file's contract list.
-	if storeDropped > 0 {
-		if err := api.replaceStoredContracts(height, storeKept); err != nil {
-			return 0, err
 		}
 	}
 
@@ -121,15 +118,66 @@ func (api *DataAPI) repairStoredHeight(height int64) (int, error) {
 	return fileDropped, nil
 }
 
-func (api *DataAPI) replaceStoredContracts(height int64, contracts []bitcoin.SmartContractData) error {
-	replacer, ok := api.dataStorage.(smartContractReplacer)
-	if !ok || replacer == nil {
+func (api *DataAPI) saveBlockPayload(cache *storage.BlockDataCache) error {
+	writer, ok := api.dataStorage.(blockPayloadWriter)
+	if !ok || writer == nil {
 		return nil
 	}
-	if contracts == nil {
-		contracts = []bitcoin.SmartContractData{}
+	return writer.SaveBlockPayload(cache)
+}
+
+// scrubBlockCache drops false OP_RETURN contracts and classifier hits that
+// extracted no message. A hit with an empty message does not keep the block
+// marked as a smart contract. Returns the number of contract rows removed.
+func scrubBlockCache(cache *storage.BlockDataCache) (dropped int, changed bool) {
+	if cache == nil {
+		return 0, false
 	}
-	return replacer.ReplaceSmartContracts(height, contracts)
+	kept, foreign := bitcoin.DropForeignOPReturnContracts(cache.SmartContracts)
+	next := make([]bitcoin.SmartContractData, 0, len(kept))
+	for _, contract := range kept {
+		if isSyntheticStegoContract(contract) && contractExtractedMessage(contract) == "" {
+			dropped++
+			continue
+		}
+		next = append(next, contract)
+	}
+	dropped += foreign
+	if dropped > 0 {
+		cache.SmartContracts = next
+		changed = true
+	}
+
+	// Keep a real contract's scan summary. Only a block with no contract and no
+	// extracted payload loses the classifier hit that was flagging it.
+	if len(filterSmartContractsForUI(cache.SmartContracts)) == 0 && !blockHasExtractedStego(cache) {
+		for i, result := range cache.ScanResults {
+			if !scanResultIsStego(result) {
+				continue
+			}
+			if strings.TrimSpace(stringFromAny(result["extracted_message"])) != "" {
+				continue
+			}
+			result["is_stego"] = false
+			cache.ScanResults[i] = result
+			changed = true
+		}
+		if cache.SteganographySummary != nil {
+			summary := cache.SteganographySummary
+			if summary.StegoDetected || summary.StegoCount > 0 || len(summary.StegoTypes) > 0 {
+				summary.StegoDetected = false
+				summary.StegoCount = 0
+				summary.AvgConfidence = 0
+				summary.StegoTypes = nil
+				changed = true
+			}
+		}
+	}
+	if changed && dropped == 0 {
+		// The block lost its contract flag even though no contract row was removed.
+		dropped = 1
+	}
+	return dropped, changed
 }
 
 // repairSmartContractFile rewrites smart_contracts in one block JSON file.
@@ -160,14 +208,49 @@ func repairSmartContractFile(path string) (dropped int, kept []bitcoin.SmartCont
 	if err := json.Unmarshal(encoded, &contracts); err != nil {
 		return 0, nil, false, err
 	}
-	kept, dropped = bitcoin.DropForeignOPReturnContracts(contracts)
-	if dropped == 0 {
+	cache := &storage.BlockDataCache{SmartContracts: contracts}
+	if rawResults, ok := doc["scan_results"]; ok && rawResults != nil {
+		encodedResults, err := json.Marshal(rawResults)
+		if err != nil {
+			return 0, nil, false, err
+		}
+		if err := json.Unmarshal(encodedResults, &cache.ScanResults); err != nil {
+			return 0, nil, false, err
+		}
+	}
+	for _, key := range []string{"steganography_summary", "steganography_scan"} {
+		rawSummary, ok := doc[key]
+		if !ok || rawSummary == nil {
+			continue
+		}
+		encodedSummary, err := json.Marshal(rawSummary)
+		if err != nil {
+			return 0, nil, false, err
+		}
+		var summary bitcoin.SteganographySummary
+		if err := json.Unmarshal(encodedSummary, &summary); err != nil {
+			return 0, nil, false, err
+		}
+		cache.SteganographySummary = &summary
+		break
+	}
+	dropped, changed = scrubBlockCache(cache)
+	if !changed {
 		return 0, contracts, false, nil
 	}
+	kept = cache.SmartContracts
 	if kept == nil {
 		kept = []bitcoin.SmartContractData{}
 	}
 	doc["smart_contracts"] = kept
+	if _, ok := doc["scan_results"]; ok {
+		doc["scan_results"] = cache.ScanResults
+	}
+	for _, key := range []string{"steganography_summary", "steganography_scan"} {
+		if _, ok := doc[key]; ok && cache.SteganographySummary != nil {
+			doc[key] = cache.SteganographySummary
+		}
+	}
 	out, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		return 0, nil, false, err

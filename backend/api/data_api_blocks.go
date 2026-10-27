@@ -391,9 +391,9 @@ func wantsContractsOnly(r *http.Request) bool {
 }
 
 // blockContainsSmartContract reports whether the block rail should treat the
-// block as holding a smart contract. That matches the card badge: a real
-// (non-synthetic) contract, or a stego detection the UI counts as one.
-// Synthetic stego_* rows alone do not qualify — those are scan placeholders.
+// block as holding a smart contract. A real contract counts. A stego hit
+// counts only when a message was extracted from it. A classifier score with
+// an empty message, including a synthetic stego_* row, does not.
 func blockContainsSmartContract(block *storage.BlockDataCache) bool {
 	if block == nil {
 		return false
@@ -401,7 +401,40 @@ func blockContainsSmartContract(block *storage.BlockDataCache) bool {
 	if len(filterSmartContractsForUI(block.SmartContracts)) > 0 {
 		return true
 	}
-	return block.SteganographySummary != nil && block.SteganographySummary.StegoCount > 0
+	return blockHasExtractedStego(block)
+}
+
+// blockHasExtractedStego reports a stego hit that actually recovered a payload.
+func blockHasExtractedStego(block *storage.BlockDataCache) bool {
+	if block == nil {
+		return false
+	}
+	for _, result := range block.ScanResults {
+		if !scanResultIsStego(result) {
+			continue
+		}
+		if strings.TrimSpace(stringFromAny(result["extracted_message"])) != "" {
+			return true
+		}
+	}
+	for _, contract := range block.SmartContracts {
+		if strings.TrimSpace(contractExtractedMessage(contract)) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func scanResultIsStego(result map[string]any) bool {
+	isStego, _ := result["is_stego"].(bool)
+	return isStego
+}
+
+func contractExtractedMessage(contract bitcoin.SmartContractData) string {
+	if contract.Metadata == nil {
+		return ""
+	}
+	return strings.TrimSpace(stringFromAny(contract.Metadata["extracted_message"]))
 }
 
 func (api *DataAPI) blockSummary(block *storage.BlockDataCache) map[string]interface{} {
@@ -642,6 +675,7 @@ func (api *DataAPI) HandleScanBlockOnDemand(w http.ResponseWriter, r *http.Reque
 		StartHeight int64 `json:"start_height"`
 		EndHeight   int64 `json:"end_height"`
 		ForceScan   bool  `json:"force_scan"`
+		ForcedScan  bool  `json:"forced_scan"`
 		Force       bool  `json:"force"`
 	}
 
@@ -650,7 +684,7 @@ func (api *DataAPI) HandleScanBlockOnDemand(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	forceScan := request.ForceScan || request.Force
+	forceScan := request.ForceScan || request.ForcedScan || request.Force
 	startHeight := request.BlockHeight
 	if startHeight == 0 && request.StartHeight > 0 {
 		startHeight = request.StartHeight
