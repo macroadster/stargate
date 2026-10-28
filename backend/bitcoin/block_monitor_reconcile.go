@@ -354,16 +354,25 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 				}
 				matchedTxIDs[tx.TxID] = match.ID
 			} else if stegoHash != "" {
-				// No local ingestion/proposal/contract yet. A fresh node still
-				// records the block and queues the commitment. The stego file
-				// often arrives later via the IPFS mirror; applyChainCommitment
-				// writes the contract once both the file and the burial depth
-				// are present. Already-confirmed rows are not rewritten.
+				// No local ingestion/proposal/contract yet. Queue the hash pair
+				// so a wish image that arrives later can still be recorded.
+				// The block list gets a smart contract only when that image is
+				// already in UPLOADS_DIR. Without it, this is generic pay-to-anchor.
 				normalizedWish := identity.CanonicalContractID(wishHash)
 				if normalizedWish == "" {
 					normalizedWish = wishHash
 				}
-				log.Printf("oracle reconcile: block %d tx %s: OP_RETURN wish=%s stego=%s has no candidate, recording chain commitment", blockHeight, tx.TxID, wishHash, stegoHash)
+				bm.noteChainCommitment(chainCommitment{
+					Height:    blockHeight,
+					TxID:      tx.TxID,
+					WishHash:  normalizedWish,
+					StegoHash: stegoHash,
+				})
+				if !wishImageOnDisk(normalizedWish) {
+					log.Printf("oracle reconcile: block %d tx %s: OP_RETURN wish=%s stego=%s has no wish image in uploads; not a smart contract", blockHeight, tx.TxID, wishHash, stegoHash)
+					break
+				}
+				log.Printf("oracle reconcile: block %d tx %s: OP_RETURN wish=%s stego=%s matches wish image in uploads", blockHeight, tx.TxID, wishHash, stegoHash)
 				smartContracts = upsertContractByID(smartContracts, SmartContractData{
 					ContractID:  normalizedWish,
 					BlockHeight: blockHeight,
@@ -378,12 +387,6 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 						"image_file":         stegoHash,
 						"ingestion_id":       normalizedWish,
 					},
-				})
-				bm.noteChainCommitment(chainCommitment{
-					Height:    blockHeight,
-					TxID:      tx.TxID,
-					WishHash:  normalizedWish,
-					StegoHash: stegoHash,
 				})
 				if bm.sweepStore != nil {
 					bm.updateTaskFundingProofsFromTx(normalizedWish, tx, blockHeight)

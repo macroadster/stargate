@@ -486,10 +486,11 @@ func printableRatio(b []byte) float64 {
 	return float64(n) / float64(len(b))
 }
 
-// DropForeignOPReturnContracts removes smart-contract rows whose stored
-// wish_hash||stego_hash is not a Stargate commitment. Blocks scanned before
-// that filter kept CRC-20 JSON and other text OP_RETURNs as contracts.
-// Rows matched by funding_txid or a witness hash are left alone.
+// DropForeignOPReturnContracts removes smart-contract rows that are not a
+// Stargate commitment. Text OP_RETURNs fail the hash-pair check. A raw
+// wish_hash||stego_hash pair is also dropped unless UPLOADS_DIR holds the
+// wish image; that pair alone is generic pay-to-anchor. Rows matched by
+// funding_txid or a witness hash are left alone.
 func DropForeignOPReturnContracts(contracts []SmartContractData) (kept []SmartContractData, dropped int) {
 	if len(contracts) == 0 {
 		return contracts, 0
@@ -523,7 +524,12 @@ func foreignOPReturnContract(contract SmartContractData) bool {
 	payload := make([]byte, 0, len(wish)+len(stego))
 	payload = append(payload, wish...)
 	payload = append(payload, stego...)
-	return !commitmentBytesOK(payload)
+	if !commitmentBytesOK(payload) {
+		return true
+	}
+	// A raw wish||stego pair is still a generic anchor until this node has
+	// the wish image. Pay-to-anchor software does not write that file.
+	return !wishImageOnDisk(hex.EncodeToString(wish))
 }
 
 func storedCommitmentHalves(contract SmartContractData) (wish, stego []byte, ok bool) {
@@ -924,12 +930,37 @@ func uploadsDirForStego() string {
 }
 
 func stegoFileOnDisk(stegoHash string) bool {
-	stegoHash = strings.ToLower(strings.TrimSpace(stegoHash))
-	if len(stegoHash) != 64 {
+	return uploadHashOnDisk(stegoHash)
+}
+
+// wishImageOnDisk reports whether UPLOADS_DIR holds the wish image for hash.
+// The file is named by the wish hash (visible pixel hash), partitioned or flat.
+// An OP_RETURN hash pair without that file is not a Stargate smart contract:
+// other software uses the same pay-to-anchor shape.
+func wishImageOnDisk(wishHash string) bool {
+	return uploadHashOnDisk(wishHash)
+}
+
+func uploadHashOnDisk(hash string) bool {
+	hash = strings.ToLower(strings.TrimSpace(hash))
+	if len(hash) != 64 {
 		return false
 	}
-	_, err := os.Stat(datadir.PartResolve(uploadsDirForStego(), stegoHash))
-	return err == nil
+	if _, err := hex.DecodeString(hash); err != nil {
+		return false
+	}
+	info, err := os.Stat(datadir.PartResolve(uploadsDirForStego(), hash))
+	return err == nil && info != nil && !info.IsDir()
+}
+
+func countWishImagesOnDisk(pending []chainCommitment) int {
+	n := 0
+	for _, c := range pending {
+		if wishImageOnDisk(c.WishHash) {
+			n++
+		}
+	}
+	return n
 }
 
 // reconcileOnChainArtifacts uses the stego_hash from the OP_RETURN to find

@@ -42,6 +42,9 @@ type BlockMonitor struct {
 	replicationMu      sync.Mutex
 	replicationLoaded  bool
 	replication        chainReplicationState
+	wishStoreMu        sync.Mutex
+	wishStored         map[string]int64 // wish hash -> height last stored as a contract block
+	wishStoreTries     map[string]int
 	oracleMetaMu       sync.Mutex
 	oracleMetaRecs     []services.IngestionRecord
 	oracleMetaAt       time.Time
@@ -429,8 +432,11 @@ func (bm *BlockMonitor) SnapshotStats() MonitorStats {
 	bm.replicationMu.Lock()
 	bm.loadReplicationLocked()
 	st.DiscoverNext = bm.replication.NextHeight
-	st.DiscoverPending = len(bm.replication.Pending)
+	pending := append([]chainCommitment(nil), bm.replication.Pending...)
 	bm.replicationMu.Unlock()
+	// Generic pay-to-anchor OP_RETURNs stay in the queue until they expire,
+	// but they are not waiting contracts. Only a wish image in uploads counts.
+	st.DiscoverPending = countWishImagesOnDisk(pending)
 	return st
 }
 

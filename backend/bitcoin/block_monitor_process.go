@@ -244,7 +244,8 @@ func (bm *BlockMonitor) checkForNewBlocks() error {
 // monitorCatchupBatch() blocks per cycle until we catch the local tip.
 // Cold start (currentHeight==0, empty storage) still seeds near the tip so we
 // do not inscription-scan the entire chain. Historical OP_RETURN contracts are
-// found by contractDiscoverLoop, which only fully stores blocks that carry one.
+// found by contractDiscoverLoop, which stores a block when its wish image is
+// already in UPLOADS_DIR. A hash pair alone is generic pay-to-anchor.
 func (bm *BlockMonitor) trackTip(tip int64) error {
 	maxPerCycle := monitorMaxBlocksPerCycle()
 	catchupBatch := monitorCatchupBatch()

@@ -42,8 +42,9 @@ type chainReplicationState struct {
 
 // chainCommitment is one on-chain wish. The contracts page lists it only
 // after the stego image is reconciled and the funding block is buried.
-// The blocks page lists it as soon as that block is stored.
-// A later transaction for the same wish replaces this row.
+// The blocks page lists it only when UPLOADS_DIR holds the wish image.
+// An OP_RETURN hash pair alone is generic pay-to-anchor, not a Stargate
+// contract. A later transaction for the same wish replaces this row.
 type chainCommitment struct {
 	Height       int64  `json:"height"`
 	TxID         string `json:"txid"`
@@ -220,7 +221,7 @@ func (bm *BlockMonitor) contractDiscoverLoop(stop <-chan struct{}) {
 }
 
 // NoteStegoFile tells the block monitor that a mirrored upload is on disk.
-// The base name of a content-addressed file is the stego hash from OP_RETURN.
+// The base name is a content hash: the wish image or the stego image from OP_RETURN.
 func (bm *BlockMonitor) NoteStegoFile(name string) {
 	if bm == nil {
 		return
@@ -233,6 +234,86 @@ func (bm *BlockMonitor) NoteStegoFile(name string) {
 		return
 	}
 	bm.retryPendingChainContracts(name)
+	bm.storeReadyWishBlocks()
+}
+
+// storeReadyWishBlocks stores queued blocks whose wish image is now in uploads.
+// A hash pair with no wish image is left queued and is not a smart contract.
+// Chain hex must already be local: an empty reply is not fetched from a public explorer.
+func (bm *BlockMonitor) storeReadyWishBlocks() {
+	if bm == nil || bm.chain == nil {
+		return
+	}
+	if !bm.processMu.TryLock() {
+		return
+	}
+	bm.processMu.Unlock()
+
+	bm.replicationMu.Lock()
+	bm.loadReplicationLocked()
+	pending := append([]chainCommitment(nil), bm.replication.Pending...)
+	bm.replicationMu.Unlock()
+
+	seenHeight := make(map[int64]struct{}, len(pending))
+	for _, c := range pending {
+		if !wishImageOnDisk(c.WishHash) || bm.wishAlreadyStored(c.WishHash, c.Height) {
+			continue
+		}
+		if _, ok := seenHeight[c.Height]; ok {
+			continue
+		}
+		hexData, err := bm.chain.GetRawBlockHex(context.Background(), c.Height)
+		if err != nil || strings.TrimSpace(hexData) == "" {
+			continue
+		}
+		seenHeight[c.Height] = struct{}{}
+		if err := bm.ProcessBlock(c.Height); err != nil {
+			n := bm.noteWishStoreTry(c.WishHash)
+			log.Printf("contract discover: wish image for %s is in uploads, store block %d: %v (attempt %d)", c.WishHash, c.Height, err, n)
+			if n >= contractDiscoverStoreAttempts() {
+				bm.markWishStored(c.WishHash, c.Height)
+				log.Printf("contract discover: gave up storing block %d for wish %s after %d attempts", c.Height, c.WishHash, n)
+			}
+			continue
+		}
+		for _, other := range pending {
+			if other.Height == c.Height && wishImageOnDisk(other.WishHash) {
+				bm.markWishStored(other.WishHash, other.Height)
+			}
+		}
+	}
+}
+
+func (bm *BlockMonitor) wishAlreadyStored(wish string, height int64) bool {
+	bm.wishStoreMu.Lock()
+	defer bm.wishStoreMu.Unlock()
+	prev, ok := bm.wishStored[wish]
+	return ok && prev >= height
+}
+
+func (bm *BlockMonitor) markWishStored(wish string, height int64) {
+	if bm == nil || wish == "" {
+		return
+	}
+	bm.wishStoreMu.Lock()
+	defer bm.wishStoreMu.Unlock()
+	if bm.wishStored == nil {
+		bm.wishStored = make(map[string]int64)
+	}
+	if prev, ok := bm.wishStored[wish]; ok && prev >= height {
+		return
+	}
+	bm.wishStored[wish] = height
+}
+
+func (bm *BlockMonitor) noteWishStoreTry(wish string) int {
+	bm.wishStoreMu.Lock()
+	defer bm.wishStoreMu.Unlock()
+	if bm.wishStoreTries == nil {
+		bm.wishStoreTries = make(map[string]int)
+	}
+	bm.wishStoreTries[wish]++
+	return bm.wishStoreTries[wish]
 }
 
 // queueMissingStego keeps a commitment whose stego image has not been mirrored yet.
@@ -502,6 +583,17 @@ func (bm *BlockMonitor) applyChainCommitment(c chainCommitment, clock pendingClo
 	if c.Legacy && (stegoFileOnDisk(c.StegoHash) || bm.contractRowExists(id)) {
 		c.Legacy = false
 	}
+	// No wish image in uploads: this hash pair is not a Stargate contract yet.
+	// It may be generic pay-to-anchor. Keep it only until the miss grace expires.
+	if !wishImageOnDisk(id) && !bm.contractRowExists(id) {
+		if c.MissingSince == 0 {
+			c.MissingSince = clock.unixNow()
+		}
+		if missExpired(c, clock, false) {
+			return true, c
+		}
+		return false, c
+	}
 	if !c.Reconciled && stegoFileOnDisk(c.StegoHash) {
 		c.MissingSince = 0
 		err := bm.reconcileOnChainArtifacts(id, c.StegoHash)
@@ -626,6 +718,7 @@ func (bm *BlockMonitor) discoverContractBlocks(ctx context.Context) {
 		bm.markDiscoverCaughtUp(tip)
 	}
 	bm.retryPendingChainContracts("")
+	bm.storeReadyWishBlocks()
 	if err != nil || tip < 0 {
 		return
 	}
@@ -647,9 +740,17 @@ func (bm *BlockMonitor) discoverContractBlocks(ctx context.Context) {
 		end = tip
 	}
 	start := next
+	skipped := 0
+	reportSkipped := func() {
+		if skipped == 0 {
+			return
+		}
+		log.Printf("contract discover: %d blocks had OP_RETURN without a wish image in uploads; not recorded as smart contracts", skipped)
+	}
 	for h := start; h <= end; h++ {
 		if ctx.Err() != nil {
 			bm.setDiscoverProgress(next, failHeight, failCount)
+			reportSkipped()
 			return
 		}
 		hexData, err := bm.rawBlockHex(h)
@@ -659,6 +760,7 @@ func (bm *BlockMonitor) discoverContractBlocks(ctx context.Context) {
 			if next > start {
 				bm.logDiscoverProgress(start, next-1, tip)
 			}
+			reportSkipped()
 			return
 		}
 		raw, err := hex.DecodeString(strings.TrimSpace(hexData))
@@ -677,9 +779,21 @@ func (bm *BlockMonitor) discoverContractBlocks(ctx context.Context) {
 			next = h + 1
 			continue
 		}
+		ready := false
 		for i := range hits {
 			hits[i].Height = h
 			bm.noteChainCommitment(hits[i])
+			if wishImageOnDisk(hits[i].WishHash) {
+				ready = true
+			}
+		}
+		if !ready {
+			// Remember the hash pair. Do not store the block as a smart contract.
+			skipped++
+			next = h + 1
+			failHeight = 0
+			failCount = 0
+			continue
 		}
 		if err := bm.ProcessBlock(h); err != nil {
 			n := 1
@@ -696,7 +810,13 @@ func (bm *BlockMonitor) discoverContractBlocks(ctx context.Context) {
 			}
 			bm.setDiscoverProgress(h, h, n)
 			log.Printf("contract discover: paused at height %d / tip %d", h, tip)
+			reportSkipped()
 			return
+		}
+		for i := range hits {
+			if wishImageOnDisk(hits[i].WishHash) {
+				bm.markWishStored(hits[i].WishHash, h)
+			}
 		}
 		next = h + 1
 		failHeight = 0
@@ -709,6 +829,7 @@ func (bm *BlockMonitor) discoverContractBlocks(ctx context.Context) {
 	if next > start {
 		bm.logDiscoverProgress(start, next-1, tip)
 	}
+	reportSkipped()
 }
 
 // markDiscoverCaughtUp records the first time the walk cursor passed the tip.

@@ -50,6 +50,15 @@ func realContract(height int64) bitcoin.SmartContractData {
 	}
 }
 
+func stageWishImage(t *testing.T, hash string) {
+	t.Helper()
+	uploads := t.TempDir()
+	t.Setenv("UPLOADS_DIR", uploads)
+	if err := os.WriteFile(filepath.Join(uploads, hash), []byte("wish-image"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func writeInscriptions(t *testing.T, root string, height int64, contracts []bitcoin.SmartContractData) string {
 	t.Helper()
 	dir := bitcoin.BlockDir(root, height, "00000000")
@@ -120,6 +129,7 @@ func postScan(t *testing.T, api *DataAPI, body string) map[string]any {
 func TestScanRepairsCachedCRC20Contract(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("BLOCKS_DIR", root)
+	stageWishImage(t, realWish)
 	path := writeInscriptions(t, root, 157665, []bitcoin.SmartContractData{realContract(157665), crcContract(157665)})
 	before, err := os.ReadFile(path)
 	if err != nil {
@@ -170,6 +180,7 @@ func TestScanRepairsCachedCRC20Contract(t *testing.T) {
 func TestScanRepairsSQLitePayloadAndFile(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("BLOCKS_DIR", root)
+	stageWishImage(t, realWish)
 	path := writeInscriptions(t, root, 157665, []bitcoin.SmartContractData{crcContract(157665), realContract(157665)})
 	store, err := storage.NewSQLiteDataStorage(filepath.Join(t.TempDir(), "blocks.db"))
 	if err != nil {
@@ -250,6 +261,31 @@ func TestScanRangeRepairsWithoutChain(t *testing.T) {
 		if len(ids) != 0 {
 			t.Fatalf("height %d file contracts=%v", height, ids)
 		}
+	}
+}
+
+func TestScanDropsAnchorWithoutWishImage(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("BLOCKS_DIR", root)
+	t.Setenv("UPLOADS_DIR", t.TempDir())
+	path := writeInscriptions(t, root, 157665, []bitcoin.SmartContractData{realContract(157665)})
+	ds := storage.NewDataStorage(root)
+	api := &DataAPI{dataStorage: ds}
+
+	body := postScan(t, api, `{"block_height":157665}`)
+	if body["repaired_contracts"].(float64) != 1 || body["repaired_blocks"].(float64) != 1 {
+		t.Fatalf("repair counts: %+v", body)
+	}
+	if ids := contractIDs(t, path); len(ids) != 0 {
+		t.Fatalf("file contracts=%v", ids)
+	}
+	raw, err := ds.GetBlockData(157665)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache := raw.(*storage.BlockDataCache)
+	if blockContainsSmartContract(cache) {
+		t.Fatalf("anchor without a wish image still flagged: %+v", cache.SmartContracts)
 	}
 }
 

@@ -126,11 +126,8 @@ func TestNoCandidateOPReturnWaitsForMirrorThenConfirms(t *testing.T) {
 	}
 	parsed := &ParsedBlock{Transactions: []Transaction{tx}}
 	got := bm.reconcileOracleIngestions(t.TempDir(), parsed, nil, 100)
-	if len(got) != 1 || got[0].ContractID != wish {
-		t.Fatalf("block contracts=%+v", got)
-	}
-	if got[0].Metadata["match_type"] != "op_return" || got[0].Metadata["image_file"] != stego {
-		t.Fatalf("metadata=%v", got[0].Metadata)
+	if len(got) != 0 {
+		t.Fatalf("recorded a contract with no wish image: %+v", got)
 	}
 	if calls != 0 {
 		t.Fatalf("reconciled before the image arrived: %d", calls)
@@ -142,11 +139,32 @@ func TestNoCandidateOPReturnWaitsForMirrorThenConfirms(t *testing.T) {
 		t.Fatalf("pending=%d", pending)
 	}
 	if _, err := store.GetContract(wish); err == nil {
-		t.Fatal("contract row exists before the stego image arrived")
+		t.Fatal("contract row exists before the wish image arrived")
 	}
 
+	// The stego file alone is the product image. Other anchor protocols can
+	// look like wish||stego and must not become a smart contract.
 	if err := os.WriteFile(filepath.Join(uploads, stego), []byte("stego-bytes"), 0o600); err != nil {
 		t.Fatal(err)
+	}
+	got = bm.reconcileOracleIngestions(t.TempDir(), parsed, nil, 100)
+	if len(got) != 0 {
+		t.Fatalf("recorded a contract with only the stego file: %+v", got)
+	}
+	bm.NoteStegoFile(stego)
+	if calls != 0 {
+		t.Fatalf("reconciled from the stego file without a wish image: %d", calls)
+	}
+
+	if err := os.WriteFile(filepath.Join(uploads, wish), []byte("wish-image"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got = bm.reconcileOracleIngestions(t.TempDir(), parsed, nil, 100)
+	if len(got) != 1 || got[0].ContractID != wish {
+		t.Fatalf("block contracts=%+v", got)
+	}
+	if got[0].Metadata["match_type"] != "op_return" || got[0].Metadata["image_file"] != stego {
+		t.Fatalf("metadata=%v", got[0].Metadata)
 	}
 	bm.NoteStegoFile(stego)
 	if calls != 1 {
@@ -186,19 +204,31 @@ func (e errString) Error() string { return string(e) }
 
 func TestSnapshotStatsReadsDiscoverCursor(t *testing.T) {
 	t.Setenv("BLOCKS_DIR", t.TempDir())
+	t.Setenv("UPLOADS_DIR", t.TempDir())
 	t.Setenv("BLOCK_MONITOR_CONTRACT_DISCOVER", "off")
+	wish := strings.Repeat("11", 32)
+	if err := os.WriteFile(filepath.Join(os.Getenv("UPLOADS_DIR"), wish), []byte("wish"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	bm := NewBlockMonitor(NewBitcoinNodeClient("http://127.0.0.1:1"))
 	bm.replicationLoaded = true
 	bm.replication.NextHeight = 62900
-	bm.replication.Pending = []chainCommitment{{
-		Height: 156928, TxID: strings.Repeat("ab", 32),
-		WishHash: strings.Repeat("11", 32), StegoHash: strings.Repeat("22", 32),
-	}}
+	bm.replication.Pending = []chainCommitment{
+		{
+			Height: 156928, TxID: strings.Repeat("ab", 32),
+			WishHash: wish, StegoHash: strings.Repeat("22", 32),
+		},
+		{
+			Height: 100, TxID: strings.Repeat("cd", 32),
+			WishHash: strings.Repeat("33", 32), StegoHash: strings.Repeat("44", 32),
+		},
+	}
 	bm.discoverWaitLogged = true
 	st := bm.SnapshotStats()
 	if st.DiscoverEnabled {
 		t.Fatal("discover reported enabled")
 	}
+	// The anchor with no wish image stays queued but is not a waiting contract.
 	if st.DiscoverNext != 62900 || st.DiscoverPending != 1 || !st.DiscoverWaiting {
 		t.Fatalf("stats=%+v", st)
 	}
@@ -307,6 +337,12 @@ func TestDropForeignOPReturnContracts(t *testing.T) {
 	}
 	realWish := "41a974b813b024a3817c9c99b5406cc5131a00406c76a4e01fd7519974ccfb40"
 	realStego := "693e48a65e37e6ca2d631ae43192e15448a691d0312648eafb14eea87c0bbe60"
+	t.Setenv("UPLOADS_DIR", t.TempDir())
+	if err := os.WriteFile(filepath.Join(os.Getenv("UPLOADS_DIR"), realWish), []byte("wish"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	anchorWish := hex.EncodeToString(bytes.Repeat([]byte{0x11}, 32))
+	anchorStego := hex.EncodeToString(bytes.Repeat([]byte{0x81}, 32))
 
 	contracts := []SmartContractData{
 		{
@@ -334,9 +370,18 @@ func TestDropForeignOPReturnContracts(t *testing.T) {
 			ImagePath:  "images/stego.png",
 			Metadata:   map[string]any{"match_type": "funding_txid", "wish_hash": crcWish, "stego_hash": crcStego},
 		},
+		{
+			ContractID: anchorWish,
+			ImagePath:  "images/" + anchorStego,
+			Metadata: map[string]any{
+				"match_type": "op_return",
+				"wish_hash":  anchorWish,
+				"stego_hash": anchorStego,
+			},
+		},
 	}
 	kept, dropped := DropForeignOPReturnContracts(contracts)
-	if dropped != 1 || len(kept) != 2 {
+	if dropped != 2 || len(kept) != 2 {
 		t.Fatalf("dropped=%d kept=%d %+v", dropped, len(kept), kept)
 	}
 	if kept[0].ContractID != realWish || kept[1].ContractID != "wish-contract-1" {
@@ -451,7 +496,11 @@ func TestApplyGivesUpAfterReconcileLimit(t *testing.T) {
 	bm, _ := newReplicationMonitor(t, 500)
 	wish := strings.Repeat("ab", 32)
 	stego := strings.Repeat("cd", 32)
-	if err := os.WriteFile(filepath.Join(os.Getenv("UPLOADS_DIR"), stego), []byte("not-stego"), 0o600); err != nil {
+	uploads := os.Getenv("UPLOADS_DIR")
+	if err := os.WriteFile(filepath.Join(uploads, wish), []byte("wish-image"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(uploads, stego), []byte("not-stego"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	bm.SetStegoReconciler(StegoReconcilerFunc(func(context.Context, string, string) error {

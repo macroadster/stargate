@@ -149,6 +149,7 @@ func filterSmartContractsForUI(contracts []bitcoin.SmartContractData) []bitcoin.
 	if len(contracts) == 0 {
 		return contracts
 	}
+	contracts, _ = bitcoin.DropForeignOPReturnContracts(contracts)
 	out := make([]bitcoin.SmartContractData, 0, len(contracts))
 	for _, contract := range contracts {
 		if isSyntheticStegoContract(contract) {
