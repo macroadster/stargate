@@ -70,7 +70,7 @@ When a block is processed, matching prioritizes:
 
 1. **funding_txid** — known funding tx from ingestion metadata → confirm, then OP_RETURN / stego reconcile
 2. **OP_RETURN candidate** — parse hashes → match `wish_hash` to known records → reconcile stego + sandbox
-3. **No-candidate fallback** — OP_RETURN `wish_hash||stego_hash` is a smart contract only when `UPLOADS_DIR/<wish_hash>` exists. Without that wish image it is left as a generic anchor. When the stego file is also on disk, reconcile the v2 payload.
+3. **No-candidate fallback** — An OP_RETURN is a smart contract only when `UPLOADS_DIR/<wish_hash>` exists. That file is the picture on the card. A 64-byte `wish_hash||stego_hash` pair without the wish image stays a generic anchor. A 32-byte wish-only anchor is a contract only when that same file is already in uploads. When the stego file is also on disk, reconcile the v2 payload.
 
 Any instance that processes the block and has the hash-named files can reconcile independently. The chain is the announcement channel.
 

@@ -17,6 +17,7 @@ import (
 	"github.com/btcsuite/btcd/wire/v2"
 
 	"stargate-backend/core/smart_contract"
+	"stargate-backend/services"
 )
 
 func opReturnWishStego(t *testing.T, wish, stego byte) (wishHex, stegoHex string, script []byte) {
@@ -159,12 +160,23 @@ func TestNoCandidateOPReturnWaitsForMirrorThenConfirms(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(uploads, wish), []byte("wish-image"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	got = bm.reconcileOracleIngestions(t.TempDir(), parsed, nil, 100)
+	blockDir := t.TempDir()
+	got = bm.reconcileOracleIngestions(blockDir, parsed, nil, 100)
 	if len(got) != 1 || got[0].ContractID != wish {
 		t.Fatalf("block contracts=%+v", got)
 	}
-	if got[0].Metadata["match_type"] != "op_return" || got[0].Metadata["image_file"] != stego {
+	if got[0].Metadata["match_type"] != "op_return" || got[0].Metadata["image_file"] != wish {
 		t.Fatalf("metadata=%v", got[0].Metadata)
+	}
+	if got[0].ImagePath != filepath.Join("images", wish) {
+		t.Fatalf("image path %q", got[0].ImagePath)
+	}
+	copied, readErr := os.ReadFile(filepath.Join(blockDir, "images", wish))
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(copied) != "wish-image" {
+		t.Fatalf("copied wish image %q", copied)
 	}
 	bm.NoteStegoFile(stego)
 	if calls != 1 {
@@ -384,12 +396,127 @@ func TestDropForeignOPReturnContracts(t *testing.T) {
 	if dropped != 2 || len(kept) != 2 {
 		t.Fatalf("dropped=%d kept=%d %+v", dropped, len(kept), kept)
 	}
-	if kept[0].ContractID != realWish || kept[1].ContractID != "wish-contract-1" {
+	wishOnly := hex.EncodeToString(bytes.Repeat([]byte{0x91}, 32))
+	wishOnlyWithImage := hex.EncodeToString(bytes.Repeat([]byte{0x92}, 32))
+	if err := os.WriteFile(filepath.Join(os.Getenv("UPLOADS_DIR"), wishOnlyWithImage), []byte("wish-only"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	contracts = append(contracts,
+		SmartContractData{
+			ContractID: wishOnly,
+			Metadata: map[string]any{
+				"match_type": "op_return",
+				"wish_hash":  wishOnly,
+				"tx_id":      strings.Repeat("d7", 32),
+			},
+		},
+		SmartContractData{
+			ContractID: wishOnlyWithImage,
+			ImagePath:  "images/" + wishOnlyWithImage,
+			Metadata: map[string]any{
+				"match_type":         "op_return",
+				"wish_hash":          wishOnlyWithImage,
+				"visible_pixel_hash": wishOnlyWithImage,
+			},
+		},
+	)
+	kept, dropped = DropForeignOPReturnContracts(contracts)
+	if dropped != 3 || len(kept) != 3 {
+		t.Fatalf("dropped=%d kept=%d %+v", dropped, len(kept), kept)
+	}
+	if kept[0].ContractID != realWish || kept[1].ContractID != "wish-contract-1" || kept[2].ContractID != wishOnlyWithImage {
 		t.Fatalf("kept %+v", kept)
 	}
 	again, droppedAgain := DropForeignOPReturnContracts(kept)
-	if droppedAgain != 0 || len(again) != 2 {
+	if droppedAgain != 0 || len(again) != 3 {
 		t.Fatalf("second pass dropped=%d kept=%d", droppedAgain, len(again))
+	}
+}
+
+func opReturnWishOnly(t *testing.T, b byte) (wishHex string, script []byte) {
+	t.Helper()
+	raw := bytes.Repeat([]byte{b}, 32)
+	script, err := txscript.NewScriptBuilder().AddOp(txscript.OP_RETURN).AddData(raw).Script()
+	if err != nil {
+		t.Fatalf("op_return: %v", err)
+	}
+	return hex.EncodeToString(raw), script
+}
+
+func TestWishOnlyOPReturnIsTheImage(t *testing.T) {
+	wish, script := opReturnWishOnly(t, 0x91)
+	bm, _ := newReplicationMonitor(t, 500)
+	tx := Transaction{
+		TxID: strings.Repeat("aa", 32),
+		Outputs: []TxOutput{{
+			ScriptPubKey: script,
+		}},
+	}
+	parsed := &ParsedBlock{Transactions: []Transaction{tx}}
+	if got := bm.reconcileOracleIngestions(t.TempDir(), parsed, nil, 141965); len(got) != 0 {
+		t.Fatalf("recorded a wish-only anchor with no image: %+v", got)
+	}
+	hits, err := commitmentsFromRawBlock(mustDecodeHex(t, mustRawBlockHex(t, script)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 0 {
+		t.Fatalf("queued a wish-only anchor with no image: %+v", hits)
+	}
+
+	if err := os.WriteFile(filepath.Join(os.Getenv("UPLOADS_DIR"), wish), []byte("png"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	blockDir := t.TempDir()
+	got := bm.reconcileOracleIngestions(blockDir, parsed, nil, 141965)
+	if len(got) != 1 || got[0].ContractID != wish || got[0].Metadata["image_file"] != wish {
+		t.Fatalf("contracts=%+v", got)
+	}
+	if _, err := os.Stat(filepath.Join(blockDir, "images", wish)); err != nil {
+		t.Fatalf("wish image was not copied into the block: %v", err)
+	}
+	hits, err = commitmentsFromRawBlock(mustDecodeHex(t, mustRawBlockHex(t, script)))
+	if err != nil || len(hits) != 1 || hits[0].WishHash != wish || hits[0].StegoHash != "" {
+		t.Fatalf("hits=%+v err=%v", hits, err)
+	}
+}
+
+func TestOlderFundingCopiesWishHashImage(t *testing.T) {
+	bm, _ := newReplicationMonitor(t, 121662)
+	wish := hex.EncodeToString(bytes.Repeat([]byte{0x93}, 32))
+	if err := os.WriteFile(filepath.Join(os.Getenv("UPLOADS_DIR"), wish), []byte("jpeg-bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rec := &services.IngestionRecord{
+		ID:       "ingestion-not-the-wish",
+		Filename: "missing.png",
+		Metadata: map[string]interface{}{
+			"visible_pixel_hash": wish,
+		},
+	}
+	dest, err := bm.moveIngestionImageWithFilename(t.TempDir(), rec, "QmMissingCID")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Base(dest) != wish {
+		t.Fatalf("image name %s, want the wish hash", filepath.Base(dest))
+	}
+	body, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != "jpeg-bytes" {
+		t.Fatalf("copied %q", body)
+	}
+	if ContractImageName(SmartContractData{
+		ContractID: "ingestion-not-the-wish",
+		ImagePath:  "images/QmMissingCID",
+		Metadata: map[string]any{
+			"image_file":         "QmMissingCID",
+			"visible_pixel_hash": wish,
+		},
+	}) != wish {
+		t.Fatal("card did not prefer the wish image")
 	}
 }
 

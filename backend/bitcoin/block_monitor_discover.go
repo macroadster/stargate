@@ -900,7 +900,15 @@ func commitmentsFromRawBlock(raw []byte) ([]chainCommitment, error) {
 				continue
 			}
 			wish, stego, ok := parseOPReturnHashes(output.PkScript)
-			if !ok || stego == "" {
+			if !ok {
+				continue
+			}
+			// A 64-byte pair is queued even before the wish file arrives.
+			// A 32-byte wish-only anchor is included only when that image is
+			// already in uploads, so the block can be stored and the card can
+			// show it. The other 32-byte OP_RETURNs are not contracts and are
+			// not queued.
+			if stego == "" && !wishImageOnDisk(wish) {
 				continue
 			}
 			out = append(out, chainCommitment{

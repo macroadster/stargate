@@ -78,17 +78,11 @@ func buildContractInscriptions(contracts []bitcoin.SmartContractData, height int
 			continue
 		}
 		meta := contract.Metadata
-		fileName := strings.TrimSpace(stringFromAny(meta["image_file"]))
-		if fileName == "" {
-			fileName = filepath.Base(strings.TrimSpace(contract.ImagePath))
-		}
+		fileName := bitcoin.ContractImageName(contract)
 		if fileName == "" {
 			continue
 		}
-		filePath := strings.TrimSpace(contract.ImagePath)
-		if filePath == "" {
-			filePath = filepath.Join("images", fileName)
-		}
+		filePath := filepath.Join("images", fileName)
 
 		txID := strings.TrimSpace(stringFromAny(meta["tx_id"]))
 		if !isLikelyTxID(txID) {
@@ -815,13 +809,7 @@ func pickBlockCardThumbnail(block *storage.BlockDataCache) (url string, isContra
 		if isSyntheticStegoContract(c) {
 			continue
 		}
-		fileName := ""
-		if c.Metadata != nil {
-			fileName = strings.TrimSpace(stringFromAny(c.Metadata["image_file"]))
-		}
-		if fileName == "" {
-			fileName = filepath.Base(strings.TrimSpace(c.ImagePath))
-		}
+		fileName := bitcoin.ContractImageName(c)
 		if fileName != "" {
 			return fmt.Sprintf("/api/block-image/%d/%s", block.BlockHeight, fileName), true
 		}

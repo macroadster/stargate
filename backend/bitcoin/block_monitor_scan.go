@@ -517,19 +517,61 @@ func foreignOPReturnContract(contract SmartContractData) bool {
 	if matchType != "" && matchType != "op_return" {
 		return false
 	}
-	wish, stego, ok := storedCommitmentHalves(contract)
-	if !ok {
+	// The wish file is the contract. A 64-byte pair and a 32-byte wish-only
+	// anchor use the same rule. A 32-byte OP_RETURN with no wish file used to
+	// stay because a missing stego half made this check give up and keep it.
+	if wish := wishHexFromContract(contract); wishImageOnDisk(wish) {
 		return false
 	}
-	payload := make([]byte, 0, len(wish)+len(stego))
-	payload = append(payload, wish...)
-	payload = append(payload, stego...)
-	if !commitmentBytesOK(payload) {
+	if matchType == "op_return" {
 		return true
 	}
-	// A raw wish||stego pair is still a generic anchor until this node has
-	// the wish image. Pay-to-anchor software does not write that file.
-	return !wishImageOnDisk(hex.EncodeToString(wish))
+	// Untyped rows that are not a hash pair stay. A parsed wish||stego pair
+	// with no wish file is a generic anchor, including text protocols whose
+	// bytes happen to be hex.
+	_, _, ok := storedCommitmentHalves(contract)
+	return ok
+}
+
+// wishHexFromContract is the wish image hash stored on a contract row.
+// The contract id is included because a wish-only anchor uses that hash as its id.
+func wishHexFromContract(contract SmartContractData) string {
+	var candidates []string
+	if contract.Metadata != nil {
+		candidates = append(candidates,
+			stringFromAny(contract.Metadata["visible_pixel_hash"]),
+			stringFromAny(contract.Metadata["wish_hash"]),
+			stringFromAny(contract.Metadata["pixel_hash"]),
+		)
+	}
+	candidates = append(candidates, contract.ContractID)
+	for _, candidate := range candidates {
+		candidate = strings.ToLower(strings.TrimSpace(candidate))
+		candidate = strings.TrimPrefix(candidate, "wish-")
+		if _, ok := digestHex(candidate); ok {
+			return candidate
+		}
+	}
+	return ""
+}
+
+// ContractImageName is the file the block card should show for a contract.
+// That file is the wish image when this node has it. A stego hash or an IPFS
+// CID is only a fallback for a row whose wish file is not here yet.
+func ContractImageName(contract SmartContractData) string {
+	if wish := wishHexFromContract(contract); wishImageOnDisk(wish) {
+		return wish
+	}
+	if contract.Metadata != nil {
+		if name := strings.TrimSpace(stringFromAny(contract.Metadata["image_file"])); name != "" && name != "." {
+			return filepath.Base(name)
+		}
+	}
+	base := filepath.Base(strings.TrimSpace(contract.ImagePath))
+	if base == "." || base == string(filepath.Separator) {
+		return ""
+	}
+	return base
 }
 
 func storedCommitmentHalves(contract SmartContractData) (wish, stego []byte, ok bool) {
@@ -763,7 +805,7 @@ func (bm *BlockMonitor) moveIngestionImageWithFilename(blockDir string, rec *ser
 	if sourcePath == "" && rec.ID != "" {
 		// Try partitioned and flat hash-only locations.
 		hashPath := datadir.PartResolve(uploadsDir, rec.ID)
-		if _, err := os.Stat(hashPath); err == nil {
+		if info, err := os.Stat(hashPath); err == nil && !info.IsDir() {
 			sourcePath = hashPath
 		} else {
 			// Fallback to old pattern with prefix
@@ -771,6 +813,27 @@ func (bm *BlockMonitor) moveIngestionImageWithFilename(blockDir string, rec *ser
 			if len(matches) > 0 {
 				sort.Strings(matches)
 				sourcePath = matches[0]
+			}
+		}
+	}
+	if sourcePath == "" && rec.Metadata != nil {
+		// Older funding txs have no OP_RETURN. The picture is named by the
+		// wish hash in metadata, not by the ingestion id or a stego CID.
+		for _, key := range []string{"visible_pixel_hash", "wish_hash", "pixel_hash"} {
+			hash := strings.ToLower(strings.TrimSpace(stringFromAny(rec.Metadata[key])))
+			hash = strings.TrimPrefix(hash, "wish-")
+			if _, ok := digestHex(hash); !ok {
+				continue
+			}
+			hashPath := datadir.PartResolve(uploadsDir, hash)
+			info, err := os.Stat(hashPath)
+			if err == nil && !info.IsDir() {
+				sourcePath = hashPath
+				if strings.TrimSpace(destFilename) == "" || !strings.EqualFold(destFilename, hash) {
+					destFilename = hash
+					destPath = security.SafeFilePath(destDir, destFilename)
+				}
+				break
 			}
 		}
 	}
@@ -939,6 +1002,28 @@ func stegoFileOnDisk(stegoHash string) bool {
 // other software uses the same pay-to-anchor shape.
 func wishImageOnDisk(wishHash string) bool {
 	return uploadHashOnDisk(wishHash)
+}
+
+// placeWishImage copies UPLOADS_DIR/<wish_hash> into the block's images
+// directory under that same hash. The card loads this file, not the stego hash.
+func placeWishImage(blockDir, wishHash string) (imageFile, imagePath string, err error) {
+	wishHash = strings.ToLower(strings.TrimSpace(wishHash))
+	wishHash = strings.TrimPrefix(wishHash, "wish-")
+	if !wishImageOnDisk(wishHash) {
+		return "", "", fmt.Errorf("wish image %s is not in uploads", wishHash)
+	}
+	src := datadir.PartResolve(uploadsDirForStego(), wishHash)
+	destDir := filepath.Join(blockDir, "images")
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
+		return "", "", err
+	}
+	dest := filepath.Join(destDir, wishHash)
+	if _, statErr := os.Stat(dest); statErr != nil {
+		if err := copyFile(src, dest); err != nil {
+			return "", "", err
+		}
+	}
+	return wishHash, filepath.Join("images", wishHash), nil
 }
 
 func uploadHashOnDisk(hash string) bool {

@@ -353,47 +353,58 @@ func (bm *BlockMonitor) reconcileOracleIngestions(blockDir string, parsedBlock *
 					delete(fallbackCandidates, candidate)
 				}
 				matchedTxIDs[tx.TxID] = match.ID
-			} else if stegoHash != "" {
-				// No local ingestion/proposal/contract yet. Queue the hash pair
-				// so a wish image that arrives later can still be recorded.
-				// The block list gets a smart contract only when that image is
-				// already in UPLOADS_DIR. Without it, this is generic pay-to-anchor.
+			} else if stegoHash != "" || wishImageOnDisk(wishHash) {
+				// No local ingestion yet. A 64-byte pair is queued so the wish
+				// image can arrive later. A 32-byte wish-only anchor is a
+				// contract only when that image is already in uploads.
+				// The card shows the wish file, not the stego hash.
 				normalizedWish := identity.CanonicalContractID(wishHash)
 				if normalizedWish == "" {
-					normalizedWish = wishHash
+					normalizedWish = strings.ToLower(strings.TrimSpace(wishHash))
 				}
-				bm.noteChainCommitment(chainCommitment{
-					Height:    blockHeight,
-					TxID:      tx.TxID,
-					WishHash:  normalizedWish,
-					StegoHash: stegoHash,
-				})
+				if stegoHash != "" {
+					bm.noteChainCommitment(chainCommitment{
+						Height:    blockHeight,
+						TxID:      tx.TxID,
+						WishHash:  normalizedWish,
+						StegoHash: stegoHash,
+					})
+				}
 				if !wishImageOnDisk(normalizedWish) {
 					log.Printf("oracle reconcile: block %d tx %s: OP_RETURN wish=%s stego=%s has no wish image in uploads; not a smart contract", blockHeight, tx.TxID, wishHash, stegoHash)
 					break
 				}
+				imageFile, imagePath, err := placeWishImage(blockDir, normalizedWish)
+				if err != nil {
+					log.Printf("oracle reconcile: block %d tx %s: wish image %s is in uploads but was not copied: %v", blockHeight, tx.TxID, normalizedWish, err)
+					imageFile = normalizedWish
+					imagePath = filepath.Join("images", normalizedWish)
+				}
 				log.Printf("oracle reconcile: block %d tx %s: OP_RETURN wish=%s stego=%s matches wish image in uploads", blockHeight, tx.TxID, wishHash, stegoHash)
+				meta := map[string]any{
+					"tx_id":              tx.TxID,
+					"block_height":       blockHeight,
+					"match_type":         "op_return",
+					"wish_hash":          wishHash,
+					"visible_pixel_hash": wishHash,
+					"image_file":         imageFile,
+					"ingestion_id":       normalizedWish,
+				}
+				if stegoHash != "" {
+					meta["stego_hash"] = stegoHash
+				}
 				smartContracts = upsertContractByID(smartContracts, SmartContractData{
 					ContractID:  normalizedWish,
 					BlockHeight: blockHeight,
-					ImagePath:   filepath.Join("images", stegoHash),
-					Metadata: map[string]any{
-						"tx_id":              tx.TxID,
-						"block_height":       blockHeight,
-						"match_type":         "op_return",
-						"wish_hash":          wishHash,
-						"stego_hash":         stegoHash,
-						"visible_pixel_hash": wishHash,
-						"image_file":         stegoHash,
-						"ingestion_id":       normalizedWish,
-					},
+					ImagePath:   imagePath,
+					Metadata:    meta,
 				})
 				if bm.sweepStore != nil {
 					bm.updateTaskFundingProofsFromTx(normalizedWish, tx, blockHeight)
 					bm.confirmContractTasks(normalizedWish, tx.TxID, blockHeight)
 				}
 			} else {
-				log.Printf("oracle reconcile: block %d tx %s: OP_RETURN wish=%s (no stego hash), skipping", blockHeight, tx.TxID, wishHash)
+				log.Printf("oracle reconcile: block %d tx %s: OP_RETURN wish=%s has no wish image in uploads; not a smart contract", blockHeight, tx.TxID, wishHash)
 			}
 			break // one OP_RETURN match per tx
 		}
