@@ -15,6 +15,7 @@ Agents and humans should treat this directory as the source of truth for *why* t
 | [0006](./0006-embedded-btcd-node.md) | Embedded btcd full node (no mining) | Accepted |
 | [0007](./0007-wish-creator-attestation.md) | Wish creator attestation | Accepted |
 | [0008](./0008-sandbox-extract-on-confirm.md) | Extract sandbox on this node's on-chain confirm | Accepted |
+| [0009](./0009-status-console.md) | Status console on a terminal | Accepted |
 
 ## Format
 

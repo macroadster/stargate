@@ -5,11 +5,11 @@ import (
 	"crypto/sha256"
 	"fmt"
 
-	"github.com/btcsuite/btcd/btcutil"
-	"github.com/btcsuite/btcd/chaincfg"
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcd/wire"
+	btcaddr "github.com/btcsuite/btcd/address/v2"
+	"github.com/btcsuite/btcd/chaincfg/v2"
+	"github.com/btcsuite/btcd/chainhash/v2"
+	"github.com/btcsuite/btcd/txscript/v2"
+	"github.com/btcsuite/btcd/wire/v2"
 )
 
 // allPayerSelectionsAreSegWit checks if all selected UTXOs are SegWit types (P2WPKH, P2WSH, Taproot).
@@ -30,11 +30,11 @@ func allPayerSelectionsAreSegWit(selections []payerSelection, client UTXOClient,
 			// Check each address from the script
 			for _, addr := range addrs {
 				switch addr.(type) {
-				case *btcutil.AddressWitnessPubKeyHash:
+				case *btcaddr.AddressWitnessPubKeyHash:
 					// P2WPKH - SegWit native
-				case *btcutil.AddressWitnessScriptHash:
+				case *btcaddr.AddressWitnessScriptHash:
 					// P2WSH - SegWit native
-				case *btcutil.AddressTaproot:
+				case *btcaddr.AddressTaproot:
 					// Taproot - SegWit v1
 				default:
 					// Any other type (P2PKH, P2SH, etc.) makes TxID malleable
@@ -92,7 +92,7 @@ func buildPayoutScripts(req PSBTRequest) ([][]byte, []int64, error) {
 // at least DustLimitP2PKH or the builder refuses instead of emitting dust.
 func mergePayoutsByAddress(payouts []PayoutOutput) ([]PayoutOutput, error) {
 	type bucket struct {
-		addr  btcutil.Address
+		addr  btcaddr.Address
 		total int64
 	}
 	var order []string
@@ -133,7 +133,7 @@ func mergePayoutsByAddress(payouts []PayoutOutput) ([]PayoutOutput, error) {
 // Peers find the stego image by its on-chain hash, extract the embedded JSON,
 // and read sandbox_hash from there.  This keeps OP_RETURN within Bitcoin's
 // 80-byte recommendation.
-func buildDonationOutputs(params *chaincfg.Params, wishHash, stegoHash []byte, donationAddr btcutil.Address) (*donationOutputs, error) {
+func buildDonationOutputs(params *chaincfg.Params, wishHash, stegoHash []byte, donationAddr btcaddr.Address) (*donationOutputs, error) {
 	if donationAddr == nil {
 		return nil, fmt.Errorf("donation address required")
 	}
@@ -173,7 +173,7 @@ func buildDonationOutputs(params *chaincfg.Params, wishHash, stegoHash []byte, d
 
 // buildCommitmentScript is kept for backward compatibility with code that
 // still references the old hashlock path.  New code should use buildDonationOutputs.
-func buildCommitmentScript(params *chaincfg.Params, pixelHash []byte, commitmentAddress btcutil.Address) ([]byte, []byte, []byte, string, error) {
+func buildCommitmentScript(params *chaincfg.Params, pixelHash []byte, commitmentAddress btcaddr.Address) ([]byte, []byte, []byte, string, error) {
 	if len(pixelHash) != 32 {
 		return nil, nil, nil, "", fmt.Errorf("pixel hash must be 32 bytes for P2WSH hashlock")
 	}
@@ -182,7 +182,7 @@ func buildCommitmentScript(params *chaincfg.Params, pixelHash []byte, commitment
 		return nil, nil, nil, "", err
 	}
 	hash := sha256.Sum256(redeemScript)
-	addr, err := btcutil.NewAddressWitnessScriptHash(hash[:], params)
+	addr, err := btcaddr.NewAddressWitnessScriptHash(hash[:], params)
 	if err != nil {
 		return nil, nil, nil, "", fmt.Errorf("pixel hash p2wsh: %w", err)
 	}
@@ -229,13 +229,13 @@ func firstScript(scripts [][]byte) []byte {
 	return scripts[0]
 }
 
-func estimateInputVBytes(addr btcutil.Address) int64 {
+func estimateInputVBytes(addr btcaddr.Address) int64 {
 	switch addr.(type) {
-	case *btcutil.AddressWitnessPubKeyHash:
+	case *btcaddr.AddressWitnessPubKeyHash:
 		return 69
-	case *btcutil.AddressTaproot:
+	case *btcaddr.AddressTaproot:
 		return 58
-	case *btcutil.AddressScriptHash:
+	case *btcaddr.AddressScriptHash:
 		return 109
 	default:
 		return 148 // P2PKH fallback

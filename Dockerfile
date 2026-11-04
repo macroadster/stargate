@@ -15,8 +15,9 @@ RUN npm run build
 # CGO disabled; we use modernc.org/sqlite (pure Go) so no C compiler or libc
 # dependencies are needed in the builder. This keeps the image small and
 # portable.
-# Pin patch toolchain so stdlib security fixes (1.25.8–1.25.14) are included.
-FROM golang:1.25.14-alpine AS backend-builder
+# Pin the patch toolchain. Go 1.27.3 includes the crypto/x509 root-store
+# fix for CVE-2026-111943 and matches the btcd v0.27.0 release toolchain.
+FROM golang:1.27.3-alpine AS backend-builder
 WORKDIR /app/backend
 # Install build dependencies (no CGO needed for modernc.org/sqlite)
 RUN apk add --no-cache git ca-certificates tzdata
@@ -29,12 +30,13 @@ COPY backend/ ./
 COPY --from=frontend-builder /app/frontend/build ./assets/frontend
 ARG VERSION=dev
 ARG GIT_COMMIT=unknown
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+# Pack btcd into the stargate binary. Version pin lives in scripts/build-btcd.sh.
+COPY scripts/build-btcd.sh /tmp/build-btcd.sh
+RUN GOOS=linux GOARCH=amd64 /tmp/build-btcd.sh ./bitcoin/btcd.embed \
+    && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags embedbtcd \
     -ldflags="-w -s -X main.version=${VERSION} -X main.gitCommit=${GIT_COMMIT}" \
-    -o /out/stargate .
-# Bundle btcd full node (no mining) alongside stargate — same container, managed process.
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go install -trimpath github.com/btcsuite/btcd@v0.25.0 \
-    && cp "$(go env GOPATH)/bin/btcd" /out/btcd
+    -o /out/stargate . \
+    && rm -f ./bitcoin/btcd.embed
 
 # Stage 3: Final lightweight image
 FROM debian:bookworm-slim
@@ -50,6 +52,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gnupg \
     git \
     build-essential \
+    sqlite3 \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/* \
@@ -68,7 +71,6 @@ WORKDIR /app
 
 # Copy binary from builder
 COPY --from=backend-builder /out/stargate /usr/local/bin/stargate
-COPY --from=backend-builder /out/btcd /usr/local/bin/btcd
 
 # Copy documentation and assets
 COPY --from=backend-builder /app/backend/docs ./docs
@@ -85,10 +87,11 @@ RUN mkdir -p /app/uploads /app/logs /app/ipfs_objects /app/ipfs_repo /app/data/b
 ENV STARGATE_STORAGE=sqlite
 # HOME is set so opencode (and similar tools) can locate user config and state if needed.
 ENV HOME=/home/stargate
-# Default: managed btcd full node (testnet4), no mining. Override with BTCD_MODE=external|off.
+# Default: managed btcd full node (testnet4), no mining. The executable is
+# embedded in stargate and extracted under STARGATE_DATA_DIR/bin.
+# Override with BTCD_MODE=external|off or BTCD_BIN=/path/to/btcd.
 ENV BITCOIN_NETWORK=testnet4
 ENV BTCD_MODE=managed
-ENV BTCD_BIN=/usr/local/bin/btcd
 ENV BTCD_DATADIR=/app/data/btcd
 # GIN_MODE removed: the project uses net/http + http.ServeMux (no Gin framework)
 

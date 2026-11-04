@@ -12,7 +12,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  GO_VERSION: '1.25'
+  GO_VERSION: '1.27.3'
   NODE_VERSION: '22'
   # Public modules (incl. github.com/macroadster/trin) via proxy; direct fallback.
   # Do not set GOPRIVATE for public deps — sumdb verification stays enabled.
@@ -34,6 +34,7 @@ jobs:
       - name: Run tests
         run: |
           test -f backend/assets/frontend/EMBED_PLACEHOLDER
+          sh scripts/install_test.sh
           cd backend
           go test ./...
 
@@ -86,12 +87,20 @@ jobs:
         run: |
           mkdir -p backend/assets/frontend
           cp -r frontend/build/* backend/assets/frontend/
+          ./scripts/build-btcd.sh backend/bitcoin/btcd.embed
           cd backend
           VERSION="${GITHUB_REF_NAME:-dev}"
           COMMIT="${GITHUB_SHA:-unknown}"
           COMMIT="${COMMIT:0:7}"
-          CGO_ENABLED=0 go build -trimpath \
+          CGO_ENABLED=0 go build -trimpath -tags embedbtcd \
             -ldflags="-w -s -X main.version=${VERSION} -X main.gitCommit=${COMMIT}" \
             -o ../stargate .
+          rm -f bitcoin/btcd.embed
           ./../stargate --version
           ./../stargate --help >/dev/null
+          tmp=$(mktemp -d)
+          cp ../stargate "${tmp}/stargate"
+          STARGATE_DATA_DIR="${tmp}/data" PATH="${tmp}" BTCD_BIN= BTCD_MODE=managed \
+            "${tmp}/stargate" doctor
+          test -x "${tmp}/data/bin/btcd"
+          "${tmp}/data/bin/btcd" --version

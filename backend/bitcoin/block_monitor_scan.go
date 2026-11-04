@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -17,9 +18,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/btcsuite/btcd/btcutil"
-	"github.com/btcsuite/btcd/chaincfg"
-	"github.com/btcsuite/btcd/txscript"
+	btcaddr "github.com/btcsuite/btcd/address/v2"
+	"github.com/btcsuite/btcd/chaincfg/v2"
+	"github.com/btcsuite/btcd/txscript/v2"
 
 	"stargate-backend/core"
 	"stargate-backend/core/identity"
@@ -363,35 +364,256 @@ func (bm *BlockMonitor) createSmartContractsFromScanResults(scanResults []map[st
 
 // parseOPReturnHashes extracts wish_hash and stego_image_hash from an
 // OP_RETURN output.  Returns (wishHash, stegoHash, ok).
-// The expected formats are:
+// The expected formats are a single data push:
 //
 //	OP_RETURN <64 bytes: wish_hash(32) || stego_hash(32)>
 //	OP_RETURN <32 bytes: wish_hash only>
 //
+// Both halves must look like raw SHA-256 digests. Text protocols that also
+// use a 64-byte OP_RETURN (CRC-20 JSON, Omni, ASCII hex) are rejected, as
+// are concatenated pushes and a payload whose two halves are identical.
 // The sandbox_hash is not on-chain — it lives inside the stego v2 JSON
 // payload.  Peers find the stego image by its on-chain hash, extract the
 // payload, and read sandbox_hash from there.
 func parseOPReturnHashes(script []byte) (string, string, bool) {
-	if len(script) < 2 || script[0] != txscript.OP_RETURN {
+	payload, ok := opReturnSinglePush(script)
+	if !ok || !commitmentBytesOK(payload) {
 		return "", "", false
 	}
-	// Disassemble the script to get the data pushes.
-	tokenizer := txscript.MakeScriptTokenizer(0, script[1:])
-	var data []byte
-	for tokenizer.Next() {
-		data = append(data, tokenizer.Data()...)
-	}
-	if tokenizer.Err() != nil {
-		return "", "", false
-	}
-	switch len(data) {
+	switch len(payload) {
 	case 64: // wish_hash(32) || stego_hash(32)
-		return hex.EncodeToString(data[:32]), hex.EncodeToString(data[32:64]), true
+		return hex.EncodeToString(payload[:32]), hex.EncodeToString(payload[32:64]), true
 	case 32: // wish_hash only
-		return hex.EncodeToString(data[:32]), "", true
+		return hex.EncodeToString(payload), "", true
 	default:
 		return "", "", false
 	}
+}
+
+// opReturnSinglePush returns the data of an OP_RETURN that is exactly one
+// push. Extra pushes and non-push opcodes (Rune OP_13, for example) are
+// rejected so unrelated scripts cannot be glued into a 64-byte payload.
+func opReturnSinglePush(script []byte) ([]byte, bool) {
+	if len(script) < 2 || script[0] != txscript.OP_RETURN {
+		return nil, false
+	}
+	tokenizer := txscript.MakeScriptTokenizer(0, script[1:])
+	var data []byte
+	pushes := 0
+	for tokenizer.Next() {
+		if tokenizer.Opcode() > txscript.OP_PUSHDATA4 {
+			return nil, false
+		}
+		pushes++
+		data = append(data, tokenizer.Data()...)
+	}
+	if tokenizer.Err() != nil || pushes != 1 {
+		return nil, false
+	}
+	return data, true
+}
+
+// commitmentBytesOK reports whether payload is one or two raw digest halves.
+// A Stargate commitment is wish_hash||stego_hash, each a SHA-256 of image
+// bytes. Foreign 64-byte OP_RETURNs are usually text, ASCII-hex, zero-padded,
+// or the same 32 bytes twice.
+func commitmentBytesOK(payload []byte) bool {
+	switch len(payload) {
+	case 32:
+		return rawDigestHalf(payload)
+	case 64:
+		if bytes.Equal(payload[:32], payload[32:]) {
+			return false
+		}
+		if !rawDigestHalf(payload[:32]) || !rawDigestHalf(payload[32:]) {
+			return false
+		}
+		return printableRatio(payload) <= 0.60
+	default:
+		return false
+	}
+}
+
+func rawDigestHalf(b []byte) bool {
+	if len(b) != 32 {
+		return false
+	}
+	printable := 0
+	hexish := true
+	for i, c := range b {
+		if c >= 0x20 && c < 0x7f {
+			printable++
+		}
+		if !isASCIIHex(c) {
+			hexish = false
+		}
+		if i+4 <= len(b) && b[i] == 0 && b[i+1] == 0 && b[i+2] == 0 && b[i+3] == 0 {
+			return false
+		}
+	}
+	if hexish || printable*4 > len(b)*3 { // more than 3/4 printable
+		return false
+	}
+	for _, magic := range [][]byte{
+		[]byte("{"),
+		[]byte("omni"),
+		[]byte("ord"),
+		[]byte("BONO"),
+		[]byte("VIA_"),
+		[]byte("=:"),
+	} {
+		if bytes.HasPrefix(b, magic) {
+			return false
+		}
+	}
+	return true
+}
+
+func isASCIIHex(c byte) bool {
+	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
+}
+
+func printableRatio(b []byte) float64 {
+	if len(b) == 0 {
+		return 0
+	}
+	n := 0
+	for _, c := range b {
+		if c >= 0x20 && c < 0x7f {
+			n++
+		}
+	}
+	return float64(n) / float64(len(b))
+}
+
+// DropForeignOPReturnContracts removes smart-contract rows that are not a
+// Stargate commitment. Text OP_RETURNs fail the hash-pair check. A raw
+// wish_hash||stego_hash pair is also dropped unless UPLOADS_DIR holds the
+// wish image; that pair alone is generic pay-to-anchor. Rows matched by
+// funding_txid or a witness hash are left alone.
+func DropForeignOPReturnContracts(contracts []SmartContractData) (kept []SmartContractData, dropped int) {
+	if len(contracts) == 0 {
+		return contracts, 0
+	}
+	kept = make([]SmartContractData, 0, len(contracts))
+	for _, contract := range contracts {
+		if foreignOPReturnContract(contract) {
+			dropped++
+			continue
+		}
+		kept = append(kept, contract)
+	}
+	if dropped == 0 {
+		return contracts, 0
+	}
+	return kept, dropped
+}
+
+func foreignOPReturnContract(contract SmartContractData) bool {
+	matchType := ""
+	if contract.Metadata != nil {
+		matchType = strings.ToLower(strings.TrimSpace(stringFromAny(contract.Metadata["match_type"])))
+	}
+	if matchType != "" && matchType != "op_return" {
+		return false
+	}
+	// The wish file is the contract. A 64-byte pair and a 32-byte wish-only
+	// anchor use the same rule. A 32-byte OP_RETURN with no wish file used to
+	// stay because a missing stego half made this check give up and keep it.
+	if wish := wishHexFromContract(contract); wishImageOnDisk(wish) {
+		return false
+	}
+	if matchType == "op_return" {
+		return true
+	}
+	// Untyped rows that are not a hash pair stay. A parsed wish||stego pair
+	// with no wish file is a generic anchor, including text protocols whose
+	// bytes happen to be hex.
+	_, _, ok := storedCommitmentHalves(contract)
+	return ok
+}
+
+// wishHexFromContract is the wish image hash stored on a contract row.
+// The contract id is included because a wish-only anchor uses that hash as its id.
+func wishHexFromContract(contract SmartContractData) string {
+	var candidates []string
+	if contract.Metadata != nil {
+		candidates = append(candidates,
+			stringFromAny(contract.Metadata["visible_pixel_hash"]),
+			stringFromAny(contract.Metadata["wish_hash"]),
+			stringFromAny(contract.Metadata["pixel_hash"]),
+		)
+	}
+	candidates = append(candidates, contract.ContractID)
+	for _, candidate := range candidates {
+		candidate = strings.ToLower(strings.TrimSpace(candidate))
+		candidate = strings.TrimPrefix(candidate, "wish-")
+		if _, ok := digestHex(candidate); ok {
+			return candidate
+		}
+	}
+	return ""
+}
+
+// ContractImageName is the file the block card should show for a contract.
+// That file is the wish image when this node has it. A stego hash or an IPFS
+// CID is only a fallback for a row whose wish file is not here yet.
+func ContractImageName(contract SmartContractData) string {
+	if wish := wishHexFromContract(contract); wishImageOnDisk(wish) {
+		return wish
+	}
+	if contract.Metadata != nil {
+		if name := strings.TrimSpace(stringFromAny(contract.Metadata["image_file"])); name != "" && name != "." {
+			return filepath.Base(name)
+		}
+	}
+	base := filepath.Base(strings.TrimSpace(contract.ImagePath))
+	if base == "." || base == string(filepath.Separator) {
+		return ""
+	}
+	return base
+}
+
+func storedCommitmentHalves(contract SmartContractData) (wish, stego []byte, ok bool) {
+	var wishHex, stegoHex string
+	if contract.Metadata != nil {
+		wishHex = stringFromAny(contract.Metadata["wish_hash"])
+		if wishHex == "" {
+			wishHex = stringFromAny(contract.Metadata["visible_pixel_hash"])
+		}
+		stegoHex = stringFromAny(contract.Metadata["stego_hash"])
+		if stegoHex == "" {
+			stegoHex = stringFromAny(contract.Metadata["image_file"])
+		}
+	}
+	if wishHex == "" {
+		wishHex = contract.ContractID
+	}
+	if stegoHex == "" {
+		stegoHex = contract.ImagePath
+	}
+	wish, okW := digestHex(wishHex)
+	stego, okS := digestHex(filepath.Base(stegoHex))
+	if !okS {
+		stego, okS = digestHex(stegoHex)
+	}
+	if !okW || !okS {
+		return nil, nil, false
+	}
+	return wish, stego, true
+}
+
+func digestHex(s string) ([]byte, bool) {
+	s = strings.ToLower(strings.TrimSpace(s))
+	s = strings.TrimPrefix(s, "wish-")
+	if len(s) != 64 {
+		return nil, false
+	}
+	raw, err := hex.DecodeString(s)
+	if err != nil || len(raw) != 32 {
+		return nil, false
+	}
+	return raw, true
 }
 
 func (bm *BlockMonitor) findImageForScanResult(images []ExtractedImageData, result map[string]any) *ExtractedImageData {
@@ -583,7 +805,7 @@ func (bm *BlockMonitor) moveIngestionImageWithFilename(blockDir string, rec *ser
 	if sourcePath == "" && rec.ID != "" {
 		// Try partitioned and flat hash-only locations.
 		hashPath := datadir.PartResolve(uploadsDir, rec.ID)
-		if _, err := os.Stat(hashPath); err == nil {
+		if info, err := os.Stat(hashPath); err == nil && !info.IsDir() {
 			sourcePath = hashPath
 		} else {
 			// Fallback to old pattern with prefix
@@ -591,6 +813,27 @@ func (bm *BlockMonitor) moveIngestionImageWithFilename(blockDir string, rec *ser
 			if len(matches) > 0 {
 				sort.Strings(matches)
 				sourcePath = matches[0]
+			}
+		}
+	}
+	if sourcePath == "" && rec.Metadata != nil {
+		// Older funding txs have no OP_RETURN. The picture is named by the
+		// wish hash in metadata, not by the ingestion id or a stego CID.
+		for _, key := range []string{"visible_pixel_hash", "wish_hash", "pixel_hash"} {
+			hash := strings.ToLower(strings.TrimSpace(stringFromAny(rec.Metadata[key])))
+			hash = strings.TrimPrefix(hash, "wish-")
+			if _, ok := digestHex(hash); !ok {
+				continue
+			}
+			hashPath := datadir.PartResolve(uploadsDir, hash)
+			info, err := os.Stat(hashPath)
+			if err == nil && !info.IsDir() {
+				sourcePath = hashPath
+				if strings.TrimSpace(destFilename) == "" || !strings.EqualFold(destFilename, hash) {
+					destFilename = hash
+					destPath = security.SafeFilePath(destDir, destFilename)
+				}
+				break
 			}
 		}
 	}
@@ -737,40 +980,101 @@ func (bm *BlockMonitor) maybeReconcileStego(rec *services.IngestionRecord) {
 	}
 }
 
+// errStegoNotOnDisk means the OP_RETURN stego hash is not in UPLOADS_DIR yet.
+// The commitment stays pending until the IPFS mirror writes that file.
+var errStegoNotOnDisk = errors.New("stego image not on disk")
+
+func uploadsDirForStego() string {
+	uploadsDir := strings.TrimSpace(os.Getenv("UPLOADS_DIR"))
+	if uploadsDir == "" {
+		return "data/uploads"
+	}
+	return uploadsDir
+}
+
+func stegoFileOnDisk(stegoHash string) bool {
+	return uploadHashOnDisk(stegoHash)
+}
+
+// wishImageOnDisk reports whether UPLOADS_DIR holds the wish image for hash.
+// The file is named by the wish hash (visible pixel hash), partitioned or flat.
+// An OP_RETURN hash pair without that file is not a Stargate smart contract:
+// other software uses the same pay-to-anchor shape.
+func wishImageOnDisk(wishHash string) bool {
+	return uploadHashOnDisk(wishHash)
+}
+
+// placeWishImage copies UPLOADS_DIR/<wish_hash> into the block's images
+// directory under that same hash. The card loads this file, not the stego hash.
+func placeWishImage(blockDir, wishHash string) (imageFile, imagePath string, err error) {
+	wishHash = strings.ToLower(strings.TrimSpace(wishHash))
+	wishHash = strings.TrimPrefix(wishHash, "wish-")
+	if !wishImageOnDisk(wishHash) {
+		return "", "", fmt.Errorf("wish image %s is not in uploads", wishHash)
+	}
+	src := datadir.PartResolve(uploadsDirForStego(), wishHash)
+	destDir := filepath.Join(blockDir, "images")
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
+		return "", "", err
+	}
+	dest := filepath.Join(destDir, wishHash)
+	if _, statErr := os.Stat(dest); statErr != nil {
+		if err := copyFile(src, dest); err != nil {
+			return "", "", err
+		}
+	}
+	return wishHash, filepath.Join("images", wishHash), nil
+}
+
+func uploadHashOnDisk(hash string) bool {
+	hash = strings.ToLower(strings.TrimSpace(hash))
+	if len(hash) != 64 {
+		return false
+	}
+	if _, err := hex.DecodeString(hash); err != nil {
+		return false
+	}
+	info, err := os.Stat(datadir.PartResolve(uploadsDirForStego(), hash))
+	return err == nil && info != nil && !info.IsDir()
+}
+
+func countWishImagesOnDisk(pending []chainCommitment) int {
+	n := 0
+	for _, c := range pending {
+		if wishImageOnDisk(c.WishHash) {
+			n++
+		}
+	}
+	return n
+}
+
 // reconcileOnChainArtifacts uses the stego_hash from the OP_RETURN to find
 // the stego image in UPLOADS_DIR and apply the v2 payload (proposal, tasks,
 // sandbox_hash). Metadata only — it does not unpack the sandbox tarball.
 // This is the primary replication path — no pubsub or
 // STARGATE_STEGO_APPROVAL_ENABLED needed.
-func (bm *BlockMonitor) reconcileOnChainArtifacts(contractID, stegoHash string) {
-	if contractID == "" {
-		return
+func (bm *BlockMonitor) reconcileOnChainArtifacts(contractID, stegoHash string) error {
+	if contractID == "" || strings.TrimSpace(stegoHash) == "" {
+		return fmt.Errorf("missing contract or stego hash")
 	}
-	uploadsDir := strings.TrimSpace(os.Getenv("UPLOADS_DIR"))
-	if uploadsDir == "" {
-		uploadsDir = "data/uploads"
+	if !stegoFileOnDisk(stegoHash) {
+		log.Printf("oracle reconcile: stego image %s not yet on disk for %s (will retry when the mirror delivers it)", stegoHash, contractID)
+		return errStegoNotOnDisk
 	}
-
-	// Reconcile stego image: find UPLOADS_DIR/<stegoHash> and extract
-	// the embedded v2 payload (proposal + tasks + sandbox_hash + metadata).
-	if stegoHash != "" {
-		stegoPath := datadir.PartResolve(uploadsDir, stegoHash)
-		if _, err := os.Stat(stegoPath); err == nil {
-			log.Printf("oracle reconcile: found stego image on disk for %s at %s, reconciling", contractID, stegoPath)
-			if bm.stegoReconciler != nil {
-				ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
-				defer cancel()
-				// Pass stegoHash as both CID and expected hash — reconcileStegoFromIPFS
-				// will fail (no IPFS CID), so use the local-file reconcile path instead.
-				// The stego reconciler already knows how to read from UPLOADS_DIR.
-				if err := bm.stegoReconciler.ReconcileStego(ctx, stegoHash, stegoHash); err != nil {
-					log.Printf("oracle reconcile: stego reconcile from on-chain hash failed for %s: %v", contractID, err)
-				}
-			}
-		} else {
-			log.Printf("oracle reconcile: stego image %s not yet on disk for %s (will arrive via mirror)", stegoHash, contractID)
-		}
+	stegoPath := datadir.PartResolve(uploadsDirForStego(), stegoHash)
+	log.Printf("oracle reconcile: found stego image on disk for %s at %s, reconciling", contractID, stegoPath)
+	if bm.stegoReconciler == nil {
+		return fmt.Errorf("no stego reconciler")
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	// Pass stegoHash as both CID and expected hash. ReconcileStego treats a
+	// 64-hex id as UPLOADS_DIR/<hash>, which is where the mirror writes it.
+	if err := bm.stegoReconciler.ReconcileStego(ctx, stegoHash, stegoHash); err != nil {
+		log.Printf("oracle reconcile: stego reconcile from on-chain hash failed for %s: %v", contractID, err)
+		return err
+	}
+	return nil
 }
 
 func txidImageFilename(txid, fallback string) string {
@@ -965,7 +1269,7 @@ func scriptHash160Hex(script []byte) string {
 	if len(script) == 0 {
 		return ""
 	}
-	return hex.EncodeToString(btcutil.Hash160(script))
+	return hex.EncodeToString(btcaddr.Hash160(script))
 }
 
 func stringFromAny(value any) string {

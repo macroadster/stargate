@@ -84,6 +84,43 @@ func NewDataStorage(dataDir string) *DataStorage {
 	return storage
 }
 
+// SaveBlockPayload replaces the hot-cache entry for a block that is already
+// loaded. The caller writes inscriptions.json. A height that is not cached
+// is left for the next disk load.
+func (ds *DataStorage) SaveBlockPayload(cache *BlockDataCache) error {
+	if cache == nil || cache.BlockHeight <= 0 {
+		return nil
+	}
+	ds.mu.Lock()
+	defer ds.mu.Unlock()
+	if _, ok := ds.cache[cache.BlockHeight]; !ok {
+		return nil
+	}
+	next := *cache
+	next.CacheTimestamp = time.Now()
+	ds.cache[cache.BlockHeight] = &next
+	return nil
+}
+
+// ReplaceSmartContracts swaps the hot-cache contract list for one height.
+// The on-disk inscriptions.json is updated by the caller. A height that is
+// not in the hot cache is left for the next disk load.
+func (ds *DataStorage) ReplaceSmartContracts(height int64, contracts []bitcoin.SmartContractData) error {
+	if contracts == nil {
+		contracts = []bitcoin.SmartContractData{}
+	}
+	ds.mu.Lock()
+	defer ds.mu.Unlock()
+	cached, ok := ds.cache[height]
+	if !ok || cached == nil {
+		return nil
+	}
+	next := *cached
+	next.SmartContracts = contracts
+	ds.cache[height] = &next
+	return nil
+}
+
 // StoreBlockData stores block monitoring results with caching
 func (ds *DataStorage) StoreBlockData(blockResponse *bitcoin.BlockInscriptionsResponse, scanResults []map[string]interface{}) error {
 	ds.mu.Lock()

@@ -117,6 +117,38 @@ func FoldContractPrefixTwins(ctx context.Context, store Store) (int, error) {
 	return n, nil
 }
 
+// RedirectPixelHashAlias reports whether id is a legacy pixel-hash alias
+// (wish-<64-hex> or contract-<64-hex>) and the bare hash it must be stored as.
+// contract-001 and other non-hash ids are not aliases. Callers that upsert a
+// contract row use this so a later write cannot reopen a twin the startup
+// fold already collapsed.
+func RedirectPixelHashAlias(id string) (canonical string, redirect bool) {
+	id = strings.TrimSpace(id)
+	if id == "" || !isPixelHashAlias(id) {
+		return "", false
+	}
+	canonical = identity.CanonicalContractID(id)
+	if !identity.IsPixelHash(canonical) || strings.EqualFold(id, canonical) {
+		return "", false
+	}
+	return canonical, true
+}
+
+// isPixelHashAlias reports whether id is wish-<64-hex> or contract-<64-hex>.
+// wish- is stripped by Normalize, so CanonicalContractID alone is not enough
+// to tell an alias from a bare hash.
+func isPixelHashAlias(id string) bool {
+	id = strings.TrimSpace(id)
+	if isContractPixelAlias(id) {
+		return true
+	}
+	const wish = "wish-"
+	if len(id) <= len(wish) || !strings.EqualFold(id[:len(wish)], wish) {
+		return false
+	}
+	return identity.IsPixelHash(id[len(wish):])
+}
+
 // foldContractPrefixAlias copies aliasID onto canonical when aliasID is the
 // live contract-<hash> row, remaps its tasks, and supersedes the alias.
 // A second call is a no-op.

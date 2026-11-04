@@ -21,8 +21,8 @@ import (
 	"stargate-backend/storage/ipfs"
 	scstore "stargate-backend/storage/smart_contract"
 
-	"github.com/btcsuite/btcd/btcutil"
-	"github.com/btcsuite/btcd/chaincfg"
+	btcaddr "github.com/btcsuite/btcd/address/v2"
+	"github.com/btcsuite/btcd/chaincfg/v2"
 	"golang.org/x/crypto/ripemd160"
 )
 
@@ -85,7 +85,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		return
 	}
 
-	var payerAddresses []btcutil.Address
+	var payerAddresses []btcaddr.Address
 	if len(body.PayerAddresses) > 0 {
 		for _, addr := range body.PayerAddresses {
 			if strings.TrimSpace(addr) == "" {
@@ -100,9 +100,9 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 			payerAddresses = append(payerAddresses, decoded)
 		}
 	} else {
-		payerAddresses = []btcutil.Address{payerAddr}
+		payerAddresses = []btcaddr.Address{payerAddr}
 	}
-	var changeAddr btcutil.Address
+	var changeAddr btcaddr.Address
 	if strings.TrimSpace(body.ChangeAddress) != "" {
 		changeAddr, err = bitcoin.DecodeAddressForNetwork(strings.TrimSpace(body.ChangeAddress), params)
 		if err != nil {
@@ -143,9 +143,9 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 
 	fundingMode, fundingAddress := s.resolveFundingMode(r.Context(), contractID)
 	primaryPayer := payerAddr
-	var fundraiserAddr btcutil.Address
+	var fundraiserAddr btcaddr.Address
 	var raiseFundPayers []bitcoin.PayerTarget
-	var raiseFundPayerAddrs []btcutil.Address
+	var raiseFundPayerAddrs []btcaddr.Address
 	var raiseFundPayouts []bitcoin.PayoutOutput
 	var raiseFundPayoutsByPayer map[string][]bitcoin.PayoutOutput
 	var raiseFundPayerOrder []string
@@ -234,8 +234,8 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 	if commitmentTarget == "" {
 		commitmentTarget = "funding"
 	}
-	var commitmentLockAddr btcutil.Address
-	var donationAddr btcutil.Address // New: direct donation P2WPKH (no hashlock)
+	var commitmentLockAddr btcaddr.Address
+	var donationAddr btcaddr.Address // New: direct donation P2WPKH (no hashlock)
 	switch commitmentTarget {
 	case "donation":
 		donation := strings.TrimSpace(os.Getenv("STARLIGHT_DONATION_ADDRESS"))
@@ -323,7 +323,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 		}
 	}
 
-	var contractorAddr btcutil.Address
+	var contractorAddr btcaddr.Address
 	if payoutTotal == 0 {
 		if strings.TrimSpace(body.ContractorAPIKey) != "" {
 			if rec, ok := s.apiKeys.Get(body.ContractorAPIKey); ok && strings.TrimSpace(rec.Wallet) != "" {
@@ -654,10 +654,10 @@ func (s *Server) resolvePSBTPixel(contractID, pixelHash string, usePixelHash boo
 
 // raiseFundContext holds precomputed raise_fund PSBT inputs.
 type raiseFundContext struct {
-	FundraiserAddr btcutil.Address
+	FundraiserAddr btcaddr.Address
 	Payouts        []bitcoin.PayoutOutput
 	Payers         []bitcoin.PayerTarget
-	PayerAddrs     []btcutil.Address
+	PayerAddrs     []btcaddr.Address
 	PayoutsByPayer map[string][]bitcoin.PayoutOutput
 	PayersByWallet map[string]bitcoin.PayerTarget
 	PayerOrder     []string
@@ -752,14 +752,14 @@ func (s *Server) prepareRaiseFundContext(ctx context.Context, contractID, fundin
 	return out, nil
 }
 
-func contractorAddressFor(addr btcutil.Address) string {
+func contractorAddressFor(addr btcaddr.Address) string {
 	if addr == nil {
 		return ""
 	}
 	return addr.EncodeAddress()
 }
 
-func (s *Server) publishIngestUpdate(ctx context.Context, proposalID, ingestionID, visiblePixelHash string, fundingTxIDs []string, res *bitcoin.PSBTResult, commitmentLockAddr btcutil.Address, commitmentTarget string, payoutScripts [][]byte, payoutScriptHashes, payoutScriptHash160s []string) {
+func (s *Server) publishIngestUpdate(ctx context.Context, proposalID, ingestionID, visiblePixelHash string, fundingTxIDs []string, res *bitcoin.PSBTResult, commitmentLockAddr btcaddr.Address, commitmentTarget string, payoutScripts [][]byte, payoutScriptHashes, payoutScriptHash160s []string) {
 	topic := ipfs.MirrorTopic()
 	ipfs.UntrackWish(ingestionID)
 	ipfs.UntrackWish(visiblePixelHash)
@@ -983,7 +983,7 @@ func toString(value interface{}) string {
 	}
 }
 
-func addressSlice(addrs []btcutil.Address) []string {
+func addressSlice(addrs []btcaddr.Address) []string {
 	out := make([]string, 0, len(addrs))
 	for _, addr := range addrs {
 		if addr == nil {
@@ -994,7 +994,7 @@ func addressSlice(addrs []btcutil.Address) []string {
 	return out
 }
 
-func addressOrEmpty(addr btcutil.Address) string {
+func addressOrEmpty(addr btcaddr.Address) string {
 	if addr == nil {
 		return ""
 	}

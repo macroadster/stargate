@@ -70,7 +70,7 @@ When a block is processed, matching prioritizes:
 
 1. **funding_txid** — known funding tx from ingestion metadata → confirm, then OP_RETURN / stego reconcile
 2. **OP_RETURN candidate** — parse hashes → match `wish_hash` to known records → reconcile stego + sandbox
-3. **No-candidate fallback** — stego file exists on disk → create/update contract from v2 payload
+3. **No-candidate fallback** — An OP_RETURN is a smart contract only when `UPLOADS_DIR/<wish_hash>` exists. That file is the picture on the card. A 64-byte `wish_hash||stego_hash` pair without the wish image stays a generic anchor. A 32-byte wish-only anchor is a contract only when that same file is already in uploads. When the stego file is also on disk, reconcile the v2 payload.
 
 Any instance that processes the block and has the hash-named files can reconcile independently. The chain is the announcement channel.
 
@@ -179,12 +179,12 @@ curl -fsSL https://raw.githubusercontent.com/macroadster/stargate/main/install.s
 stargate
 ```
 
-Server: `http://localhost:3001` with SQLite on **testnet4**. Linux/macOS amd64 and arm64. Installs to `~/.local/bin`. If that directory is not on your PATH, the script appends it to your shell profile (`.zshrc` / `.bashrc` / etc.). Set `INSTALL_DIR` to override the install path. Operator env: [`docs/arch/ENV.md`](docs/arch/ENV.md).
+Server: `http://localhost:3001` with SQLite on **testnet4**. Linux/macOS amd64 and arm64. Installs `stargate` to `~/.local/bin`. The binary embeds btcd and extracts it on startup for managed mode. If that directory is not on your PATH, the script appends it to your shell profile (`.zshrc` / `.bashrc` / etc.). Set `INSTALL_DIR` to override the install path. Operator env: [`docs/arch/ENV.md`](docs/arch/ENV.md).
 
 ### Development prerequisites
 
-- Node.js 18+ and npm
-- Go 1.25+
+- Node.js 22.12+ and npm
+- Go 1.27+
 - Git
 - Docker (optional, for `make docker`)
 
@@ -211,6 +211,22 @@ npm start      # http://localhost:3000
 - In-app manuals: `/docs` (from `frontend/public/docs/`)
 
 Optional Starlight scanner integration (stego approval pipeline) uses env such as `STARGATE_STEGO_APPROVAL_ENABLED`, `STARGATE_PROXY_BASE`, and optional `IPFS_API_URL`. For the native Trin/GGUF path use `STARLIGHT_GGUF` / `STARLIGHT_TRIN_MODEL`, or rely on auto-download into `$STARGATE_DATA_DIR/models/starlight.gguf` (`STARLIGHT_HF_*`). See deployment docs and `docs/arch/TRIN_STARLIGHT_SCANNER.md`. API keys are issued only by `POST /api/auth/challenge` + `POST /api/auth/verify`; `STARGATE_API_KEY` is ignored.
+
+## Console
+
+`stargate` in a terminal draws a status console. The first screen tells you
+the browser URL (default `http://127.0.0.1:3001`). Press `m` for chain height,
+peers, the scanner, the block monitor, and the IPFS mirror. Press `q` to stop.
+
+```bash
+stargate                 # serve + console on a TTY
+stargate serve --no-tui  # logs only
+stargate console         # attach to a node that is already running
+stargate status --once   # one text snapshot
+```
+
+Docker and systemd are not a TTY, so they keep the log stream. Details:
+[`docs/arch/CONSOLE.md`](docs/arch/CONSOLE.md).
 
 ## Usage (UI)
 

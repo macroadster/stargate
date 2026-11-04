@@ -150,6 +150,20 @@ export const shouldShowBlockThumbnailImage = (block, hideImages = true) => {
   return Boolean(block?.thumbnailIsContract);
 };
 
+/**
+ * True when the block rail should keep this block while clean blocks are hidden.
+ * The pending tip is not a scanned block. A block counts when the server flagged
+ * it, or when it has a smart-contract / stego count the card would show.
+ */
+export const blockHasSmartContract = (block) => {
+  if (!block || block.isFuture) return false;
+  if (typeof block.has_smart_contract === 'boolean') return block.has_smart_contract;
+  const count = Number(block.smart_contract_count || 0);
+  const stego = Number(block.steganography_summary?.stego_count || 0);
+  if (count > 0 || stego > 0) return true;
+  return Array.isArray(block.smart_contracts) && block.smart_contracts.length > 0;
+};
+
 export const resolveModalImage = (inscription) => {
   const mime = (inscription?.mime_type || '').toLowerCase();
   const { isImage: isActuallyImageFile } = classifyInscription(inscription);

@@ -784,19 +784,24 @@ func TestSQLiteCreateProposalDoesNotSupersedeConfirmed(t *testing.T) {
 		t.Fatalf("create proposal: %v", err)
 	}
 
-	c, err := store.GetContract(wishID)
+	// wish-<hash> is stored as the bare hash. The confirmed row is that key.
+	c, err := store.GetContract(hash)
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
 	if c.Status != "confirmed" {
 		t.Fatalf("confirmed wish demoted to %s", c.Status)
 	}
+	if _, err := store.GetContract(wishID); err == nil {
+		t.Fatal("wish- alias was stored as its own row")
+	}
 }
 
 func TestSQLiteUpsertPreservesConfirmedFields(t *testing.T) {
 	store := newTestSQLiteStore(t)
 	ctx := context.Background()
-	id := "wish-" + strings.Repeat("cd", 32)
+	hash := strings.Repeat("cd", 32)
+	id := "wish-" + hash
 
 	if err := store.UpsertContractWithTasks(ctx, core.Contract{
 		ContractID:      id,
@@ -815,7 +820,8 @@ func TestSQLiteUpsertPreservesConfirmedFields(t *testing.T) {
 	}, nil); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
-	c, err := store.GetContract(id)
+	// The alias write lands on the bare hash. Protection still applies there.
+	c, err := store.GetContract(hash)
 	if err != nil {
 		t.Fatal(err)
 	}

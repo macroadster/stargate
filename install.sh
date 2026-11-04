@@ -24,18 +24,7 @@ BINARY="stargate-${OS}-${ARCH}"
 URL="https://github.com/${REPO}/releases/latest/download/${BINARY}"
 DEST="${INSTALL_DIR}/${BINARY_NAME}"
 
-echo "Downloading stargate for ${OS}/${ARCH}..."
-TMP=$(mktemp)
-trap 'rm -f "$TMP"' EXIT
-
-if ! curl -fsSL -o "$TMP" "$URL"; then
-  echo "Download failed. Check https://github.com/${REPO}/releases for available binaries." >&2
-  exit 1
-fi
-
-chmod +x "$TMP"
-
-# Ensure install directory exists.
+# Ensure install directory exists before downloading.
 if [ ! -d "$INSTALL_DIR" ]; then
   echo "Creating install directory: $INSTALL_DIR"
   mkdir -p "$INSTALL_DIR"
@@ -48,10 +37,24 @@ if [ ! -w "$INSTALL_DIR" ]; then
   exit 1
 fi
 
-mv "$TMP" "$DEST"
-trap - EXIT
+download_exe() {
+  url=$1
+  dest=$2
+  label=$3
+  tmp=$(mktemp)
+  if ! curl -fsSL -o "$tmp" "$url"; then
+    rm -f "$tmp"
+    echo "Download failed for ${label}. Check https://github.com/${REPO}/releases for available binaries." >&2
+    echo "URL: ${url}" >&2
+    exit 1
+  fi
+  chmod +x "$tmp"
+  mv "$tmp" "$dest"
+  echo "Installed ${label} to ${dest}"
+}
 
-echo "Installed stargate to ${DEST}"
+echo "Downloading stargate for ${OS}/${ARCH}..."
+download_exe "$URL" "$DEST" "stargate"
 
 # --- PATH setup ----------------------------------------------------------------
 # Strip trailing slash for consistent PATH matching.
@@ -145,14 +148,17 @@ else
 fi
 
 if "${DEST}" --version 2>/dev/null; then
-  echo "Start the server:  stargate serve   # or just: stargate"
+  echo "Start the server:  stargate"
+  echo "Then open the URL the console prints (default http://127.0.0.1:3001)."
   echo "Help:              stargate help"
 elif command -v stargate >/dev/null 2>&1; then
   stargate --version 2>/dev/null || true
-  echo "Start the server:  stargate serve   # or just: stargate"
+  echo "Start the server:  stargate"
+  echo "Then open the URL the console prints (default http://127.0.0.1:3001)."
   echo "Help:              stargate help"
 else
-  echo "Run:  ${DEST} serve"
+  echo "Run:  ${DEST}"
+  echo "Then open the URL the console prints (default http://127.0.0.1:3001)."
   echo "Help: ${DEST} help"
   echo "(or open a new shell so PATH picks up ${INSTALL_DIR})"
 fi

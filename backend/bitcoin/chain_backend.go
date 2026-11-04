@@ -3,7 +3,7 @@ package bitcoin
 import (
 	"context"
 
-	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btcd/wire/v2"
 )
 
 // UTXOClient is the chain surface used by PSBT builders and commitment sweeps

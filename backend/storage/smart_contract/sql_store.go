@@ -1086,6 +1086,20 @@ func (s *SQLStore) UpsertContractWithTasks(ctx context.Context, contract smart_c
 		createdAt = contract.CreatedAt.Format(time.RFC3339)
 	}
 
+	// Same alias rule as MemoryStore: a wish- or contract- pixel hash is not
+	// its own row. Write the bare hash, and if the alias row already exists,
+	// leave it superseded instead of reviving it.
+	aliasID := ""
+	if canonical, ok := RedirectPixelHashAlias(contract.ContractID); ok {
+		aliasID = strings.TrimSpace(contract.ContractID)
+		contract.ContractID = canonical
+		for i := range tasks {
+			if strings.TrimSpace(tasks[i].ContractID) == "" || strings.EqualFold(strings.TrimSpace(tasks[i].ContractID), aliasID) {
+				tasks[i].ContractID = canonical
+			}
+		}
+	}
+
 	// Protected statuses (confirmed/completed/superseded) keep title, budget,
 	// and status; stego URL / skills / task counts may still refresh.
 	_, err = s.txExec(tx, ctx, `
@@ -1136,6 +1150,14 @@ ON CONFLICT(task_id) DO UPDATE SET
   merkle_proof = COALESCE(excluded.merkle_proof, mcp_tasks.merkle_proof)
 `, t.TaskID, t.ContractID, t.GoalID, t.Title, t.Description, t.BudgetSats, taskSkills, t.Status, t.ClaimedBy, t.ClaimedAt, t.ClaimExpires, t.Difficulty, t.EstimatedHours, string(reqJSON), proofStr)
 		if err != nil {
+			return err
+		}
+	}
+
+	if aliasID != "" {
+		if _, err := s.txExec(tx, ctx, `
+UPDATE mcp_contracts SET status='superseded' WHERE contract_id=? AND lower(status)<>'superseded'
+`, aliasID); err != nil {
 			return err
 		}
 	}
@@ -1838,6 +1860,7 @@ func (s *SQLStore) CreateContractReworkRequest(ctx context.Context, contractID, 
 	}
 	defer tx.Rollback()
 
+	contractID = s.reworkContractID(ctx, contractID)
 	var metadataBytes []byte
 	if err := s.txQueryRow(tx, ctx, `SELECT metadata FROM mcp_contracts WHERE contract_id=?`, contractID).Scan(&metadataBytes); err != nil {
 		if err == sql.ErrNoRows {
@@ -1875,6 +1898,7 @@ func (s *SQLStore) CreateContractReworkRequest(ctx context.Context, contractID, 
 }
 
 func (s *SQLStore) GetContractReworkRequests(ctx context.Context, contractID string) ([]smart_contract.ContractReworkRequest, error) {
+	contractID = s.reworkContractID(ctx, contractID)
 	var metadataBytes []byte
 	if err := s.queryRowContext(ctx, `SELECT metadata FROM mcp_contracts WHERE contract_id=?`, contractID).Scan(&metadataBytes); err != nil {
 		if err == sql.ErrNoRows {
@@ -1899,6 +1923,7 @@ func (s *SQLStore) ResolveContractReworkRequest(ctx context.Context, contractID,
 	}
 	defer tx.Rollback()
 
+	contractID = s.reworkContractID(ctx, contractID)
 	var metadataBytes []byte
 	if err := s.txQueryRow(tx, ctx, `SELECT metadata FROM mcp_contracts WHERE contract_id=?`, contractID).Scan(&metadataBytes); err != nil {
 		if err == sql.ErrNoRows {
@@ -1923,6 +1948,22 @@ func (s *SQLStore) ResolveContractReworkRequest(ctx context.Context, contractID,
 		return err
 	}
 	return tx.Commit()
+}
+
+// reworkContractID maps a wish- or contract- pixel alias onto the bare row
+// when that row exists. A missing alias stays unchanged so the error names
+// the id the caller passed.
+func (s *SQLStore) reworkContractID(ctx context.Context, contractID string) string {
+	canonical, ok := RedirectPixelHashAlias(contractID)
+	if !ok {
+		return contractID
+	}
+	var one int
+	err := s.queryRowContext(ctx, `SELECT 1 FROM mcp_contracts WHERE contract_id=?`, canonical).Scan(&one)
+	if err != nil {
+		return contractID
+	}
+	return canonical
 }
 
 // hydrateProposalTasks enriches proposal tasks with live statuses from the DB.

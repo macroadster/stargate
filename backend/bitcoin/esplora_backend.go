@@ -9,7 +9,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btcd/wire/v2"
 )
 
 // EsploraBackend is an HTTP explorer adapter used only when BTCD_MODE=off.

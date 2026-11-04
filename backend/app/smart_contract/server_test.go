@@ -10,11 +10,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/btcsuite/btcd/btcutil"
-	"github.com/btcsuite/btcd/chaincfg"
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcd/wire"
+	btcaddr "github.com/btcsuite/btcd/address/v2"
+	"github.com/btcsuite/btcd/chaincfg/v2"
+	"github.com/btcsuite/btcd/chainhash/v2"
+	"github.com/btcsuite/btcd/txscript/v2"
+	"github.com/btcsuite/btcd/wire/v2"
 
 	"path/filepath"
 
@@ -730,7 +730,7 @@ func (s *networkStubChain) BroadcastTx(string) (string, error) { return "", nil 
 func mustTestnetAddress(t *testing.T, fill byte) string {
 	t.Helper()
 	hash := bytes.Repeat([]byte{fill}, 20)
-	addr, err := btcutil.NewAddressWitnessPubKeyHash(hash, &chaincfg.TestNet4Params)
+	addr, err := btcaddr.NewAddressWitnessPubKeyHash(hash, &chaincfg.TestNet4Params)
 	if err != nil {
 		t.Fatalf("failed to build address: %v", err)
 	}
@@ -739,7 +739,7 @@ func mustTestnetAddress(t *testing.T, fill byte) string {
 
 func mustFundingTx(t *testing.T, payoutAddress string, value int64) (string, string) {
 	t.Helper()
-	addr, err := btcutil.DecodeAddress(payoutAddress, &chaincfg.TestNet4Params)
+	addr, err := btcaddr.DecodeAddress(payoutAddress, &chaincfg.TestNet4Params)
 	if err != nil {
 		t.Fatalf("failed to decode payout address: %v", err)
 	}

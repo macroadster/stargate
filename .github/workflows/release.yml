@@ -11,7 +11,7 @@ permissions:
   packages: write
 
 env:
-  GO_VERSION: '1.25'
+  GO_VERSION: '1.27.3'
   NODE_VERSION: '22'
   # Public modules (incl. github.com/macroadster/trin) via proxy; direct fallback.
   # Do not set GOPRIVATE for public deps — sumdb verification stays enabled.
@@ -64,6 +64,13 @@ jobs:
           mkdir -p backend/assets/frontend
           cp -r frontend/build/* backend/assets/frontend/
 
+      - name: Build btcd for embed
+        env:
+          CGO_ENABLED: '0'
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+        run: ./scripts/build-btcd.sh backend/bitcoin/btcd.embed
+
       - name: Build binary
         env:
           CGO_ENABLED: '0'
@@ -74,14 +81,18 @@ jobs:
           VERSION="${GITHUB_REF_NAME:-dev}"
           COMMIT="${GITHUB_SHA:-unknown}"
           COMMIT="${COMMIT:0:7}"
-          go build -trimpath \
+          go build -trimpath -tags embedbtcd \
             -ldflags="-w -s -X main.version=${VERSION} -X main.gitCommit=${COMMIT}" \
             -o ../stargate-${{ matrix.os }}-${{ matrix.arch }} .
+          rm -f bitcoin/btcd.embed
 
       - name: Compress binary
         run: |
-          tar -czf stargate-${{ matrix.os }}-${{ matrix.arch }}.tar.gz \
-            stargate-${{ matrix.os }}-${{ matrix.arch }}
+          stage=$(mktemp -d)
+          cp "stargate-${{ matrix.os }}-${{ matrix.arch }}" "${stage}/stargate"
+          chmod +x "${stage}/stargate"
+          tar -czf "stargate-${{ matrix.os }}-${{ matrix.arch }}.tar.gz" -C "${stage}" stargate
+          rm -rf "${stage}"
 
       - uses: actions/upload-artifact@v7
         with:

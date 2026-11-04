@@ -243,7 +243,9 @@ func (bm *BlockMonitor) checkForNewBlocks() error {
 // once we have a known currentHeight. When behind, we process up to
 // monitorCatchupBatch() blocks per cycle until we catch the local tip.
 // Cold start (currentHeight==0, empty storage) still seeds near the tip so we
-// do not scan the entire chain; historical gaps remain available via on-demand scan.
+// do not inscription-scan the entire chain. Historical OP_RETURN contracts are
+// found by contractDiscoverLoop, which stores a block when its wish image is
+// already in UPLOADS_DIR. A hash pair alone is generic pay-to-anchor.
 func (bm *BlockMonitor) trackTip(tip int64) error {
 	maxPerCycle := monitorMaxBlocksPerCycle()
 	catchupBatch := monitorCatchupBatch()
@@ -356,6 +358,12 @@ func (bm *BlockMonitor) getChainTipHeight() (int64, error) {
 // ProcessBlock loads and processes a single block via the configured chain backend
 // (local btcd by default). Exported for on-demand scans.
 func (bm *BlockMonitor) ProcessBlock(height int64) error {
+	bm.processMu.Lock()
+	defer bm.processMu.Unlock()
+	return bm.processBlockLocked(height)
+}
+
+func (bm *BlockMonitor) processBlockLocked(height int64) error {
 	startTime := time.Now()
 
 	log.Printf("Processing block %d, bitcoinAPI set: %v", height, bm.bitcoinAPI != nil)

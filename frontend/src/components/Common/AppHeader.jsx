@@ -25,6 +25,8 @@ const AppHeader = ({
   onToggleText,
   hideImages = true,
   onToggleImages,
+  hideCleanBlocks = false,
+  onToggleCleanBlocks,
   showThemeToggle = true,
   isDarkMode: propIsDarkMode,
 }) => {
@@ -81,6 +83,8 @@ const AppHeader = ({
     setIsMenuOpen(false);
   };
   const filterToggleTitle = isSignedIn ? undefined : "Sign in to change";
+  // Unsigned viewers always hide clean blocks. Signing in is what unlocks the toggle.
+  const cleanBlocksHidden = !isSignedIn || hideCleanBlocks;
 
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -137,18 +141,18 @@ const AppHeader = ({
                   </li>
                   <li>
                     <button
-                      onClick={() => navigate("/contracts")}
-                      className="nav-link"
-                    >
-                      Contracts
-                    </button>
-                  </li>
-                  <li>
-                    <button
                       onClick={() => navigate("/discover")}
                       className="nav-link"
                     >
                       Discover
+                    </button>
+                  </li>
+                  <li>
+                    <button
+                      onClick={() => navigate("/contracts")}
+                      className="nav-link"
+                    >
+                      Contracts
                     </button>
                   </li>
                   <li>
@@ -235,6 +239,16 @@ const AppHeader = ({
                           >
                             <span>Hide images</span>
                             {hideImages && (
+                              <Check className="w-4 h-4 text-primary" />
+                            )}
+                          </button>
+                          <button
+                            onClick={() => requestFilterToggle(onToggleCleanBlocks)}
+                            className="dropdown-item flex flex-row items-center justify-between"
+                            title={isSignedIn ? 'Show only blocks that contain smart contracts' : 'Sign in to show clean blocks'}
+                          >
+                            <span>Hide clean blocks</span>
+                            {cleanBlocksHidden && (
                               <Check className="w-4 h-4 text-primary" />
                             )}
                           </button>
@@ -347,23 +361,23 @@ const AppHeader = ({
             <li>
               <button
                 onClick={() => {
-                  navigate("/contracts");
-                  setIsMenuOpen(false);
-                }}
-                className="nav-link"
-              >
-                Contracts
-              </button>
-            </li>
-            <li>
-              <button
-                onClick={() => {
                   navigate("/discover");
                   setIsMenuOpen(false);
                 }}
                 className="nav-link"
               >
                 Discover
+              </button>
+            </li>
+            <li>
+              <button
+                onClick={() => {
+                  navigate("/contracts");
+                  setIsMenuOpen(false);
+                }}
+                className="nav-link"
+              >
+                Contracts
               </button>
             </li>
             <li>
@@ -397,6 +411,16 @@ const AppHeader = ({
                   >
                     <span>Hide images</span>
                     {hideImages && <Check className="w-4 h-4 text-primary" />}
+                  </button>
+                </li>
+                <li>
+                  <button
+                    onClick={() => requestFilterToggle(onToggleCleanBlocks)}
+                    className="nav-link flex flex-row items-center justify-between"
+                    title={isSignedIn ? 'Show only blocks that contain smart contracts' : 'Sign in to show clean blocks'}
+                  >
+                    <span>Hide clean blocks</span>
+                    {cleanBlocksHidden && <Check className="w-4 h-4 text-primary" />}
                   </button>
                 </li>
               </>

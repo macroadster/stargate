@@ -3,19 +3,19 @@ package bitcoin
 import (
 	"fmt"
 
-	"github.com/btcsuite/btcd/btcutil"
-	"github.com/btcsuite/btcd/chaincfg"
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcd/wire"
+	btcaddr "github.com/btcsuite/btcd/address/v2"
+	"github.com/btcsuite/btcd/chaincfg/v2"
+	"github.com/btcsuite/btcd/txscript/v2"
+	"github.com/btcsuite/btcd/wire/v2"
 )
 
 type payerUTXO struct {
-	address btcutil.Address
+	address btcaddr.Address
 	utxo    AddressUTXO
 }
 
 // collectPayerUTXOs lists confirmed UTXOs for each payer address.
-func collectPayerUTXOs(client UTXOClient, payerAddrs []btcutil.Address) ([]payerUTXO, error) {
+func collectPayerUTXOs(client UTXOClient, payerAddrs []btcaddr.Address) ([]payerUTXO, error) {
 	var candidates []payerUTXO
 	for _, addr := range payerAddrs {
 		if addr == nil {
@@ -36,7 +36,7 @@ func collectPayerUTXOs(client UTXOClient, payerAddrs []btcutil.Address) ([]payer
 }
 
 // seedOneUTXOPerPayer prioritizes at least one UTXO per payer when UseAllPayers.
-func seedOneUTXOPerPayer(payerAddrs []btcutil.Address, candidates []payerUTXO) ([]payerUTXO, error) {
+func seedOneUTXOPerPayer(payerAddrs []btcaddr.Address, candidates []payerUTXO) ([]payerUTXO, error) {
 	seeded := make([]payerUTXO, 0, len(payerAddrs))
 	rest := append([]payerUTXO(nil), candidates...)
 	for _, addr := range payerAddrs {
@@ -116,7 +116,7 @@ func resolveFundingCommitment(params *chaincfg.Params, req PSBTRequest) (
 }
 
 // selectFundingUTXOs greedily selects UTXOs until payouts + commitment + fee are covered.
-func selectFundingUTXOs(candidates []payerUTXO, payoutScriptCount int, donation *donationOutputs, commitmentScript []byte, requiredValue, feeRate int64, changeAddr btcutil.Address) ([]payerUTXO, int64, error) {
+func selectFundingUTXOs(candidates []payerUTXO, payoutScriptCount int, donation *donationOutputs, commitmentScript []byte, requiredValue, feeRate int64, changeAddr btcaddr.Address) ([]payerUTXO, int64, error) {
 	var selected []payerUTXO
 	var selectedValue int64
 	var estimatedInputVBytes int64
@@ -171,7 +171,7 @@ func fundingTxIDIfAllSegWit(client UTXOClient, params *chaincfg.Params, selected
 		isSegWitInput := false
 		for _, addr := range addrs {
 			switch addr.(type) {
-			case *btcutil.AddressWitnessPubKeyHash, *btcutil.AddressWitnessScriptHash, *btcutil.AddressTaproot:
+			case *btcaddr.AddressWitnessPubKeyHash, *btcaddr.AddressWitnessScriptHash, *btcaddr.AddressTaproot:
 				isSegWitInput = true
 			}
 		}

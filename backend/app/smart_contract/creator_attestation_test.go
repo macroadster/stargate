@@ -10,9 +10,9 @@ import (
 	"stargate-backend/stego"
 	auth "stargate-backend/storage/auth"
 
+	btcaddr "github.com/btcsuite/btcd/address/v2"
 	"github.com/btcsuite/btcd/btcec/v2"
-	"github.com/btcsuite/btcd/btcutil"
-	"github.com/btcsuite/btcd/chaincfg"
+	"github.com/btcsuite/btcd/chaincfg/v2"
 )
 
 func attestationKey(t *testing.T) (*btcec.PrivateKey, string) {
@@ -21,8 +21,8 @@ func attestationKey(t *testing.T) (*btcec.PrivateKey, string) {
 	if err != nil {
 		t.Fatalf("new key: %v", err)
 	}
-	pubHash := btcutil.Hash160(priv.PubKey().SerializeCompressed())
-	addr, err := btcutil.NewAddressWitnessPubKeyHash(pubHash, &chaincfg.TestNet4Params)
+	pubHash := btcaddr.Hash160(priv.PubKey().SerializeCompressed())
+	addr, err := btcaddr.NewAddressWitnessPubKeyHash(pubHash, &chaincfg.TestNet4Params)
 	if err != nil {
 		t.Fatalf("address: %v", err)
 	}

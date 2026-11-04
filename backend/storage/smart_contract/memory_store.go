@@ -905,10 +905,32 @@ func (s *MemoryStore) UpsertContractWithTasks(ctx context.Context, contract smar
 		contract.CreatedAt = time.Now()
 	}
 
+	// wish-<64-hex> and contract-<64-hex> are lookup aliases. Storing them as
+	// their own primary key reopens a twin the startup fold already collapsed.
+	// Land the row on the bare hash. A non-hash id such as contract-001 is kept.
+	aliasID := ""
+	if canonical, ok := RedirectPixelHashAlias(contract.ContractID); ok {
+		aliasID = strings.TrimSpace(contract.ContractID)
+		contract.ContractID = canonical
+		for i := range tasks {
+			if strings.TrimSpace(tasks[i].ContractID) == "" || strings.EqualFold(strings.TrimSpace(tasks[i].ContractID), aliasID) {
+				tasks[i].ContractID = canonical
+			}
+		}
+	}
+
 	if existing, ok := s.contracts[contract.ContractID]; ok {
 		contract = ProtectContractUpsert(existing, contract)
 	}
 	s.contracts[contract.ContractID] = contract
+	// The alias must not stay live beside the bare row. Mark a row that was
+	// already stored under the alias; a first write never creates it.
+	if aliasID != "" {
+		if alias, ok := s.contracts[aliasID]; ok && !strings.EqualFold(strings.TrimSpace(alias.Status), "superseded") {
+			alias.Status = "superseded"
+			s.contracts[aliasID] = alias
+		}
+	}
 
 	// Store all tasks
 	for _, task := range tasks {
@@ -1392,6 +1414,11 @@ func (s *MemoryStore) CreateContractReworkRequest(ctx context.Context, contractI
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if canonical, ok := RedirectPixelHashAlias(contractID); ok {
+		if _, exists := s.contracts[canonical]; exists {
+			contractID = canonical
+		}
+	}
 	c, ok := s.contracts[contractID]
 	if !ok {
 		return smart_contract.ContractReworkRequest{}, fmt.Errorf("contract %s not found", contractID)
@@ -1421,6 +1448,11 @@ func (s *MemoryStore) GetContractReworkRequests(ctx context.Context, contractID 
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	if canonical, ok := RedirectPixelHashAlias(contractID); ok {
+		if _, exists := s.contracts[canonical]; exists {
+			contractID = canonical
+		}
+	}
 	c, ok := s.contracts[contractID]
 	if !ok {
 		return nil, fmt.Errorf("contract %s not found", contractID)
@@ -1434,6 +1466,11 @@ func (s *MemoryStore) ResolveContractReworkRequest(ctx context.Context, contract
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if canonical, ok := RedirectPixelHashAlias(contractID); ok {
+		if _, exists := s.contracts[canonical]; exists {
+			contractID = canonical
+		}
+	}
 	c, ok := s.contracts[contractID]
 	if !ok {
 		return fmt.Errorf("contract %s not found", contractID)

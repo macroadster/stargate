@@ -14,8 +14,14 @@ const generateBlock = (block) => {
   const stegoCount = block.steganography_summary?.stego_count || 0;
   const txCount = block.tx_count ?? block.total_transactions ?? block.TotalTransactions ?? 0;
 
-  // For UI purposes, treat all inscriptions as "smart contracts" to show the badge
-  const displayContractCount = Math.max(smartContractCount, stegoCount);
+  // has_smart_contract is the server's decision. A classifier hit with no
+  // extracted payload is not a smart contract, even when stego_count is set.
+  const hasSmartContract = typeof block.has_smart_contract === 'boolean'
+    ? block.has_smart_contract
+    : smartContractCount > 0 || stegoCount > 0;
+  const displayContractCount = hasSmartContract
+    ? Math.max(smartContractCount, stegoCount, 1)
+    : 0;
 
   const resolvedHeight = Number(block.block_height ?? block.height ?? 0);
   const resolvedTimestamp =
@@ -31,6 +37,7 @@ const generateBlock = (block) => {
     inscriptionCount: inscriptionCount,
     inscription_count: inscriptionCount,
     smart_contract_count: displayContractCount,
+    has_smart_contract: hasSmartContract,
     smart_contracts: block.smart_contracts || [],
     witness_image_count: block.images ? block.images.length : 0,
     hasBRC20: false,
@@ -42,7 +49,7 @@ const generateBlock = (block) => {
   };
 };
 
-export const useBlocks = () => {
+export const useBlocks = (contractsOnly = false) => {
   const [blocks, setBlocks] = useState([]);
   const [selectedBlock, setSelectedBlock] = useState(null);
   const [isUserNavigating, setIsUserNavigating] = useState(false);
@@ -53,6 +60,10 @@ export const useBlocks = () => {
   const [isInitializing, setIsInitializing] = useState(true);
   const loadingRef = useRef(false);
   const loadingOlderRef = useRef(false);
+  const contractsOnlyRef = useRef(contractsOnly);
+  const appliedContractsOnlyRef = useRef(contractsOnly);
+  const fetchSeqRef = useRef(0);
+  contractsOnlyRef.current = contractsOnly;
   const olderCursorRef = useRef(null);
   const hasMoreOlderRef = useRef(true);
   const pendingFetchAroundRef = useRef(null);
@@ -173,17 +184,19 @@ export const useBlocks = () => {
     return deduped.sort((a, b) => b.height - a.height);
   };
 
-  const fetchBlocks = useCallback(async (cursor = null, isPolling = false) => {
+  const fetchBlocks = useCallback(async (cursor = null, isPolling = false, replaceWindow = false) => {
     if (loadingRef.current) return;
     if (showHistorical === null) {
       console.log('Waiting for network check (showHistorical is null)');
       return;
     }
+    const seq = fetchSeqRef.current;
     loadingRef.current = true;
     try {
       const url = new URL(`${API_BASE}/api/data/block-summaries`);
       url.searchParams.set('limit', 20);
       if (cursor) url.searchParams.set('cursor_height', cursor);
+      if (contractsOnlyRef.current) url.searchParams.set('contracts_only', '1');
 
       const response = await apiFetch(url.toString());
       const data = await response.json();
@@ -209,6 +222,8 @@ export const useBlocks = () => {
         }
       }
 
+      if (seq !== fetchSeqRef.current) return;
+
       const blocksData = data.blocks || [];
       const recentBlocks = Array.isArray(blocksData)
         ? blocksData.map(generateBlock).filter(b => b.height)
@@ -216,8 +231,11 @@ export const useBlocks = () => {
 
       // When loading older blocks via cursor, anchor the window around the
       // currently selected block so we don't evict what the user is viewing.
+      // A filter change replaces the window so clean blocks are not merged
+      // into a contracts-only page (or the reverse).
       const anchor = manualSelectedHeight.current || selectedBlockRef.current?.height || null;
-      let deduped = mergeAndTrim(blocksRef.current, recentBlocks, anchor);
+      const existing = replaceWindow ? [] : blocksRef.current;
+      let deduped = mergeAndTrim(existing, recentBlocks, anchor);
       deduped = addSpecialBlocks(deduped, networkHeight);
 
       // Track whether there are newer blocks above our window
@@ -253,11 +271,12 @@ export const useBlocks = () => {
       setBlocks(deduped);
       setIsInitializing(false);
 
-      // Only update the older-blocks cursor when this is the initial load
-      // (no cursor yet) or an explicit cursor-based fetch. Polling (isPolling
-      // with no cursor) must NOT overwrite it or the user loses their scroll
-      // position into history.
-      if (!isPolling || cursor) {
+      // Record the older-blocks cursor on the initial load and on an explicit
+      // cursor fetch. A tip poll must not overwrite a cursor the user already
+      // scrolled into. The first poll can still win the race before any cursor
+      // exists; without recording it, contracts-only never asks for the next
+      // page and the rail stays on "Looking for blocks…".
+      if (!isPolling || cursor || !olderCursorRef.current) {
         setNextCursor(data.next_cursor || null);
         setHasMore(Boolean(data.has_more));
         olderCursorRef.current = data.next_cursor || null;
@@ -307,24 +326,47 @@ export const useBlocks = () => {
         setSelectedBlock(deduped[0]);
       }
     } catch (error) {
+      if (seq !== fetchSeqRef.current) return;
       console.error('Error fetching blocks:', error);
       setBlocks([]);
       setIsInitializing(false);
+      setHasMore(false);
+      hasMoreOlderRef.current = false;
       if (!selectedBlockRef.current && !isPolling) {
         setSelectedBlock(null);
       }
     } finally {
-      loadingRef.current = false;
-      // Drain any pending fetchBlocksAround that was blocked by this fetch.
-      // This handles the race on initial page load: URL effect calls
-      // setManualHeight → fetchBlocksAround while fetchBlocks is still running.
-      const pending = pendingFetchAroundRef.current;
-      if (pending !== null) {
-        pendingFetchAroundRef.current = null;
-        setTimeout(() => fetchBlocksAroundRef.current?.(pending), 0);
+      if (seq === fetchSeqRef.current) {
+        loadingRef.current = false;
+        // Drain any pending fetchBlocksAround that was blocked by this fetch.
+        // This handles the race on initial page load: URL effect calls
+        // setManualHeight → fetchBlocksAround while fetchBlocks is still running.
+        const pending = pendingFetchAroundRef.current;
+        if (pending !== null) {
+          pendingFetchAroundRef.current = null;
+          setTimeout(() => fetchBlocksAroundRef.current?.(pending), 0);
+        }
       }
     }
   }, [showHistorical]);
+
+  // The contract filter changes which heights belong in the window. Drop the
+  // previous page so a contracts-only history is not merged with clean blocks.
+  useEffect(() => {
+    if (appliedContractsOnlyRef.current === contractsOnly) return;
+    appliedContractsOnlyRef.current = contractsOnly;
+    fetchSeqRef.current += 1;
+    loadingRef.current = false;
+    loadingOlderRef.current = false;
+    olderCursorRef.current = null;
+    hasMoreOlderRef.current = true;
+    latestHeightRef.current = null;
+    if (!networkCheckedRef.current || showHistorical === null) return;
+    // Keep the cards on screen until this page returns. The rail hides clean
+    // blocks immediately; this fetch then replaces the window so history
+    // does not mix filtered and unfiltered pages.
+    fetchBlocks(null, false, true);
+  }, [contractsOnly, fetchBlocks, showHistorical]);
 
   const getOldestLoadedHeight = useCallback(() => {
     const realBlocks = blocksRef.current.filter(
@@ -352,15 +394,19 @@ export const useBlocks = () => {
       (getOldestLoadedHeight() != null ? String(getOldestLoadedHeight()) : null);
     if (!cursor) return;
 
+    const seq = fetchSeqRef.current;
     loadingOlderRef.current = true;
     try {
       const url = new URL(`${API_BASE}/api/data/block-summaries`);
       url.searchParams.set('limit', 20);
       url.searchParams.set('cursor_height', cursor);
+      if (contractsOnlyRef.current) url.searchParams.set('contracts_only', '1');
 
       const response = await apiFetch(url.toString());
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const data = await response.json();
+
+      if (seq !== fetchSeqRef.current) return;
 
       const blocksData = data.blocks || [];
       const olderBlocks = Array.isArray(blocksData)
@@ -398,17 +444,23 @@ export const useBlocks = () => {
 
       // If we only got duplicates but more pages exist, step from oldest loaded
       // so the next scroll/request advances past the stuck first-page boundary.
+      // A contracts-only page can legitimately return no blocks while moving the
+      // cursor past a clean gap — keep that older cursor.
       if (apiHasMore && newRealBlocks.length === 0) {
         const oldest = getOldestLoadedHeight();
-        if (oldest != null) {
+        const apiMovedPastLoaded = apiCursor != null && oldest != null && Number(apiCursor) < oldest;
+        if (!apiMovedPastLoaded && oldest != null) {
           olderCursorRef.current = String(oldest);
           setNextCursor(String(oldest));
         }
       }
     } catch (error) {
+      if (seq !== fetchSeqRef.current) return;
       console.error('Error loading older blocks:', error);
     } finally {
-      loadingOlderRef.current = false;
+      if (seq === fetchSeqRef.current) {
+        loadingOlderRef.current = false;
+      }
     }
   }, [showHistorical, getOldestLoadedHeight]);
 
@@ -417,13 +469,17 @@ export const useBlocks = () => {
   const fetchBlocksAround = useCallback(async (targetHeight) => {
     if (loadingRef.current) return;
     if (showHistorical === null) return;
+    const seq = fetchSeqRef.current;
     loadingRef.current = true;
     try {
-      // Fetch blocks starting at targetHeight + some buffer above
-      const cursorAbove = targetHeight + 11; // fetch a page starting just above target
+      // Unfiltered pages include a few blocks above the target. Contract-only
+      // pages start at the target itself so a matching block is not pushed
+      // out of the page by newer contract blocks.
+      const cursorAbove = contractsOnlyRef.current ? targetHeight + 1 : targetHeight + 11;
       const url = new URL(`${API_BASE}/api/data/block-summaries`);
       url.searchParams.set('limit', 40);
       url.searchParams.set('cursor_height', cursorAbove);
+      if (contractsOnlyRef.current) url.searchParams.set('contracts_only', '1');
 
       const response = await apiFetch(url.toString());
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -440,6 +496,8 @@ export const useBlocks = () => {
           }
         } catch (e) { /* ignore */ }
       }
+
+      if (seq !== fetchSeqRef.current) return;
 
       const blocksData = data.blocks || [];
       const fetchedBlocks = Array.isArray(blocksData)
@@ -472,9 +530,12 @@ export const useBlocks = () => {
         setSelectedBlock({ ...match });
       }
     } catch (error) {
+      if (seq !== fetchSeqRef.current) return;
       console.error('Error fetching blocks around height:', error);
     } finally {
-      loadingRef.current = false;
+      if (seq === fetchSeqRef.current) {
+        loadingRef.current = false;
+      }
     }
   }, [showHistorical]);
 
@@ -562,12 +623,12 @@ export const useBlocks = () => {
     selectedBlockRef.current = selectedBlock;
   }, [selectedBlock]);
 
-  const handleBlockSelect = (block) => {
+  const handleBlockSelect = useCallback((block) => {
     // Clone to avoid React bailing when the same object reference recurs between polls.
     manualSelectedHeight.current = block.height;
     setIsUserNavigating(true);
     setSelectedBlock({ ...block });
-  };
+  }, []);
 
   const setManualHeight = (height) => {
     manualSelectedHeight.current = height;
@@ -612,6 +673,8 @@ export const useBlocks = () => {
     isUserNavigating,
     isInitializing,
     hasNewer,
+    hasMore,
+    nextCursor,
     handleBlockSelect,
     setSelectedBlock,
     setIsUserNavigating,

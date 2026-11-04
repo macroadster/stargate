@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/btcsuite/btcd/chaincfg"
-	"github.com/btcsuite/btcd/txscript"
+	"github.com/btcsuite/btcd/chaincfg/v2"
+	"github.com/btcsuite/btcd/txscript/v2"
 
 	"stargate-backend/services"
 )
@@ -62,11 +62,6 @@ func outputAddresses(script []byte, params *chaincfg.Params) []string {
 	}
 	return out
 }
-
-// persistDiscoveryContract saves a contract discovered purely from on-chain
-// OP_RETURN data to the MCP store and ingestion database.  This enables a
-// fresh instance to rebuild its database from block scans before IPFS sync
-// delivers the original wish image.
 
 func hashPrefixFromFilename(filename string) string {
 	if strings.TrimSpace(filename) == "" {

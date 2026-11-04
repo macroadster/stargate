@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"stargate-backend/core/identity"
 	"stargate-backend/core/smart_contract"
 	scstore "stargate-backend/storage/smart_contract"
 )
@@ -69,7 +70,15 @@ func (s *ContractReworkService) CreateRequest(ctx context.Context, contractID, n
 	}
 
 	// wallet, not a wallet the caller resolved for itself.
-	req, err := s.store.CreateContractReworkRequest(ctx, contractID, wallet, notes)
+	// A wish- or contract- pixel alias is stored as the bare hash. File and
+	// record against that row so the event names the same id the store wrote.
+	storedID := contractID
+	if canonical := identity.CanonicalContractID(contractID); identity.IsPixelHash(canonical) {
+		if c, err := scstore.LookupContract(s.store, canonical); err == nil && strings.TrimSpace(c.ContractID) != "" {
+			storedID = c.ContractID
+		}
+	}
+	req, err := s.store.CreateContractReworkRequest(ctx, storedID, wallet, notes)
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			return smart_contract.ContractReworkRequest{}, FailKind(http.StatusNotFound, KindContractNotFound, err.Error())
@@ -79,7 +88,7 @@ func (s *ContractReworkService) CreateRequest(ctx context.Context, contractID, n
 
 	s.emitEvent(smart_contract.Event{
 		Type:      "contract_rework_requested",
-		EntityID:  contractID,
+		EntityID:  storedID,
 		Actor:     wallet,
 		Message:   "rework requested",
 		CreatedAt: time.Now(),

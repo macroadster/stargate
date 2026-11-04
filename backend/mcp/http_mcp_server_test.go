@@ -20,7 +20,7 @@ import (
 	"stargate-backend/storage/datadir"
 	scstore "stargate-backend/storage/smart_contract"
 
-	"github.com/btcsuite/btcd/chaincfg"
+	"github.com/btcsuite/btcd/chaincfg/v2"
 )
 
 type allowAllValidator struct{}

@@ -16,29 +16,38 @@ import (
 
 // BlockMonitor handles comprehensive Bitcoin block monitoring and data extraction
 type BlockMonitor struct {
-	bitcoinClient    *BitcoinNodeClient
-	rawClient        *RawBlockClient
-	chain            ChainBackend
-	bitcoinAPI       *BitcoinAPI
-	currentHeight    int64
-	lastChecked      time.Time
-	isRunning        bool
-	isStopping       bool
-	stopChan         chan struct{}
-	wg               sync.WaitGroup
-	mu               sync.RWMutex
-	dataStorage      DataStorageInterface
-	ingestion        *services.IngestionService
-	sweepStore       SweepTaskStore
-	sweepMempool     UTXOClient
-	stegoReconciler  StegoReconciler
-	sandboxExtractor SandboxExtractor
-	unpinPath        func(context.Context, string) error
-	ipfsClient       *ipfs.Client
-	reconcileMu      sync.Mutex
-	oracleMetaMu     sync.Mutex
-	oracleMetaRecs   []services.IngestionRecord
-	oracleMetaAt     time.Time
+	bitcoinClient      *BitcoinNodeClient
+	rawClient          *RawBlockClient
+	chain              ChainBackend
+	bitcoinAPI         *BitcoinAPI
+	currentHeight      int64
+	lastChecked        time.Time
+	isRunning          bool
+	isStopping         bool
+	stopChan           chan struct{}
+	wg                 sync.WaitGroup
+	mu                 sync.RWMutex
+	dataStorage        DataStorageInterface
+	ingestion          *services.IngestionService
+	sweepStore         SweepTaskStore
+	sweepMempool       UTXOClient
+	stegoReconciler    StegoReconciler
+	sandboxExtractor   SandboxExtractor
+	unpinPath          func(context.Context, string) error
+	ipfsClient         *ipfs.Client
+	reconcileMu        sync.Mutex
+	processMu          sync.Mutex
+	discoverMu         sync.Mutex
+	discoverWaitLogged bool
+	replicationMu      sync.Mutex
+	replicationLoaded  bool
+	replication        chainReplicationState
+	wishStoreMu        sync.Mutex
+	wishStored         map[string]int64 // wish hash -> height last stored as a contract block
+	wishStoreTries     map[string]int
+	oracleMetaMu       sync.Mutex
+	oracleMetaRecs     []services.IngestionRecord
+	oracleMetaAt       time.Time
 
 	// Configuration
 	checkInterval time.Duration
@@ -344,6 +353,12 @@ func (bm *BlockMonitor) Start() error {
 	} else {
 		log.Printf("block monitor: periodic reconcile sweep disabled (tip-only tracking)")
 	}
+	if contractDiscoverEnabled() {
+		bm.wg.Add(1)
+		go bm.contractDiscoverLoop(stopChan)
+	} else {
+		log.Printf("contract discover: disabled (BLOCK_MONITOR_CONTRACT_DISCOVER=off)")
+	}
 
 	return nil
 }
@@ -373,6 +388,56 @@ func (bm *BlockMonitor) IsRunning() bool {
 	bm.mu.RLock()
 	defer bm.mu.RUnlock()
 	return bm.isRunning
+}
+
+// MonitorStats is the in-memory block-monitor counters for the status console.
+// It does not query storage. Discover fields are the historical OP_RETURN walk.
+type MonitorStats struct {
+	Running             bool
+	CurrentHeight       int64
+	BlocksProcessed     int64
+	TotalTransactions   int64
+	TotalImages         int64
+	TotalInscriptions   int64
+	TotalStegoContracts int64
+	LastProcess         time.Duration
+	CheckInterval       time.Duration
+	DiscoverEnabled     bool
+	DiscoverNext        int64
+	DiscoverPending     int
+	DiscoverWaiting     bool
+}
+
+// SnapshotStats copies the in-memory counters. A nil monitor returns the zero value.
+func (bm *BlockMonitor) SnapshotStats() MonitorStats {
+	if bm == nil {
+		return MonitorStats{}
+	}
+	bm.mu.RLock()
+	st := MonitorStats{
+		Running:             bm.isRunning,
+		CurrentHeight:       bm.currentHeight,
+		BlocksProcessed:     bm.blocksProcessed,
+		TotalTransactions:   bm.totalTransactions,
+		TotalImages:         bm.totalImages,
+		TotalInscriptions:   bm.totalInscriptions,
+		TotalStegoContracts: bm.totalStegoContracts,
+		LastProcess:         bm.lastProcessTime,
+		CheckInterval:       bm.checkInterval,
+		DiscoverEnabled:     contractDiscoverEnabled(),
+		// Written by the discover loop. A torn read only lags the console by one sample.
+		DiscoverWaiting: bm.discoverWaitLogged,
+	}
+	bm.mu.RUnlock()
+	bm.replicationMu.Lock()
+	bm.loadReplicationLocked()
+	st.DiscoverNext = bm.replication.NextHeight
+	pending := append([]chainCommitment(nil), bm.replication.Pending...)
+	bm.replicationMu.Unlock()
+	// Generic pay-to-anchor OP_RETURNs stay in the queue until they expire,
+	// but they are not waiting contracts. Only a wish image in uploads counts.
+	st.DiscoverPending = countWishImagesOnDisk(pending)
+	return st
 }
 
 // GetStatistics returns current monitoring statistics

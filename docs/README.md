@@ -31,6 +31,7 @@ line:
 2. [arch/DOMAIN_SEAMS.md](./arch/DOMAIN_SEAMS.md) — stego / bitcoin / confirm / extract
 3. [arch/starlight_contracts.md](./arch/starlight_contracts.md) — **§12 is implemented**; §§1–11 are historical script sketches
 4. [arch/ENV.md](./arch/ENV.md) — `STARGATE_*` / `BTCD_*` / `STARLIGHT_*`
+   The terminal status console is [arch/CONSOLE.md](./arch/CONSOLE.md).
 5. [arch/MCP_UNIFIED_PLAN.md](./arch/MCP_UNIFIED_PLAN.md) — REST vs MCP surfaces
 6. [arch/TRIN_STARLIGHT_SCANNER.md](./arch/TRIN_STARLIGHT_SCANNER.md) — in-process GGUF scan path
 

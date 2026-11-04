@@ -5,32 +5,32 @@ import (
 	"encoding/hex"
 	"fmt"
 
-	"github.com/btcsuite/btcd/btcutil"
-	"github.com/btcsuite/btcd/chaincfg"
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcd/wire"
+	btcaddr "github.com/btcsuite/btcd/address/v2"
+	"github.com/btcsuite/btcd/chaincfg/v2"
+	"github.com/btcsuite/btcd/txscript/v2"
+	"github.com/btcsuite/btcd/wire/v2"
 )
 
 // PSBTRequest captures the inputs needed to craft a payout PSBT.
 type PSBTRequest struct {
-	PayerAddress      btcutil.Address
-	PayerAddresses    []btcutil.Address
+	PayerAddress      btcaddr.Address
+	PayerAddresses    []btcaddr.Address
 	TargetValueSats   int64
 	PixelHash         []byte          // Wish image hash (32 bytes) — used for OP_RETURN proof
 	ProductPixelHash  []byte          // Stego image hash (32 bytes) — used for OP_RETURN proof
 	CommitmentSats    int64           // Sats sent directly to DonationAddress
-	DonationAddress   btcutil.Address // Direct P2WPKH donation recipient
-	CommitmentAddress btcutil.Address // Deprecated: kept for backward compat, use DonationAddress
-	ContractorAddress btcutil.Address
+	DonationAddress   btcaddr.Address // Direct P2WPKH donation recipient
+	CommitmentAddress btcaddr.Address // Deprecated: kept for backward compat, use DonationAddress
+	ContractorAddress btcaddr.Address
 	Payouts           []PayoutOutput
 	FeeRateSatPerVB   int64
-	ChangeAddress     btcutil.Address
+	ChangeAddress     btcaddr.Address
 	UseAllPayers      bool
 }
 
 // PayoutOutput defines a payout destination and amount.
 type PayoutOutput struct {
-	Address   btcutil.Address
+	Address   btcaddr.Address
 	ValueSats int64
 }
 
@@ -61,12 +61,12 @@ type PSBTResult struct {
 
 // PayerTarget defines a funding contribution for a specific payer address.
 type PayerTarget struct {
-	Address    btcutil.Address
+	Address    btcaddr.Address
 	TargetSats int64
 }
 
 type payerSelection struct {
-	address       btcutil.Address
+	address       btcaddr.Address
 	target        int64
 	selected      int64
 	feeShare      int64
@@ -89,7 +89,7 @@ func BuildFundingPSBT(client UTXOClient, params *chaincfg.Params, req PSBTReques
 		if req.PayerAddress == nil {
 			return nil, fmt.Errorf("payer address required")
 		}
-		payerAddrs = []btcutil.Address{req.PayerAddress}
+		payerAddrs = []btcaddr.Address{req.PayerAddress}
 	}
 	changeAddr := req.ChangeAddress
 	if changeAddr == nil {

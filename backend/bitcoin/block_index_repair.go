@@ -8,7 +8,7 @@ import (
 
 	"github.com/btcsuite/btcd/database"
 	_ "github.com/btcsuite/btcd/database/ffldb"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btcd/wire/v2"
 )
 
 // btcd block-index status bits (blockchain.blockStatus). Duplicated here so
@@ -21,7 +21,7 @@ const (
 )
 
 const (
-	// Must match blockchain.blockIndexBucketName in btcd v0.25.
+	// Must match blockchain.blockIndexBucketName in btcd v0.27.
 	btcdBlockIndexBucket = "blockheaderidx"
 	btcdBlockHeaderSize  = 80 // wire.MaxBlockHeaderPayload
 	btcdBlocksDBName     = "blocks_ffldb"

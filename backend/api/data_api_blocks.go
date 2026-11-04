@@ -42,32 +42,40 @@ func (api *DataAPI) loadBlockFromDisk(height int64) (*storage.BlockDataCache, er
 			if d, e := os.ReadFile(candidate); e == nil {
 				data := d
 				var raw struct {
-					BlockHeight       int64                        `json:"block_height"`
-					BlockHash         string                       `json:"block_hash"`
-					Timestamp         int64                        `json:"timestamp"`
-					TxCount           int                          `json:"tx_count"`
-					TotalTransactions int                          `json:"total_transactions"`
-					Inscriptions      []bitcoin.InscriptionData    `json:"inscriptions"`
-					Images            []bitcoin.ExtractedImageData `json:"images"`
-					Smart             []bitcoin.SmartContractData  `json:"smart_contracts"`
-					ScanResults       []map[string]interface{}     `json:"scan_results"`
+					BlockHeight       int64                         `json:"block_height"`
+					BlockHash         string                        `json:"block_hash"`
+					Timestamp         int64                         `json:"timestamp"`
+					TxCount           int                           `json:"tx_count"`
+					TotalTransactions int                           `json:"total_transactions"`
+					Inscriptions      []bitcoin.InscriptionData     `json:"inscriptions"`
+					Images            []bitcoin.ExtractedImageData  `json:"images"`
+					Smart             []bitcoin.SmartContractData   `json:"smart_contracts"`
+					ScanResults       []map[string]interface{}      `json:"scan_results"`
+					StegoScan         *bitcoin.SteganographySummary `json:"steganography_scan"`
+					StegoSummary      *bitcoin.SteganographySummary `json:"steganography_summary"`
 				}
 				if uerr := json.Unmarshal(data, &raw); uerr == nil {
 					txc := raw.TxCount
 					if txc == 0 {
 						txc = raw.TotalTransactions
 					}
+					stego := raw.StegoSummary
+					if stego == nil {
+						// On-disk inscriptions.json stores the scan under steganography_scan.
+						stego = raw.StegoScan
+					}
 					return &storage.BlockDataCache{
-						BlockHeight:    raw.BlockHeight,
-						BlockHash:      raw.BlockHash,
-						Timestamp:      raw.Timestamp,
-						TxCount:        txc,
-						Inscriptions:   raw.Inscriptions,
-						Images:         raw.Images,
-						SmartContracts: raw.Smart,
-						ScanResults:    raw.ScanResults,
-						ProcessingTime: 0,
-						Success:        true,
+						BlockHeight:          raw.BlockHeight,
+						BlockHash:            raw.BlockHash,
+						Timestamp:            raw.Timestamp,
+						TxCount:              txc,
+						Inscriptions:         raw.Inscriptions,
+						Images:               raw.Images,
+						SmartContracts:       raw.Smart,
+						ScanResults:          raw.ScanResults,
+						SteganographySummary: stego,
+						ProcessingTime:       0,
+						Success:              true,
 					}, nil
 				}
 			}
@@ -368,7 +376,127 @@ func (api *DataAPI) HandleGetRecentBlocks(w http.ResponseWriter, r *http.Request
 	json.NewEncoder(w).Encode(response)
 }
 
+// contractsOnlyMaxScan bounds how many heights one contracts_only page inspects.
+// Contract blocks are sparse. A cap of a few hundred returns an empty page when
+// the newest contract sits just below the tip, and the rail stays on
+// "Looking for blocks…". A few thousand sqlite reads is still one short request.
+// Tests lower this.
+var contractsOnlyMaxScan = 4000
+
+func wantsContractsOnly(r *http.Request) bool {
+	switch strings.ToLower(strings.TrimSpace(r.URL.Query().Get("contracts_only"))) {
+	case "1", "true", "yes":
+		return true
+	default:
+		return false
+	}
+}
+
+// blockContainsSmartContract reports whether the block rail should treat the
+// block as holding a smart contract. A real contract counts. A stego hit
+// counts only when a message was extracted from it. A classifier score with
+// an empty message, including a synthetic stego_* row, does not.
+func blockContainsSmartContract(block *storage.BlockDataCache) bool {
+	if block == nil {
+		return false
+	}
+	if len(filterSmartContractsForUI(block.SmartContracts)) > 0 {
+		return true
+	}
+	return blockHasExtractedStego(block)
+}
+
+// blockHasExtractedStego reports a stego hit that actually recovered a payload.
+func blockHasExtractedStego(block *storage.BlockDataCache) bool {
+	if block == nil {
+		return false
+	}
+	for _, result := range block.ScanResults {
+		if !scanResultIsStego(result) {
+			continue
+		}
+		if strings.TrimSpace(stringFromAny(result["extracted_message"])) != "" {
+			return true
+		}
+	}
+	for _, contract := range block.SmartContracts {
+		if strings.TrimSpace(contractExtractedMessage(contract)) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func scanResultIsStego(result map[string]any) bool {
+	isStego, _ := result["is_stego"].(bool)
+	return isStego
+}
+
+func contractExtractedMessage(contract bitcoin.SmartContractData) string {
+	if contract.Metadata == nil {
+		return ""
+	}
+	return strings.TrimSpace(stringFromAny(contract.Metadata["extracted_message"]))
+}
+
+func (api *DataAPI) blockSummary(block *storage.BlockDataCache) map[string]interface{} {
+	inscriptions := block.Inscriptions
+	smartContracts := filterSmartContractsForUI(block.SmartContracts)
+	if len(inscriptions) == 0 && len(smartContracts) > 0 {
+		inscriptions, _, _ = buildContractInscriptions(smartContracts, block.BlockHeight)
+	}
+	preview := []string{}
+	for i, ins := range inscriptions {
+		if i >= 3 {
+			break
+		}
+		preview = append(preview, ins.FileName)
+	}
+	inscriptionCount := len(block.Inscriptions)
+	contractCount := len(smartContracts)
+	hasImages := len(block.Images) > 0 || inscriptionCount > 0 || contractCount > 0
+
+	// Prefer the first real smart contract image (served via block-image), else first inscription.
+	// thumbnail_is_contract is only true for a real contract cover so Hide images
+	// can suppress ordinary inscription JPEGs in the block rail.
+	thumbnailURL, thumbnailIsContract := pickBlockCardThumbnail(block)
+
+	// Fallback for blocks where the persisted Inscriptions list is empty
+	// but the tx index knows the block has servable inscription content.
+	if thumbnailURL == "" {
+		api.txMu.RLock()
+		if txs, ok := api.heightIndex[block.BlockHeight]; ok && len(txs) > 0 {
+			thumbnailURL = fmt.Sprintf("/content/%s", txs[0])
+		}
+		api.txMu.RUnlock()
+	}
+
+	// Last resort on-disk scan: payload files in the block images/ directory.
+	if thumbnailURL == "" {
+		if t := api.findFirstBlockImageThumbnail(block.BlockHeight); t != "" {
+			thumbnailURL = t
+		}
+	}
+
+	return map[string]interface{}{
+		"block_height":          block.BlockHeight,
+		"block_hash":            block.BlockHash,
+		"timestamp":             block.Timestamp,
+		"tx_count":              block.TxCount,
+		"inscription_count":     inscriptionCount,
+		"smart_contract_count":  contractCount,
+		"has_smart_contract":    blockContainsSmartContract(block),
+		"steganography_summary": block.SteganographySummary,
+		"preview_inscriptions":  preview,
+		"has_images":            hasImages,
+		"thumbnail_url":         thumbnailURL,
+		"thumbnail_is_contract": thumbnailIsContract,
+	}
+}
+
 // HandleGetBlockSummaries provides cursor-based block summaries for horizontal scrolling.
+// contracts_only=1 skips clean blocks and returns the next page of blocks that
+// contain a smart contract (or a stego detection the card counts as one).
 func (api *DataAPI) HandleGetBlockSummaries(w http.ResponseWriter, r *http.Request) {
 	api.EnableCORS(w, r)
 	if r.Method == "OPTIONS" {
@@ -407,86 +535,55 @@ func (api *DataAPI) HandleGetBlockSummaries(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	end := start + limit
-	if end > len(heights) {
-		end = len(heights)
-	}
-
-	selected := heights[start:end]
-	var summaries []map[string]interface{}
-	for _, h := range selected {
-		block, err := api.loadBlock(h)
-		if err != nil {
-			log.Printf("Failed to load block %d: %v", h, err)
-			continue
-		}
-		inscriptions := block.Inscriptions
-		smartContracts := filterSmartContractsForUI(block.SmartContracts)
-		if len(inscriptions) == 0 && len(smartContracts) > 0 {
-			inscriptions, _, _ = buildContractInscriptions(smartContracts, block.BlockHeight)
-		}
-		preview := []string{}
-		for i, ins := range inscriptions {
-			if i >= 3 {
-				break
-			}
-			preview = append(preview, ins.FileName)
-		}
-		inscriptionCount := len(block.Inscriptions)
-		contractCount := len(smartContracts)
-		hasImages := len(block.Images) > 0 || inscriptionCount > 0 || contractCount > 0
-
-		// Compute a representative thumbnail URL for the block card.
-		// Prefer the first real smart contract image (served via block-image), else first inscription.
-		// thumbnail_is_contract is only true for a real contract cover so Hide images
-		// can suppress ordinary inscription JPEGs in the block rail.
-		thumbnailURL, thumbnailIsContract := pickBlockCardThumbnail(block)
-
-		// Fallback for blocks where the persisted Inscriptions list is (currently) empty
-		// but we know via the tx index (from prior content access or startup scan) that
-		// the block has servable inscription content. This makes the BlockCard show the
-		// actual thumbnail image (e.g. for blocks like 95785 that have witness images
-		// resolvable via /content/ even if the block cache list is empty).
-		if thumbnailURL == "" {
-			api.txMu.RLock()
-			if txs, ok := api.heightIndex[block.BlockHeight]; ok && len(txs) > 0 {
-				// /content/{tx} (no witness) serves the primary inscription for the tx.
-				// This is the same pattern used for recent blocks and will render a real
-				// image thumbnail in the scroller instead of the emoji.
-				thumbnailURL = fmt.Sprintf("/content/%s", txs[0])
-			}
-			api.txMu.RUnlock()
-		}
-
-		// Last resort on-disk scan: if there are payload files in the block dir's images/
-		// subdir (even without tx metadata), use the block-image serving route so the
-		// card can still show a thumbnail.
-		if thumbnailURL == "" {
-			if t := api.findFirstBlockImageThumbnail(block.BlockHeight); t != "" {
-				thumbnailURL = t
-			}
-		}
-
-		summaries = append(summaries, map[string]interface{}{
-			"block_height":          block.BlockHeight,
-			"block_hash":            block.BlockHash,
-			"timestamp":             block.Timestamp,
-			"tx_count":              block.TxCount,
-			"inscription_count":     inscriptionCount,
-			"smart_contract_count":  contractCount,
-			"steganography_summary": block.SteganographySummary,
-			"preview_inscriptions":  preview,
-			"has_images":            hasImages,
-			"thumbnail_url":         thumbnailURL,
-			"thumbnail_is_contract": thumbnailIsContract,
-		})
-	}
-
+	summaries := make([]map[string]interface{}, 0)
 	var nextCursor string
 	hasMore := false
-	if end < len(heights) {
-		nextCursor = fmt.Sprintf("%d", heights[end-1])
-		hasMore = true
+	contractsOnly := wantsContractsOnly(r)
+
+	if !contractsOnly {
+		// Keep the historical page size in height slots, including heights that
+		// fail to load, so cursors stay aligned with the unfiltered rail.
+		end := start + limit
+		if end > len(heights) {
+			end = len(heights)
+		}
+		for _, h := range heights[start:end] {
+			block, err := api.loadBlock(h)
+			if err != nil {
+				log.Printf("Failed to load block %d: %v", h, err)
+				continue
+			}
+			summaries = append(summaries, api.blockSummary(block))
+		}
+		if end < len(heights) {
+			nextCursor = fmt.Sprintf("%d", heights[end-1])
+			hasMore = true
+		}
+	} else {
+		// Skip clean blocks, but stop after contractsOnlyMaxScan heights so a
+		// long stretch without contracts cannot hold the request open. The
+		// cursor is the last inspected height, which may be a clean block, so
+		// the next page continues below it instead of re-reading the gap.
+		examined := 0
+		idx := start
+		for idx < len(heights) && len(summaries) < limit && examined < contractsOnlyMaxScan {
+			h := heights[idx]
+			idx++
+			examined++
+			block, err := api.loadBlock(h)
+			if err != nil {
+				log.Printf("Failed to load block %d: %v", h, err)
+				continue
+			}
+			if !blockContainsSmartContract(block) {
+				continue
+			}
+			summaries = append(summaries, api.blockSummary(block))
+		}
+		if idx > 0 && idx < len(heights) {
+			nextCursor = fmt.Sprintf("%d", heights[idx-1])
+			hasMore = true
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -580,6 +677,7 @@ func (api *DataAPI) HandleScanBlockOnDemand(w http.ResponseWriter, r *http.Reque
 		StartHeight int64 `json:"start_height"`
 		EndHeight   int64 `json:"end_height"`
 		ForceScan   bool  `json:"force_scan"`
+		ForcedScan  bool  `json:"forced_scan"`
 		Force       bool  `json:"force"`
 	}
 
@@ -588,7 +686,7 @@ func (api *DataAPI) HandleScanBlockOnDemand(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	forceScan := request.ForceScan || request.Force
+	forceScan := request.ForceScan || request.ForcedScan || request.Force
 	startHeight := request.BlockHeight
 	if startHeight == 0 && request.StartHeight > 0 {
 		startHeight = request.StartHeight
@@ -607,18 +705,24 @@ func (api *DataAPI) HandleScanBlockOnDemand(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Check if we already have data for this block
+	// Stored rows from before the OP_RETURN filter still mark CRC-20 JSON and
+	// other text payloads as contracts. Repair those in place. An unforced
+	// range stops there so a wide repair does not re-download the chain.
+	repairedBlocks, repairedContracts := api.repairStoredContracts(startHeight, endHeight)
+
 	if !forceScan && startHeight == endHeight {
 		if existingData, err := api.dataStorage.GetBlockData(startHeight); err == nil {
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"success":    true,
-				"cached":     true,
-				"block_data": existingData,
-				"message":    "Returned cached data",
-			})
+			api.writeScanResult(w, true, startHeight, endHeight, existingData, repairedBlocks, repairedContracts, "Returned cached data")
 			return
 		}
+	}
+	if !forceScan && startHeight != endHeight {
+		var blockData interface{}
+		if existing, err := api.dataStorage.GetBlockData(endHeight); err == nil {
+			blockData = existing
+		}
+		api.writeScanResult(w, true, startHeight, endHeight, blockData, repairedBlocks, repairedContracts, "Repaired stored smart contracts")
+		return
 	}
 
 	// Process the block
@@ -631,6 +735,11 @@ func (api *DataAPI) HandleScanBlockOnDemand(w http.ResponseWriter, r *http.Reque
 		}
 	}
 	log.Printf("On-demand scan for %d-%d completed in %v", startHeight, endHeight, time.Since(scanStart))
+	// A chain rescan uses the current filter. Repair again so a row the
+	// rescan did not rewrite cannot keep a foreign payload.
+	againBlocks, againContracts := api.repairStoredContracts(startHeight, endHeight)
+	repairedBlocks += againBlocks
+	repairedContracts += againContracts
 
 	// Get the processed data
 	blockData, err := api.dataStorage.GetBlockData(endHeight)
@@ -639,17 +748,24 @@ func (api *DataAPI) HandleScanBlockOnDemand(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Create real-time update
-	update := api.dataStorage.CreateRealtimeUpdate("scan_complete", endHeight, blockData)
+	api.writeScanResult(w, false, startHeight, endHeight, blockData, repairedBlocks, repairedContracts, "Block scanned successfully")
+}
 
+func (api *DataAPI) writeScanResult(w http.ResponseWriter, cached bool, startHeight, endHeight int64, blockData interface{}, repairedBlocks, repairedContracts int, message string) {
+	var update *storage.RealtimeUpdate
+	if blockData != nil && api.dataStorage != nil {
+		update = api.dataStorage.CreateRealtimeUpdate("scan_complete", endHeight, blockData)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success":    true,
-		"cached":     false,
-		"block_data": blockData,
-		"message":    "Block scanned successfully",
-		"scanned":    []int64{startHeight, endHeight},
-		"update":     update,
+		"success":            true,
+		"cached":             cached,
+		"block_data":         blockData,
+		"message":            message,
+		"scanned":            []int64{startHeight, endHeight},
+		"repaired_blocks":    repairedBlocks,
+		"repaired_contracts": repairedContracts,
+		"update":             update,
 	})
 }
 

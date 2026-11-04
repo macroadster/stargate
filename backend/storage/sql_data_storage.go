@@ -2,6 +2,7 @@ package storage
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -149,6 +150,72 @@ func (s *SQLDataStorage) StoreBlockData(blockResponse *bitcoin.BlockInscriptions
 		return nil
 	}
 	return nil
+}
+
+// SaveBlockPayload replaces the stored JSON for one height and refreshes the
+// stego_detected column from the payload summary. A missing height is ignored.
+func (s *SQLDataStorage) SaveBlockPayload(cache *BlockDataCache) error {
+	if cache == nil || cache.BlockHeight <= 0 {
+		return nil
+	}
+	payload, err := json.Marshal(cache)
+	if err != nil {
+		return fmt.Errorf("marshal block %d payload: %w", cache.BlockHeight, err)
+	}
+	stego := 0
+	if cache.SteganographySummary != nil && cache.SteganographySummary.StegoDetected {
+		stego = cache.SteganographySummary.StegoCount
+	}
+	res := s.db.Model(&BlockScanRow{}).Where("block_height = ?", cache.BlockHeight).Updates(map[string]any{
+		"payload":        payload,
+		"block_hash":     cache.BlockHash,
+		"stego_detected": stego,
+		"images_scanned": len(cache.Images),
+	})
+	if res.Error != nil {
+		return res.Error
+	}
+	return nil
+}
+
+// ReplaceSmartContracts rewrites only the smart_contracts list inside the
+// stored payload. Stego summaries and the stego_detected column stay as they
+// were, so repairing a false OP_RETURN row does not wipe a real scan.
+func (s *SQLDataStorage) ReplaceSmartContracts(height int64, contracts []bitcoin.SmartContractData) error {
+	if contracts == nil {
+		contracts = []bitcoin.SmartContractData{}
+	}
+	var row BlockScanRow
+	err := s.db.Select("payload").Where("block_height = ?", height).First(&row).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		return err
+	}
+	var cache BlockDataCache
+	if err := json.Unmarshal(row.Payload, &cache); err != nil {
+		return fmt.Errorf("unmarshal block %d payload: %w", height, err)
+	}
+	cache.SmartContracts = contracts
+	payload, err := json.Marshal(&cache)
+	if err != nil {
+		return fmt.Errorf("marshal block %d payload: %w", height, err)
+	}
+	return s.db.Model(&BlockScanRow{}).Where("block_height = ?", height).Update("payload", payload).Error
+}
+
+// ListBlockHeights returns stored heights in [start, end], ascending.
+func (s *SQLDataStorage) ListBlockHeights(start, end int64) ([]int64, error) {
+	var heights []int64
+	err := s.db.Model(&BlockScanRow{}).
+		Where("block_height >= ? AND block_height <= ?", start, end).
+		Order("block_height ASC").
+		Pluck("block_height", &heights).Error
+	if err != nil {
+		return nil, err
+	}
+	return heights, nil
 }
 
 // GetBlockData retrieves block data by height.

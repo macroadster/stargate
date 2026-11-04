@@ -40,6 +40,7 @@ var DefaultPrimary = map[string]string{
 	"mcp_tools":      "/mcp/tools + /mcp/call (shim over smart_contract store)",
 	"auth":           "/api/auth/*",
 	"health":         "/api/health",
+	"console":        "GET /api/console/status",
 }
 
 // DefaultAliases lists historical paths that are no longer registered (3bk.8).

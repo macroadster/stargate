@@ -19,11 +19,11 @@ import (
 	"stargate-backend/storage/auth"
 	scstore "stargate-backend/storage/smart_contract"
 
-	"github.com/btcsuite/btcd/btcutil"
-	"github.com/btcsuite/btcd/chaincfg"
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcd/wire"
+	btcaddr "github.com/btcsuite/btcd/address/v2"
+	"github.com/btcsuite/btcd/chaincfg/v2"
+	"github.com/btcsuite/btcd/chainhash/v2"
+	"github.com/btcsuite/btcd/txscript/v2"
+	"github.com/btcsuite/btcd/wire/v2"
 )
 
 type psbtMockUTXO struct {
@@ -65,7 +65,7 @@ func (m *psbtMockUTXO) BroadcastTx(string) (string, error) {
 	return "", fmt.Errorf("broadcast not used in tests")
 }
 
-func seedPSBTUTXO(t *testing.T, client *psbtMockUTXO, addr btcutil.Address, value int64) {
+func seedPSBTUTXO(t *testing.T, client *psbtMockUTXO, addr btcaddr.Address, value int64) {
 	t.Helper()
 	script, err := txscript.PayToAddrScript(addr)
 	if err != nil {
@@ -86,18 +86,18 @@ func seedPSBTUTXO(t *testing.T, client *psbtMockUTXO, addr btcutil.Address, valu
 	client.utxos[addr.EncodeAddress()] = append(client.utxos[addr.EncodeAddress()], u)
 }
 
-func mustTestP2WPKH(t *testing.T, fill byte) btcutil.Address {
+func mustTestP2WPKH(t *testing.T, fill byte) btcaddr.Address {
 	t.Helper()
-	addr, err := btcutil.NewAddressWitnessPubKeyHash(bytes.Repeat([]byte{fill}, 20), &chaincfg.TestNet4Params)
+	addr, err := btcaddr.NewAddressWitnessPubKeyHash(bytes.Repeat([]byte{fill}, 20), &chaincfg.TestNet4Params)
 	if err != nil {
 		t.Fatalf("p2wpkh: %v", err)
 	}
 	return addr
 }
 
-func mustTestP2PKH(t *testing.T, fill byte) btcutil.Address {
+func mustTestP2PKH(t *testing.T, fill byte) btcaddr.Address {
 	t.Helper()
-	addr, err := btcutil.NewAddressPubKeyHash(bytes.Repeat([]byte{fill}, 20), &chaincfg.TestNet4Params)
+	addr, err := btcaddr.NewAddressPubKeyHash(bytes.Repeat([]byte{fill}, 20), &chaincfg.TestNet4Params)
 	if err != nil {
 		t.Fatalf("p2pkh: %v", err)
 	}

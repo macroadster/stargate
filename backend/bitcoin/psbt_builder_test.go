@@ -7,11 +7,11 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/btcsuite/btcd/btcutil"
-	"github.com/btcsuite/btcd/chaincfg"
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcd/wire"
+	btcaddr "github.com/btcsuite/btcd/address/v2"
+	"github.com/btcsuite/btcd/chaincfg/v2"
+	"github.com/btcsuite/btcd/chainhash/v2"
+	"github.com/btcsuite/btcd/txscript/v2"
+	"github.com/btcsuite/btcd/wire/v2"
 )
 
 type raiseFundMockUTXO struct {
@@ -53,7 +53,7 @@ func (m *raiseFundMockUTXO) BroadcastTx(string) (string, error) {
 	return "", fmt.Errorf("broadcast not used in tests")
 }
 
-func seedAddrUTXO(t *testing.T, client *raiseFundMockUTXO, addr btcutil.Address, value int64) {
+func seedAddrUTXO(t *testing.T, client *raiseFundMockUTXO, addr btcaddr.Address, value int64) {
 	t.Helper()
 	script, err := txscript.PayToAddrScript(addr)
 	if err != nil {
@@ -75,18 +75,18 @@ func seedAddrUTXO(t *testing.T, client *raiseFundMockUTXO, addr btcutil.Address,
 	client.utxos[key] = append(client.utxos[key], u)
 }
 
-func mustP2WPKH(t *testing.T, params *chaincfg.Params, fill byte) btcutil.Address {
+func mustP2WPKH(t *testing.T, params *chaincfg.Params, fill byte) btcaddr.Address {
 	t.Helper()
-	addr, err := btcutil.NewAddressWitnessPubKeyHash(bytes.Repeat([]byte{fill}, 20), params)
+	addr, err := btcaddr.NewAddressWitnessPubKeyHash(bytes.Repeat([]byte{fill}, 20), params)
 	if err != nil {
 		t.Fatalf("p2wpkh: %v", err)
 	}
 	return addr
 }
 
-func mustP2PKH(t *testing.T, params *chaincfg.Params, fill byte) btcutil.Address {
+func mustP2PKH(t *testing.T, params *chaincfg.Params, fill byte) btcaddr.Address {
 	t.Helper()
-	addr, err := btcutil.NewAddressPubKeyHash(bytes.Repeat([]byte{fill}, 20), params)
+	addr, err := btcaddr.NewAddressPubKeyHash(bytes.Repeat([]byte{fill}, 20), params)
 	if err != nil {
 		t.Fatalf("p2pkh: %v", err)
 	}
@@ -183,7 +183,7 @@ func TestBuildRaiseFundPSBTTable(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			payerA := mustP2WPKH(t, params, 0x11)
-			var payerB btcutil.Address
+			var payerB btcaddr.Address
 			if c.legacyB {
 				payerB = mustP2PKH(t, params, 0x22)
 			} else {
@@ -354,7 +354,7 @@ func TestAllPayerSelectionsAreSegWit(t *testing.T) {
 	}
 }
 
-func fundingPSBTForAddr(t *testing.T, addr btcutil.Address) *PSBTResult {
+func fundingPSBTForAddr(t *testing.T, addr btcaddr.Address) *PSBTResult {
 	t.Helper()
 	params := &chaincfg.TestNet4Params
 	dest := mustP2WPKH(t, params, 0x99)

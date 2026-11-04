@@ -83,6 +83,65 @@ func TestSQLDataStorageSQLiteRoundTrip(t *testing.T) {
 	}
 }
 
+func TestReplaceSmartContractsKeepsStegoSummary(t *testing.T) {
+	path := t.TempDir() + "/blocks.db"
+	store, err := NewSQLiteDataStorage(path)
+	if err != nil {
+		t.Fatalf("NewSQLiteDataStorage: %v", err)
+	}
+	defer store.Close()
+
+	crcWish := "7b2270223a226372632d3230222c226f70223a227472616e73666572222c2274"
+	crcStego := "69636b223a224c454146222c22616d74223a223130363639303236393233227d"
+	realWish := "41a974b813b024a3817c9c99b5406cc5131a00406c76a4e01fd7519974ccfb40"
+	resp := &bitcoin.BlockInscriptionsResponse{
+		BlockHeight:       157665,
+		BlockHash:         "000000000000000286c9ff46dff4ce574f78744ef9666b2daf676a36837252a0",
+		Timestamp:         1793019911,
+		TotalTransactions: 261,
+		Success:           true,
+		SmartContracts: []bitcoin.SmartContractData{
+			{ContractID: realWish, BlockHeight: 157665, ImagePath: "images/real"},
+			{
+				ContractID:  crcWish,
+				BlockHeight: 157665,
+				ImagePath:   "images/" + crcStego,
+				Metadata: map[string]any{
+					"match_type": "op_return",
+					"wish_hash":  crcWish,
+					"stego_hash": crcStego,
+				},
+			},
+		},
+	}
+	scans := []map[string]interface{}{{"is_stego": true, "confidence": 0.5, "stego_type": "alpha"}}
+	if err := store.StoreBlockData(resp, scans); err != nil {
+		t.Fatal(err)
+	}
+	kept, _ := bitcoin.DropForeignOPReturnContracts(resp.SmartContracts)
+	if err := store.ReplaceSmartContracts(157665, kept); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := store.GetBlockData(157665)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := raw.(*BlockDataCache)
+	if len(entry.SmartContracts) != 1 || entry.SmartContracts[0].ContractID != realWish {
+		t.Fatalf("contracts=%+v", entry.SmartContracts)
+	}
+	if entry.SteganographySummary == nil || !entry.SteganographySummary.StegoDetected || entry.BlockHash == "" {
+		t.Fatalf("payload lost fields: %+v", entry.SteganographySummary)
+	}
+	heights, err := store.ListBlockHeights(157000, 158000)
+	if err != nil || len(heights) != 1 || heights[0] != 157665 {
+		t.Fatalf("heights=%v err=%v", heights, err)
+	}
+	if err := store.ReplaceSmartContracts(999, nil); err != nil {
+		t.Fatalf("missing height: %v", err)
+	}
+}
+
 func TestSQLDataStorageMemory(t *testing.T) {
 	db, err := gormdb.OpenMemory()
 	if err != nil {

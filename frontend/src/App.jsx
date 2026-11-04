@@ -1,5 +1,5 @@
 import { Suspense, lazy, useState, useEffect, useRef } from 'react';
-import { Check, Copy, Github, Linkedin } from 'lucide-react';
+import { Check, Copy } from 'lucide-react';
 import { Routes, Route, useParams, useNavigate, useLocation } from 'react-router-dom';
 
 import BlockCard from './components/Block/BlockCard';
@@ -18,6 +18,26 @@ const ContractsPage = lazy(() => import('./pages/ContractsPage'));
 const McpDocsPage = lazy(() => import('./pages/McpDocsPage'));
 const DocsPage = lazy(() => import('./pages/DocsPage'));
 
+// lucide-react 1 dropped brand marks. These strokes match the previous icons.
+function BrandIcon({ className, children }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      width="24"
+      height="24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {children}
+    </svg>
+  );
+}
+
 const RouteFallback = () => (
   <div className="flex min-h-[40vh] items-center justify-center text-sm opacity-70">Loading…</div>
 );
@@ -28,7 +48,27 @@ import { CONTENT_BASE } from './apiBase';
 import { apiFetch } from './utils/api';
 
 import { useHorizontalScroll } from './hooks/useHorizontalScroll';
-import { shouldShowInscription } from './components/Inscription/inscriptionUtils';
+import { blockHasSmartContract, shouldShowInscription } from './components/Inscription/inscriptionUtils';
+
+const HIDE_CLEAN_BLOCKS_KEY = 'stargate.hideCleanBlocks';
+
+const readHideCleanBlocks = (signedIn) => {
+  // Unsigned viewers only see blocks that contain smart contracts.
+  if (!signedIn) return true;
+  try {
+    return sessionStorage.getItem(HIDE_CLEAN_BLOCKS_KEY) === '1';
+  } catch {
+    return false;
+  }
+};
+
+const writeHideCleanBlocks = (value) => {
+  try {
+    sessionStorage.setItem(HIDE_CLEAN_BLOCKS_KEY, value ? '1' : '0');
+  } catch {
+    /* private mode */
+  }
+};
 
 const formatTimeAgo = (timestamp) => {
   const now = Date.now();
@@ -63,15 +103,23 @@ function MainContent() {
   const [hideImages, setHideImages] = useState(true);
   const [pendingRefreshKey, setPendingRefreshKey] = useState(0);
   const isSignedIn = Boolean(auth?.apiKey);
+  const [hideCleanBlocks, setHideCleanBlocks] = useState(() => readHideCleanBlocks(isSignedIn));
 
   useEffect(() => {
     if (!isSignedIn) {
       setHideText(true);
       setHideImages(true);
+      setHideCleanBlocks(true);
+      try {
+        sessionStorage.removeItem(HIDE_CLEAN_BLOCKS_KEY);
+      } catch {
+        /* private mode */
+      }
     }
   }, [isSignedIn]);
   const { elRef: scrollRef, isDragging } = useHorizontalScroll();
   const prevBlocksLengthRef = useRef(0);
+  const contractPageLoadsRef = useRef(0);
 
   const {
     blocks,
@@ -85,8 +133,10 @@ function MainContent() {
     setManualHeight,
     loadMoreBlocks,
     loadNewerBlocks,
-    refreshBlocks
-  } = useBlocks();
+    refreshBlocks,
+    hasMore: hasMoreBlocks,
+    nextCursor: blockPageCursor,
+  } = useBlocks(hideCleanBlocks);
 
   useEffect(() => {
     const newBlock = blocks.find(b => b.isNew);
@@ -98,6 +148,54 @@ function MainContent() {
     }
     prevBlocksLengthRef.current = blocks.length;
   }, [blocks, scrollRef]);
+
+  const visibleBlocks = hideCleanBlocks
+    ? blocks.filter((block) => block.isFuture || blockHasSmartContract(block))
+    : blocks;
+  const contractBlockCount = blocks.filter(blockHasSmartContract).length;
+
+  // A contracts-only page can be shorter than the rail. Keep asking for the
+  // next page of contract blocks until the scroller has something to drag.
+  useEffect(() => {
+    if (!hideCleanBlocks) {
+      contractPageLoadsRef.current = 0;
+      return;
+    }
+    if (isInitializing || !hasMoreBlocks || contractBlockCount >= 12) return;
+    // Each page already walks a bounded height span. Stop if contract blocks
+    // are so sparse that filling the rail would scan the whole chain.
+    if (contractPageLoadsRef.current >= 40) return;
+    contractPageLoadsRef.current += 1;
+    loadMoreBlocks();
+  }, [hideCleanBlocks, isInitializing, hasMoreBlocks, contractBlockCount, blockPageCursor, loadMoreBlocks]);
+
+  // Leave a clean /block/:height when the filter is on. Home and /pending
+  // stay on the tip; the rail just stops showing clean history.
+  // Judge the loaded summary in the rail. The selected object can stay a
+  // placeholder (has_images undefined) even after that summary arrives.
+  useEffect(() => {
+    if (!hideCleanBlocks || height === undefined) return;
+    if (location.pathname === '/pending') return;
+    if (wishId || contractId || proposalId) return;
+    const targetHeight = Number(height);
+    if (!Number.isFinite(targetHeight)) return;
+    const summary = blocks.find((block) => block.height === targetHeight);
+    if (!summary || summary.isFuture || blockHasSmartContract(summary)) return;
+    const next = blocks.find(blockHasSmartContract);
+    if (!next || next.height === summary.height) return;
+    originalHandleBlockSelect(next);
+    navigate(`/block/${next.height}`);
+  }, [
+    hideCleanBlocks,
+    height,
+    blocks,
+    location.pathname,
+    wishId,
+    contractId,
+    proposalId,
+    originalHandleBlockSelect,
+    navigate,
+  ]);
 
   const handleBlockSelect = (block) => {
     if (isDragging) return; // Prevent click if a drag occurred
@@ -710,6 +808,15 @@ function MainContent() {
           if (!isSignedIn) return;
           setHideImages((value) => !value);
         }}
+        hideCleanBlocks={hideCleanBlocks}
+        onToggleCleanBlocks={() => {
+          if (!isSignedIn) return;
+          setHideCleanBlocks((value) => {
+            const next = !value;
+            writeHideCleanBlocks(next);
+            return next;
+          });
+        }}
       />
 
       <div style={{ minHeight: 0, overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
@@ -730,7 +837,7 @@ function MainContent() {
             }
           }}
         >
-          {blocks.map((block, index) => (
+          {visibleBlocks.map((block, index) => (
             <BlockCard
               key={`${block.height}-${index}`}
               block={block}
@@ -739,6 +846,13 @@ function MainContent() {
               hideImages={hideImages}
             />
           ))}
+          {hideCleanBlocks && contractBlockCount === 0 && (
+            <div className="flex items-center text-sm text-secondary px-2">
+              {isInitializing || hasMoreBlocks
+                ? 'Looking for blocks with smart contracts…'
+                : 'No blocks with smart contracts yet.'}
+            </div>
+          )}
         </div>
 
         <div className="w-full px-4 sm:px-6 lg:px-8 xl:px-12 py-8 block-page-content" style={{ flex: 1, minWidth: 0, maxWidth: '100%', overflowX: 'hidden' }}>
@@ -1158,7 +1272,10 @@ function MainContent() {
                   className="nav-link p-0 text-muted"
                   title="GitHub"
                 >
-                  <Github className="w-5 h-5" />
+                  <BrandIcon className="w-5 h-5">
+                    <path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4" />
+                    <path d="M9 18c-4.51 2-5-2-7-2" />
+                  </BrandIcon>
                 </a>
                 <a
                   href="https://x.com/howssatoshi"
@@ -1176,7 +1293,11 @@ function MainContent() {
                   className="nav-link p-0 text-muted"
                   title="LinkedIn"
                 >
-                  <Linkedin className="w-5 h-5" />
+                  <BrandIcon className="w-5 h-5">
+                    <path d="M16 8a6 6 0 0 1 6 6v7h-4v-7a2 2 0 0 0-2-2 2 2 0 0 0-2 2v7h-4v-7a6 6 0 0 1 6-6z" />
+                    <rect width="4" height="12" x="2" y="9" />
+                    <circle cx="4" cy="4" r="2" />
+                  </BrandIcon>
                 </a>
               </div>
 
