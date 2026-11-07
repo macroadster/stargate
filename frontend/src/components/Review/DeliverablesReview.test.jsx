@@ -124,4 +124,73 @@ describe('DeliverablesReview', () => {
       expect(screen.getAllByText(/Details here/).length).toBeGreaterThan(0);
     });
   });
+
+  test('collapsed task shows latest attempt status, not first attempt', async () => {
+    const first = {
+      submission_id: 'sub-1',
+      task_id: 'task-1',
+      claim_id: 'claim-1',
+      status: 'rejected',
+      submitted_at: '2026-01-01T00:00:00Z',
+      created_at: '2026-01-01T00:00:00Z',
+      deliverables: { notes: 'first attempt notes' },
+    };
+    const latest = {
+      submission_id: 'sub-2',
+      task_id: 'task-1',
+      claim_id: 'claim-2',
+      status: 'approved',
+      submitted_at: '2026-02-01T00:00:00Z',
+      created_at: '2026-02-01T00:00:00Z',
+      deliverables: { notes: 'latest attempt notes' },
+    };
+
+    // Oldest-first order is the revealing case: a plain map overwrite
+    // (first -> second) would keep latest, but a newest-first overwrite
+    // or an object map keyed by task_id would keep 'rejected'.
+    // Pass the stale task_id map (first attempt) alongside the full
+    // list so the collapsed header must resolve by timestamp.
+    render(
+      <AuthProvider>
+        <DeliverablesReview
+          proposalItems={[
+            {
+              id: 'prop-1',
+              title: 'Test Proposal',
+              tasks: [
+                {
+                  task_id: 'task-1',
+                  title: 'Implement feature',
+                  active_claim_id: 'claim-2',
+                },
+              ],
+            },
+          ]}
+          submissions={{ 'task-1': first, 'sub-1': first, 'sub-2': latest }}
+          submissionsList={[first, latest]}
+          onRefresh={jest.fn()}
+        />
+      </AuthProvider>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Implement feature')).toBeInTheDocument();
+    });
+
+    // Collapsed header must reflect the latest (approved) attempt.
+    expect(screen.getByText('approved')).toBeInTheDocument();
+    expect(screen.queryByText('rejected')).not.toBeInTheDocument();
+    // Collapsed must not leak the first attempt's notes.
+    expect(screen.queryByText(/first attempt notes/)).not.toBeInTheDocument();
+
+    const expandBtn = document.querySelector('.deliverables-expand-btn');
+    fireEvent.click(expandBtn);
+
+    await waitFor(() => {
+      expect(screen.getByText('Submission Timeline')).toBeInTheDocument();
+      expect(screen.getByText('Attempt 1')).toBeInTheDocument();
+      expect(screen.getByText('Attempt 2')).toBeInTheDocument();
+      expect(screen.getAllByText('rejected').length).toBeGreaterThan(0);
+    });
+  });
 });

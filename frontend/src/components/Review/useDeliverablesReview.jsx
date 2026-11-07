@@ -36,8 +36,8 @@ export function useDeliverablesReview({ proposalItems, submissions, submissionsL
     [submissions, submissionsList],
   );
   const allDeliverables = React.useMemo(
-    () => buildAllDeliverables(proposalItems, submissionsObj),
-    [proposalItems, submissionsObj],
+    () => buildAllDeliverables(proposalItems, submissionsMap),
+    [proposalItems, submissionsMap],
   );
 
   const submissionIds = React.useMemo(

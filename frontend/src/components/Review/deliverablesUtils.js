@@ -73,15 +73,58 @@ export const normalizeSubmissions = (submissions, submissionsList) => {
   const submissionsMap = {};
   submissionsArray.forEach((submission) => {
     if (submission.submission_id) submissionsMap[submission.submission_id] = submission;
-    if (submission.task_id) submissionsMap[submission.task_id] = submission;
-    if (submission.claim_id) submissionsMap[submission.claim_id] = submission;
+    if (submission.task_id) {
+      const existing = submissionsMap[submission.task_id];
+      if (!existing || getSubmissionTimestamp(submission) > getSubmissionTimestamp(existing)) {
+        submissionsMap[submission.task_id] = submission;
+      }
+    }
+    if (submission.claim_id) {
+      const existing = submissionsMap[submission.claim_id];
+      if (!existing || getSubmissionTimestamp(submission) > getSubmissionTimestamp(existing)) {
+        submissionsMap[submission.claim_id] = submission;
+      }
+    }
   });
   return { submissionsObj, submissionsArray, submissionsMap };
 };
 
 /** Join proposal tasks with matching submissions. */
-export const buildAllDeliverables = (proposalItems, submissionsObj) =>
-  (proposalItems || [])
+export const buildAllDeliverables = (proposalItems, submissionsObj) => {
+  // Determine the latest attempt per task by timestamp instead of relying
+  // on a plain map lookup, which can point at the first (oldest) attempt
+  // when the map was built by simple overwrite.
+  const candidates = [];
+  if (Array.isArray(submissionsObj)) {
+    candidates.push(...submissionsObj);
+  } else if (submissionsObj && typeof submissionsObj === 'object') {
+    Object.values(submissionsObj).forEach((s) => {
+      if (s && typeof s === 'object') candidates.push(s);
+    });
+  }
+  const unique = new Map();
+  candidates.forEach((s) => {
+    const key = s.submission_id || `${s.task_id || ''}:${getSubmissionTimestamp(s)}:${s.claim_id || ''}`;
+    if (!unique.has(key)) unique.set(key, s);
+  });
+  const uniq = Array.from(unique.values());
+  const latestByTaskId = {};
+  const latestByClaimId = {};
+  uniq.forEach((s) => {
+    if (s.task_id) {
+      const existing = latestByTaskId[s.task_id];
+      if (!existing || getSubmissionTimestamp(s) > getSubmissionTimestamp(existing)) {
+        latestByTaskId[s.task_id] = s;
+      }
+    }
+    if (s.claim_id) {
+      const existing = latestByClaimId[s.claim_id];
+      if (!existing || getSubmissionTimestamp(s) > getSubmissionTimestamp(existing)) {
+        latestByClaimId[s.claim_id] = s;
+      }
+    }
+  });
+  return (proposalItems || [])
     .flatMap((proposal) => {
       const tasks =
         Array.isArray(proposal.tasks) && proposal.tasks.length > 0
@@ -90,7 +133,18 @@ export const buildAllDeliverables = (proposalItems, submissionsObj) =>
             ? proposal.metadata.suggested_tasks
             : [];
       return tasks.map((task) => {
-        const submission = submissionsObj[task.task_id] || submissionsObj[task.active_claim_id] || null;
+        let submission =
+          latestByTaskId[task.task_id]
+          || (task.active_claim_id ? latestByClaimId[task.active_claim_id] : null)
+          || null;
+        // Fallback to direct map lookup for submissions that lack task/claim ids
+        // or where the direct entry is newer than the scanned one.
+        if (submissionsObj && !Array.isArray(submissionsObj)) {
+          const direct = submissionsObj[task.task_id] || (task.active_claim_id ? submissionsObj[task.active_claim_id] : null) || null;
+          if (direct && (!submission || getSubmissionTimestamp(direct) > getSubmissionTimestamp(submission))) {
+            submission = direct;
+          }
+        }
         return {
           ...task,
           proposal,
@@ -102,6 +156,7 @@ export const buildAllDeliverables = (proposalItems, submissionsObj) =>
       });
     })
     .filter((item) => item.submission);
+};
 
 export const buildComparisonGroups = (proposalItems, submissionsByTask) =>
   (proposalItems || [])
