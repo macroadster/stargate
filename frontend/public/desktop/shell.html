@@ -1758,7 +1758,6 @@
         }
 
         const appWindows = new Map();
-        let windowSeed = 0;
 
         function isMobileShell() {
             return window.matchMedia('(max-width: 860px)').matches;
@@ -3508,6 +3507,7 @@
                     </div>
                 `,
                 width: 360, height: 440,
+                center: true,
                 meta: createWindowMeta(id)
             });
             appWindows.set(id, win);
@@ -3672,7 +3672,60 @@
             const safe = { ...opts };
             if (typeof safe.title === 'string') safe.title = escapeHtml(safe.title);
             if (typeof safe.subtitle === 'string') safe.subtitle = escapeHtml(safe.subtitle);
-            return _createShellWindow(safe);
+
+            // Placement. Upstream cascades off a counter that never decrements
+            // (and is bumped by restored windows), so freshly created windows can
+            // land exactly on top of open ones — the cascade appears lost.
+            // Resolve placement here instead: explicit numeric left/top wins,
+            // `center: true` centers in the window stack, and otherwise we cascade
+            // off the live set of open windows, skipping slots that are occupied.
+            const center = safe.center === true;
+            delete safe.center;
+
+            const width = Number.isFinite(safe.width) ? safe.width : 640;
+            const height = Number.isFinite(safe.height) ? safe.height : 420;
+            const stack = windowManager.container;
+            const bounds = stack && stack.getBoundingClientRect().width > 0
+                ? stack.getBoundingClientRect()
+                : { width: window.innerWidth, height: window.innerHeight };
+            const maxLeft = Math.max(0, Math.round(bounds.width - width));
+            const maxTop = Math.max(0, Math.round(bounds.height - height));
+            const hasLeft = Number.isFinite(safe.left);
+            const hasTop = Number.isFinite(safe.top);
+
+            if (center) {
+                if (!hasLeft) safe.left = Math.round(maxLeft / 2);
+                if (!hasTop) safe.top = Math.round(maxTop / 2);
+            } else if (!hasLeft || !hasTop) {
+                const openWindows = stack ? [...stack.querySelectorAll('.window')] : [];
+                const slotOccupied = (left, top) => openWindows.some((w) => {
+                    const l = parseFloat(w.style.left);
+                    const t = parseFloat(w.style.top);
+                    return Number.isFinite(l) && Number.isFinite(t) && Math.abs(l - left) < 32 && Math.abs(t - top) < 24;
+                });
+                let slot = openWindows.length % 8;
+                for (let tries = 0; tries < 8; tries += 1) {
+                    const candidateLeft = Math.min(120 + slot * 32, maxLeft);
+                    const candidateTop = Math.min(80 + slot * 24, maxTop);
+                    if (!slotOccupied(candidateLeft, candidateTop)) break;
+                    slot = (slot + 1) % 8;
+                }
+                if (!hasLeft) safe.left = Math.min(120 + slot * 32, maxLeft);
+                if (!hasTop) safe.top = Math.min(80 + slot * 24, maxTop);
+            } else {
+                // Both axes pinned (e.g. restored session) — keep on-screen even if
+                // the viewport shrank since the position was saved.
+                safe.left = Math.min(Math.max(0, safe.left), maxLeft);
+                safe.top = Math.min(Math.max(0, safe.top), maxTop);
+            }
+            const win = _createShellWindow(safe);
+            // Upstream applies `inset: auto` after left/top, and `inset` is a
+            // shorthand whose longhands reset them — created windows end up with
+            // no left/top and pile at their static position. Re-apply placement
+            // after creation so it actually sticks.
+            if (Number.isFinite(safe.left)) win.style.left = `${safe.left}px`;
+            if (Number.isFinite(safe.top)) win.style.top = `${safe.top}px`;
+            return win;
         };
 
         // Open-contract rows still advertise id "wish-<hash>". Search and /contract/:id use the bare hash.

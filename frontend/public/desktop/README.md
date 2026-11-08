@@ -19,7 +19,12 @@ Shell-specific integration lives in `shell.html` itself:
 
 - `windowManager.createWindow` is wrapped to escape window title/subtitle
   before the (HTML-interpolating) chrome renders them. Upstream stays
-  byte-identical to the package.
+  byte-identical to the package. The wrapper also owns placement, because
+  the upstream cascade counts windows ever created instead of windows open
+  (restored windows bump it too), so new windows could stack exactly on top
+  of open ones. Explicit numeric `left`/`top` wins; `center: true` centers
+  the window in the stack (used by About Starlight); otherwise the wrapper
+  cascades off the live open-window set, skipping occupied slots.
 - A `storage` listener re-reads `confirmedContracts` / `dockPins` /
   `stackPins` on change, so installs made by the stargate **Get** button
   (or in another tab) appear without reloading the shell.
