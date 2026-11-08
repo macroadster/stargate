@@ -3,7 +3,115 @@
  * Standardized components for the QuantumCSS framework
  */
 
+/**
+ * Resolve localStorage key for theme preference.
+ * - data-theme-storage="path"|"pathname" → per-path key (avoids multi-demo pollution)
+ * - data-theme-storage="<custom>" → that exact key
+ * - default → "theme"
+ * @param {HTMLElement} [html]
+ * @returns {string}
+ */
+function resolveThemeStorageKey(html) {
+  const el = html || (typeof document !== 'undefined' ? document.documentElement : null);
+  if (!el) return 'theme';
+  const attr = el.getAttribute('data-theme-storage');
+  if (!attr) return 'theme';
+  if (attr === 'path' || attr === 'pathname') {
+    try {
+      return `theme:${typeof location !== 'undefined' ? location.pathname : ''}`;
+    } catch {
+      return 'theme';
+    }
+  }
+  return attr;
+}
+
+/**
+ * Apply theme before first paint to avoid FOUC.
+ * Call from an inline <script> in <head>, or rely on DOMContentLoaded init.
+ *
+ * Honors (in order):
+ * 1. data-theme-locked → always data-theme-default (ignore storage)
+ * 2. localStorage[storageKey] when set
+ * 3. html[data-theme-default]
+ * 4. "dark"
+ *
+ * @param {string} [storageKey] - Override; otherwise resolveThemeStorageKey()
+ */
+function applyThemeBootstrap(storageKey) {
+  if (typeof document === 'undefined') return 'dark';
+  const html = document.documentElement;
+  const defaultTheme = html.getAttribute('data-theme-default') || 'dark';
+  const key = storageKey || resolveThemeStorageKey(html);
+  const locked = html.hasAttribute('data-theme-locked');
+
+  let theme = defaultTheme;
+  if (!locked) {
+    try {
+      const saved = localStorage.getItem(key);
+      if (saved) theme = saved;
+    } catch { /* private mode */ }
+  }
+
+  let effective = theme;
+  if (theme === 'auto') {
+    effective = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+  } else if (theme !== 'light' && theme !== 'dark') {
+    effective = defaultTheme === 'light' ? 'light' : 'dark';
+  }
+  html.setAttribute('data-theme', effective);
+  return effective;
+}
+
+/**
+ * Tag <html data-os="macos|windows|linux"> so CSS can tune tracking,
+ * smoothing, and native font stacks. Apps may set data-os themselves
+ * or lock it with data-os-locked (screenshot / theme previews).
+ *
+ * @param {HTMLElement} [html]
+ * @returns {string}
+ */
+function applyOsBootstrap(html) {
+  if (typeof document === 'undefined') return 'other';
+  const el = html || document.documentElement;
+  if (el.hasAttribute('data-os-locked')) {
+    return el.getAttribute('data-os') || 'other';
+  }
+  if (el.hasAttribute('data-os')) {
+    return el.getAttribute('data-os');
+  }
+
+  const ua = (typeof navigator !== 'undefined' && navigator.userAgent) || '';
+  const platform =
+    (typeof navigator !== 'undefined' &&
+      ((navigator.userAgentData && navigator.userAgentData.platform) ||
+        navigator.platform)) ||
+    '';
+  const hay = `${platform} ${ua}`;
+
+  let os = 'other';
+  if (/iPhone|iPad|iPod|Macintosh|Mac OS X|MacIntel/.test(hay)) {
+    os = 'macos';
+  } else if (/Win32|Win64|Windows/.test(hay)) {
+    os = 'windows';
+  } else if (/Linux|X11|CrOS|Android/.test(hay)) {
+    os = 'linux';
+  }
+
+  el.setAttribute('data-os', os);
+  return os;
+}
+
+// Run immediately when this file is loaded (still helps if placed in <head>)
+if (typeof document !== 'undefined') {
+  applyThemeBootstrap();
+  applyOsBootstrap();
+}
+
 const Starlight = {
+  applyThemeBootstrap,
+  applyOsBootstrap,
+  resolveThemeStorageKey,
   /**
    * Initializes a randomized star field in the target container.
    * @param {string} selector - CSS selector for the container (default: '.starlight-stars')
@@ -653,6 +761,7 @@ const Starlight = {
     const createWindow = ({
       windowId,
       title = '',
+      subtitle = '',
       bodyHTML = '',
       toolbarHTML = '',
       width = 640,
@@ -663,9 +772,6 @@ const Starlight = {
       meta = {}
     }) => {
       createdWindowCount += 1;
-      const escapeTitle = (value) => String(value ?? '').replace(/[&<>"']/g, (ch) => ({
-        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-      }[ch]));
       const resolvedLeft = typeof left === 'number'
         ? left
         : 120 + ((createdWindowCount - 1) % 4) * 32;
@@ -678,22 +784,13 @@ const Starlight = {
         windowEl.dataset.window = windowId;
       }
       windowEl.setAttribute(config.floatingAttr, 'true');
-      // inset is a shorthand and would clear left/top if assigned after them.
-      windowEl.style.inset = 'auto';
-      if (isMobile()) {
-        windowEl.classList.add(config.maximizedClass);
-        windowEl.style.left = '0';
-        windowEl.style.top = '0';
-        windowEl.style.width = '100%';
-        windowEl.style.height = '100%';
-      } else {
-        windowEl.style.left = `${resolvedLeft}px`;
-        windowEl.style.top = `${resolvedTop}px`;
-        windowEl.style.width = `${width}px`;
-        windowEl.style.height = `${height}px`;
-      }
+      windowEl.style.left = `${resolvedLeft}px`;
+      windowEl.style.top = `${resolvedTop}px`;
+      windowEl.style.width = `${width}px`;
+      windowEl.style.height = `${height}px`;
       windowEl.style.right = 'auto';
       windowEl.style.bottom = 'auto';
+      windowEl.style.inset = 'auto';
       windowEl.innerHTML = `
         <header class="window-header">
           <div class="window-title">
@@ -702,7 +799,10 @@ const Starlight = {
               <button class="window-control is-minimize" type="button" data-window-minimize aria-label="Minimize"></button>
               <button class="window-control is-maximize" type="button" data-window-maximize aria-label="Expand"></button>
             </div>
-            <strong>${escapeTitle(title)}</strong>
+            <div>
+              <strong>${title}</strong>
+              <span>${subtitle}</span>
+            </div>
           </div>
           <div class="window-toolbar" data-window-toolbar>${toolbarHTML}</div>
         </header>
@@ -733,42 +833,9 @@ const Starlight = {
       }
     });
 
-    document.addEventListener('pointerup', (event) => {
+    document.addEventListener('pointerup', () => {
       if (dragState) {
-        const { windowEl, hostRect } = dragState;
-        const x = event.clientX - hostRect.left;
-        const y = event.clientY - hostRect.top;
-
-        if (y < 10) {
-          // Snap Maximize
-          if (!windowEl.classList.contains(config.maximizedClass)) {
-            windowEl.dataset.prevLeft = windowEl.style.left || '';
-            windowEl.dataset.prevTop = windowEl.style.top || '';
-            windowEl.dataset.prevWidth = windowEl.style.width || '';
-            windowEl.dataset.prevHeight = windowEl.style.height || '';
-            windowEl.classList.add(config.maximizedClass);
-            windowEl.style.left = '0';
-            windowEl.style.top = '0';
-            windowEl.style.width = '100%';
-            windowEl.style.height = '100%';
-          }
-        } else if (x < 15) {
-          // Snap Left Split
-          windowEl.classList.remove(config.maximizedClass);
-          windowEl.style.left = '0';
-          windowEl.style.top = '0';
-          windowEl.style.width = '50%';
-          windowEl.style.height = '100%';
-        } else if (x > hostRect.width - 15) {
-          // Snap Right Split
-          windowEl.classList.remove(config.maximizedClass);
-          windowEl.style.left = '50%';
-          windowEl.style.top = '0';
-          windowEl.style.width = '50%';
-          windowEl.style.height = '100%';
-        }
-
-        windowEl.classList.remove(config.draggingClass);
+        dragState.windowEl.classList.remove(config.draggingClass);
       }
       dragState = null;
       resizeState = null;
@@ -810,22 +877,28 @@ const Starlight = {
    * Configurable via data attributes on theme toggle elements.
    */
   initTheme() {
+    const htmlEl = document.documentElement;
     const config = {
-      defaultTheme: 'dark',
-      storageKey: 'theme',
+      defaultTheme: htmlEl.getAttribute('data-theme-default') || 'dark',
+      storageKey: resolveThemeStorageKey(htmlEl),
       themes: ['light', 'dark', 'auto'],
       iconSelector: {
         light: '.sun-icon, [data-theme-icon="light"]',
         dark: '.moon-icon, [data-theme-icon="dark"]',
-        auto: '.icon-display, [data-theme-icon="auto"]'
+        // `.icon-display` is the monitor glyph. Content (gallery cards, feature
+        // icons) uses it too, so auto-mode visibility is `.auto-icon` only.
+        // Bare monitor icons beside sun/moon stay supported for older toggles.
+        auto: '.auto-icon, [data-theme-icon="auto"]'
       },
-      autoDetect: true
+      autoDetect: true,
+      locked: htmlEl.hasAttribute('data-theme-locked')
     };
-    
     // Override config with global settings if available
     if (window.StarlightConfig && window.StarlightConfig.theme) {
       Object.assign(config, window.StarlightConfig.theme);
     }
+    // Re-apply after config merge (storage key / locked may change)
+    applyThemeBootstrap(config.storageKey);
 
     const html = document.documentElement;
 
@@ -834,33 +907,49 @@ const Starlight = {
      * @param {string} theme - The theme that is active (light, dark, or auto)
      * @param {string} effectiveTheme - The actual theme being displayed
      */
+    const themeIconNodes = (role) => {
+      const selector = config.iconSelector[role];
+      const nodes = selector ? [...document.querySelectorAll(selector)] : [];
+      if (role !== 'auto') return nodes;
+
+      const seen = new Set(nodes);
+      document.querySelectorAll('.icon-display').forEach((icon) => {
+        if (seen.has(icon)) return;
+        const parent = icon.parentElement;
+        if (!parent) return;
+        const besideThemeIcon = parent.querySelector(
+          ':scope > .sun-icon, :scope > .moon-icon, :scope > [data-theme-icon="light"], :scope > [data-theme-icon="dark"]'
+        );
+        if (!besideThemeIcon) return;
+        seen.add(icon);
+        nodes.push(icon);
+      });
+      return nodes;
+    };
+
     const updateIcons = (theme, effectiveTheme) => {
-      const autoIconSelector = config.iconSelector.auto;
-      const hasAutoIcon = autoIconSelector && document.querySelector(autoIconSelector) !== null;
-      
-      if (theme === 'auto' && hasAutoIcon) {
-        // Auto mode with auto icon: show only auto icon
-        document.querySelectorAll(autoIconSelector).forEach(icon => {
+      const autoNodes = themeIconNodes('auto');
+
+      if (theme === 'auto' && autoNodes.length > 0) {
+        autoNodes.forEach((icon) => {
           icon.classList.remove('hidden');
         });
-        // Hide light/dark icons
         const lightSelector = config.iconSelector.light;
         const darkSelector = config.iconSelector.dark;
-        document.querySelectorAll(`${lightSelector}, ${darkSelector}`).forEach(icon => {
-          icon.classList.add('hidden');
-        });
-        return;
-      }
-      
-      // Otherwise use normal theme-based visibility
-      config.themes.forEach(t => {
-        const selector = config.iconSelector[t];
-        if (selector) {
-          document.querySelectorAll(selector).forEach(icon => {
-            const isEffective = theme === 'auto' ? t === effectiveTheme : t === theme;
-            icon.classList.toggle('hidden', !isEffective);
+        const hideSelector = [lightSelector, darkSelector].filter(Boolean).join(', ');
+        if (hideSelector) {
+          document.querySelectorAll(hideSelector).forEach((icon) => {
+            icon.classList.add('hidden');
           });
         }
+        return;
+      }
+
+      config.themes.forEach((t) => {
+        themeIconNodes(t).forEach((icon) => {
+          const isEffective = theme === 'auto' ? t === effectiveTheme : t === theme;
+          icon.classList.toggle('hidden', !isEffective);
+        });
       });
     };
 
@@ -889,8 +978,8 @@ const Starlight = {
       // Apply to DOM
       html.setAttribute('data-theme', effectiveTheme);
       
-      // Save preference
-      if (save) {
+      // Save preference (skip when brand-locked unless caller forces save)
+      if (save && !config.locked) {
         localStorage.setItem(config.storageKey, theme);
       }
       

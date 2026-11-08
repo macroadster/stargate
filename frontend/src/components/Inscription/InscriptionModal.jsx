@@ -77,11 +77,14 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
             <button
               onClick={handleInstallToDesktop}
               disabled={!installCandidate}
-              className="btn-starlight btn-sm inline-flex items-center gap-2"
-              title={installedOnShellDesktop ? 'This contract is installed in Quantum Shell' : 'Install this contract into Quantum Shell'}
+              className="modal-get-button"
+              data-installed={installedOnShellDesktop ? 'true' : 'false'}
+              title={installedOnShellDesktop ? 'Installed in Quantum Shell' : 'Install this contract into Quantum Shell'}
               aria-pressed={installedOnShellDesktop}
             >
-              {installedOnShellDesktop ? <Check className="w-4 h-4" /> : <Download className="w-4 h-4" />}
+              {installedOnShellDesktop
+                ? <Check size={14} strokeWidth={2.5} aria-hidden="true" />
+                : <Download size={14} strokeWidth={2} aria-hidden="true" />}
               <span>{installedOnShellDesktop ? 'On Desktop' : 'Get'}</span>
             </button>
             <button onClick={onClose} className="btn-icon" aria-label="Close">

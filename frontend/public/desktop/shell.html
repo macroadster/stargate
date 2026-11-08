@@ -1542,6 +1542,8 @@
                     <strong>Quantum Shell</strong>
                 </button>
                 <div class="dropdown-menu">
+                    <button class="dropdown-item" onclick="backToStarlight()"><i class="icon-chevron-left" style="margin-right:8px;"></i>Back to Starlight</button>
+                    <div style="border-top:1px solid var(--shell-border); margin:4px 0;"></div>
                     <button class="dropdown-item" onclick="resetLayout()">Reset Layout</button>
                     <button class="dropdown-item" onclick="wipeMemory()">Wipe Memory</button>
                     <div style="border-top:1px solid var(--shell-border); margin:4px 0;"></div>
@@ -2497,7 +2499,7 @@
                     tag: 'System'
                 },
                 { id: 'tasks', name: 'Task Manager', icon: 'icon-activity', action: openTaskManager, tag: 'System' },
-                { id: 'about', name: 'About Starlight', icon: 'icon-info', action: openAbout, tag: 'System' }
+                { id: 'about', name: 'About Starlight', icon: 'icon-starlight', action: openAbout, tag: 'System' }
             ];
             apps.forEach(a => { if(a.name.toLowerCase().includes(q)) results.push({ ...a, type: 'app' }); });
 
@@ -2527,7 +2529,7 @@
                         name,
                         sub: hash.slice(0, 12) + '...',
                         thumb: thumbSource.startsWith('http') ? null : thumbSource,
-                        icon: thumbSource.startsWith('http') ? null : 'icon-atom',
+                        icon: thumbSource.startsWith('http') ? null : 'icon-starlight',
                         img: thumbSource.startsWith('http') ? thumbSource : null,
                         tag: 'Available',
                         action: () => openContract(hash, name, false)
@@ -2563,7 +2565,7 @@
                 if (item.img) mediaHTML = `<img src="${escapeHtml(item.img)}" alt="">`;
                 else if (item.thumb_url) mediaHTML = `<img src="${escapeHtml(item.thumb_url)}" alt="">`;
                 else if (item.thumb) mediaHTML = `<img src="${API_BASE}/uploads/${encodeURIComponent(item.thumb)}" alt="">`;
-                else mediaHTML = `<i class="${escapeHtml(item.icon || 'icon-atom')}"></i>`;
+                else mediaHTML = `<i class="${escapeHtml(item.icon || 'icon-starlight')}"></i>`;
 
                 el.innerHTML = `
                     ${mediaHTML}
@@ -2848,7 +2850,7 @@
                 btn.dataset.id = runningId;
                 btn.title = app.title;
                 // Prefer Quantum CSS icons for default apps (including tokenized contracts)
-                btn.innerHTML = `<i class="${app.icon || 'icon-atom'}"></i>`;
+                btn.innerHTML = `<i class="${app.icon || 'icon-starlight'}"></i>`;
                 btn.onclick = () => {
                     if (app.id === 'command-center') {
                         openHome();
@@ -3360,6 +3362,19 @@
             localStorage.setItem('overviewOff', isOff ? '1' : '');
         }
 
+        // The shell lives both as a full page and inside the stargate app's iframe.
+        // Same-origin, so navigating the top window is safe; fall back to self otherwise.
+        function backToStarlight() {
+            const target = '/';
+            try {
+                if (window.top && window.top !== window.self) {
+                    window.top.location.href = target;
+                    return;
+                }
+            } catch (e) { /* cross-origin top — navigate this window instead */ }
+            window.location.href = target;
+        }
+
         function resetLayout() {
             showConfirmDialog({
                 title: 'Reset Layout',
@@ -3406,7 +3421,7 @@
                         <div style="background:var(--shell-item-bg); padding:12px; border-radius:14px; display:flex; align-items:center; justify-content:space-between; border:1px solid var(--shell-item-border);">
                             <div style="display:flex; align-items:center; gap:12px;">
                                 <div style="width:32px; height:32px; background:var(--shell-accent); color:#000; border-radius:8px; display:grid; place-items:center;">
-                                    <i class="${isContract ? 'icon-atom' : 'icon-activity'}"></i>
+                                    <i class="${isContract ? 'icon-starlight' : 'icon-activity'}"></i>
                                 </div>
                                 <div style="display:flex; flex-direction:column;">
                                     <strong style="font-size:0.85rem;">${escapeHtml(title)}</strong>
@@ -3650,6 +3665,16 @@
             }[ch]));
         }
 
+        // The upstream window chrome interpolates title/subtitle into HTML.
+        // Escape them here so the synced starlight.js stays byte-identical to the package.
+        const _createShellWindow = windowManager.createWindow.bind(windowManager);
+        windowManager.createWindow = function(opts = {}) {
+            const safe = { ...opts };
+            if (typeof safe.title === 'string') safe.title = escapeHtml(safe.title);
+            if (typeof safe.subtitle === 'string') safe.subtitle = escapeHtml(safe.subtitle);
+            return _createShellWindow(safe);
+        };
+
         // Open-contract rows still advertise id "wish-<hash>". Search and /contract/:id use the bare hash.
         function openContractHash(c) {
             const pixel = c?.visiblePixelHash || c?.visible_pixel_hash;
@@ -3705,6 +3730,29 @@
 
         windowManager.initializeStaticWindows(win => createWindowMeta(win.dataset.window, "static"));
         restoreWindows();
+        // Live refresh: the stargate app (Get button) and other tabs write the pins directly.
+        // Re-render when they change so an open shell does not need a reload to show new icons.
+        window.addEventListener('storage', (event) => {
+            if (!event || !event.key) return;
+            try {
+                if (event.key === 'confirmedContracts') {
+                    const next = JSON.parse(event.newValue || '[]');
+                    shellState.confirmedContracts = Array.isArray(next) ? next : [];
+                    renderDesktop();
+                } else if (event.key === 'dockPins') {
+                    const next = JSON.parse(event.newValue || '[]');
+                    shellState.dockPins = Array.isArray(next) ? next : [];
+                    renderDock();
+                } else if (event.key === 'stackPins') {
+                    const next = JSON.parse(event.newValue || '[]');
+                    shellState.stackPins = Array.isArray(next) ? next : [];
+                    renderStack();
+                } else {
+                    return;
+                }
+            } catch (e) { /* malformed payload — keep current state */ }
+        });
+
         renderRail(); renderDesktop(); renderDock(); renderStack(); renderEvents();
         syncMobileChrome();
         window.matchMedia('(max-width: 860px)').addEventListener('change', syncMobileChrome);
