@@ -1,6 +1,7 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import InscriptionModal from './InscriptionModal';
 
 const approveProposal = vi.fn();
@@ -132,7 +133,7 @@ describe('InscriptionModal confirmed-contract actions', () => {
 
   it('keeps Approve enabled for unconfirmed contracts', () => {
     useInscriptionModalState.mockReturnValue({ ...baseState, isContractLocked: false });
-    render(<InscriptionModal inscription={inscription} onClose={() => {}} initialTab="proposals" />);
+    render(<MemoryRouter><InscriptionModal inscription={inscription} onClose={() => {}} initialTab="proposals" /></MemoryRouter>);
 
     expect(screen.getByRole('button', { name: 'Approve' })).not.toBeDisabled();
   });
@@ -143,14 +144,14 @@ describe('InscriptionModal confirmed-contract actions', () => {
       isContractLocked: false,
       activeTab: 'rework',
     });
-    render(<InscriptionModal inscription={inscription} onClose={() => {}} initialTab="rework" />);
+    render(<MemoryRouter><InscriptionModal inscription={inscription} onClose={() => {}} initialTab="rework" /></MemoryRouter>);
 
     expect(screen.getByRole('button', { name: /\+ Request Rework/ })).not.toBeDisabled();
   });
 
   it('disables Approve for a confirmed contract', () => {
     useInscriptionModalState.mockReturnValue({ ...baseState, isContractLocked: true });
-    render(<InscriptionModal inscription={inscription} onClose={() => {}} initialTab="proposals" />);
+    render(<MemoryRouter><InscriptionModal inscription={inscription} onClose={() => {}} initialTab="proposals" /></MemoryRouter>);
 
     const approve = screen.getByRole('button', { name: 'Approve' });
     expect(approve).toBeDisabled();
@@ -163,7 +164,7 @@ describe('InscriptionModal confirmed-contract actions', () => {
       isContractLocked: true,
       activeTab: 'rework',
     });
-    render(<InscriptionModal inscription={inscription} onClose={() => {}} initialTab="rework" />);
+    render(<MemoryRouter><InscriptionModal inscription={inscription} onClose={() => {}} initialTab="rework" /></MemoryRouter>);
 
     const rework = screen.getByRole('button', { name: /\+ Request Rework/ });
     expect(rework).toBeDisabled();

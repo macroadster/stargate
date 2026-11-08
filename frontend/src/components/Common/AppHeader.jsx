@@ -149,6 +149,14 @@ const AppHeader = ({
                   </li>
                   <li>
                     <button
+                      onClick={() => navigate("/desktop")}
+                      className="nav-link"
+                    >
+                      Desktop
+                    </button>
+                  </li>
+                  <li>
+                    <button
                       onClick={() => navigate("/docs")}
                       className="nav-link"
                     >
@@ -359,6 +367,17 @@ const AppHeader = ({
                 className="nav-link"
               >
                 Contracts
+              </button>
+            </li>
+            <li>
+              <button
+                onClick={() => {
+                  navigate("/desktop");
+                  setIsMenuOpen(false);
+                }}
+                className="nav-link"
+              >
+                Desktop
               </button>
             </li>
             <li>

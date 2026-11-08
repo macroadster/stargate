@@ -15,6 +15,7 @@ const InscriptionModal = lazy(() => import('./components/Inscription/Inscription
 const DiscoverPage = lazy(() => import('./components/Discover/DiscoverPage'));
 const AuthPage = lazy(() => import('./pages/AuthPage'));
 const ContractsPage = lazy(() => import('./pages/ContractsPage'));
+const DesktopPage = lazy(() => import('./pages/DesktopPage'));
 const McpDocsPage = lazy(() => import('./pages/McpDocsPage'));
 const DocsPage = lazy(() => import('./pages/DocsPage'));
 
@@ -1338,6 +1339,7 @@ export default function App() {
             <Route path="/" element={<MainContent />} />
             <Route path="/pending" element={<MainContent />} />
             <Route path="/contracts" element={<ContractsPage />} />
+            <Route path="/desktop" element={<DesktopPage />} />
             <Route path="/discover" element={<DiscoverPage />} />
             <Route path="/auth" element={<AuthPage />} />
             <Route path="/mcp/docs" element={<McpDocsPage />} />

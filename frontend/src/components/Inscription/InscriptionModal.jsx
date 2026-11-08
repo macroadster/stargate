@@ -1,4 +1,6 @@
-import { X } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { Check, Download, X } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import CopyButton from '../Common/CopyButton';
 import MarkdownContent from '../Common/MarkdownContent';
@@ -7,9 +9,12 @@ import DeliverablesReview from '../Review/DeliverablesReview';
 import { apiFetch } from '../../utils/api';
 import { QR_BYTE_LIMIT, isPlaceholderAddress, normalizeAddress } from './inscriptionUtils';
 import { useInscriptionModalState } from './useInscriptionModalState';
+import { installContractOnShellDesktop, isInstalledOnShellDesktop, shellCandidateHash } from '../../utils/quantumShell';
 
 const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
+  const navigate = useNavigate();
   const m = useInscriptionModalState(inscription, initialTab);
+  const [installTick, setInstallTick] = useState(0);
   const {
     auth, network, setNetwork, activeTab, setActiveTab, monoContent, setMonoContent,
     proposalItems, isLoadingProposals, proposalError, approvingId, submissions, submissionsList,
@@ -28,14 +33,61 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
     generatePSBT, publishAndBuild,
   } = m;
 
+  const installCandidate = shellCandidateHash(inscription, pixelHash);
+  const installedOnShellDesktop = useMemo(
+    () => (installCandidate ? isInstalledOnShellDesktop(installCandidate) : false),
+    // installTick re-reads localStorage after a Get click
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [installCandidate, installTick],
+  );
+
+  const handleInstallToDesktop = () => {
+    const result = installContractOnShellDesktop(inscription, { pixelHash });
+    if (result.status === 'installed' || result.status === 'already-installed') {
+      setInstallTick((value) => value + 1);
+    }
+    if (result.status === 'installed') {
+      toast.success((t) => (
+        <span className="inline-flex items-center gap-3">
+          <span>Installed to your Quantum Shell desktop</span>
+          <button
+            type="button"
+            className="underline"
+            onClick={() => { toast.dismiss(t.id); navigate('/desktop'); }}
+          >
+            Open
+          </button>
+        </span>
+      ));
+      return;
+    }
+    if (result.status === 'already-installed') {
+      toast.success('Already on your Quantum Shell desktop');
+      return;
+    }
+    toast.error('Unable to install — this contract has no usable hash yet.');
+  };
+
   return (
     <div className="modal-backdrop">
       <div className="modal-container">
         <div className="modal-header">
           <h2 className="text-lg lg:text-xl font-bold">Smart Contract Details</h2>
-          <button onClick={onClose} className="btn-icon">
-            <X className="w-6 h-6" />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleInstallToDesktop}
+              disabled={!installCandidate}
+              className="btn-starlight btn-sm inline-flex items-center gap-2"
+              title={installedOnShellDesktop ? 'This contract is installed in Quantum Shell' : 'Install this contract into Quantum Shell'}
+              aria-pressed={installedOnShellDesktop}
+            >
+              {installedOnShellDesktop ? <Check className="w-4 h-4" /> : <Download className="w-4 h-4" />}
+              <span>{installedOnShellDesktop ? 'On Desktop' : 'Get'}</span>
+            </button>
+            <button onClick={onClose} className="btn-icon" aria-label="Close">
+              <X className="w-6 h-6" />
+            </button>
+          </div>
         </div>
 
         <div className="modal-content" data-deliverables-scroll ref={scrollContainerRef}>
