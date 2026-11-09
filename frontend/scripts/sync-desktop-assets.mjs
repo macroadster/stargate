@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Syncs the Quantum Shell's shared dependencies from the installed
+ * Syncs the Starlight Shell's shared dependencies from the installed
  * @howssatoshi/quantumcss package into frontend/public/desktop/.
  *
  * The shell ships as static files, so it cannot resolve node_modules at

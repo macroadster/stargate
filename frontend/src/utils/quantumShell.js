@@ -1,7 +1,7 @@
 /**
- * Quantum Shell integration — install contracts to the shell's desktop.
+ * Starlight Shell integration — install contracts to the shell's desktop.
  *
- * The Quantum Shell (served from /desktop/index.html) renders its desktop icons
+ * The Starlight Shell (served from /desktop/index.html) renders its desktop icons
  * from the `confirmedContracts` localStorage key. stargate and the shell are
  * same-origin, so installing a contract means writing that entry here; the
  * shell picks it up the next time it boots.

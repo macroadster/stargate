@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Starlight OS Shell</title>
+    <title>Starlight Shell</title>
     <link rel="stylesheet" href="quantum.min.css">
     <style>
         :root {
@@ -1539,7 +1539,7 @@
             <div class="brand dropdown">
                 <button class="dropdown-toggle" style="display:flex; align-items:center; gap:12px;">
                     <div class="brand-mark"><i class="icon-starlight"></i></div>
-                    <strong>Quantum Shell</strong>
+                    <strong>Starlight Shell</strong>
                 </button>
                 <div class="dropdown-menu">
                     <button class="dropdown-item" onclick="backToStarlight()"><i class="icon-chevron-left" style="margin-right:8px;"></i>Back to Starlight</button>
@@ -1640,7 +1640,7 @@
                 <div style="width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,var(--q-color-starlight-peach,#ffd589),var(--q-color-starlight-blue,#7ee7ff));display:flex;align-items:center;justify-content:center;color:#000;font-size:14px;">⇄</div>
                 <h3 style="margin:0;">Multi-Device Sync</h3>
             </div>
-            <p style="color:var(--shell-muted); font-size:0.82rem; margin:0 0 14px;">Pair this Quantum Shell with another device (iPhone, Mac, etc) using Starlight + direct P2P.</p>
+            <p style="color:var(--shell-muted); font-size:0.82rem; margin:0 0 14px;">Pair this Starlight Shell with another device (iPhone, Mac, etc) using Starlight + direct P2P.</p>
 
             <div id="syncNotPaired">
                 <div style="background:var(--shell-item-bg); border:1px solid var(--shell-border); border-radius:16px; padding:14px; margin-bottom:14px;">
@@ -1704,6 +1704,26 @@
             if (origin.endsWith(':3000')) return origin.replace(':3000', ':3001');
             return origin;
         })();
+        // The About window shows the same version the CLI/status console does
+        // (GET /api/console/status -> Snapshot.version, i.e. versionString()).
+        // Renders "Version unavailable" when the node can't be reached.
+        let shellVersionPromise = null;
+        function fetchShellVersion() {
+            if (!shellVersionPromise) {
+                shellVersionPromise = (async () => {
+                    try {
+                        const res = await fetch(`${API_BASE}/api/console/status`, { headers: { 'Accept': 'application/json' } });
+                        if (!res.ok) return null;
+                        const data = await res.json();
+                        const v = typeof data?.version === 'string' ? data.version.trim() : '';
+                        return v ? v.replace(/^stargate\s+/i, '') : null;
+                    } catch {
+                        return null;
+                    }
+                })();
+            }
+            return shellVersionPromise;
+        }
         const root = document.documentElement;
         
         const shellState = {
@@ -3490,8 +3510,8 @@
                     <div style="padding:30px; text-align:center; display:flex; flex-direction:column; gap:20px;">
                         <div class="brand-mark" style="width:64px; height:64px; margin:0 auto; font-size:2rem; animation: pulse 2s ease-in-out infinite;"><i class="icon-starlight"></i></div>
                         <div>
-                            <h2 style="margin:0 0 4px 0;">Starlight OS Shell</h2>
-                            <p style="color:var(--shell-muted); margin:0;">Version 0.9.4-alpha</p>
+                            <h2 style="margin:0 0 4px 0;">Starlight Shell</h2>
+                            <p id="aboutVersion" style="color:var(--shell-muted); margin:0;">Version …</p>
                         </div>
                         <div style="background:var(--shell-item-bg); padding:16px; border-radius:16px; text-align:left; font-size:0.85rem;">
                             <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
@@ -3511,6 +3531,12 @@
                 meta: createWindowMeta(id)
             });
             appWindows.set(id, win);
+
+            fetchShellVersion().then((v) => {
+                const el = document.getElementById('aboutVersion');
+                if (!el) return; // window closed before the fetch resolved
+                el.textContent = v ? `Version ${v}` : 'Version unavailable';
+            });
 
             const interval = setInterval(() => {
                 const aboutStatus = document.getElementById('aboutStatus');
@@ -3895,7 +3921,7 @@
                 if (ua.includes('iPad')) return 'iPad';
                 if (ua.includes('Mac')) return 'Mac';
                 if (ua.includes('Android')) return 'Android';
-                return 'Quantum Shell';
+                return 'Starlight Shell';
             }
 
             _initUIHooks() {
@@ -4579,7 +4605,7 @@
                     list.innerHTML = '';
                     const devs = Object.entries(info.known || {});
                     if (devs.length === 0) {
-                        list.innerHTML = '<div style="color:var(--shell-muted);font-size:0.75rem;">No other devices seen yet. Open Quantum Shell on the paired device.</div>';
+                        list.innerHTML = '<div style="color:var(--shell-muted);font-size:0.75rem;">No other devices seen yet. Open Starlight Shell on the paired device.</div>';
                     } else {
                         devs.forEach(([id, meta]) => {
                             const el = document.createElement('div');

@@ -49,7 +49,7 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
     if (result.status === 'installed') {
       toast.success((t) => (
         <span className="inline-flex items-center gap-3">
-          <span>Installed to your Quantum Shell desktop</span>
+          <span>Installed to your Starlight Shell desktop</span>
           <button
             type="button"
             className="underline"
@@ -62,7 +62,7 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
       return;
     }
     if (result.status === 'already-installed') {
-      toast.success('Already on your Quantum Shell desktop');
+      toast.success('Already on your Starlight Shell desktop');
       return;
     }
     toast.error('Unable to install — this contract has no usable hash yet.');
@@ -79,7 +79,7 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
               disabled={!installCandidate}
               className="modal-get-button"
               data-installed={installedOnShellDesktop ? 'true' : 'false'}
-              title={installedOnShellDesktop ? 'Installed in Quantum Shell' : 'Install this contract into Quantum Shell'}
+              title={installedOnShellDesktop ? 'Installed in Starlight Shell' : 'Install this contract into Starlight Shell'}
               aria-pressed={installedOnShellDesktop}
             >
               {installedOnShellDesktop

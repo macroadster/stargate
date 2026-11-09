@@ -1,6 +1,6 @@
-# Quantum Shell (`/desktop`)
+# Starlight Shell (`/desktop`)
 
-Static copy of the Quantum Shell desktop environment, integrated into the
+Static copy of the Starlight Shell desktop environment, integrated into the
 stargate frontend. It occupies the whole viewport at the `/desktop` route
 (see `src/pages/DesktopPage.jsx`) — the shell's own menu bar is the only
 chrome, and its brand menu carries the way back to Starlight.

@@ -1,14 +1,14 @@
 import { useEffect } from 'react';
 
 /**
- * Hosts the Quantum Shell (static files from public/desktop, served at
+ * Hosts the Starlight Shell (static files from public/desktop, served at
  * /desktop/shell.html) as the whole viewport. The shell is the only chrome
  * on this route; its brand menu carries the way back to Starlight.
  */
 export default function DesktopPage() {
   useEffect(() => {
     const previousTitle = document.title;
-    document.title = 'Quantum Shell — Starlight';
+    document.title = 'Starlight Shell';
     return () => {
       document.title = previousTitle;
     };
@@ -17,7 +17,7 @@ export default function DesktopPage() {
   return (
     <iframe
       src="/desktop/shell.html"
-      title="Quantum Shell"
+      title="Starlight Shell"
       style={{
         display: 'block',
         width: '100vw',

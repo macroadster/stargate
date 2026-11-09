@@ -960,7 +960,7 @@ func contractToInscriptionRequest(contract sc.Contract) models.InscriptionReques
 	visible := ""
 	if n := identity.CanonicalContractID(contract.ContractID); identity.IsPixelHash(n) {
 		visible = n
-		// Quantum Shell (confirmed sandbox) only paints a pending wish whose
+		// Starlight Shell (confirmed sandbox) only paints a pending wish whose
 		// id starts with wish-. Storage stays the bare hash; this is the list alias.
 		// contract-<64-hex> is the same wish, so it uses that alias too.
 		if !strings.HasPrefix(contract.ContractID, "wish-") {

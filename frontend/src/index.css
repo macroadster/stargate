@@ -3419,7 +3419,7 @@ html[data-theme="light"] .modal-proposals-refresh:hover {
     background: rgba(0, 0, 0, 0.05);
 }
 
-/* Get — install the contract into Quantum Shell. Quiet glass pill in the
+/* Get — install the contract into Starlight Shell. Quiet glass pill in the
    Smart Contract Details header; the accent comes from the Starlight palette. */
 .modal-get-button {
     display: inline-flex;
