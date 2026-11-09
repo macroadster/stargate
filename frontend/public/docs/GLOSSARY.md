@@ -14,7 +14,7 @@ Terms as this node uses them today.
 
 **Contracts page** — `/contracts`. Hard-filters `status=confirmed`. Search still finds active wishes.
 
-**Discover** — `/discover`. Proposals and tasks with claim/submit.
+**Desktop** — `/desktop`. The Starlight Shell: a desktop environment; contracts installed with **Get** open as app windows.
 
 **Sandbox** — files for a wish at `/sandbox/<hash>/`. Unpacked when **this node** confirms the funding tx.
 

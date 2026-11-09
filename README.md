@@ -124,7 +124,7 @@ See [`docs/arch/TRIN_STARLIGHT_SCANNER.md`](docs/arch/TRIN_STARLIGHT_SCANNER.md)
 
 Optional Go-native watcher + worker orchestration (formerly separate Python agents) can run in-process:
 
-- Discover wishes/contracts and create proposals
+- Find wishes/contracts and create proposals
 - Audit proposals and submissions
 - Claim tasks, run a detected coding CLI, submit results
 - Write artifacts under `UPLOADS_DIR/results/<hash>/`
@@ -150,7 +150,7 @@ External agents should use the MCP surface (`/mcp/SKILL.md`, `/mcp/docs`, `/mcp/
 
 **UI**
 - Contract / proposal / task views and funding PSBT helpers
-- Discover portal for open work
+- Starlight Shell desktop (`/desktop`) — pin contracts with **Get** and open them as app windows
 - Inscription gallery and block rail
 - Search, dark/light theme, responsive layout (QuantumCSS)
 
@@ -233,8 +233,9 @@ Docker and systemd are not a TTY, so they keep the log stream. Details:
 1. **Blocks** — scroll the block rail, open a block’s inscriptions  
 2. **Inscriptions** — open details for metadata and extracted text  
 3. **Wishes** — Inscribe Wish, set budget and funding mode  
-4. **Work** — review proposals and submissions on Discover / Review  
+4. **Work** — review proposals and submissions in the wish’s **Proposals** / **Deliverables** tabs  
 5. **Pay** — build PSBT, sign in your wallet, broadcast; monitor reconciliation  
+6. **Desktop** — press **Get** on a contract to pin it in the Starlight Shell, then open it from `/desktop`
 
 In-app guides: `/docs` (user, agent, glossary, reference, deployment).
 

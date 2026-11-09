@@ -21,4 +21,4 @@ npm start
 
 Point the UI at a backend with the usual Vite/proxy or `API_BASE` configuration for your environment.
 
-In-app manuals (`/docs`, **Documents** in the header) are [`public/docs/`](./public/docs/). Keep those pages about the live UI (Inscribe chat, Pending vs Contracts, Discover, PSBT, attestation) — not repo architecture. Developer map is the repo `docs/README.md`.
+In-app manuals (`/docs`, **Documents** in the header) are [`public/docs/`](./public/docs/). Keep those pages about the live UI (Inscribe chat, Pending vs Contracts, Desktop / Starlight Shell, PSBT, attestation) — not repo architecture. Developer map is the repo `docs/README.md`. The shell integration itself is documented in [`public/desktop/README.md`](./public/desktop/README.md).

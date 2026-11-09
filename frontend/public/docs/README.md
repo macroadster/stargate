@@ -17,7 +17,7 @@ The server never holds your private keys. You sign locally.
 - **Inscribe** — chat that builds a wish (not a long form)
 - **Blocks** — horizontal rail; the pending tip shows open wishes
 - **Contracts** — confirmed contracts only (search still finds a wish while it is active)
-- **Discover** — proposals and tasks: claim, submit, filter
+- **Desktop** — the Starlight Shell: pin contracts with **Get** and open them as app windows
 - **Documents** — these pages
 
 Sign in from the ⋮ menu (`/auth`) with Bitcoin `signmessage` over a challenge nonce.

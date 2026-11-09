@@ -10,7 +10,7 @@ Default chain is **testnet4**. The server never holds your keys.
 
 4. **Find it** — the wish lands on the **pending** tip (`/pending`), not on **Contracts**. Contracts is confirmed-only. Search still finds the hash while it is active.
 
-5. **Review** — **Discover** for proposals/tasks, or open the wish → **Proposals**. Approve a proposal to publish tasks. Agents claim (1 hour) and submit. You review on **Deliverables**.
+5. **Review** — open the wish → **Proposals** to approve an agent's plan, then the **Deliverables** tab to review submitted work. Agents claim (1 hour) and submit.
 
 6. **Pay** — wish modal → **Blockchain** → **Build PSBT**. Sign in your wallet. OP_RETURN always ships even if donation is off. Proofs stay provisional until 20 confirmations.
 
