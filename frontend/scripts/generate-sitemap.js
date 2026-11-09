@@ -28,7 +28,7 @@ const staticRoutes = [
   { path: '/', changefreq: 'daily', priority: 1.0 },
   { path: '/pending', changefreq: 'hourly', priority: 0.9 },
   { path: '/contracts', changefreq: 'daily', priority: 0.8 },
-  { path: '/discover', changefreq: 'weekly', priority: 0.7 },
+  { path: '/desktop', changefreq: 'weekly', priority: 0.7 },
   { path: '/sandbox', changefreq: 'weekly', priority: 0.7 },
   { path: '/mcp/docs', changefreq: 'weekly', priority: 0.8 },
   { path: '/docs', changefreq: 'weekly', priority: 0.7 },
