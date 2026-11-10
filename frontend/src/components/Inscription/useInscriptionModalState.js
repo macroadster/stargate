@@ -14,6 +14,7 @@ import {
   resolveModalImage,
   parseStegoManifest,
   submissionTimestamp,
+  toPercent,
 } from './inscriptionUtils';
 
 /**
@@ -348,7 +349,7 @@ export function useInscriptionModalState(inscription, initialTab = 'content') {
                    selectedTask?.merkle_proof?.visible_pixel_hash || 
                    '';
   const confidenceValue = Number(inscription.metadata?.confidence || 0);
-  const confidencePercent = Math.round(confidenceValue * 100);
+  const confidencePercent = toPercent(confidenceValue);
   const isConfirmedContract = checkConfirmedContract(inscription);
   const isFundingConfirmed = useMemo(() => {
     const tasks = allTasks.length > 0 ? allTasks : psbtTasks;

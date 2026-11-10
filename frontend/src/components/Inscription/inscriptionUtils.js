@@ -195,3 +195,15 @@ export const submissionTimestamp = (submission) => {
   const parsed = Date.parse(raw);
   return Number.isNaN(parsed) ? 0 : parsed;
 };
+
+/**
+ * Normalize a confidence/probability value to a whole percent (0-100).
+ * Scanners store either a 0-1 fraction or an already-scaled 0-100 percent,
+ * so values above 1 are treated as percents as-is.
+ */
+export const toPercent = (value) => {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  const percent = n <= 1 ? n * 100 : n;
+  return Math.min(100, Math.round(percent));
+};

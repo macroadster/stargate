@@ -7528,6 +7528,12 @@ html[data-theme="dark"] .dark\:border-gray-600 { border-color: #475569 !importan
 .py-6 { padding-top: 1.5rem; padding-bottom: 1.5rem; }
 .py-8 { padding-top: 2rem; padding-bottom: 2rem; }
 
+/* Position offsets: top-2/right-2 missing (absolute-positioned badges rely on them).
+   Without these, `absolute top-2 right-2` falls back to the static position and the
+   badge renders next to the element instead of pinned inside its corner. */
+.top-2 { top: 0.5rem; }
+.right-2 { right: 0.5rem; }
+
 /* Sizing: w-40 missing (w-32 exists) */
 .w-40 { width: 10rem; }
 
