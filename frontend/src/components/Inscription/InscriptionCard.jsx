@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { toPercent } from './inscriptionUtils';
 
 const InscriptionCard = ({ inscription, onClick }) => {
   const [showTextPreview, setShowTextPreview] = useState(false);
@@ -96,7 +97,7 @@ const InscriptionCard = ({ inscription, onClick }) => {
   const confidenceScore = Number(inscription.metadata?.confidence || 0);
   const stegoProbability = Number(inscription.metadata?.stego_probability || 0);
   const detectionScore = Math.max(confidenceScore, stegoProbability);
-  const detectionPercent = Math.round(detectionScore * 100);
+  const detectionPercent = toPercent(detectionScore);
   const shouldLoadMedia = isVisible;
   const showImage = shouldLoadMedia && imageSource && isActuallyImageFile && !isInlineHtml;
   const showSandbox = shouldLoadMedia && (isHtmlContent || isSvgContent) && (sandboxSrc || sandboxDoc);

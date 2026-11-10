@@ -80,7 +80,7 @@ Detail: [TRIN_STARLIGHT_SCANNER.md](./TRIN_STARLIGHT_SCANNER.md).
 | Variable | Default | Notes |
 | --- | --- | --- |
 | `STARGATE_AGENT_ENABLED` | `false` | Master switch |
-| `STARGATE_AGENT_WATCHER_ENABLED` | — | Discover / propose |
+| `STARGATE_AGENT_WATCHER_ENABLED` | — | Find wishes / propose |
 | `STARGATE_AGENT_WORKER_ENABLED` | — | Claim / execute / submit |
 | `STARGATE_AGENT_AI_IDENTIFIER` | — | |
 | `STARGATE_AGENT_POLL_INTERVAL` | `60` | Seconds |

@@ -141,18 +141,18 @@ const AppHeader = ({
                   </li>
                   <li>
                     <button
-                      onClick={() => navigate("/discover")}
-                      className="nav-link"
-                    >
-                      Discover
-                    </button>
-                  </li>
-                  <li>
-                    <button
                       onClick={() => navigate("/contracts")}
                       className="nav-link"
                     >
                       Contracts
+                    </button>
+                  </li>
+                  <li>
+                    <button
+                      onClick={() => navigate("/desktop")}
+                      className="nav-link"
+                    >
+                      Desktop
                     </button>
                   </li>
                   <li>
@@ -361,23 +361,23 @@ const AppHeader = ({
             <li>
               <button
                 onClick={() => {
-                  navigate("/discover");
-                  setIsMenuOpen(false);
-                }}
-                className="nav-link"
-              >
-                Discover
-              </button>
-            </li>
-            <li>
-              <button
-                onClick={() => {
                   navigate("/contracts");
                   setIsMenuOpen(false);
                 }}
                 className="nav-link"
               >
                 Contracts
+              </button>
+            </li>
+            <li>
+              <button
+                onClick={() => {
+                  navigate("/desktop");
+                  setIsMenuOpen(false);
+                }}
+                className="nav-link"
+              >
+                Desktop
               </button>
             </li>
             <li>

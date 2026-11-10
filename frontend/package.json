@@ -28,7 +28,10 @@
     "test:watch": "NODE_NO_WARNINGS=1 vitest --watch",
     "test:real": "npx playwright test tests/mcp_workflow_real.spec.js --headed",
     "test:real:headless": "npx playwright test tests/mcp_workflow_real.spec.js",
-    "sitemap": "node scripts/generate-sitemap.js"
+    "sitemap": "node scripts/generate-sitemap.js",
+    "sync:desktop": "node scripts/sync-desktop-assets.mjs",
+    "prebuild": "npm run sync:desktop",
+    "prestart": "npm run sync:desktop"
   },
   "eslintConfig": {
     "extends": [

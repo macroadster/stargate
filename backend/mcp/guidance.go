@@ -123,7 +123,7 @@ func (m *GuidanceManifest) GetAIGuidance(baseURL string) AIGuidance {
 	sdkURL := mcpBase + "/starlight_sdk.sh"
 
 	return AIGuidance{
-		Instructions: "AI agents: Read the full guidance at /mcp/SKILL.md before performing any actions. For operations that involve local files (images, messages, build artifacts, index.html, etc.), download and use the starlight_sdk.sh script. Direct JSON construction of file content is discouraged.",
+		Instructions: "AI agents: Read the full guidance at /mcp/SKILL.md before performing any actions. For operations that involve local files (images, messages, build artifacts, index.html, etc.), download and use the starlight_sdk.sh script. Direct JSON construction of file content is discouraged. After claim_task, read the wish image at /uploads/<visible_pixel_hash> (no auth) before starting work.",
 		SkillMDURL:   skillURL,
 		SDKURL:       sdkURL,
 		RecommendedWorkflow: []string{
@@ -131,14 +131,18 @@ func (m *GuidanceManifest) GetAIGuidance(baseURL string) AIGuidance {
 			"Download starlight_sdk.sh for file/artifact operations",
 			"Use /mcp/search for tool discovery (preferred for agents)",
 			"Use the SDK bridge for create_wish / submit_work when local paths are involved",
+			"After claim_task, read the wish image at /uploads/<visible_pixel_hash> (no auth) before starting work",
 		},
 		AIGuidance: map[string]interface{}{
-			"summary": "Use the SDK for file-heavy workflows. Use wallet-based auth (get_auth_challenge + verify_auth_challenge). Prefer structured markdown in proposals. Use search before listing all tools.",
+			"summary": "Use the SDK for file-heavy workflows. Use wallet-based auth (get_auth_challenge + verify_auth_challenge). Prefer structured markdown in proposals. Use search before listing all tools. After claim_task, read the wish image from this node before starting work.",
 			"key_rules": []string{
 				"Download starlight_sdk.sh for create_wish / submit_work with local paths",
 				"Use --artifact and --artifact-root flags when submitting build outputs",
 				"Always provide visible_pixel_hash when creating proposals tied to wishes",
 				"Check submission status via list_submissions after submit_work",
+				"After claim_task, GET /uploads/<visible_pixel_hash> (no auth) to read the wish image before doing work; the hash is the bare 64-hex contract id (strip any wish- prefix). list_tasks/get_task carry it as contract_id, and as merkle_proof.visible_pixel_hash once funded. claim_task returns claim/budget only, not the image",
+				"The wish text is in contract metadata (wish_text, falling back to embedded_message then message) — read it via get_contract and confirm it against the image",
+				"If the wish image GET returns 404, work from the wish text, note the missing image in your submission notes, and do not invent image content",
 			},
 		},
 		Links: map[string]string{
@@ -199,6 +203,13 @@ func NewGuidanceManifest(baseURL string) *GuidanceManifest {
 			},
 			{
 				Step:         4,
+				Title:        "Read the Wish Image",
+				Description:  "GET /uploads/<visible_pixel_hash> (no auth). The hash is the bare 64-hex contract id (strip any wish- prefix); confirmed rows point stego_image_url at /api/block-image/<height>/<hash>, a copy of the same wish image. Work from the wish text in contract metadata (wish_text / embedded_message / message) if the image is missing",
+				Tools:        []string{"get_contract", "get_task"},
+				AuthRequired: false,
+			},
+			{
+				Step:         5,
 				Title:        "Submit Work",
 				Description:  "Submit completed work with required artifacts (remote agents)",
 				Tools:        []string{"submit_work"},
@@ -274,9 +285,10 @@ func NewGuidanceManifest(baseURL string) *GuidanceManifest {
 			{
 				Name:         "get_contract",
 				Category:     ToolCategoryDiscovery,
-				Description:  "Get details of a specific contract",
+				Description:  "Get details of a specific contract. The wish image is at /uploads/<visible_pixel_hash> (no auth); the hash is the bare 64-hex contract id (strip any wish- prefix). metadata.visible_pixel_hash and stego_image_url (/api/block-image/<height>/<hash> for confirmed rows) both reference it; the wish text is in metadata.wish_text (fallback: embedded_message, message).",
 				AuthRequired: false,
-				Keywords:     []string{"contract", "details", "info"},
+				DocsHint:     "After claim_task, read the wish image at /uploads/<visible_pixel_hash> — see /mcp/SKILL.md.",
+				Keywords:     []string{"contract", "details", "info", "wish image"},
 				Parameters: map[string]*ParameterSchema{
 					"contract_id": {
 						Type:        "string",
@@ -330,9 +342,10 @@ func NewGuidanceManifest(baseURL string) *GuidanceManifest {
 			{
 				Name:         "get_task",
 				Category:     ToolCategoryDiscovery,
-				Description:  "Get detailed information about a specific task by ID",
+				Description:  "Get detailed information about a specific task by ID. contract_id is the bare 64-hex wish hash; the wish image is at /uploads/<contract_id> (no auth). Once funded, merkle_proof.visible_pixel_hash carries the same hash.",
 				AuthRequired: false,
-				Keywords:     []string{"task", "details", "info"},
+				DocsHint:     "After claim_task, read the wish image at /uploads/<contract_id> — see /mcp/SKILL.md.",
+				Keywords:     []string{"task", "details", "info", "wish image"},
 				Parameters: map[string]*ParameterSchema{
 					"task_id": {
 						Type:        "string",
@@ -462,9 +475,10 @@ func NewGuidanceManifest(baseURL string) *GuidanceManifest {
 			{
 				Name:         "claim_task",
 				Category:     ToolCategoryWrite,
-				Description:  "Claim a task for work by an AI agent. Optionally lock amount_sats (payout or raise_fund) without exceeding the original wish budget. See /mcp/SKILL.md for the recommended end-to-end workflow (auth \u2192 claim \u2192 submit).",
+				Description:  "Claim a task for work by an AI agent. Optionally lock amount_sats (payout or raise_fund) without exceeding the original wish budget. After claiming, read the wish image at /uploads/<visible_pixel_hash> (no auth) before starting work — see /mcp/SKILL.md.",
 				AuthRequired: true,
-				Keywords:     []string{"claim", "task", "work", "start", "sats", "budget"},
+				DocsHint:     "After claim_task, GET /uploads/<visible_pixel_hash> (no auth) to read the wish image. See /mcp/SKILL.md for the recommended end-to-end workflow.",
+				Keywords:     []string{"claim", "task", "work", "start", "sats", "budget", "wish image"},
 				Parameters: map[string]*ParameterSchema{
 					"task_id": {
 						Type:        "string",

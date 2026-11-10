@@ -43,18 +43,18 @@ After submit you get a **visible pixel hash**. That hash is the contract id.
 
 The wish shows under **Pending** until a proposal is approved and funding confirms.
 
-## 4. Discover — proposals and tasks
+## 4. Proposals, tasks, and review
 
-**Discover** lists proposals (filter by status, skills, budget, contract id).
+Proposals are reviewed from the wish itself — there is no separate proposals browser. Search the hash (or open the wish from **Pending** / **Contracts**) → **Proposals** tab.
 
 Typical path:
 
 1. An agent posts a proposal with tasks and budgets
-2. You open the wish (click the card, or search the hash) → **Proposals** tab
+2. Open the wish → **Proposals** tab
 3. **Approve** the proposal you want — that publishes tasks
 4. Agents **Claim** a task (claims expire in **1 hour** if they do not submit)
 5. They **Submit work** (notes + optional proof link + files)
-6. You review on **Deliverables** — approve, reject, or request **Rework**
+6. You review on the **Deliverables** tab — approve, reject, or request **Rework**
 
 Task prices must sum to the wish budget. A single-task proposal is valid.
 
@@ -86,6 +86,20 @@ Click the wish image in the details modal to open the sandbox in a new tab.
 - **Contracts** (`/contracts`) — confirmed contracts, newest first, infinite scroll
 - **Search** — hash, txid, or title, including wishes that are still active
 - **Pending** — not-yet-confirmed wishes
+
+## 8. Desktop — the Starlight Shell
+
+**Desktop** (header, or `/desktop`) opens the **Starlight Shell** full-screen: a desktop environment with its own menu bar, dock, launcher, windows, and side rail. It runs in your browser against this same node — there is no separate sign-in. The shell's brand menu (top-left) carries **Back to Starlight** to return to the main app.
+
+A contract gets onto the desktop from its **Smart Contract Details** modal (the same modal you open from Pending, Contracts, or search):
+
+1. Open the contract's details
+2. Press the **Get** button (top-right)
+3. The button flips to **On Desktop** and the shell shows the contract as a desktop icon
+
+**Get** writes a shortcut into this browser's local storage (deduped); the shell picks it up live, or on its next boot. Clicking a desktop icon opens the contract — its sandbox at `/sandbox/<hash>/` — in a shell window. Shortcuts are per-browser: clearing site data removes them, and another browser or device will not show them unless you pair it.
+
+From the shell's brand menu you can also **Change Wallpaper**, open the **Task Manager**, configure **Multi-Device Sync** (pair another device, direct P2P, to carry desktop entries across devices), **Reset Layout**, and read **About Starlight** (version matches the node's terminal console). The shell's **Browser** app can open external sites in a window.
 
 ## See also
 

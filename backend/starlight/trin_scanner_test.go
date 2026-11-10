@@ -217,8 +217,8 @@ func resolveTestGGUF() string {
 		candidates = append(candidates, p)
 	}
 	candidates = append(candidates,
-		"/Users/eric/sandbox/starlight/starlight/models/starlight.gguf",
-		"../../../starlight/models/starlight.gguf",
+		"/Users/eric/sandbox/starlight/starlight-ai/models/starlight.gguf",
+		"../../../starlight-ai/models/starlight.gguf",
 		"../../../../starlight/models/starlight.gguf",
 		"/Users/eric/sandbox/trin/demos/weights/starlight_fixture.gguf",
 		"../../../../trin/demos/weights/starlight_fixture.gguf",

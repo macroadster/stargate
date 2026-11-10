@@ -106,6 +106,17 @@ func SecurityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Frame-Options", "SAMEORIGIN")
 		w.Header().Set("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
 
+		// The Starlight Shell (/desktop/) embeds arbitrary sites in the Browser
+		// app's sandboxed iframe (no allow-top-navigation), so those pages must
+		// be allowed to frame http(s) origins. Every other path keeps
+		// frame-src 'self' blob:. Sites that set X-Frame-Options or CSP
+		// frame-ancestors still block themselves — the shell shows a blocked
+		// page with an "open in system browser" escape hatch for those.
+		frameSrc := "frame-src 'self' blob:; "
+		if strings.HasPrefix(r.URL.Path, "/desktop/") {
+			frameSrc = "frame-src 'self' blob: http: https:; "
+		}
+
 		// Content Security Policy
 		// - connect-src 'self' prevents sending data to external domains
 		// - script-src 'self' 'unsafe-inline' 'unsafe-eval' (unsafe-eval is needed for wasm/sql.js)
@@ -123,8 +134,8 @@ func SecurityHeaders(next http.Handler) http.Handler {
 			"img-src 'self' data: blob: https:; "+
 			"%s "+
 			"worker-src 'self' blob:; "+
-			"frame-src 'self' blob:; "+
-			"object-src 'none';", connectSrc)
+			"%s"+
+			"object-src 'none';", connectSrc, frameSrc)
 		w.Header().Set("Content-Security-Policy", csp)
 
 		next.ServeHTTP(w, r)

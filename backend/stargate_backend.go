@@ -907,11 +907,17 @@ func setupRoutes(ctx context.Context, mux *http.ServeMux, container *container.C
 			path = "index.html"
 		}
 
-		// Check if the file exists in the embedded FS
-		_, err := frontendFS.Open(path)
-		if err == nil {
-			fileServer.ServeHTTP(w, r)
-			return
+		// Check if the path exists in the embedded FS. Directories are never
+		// served as file listings — they fall through to the SPA fallback so
+		// client routes that share a directory name (e.g. /docs, /desktop)
+		// render the app.
+		if file, openErr := frontendFS.Open(path); openErr == nil {
+			info, statErr := file.Stat()
+			_ = file.Close()
+			if statErr == nil && !info.IsDir() {
+				fileServer.ServeHTTP(w, r)
+				return
+			}
 		}
 
 		// Fallback to index.html for SPA routing

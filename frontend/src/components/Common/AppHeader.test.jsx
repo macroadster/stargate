@@ -95,4 +95,12 @@ describe('AppHeader inscription filters', () => {
     fireEvent.click(items[0]);
     expect(onToggleCleanBlocks).toHaveBeenCalledTimes(1);
   });
+
+  it('does not render Discover in the navigation bar', () => {
+    renderHeader();
+    expect(screen.queryByRole('button', { name: 'Discover' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Blocks' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Contracts' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Documents' })).toBeInTheDocument();
+  });
 });

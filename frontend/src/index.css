@@ -3419,6 +3419,96 @@ html[data-theme="light"] .modal-proposals-refresh:hover {
     background: rgba(0, 0, 0, 0.05);
 }
 
+/* Get — install the contract into Starlight Shell. Quiet glass pill in the
+   Smart Contract Details header; the accent comes from the Starlight palette. */
+.modal-get-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    height: 2.25rem;
+    padding: 0 1rem;
+    border-radius: 9999px;
+    border: 1px solid color-mix(in srgb, var(--q-color-starlight-blue, #7ee7ff) 38%, transparent);
+    background: transparent;
+    color: color-mix(in srgb, var(--q-color-starlight-blue, #7ee7ff) 88%, #ffffff);
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease, transform 0.15s ease;
+}
+
+.modal-get-button:hover:not(:disabled) {
+    border-color: color-mix(in srgb, var(--q-color-starlight-blue, #7ee7ff) 68%, transparent);
+    box-shadow: 0 0 16px color-mix(in srgb, var(--q-color-starlight-blue, #7ee7ff) 22%, transparent);
+    transform: translateY(-1px);
+}
+
+.modal-get-button:active:not(:disabled) {
+    transform: translateY(0) scale(0.97);
+}
+
+.modal-get-button:focus-visible {
+    outline: 2px solid var(--q-color-starlight-blue, #7ee7ff);
+    outline-offset: 2px;
+}
+
+.modal-get-button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.modal-get-button[data-installed="true"] {
+    border-color: color-mix(in srgb, #10b981 55%, transparent);
+    background: transparent;
+    color: #6ee7b7;
+    box-shadow: none;
+    transform: none;
+    cursor: default;
+}
+
+.modal-get-button[data-installed="true"]:hover {
+    border-color: color-mix(in srgb, #10b981 70%, transparent);
+    box-shadow: 0 0 12px color-mix(in srgb, #10b981 18%, transparent);
+    transform: none;
+}
+
+@media (prefers-color-scheme: light) {
+    html:not([data-theme="dark"]) .modal-get-button {
+        border-color: color-mix(in srgb, #0369a1 38%, transparent);
+        background: transparent;
+        color: #0369a1;
+    }
+    html:not([data-theme="dark"]) .modal-get-button:hover:not(:disabled) {
+        border-color: color-mix(in srgb, #0369a1 65%, transparent);
+        box-shadow: 0 0 14px color-mix(in srgb, #0369a1 15%, transparent);
+    }
+    html:not([data-theme="dark"]) .modal-get-button[data-installed="true"] {
+        border-color: color-mix(in srgb, #047857 45%, transparent);
+        background: transparent;
+        color: #047857;
+    }
+}
+
+html[data-theme="light"] .modal-get-button {
+    border-color: color-mix(in srgb, #0369a1 38%, transparent);
+    background: transparent;
+    color: #0369a1;
+}
+
+html[data-theme="light"] .modal-get-button:hover:not(:disabled) {
+    border-color: color-mix(in srgb, #0369a1 65%, transparent);
+    box-shadow: 0 0 14px color-mix(in srgb, #0369a1 15%, transparent);
+}
+
+html[data-theme="light"] .modal-get-button[data-installed="true"] {
+    border-color: color-mix(in srgb, #047857 45%, transparent);
+    background: transparent;
+    color: #047857;
+}
+
 .modal-proposal-card {
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 0.5rem;
@@ -7437,6 +7527,12 @@ html[data-theme="dark"] .dark\:border-gray-600 { border-color: #475569 !importan
 .space-y-6 > * + * { margin-top: 1.5rem; }
 .py-6 { padding-top: 1.5rem; padding-bottom: 1.5rem; }
 .py-8 { padding-top: 2rem; padding-bottom: 2rem; }
+
+/* Position offsets: top-2/right-2 missing (absolute-positioned badges rely on them).
+   Without these, `absolute top-2 right-2` falls back to the static position and the
+   badge renders next to the element instead of pinned inside its corner. */
+.top-2 { top: 0.5rem; }
+.right-2 { right: 0.5rem; }
 
 /* Sizing: w-40 missing (w-32 exists) */
 .w-40 { width: 10rem; }

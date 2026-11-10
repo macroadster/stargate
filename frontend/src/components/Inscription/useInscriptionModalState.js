@@ -14,6 +14,7 @@ import {
   resolveModalImage,
   parseStegoManifest,
   submissionTimestamp,
+  toPercent,
 } from './inscriptionUtils';
 
 /**
@@ -348,7 +349,7 @@ export function useInscriptionModalState(inscription, initialTab = 'content') {
                    selectedTask?.merkle_proof?.visible_pixel_hash || 
                    '';
   const confidenceValue = Number(inscription.metadata?.confidence || 0);
-  const confidencePercent = Math.round(confidenceValue * 100);
+  const confidencePercent = toPercent(confidenceValue);
   const isConfirmedContract = checkConfirmedContract(inscription);
   const isFundingConfirmed = useMemo(() => {
     const tasks = allTasks.length > 0 ? allTasks : psbtTasks;
@@ -715,10 +716,16 @@ export function useInscriptionModalState(inscription, initialTab = 'content') {
               allSubmissions[submission.submission_id] = submission;
             }
             if (submission.task_id) {
-              allSubmissions[submission.task_id] = submission;
+              const existing = allSubmissions[submission.task_id];
+              if (!existing || submissionTimestamp(submission) > submissionTimestamp(existing)) {
+                allSubmissions[submission.task_id] = submission;
+              }
             }
             if (submission.claim_id) {
-              allSubmissions[submission.claim_id] = submission;
+              const existing = allSubmissions[submission.claim_id];
+              if (!existing || submissionTimestamp(submission) > submissionTimestamp(existing)) {
+                allSubmissions[submission.claim_id] = submission;
+              }
             }
           });
         }

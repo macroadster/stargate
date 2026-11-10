@@ -12,7 +12,7 @@ func opusQwenGGUF(t *testing.T) string {
 	t.Helper()
 	path := os.Getenv("OPUS_QWEN_GGUF")
 	if path == "" {
-		path = "/Users/eric/sandbox/starlight/starlight/datasets/opus_submission_2026/model/qwen2.5-0.5b-instruct-q8_0.gguf"
+		path = "/Users/eric/sandbox/starlight/starlight-ai/datasets/opus_submission_2026/model/qwen2.5-0.5b-instruct-q8_0.gguf"
 	}
 	if _, err := os.Stat(path); err != nil {
 		t.Skip(err)
@@ -49,7 +49,7 @@ func TestTryInitScannersQwen(t *testing.T) {
 }
 
 func TestQwenScannerQuotesAlpha(t *testing.T) {
-	imgPath := "/Users/eric/sandbox/starlight/starlight/datasets/opus_submission_2026/eval/fixtures/opus_protocol_alpha_005.png"
+	imgPath := "/Users/eric/sandbox/starlight/starlight-ai/datasets/opus_submission_2026/eval/fixtures/opus_protocol_alpha_005.png"
 	data, err := os.ReadFile(imgPath)
 	if err != nil {
 		t.Skip(err)

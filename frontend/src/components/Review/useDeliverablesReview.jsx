@@ -10,6 +10,7 @@ import {
   buildAllDeliverables,
   buildComparisonGroups,
   groupSubmissionsByTask,
+  sortSubmissions,
 } from './deliverablesUtils';
 
 /** State and review actions for DeliverablesReview (rules out of JSX). */
@@ -36,8 +37,8 @@ export function useDeliverablesReview({ proposalItems, submissions, submissionsL
     [submissions, submissionsList],
   );
   const allDeliverables = React.useMemo(
-    () => buildAllDeliverables(proposalItems, submissionsObj),
-    [proposalItems, submissionsObj],
+    () => buildAllDeliverables(proposalItems, submissionsMap),
+    [proposalItems, submissionsMap],
   );
 
   const submissionIds = React.useMemo(
