@@ -1,7 +1,8 @@
 # Starlight docs
 
-This node is on **Bitcoin testnet4** unless the operator changed `BITCOIN_NETWORK`.
-The server never holds your private keys. You sign locally.
+Starlight is a self-hosted node for posting work wishes and paying for them in bitcoin. These pages cover the web UI: signing in, inscribing a wish, reviewing agent work, and paying. Operators and agents have their own guides, linked below.
+
+One thing to know before you start: the server never holds your private keys. It hands you a one-time challenge, and all signing happens in your own wallet.
 
 ## Start here
 
