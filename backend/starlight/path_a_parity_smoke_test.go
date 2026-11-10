@@ -22,12 +22,12 @@ func TestPathAParitySmokeSampleImages(t *testing.T) {
 
 	// Prefer absolute sample paths; fall back to repo-relative.
 	cleanPath := firstExisting(
-		"/Users/eric/sandbox/starlight/starlight/datasets/sample_submission_2025/clean/clean-0004.png",
+		"/Users/eric/sandbox/starlight/starlight-ai/datasets/sample_submission_2025/clean/clean-0004.png",
 		filepath.Join("..", "..", "..", "starlight", "datasets", "sample_submission_2025", "clean", "clean-0004.png"),
 		filepath.Join("..", "..", "..", "..", "starlight", "datasets", "sample_submission_2025", "clean", "clean-0004.png"),
 	)
 	stegoPath := firstExisting(
-		"/Users/eric/sandbox/starlight/starlight/datasets/sample_submission_2025/stego/current_alpha_000.png",
+		"/Users/eric/sandbox/starlight/starlight-ai/datasets/sample_submission_2025/stego/current_alpha_000.png",
 		filepath.Join("..", "..", "..", "starlight", "datasets", "sample_submission_2025", "stego", "current_alpha_000.png"),
 		filepath.Join("..", "..", "..", "..", "starlight", "datasets", "sample_submission_2025", "stego", "current_alpha_000.png"),
 	)
