@@ -10,6 +10,7 @@ import {
   buildAllDeliverables,
   buildComparisonGroups,
   groupSubmissionsByTask,
+  sortSubmissions,
 } from './deliverablesUtils';
 
 /** State and review actions for DeliverablesReview (rules out of JSX). */

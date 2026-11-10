@@ -24,7 +24,7 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
     scanMessage, scanLoading, scanError, scrollContainerRef,
     reworkRequests, setReworkRequests, isLoadingRework, showReworkForm, setShowReworkForm, reworkNotes, setReworkNotes,
     isSubmittingRework, setIsSubmittingRework,
-    allTasks, approvedProposal, psbtTasks, deliverableTasks, approvedBudgetsTotal, wishBudgetSats, remainingWishSats, payoutSummaries,
+    allTasks, approvedProposal, psbtTasks, deliverableTasks, approvedBudgetsTotal, wishBudgetSats, remainingWishSats, payoutSummaries, primaryContractId,
     stegoProposal, stegoTasks, stegoProposalStatus, stegoTaskStatusMap, hiddenMessageText,
     inscriptionMessage, inscriptionAddress, isRaiseFund, selectedTask,
     fundDepositAddress, resolvedContractorWallet, resolvedFundraiserWallet, textContent, pixelHash,
