@@ -247,11 +247,21 @@ func (f ProposalFilter) PageLimit() int {
 	return f.MaxResults
 }
 
+// EventLink is a structured, actionable target attached to an Event. Clients
+// (e.g. the desktop System Pulse) should render these instead of guessing
+// which hex strings in Message are openable. URL is app-relative.
+type EventLink struct {
+	Label string `json:"label"`          // short human label, e.g. "Open wish"
+	URL   string `json:"url"`            // app-relative path, e.g. /sandbox/<hash> or /uploads/<hash>
+	Kind  string `json:"kind,omitempty"` // "contract" (open in shell) | "artifact" (browser/download)
+}
+
 // Event is a lightweight activity entry for MCP actions.
 type Event struct {
-	Type      string    `json:"type"`       // claim | approve | submit | publish
-	EntityID  string    `json:"entity_id"`  // task_id, proposal_id, claim_id
-	Actor     string    `json:"actor"`      // ai id or system
-	Message   string    `json:"message"`    // human-readable summary
-	CreatedAt time.Time `json:"created_at"` // timestamp of the event
+	Type      string      `json:"type"`       // claim | approve | submit | publish
+	EntityID  string      `json:"entity_id"`  // task_id, proposal_id, claim_id
+	Actor     string      `json:"actor"`      // ai id or system
+	Message   string      `json:"message"`    // human-readable summary
+	CreatedAt time.Time   `json:"created_at"` // timestamp of the event
+	Links     []EventLink `json:"links,omitempty"`
 }

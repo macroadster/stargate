@@ -959,6 +959,10 @@
         .event-item:last-child { border-bottom: none; }
         .event-item strong { color: var(--shell-accent); }
         .event-item small { display: block; color: var(--shell-muted); margin-top: 4px; }
+        .event-links { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+        .event-link { background: transparent; border: 1px dashed var(--shell-accent); color: var(--shell-accent);
+            border-radius: 999px; padding: 2px 10px; font-size: 0.72rem; cursor: pointer; font-family: inherit; }
+        .event-link:hover { background: var(--shell-item-bg); }
 
         .rail-button.has-new::after {
             content: ""; position: absolute; top: 4px; right: 4px; width: 10px; height: 10px;
@@ -2560,6 +2564,9 @@
             shellState.cachedPulseEvents.forEach(e => {
                 const msg = e.message || '';
                 const type = e.type || 'Event';
+                const links = (Array.isArray(e.links) ? e.links : [])
+                    .map(l => ({ l, url: pulseLinkFromUrl(l && l.url) }))
+                    .filter(x => x.url);
                 if (msg.toLowerCase().includes(q) || type.toLowerCase().includes(q)) {
                     results.push({
                         name: type,
@@ -2567,10 +2574,9 @@
                         icon: 'icon-activity',
                         tag: 'Pulse',
                         action: () => {
-                            // Try to find a hash in the message and open it
-                            const hashMatch = msg.match(/(0x)?[a-fA-F0-9]{40,64}/);
-                            if (hashMatch) openContract(hashMatch[0], 'Pulse Contract');
-                            else alert('No actionable hash found in this event.');
+                            if (links.length === 0) { alert('No actionable links on this event.'); return; }
+                            const primary = links.find(x => x.l.kind === 'contract') || links[0];
+                            openPulseLink(primary.url, primary.l.kind || '', primary.l.label || 'Pulse Contract');
                         }
                     });
                 }
@@ -3608,6 +3614,44 @@
             return resolveMediaUrl(pxHash);
         }
 
+        // Render a System Pulse event link. URLs are app-relative whitelisted
+        // paths from the backend (Event.links); anything else is dropped.
+        function pulseLinkFromUrl(url) {
+            const u = String(url || '');
+            const m = u.match(/^\/(sandbox|uploads|api)\/[^\s"'<>]*$/);
+            if (!m) return null;
+            return u;
+        }
+
+        function renderPulseLinks(e) {
+            const links = Array.isArray(e.links) ? e.links : [];
+            const html = links.map(l => {
+                const url = pulseLinkFromUrl(l && l.url);
+                if (!url) return '';
+                const label = escapeHtml((l && l.label) || url);
+                const kind = l && l.kind === 'contract' ? 'contract' : 'artifact';
+                return `<button type="button" class="event-link" data-pulse-url="${escapeHtml(url)}" data-pulse-kind="${kind}" data-pulse-label="${escapeHtml((l && l.label) || 'Open')}">${label}</button>`;
+            }).filter(Boolean).join('');
+            return html ? `<div class="event-links">${html}</div>` : '';
+        }
+
+        function openPulseLink(url, kind, label) {
+            const contractMatch = String(url).match(/^\/sandbox\/([^\/?#]+)/);
+            if (kind === 'contract' && contractMatch) {
+                openContract(decodeURIComponent(contractMatch[1]), label || 'Pulse Contract', true);
+                return;
+            }
+            window.open(API_BASE + url, '_blank', 'noopener');
+        }
+
+        function bindPulseLinks(container) {
+            container.querySelectorAll('[data-pulse-url]').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    openPulseLink(btn.getAttribute('data-pulse-url') || '', btn.getAttribute('data-pulse-kind') || '', btn.getAttribute('data-pulse-label') || '');
+                });
+            });
+        }
+
         async function renderEvents() {
             const container = document.getElementById('eventList');
             const events = await StarlightAPI.fetchEvents();
@@ -3624,19 +3668,19 @@
             }
 
             container.innerHTML = events.slice(0, 10).map(e => {
-                const rawMsg = escapeHtml(e.message || 'Smart contract event');
-                // Regex matches 40-64 char hex strings, optionally starting with 0x
-                const msg = rawMsg.replace(/(0x)?[a-fA-F0-9]{40,64}/g, (match) => {
-                    return `<a href="#" onclick="openContract('${match}', 'Pulse Contract'); return false;" style="color:var(--shell-accent); text-decoration:none; border-bottom:1px dashed var(--shell-accent);">${match.slice(0,8)}...</a>`;
-                });
+                // Message is plain text — hashes are linked via structured e.links, never auto-linked.
+                const msg = escapeHtml(e.message || 'Smart contract event');
+                const created = e.created_at || e.timestamp;
 
                 return `
                 <div class="event-item">
                     <strong>${escapeHtml(e.type || 'Update')}</strong>
                     <span>${msg}</span>
-                    <small>${e.timestamp ? new Date(e.timestamp).toLocaleTimeString() : ''}</small>
+                    ${renderPulseLinks(e)}
+                    <small>${created ? new Date(created).toLocaleTimeString() : ''}</small>
                 </div>
             `}).join('');
+            bindPulseLinks(container);
         }
 
         window.removeFromStack = (hash) => {

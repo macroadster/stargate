@@ -382,8 +382,9 @@ func (s *Server) FinalizePublishArtifacts(ctx context.Context, proposalID string
 		Type:      "stego_publish",
 		EntityID:  proposalID,
 		Actor:     "system",
-		Message:   fmt.Sprintf("stego artifacts published (stego=%s sandbox=%s)", artifacts.StegoImageHash, artifacts.SandboxHash),
+		Message:   fmt.Sprintf("stego artifacts published (wish=%s stego=%s sandbox=%s)", visibleHash, artifacts.StegoImageHash, artifacts.SandboxHash),
 		CreatedAt: time.Now(),
+		Links:     stegoPublishLinks(visibleHash, artifacts.StegoImageHash, artifacts.SandboxHash),
 	})
 }
 
@@ -547,6 +548,16 @@ func (s *Server) publishStegoForProposal(ctx context.Context, proposalID string,
 	}
 	sum := sha256.Sum256(stegoBytes)
 	contractID := hex.EncodeToString(sum[:])
+	// Persist the product stego under its content hash so /uploads/<contractID>
+	// (used by System Pulse / openContract) resolves. Mirrors PreparePublishArtifacts.
+	stegoDiskPath := datadir.PartPath(uploadsDir, contractID)
+	if _, statErr := os.Stat(stegoDiskPath); os.IsNotExist(statErr) {
+		if err := os.MkdirAll(filepath.Dir(stegoDiskPath), 0755); err == nil {
+			if writeErr := os.WriteFile(stegoDiskPath, stegoBytes, 0644); writeErr != nil {
+				log.Printf("stego publish: failed to write stego image to %s: %v", stegoDiskPath, writeErr)
+			}
+		}
+	}
 	stegoName := fmt.Sprintf("proposal-%s-stego%s", proposalID, filepath.Ext(filename))
 	if strings.TrimSpace(stegoName) == fmt.Sprintf("proposal-%s-stego", proposalID) {
 		stegoName = fmt.Sprintf("proposal-%s-stego.png", proposalID)
@@ -614,10 +625,29 @@ func (s *Server) publishStegoForProposal(ctx context.Context, proposalID string,
 		Type:      "stego_publish",
 		EntityID:  proposalID,
 		Actor:     "system",
-		Message:   fmt.Sprintf("stego image published (cid=%s contract=%s)", stegoCID, contractID),
+		Message:   fmt.Sprintf("stego image published (wish=%s contract=%s cid=%s)", visibleHash, contractID, stegoCID),
 		CreatedAt: time.Now(),
+		Links:     stegoPublishLinks(visibleHash, contractID, sandboxHash),
 	})
 	return nil
+}
+
+// stegoPublishLinks builds structured action links for stego_publish events.
+// Only the visible pixel hash resolves under /sandbox/<hash> (the unpacked
+// wish deliverable); the stego image and sandbox tarball are content-addressed
+// blobs served from /uploads/<hash>.
+func stegoPublishLinks(visibleHash, stegoHash, sandboxHash string) []smart_contract.EventLink {
+	links := make([]smart_contract.EventLink, 0, 3)
+	if h := strings.TrimSpace(visibleHash); h != "" {
+		links = append(links, smart_contract.EventLink{Label: "Open wish", URL: "/sandbox/" + h, Kind: "contract"})
+	}
+	if h := strings.TrimSpace(stegoHash); h != "" {
+		links = append(links, smart_contract.EventLink{Label: "Stego image", URL: "/uploads/" + h, Kind: "artifact"})
+	}
+	if h := strings.TrimSpace(sandboxHash); h != "" {
+		links = append(links, smart_contract.EventLink{Label: "Sandbox tarball", URL: "/uploads/" + h, Kind: "artifact"})
+	}
+	return links
 }
 
 // ArchiveWishContract exposes archiveWishContract to other surfaces so they can
