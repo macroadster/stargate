@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"embed"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	"mime"
 	"net/http"
 	_ "net/http/pprof" // registers on DefaultServeMux; only mounted when STARGATE_PPROF=true
 	"net/url"
@@ -917,7 +919,39 @@ func setupRoutes(ctx context.Context, mux *http.ServeMux, container *container.C
 
 	// Serve frontend files from embedded FS
 	frontendFS, _ := fs.Sub(frontendAssets, "assets/frontend")
-	fileServer := http.FileServer(http.FS(frontendFS))
+
+	// serveFrontendFile serves one embedded file with a cache policy that
+	// matches the file kind. Vite emits content-hashed filenames under
+	// /assets/, so those are immutable for a year; index.html and every
+	// other path is revalidated on each load (ETag) so a rebuild is picked
+	// up on the next page load instead of heuristically cached forever by
+	// the browser. Directories never serve listings — callers fall through.
+	serveFrontendFile := func(w http.ResponseWriter, r *http.Request, path string) bool {
+		content, err := fs.ReadFile(frontendFS, path)
+		if err != nil {
+			return false
+		}
+		contentType := mime.TypeByExtension(filepath.Ext(path))
+		if contentType == "" {
+			contentType = http.DetectContentType(content)
+		}
+		w.Header().Set("Content-Type", contentType)
+		if strings.HasPrefix(path, "assets/") {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+			_, _ = w.Write(content)
+			return true
+		}
+		sum := sha256.Sum256(content)
+		etag := fmt.Sprintf("\"%x\"", sum[:16])
+		w.Header().Set("ETag", etag)
+		w.Header().Set("Cache-Control", "no-cache, must-revalidate")
+		if r.Header.Get("If-None-Match") == etag {
+			w.WriteHeader(http.StatusNotModified)
+			return true
+		}
+		_, _ = w.Write(content)
+		return true
+	}
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		// Clean the path to prevent directory traversal
@@ -926,17 +960,12 @@ func setupRoutes(ctx context.Context, mux *http.ServeMux, container *container.C
 			path = "index.html"
 		}
 
-		// Check if the path exists in the embedded FS. Directories are never
-		// served as file listings — they fall through to the SPA fallback so
-		// client routes that share a directory name (e.g. /docs, /desktop)
-		// render the app.
-		if file, openErr := frontendFS.Open(path); openErr == nil {
-			info, statErr := file.Stat()
-			_ = file.Close()
-			if statErr == nil && !info.IsDir() {
-				fileServer.ServeHTTP(w, r)
-				return
-			}
+		// Directories are never served as file listings — they fall through
+		// to the SPA fallback so client routes that share a directory name
+		// (e.g. /docs, /desktop) render the app.
+		if info, err := fs.Stat(frontendFS, path); err == nil && !info.IsDir() {
+			serveFrontendFile(w, r, path)
+			return
 		}
 
 		// Fallback to index.html for SPA routing
@@ -961,12 +990,10 @@ func setupRoutes(ctx context.Context, mux *http.ServeMux, container *container.C
 				return
 			}
 
-			indexContent, err := fs.ReadFile(frontendFS, "index.html")
-			if err == nil {
-				w.Header().Set("Content-Type", "text/html; charset=utf-8")
-				w.Write(indexContent)
-				return
+			if !serveFrontendFile(w, r, "index.html") {
+				http.NotFound(w, r)
 			}
+			return
 		}
 
 		http.NotFound(w, r)
