@@ -8,7 +8,7 @@ import FundingProofSummary from '../Common/FundingProofSummary';
 import SafeQrCodeCanvas from '../Common/SafeQrCodeCanvas';
 import DeliverablesReview from '../Review/DeliverablesReview';
 import { apiFetch } from '../../utils/api';
-import { QR_BYTE_LIMIT, isPlaceholderAddress, normalizeAddress } from './inscriptionUtils';
+import { QR_BYTE_LIMIT, isPlaceholderAddress, normalizeAddress, looksLikeBitcoinAddress } from './inscriptionUtils';
 import { useInscriptionModalState } from './useInscriptionModalState';
 import { installContractOnShellDesktop, isInstalledOnShellDesktop, shellCandidateHash } from '../../utils/quantumShell';
 
@@ -418,12 +418,12 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
                             !isPlaceholderAddress(fundingWallet) &&
                             normalizeAddress(fundingWallet) !== normalizeAddress(auth.wallet);
                           const payoutList = payoutSummaries
-                            .filter((p) => p.wallet && p.wallet !== 'Unknown wallet')
+                            .filter((p) => looksLikeBitcoinAddress(p.wallet))
                             .map((p) => p.wallet);
                           const noTasks = deliverableTasks.length === 0;
                           const missingPayout = isRaiseFund
                             ? !fundraiserWallet
-                            : payoutList.length === 0 && !payoutWallet;
+                            : payoutList.length === 0 && !looksLikeBitcoinAddress(payoutWallet);
                           return psbtLoading || !auth.wallet || !approvedProposal || missingPayout || noTasks || fundingMismatch;
                         })()}
                         className="modal-deliverables-btn"
@@ -467,6 +467,31 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
                             {isRaiseFund ? resolvedFundraiserWallet || 'n/a' : auth.wallet || fundDepositAddress || 'n/a'}
                           </div>
                         </div>
+                        {!isRaiseFund && (
+                          <div className="space-y-1">
+                            <label className="block modal-deliverables-label" htmlFor="contractor-payout-address">
+                              Contractor payout address
+                            </label>
+                            <input
+                              id="contractor-payout-address"
+                              type="text"
+                              className="modal-deliverables-input modal-address-text"
+                              style={{ fontSize: '0.7rem' }}
+                              placeholder="bc1… / tb1… — required when the contractor has no wallet on record"
+                              value={psbtForm.contractorWallet || ''}
+                              onChange={(e) => setPsbtForm((p) => ({ ...p, contractorWallet: e.target.value.trim() }))}
+                              spellCheck={false}
+                              autoComplete="off"
+                            />
+                            {!looksLikeBitcoinAddress(resolvedContractorWallet) && (
+                              <div className="modal-data-label mt-1">
+                                On-record contractor wallet is not a Bitcoin address
+                                {selectedTask?.contractor_wallet ? ` (${selectedTask.contractor_wallet})` : ''}.
+                                Paste one to enable payout.
+                              </div>
+                            )}
+                          </div>
+                        )}
                         <div className="md:col-span-2">
                           <label className="flex items-start gap-3 modal-deliverables-checkbox-label" style={{ padding: '0.75rem' }}>
                             <input

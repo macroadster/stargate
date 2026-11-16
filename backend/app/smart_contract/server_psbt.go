@@ -293,7 +293,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 			}
 			addr, err := bitcoin.DecodeAddressForNetwork(strings.TrimSpace(payout.Address), params)
 			if err != nil {
-				Error(w, http.StatusBadRequest, fmt.Sprintf("invalid payout address: %v", err))
+				Error(w, http.StatusBadRequest, fmt.Sprintf("invalid payout address %q: %v", payout.Address, err))
 				return
 			}
 			if payout.AmountSats <= 0 {
@@ -337,7 +337,7 @@ func (s *Server) handleContractPSBT(w http.ResponseWriter, r *http.Request, cont
 			contractorAddr, err = bitcoin.DecodeAddressForNetwork(strings.TrimSpace(body.ContractorWallet), params)
 		}
 		if err != nil {
-			Error(w, http.StatusBadRequest, fmt.Sprintf("invalid contractor wallet: %v", err))
+			Error(w, http.StatusBadRequest, fmt.Sprintf("invalid contractor wallet %q: %v", strings.TrimSpace(body.ContractorWallet), err))
 			return
 		}
 		if contractorAddr == nil {

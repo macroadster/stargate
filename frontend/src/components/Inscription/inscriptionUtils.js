@@ -63,6 +63,20 @@ export const expandContractCandidates = (inscription) => {
 
 export const normalizeAddress = (value) => (value || '').trim().toLowerCase();
 
+// Accepts mainnet/testnet bech32/bech32m (bc1…/tb1…/bcrt1…) and legacy
+// base58 P2PKH/P2SH (1…/3… mainnet, m…/n…/2… testnet). Deliberately
+// permissive on charset/length — the backend revalidates with
+// DecodeAddressForNetwork. Rejects identifiers such as "stargate-builtin-agent".
+const BECH32M_RE = /^(bc|tb|bcrt)1[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{8,}$/;
+const BASE58_RE = /^[13mn2][1-9A-HJ-NP-Za-km-z]{20,80}$/;
+
+export const looksLikeBitcoinAddress = (value) => {
+  const trimmed = (value || '').trim();
+  if (!trimmed) return false;
+  // bech32 is case-insensitive; base58 is case-sensitive.
+  return BECH32M_RE.test(trimmed.toLowerCase()) || BASE58_RE.test(trimmed);
+};
+
 export const isPlaceholderAddress = (value) => {
   const cleaned = (value || '').trim().toLowerCase();
   if (!cleaned) return true;

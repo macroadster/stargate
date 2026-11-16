@@ -10,6 +10,7 @@ import {
   sameContractId,
   isPlaceholderAddress,
   normalizeAddress,
+  looksLikeBitcoinAddress,
   isConfirmedContract as checkConfirmedContract,
   resolveModalImage,
   parseStegoManifest,
@@ -924,8 +925,20 @@ export function useInscriptionModalState(inscription, initialTab = 'content') {
     const payouts = isRaiseFund
       ? []
       : payoutSummaries
-          .filter((p) => p.wallet && p.wallet !== 'Unknown wallet')
-          .map((p) => ({ address: p.wallet, amount_sats: Math.trunc(p.total) }));
+          .filter((p) => looksLikeBitcoinAddress(p.wallet))
+          .map((p) => ({ address: p.wallet.trim(), amount_sats: Math.trunc(p.total) }));
+    if (!isRaiseFund) {
+      const invalid = payoutSummaries.filter((p) => !looksLikeBitcoinAddress(p.wallet));
+      if (invalid.length > 0 && payouts.length > 0) {
+        const bad = [...new Set(invalid.map((p) => p.wallet))].join(', ');
+        setPsbtError(`Contractor wallet(s) not payable: ${bad}. Fix them or paste a payout address to override.`);
+        return;
+      }
+      if (payouts.length === 0 && !looksLikeBitcoinAddress(payoutWallet)) {
+        setPsbtError('Paste a contractor payout address — the contractor has no Bitcoin address on record.');
+        return;
+      }
+    }
     if (isRaiseFund && !fundraiserWallet) {
       setPsbtError('Add the fundraiser payout address first.');
       return;
@@ -1011,8 +1024,8 @@ export function useInscriptionModalState(inscription, initialTab = 'content') {
         setPsbtError('Add the fundraiser payout address first.');
         return;
       }
-      if (!isRaiseFund && !payoutWallet) {
-        setPsbtError('Add the contractor payout wallet first.');
+      if (!isRaiseFund && !looksLikeBitcoinAddress(payoutWallet)) {
+        setPsbtError('Add a valid contractor payout address (the contractor has no Bitcoin address on record).');
         return;
       }
       if (!auth.apiKey || !auth.wallet) {
