@@ -23,7 +23,7 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
     psbtForm, setPsbtForm, psbtResult, psbtError, psbtLoading, authBlocked, copiedPsbt,
     showPsbtQr, setShowPsbtQr, stegoPayload, stegoPayloadLoading, stegoPayloadError,
     scanMessage, scanLoading, scanError, scrollContainerRef,
-    reworkRequests, setReworkRequests, isLoadingRework, showReworkForm, setShowReworkForm, reworkNotes, setReworkNotes,
+    reworkRequests, setReworkRequests, isLoadingRework, reworkError, showReworkForm, setShowReworkForm, reworkNotes, setReworkNotes,
     isSubmittingRework, setIsSubmittingRework,
     allTasks, approvedProposal, psbtTasks, deliverableTasks, approvedBudgetsTotal, wishBudgetSats, remainingWishSats, payoutSummaries, primaryContractId,
     stegoProposal, stegoTasks, stegoProposalStatus, stegoTaskStatusMap, hiddenMessageText,
@@ -1201,7 +1201,8 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
                       </button>
                     )}
                   </div>
-                  
+                  {reworkError && <div className="modal-data-label">{reworkError}</div>}
+
                   {showReworkForm && (
                     <div className="modal-form-card">
                       <div className="space-y-3">

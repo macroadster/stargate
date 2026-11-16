@@ -127,6 +127,11 @@ func (s *Server) handleContracts(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		if len(parts) > 1 && parts[1] == "rework" {
+			s.handleGetContractReworkRequests(w, r, contractID)
+			return
+		}
+
 		contract, err := s.store.GetContract(contractID)
 		if err != nil {
 			Error(w, http.StatusNotFound, err.Error())
@@ -203,6 +208,25 @@ func (s *Server) handleSandboxPull(w http.ResponseWriter, r *http.Request, contr
 }
 
 // handleGetContractReworkRequests returns all rework requests for a contract.
+// The store resolves wish-/contract- pixel aliases onto the stored bare-hash
+// row, so this serves both confirmed (wish-<hash>) and bare ids. 404 when the
+// id matches no contract row. Mirrors the MCP get_contract_rework_requests
+// tool; the Rework tab polls it on entry. (The GET case was never wired until
+// 2026-11, so the tab saw 404 even though rework requests existed.)
+func (s *Server) handleGetContractReworkRequests(w http.ResponseWriter, r *http.Request, contractID string) {
+	reworkReqs, err := s.store.GetContractReworkRequests(r.Context(), contractID)
+	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "not found") {
+			Error(w, http.StatusNotFound, err.Error())
+			return
+		}
+		Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	JSON(w, http.StatusOK, map[string]interface{}{
+		"rework_requests": reworkReqs,
+	})
+}
 
 // handleContractRework creates a new rework request for a contract.
 func (s *Server) handleContractRework(w http.ResponseWriter, r *http.Request, contractID string) {

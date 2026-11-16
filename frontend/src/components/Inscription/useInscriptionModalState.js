@@ -66,6 +66,7 @@ export function useInscriptionModalState(inscription, initialTab = 'content') {
   const deliverablesScrollRef = React.useRef(0);
   const [reworkRequests, setReworkRequests] = useState([]);
   const [isLoadingRework, setIsLoadingRework] = useState(false);
+  const [reworkError, setReworkError] = useState('');
   const [showReworkForm, setShowReworkForm] = useState(false);
   const [reworkNotes, setReworkNotes] = useState('');
   const [isSubmittingRework, setIsSubmittingRework] = useState(false);
@@ -792,6 +793,7 @@ export function useInscriptionModalState(inscription, initialTab = 'content') {
     }
     const fetchReworkRequests = async () => {
       setIsLoadingRework(true);
+      setReworkError('');
       try {
         const res = await apiFetch(
           `/api/smart_contract/contracts/${inscription.id}/rework`,
@@ -800,9 +802,12 @@ export function useInscriptionModalState(inscription, initialTab = 'content') {
         if (res.ok) {
           const data = await res.json();
           setReworkRequests(data.rework_requests || []);
+        } else {
+          setReworkError(`Unable to load rework requests (HTTP ${res.status}).`);
         }
       } catch (err) {
         console.error('Failed to fetch rework requests:', err);
+        setReworkError('Unable to load rework requests.');
       } finally {
         setIsLoadingRework(false);
       }
@@ -857,8 +862,10 @@ export function useInscriptionModalState(inscription, initialTab = 'content') {
         }
         throw new Error(String(errorMessage || `HTTP ${res.status}`));
       }
-      await loadProposals({ showLoading: true });
       toast.success(isPublish ? 'Proposal published' : 'Proposal approved & published');
+      // Refresh proposals in the background; the button is busy only for the
+      // POST itself, so a slow reload cannot park it on "Processing…".
+      loadProposals();
     } catch (err) {
       console.error('Failed to approve proposal', err);
       setProposalError(`Approve failed: ${err.message}`);
@@ -1051,6 +1058,7 @@ export function useInscriptionModalState(inscription, initialTab = 'content') {
     reworkRequests,
     setReworkRequests,
     isLoadingRework,
+    reworkError,
     showReworkForm,
     setShowReworkForm,
     reworkNotes,

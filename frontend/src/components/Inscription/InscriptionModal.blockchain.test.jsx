@@ -53,6 +53,7 @@ const baseState = {
   reworkRequests: [],
   setReworkRequests: vi.fn(),
   isLoadingRework: false,
+  reworkError: '',
   showReworkForm: false,
   setShowReworkForm: vi.fn(),
   reworkNotes: '',
