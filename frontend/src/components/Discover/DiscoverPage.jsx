@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { apiFetch } from '../../utils/api';
 import AppHeader from '../Common/AppHeader';
 import MarkdownContent from '../Common/MarkdownContent';
+import { FundingProofBadge } from '../Common/FundingProofSummary';
 import { useAuth } from '../../context/AuthContext';
 
 const formatDate = (ts) => (ts ? new Date(ts).toLocaleString() : '—');
@@ -371,8 +372,19 @@ export default function DiscoverPage() {
                             <div className="text-[11px] text-gray-500">Skills: {(t.skills_required || []).join(', ')}</div>
                           )}
                           {t.merkle_proof && (
-                            <div className="text-[11px] text-gray-500 mt-1 modal-address-text" title={t.merkle_proof.funding_address || undefined}>
-                              Funding: {t.merkle_proof.funding_address || 'n/a'} • Funded {t.merkle_proof.funded_amount_sats || 0} sats
+                            <div className="text-[11px] text-gray-500 mt-1" title={t.merkle_proof.funding_address || undefined}>
+                              <div className="flex items-center gap-2 flex-wrap modal-address-text">
+                                <FundingProofBadge proof={t.merkle_proof} />
+                                <span>
+                                  Funding: {t.merkle_proof.funding_address || 'n/a'} • Funded {t.merkle_proof.funded_amount_sats || 0} sats
+                                  {Number(t.merkle_proof.block_height) > 0 ? ` • Block ${t.merkle_proof.block_height}` : ''}
+                                </span>
+                              </div>
+                              {t.merkle_proof.tx_id && (
+                                <div className="font-mono text-[10px] mt-0.5" title={t.merkle_proof.tx_id}>
+                                  tx {t.merkle_proof.tx_id.slice(0, 12)}…{t.merkle_proof.tx_id.slice(-6)}
+                                </div>
+                              )}
                             </div>
                           )}
                           {t.active_claim_id && submissionsByTask[t.active_claim_id] && (

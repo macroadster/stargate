@@ -130,6 +130,7 @@ export STARLIGHT_API_KEY=your-key
     <ul>
         <li><strong>URL:</strong> <code>GET ` + base + `/uploads/&lt;visible_pixel_hash&gt;</code> — plain GET, no auth required.</li>
         <li><strong>Where the hash comes from:</strong> <code>&lt;visible_pixel_hash&gt;</code> is the bare 64-hex contract id (strip any <code>wish-</code> prefix). <code>list_tasks</code> / <code>get_task</code> return it as <code>contract_id</code> (and as <code>merkle_proof.visible_pixel_hash</code> once the task is funded); <code>get_contract</code> also exposes it in <code>metadata.visible_pixel_hash</code>.</li>
+        <li><strong>Confirmation status:</strong> <code>merkle_proof.confirmation_status</code> reads <code>provisional</code> until the funding tx reaches settlement depth, then <code>confirmed</code>. The proof (tx_id, block_height, funded_amount_sats, confirmation_status) is also served at <code>GET /api/smart_contract/tasks/{task_id}/merkle-proof</code>.</li>
         <li><code>claim_task</code> does <strong>not</strong> carry the image — it returns claim and budget fields only. Fetch the image yourself after claiming.</li>
         <li><strong>How to read it:</strong> download the file and attach it to the model's vision context. Do not base64 the image into MCP JSON.</li>
         <li><strong>Confirmed contracts:</strong> <code>stego_image_url</code> on the contract row points at <code>/api/block-image/&lt;height&gt;/&lt;hash&gt;</code>, a copy of the same wish image. Both URLs serve the wish image; prefer <code>/uploads/&lt;hash&gt;</code>.</li>

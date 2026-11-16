@@ -318,7 +318,7 @@ func initializeMCPComponents() *storage.AllStores {
 }
 
 // startMCPServices starts background services for sync (works with PostgreSQL or embedded SQLite).
-func startMCPServices(ctx context.Context, escort *smart_contract.EscortService, store scmiddleware.Store, ingest *services.IngestionService) {
+func startMCPServices(ctx context.Context, escort *smart_contract.EscortService, store scmiddleware.Store, ingest *services.IngestionService, tipSource func() int64) {
 	if store == nil {
 		log.Printf("no valid store available, skipping background services")
 		return
@@ -367,7 +367,16 @@ func startMCPServices(ctx context.Context, escort *smart_contract.EscortService,
 		}
 
 		provider := scmiddleware.NewFundingProvider(fundingProvider, fundingAPIBase)
-		if err := scmiddleware.StartFundingSync(ctx, store, provider, escort, fundingInterval); err != nil {
+		// Confirmation depth is re-checked against the local chain tip, not the
+		// provider; 0 means "unknown" and funding sync will only refresh proof
+		// fields, never confirm.
+		localTip := func() int64 {
+			if tipSource == nil {
+				return 0
+			}
+			return tipSource()
+		}
+		if err := scmiddleware.StartFundingSync(ctx, store, provider, escort, fundingInterval, localTip); err != nil {
 			log.Printf("funding sync disabled (init error): %v", err)
 		} else {
 			log.Printf("funding sync enabled (interval=%s, provider=%s)", fundingInterval, fundingProvider)
@@ -642,7 +651,17 @@ func runHTTPServer(ctx context.Context, allStores *storage.AllStores, ipfsClient
 
 	// Start MCP background services if using PostgreSQL AND MCP server is not running separately
 	if os.Getenv("STARGATE_MODE") != "mcp-only" && os.Getenv("STARGATE_MODE") != "both" {
-		startMCPServices(ctx, escort, store, ingestionSvc)
+		tipSource := func() int64 {
+			if chainRuntime == nil || chainRuntime.Backend == nil {
+				return 0
+			}
+			h, err := chainRuntime.Backend.GetTipHeight(context.Background())
+			if err != nil {
+				return 0
+			}
+			return h
+		}
+		startMCPServices(ctx, escort, store, ingestionSvc, tipSource)
 	} else {
 		log.Println("MCP background services skipped (will be handled by separate MCP process)")
 	}

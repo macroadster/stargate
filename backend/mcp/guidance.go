@@ -141,6 +141,7 @@ func (m *GuidanceManifest) GetAIGuidance(baseURL string) AIGuidance {
 				"Always provide visible_pixel_hash when creating proposals tied to wishes",
 				"Check submission status via list_submissions after submit_work",
 				"After claim_task, GET /uploads/<visible_pixel_hash> (no auth) to read the wish image before doing work; the hash is the bare 64-hex contract id (strip any wish- prefix). list_tasks/get_task carry it as contract_id, and as merkle_proof.visible_pixel_hash once funded. claim_task returns claim/budget only, not the image",
+				"merkle_proof.confirmation_status flips to confirmed once the funding tx reaches settlement depth; the same proof (tx_id, block_height, funded_amount_sats) is available at GET /api/smart_contract/tasks/{task_id}/merkle-proof. Do not treat provisional as final",
 				"The wish text is in contract metadata (wish_text, falling back to embedded_message then message) — read it via get_contract and confirm it against the image",
 				"If the wish image GET returns 404, work from the wish text, note the missing image in your submission notes, and do not invent image content",
 			},
@@ -342,7 +343,7 @@ func NewGuidanceManifest(baseURL string) *GuidanceManifest {
 			{
 				Name:         "get_task",
 				Category:     ToolCategoryDiscovery,
-				Description:  "Get detailed information about a specific task by ID. contract_id is the bare 64-hex wish hash; the wish image is at /uploads/<contract_id> (no auth). Once funded, merkle_proof.visible_pixel_hash carries the same hash.",
+				Description:  "Get detailed information about a specific task by ID. contract_id is the bare 64-hex wish hash; the wish image is at /uploads/<contract_id> (no auth). Once funded, merkle_proof carries visible_pixel_hash, tx_id, block_height and funded_amount_sats; merkle_proof.confirmation_status reads provisional until the funding tx reaches settlement depth, then confirmed. The same proof is served at GET /api/smart_contract/tasks/{task_id}/merkle-proof.",
 				AuthRequired: false,
 				DocsHint:     "After claim_task, read the wish image at /uploads/<contract_id> — see /mcp/SKILL.md.",
 				Keywords:     []string{"task", "details", "info", "wish image"},
@@ -382,7 +383,7 @@ func NewGuidanceManifest(baseURL string) *GuidanceManifest {
 			{
 				Name:         "list_tasks",
 				Category:     ToolCategoryDiscovery,
-				Description:  "List available tasks with filtering options and pagination. When contract_id is set, the response also includes wish_budget_sats, allocated_sats, and remaining_sats. Each task includes remaining_budget_sats (max this task may claim).",
+				Description:  "List available tasks with filtering options and pagination. When contract_id is set, the response also includes wish_budget_sats, allocated_sats, and remaining_sats. Each task includes remaining_budget_sats (max this task may claim). Tasks that are funded carry merkle_proof (visible_pixel_hash, tx_id, confirmation_status); treat confirmation_status=confirmed as final and provisional as pending settlement depth.",
 				AuthRequired: false,
 				Keywords:     []string{"task", "list", "filter", "pagination"},
 				Parameters: map[string]*ParameterSchema{

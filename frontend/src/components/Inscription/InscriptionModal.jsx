@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import CopyButton from '../Common/CopyButton';
 import MarkdownContent from '../Common/MarkdownContent';
+import FundingProofSummary from '../Common/FundingProofSummary';
 import SafeQrCodeCanvas from '../Common/SafeQrCodeCanvas';
 import DeliverablesReview from '../Review/DeliverablesReview';
 import { apiFetch } from '../../utils/api';
@@ -32,6 +33,16 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
     loadProposals, loadSubmissions, getLatestSubmissionByTask, approveProposal, copyToClipboard,
     generatePSBT, publishAndBuild,
   } = m;
+  const fundingProofs = useMemo(() => {
+    const list = allTasks.length > 0 ? allTasks : psbtTasks;
+    return list
+      .filter((t) => t?.merkle_proof?.tx_id)
+      .map((t, idx) => ({
+        id: t.task_id || t.title || `proof-${idx}`,
+        title: t.title || t.task_id || `Task ${idx + 1}`,
+        proof: t.merkle_proof,
+      }));
+  }, [allTasks, psbtTasks]);
 
   const installCandidate = shellCandidateHash(inscription, pixelHash);
   const installedOnShellDesktop = useMemo(
@@ -1363,6 +1374,27 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
                       </div>
                     </div>
                   </div>
+
+                  {fundingProofs.length > 0 && (
+                    <div>
+                      <h4 className="modal-section-title">
+                        <span className="modal-section-dot green"></span>
+                        Funding Proof{fundingProofs.length > 1 ? 's' : ''}
+                      </h4>
+                      <div className="space-y-3">
+                        {fundingProofs.map(({ id, title, proof }) => (
+                          <div key={id}>
+                            {fundingProofs.length > 1 && (
+                              <div className="modal-data-label mb-1 truncate" title={title}>
+                                {title}
+                              </div>
+                            )}
+                            <FundingProofSummary proof={proof} />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   {inscription.metadata?.scanned_at && (
                     <div>

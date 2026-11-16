@@ -643,6 +643,10 @@ func (bm *BlockMonitor) updateTaskFundingProofsFromTx(contractID string, tx Tran
 			if proof.SeenAt.IsZero() {
 				proof.SeenAt = now
 			}
+			if strings.TrimSpace(proof.SweepStatus) == "" {
+				// Donation was paid directly in the PSBT; nothing to sweep.
+				proof.SweepStatus = "direct"
+			}
 			if bm.scanMayConfirm(blockHeight) {
 				proof.ConfirmationStatus = "confirmed"
 				if proof.ConfirmedAt == nil {
@@ -929,6 +933,10 @@ func (bm *BlockMonitor) promoteProvisionalProofs(tip int64) {
 			now := time.Now()
 			proof.ConfirmationStatus = "confirmed"
 			proof.ConfirmedAt = &now
+			if strings.TrimSpace(proof.SweepStatus) == "" {
+				// Donation was paid directly in the PSBT; nothing to sweep.
+				proof.SweepStatus = "direct"
+			}
 			if err := bm.sweepStore.UpdateTaskProof(context.Background(), task.TaskID, proof); err != nil {
 				log.Printf("oracle reconcile: promote provisional %s: %v", task.TaskID, err)
 				continue

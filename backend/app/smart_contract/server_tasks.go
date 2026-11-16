@@ -77,6 +77,10 @@ func (s *Server) handleTasks(w http.ResponseWriter, r *http.Request) {
 				Error(w, http.StatusNotFound, err.Error())
 				return
 			}
+			if proof == nil {
+				Error(w, http.StatusNotFound, "task has no merkle proof")
+				return
+			}
 			JSON(w, http.StatusOK, proof)
 			return
 		}

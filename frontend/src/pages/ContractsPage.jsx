@@ -42,8 +42,10 @@ export default function ContractsPage() {
 
   const displayContracts = useMemo(() => {
     return contracts.map((contract) => {
+      const status = (contract.metadata?.status || contract.status || '').toLowerCase();
       return {
         ...contract,
+        statusLabel: status,
         headline: extractHeadline(contract.text) || contract.file_name || 'Untitled Contract'
       };
     });
@@ -97,9 +99,12 @@ export default function ContractsPage() {
                     <span className="text-[10px] font-black uppercase tracking-[0.2em] opacity-70">
                       Block #{contract.block_height || 'Pending'}
                     </span>
-                    {contract.metadata?.status && (
-                      <span className="badge badge-primary" style={{ fontSize: '0.6rem' }}>
-                        {contract.metadata.status}
+                    {contract.statusLabel && (
+                      <span
+                        className={`badge ${contract.statusLabel === 'confirmed' ? 'badge-success' : 'badge-primary'}`}
+                        style={{ fontSize: '0.6rem' }}
+                      >
+                        {contract.statusLabel}
                       </span>
                     )}
                   </div>
@@ -107,8 +112,11 @@ export default function ContractsPage() {
                     {contract.headline}
                   </div>
                   <div className="flex items-center justify-between gap-2 text-xs opacity-60">
-                    <div className="contract-id truncate flex-1 font-mono">
-                      {contract.id?.slice(0, 12)}…
+                    <div
+                      className="contract-id truncate flex-1 font-mono"
+                      title={contract.tx_id || contract.id}
+                    >
+                      {contract.tx_id ? `tx ${contract.tx_id.slice(0, 12)}…` : `${contract.id?.slice(0, 12)}…`}
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0">
                       <span>💰 {(contract.metadata?.total_budget / 1e8 || 0).toFixed(4)} BTC</span>
