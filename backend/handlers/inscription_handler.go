@@ -551,7 +551,14 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 		log.Printf("DEBUG: Native stego path selected")
 		inscribeResult, err := stego.Inscribe(imgBytes, embeddedMessage, method)
 		if err != nil {
-			h.sendError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to embed steganography: %v", err))
+			// Cover too small for the payload: tell the caller what to fix
+			// instead of returning 500 with a misleading message.
+			switch {
+			case stego.IsImageTooSmall(err) || stego.IsSoftDecodeFailure(err):
+				h.sendError(w, http.StatusBadRequest, err.Error())
+			default:
+				h.sendError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to embed steganography: %v", err))
+			}
 			return
 		}
 		ingestionID = inscribeResult.ID

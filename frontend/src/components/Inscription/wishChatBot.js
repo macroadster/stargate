@@ -442,11 +442,43 @@ function prettyBytes(n) {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-/** 1x1 PNG placeholder when user skips an image (matches legacy InscribeModal). */
+/**
+ * Build a placeholder cover when the user skips an image. A 1x1 PNG is far too
+ * small for the alpha payload — the stego embed needs at least `bytes * 8`
+ * pixels. Generate a deterministic 128x128 PNG so the inscribe path always has
+ * enough capacity (16k pixels ≈ 2 KB of payload).
+ */
 export function buildPlaceholderImage() {
-  const pngBase64 =
-    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/Ptq4YQAAAABJRU5ErkJggg==';
-  const bytes = Uint8Array.from(atob(pngBase64), (c) => c.charCodeAt(0));
+  // jsdom (used in tests) has no canvas — fall back to a small static 1x1 PNG.
+  // In real browsers, generate a 128x128 branded placeholder (16k pixels —
+  // enough capacity for any reasonable wish text alpha-channel embed).
+  let dataUrl = '';
+  try {
+    const size = 128;
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = typeof canvas.getContext === 'function' ? canvas.getContext('2d') : null;
+    if (!ctx) {
+      dataUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/Ptq4YQAAAABJRU5ErkJggg==';
+    } else {
+      const grad = ctx.createLinearGradient(0, 0, size, size);
+      grad.addColorStop(0, '#1a0b2e');
+      grad.addColorStop(0.5, '#2d1b4e');
+      grad.addColorStop(1, '#0f3460');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, size, size);
+      ctx.fillStyle = '#e94560';
+      ctx.font = 'bold 48px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('✶', size / 2, size / 2);
+      dataUrl = canvas.toDataURL('image/png');
+    }
+  } catch {
+    dataUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/Ptq4YQAAAABJRU5ErkJggg==';
+  }
+  const bytes = Uint8Array.from(atob(dataUrl.split(',')[1]), (c) => c.charCodeAt(0));
   return new File([bytes], 'placeholder.png', { type: 'image/png' });
 }
 

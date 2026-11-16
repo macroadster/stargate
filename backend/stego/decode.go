@@ -35,6 +35,10 @@ const (
 // non-stego / not-found rather than a hard failure.
 var ErrUnsupportedFormat = errors.New("unsupported image format")
 
+// ErrImageTooSmall indicates the cover cannot carry the payload in its alpha
+// channel. Callers should return 400 (client error) with the message, not 500.
+var ErrImageTooSmall = errors.New("image is too small for the payload")
+
 // ErrImageTooLarge indicates the image exceeds dimension or pixel-count limits.
 var ErrImageTooLarge = errors.New("image exceeds safe decode limits")
 
@@ -55,6 +59,11 @@ func IsSoftDecodeFailure(err error) bool {
 	return errors.Is(err, ErrUnsupportedFormat) ||
 		errors.Is(err, ErrImageTooLarge) ||
 		errors.Is(err, ErrImageTooLargeBytes)
+}
+
+// IsImageTooSmall reports whether err is (or wraps) ErrImageTooSmall.
+func IsImageTooSmall(err error) bool {
+	return err != nil && errors.Is(err, ErrImageTooSmall)
 }
 
 // DecodeImage safely decodes image bytes for steganography paths.

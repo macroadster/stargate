@@ -78,8 +78,12 @@ func EmbedAlpha(img image.Image, payload []byte) (*image.RGBA, error) {
 	width, height := bounds.Dx(), bounds.Dy()
 	numPixels := width * height
 
-	if len(fullPayload)*8 > numPixels {
-		return nil, image.ErrFormat // Or a custom error for capacity
+	neededBits := len(fullPayload) * 8
+	if neededBits > numPixels {
+		return nil, fmt.Errorf(
+			"%w: payload needs %d alpha bits (%d bytes), image has %d pixels (%dx%d)",
+			ErrImageTooSmall, neededBits, len(fullPayload), numPixels, width, height,
+		)
 	}
 
 	// Convert to RGBA if not already

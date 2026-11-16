@@ -115,15 +115,8 @@ const WishChatModal = ({ onClose, onSuccess }) => {
         });
 
         if (!response.ok) {
-          let detail = `Inscription failed (${response.status})`;
-          try {
-            const errBody = await response.json();
-            if (errBody?.error || errBody?.message) {
-              detail = errBody.error || errBody.message;
-            }
-          } catch {
-            /* ignore */
-          }
+          const errBody = await response.json().catch(() => null);
+          const detail = extractApiErrorMessage(errBody, `Inscription failed (${response.status})`);
           throw new Error(detail);
         }
 
