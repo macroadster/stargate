@@ -1904,6 +1904,7 @@ func (h *HTTPMCPServer) handleCreateWish(ctx context.Context, args map[string]in
 	priceUnit, unitOk := args["price_unit"].(string)
 	address, _ := args["address"].(string)
 	fundingMode, modeOk := args["funding_mode"].(string)
+	creatorSig, _ := args["creator_sig"].(string)
 
 	// Validate price_unit if price is provided
 	if priceOk && price != "" && (!unitOk || priceUnit == "") {
@@ -1939,6 +1940,9 @@ func (h *HTTPMCPServer) handleCreateWish(ctx context.Context, args map[string]in
 	}
 	if fundingMode != "" {
 		reqBody["funding_mode"] = fundingMode
+	}
+	if creatorSig != "" {
+		reqBody["creator_sig"] = creatorSig
 	}
 
 	jsonBody, err := json.Marshal(reqBody)

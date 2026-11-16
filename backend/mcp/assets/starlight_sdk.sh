@@ -25,6 +25,7 @@ Commands:
       --price-unit btc|sats
       --funding-mode payout|raise_fund
       --address BTC_ADDRESS
+      --creator-sig SIGNATURE   (optional) wallet signmessage signature over the wish attestation message STARLIGHT-WISH-V1"$<visible_pixel_hash>"; only a signature from the --api-key's bound wallet is recorded (fail-closed, ADR 0007)
 
   submit-work
     Bridge local file paths into submit_work/deliverables.artifacts payloads.
@@ -158,7 +159,7 @@ call_mcp() {
 }
 
 create_wish() {
-  local api_key="${STARLIGHT_API_KEY:-}" message="" message_file="" image="" price="" price_unit="" funding_mode="" address=""
+  local api_key="${STARLIGHT_API_KEY:-}" message="" message_file="" image="" price="" price_unit="" funding_mode="" address="" creator_sig=""
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -170,6 +171,7 @@ create_wish() {
       --price-unit) price_unit=${2:-}; shift 2 ;;
       --funding-mode) funding_mode=${2:-}; shift 2 ;;
       --address) address=${2:-}; shift 2 ;;
+      --creator-sig) creator_sig=${2:-}; shift 2 ;;
       -h|--help) usage; exit 0 ;;
       *) fail "unknown create-wish option: $1" ;;
     esac
@@ -200,6 +202,9 @@ create_wish() {
   fi
   if [[ -n "$address" ]]; then
     args_json=$(jq --arg address "$address" '. + {address: $address}' <<<"$args_json")
+  fi
+  if [[ -n "$creator_sig" ]]; then
+    args_json=$(jq --arg creator_sig "$creator_sig" '. + {creator_sig: $creator_sig}' <<<"$args_json")
   fi
 
   call_mcp "$api_key" "create_wish" "$args_json"

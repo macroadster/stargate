@@ -380,6 +380,7 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 		ImageBase64  string `json:"image_base64"`
 		Filename     string `json:"filename"`
 		SkipProposal bool   `json:"skip_proposal"`
+		CreatorSig  string `json:"creator_sig"`
 	}
 	if err := json.Unmarshal(bodyBytes, &payload); err != nil {
 		h.sendError(w, http.StatusBadRequest, "Invalid JSON")
@@ -585,6 +586,20 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 	}
 	if strings.EqualFold(priceUnit, "sats") {
 		meta["budget_sats"] = parsePriceSats(price)
+	}
+
+	// Optional user-supplied creator_sig attestation (the MCP create_wish /
+	// SDK path has no human sign-message input — the reported gap). Record it
+	// only after it verifies against the request's bound wallet. An unverified
+	// signature is never persisted and never treated as the creator: fail
+	// closed, matching ADR 0007 and the rest of the attestation rules.
+	if strings.TrimSpace(payload.CreatorSig) != "" && creatorWallet != "" {
+		if err := scmiddleware.VerifyCreatorAttestation(creatorWallet, strings.TrimSpace(payload.CreatorSig), ingestionID); err == nil {
+			meta["creator_sig"] = strings.TrimSpace(payload.CreatorSig)
+			log.Printf("DEBUG: creator_sig attestation recorded for %s", ingestionID)
+		} else {
+			log.Printf("DEBUG: creator_sig attestation rejected for %s: %v", ingestionID, err)
+		}
 	}
 
 	// Write stego image to uploads directory

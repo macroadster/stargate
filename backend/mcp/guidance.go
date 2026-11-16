@@ -661,6 +661,10 @@ func NewGuidanceManifest(baseURL string) *GuidanceManifest {
 						Description: "Funding mode: payout or raise_fund (optional)",
 						Enum:        []string{"payout", "raise_fund"},
 					},
+					"creator_sig": {
+						Type:        "string",
+						Description: "(optional) Wallet signmessage signature over the wish attestation message `STARLIGHT-WISH-V1\\n<visible_pixel_hash>`. An agent issuing via the MCP create_wish path has no browser sign-message surface, so provide it to make the wish creator-verifiable on replicas. Only a signature from the request's bound wallet is recorded; anything else is rejected (fail-closed, ADR 0007).",
+					},
 				},
 				Examples: []ToolExample{
 					{Description: "Create a simple wish", Arguments: map[string]interface{}{"message": "Build me a trading bot"}},
