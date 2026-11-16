@@ -840,6 +840,29 @@ export function useInscriptionModalState(inscription, initialTab = 'content') {
     }
   }, [psbtForm.fundraiserWallet, fundDepositAddress]);
 
+  // Shared low-level approve/publish call. Throws on failure; surfaces the
+  // result via toast and refreshes proposals in the background. Deliberately
+  // does NOT touch approvingId/proposalError — callers own their busy state
+  // so one flow's POST never lights up the other's button.
+  const approveProposalRequest = async (proposalId, isPublish = false) => {
+    const endpoint = isPublish ? 'publish' : 'approve';
+    const res = await fetchWithTimeout(`${API_BASE}/api/smart_contract/proposals/${proposalId}/${endpoint}`, { method: 'POST' }, 6000);
+    if (!res.ok) {
+      const body = await res.text();
+      let errorMessage = body || `HTTP ${res.status}`;
+      try {
+        const parsedBody = JSON.parse(body);
+        errorMessage = extractApiErrorMessage(parsedBody, body || `HTTP ${res.status}`);
+      } catch {
+        // Use original body if it's not valid JSON
+      }
+      throw new Error(String(errorMessage || `HTTP ${res.status}`));
+    }
+    toast.success(isPublish ? 'Proposal published' : 'Proposal approved & published');
+    // Refresh proposals in the background; callers decide their own busy UI.
+    loadProposals();
+  };
+
   const approveProposal = async (proposalId, isPublish = false) => {
     if (!proposalId) return;
     if (isContractLocked) {
@@ -849,23 +872,7 @@ export function useInscriptionModalState(inscription, initialTab = 'content') {
     setApprovingId(proposalId);
     setProposalError('');
     try {
-      const endpoint = isPublish ? 'publish' : 'approve';
-      const res = await fetchWithTimeout(`${API_BASE}/api/smart_contract/proposals/${proposalId}/${endpoint}`, { method: 'POST' }, 6000);
-      if (!res.ok) {
-        const body = await res.text();
-        let errorMessage = body || `HTTP ${res.status}`;
-        try {
-          const parsedBody = JSON.parse(body);
-          errorMessage = extractApiErrorMessage(parsedBody, body || `HTTP ${res.status}`);
-        } catch {
-          // Use original body if it's not valid JSON
-        }
-        throw new Error(String(errorMessage || `HTTP ${res.status}`));
-      }
-      toast.success(isPublish ? 'Proposal published' : 'Proposal approved & published');
-      // Refresh proposals in the background; the button is busy only for the
-      // POST itself, so a slow reload cannot park it on "Processing…".
-      loadProposals();
+      await approveProposalRequest(proposalId, isPublish);
     } catch (err) {
       console.error('Failed to approve proposal', err);
       setProposalError(`Approve failed: ${err.message}`);
@@ -976,47 +983,58 @@ export function useInscriptionModalState(inscription, initialTab = 'content') {
   const publishAndBuild = async () => {
     setPsbtError('');
     setPsbtResult(null);
-    const proposal = approvedProposal || proposalItems[0];
-    if (!proposal) {
-      setPsbtError('No proposal available to publish.');
-      return;
-    }
-    const payoutWallet = resolvedContractorWallet;
-    const fundraiserWallet = resolvedFundraiserWallet;
-    const fundingWallet =
-      selectedTask?.merkle_proof?.funding_address ||
-      inscription.metadata?.funding_address ||
-      '';
-    if (
-      fundingWallet &&
-      auth.wallet &&
-      !isPlaceholderAddressCb(fundingWallet) &&
-      normalizeAddress(fundingWallet) !== normalizeAddress(auth.wallet)
-    ) {
-      setPsbtError('Funding wallet does not match signed-in wallet.');
-      return;
-    }
-    if (isRaiseFund && !fundraiserWallet) {
-      setPsbtError('Add the fundraiser payout address first.');
-      return;
-    }
-    if (!isRaiseFund && !payoutWallet) {
-      setPsbtError('Add the contractor payout wallet first.');
-      return;
-    }
-    if (!auth.apiKey || !auth.wallet) {
-      setPsbtError('Sign in with the funding API key (payer wallet) first.');
-      return;
-    }
-    const status = (proposal.status || '').toLowerCase();
+    // Show busy on the Publish & Build button for the whole flow (the
+    // implicit approval + the PSBT build) so it never looks idle mid-flight.
+    setPsbtLoading(true);
     try {
+      const proposal = approvedProposal || proposalItems[0];
+      if (!proposal) {
+        setPsbtError('No proposal available to publish.');
+        return;
+      }
+      const payoutWallet = resolvedContractorWallet;
+      const fundraiserWallet = resolvedFundraiserWallet;
+      const fundingWallet =
+        selectedTask?.merkle_proof?.funding_address ||
+        inscription.metadata?.funding_address ||
+        '';
+      if (
+        fundingWallet &&
+        auth.wallet &&
+        !isPlaceholderAddressCb(fundingWallet) &&
+        normalizeAddress(fundingWallet) !== normalizeAddress(auth.wallet)
+      ) {
+        setPsbtError('Funding wallet does not match signed-in wallet.');
+        return;
+      }
+      if (isRaiseFund && !fundraiserWallet) {
+        setPsbtError('Add the fundraiser payout address first.');
+        return;
+      }
+      if (!isRaiseFund && !payoutWallet) {
+        setPsbtError('Add the contractor payout wallet first.');
+        return;
+      }
+      if (!auth.apiKey || !auth.wallet) {
+        setPsbtError('Sign in with the funding API key (payer wallet) first.');
+        return;
+      }
+      const status = (proposal.status || '').toLowerCase();
       if (!['approved', 'published'].includes(status)) {
-        await approveProposal(proposal.id, status === 'approved');
-        await loadProposals({ showLoading: true });
+        try {
+          // Implicit approval: does not light up the Approve button; failures
+          // abort the PSBT rather than build against an unapproved proposal.
+          await approveProposalRequest(proposal.id, status === 'approved');
+        } catch (err) {
+          setPsbtError(`Approve failed: ${err.message}`);
+          return;
+        }
       }
       await generatePSBT();
     } catch (err) {
       setPsbtError(String(err?.message || err || 'PSBT build failed'));
+    } finally {
+      setPsbtLoading(false);
     }
   };
 
