@@ -515,7 +515,8 @@ const WishChatModal = ({ onClose, onSuccess }) => {
             {phase === 'done' && attestMessage && attestStatus !== 'done' && (
               <div className="wish-chat-field">
                 <span>Creator signature</span>
-                <code className="auth-challenge-nonce font-mono text-xs break-all">{attestMessage}</code>
+                <code className="auth-challenge-nonce font-mono text-xs break-all block whitespace-pre-wrap">{attestMessage}</code>
+                <p className="text-[11px] opacity-70 -mt-1">Sign the two lines exactly, including the newline between <code className="font-mono">STARLIGHT-WISH-V1</code> and the hash. Paste the wallet signmessage signature.</p>
                 <textarea
                   rows={2}
                   value={attestSig}

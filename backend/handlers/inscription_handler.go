@@ -797,7 +797,7 @@ func (h *InscriptionHandler) HandleCreatorAttest(w http.ResponseWriter, r *http.
 
 	if err := scmiddleware.VerifyCreatorAttestation(wallet, sig, visibleHash); err != nil {
 		h.sendError(w, http.StatusForbidden, fmt.Sprintf(
-			"invalid creator signature — sign the exact message `STARLIGHT-WISH-V1\\n%s` with the wallet bound to this API key (%q) and try again",
+			"invalid creator signature\nSTARLIGHT-WISH-V1\n%s\nSign that exact two-line message with the wallet your API key is bound to (%q), then try again",
 			visibleHash, wallet))
 		return
 	}

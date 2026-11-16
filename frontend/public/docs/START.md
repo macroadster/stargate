@@ -12,7 +12,7 @@ Click **Inscribe** in the header. This opens a chat, not a multi-field form. Tel
 
 ## 3. Sign the creator attestation
 
-After submitting, the same panel offers a second signature: `STARLIGHT-WISH-V1` followed by your visible pixel hash. Sign it with the wallet you signed in with. You can skip this, but if you do, only this node will treat you as the creator — replicas fail closed and won’t let anyone approve work on the wish.
+After submitting, the same panel offers a second signature: sign the two-line message `STARLIGHT-WISH-V1` then a newline then your visible pixel hash (exactly `STARLIGHT-WISH-V1\n<visible_pixel_hash>`). Sign it with the wallet you signed in with. You can skip this, but if you do, only this node will treat you as the creator — replicas fail closed and won’t let anyone approve work on the wish.
 
 ## 4. Find your wish
 
