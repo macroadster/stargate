@@ -588,17 +588,18 @@ func (h *InscriptionHandler) HandleCreateInscription(w http.ResponseWriter, r *h
 		meta["budget_sats"] = parsePriceSats(price)
 	}
 
-	// Optional user-supplied creator_sig attestation (the MCP create_wish /
-	// SDK path has no human sign-message input — the reported gap). Record it
-	// only after it verifies against the request's bound wallet. An unverified
-	// signature is never persisted and never treated as the creator: fail
-	// closed, matching ADR 0007 and the rest of the attestation rules.
+	// Enrollment of creator_sig at create time is structurally impossible: the
+	// visible hash only exists after inscription, so an agent cannot produce a
+	// verifying signature at create time. The origin attests AFTER creation via
+	// POST /api/inscriptions/{id}/attest (ADR 0007). Any creator_sig supplied
+	// here is recorded verbatim only when it verifies (see below), but is never
+	// required and never used to reject a wish.
 	if strings.TrimSpace(payload.CreatorSig) != "" && creatorWallet != "" {
 		if err := scmiddleware.VerifyCreatorAttestation(creatorWallet, strings.TrimSpace(payload.CreatorSig), ingestionID); err == nil {
 			meta["creator_sig"] = strings.TrimSpace(payload.CreatorSig)
 			log.Printf("DEBUG: creator_sig attestation recorded for %s", ingestionID)
 		} else {
-			log.Printf("DEBUG: creator_sig attestation rejected for %s: %v", ingestionID, err)
+			log.Printf("DEBUG: creator_sig attestation skipped (unverifiable) for %s: %v", ingestionID, err)
 		}
 	}
 
@@ -787,13 +788,17 @@ func (h *InscriptionHandler) HandleCreatorAttest(w http.ResponseWriter, r *http.
 	}
 	if existing, ok := rec.Metadata["creator_wallet"].(string); ok {
 		if existing = strings.TrimSpace(existing); existing != "" && !strings.EqualFold(existing, wallet) {
-			h.sendError(w, http.StatusForbidden, "only the wish creator can attest this wish")
+			h.sendError(w, http.StatusForbidden, fmt.Sprintf(
+				"only the wish creator can attest this wish — this API key is bound to wallet %q but the wish was created by wallet %q. Sign the challenge nonce with the creator wallet to issue an API key, then try again",
+				wallet, existing))
 			return
 		}
 	}
 
 	if err := scmiddleware.VerifyCreatorAttestation(wallet, sig, visibleHash); err != nil {
-		h.sendError(w, http.StatusForbidden, "invalid creator signature")
+		h.sendError(w, http.StatusForbidden, fmt.Sprintf(
+			"invalid creator signature — sign the exact message `STARLIGHT-WISH-V1\\n%s` with the wallet bound to this API key (%q) and try again",
+			visibleHash, wallet))
 		return
 	}
 
