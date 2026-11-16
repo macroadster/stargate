@@ -2174,13 +2174,22 @@ html[data-theme="light"] .contract-success-btn-done {
 .wish-chat-draft-status {
     font-size: 0.75rem;
     margin-top: 0.15rem;
+    min-width: 0;
 }
 
 .wish-chat-ready {
     color: #6ee7b7;
     display: inline-flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 0.25rem;
+    min-width: 0;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.7rem;
+    line-height: 1.3;
 }
 
 .wish-chat-missing {
