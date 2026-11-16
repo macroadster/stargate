@@ -237,27 +237,27 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
                             <div className="flex gap-2 flex-wrap">
                               <button
                                 onClick={() => reviewDeliverable(submissionId, 'review')}
-                                disabled={reviewingId === submissionId || isContractLocked}
+                                disabled={(!!submissionId && reviewingId === submissionId) || isContractLocked}
                                 className="deliverables-action-btn review"
                               >
                                 <Eye className="w-3 h-3" />
-                                {reviewingId === submissionId ? 'Processing…' : 'Review'}
+                                {!!submissionId && reviewingId === submissionId ? 'Processing…' : 'Review'}
                               </button>
                               <button
                                 onClick={() => reviewDeliverable(submissionId, 'approve')}
-                                disabled={reviewingId === submissionId || isContractLocked}
+                                disabled={(!!submissionId && reviewingId === submissionId) || isContractLocked}
                                 className="deliverables-action-btn approve"
                               >
                                 <CheckCircle className="w-3 h-3" />
-                                {reviewingId === submissionId ? 'Processing…' : 'Approve'}
+                                {!!submissionId && reviewingId === submissionId ? 'Processing…' : 'Approve'}
                               </button>
                               <button
                                 onClick={() => reviewDeliverable(submissionId, 'reject')}
-                                disabled={reviewingId === submissionId || isContractLocked}
+                                disabled={(!!submissionId && reviewingId === submissionId) || isContractLocked}
                                 className="deliverables-action-btn reject"
                               >
                                 <XCircle className="w-3 h-3" />
-                                {reviewingId === submissionId ? 'Processing…' : 'Reject'}
+                                {!!submissionId && reviewingId === submissionId ? 'Processing…' : 'Reject'}
                               </button>
                             </div>
                           </div>
@@ -323,14 +323,14 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
                         <div className="flex items-center gap-2">
                           <button
                             onClick={() => reviewDeliverable(deliverable.submissionKey, 'approve')}
-                            disabled={reviewingId === deliverable.submissionKey || isContractLocked}
+                            disabled={(!!deliverable.submissionKey && reviewingId === deliverable.submissionKey) || isContractLocked}
                             className="deliverables-action-btn approve"
                           >
                             Approve
                           </button>
                           <button
                             onClick={() => reviewDeliverable(deliverable.submissionKey, 'reject')}
-                            disabled={reviewingId === deliverable.submissionKey || isContractLocked}
+                            disabled={(!!deliverable.submissionKey && reviewingId === deliverable.submissionKey) || isContractLocked}
                             className="deliverables-action-btn reject"
                           >
                             Reject
@@ -671,27 +671,27 @@ const DeliverablesReview = ({ proposalItems, submissions, submissionsList, onRef
                         <div className="flex gap-2 flex-wrap">
                           <button
                             onClick={() => reviewDeliverable(deliverable.submissionKey, 'review')}
-                            disabled={reviewingId === deliverable.submissionKey || isContractLocked}
+                            disabled={(!!deliverable.submissionKey && reviewingId === deliverable.submissionKey) || isContractLocked}
                             className="deliverables-action-btn review"
                           >
                             <Eye className="w-4 h-4" />
-                            {reviewingId === deliverable.submissionKey ? 'Processing…' : 'Mark as Reviewed'}
+                            {!!deliverable.submissionKey && reviewingId === deliverable.submissionKey ? 'Processing…' : 'Mark as Reviewed'}
                           </button>
                           <button
                             onClick={() => reviewDeliverable(deliverable.submissionKey, 'approve')}
-                            disabled={reviewingId === deliverable.submissionKey || isContractLocked}
+                            disabled={(!!deliverable.submissionKey && reviewingId === deliverable.submissionKey) || isContractLocked}
                             className="deliverables-action-btn approve"
                           >
                             <CheckCircle className="w-4 h-4" />
-                            {reviewingId === deliverable.submissionKey ? 'Processing…' : 'Approve'}
+                            {!!deliverable.submissionKey && reviewingId === deliverable.submissionKey ? 'Processing…' : 'Approve'}
                           </button>
                           <button
                             onClick={() => reviewDeliverable(deliverable.submissionKey, 'reject')}
-                            disabled={reviewingId === deliverable.submissionKey || isContractLocked}
+                            disabled={(!!deliverable.submissionKey && reviewingId === deliverable.submissionKey) || isContractLocked}
                             className="deliverables-action-btn reject"
                           >
                             <XCircle className="w-4 h-4" />
-                            {reviewingId === deliverable.submissionKey ? 'Processing…' : 'Reject'}
+                            {!!deliverable.submissionKey && reviewingId === deliverable.submissionKey ? 'Processing…' : 'Reject'}
                           </button>
                         </div>
                       </div>

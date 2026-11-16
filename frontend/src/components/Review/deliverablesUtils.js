@@ -149,7 +149,9 @@ export const buildAllDeliverables = (proposalItems, submissionsObj) => {
           ...task,
           proposal,
           submission,
-          submissionKey: submission?.submission_id,
+          // Fall back past a missing submission_id so every deliverable gets a
+          // stable non-empty key for the review busy-state comparison.
+          submissionKey: getSubmissionId(submission, task.task_id || proposal.id || 'submission'),
           proposalId: proposal.id,
           proposalTitle: proposal.title,
         };

@@ -357,14 +357,25 @@ const InscriptionModal = ({ inscription, onClose, initialTab = 'content' }) => {
                                   </span>
                                 );
                               }
+                              // A proposal with no id (corrupt row) must never
+                              // match the empty initial approvingId — every one
+                              // would render "Processing…" forever.
+                              const missingId = !p.id;
+                              const isApproving = !missingId && approvingId === p.id;
                               return (
                                 <button
                                   onClick={() => approveProposal(p.id, false)}
-                                  disabled={approvingId === p.id || isContractLocked}
-                                  title={isContractLocked ? 'Confirmed contracts cannot be approved' : undefined}
+                                  disabled={isApproving || isContractLocked || missingId}
+                                  title={
+                                    missingId
+                                      ? 'This proposal has no id in the database; it cannot be approved.'
+                                      : isContractLocked
+                                        ? 'Confirmed contracts cannot be approved'
+                                        : undefined
+                                  }
                                   className="modal-btn-approve"
                                 >
-                                  {approvingId === p.id ? 'Processing…' : 'Approve'}
+                                  {isApproving ? 'Processing…' : 'Approve'}
                                 </button>
                               );
                             })()}

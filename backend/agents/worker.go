@@ -162,8 +162,10 @@ func (w *Worker) ProcessWishes(ctx context.Context) {
 		}
 		desc := "I propose to fulfill the wish: '" + c.Title + "' by executing a systematic implementation plan.\n\n### Task 1: Build Solution\nExecute the technical requirements to fulfill the original wish."
 
+		// The store does not assign an id; a blank one would upsert the shared
+		// zero-id row (every proposal colliding). Generate one here.
 		prop := smart_contract.Proposal{
-			ID:               "", // store will assign or we can generate
+			ID:               fmt.Sprintf("proposal-%d", time.Now().UnixNano()),
 			Title:            title,
 			DescriptionMD:    desc,
 			VisiblePixelHash: wid,

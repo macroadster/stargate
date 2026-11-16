@@ -256,6 +256,17 @@ func ValidateBitcoinAddress(addr string) error {
 
 // ValidateProposalInput validates all proposal input fields
 func ValidateProposalInput(proposal *smart_contract.Proposal) error {
+	// A proposal with no id cannot be addressed by any approve/claim/review
+	// flow; the stores key rows by it, so a blank id silently corrupts the
+	// proposals table (it upserts the shared zero row). Refuse it here, the
+	// one choke point both stores call before persisting.
+	if proposal == nil {
+		return fmt.Errorf("proposal is nil")
+	}
+	if strings.TrimSpace(proposal.ID) == "" {
+		return fmt.Errorf("proposal id is required")
+	}
+
 	// Validate title
 	if proposal.Title != "" {
 		if len(proposal.Title) > MaxProposalTitle {
