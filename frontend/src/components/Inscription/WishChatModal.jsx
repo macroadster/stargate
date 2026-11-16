@@ -13,6 +13,7 @@ import {
 import { useAuth } from '../../context/AuthContext';
 import { apiFetch, extractApiErrorMessage } from '../../utils/api';
 import MarkdownContent from '../Common/MarkdownContent';
+import CopyButton from '../Common/CopyButton';
 import {
   emptyDraft,
   welcomeMessages,
@@ -514,8 +515,10 @@ const WishChatModal = ({ onClose, onSuccess }) => {
             )}
             {phase === 'done' && attestMessage && attestStatus !== 'done' && (
               <div className="wish-chat-field">
-                <span>Creator signature</span>
-                <code className="auth-challenge-nonce font-mono text-xs break-all block whitespace-pre-wrap">{attestMessage}</code>
+                <span className="flex items-center justify-between gap-2">Creator signature
+                  <CopyButton text={attestMessage} aria-label="Copy creator attestation message" />
+                </span>
+                <code className="auth-challenge-nonce font-mono text-xs break-all block whitespace-pre-wrap select-all">{attestMessage}</code>
                 <p className="text-[11px] opacity-70 -mt-1">Sign the two lines exactly, including the newline between <code className="font-mono">STARLIGHT-WISH-V1</code> and the hash. Paste the wallet signmessage signature.</p>
                 <textarea
                   rows={2}

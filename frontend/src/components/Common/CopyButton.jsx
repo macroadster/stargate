@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Copy, Check } from 'lucide-react';
 
-const CopyButton = ({ text, className = "" }) => {
+const CopyButton = ({ text, className = "", "aria-label": ariaLabel = "Copy to clipboard" }) => {
   const [copiedText, setCopiedText] = useState('');
 
   const copyToClipboard = async (textToCopy) => {
@@ -19,9 +19,11 @@ const CopyButton = ({ text, className = "" }) => {
   };
 
   return (
-    <button 
+    <button
       onClick={() => copyToClipboard(text)}
       className={`text-primary hover:opacity-70 ${className}`}
+      aria-label={ariaLabel}
+      title={ariaLabel}
     >
       {copiedText === text ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
     </button>
