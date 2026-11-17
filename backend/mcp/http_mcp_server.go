@@ -1009,18 +1009,67 @@ func (h *HTTPMCPServer) handleCreateProposal(ctx context.Context, args map[strin
 
 	// wish_budget_sats is part of this surface's response, so the wish is still
 	// read here. The budget cap itself is not re-applied: Create enforces it and
-	// answers KindBudgetExceeded, which is mapped below.
+	// answers KindBudgetExceeded, which is mapped below. The same lookup also
+	// yields the wish funder: who pays depends on the funding mode.
 	wishBudget := int64(0)
+	wishFundAddr := ""
+	wishCreatorWallet := ""
+	wishFundingMode := ""
 	if wish, wishErr := scstore.LookupContract(h.store, "wish-"+visiblePixelHash); wishErr == nil {
 		wishBudget = scstore.WishBudgetFromContract(wish)
+		wishFundAddr = scstore.FundingAddressFromMeta(wish.Metadata)
+		if wish.Metadata != nil {
+			if v, ok := wish.Metadata["funding_mode"].(string); ok {
+				wishFundingMode = strings.TrimSpace(v)
+			}
+			if v, ok := wish.Metadata["creator_wallet"].(string); ok {
+				wishCreatorWallet = strings.TrimSpace(v)
+			}
+		}
+	}
+	// The inscribe flow records the wish's funder address and creator wallet on
+	// the ingestion row (keyed by visible_pixel_hash), not on the contract row,
+	// so fall back to it when the contract carries none.
+	if h.ingestionSvc != nil {
+		if rec, recErr := h.ingestionSvc.Get(visiblePixelHash); recErr == nil && rec != nil {
+			if wishFundAddr == "" {
+				wishFundAddr = scstore.FundingAddressFromMeta(rec.Metadata)
+			}
+			if rec.Metadata != nil {
+				if wishCreatorWallet == "" {
+					if v, ok := rec.Metadata["creator_wallet"].(string); ok {
+						wishCreatorWallet = strings.TrimSpace(v)
+					}
+				}
+				if wishFundingMode == "" {
+					if v, ok := rec.Metadata["funding_mode"].(string); ok {
+						wishFundingMode = strings.TrimSpace(v)
+					}
+				}
+			}
+		}
 	}
 
-	// funding_address is metadata this surface writes and REST does not, so it is
-	// passed in rather than reproduced inside the service. creator_wallet is set
-	// by Create from the same API key.
-	fundingAddr := scstore.FundingAddressFromMeta(map[string]interface{}{})
-	if apiKeyRec, ok := h.apiKeyStore.Get(apiKey); ok && strings.TrimSpace(apiKeyRec.Wallet) != "" {
-		fundingAddr = strings.TrimSpace(apiKeyRec.Wallet)
+	// funding_address is metadata this surface writes and REST does not, so it
+	// is passed in rather than reproduced inside the service. creator_wallet is
+	// set by Create from the same API key. The funder is the wallet recorded on
+	// the wish for a payout wish, and the proposer (acting as fundraiser) for a
+	// raise-fund wish. When the wish records no funder, fall back to the
+	// proposer key's wallet, as before.
+	fundingAddr := ""
+	isRaiseFund := scservices.IsRaiseFund(wishFundingMode) ||
+		scservices.LooksLikeRaiseFund(title) ||
+		scservices.LooksLikeRaiseFund(descriptionMD)
+	if !isRaiseFund {
+		fundingAddr = wishFundAddr
+		if fundingAddr == "" {
+			fundingAddr = wishCreatorWallet
+		}
+	}
+	if fundingAddr == "" {
+		if apiKeyRec, ok := h.apiKeyStore.Get(apiKey); ok && strings.TrimSpace(apiKeyRec.Wallet) != "" {
+			fundingAddr = strings.TrimSpace(apiKeyRec.Wallet)
+		}
 	}
 
 	// ContractID is deliberately omitted. This surface used to store

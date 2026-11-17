@@ -3,12 +3,16 @@ package mcp
 import (
 	"context"
 	"net/http"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"testing"
+	"time"
 
 	scservices "stargate-backend/app/smart_contract/services"
 	"stargate-backend/core/smart_contract"
+	"stargate-backend/services"
+	auth "stargate-backend/storage/auth"
 	scstore "stargate-backend/storage/smart_contract"
 )
 
@@ -19,6 +23,8 @@ import (
 // tests existed, in both shapes, which is why the drift was never noticed.
 
 const createWishBudget = int64(5000)
+
+const surfaceFunderWlt = "bc1qwishfunder"
 
 // seedCreatableWish creates the wish contract create_proposal proposes against,
 // carrying a budget so wish_budget_sats is exercised.
@@ -270,5 +276,109 @@ func TestMCPCreateProposalReportsMissingWish(t *testing.T) {
 	}
 	if resp.ErrorCode != ErrCodeNotFound {
 		t.Fatalf("error_code = %q, want %q (body: %s)", resp.ErrorCode, ErrCodeNotFound, resp.Error)
+	}
+}
+
+// surfaceFunderFixture builds a surface fixture whose ingestion row names a
+// wish creator other than the proposer's key wallet, so the funder and the
+// proposer can be told apart. funding_mode is optional.
+func surfaceFunderFixture(t *testing.T, fundingMode string) (*HTTPMCPServer, scstore.Store) {
+	t.Helper()
+
+	meta := map[string]interface{}{
+		"creator_wallet": surfaceFunderWlt,
+		"address":        surfaceFunderWlt,
+	}
+	if fundingMode != "" {
+		meta["funding_mode"] = fundingMode
+	}
+
+	ingestSvc, err := services.NewIngestionService(filepath.Join(t.TempDir(), "ingest.db"))
+	if err != nil {
+		t.Fatalf("ingestion service: %v", err)
+	}
+	if err := ingestSvc.Create(services.IngestionRecord{
+		ID:       surfaceWishHash,
+		Filename: "wish.png",
+		Method:   "test",
+		Status:   "completed",
+		Metadata: meta,
+	}); err != nil {
+		t.Fatalf("seed ingestion: %v", err)
+	}
+
+	keys := &surfaceKeyStore{keys: map[string]auth.APIKey{
+		surfaceCreatorKey: {Key: surfaceCreatorKey, Wallet: surfaceCreatorWlt},
+	}}
+
+	store := scstore.NewMemoryStore(72 * 60 * 60)
+	srv := NewHTTPMCPServer(store, keys, nil, ingestSvc, nil, nil, auth.NewChallengeStore(10*time.Minute))
+	return srv, store
+}
+
+func TestMCPCreateProposalPayoutRecordsWishFunderAsFundingAddress(t *testing.T) {
+	srv, store := surfaceFunderFixture(t, "")
+	seedCreatableWish(t, store)
+
+	resp := callTool(t, srv, surfaceCreatorKey, "create_proposal", createProposalArgs(0))
+	if !resp.Success {
+		t.Fatalf("create_proposal failed: %s", resp.Error)
+	}
+
+	// A payout wish is funded by the wish creator, not by whoever proposes.
+	// The GUI compares the signed-in funder wallet against this value to
+	// enable or disable Publish & Build; stamping the proposer's wallet here
+	// greyed the button out for the actual funder (stargate-lvac).
+	stored := storedProposalFor(t, store)
+	if got, _ := stored.Metadata["funding_address"].(string); got != surfaceFunderWlt {
+		t.Fatalf("funding_address = %q, want the wish funder %q", got, surfaceFunderWlt)
+	}
+}
+
+func TestMCPCreateProposalRaiseFundKeepsProposerWalletAsFundingAddress(t *testing.T) {
+	srv, store := surfaceFunderFixture(t, "raise_fund")
+	seedCreatableWish(t, store)
+
+	resp := callTool(t, srv, surfaceCreatorKey, "create_proposal", createProposalArgs(0))
+	if !resp.Success {
+		t.Fatalf("create_proposal failed: %s", resp.Error)
+	}
+
+	// A raise-fund wish is funded by the proposer, who acts as the fundraiser.
+	stored := storedProposalFor(t, store)
+	if got, _ := stored.Metadata["funding_address"].(string); got != surfaceCreatorWlt {
+		t.Fatalf("funding_address = %q, want the proposer wallet %q", got, surfaceCreatorWlt)
+	}
+}
+
+func TestMCPCreateProposalFallsBackToProposerWalletWhenWishRecordsNone(t *testing.T) {
+	ingestSvc, err := services.NewIngestionService(filepath.Join(t.TempDir(), "ingest.db"))
+	if err != nil {
+		t.Fatalf("ingestion service: %v", err)
+	}
+	if err := ingestSvc.Create(services.IngestionRecord{
+		ID:       surfaceWishHash,
+		Filename: "wish.png",
+		Method:   "test",
+		Status:   "completed",
+		Metadata: map[string]interface{}{},
+	}); err != nil {
+		t.Fatalf("seed ingestion: %v", err)
+	}
+	keys := &surfaceKeyStore{keys: map[string]auth.APIKey{
+		surfaceCreatorKey: {Key: surfaceCreatorKey, Wallet: surfaceCreatorWlt},
+	}}
+	store := scstore.NewMemoryStore(72 * 60 * 60)
+	srv := NewHTTPMCPServer(store, keys, nil, ingestSvc, nil, nil, auth.NewChallengeStore(10*time.Minute))
+	seedCreatableWish(t, store)
+
+	resp := callTool(t, srv, surfaceCreatorKey, "create_proposal", createProposalArgs(0))
+	if !resp.Success {
+		t.Fatalf("create_proposal failed: %s", resp.Error)
+	}
+
+	stored := storedProposalFor(t, store)
+	if got, _ := stored.Metadata["funding_address"].(string); got != surfaceCreatorWlt {
+		t.Fatalf("funding_address = %q, want the proposer wallet %q as fallback", got, surfaceCreatorWlt)
 	}
 }
