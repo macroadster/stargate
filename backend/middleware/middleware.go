@@ -94,30 +94,11 @@ func SecurityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 
-		// Sandbox paths serve user-generated HTML apps. They must not be able
-		// to phone home or exfiltrate same-origin data (the sql.js auth blob,
-		// API keys, …) to a remote host, so lock connect-src down to local
-		// schemes only. blob:/data: are self-generated, not remote egress.
-		// Local media (file-picker plays, embedded base64 audio) keeps working
-		// via media-src/connect-src blob:/data:; inline scripts/styles and
-		// base64 images are required by the existing contract artifacts.
-		// Same-origin framing (modal preview, Starlight Shell) still works;
-		// cross-origin framing is denied.
+		// Sandbox paths serve user-generated HTML apps that need full web
+		// capabilities (external scripts, remote APIs). Skip the restrictive
+		// CSP and allow framing so the modal iframe preview works too.
 		if strings.HasPrefix(r.URL.Path, "/sandbox/") {
-			w.Header().Set("X-Frame-Options", "SAMEORIGIN")
-			w.Header().Set("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
-			w.Header().Set("Content-Security-Policy", "default-src 'self'; "+
-				"script-src 'self' 'unsafe-inline'; "+
-				"style-src 'self' 'unsafe-inline'; "+
-				"img-src 'self' data: blob:; "+
-				"font-src 'self' data:; "+
-				"connect-src 'self' blob: data:; "+
-				"media-src 'self' blob: data:; "+
-				"worker-src 'self' blob:; "+
-				"object-src 'none'; "+
-				"base-uri 'none'; "+
-				"form-action 'self'; "+
-				"frame-ancestors 'self'")
+			w.Header().Set("X-Frame-Options", "ALLOWALL")
 			next.ServeHTTP(w, r)
 			return
 		}
