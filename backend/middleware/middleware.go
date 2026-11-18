@@ -101,24 +101,23 @@ func SecurityHeaders(next http.Handler) http.Handler {
 		// Local media (file-picker plays, embedded base64 audio) keeps working
 		// via media-src/connect-src blob:/data:; inline scripts/styles and
 		// base64 images are required by the existing contract artifacts.
-		// 'wasm-unsafe-eval' permits WebAssembly compilation (sql.js/SQLite)
-		// from already-allowed scripts; it grants no new source origin.
 		// Same-origin framing (modal preview, Starlight Shell) still works;
 		// cross-origin framing is denied.
 		if strings.HasPrefix(r.URL.Path, "/sandbox/") {
 			w.Header().Set("X-Frame-Options", "SAMEORIGIN")
 			w.Header().Set("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
-			csp := sandboxCSPDefault
-			// Narrow carve-outs for known first-party system contracts whose
-			// artifacts hardcode specific third-party origins. These are
-			// pinned-hash apps built for this network; every other contract
-			// keeps the strict default.
-			if hash := sandboxPathHash(r.URL.Path); hash != "" {
-				if override, ok := sandboxCSPOverrides[hash]; ok {
-					csp = override
-				}
-			}
-			w.Header().Set("Content-Security-Policy", csp)
+			w.Header().Set("Content-Security-Policy", "default-src 'self'; "+
+				"script-src 'self' 'unsafe-inline'; "+
+				"style-src 'self' 'unsafe-inline'; "+
+				"img-src 'self' data: blob:; "+
+				"font-src 'self' data:; "+
+				"connect-src 'self' blob: data:; "+
+				"media-src 'self' blob: data:; "+
+				"worker-src 'self' blob:; "+
+				"object-src 'none'; "+
+				"base-uri 'none'; "+
+				"form-action 'self'; "+
+				"frame-ancestors 'self'")
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -160,71 +159,6 @@ func SecurityHeaders(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
-}
-
-// sandboxCSPDefault is the locked-down policy for user-generated sandbox
-// apps. Nothing remote may load; blob:/data: are self-generated, not remote
-// egress. 'wasm-unsafe-eval' permits WebAssembly compilation (sql.js /
-// SQLite) from already-allowed scripts; it grants no new origin.
-const sandboxCSPDefault = "default-src 'self'; " +
-	"script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; " +
-	"style-src 'self' 'unsafe-inline'; " +
-	"img-src 'self' data: blob:; " +
-	"font-src 'self' data:; " +
-	"connect-src 'self' blob: data:; " +
-	"media-src 'self' blob: data:; " +
-	"worker-src 'self' blob:; " +
-	"object-src 'none'; " +
-	"base-uri 'none'; " +
-	"form-action 'self'; " +
-	"frame-ancestors 'self'"
-
-// sandboxCSPOverrides holds narrow CSP exceptions for known, first-party
-// system contracts pinned by content hash. Their artifacts hardcode
-// specific third-party origins (CDN asset hosts, the chat relay, and
-// cross-node Starlight video URLs). Every other sandbox path keeps
-// sandboxCSPDefault; adding an override is an explicit, auditable decision.
-var sandboxCSPOverrides = map[string]string{
-	// Starlight Chat (p2p): sql.js loaded from cdnjs (JS + WASM binary),
-	// chat stream/fetch against the starlight-ai.freemyip.com MCP relay.
-	"503751efad310be50b8c2e63563dc1a2c1ddef4f52c9d3b91a6394c75b3985f3": "default-src 'self'; " +
-		"script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://cdnjs.cloudflare.com; " +
-		"style-src 'self' 'unsafe-inline'; " +
-		"img-src 'self' data: blob:; " +
-		"font-src 'self' data:; " +
-		"connect-src 'self' blob: data: https://cdnjs.cloudflare.com https://starlight-ai.freemyip.com; " +
-		"media-src 'self' blob: data:; " +
-		"worker-src 'self' blob:; " +
-		"object-src 'none'; " +
-		"base-uri 'none'; " +
-		"form-action 'self'; " +
-		"frame-ancestors 'self'",
-	// Loops (local video library): quantumcss + starlight.js from unpkg,
-	// Video library backed by sql.js (wasm-unsafe-eval covers it). It
-	// streams "Starlight videos" cross-node — media/img/connect must reach
-	// arbitrary https sandboxes by design once a user pastes a URL; until
-	// then media/img posts load from this node. Local files via FSA API
-	// and blob: URLs are unaffected by CSP.
-	"2d89e6ebfd09604938416481cb69cee2a63ceadab93541b3fbf4a26293274bf7": "default-src 'self'; " +
-		"script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://unpkg.com; " +
-		"style-src 'self' 'unsafe-inline' https://unpkg.com; " +
-		"img-src 'self' data: blob: https:; " +
-		"font-src 'self' data: https://unpkg.com; " +
-		"connect-src 'self' blob: data: https:; " +
-		"media-src 'self' blob: data: https:; " +
-		"worker-src 'self' blob:; " +
-		"object-src 'none'; " +
-		"base-uri 'none'; " +
-		"form-action 'self'; " +
-		"frame-ancestors 'self'",
-}
-
-// sandboxPathHash extracts the first path segment after /sandbox/ for
-// override lookup. Returns "" when there is none.
-func sandboxPathHash(path string) string {
-	rel := strings.TrimPrefix(path, "/sandbox/")
-	seg, _, _ := strings.Cut(rel, "/")
-	return strings.Trim(seg, "/")
 }
 
 // Timeout middleware. Uses a mutex-protected response writer so that when the
