@@ -37,17 +37,34 @@ func TestSecurityHeadersOtherPathsKeepTightFrameSrc(t *testing.T) {
 	}
 }
 
-func TestSecurityHeadersSandboxPathUnchanged(t *testing.T) {
+func TestSecurityHeadersSandboxPathLockedDown(t *testing.T) {
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})
 	req := httptest.NewRequest(http.MethodGet, "/sandbox/abc/", nil)
 	w := httptest.NewRecorder()
 	SecurityHeaders(inner).ServeHTTP(w, req)
-	if got := w.Header().Get("X-Frame-Options"); got != "ALLOWALL" {
-		t.Fatalf("sandbox X-Frame-Options = %q, want ALLOWALL", got)
+	if got := w.Header().Get("X-Frame-Options"); got != "SAMEORIGIN" {
+		t.Fatalf("sandbox X-Frame-Options = %q, want SAMEORIGIN", got)
 	}
-	if got := w.Header().Get("Content-Security-Policy"); got != "" {
-		t.Fatalf("sandbox must not get the restrictive CSP, got: %s", got)
+	csp := w.Header().Get("Content-Security-Policy")
+	for _, want := range []string{
+		"default-src 'self'",
+		"connect-src 'self' blob: data:;",
+		"media-src 'self' blob: data:;",
+		"img-src 'self' data: blob:;",
+		"worker-src 'self' blob:;",
+		"object-src 'none'",
+		"base-uri 'none'",
+		"form-action 'self'",
+		"frame-ancestors 'self'",
+	} {
+		if !strings.Contains(csp, want) {
+			t.Fatalf("sandbox CSP missing %q, got: %s", want, csp)
+		}
+	}
+	// Remote egress must stay closed: no wildcard/http(s) source in connect-src.
+	if strings.Contains(csp, "connect-src *") || strings.Contains(csp, "connect-src https:") || strings.Contains(csp, "http: https:") {
+		t.Fatalf("sandbox CSP must not allow remote connect origins, got: %s", csp)
 	}
 }
