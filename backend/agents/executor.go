@@ -197,9 +197,11 @@ type invocationSpec struct {
 var toolSpecs = map[string]invocationSpec{
 	"opencode": {
 		buildArgs: func(fullPrompt, workdir, promptFile string) []string {
-			// opencode run takes the prompt as a positional argument.
-			// --dir is the documented way to set the working directory.
-			return []string{"run", "--dir", workdir, fullPrompt}
+			// OpenCode 2 takes the prompt as a positional argument. The working
+			// directory comes from the process CWD (cmd.Dir in invokeTool); V2 has
+			// no --dir flag and rejects it. --auto avoids permission prompts in
+			// this non-interactive, headless execution path.
+			return []string{"run", "--auto", fullPrompt}
 		},
 		preferPromptFile: false,
 	},

@@ -41,7 +41,7 @@ RUN GOOS=linux GOARCH=amd64 /tmp/build-btcd.sh ./bitcoin/btcd.embed \
 # Stage 3: Final lightweight image
 FROM debian:bookworm-slim
 
-# Install runtime dependencies, Node.js (required by opencode), and bundle opencode CLI.
+# Install runtime dependencies, Node.js (for JS/TS tooling used by agent tasks), and bundle the OpenCode 2 CLI.
 # This enables the built-in agent (AutoDetectExecutor) to drive real AI coding tools
 # when STARGATE_AGENT_EXECUTOR=opencode (or auto-detected). No opencode.json is bundled.
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -53,13 +53,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     build-essential \
     sqlite3 \
-    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 
-# Install OpenCode CLI into /opt/opencode and expose via /usr/local/bin
-RUN curl -fsSL https://opencode.ai/install | bash \
+# Install OpenCode 2 CLI into /opt/opencode and expose via /usr/local/bin.
+# https://opencode.ai/install installs legacy OpenCode 1; V2 uses /v2/install.
+# Pin the version so image builds are reproducible (override with --build-arg).
+ARG OPENCODE_VERSION=2.3.2
+RUN curl -fsSL https://opencode.ai/v2/install | bash -s -- --version ${OPENCODE_VERSION} \
     && mv /root/.opencode /opt/opencode \
     && ln -s /opt/opencode/bin/opencode /usr/local/bin/opencode \
     && chmod -R 755 /opt/opencode

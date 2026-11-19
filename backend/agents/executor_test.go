@@ -78,7 +78,9 @@ func TestAutoDetectExecutor_CommandConstruction(t *testing.T) {
 			name:         "opencode",
 			detectedName: "opencode",
 			req:          ExecutionRequest{Workdir: "/tmp/ws", Description: "build a todo app"},
-			wantContains: []string{"run", "--dir", "/tmp/ws", "build a todo app"},
+			wantContains: []string{"run", "--auto", "build a todo app"},
+			// V2 has no --dir flag, and the workdir is applied via cmd.Dir.
+			wantNotContain: []string{"--dir", "/tmp/ws"},
 		},
 		{
 			name:         "claude",

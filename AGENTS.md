@@ -357,7 +357,7 @@ Enable with environment variables (all optional, sensible defaults exist):
 
 The agent writes results under `UPLOADS_DIR/results/<hash>/` (served at `/uploads/` and `/sandbox/` by the **same** `stargate` process).
 
-For real LLM-driven work, wire a custom `agents.Executor` (the default is a safe stub that produces placeholder reports). A future `opencode_run` MCP tool or sidecar executor will provide the real implementation path.
+For real LLM-driven work, the built-in `AutoDetectExecutor` drives a local coding CLI (`opencode`, `claude`, `grok`, `agy`, or `codex`) inside the task workdir; select it with `STARGATE_AGENT_EXECUTOR` or use `stub` to disable it. The OpenCode path targets OpenCode 2: `opencode run <prompt>` with the workdir set by the process CWD (V2 rejects the old `--dir` flag).
 
 External agents can use the same MCP/REST APIs on the single binary (`/mcp/*`, `/api/smart_contract/*`). See `GET /api/surfaces` and `docs/adr/0005-rest-vs-mcp-ownership.md`.
 
