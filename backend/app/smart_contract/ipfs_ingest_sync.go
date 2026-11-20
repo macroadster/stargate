@@ -43,6 +43,13 @@ type ipfsIngestSyncState struct {
 	queueWake     chan struct{}
 }
 
+// manifestCatClient is the slice of *ipfs.Client used by manifest staging.
+// Keeping it an interface lets tests drive the staging path without a live
+// IPFS node or the package-global client singleton.
+type manifestCatClient interface {
+	Cat(context.Context, string) ([]byte, error)
+}
+
 type ipfsIngestManifest struct {
 	Version   int                       `json:"version"`
 	Origin    string                    `json:"origin"`
@@ -141,6 +148,12 @@ func IngestDownloadedFile(ctx context.Context, filePath string, cid string, inge
 	}
 	sum := sha256.Sum256(blob)
 	stegoHash := hex.EncodeToString(sum[:])
+	// Defense in depth: the mirror already skips tombstoned downloads, but the
+	// uploads-dir backfill walks the filesystem directly. Never re-ingest a
+	// wish that was explicitly deleted.
+	if ipfs.IsPathDeleted(filePath) || ipfs.IsPathDeleted(stegoHash) {
+		return
+	}
 	uploadsDir := strings.TrimSpace(os.Getenv("UPLOADS_DIR"))
 	if uploadsDir == "" {
 		return
@@ -343,7 +356,7 @@ func ipfsIngestSubscribe(ctx context.Context, ingest *services.IngestionService,
 
 // ipfsIngestProcessManifest stages image blobs from a peer manifest onto disk.
 // No SQL writes — confirmation is the only gate into SQLite/Postgres.
-func ipfsIngestProcessManifest(ctx context.Context, ingest *services.IngestionService, store Store, cfg ipfsIngestSyncConfig, state *ipfsIngestSyncState, client *ipfs.Client, topic, manifestCID string) error {
+func ipfsIngestProcessManifest(ctx context.Context, ingest *services.IngestionService, store Store, cfg ipfsIngestSyncConfig, state *ipfsIngestSyncState, client manifestCatClient, topic, manifestCID string) error {
 	_ = ingest
 	_ = store
 	data, err := client.Cat(ctx, manifestCID)
@@ -370,6 +383,13 @@ func ipfsIngestProcessManifest(ctx context.Context, ingest *services.IngestionSe
 		if !isImageFile(entry.Path) {
 			continue
 		}
+		// A peer may keep advertising a wish after it was deleted here. Mirror
+		// downloads consult the tombstone set, but manifest staging does not,
+		// so TrackWish below would re-track it and the contract would resurface.
+		if ipfs.IsPathDeleted(entry.Path) {
+			log.Printf("ipfs stage: skip tombstoned manifest path=%s cid=%s topic=%s", entry.Path, entry.CID, topic)
+			continue
+		}
 		if last, ok := state.lastSeen[entry.CID]; ok && entry.ModTime <= last {
 			if state.repairChecked[entry.CID] {
 				continue
@@ -383,6 +403,12 @@ func ipfsIngestProcessManifest(ctx context.Context, ingest *services.IngestionSe
 		}
 		sum := sha256.Sum256(blob)
 		stegoHash := hex.EncodeToString(sum[:])
+		// Also guard on the content hash: a peer can mislabel the manifest path
+		// while serving the exact payload that was deleted.
+		if ipfs.IsPathDeleted(stegoHash) {
+			log.Printf("ipfs stage: skip tombstoned wish hash=%s cid=%s topic=%s", stegoHash, entry.CID, topic)
+			continue
+		}
 		if uploadsDir != "" {
 			uploadPath := datadir.PartPath(uploadsDir, stegoHash)
 			if err := os.MkdirAll(filepath.Dir(uploadPath), 0755); err == nil {
